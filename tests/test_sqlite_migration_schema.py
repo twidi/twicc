@@ -15,7 +15,7 @@ from django.db import (
     models,
     transaction,
 )
-from django.db.migrations import CreateModel, Migration, RunPython, RunSQL
+from django.db.migrations import AddConstraint, AddField, CreateModel, Migration, RemoveConstraint, RunPython, RunSQL
 from django.db.migrations.operations.base import Operation
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.state import ModelState, ProjectState
@@ -136,6 +136,72 @@ def test_executor_ordinary_writes_skip_checks_and_record_migration(connection, k
             executor.apply_migration(state(), item)
     assert fk_checks(statements) == []
     assert (("scope_app", "scope_test") in executor.recorder.applied_migrations()) is not backward
+    assert_restored(connection)
+
+
+@isolate_apps()
+@pytest.mark.parametrize("policy", ["ABORT", "IGNORE", "REPLACE"])
+@pytest.mark.parametrize("incoming", [False, True])
+def test_unique_rebuild_only_skips_checks_for_abort_without_incoming_keys(connection, policy, incoming):
+    class Parent(models.Model):
+        class Meta:
+            app_label = "scope_app"
+            db_table = "parent"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Parent, db_index=False, on_delete=models.PROTECT)
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    class PolicyUnique(models.UniqueConstraint):
+        def constraint_sql(self, model, schema_editor):
+            return super().constraint_sql(model, schema_editor) + f" ON CONFLICT {policy}"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id,label) VALUES (1,'keep')")
+    if incoming:
+        connection.connection.execute(
+            "CREATE TABLE incoming (record_id integer REFERENCES scope_app_record(id))"
+        )
+        connection.connection.execute("INSERT INTO incoming VALUES (1)")
+    constraint = PolicyUnique(fields=["owner", "label"], name="record_owner_label")
+    Record._meta.constraints = [constraint]
+    with checks(connection) as statements, connection.schema_editor() as editor:
+        editor.add_constraint(Record, constraint)
+    assert fk_checks(statements) == ([] if policy == "ABORT" and not incoming else ["PRAGMA foreign_key_check"])
+    assert connection.connection.execute("SELECT id,owner_id,label FROM scope_app_record").fetchall() == [(1, 1, "keep")]
+    assert_restored(connection)
+
+
+@isolate_apps()
+def test_unique_rebuild_duplicate_values_abort_and_restore_original_schema(connection):
+    class Parent(models.Model):
+        class Meta:
+            app_label = "scope_app"
+            db_table = "parent"
+
+    class Record(models.Model):
+        owner = models.ForeignKey(Parent, db_index=False, on_delete=models.PROTECT)
+        label = models.TextField()
+
+        class Meta:
+            app_label = "scope_app"
+
+    with connection.schema_editor() as editor:
+        editor.create_model(Record)
+    connection.connection.execute("INSERT INTO scope_app_record(owner_id,label) VALUES (1,'same'),(1,'same')")
+    constraint = models.UniqueConstraint(fields=["owner", "label"], name="record_owner_label")
+    Record._meta.constraints = [constraint]
+    with checks(connection) as statements, pytest.raises(IntegrityError), connection.schema_editor() as editor:
+        editor.add_constraint(Record, constraint)
+    assert fk_checks(statements) == []
+    assert connection.connection.execute("SELECT id,owner_id,label FROM scope_app_record ORDER BY id").fetchall() == [
+        (1, 1, "same"), (2, 1, "same"),
+    ]
+    assert "new__scope_app_record" not in connection.introspection.table_names()
     assert_restored(connection)
 
 
@@ -1899,4 +1965,70 @@ def test_rebuild_new_abort_constraint_preserves_parent_rows_without_checks(conne
     assert fk_checks(statements) == []
     assert connection.connection.execute("SELECT id,added FROM scope_app_owner").fetchall() == [(1, None), (2, None)]
     assert connection.connection.execute("SELECT owner_id FROM scope_app_record").fetchall() == [(2,)]
+    assert_restored(connection)
+
+
+@pytest.mark.parametrize("independent_write", [None, "before", "after", "new_fk"])
+def test_replace_item_uniqueness_with_null_history_preserves_relations(connection, independent_write):
+    initial = state()
+    old_unique = models.UniqueConstraint(fields=["owner", "line"], name="item_owner_line")
+    initial.add_model(ModelState("scope_app", "Item", [
+        ("id", models.BigAutoField(primary_key=True)),
+        ("owner", models.ForeignKey("scope_app.Parent", db_index=False, on_delete=models.PROTECT)),
+        ("line", models.PositiveBigIntegerField()),
+    ], {"db_table": "item", "constraints": [old_unique], "indexes": [
+        models.Index(fields=["line"], name="item_line_idx"),
+        models.Index(fields=["line"], name="item_partial_idx", condition=models.Q(line__gt=0)),
+    ]}))
+    with connection.schema_editor() as editor:
+        editor.create_model(initial.apps.get_model("scope_app", "Item"))
+    connection.connection.execute("INSERT INTO item(owner_id,line) VALUES (1,1),(1,2)")
+    item = Migration("replace_item_unique", "scope_app")
+    item.operations = [
+        CreateModel(name=name, fields=[("id", models.BigAutoField(primary_key=True))])
+        for name in ("History", "Source")
+    ] + [
+        AddField("item", "history", models.ForeignKey(
+            "scope_app.History", null=True, db_index=False, on_delete=models.PROTECT)),
+        AddField("item", "source", models.ForeignKey(
+            "scope_app.Source", null=True, db_index=False, on_delete=models.PROTECT)),
+        AddField("item", "source_revision", models.PositiveBigIntegerField(null=True)),
+        AddField("item", "source_line", models.PositiveBigIntegerField(null=True)),
+        AddField("item", "native_line_id", models.CharField(max_length=255, null=True)),
+        RemoveConstraint("item", "item_owner_line"),
+        AddConstraint("item", models.UniqueConstraint(fields=["history", "line"], name="item_history_line")),
+    ]
+    with checks(connection) as statements:
+        try:
+            with connection.schema_editor() as editor:
+                if independent_write == "before":
+                    editor.execute("UPDATE child SET parent_id=99")
+                item.apply(initial, editor)
+                if independent_write == "after":
+                    editor.execute("UPDATE child SET parent_id=99")
+                elif independent_write == "new_fk":
+                    editor.execute("UPDATE item SET history_id=99")
+        except IntegrityError:
+            assert independent_write is not None
+        else:
+            assert independent_write is None
+    expected_checks = {
+        None: [], "before": ['PRAGMA foreign_key_check("child")'],
+        "after": ['PRAGMA foreign_key_check("child")'], "new_fk": ['PRAGMA foreign_key_check("item")'],
+    }
+    assert fk_checks(statements) == expected_checks[independent_write]
+    assert connection.connection.execute("SELECT id,owner_id,line FROM item ORDER BY id").fetchall() == [
+        (1, 1, 1), (2, 1, 2),
+    ]
+    if independent_write is None:
+        assert connection.connection.execute(
+            "SELECT history_id,source_id,source_revision,source_line,native_line_id FROM item"
+        ).fetchall() == [(None,) * 5, (None,) * 5]
+        assert connection.connection.execute("PRAGMA foreign_key_check(item)").fetchall() == []
+        indexes = connection.introspection.get_constraints(connection.cursor(), "item")
+        assert indexes["item_history_line"]["columns"] == ["history_id", "line"]
+        assert indexes["item_partial_idx"]["columns"] == ["line"]
+    else:
+        assert connection.connection.execute("SELECT parent_id FROM child").fetchall() == [(1,)]
+        assert "history_id" not in [row[1] for row in connection.connection.execute("PRAGMA table_info(item)")]
     assert_restored(connection)

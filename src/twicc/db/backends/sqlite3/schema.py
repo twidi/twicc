@@ -271,12 +271,28 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             for index in parent.indexes
         )
 
+    def _is_abort_unique_constraint(self, clause):
+        """Recognize only ordinary column UNIQUE clauses that cannot discard rows."""
+        if clause[:1] == (("word", "constraint"),):
+            if len(clause) < 3 or clause[1][0] not in ("word", "identifier"):
+                return False
+            clause = clause[2:]
+        if clause[:2] != (("word", "unique"), ("word", "(")):
+            return False
+        if clause[-3:] == (("word", "on"), ("word", "conflict"), ("word", "abort")):
+            clause = clause[:-3]
+        if clause[-1:] != (("word", ")"),):
+            return False
+        columns = split_clauses(clause[2:-1])
+        return bool(columns) and all(len(column) == 1 and column[0][0] == "identifier" for column in columns)
+
     def _preserves_relations(self, before, after, table, retained):
         old, new = before[table], after[table]
-        involved = old.foreign_keys or new.foreign_keys or any(
+        incoming = any(
             fk.parent_table == table for schema in (before, after)
             for child in schema.values() for fk in child.foreign_keys
         )
+        involved = old.foreign_keys or new.foreign_keys or incoming
         if not involved:
             return True
         old_columns, new_columns = dict(old.declarations), dict(new.declarations)
@@ -292,14 +308,21 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
             return False
         if any(old_columns[column] != new_columns.get(column) for column in retained):
             return False
-        if old.constraints != new.constraints or old.primary_key != new.primary_key:
+        if old.primary_key != new.primary_key:
             return False
+        if old.constraints != new.constraints:
+            # With no incoming FK, ordinary UNIQUE changes cannot affect a
+            # parent key. SQLite aborts the identity copy on duplicate values.
+            if incoming or tuple(c for c in old.constraints if not self._is_abort_unique_constraint(c)) != tuple(
+                c for c in new.constraints if not self._is_abort_unique_constraint(c)
+            ):
+                return False
         def unique_keys(schema):
             return {
                 (index.columns, index.collations, index.partial, index.has_expressions, index.uses_generated_columns)
                 for index in schema.indexes if index.unique and set(index.columns) <= retained
             }
-        if unique_keys(old) != unique_keys(new):
+        if incoming and unique_keys(old) != unique_keys(new):
             return False
         old_keys = {fk for fk in old.foreign_keys if set(fk.child_columns) <= retained}
         if not old_keys <= set(new.foreign_keys):
@@ -666,6 +689,19 @@ class DatabaseSchemaEditor(SQLiteSchemaEditor):
                 if index is not None and canonical_identifier(effect.arg2 or "") != table:
                     return False
                 continue
+            if (
+                proof.kind == "delete" and self._rebuild is not None
+                and table == canonical_identifier(self._rebuild.table)
+                and effect.action == sqlite3.SQLITE_DROP_INDEX
+                and canonical_identifier(effect.arg2 or "") == table
+            ):
+                # DROP TABLE removes its own indexes. Match only indexes from
+                # the physical source schema of this observed rebuild.
+                if any(
+                    item.name and canonical_identifier(item.name) == name
+                    for item in self._rebuild.schema[table].indexes
+                ):
+                    continue
             if proof.kind == "create":
                 if effect.action == sqlite3.SQLITE_CREATE_TABLE and name == "sqlite_sequence":
                     continue
