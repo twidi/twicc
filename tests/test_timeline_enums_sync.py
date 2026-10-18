@@ -1,7 +1,6 @@
 """Pin the copies of the timeline enum values that cannot be derived from one source."""
 
 from twicc.core.models import TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision
-from twicc.core.services import timeline_backfill
 from twicc.core.timeline import PAYLOAD_TYPES, STARTED_OF, validate_data
 
 
@@ -40,14 +39,6 @@ def test_every_interval_end_has_a_matching_start_and_vice_versa():
         if verb in ("started", "ended"):
             other = f"{subject}.{'ended' if verb == 'started' else 'started'}"
             assert other in values, value
-
-
-def test_backfill_flag_kinds_are_members_and_their_ends_exist():
-    values = set(TimelineKind.values)
-    for _attribute, started in timeline_backfill._FLAGS:
-        assert started in values
-    assert set(timeline_backfill._RELEVANT_KINDS) <= values
-    assert len(timeline_backfill._RELEVANT_KINDS) == 1 + 2 * len(timeline_backfill._FLAGS)
 
 
 def test_enum_values_fit_their_column_widths():

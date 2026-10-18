@@ -196,7 +196,7 @@ def test_the_backfill_writes_null_origin_fields(project):
     )
     write_creation_rows_sync("s1")
     rows = list(TimelineEvent.objects.filter(session_id="s1"))
-    assert {row.kind for row in rows} == {"session.created", "hidden.started"}
+    assert [row.kind for row in rows] == ["session.created"]
     assert {columns(row) for row in rows} == {("system", None, None, None)}
 
 

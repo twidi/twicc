@@ -50,10 +50,7 @@ def test_the_first_compute_writes_the_creation_row_at_the_computed_created_at(pr
     assert created.occurred_at.isoformat() == CREATED
     assert created.precision == "derived"
     assert created.data["origin"] == "sync"
-    hidden = TimelineEvent.objects.get(session_id="s1", kind="hidden.started")
-    assert hidden.occurred_at.isoformat() == UPDATED
-    assert hidden.precision == "estimated"
-    assert kinds("s1") == ["session.created", "hidden.started"]
+    assert kinds("s1") == ["session.created"]  # no flag row: the hidden flag has no known date
 
 
 def test_a_known_session_gets_nothing_and_no_signal(project, pokes):

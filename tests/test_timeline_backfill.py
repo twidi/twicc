@@ -47,23 +47,16 @@ def test_creation_row_carries_the_spawner_when_the_column_is_set(project):
     assert data["spawned_by"] == "boss" and data["settings"] is None
 
 
-def test_flag_rows_use_last_updated_at_then_created_at(project):
-    updated = timezone.now() - timedelta(days=1)
-    created = updated - timedelta(days=5)
-    make(project, "a", created_at=created, last_updated_at=updated, archived=True)
-    make(project, "b", created_at=created, hidden=True)
-    make(project, "c", created_at=created, mute_on_user_turn=True)
-    assert write("a") == write("b") == write("c") == 2
-    assert TimelineEvent.objects.get(session_id="a", kind="archived.started").occurred_at == updated
-    assert TimelineEvent.objects.get(session_id="b", kind="hidden.started").occurred_at == created
-    assert TimelineEvent.objects.get(session_id="b", kind="hidden.started").precision == "estimated"
-    assert TimelineEvent.objects.get(session_id="c", kind="muted.started").dedupe_key == "backfill:muted.started"
-
-
-def test_pinned_row_carries_the_scope(project):
-    make(project, created_at=timezone.now(), pinned="workspace")
-    assert write() == 2
-    assert TimelineEvent.objects.get(session_id="s1", kind="pinned.started").data == {"scope": "workspace"}
+def test_no_flag_row_is_written_even_when_the_session_is_archived_hidden_pinned_muted(project):
+    # A flag set before TwiCC observed it has no known date: the timeline records no invented row.
+    now = timezone.now()
+    make(
+        project, created_at=now - timedelta(days=5), last_updated_at=now, archived=True, hidden=True,
+        mute_on_user_turn=True, pinned="workspace",
+    )
+    assert write() == 1
+    assert kinds("s1") == ["session.created"]
+    assert not TimelineEvent.objects.filter(kind__endswith=".started").exists()
 
 
 def test_no_process_rows_are_ever_written(project):
@@ -87,11 +80,11 @@ def test_a_watcher_row_makes_the_session_known(project):
     assert kinds("s1") == ["session.created"]
 
 
-def test_a_live_flag_row_without_session_created_suppresses_only_that_subject(project):
+def test_a_live_flag_row_without_session_created_does_not_make_the_session_known(project):
     make(project, created_at=timezone.now(), archived=True, hidden=True, last_updated_at=timezone.now())
     record_event_sync("archived.ended", session_id="s1", actor="user")
-    assert write() == 2
-    assert kinds("s1") == ["archived.ended", "session.created", "hidden.started"]
+    assert write() == 1
+    assert kinds("s1") == ["archived.ended", "session.created"]
 
 
 def test_a_subagent_a_missing_session_or_an_empty_created_at_gets_nothing(project):
@@ -171,7 +164,7 @@ def test_a_known_session_costs_one_timeline_query_and_no_session_read(project):
 def test_an_unknown_session_is_read_once_with_only_the_columns_the_rows_use(project):
     make(project, created_at=timezone.now(), archived=True, hidden=True, mute_on_user_turn=True, pinned="all")
     with CaptureQueriesContext(connection) as captured:
-        assert write() == 5
+        assert write() == 1
     reads = _session_reads(_statements(captured))
     assert len(reads) == 1, reads
     for heavy in ("inline_artifacts", "plan_paths", "goals", "tasks", "layout", "annotations"):
@@ -280,10 +273,10 @@ def test_raw_insert_still_raises_on_another_constraint_violation(project):
     assert TimelineEvent.objects.filter(session_id="x").count() == 0
 
 
-def test_a_rerun_after_deleting_the_creation_row_rewrites_only_that_row(project):
+def test_a_rerun_after_deleting_the_creation_row_rewrites_that_row(project):
     make(project, created_at=timezone.now(), archived=True)
-    assert write() == 2
+    assert write() == 1
     TimelineEvent.objects.filter(session_id="s1", kind="session.created").delete()  # let the session be re-processed
     assert write() == 1
-    assert TimelineEvent.objects.filter(session_id="s1").count() == 2
+    assert kinds("s1") == ["session.created"]
     assert write() == 0

@@ -49,11 +49,11 @@ def mark(sid, reason="rollout_missing"):
         loop.close()
 
 
-def test_a_computed_root_marked_unavailable_gets_its_rows_from_the_stored_created_at(project, pokes):
+def test_a_computed_root_marked_unavailable_gets_its_creation_row_from_the_stored_created_at(project, pokes):
     make_computed_root(project, pinned="project")
     assert mark("r") == 1
     assert Session.objects.get(id="r").unavailable_reason == "rollout_missing"
-    assert kinds("r") == ["session.created", "pinned.started"]
+    assert kinds("r") == ["session.created"]  # no flag row: the pin has no known date
     created = TimelineEvent.objects.get(session_id="r", kind="session.created")
     assert created.occurred_at == CREATED
     assert pokes == [1]

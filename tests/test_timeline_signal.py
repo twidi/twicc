@@ -171,7 +171,7 @@ def test_the_creation_rows_request_one_signal_after_commit_and_none_when_nothing
     Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex",
                            created_at=timezone.now(), archived=True)
     with transaction.atomic():
-        assert write_creation_rows_sync("a") == 2
+        assert write_creation_rows_sync("a") == 1
         assert pokes == []
     assert pokes == [1]
     assert write_creation_rows_sync("a") == 0

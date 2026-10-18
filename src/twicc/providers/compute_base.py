@@ -4213,10 +4213,10 @@ class BaseSessionCompute:
             )
 
         with timed_sync_phase('compute_final_timeline'):
-            # 8bis. Write the timeline creation rows of a session the timeline does not know yet.
-            # After the titles, so the first compute of a historical session records no title
-            # change (spec 2026-10-18, C7); inside the transaction, so a rolled-back publication
-            # discards its rows (§5.1). Never raises.
+            # 8bis. Write the timeline ``session.created`` row of a session the timeline does not
+            # know yet. After the titles, so the first compute of a historical session records no
+            # title change (spec 2026-10-18, C7); inside the transaction, so a rolled-back
+            # publication discards its row (§5.1). Never raises.
             if session.type == SessionType.SESSION:
                 from twicc.core.services.timeline_backfill import write_creation_rows_sync
 
