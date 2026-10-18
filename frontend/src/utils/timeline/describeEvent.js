@@ -52,7 +52,9 @@ const SESSION_CREATED_BASE = {
     sync: 'Session created',
 }
 
-const TITLE_SOURCE_TAGS = { auto: 'automatic', agent: 'by the agent' }
+// `agent`: the provider wrote the title in its own files (a /rename in the CLI, Codex naming its thread); the tag
+// names the provider, see titleSourceTag.
+const TITLE_SOURCE_TAGS = { auto: 'automatic' }
 
 const text = textPart
 
@@ -90,7 +92,14 @@ function describeSessionCreated(event, data, context, author) {
     return { icon: 'plus', severity: 'neutral', parts }
 }
 
-function describeTitleChanged(event, data) {
+function titleSourceTag(event, data, context) {
+    if (data.source !== 'agent') return lookup(TITLE_SOURCE_TAGS, data.source) ?? null
+    const provider = event.provider ?? context.sessions?.[event.session_id]?.provider ?? null
+    const product = context.labelsFor?.(provider)?.product ?? null
+    return product ? `from ${product}` : 'from the provider'
+}
+
+function describeTitleChanged(event, data, context) {
     const next = asString(data.new)
     const previous = asString(data.old)
     const tooltip = []
@@ -105,7 +114,7 @@ function describeTitleChanged(event, data) {
     else if (previous === null) parts = [text('Titled '), value(next, 'New title')]
     else parts = [text('Renamed '), value(previous, 'Old title'), arrowPart(), value(next, 'New title')]
     return {
-        icon: 'pencil', severity: 'neutral', parts, tag: lookup(TITLE_SOURCE_TAGS, data.source) ?? null, tooltip,
+        icon: 'pencil', severity: 'neutral', parts, tag: titleSourceTag(event, data, context), tooltip,
     }
 }
 
@@ -195,7 +204,7 @@ function backendTooltip(data) {
 function describeKind(event, data, context, author) {
     switch (event.kind) {
         case 'session.created': return describeSessionCreated(event, data, context, author)
-        case 'title.changed': return describeTitleChanged(event, data)
+        case 'title.changed': return describeTitleChanged(event, data, context)
         case 'settings.changed': return describeSettings(event, data, context)
         case 'process.started': return describeProcessStarted(event, data)
         case 'process.ended': return describeProcessEnded(event, data, context)
@@ -239,7 +248,7 @@ function describeTime(event, context) {
  * @property {string} icon - Font Awesome Free solid name.
  * @property {'neutral'|'success'|'warning'|'danger'} severity
  * @property {Array<Object>} parts - Wording segments (parts.js): `text`, `value`, `arrow`, `session`.
- * @property {string|null} tag - Small tag at the end of the wording ("automatic", "by the agent").
+ * @property {string|null} tag - Small tag at the end of the wording ("automatic", "from Codex").
  * @property {{text: string, title: string}|null} badge - Background-work badge of `turn.ended`.
  * @property {{first: string, rest: string}|null} detail - Monospace first line of an error, with the rest behind an expand control.
  * @property {import('./authorLabel.js').AuthorLabel} author

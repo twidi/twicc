@@ -15,7 +15,7 @@ defineProps({
     <span v-if="part.type === 'text'">{{ part.text }}</span>
     <span v-else-if="part.type === 'value'" class="timeline-value">{{ part.text }}</span>
     <!-- Real spaces around the arrow, not margins: a copy or a screen reader gets separate words. -->
-    <template v-else-if="part.type === 'arrow'">{{ ' ' }}<wa-icon name="arrow-right" :label="part.label" auto-width class="timeline-arrow"></wa-icon>{{ ' ' }}</template>
+    <template v-else-if="part.type === 'arrow'">{{ ' ' }}<wa-icon name="arrow-right-long" :label="part.label" auto-width class="timeline-arrow"></wa-icon>{{ ' ' }}</template>
     <TimelineSessionMention v-else :mention="part.mention" />
 </template>
 
@@ -26,9 +26,12 @@ defineProps({
     font-weight: var(--wa-font-weight-bold);
 }
 
-/* Between an old and a new value: on the text (lowered like Font Awesome inline icons), quiet. */
+/* Between an old and a new value: on the text (lowered like Font Awesome inline icons), long, faint and with a
+   little room on each side, so it reads as a separator next to the bold values (real spaces stay in the DOM too). */
 .timeline-arrow {
     vertical-align: -0.125em;
     color: var(--wa-color-text-quiet);
+    opacity: 0.6;
+    margin-inline: 0.2em;
 }
 </style>

@@ -242,10 +242,17 @@ a.timeline-project {
     display: inline-block;
 }
 
-/* The source of the event ("automatic", "by the agent"): a small tag right after the last word of the wording (a
+/* The source of the event ("automatic", "from Codex"): a small tag right after the last word of the wording (a
    real space before it, in the template). */
 .timeline-tag {
     vertical-align: baseline;
+    /* Tighter than the form-control height Web Awesome gives a tag: it sits inside a line of text. */
+    height: auto;
+    line-height: 1.2;
+    padding-block: 0.1em;
+    padding-inline: 0.5em;
+    /* A little more room than the real space before it. */
+    margin-inline-start: 0.25em;
 }
 
 .timeline-author {
@@ -256,6 +263,8 @@ a.timeline-project {
 /* On the text baseline, like the icon and the time: the badge, the wording and the icon share one visual line. */
 .timeline-badge {
     align-self: baseline;
+    /* Tighter than Web Awesome's 0.375em, like the tag. */
+    padding-block: 0.1em;
 }
 
 .timeline-error {

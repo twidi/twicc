@@ -177,7 +177,11 @@ test('title.changed: renamed, titled, cleared, source tags', () => {
     assert.equal(words(title({ source: 'user', old: 'A', new: '' })), 'Title cleared')
     assert.equal(title({ source: 'user', new: 'B' }).tag, null)
     assert.equal(title({ source: 'auto', new: 'B' }).tag, 'automatic')
-    assert.equal(title({ source: 'agent', new: 'B' }).tag, 'by the agent')
+    // The provider wrote it in its own files (a /rename in the CLI, Codex naming its thread): named after the provider.
+    const labelsFor = (provider) => ({ claude_code: { product: 'Claude Code' }, codex: { product: 'Codex' } }[provider] ?? null)
+    assert.equal(describe('title.changed', { provider: 'codex', data: { source: 'agent', new: 'B' } }, { labelsFor }).tag, 'from Codex')
+    assert.equal(describe('title.changed', { provider: 'claude_code', data: { source: 'agent', new: 'B' } }, { labelsFor }).tag, 'from Claude Code')
+    assert.equal(title({ source: 'agent', new: 'B' }).tag, 'from the provider')
     assert.equal(title({ source: 'future', new: 'B' }).tag, null)
     assert.equal(title({ source: 'constructor', new: 'B' }).tag, null)
 })

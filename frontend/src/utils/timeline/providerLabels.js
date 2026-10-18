@@ -13,6 +13,8 @@ export function createLabelsFor(getProviderHelpers) {
         const helpers = provider ? getProviderHelpers(provider) : null
         if (!helpers) return null
         return {
+            /** The product name ("Claude Code", "Codex"), or null when the helpers do not name one. */
+            product: helpers.serviceProductLabel ?? null,
             field: (field) => helpers.getFieldLabel(field),
             choice: (field, value) => helpers.getChoiceLabel(field, value),
             model: (model) => helpers.getModelLabel(model),

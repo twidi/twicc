@@ -368,7 +368,7 @@ test('a rename: the two titles are values of their own, the arrow an icon with a
     const [wording] = byClass(root, 'timeline-wording')
     assert.ok(!textOf(wording).includes('"') && !textOf(wording).includes('->'), 'no raw quotes, no ASCII arrow')
     const [arrow] = descendants(wording, (n) => n.type === 'wa-icon')
-    assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right', 'to', 'timeline-arrow'])
+    assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right-long', 'to', 'timeline-arrow'])
     // Real spaces in the text, not margins: a copy or a screen reader gets separate words.
     assert.equal(textOf(wording).replace(/\s+/g, ' ').trim(), 'Renamed Old one New one automatic')
     // The order of the flow: "Renamed", old, arrow, new, then the tag, all inside the wording; the last word and the
@@ -391,7 +391,7 @@ test('a first title and a settings change use the same parts: the value, the sam
     const settings = await render(t, [make('settings.changed', { data: { changes: { effort: ['low', 'high'] } } })])
     const [settingsWording] = byClass(settings, 'timeline-wording')
     const [arrow] = descendants(settingsWording, (n) => n.type === 'wa-icon')
-    assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right', 'to'])
+    assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right-long', 'to'])
     assert.deepEqual(byClass(settingsWording, 'timeline-value').map(textOf), ['low', 'high'], 'the setting values are values, like titles')
     assert.equal(textOf(settingsWording).replace(/\s+/g, ' ').trim(), 'effort: low high')
 })
@@ -403,15 +403,19 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
     const partStyle = part.slice(part.indexOf('<style'))
     assert.equal(declarationsOf(partStyle, '.timeline-value').get('font-weight'), 'var(--wa-font-weight-bold)')
     const arrow = declarationsOf(partStyle, '.timeline-arrow')
+    // Lighter than the bold values around it, so the eye finds the split between the two titles.
     assert.equal(arrow.get('color'), 'var(--wa-color-text-quiet)')
+    assert.equal(arrow.get('opacity'), '0.6')
     assert.equal(arrow.get('vertical-align'), '-0.125em')
-    assert.ok(!arrow.has('margin-inline'), 'the gaps around the arrow are real spaces')
-    assert.match(part, /\{\{ ' ' \}\}<wa-icon name="arrow-right"[^>]*><\/wa-icon>\{\{ ' ' \}\}/)
+    assert.equal(arrow.get('margin-inline'), '0.2em', 'a little more room than the spaces alone')
+    // Real spaces stay around the arrow and before the tag: a copy or a screen reader gets separate words.
+    assert.match(part, /\{\{ ' ' \}\}<wa-icon name="arrow-right-long"[^>]*><\/wa-icon>\{\{ ' ' \}\}/)
     assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/>\{\{ ' ' \}\}<wa-tag /)
     const tag = declarationsOf(style, '.timeline-tag')
     assert.equal(tag.get('vertical-align'), 'baseline')
     assert.ok(!tag.has('display') && !tag.has('flex-basis'), 'never forced onto a line of its own')
-    assert.ok(!tag.has('margin-inline-start'), 'the gap before the tag is a real space')
+    assert.equal(tag.get('margin-inline-start'), '0.25em', 'a little more room before the tag than the space alone')
+    assert.equal(tag.get('padding-inline'), '0.5em', 'narrower than the Web Awesome default (0.75em)')
     assert.equal(declarationsOf(style, '.timeline-tag-glue').get('display'), 'inline-block')
     // What makes the glue safe on a narrow screen: a last word longer than the line still breaks inside it.
     assert.equal(declarationsOf(style, '.timeline-row-main').get('overflow-wrap'), 'anywhere')

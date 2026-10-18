@@ -5,6 +5,7 @@ import { describeSettingsChange } from './settingsDiff.js'
 import { createLabelsFor } from './providerLabels.js'
 
 const helpers = {
+    serviceProductLabel: 'Claude Code',
     getFieldLabel: (field) => ({ effort: 'Effort', selected_model: 'Model' }[field] ?? field),
     getChoiceLabel: (field, value) => (field === 'effort' && value === 'high' ? 'High' : null),
     getModelLabel: (model) => (model === 'opus' ? 'Opus' : ''),
@@ -17,6 +18,7 @@ test('a known provider gives labels, an unknown or missing one gives null', () =
     assert.equal(labelsFor(undefined), null)
     const labels = labelsFor('claude_code')
     assert.deepEqual([labels.field('effort'), labels.choice('effort', 'high'), labels.choice('effort', 'x'), labels.model('opus')], ['Effort', 'High', null, 'Opus'])
+    assert.equal(labels.product, 'Claude Code')
 })
 
 test('the diff uses them and falls back to the raw value when the helper has no label', () => {
