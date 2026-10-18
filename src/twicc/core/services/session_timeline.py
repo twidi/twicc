@@ -435,10 +435,18 @@ def record_title_change(
 
     Subagent sessions get no event (decision D2): the compute fills titles for
     every session it processes, subagents included.
+
+    An ``auto`` / ``agent`` title of a session not yet known to the timeline (no ``session.created``
+    row) is its initial title, not a change: no event (spec 2026-10-18, C7). A ``user`` title is
+    always written.
     """
     try:
         row = Session.objects.filter(id=session_id).values_list("project_id", "type", "provider").first()
         if row is None or row[1] == SessionType.SUBAGENT:
+            return
+        if source != "user" and not TimelineEvent.objects.filter(
+            session_id=session_id, kind=TimelineKind.SESSION_CREATED,
+        ).exists():
             return
         who = {"origin": origin} if source == "user" else {"actor": TimelineActor.AGENT}
         record_event_sync(

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import columns, kinds, run_with_writer
+from tests.timeline_helpers import columns, kinds, mark_known, run_with_writer
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, Session, SessionType, TimelineEvent
@@ -92,9 +92,10 @@ def test_a_user_title_with_a_captured_origin_ignores_the_carrier(project):
 @pytest.mark.parametrize("source", ["auto", "agent"])
 def test_a_non_user_title_keeps_actor_agent_and_null_origin_fields(project, source):
     make(project)
+    mark_known("s1", project.id)
     with origin_scope(AGENT):
         record_title_change("s1", "New", source=source, old=None)
-    assert columns(TimelineEvent.objects.get(session_id="s1")) == ("agent", None, None, None)
+    assert columns(TimelineEvent.objects.get(session_id="s1", kind="title.changed")) == ("agent", None, None, None)
 
 
 def test_the_title_update_service_records_the_drop_origin(project):

@@ -9,7 +9,7 @@ from twicc.core.models import (
 from twicc.core.services.session_timeline import (
     latest_event_id, project_id_of, record_event, record_event_sync, record_session_created,
 )
-from tests.timeline_helpers import kinds, run_with_writer
+from tests.timeline_helpers import kinds, mark_known, run_with_writer
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -208,11 +208,16 @@ def test_record_title_change_skips_subagents_and_unknown_sessions(project):
     parent = Session.objects.create(id="p", file_path="p.jsonl", project=project, provider="codex")
     Session.objects.create(id="c", file_path="c.jsonl", project=project, provider="codex",
                            type=SessionType.SUBAGENT, parent_session=parent)
+    mark_known("p", project.id)
+    mark_known("c", project.id)  # known too, so only the subagent rule can drop its title
     record_title_change("c", "Child title", source="agent")
     record_title_change("nope", "Ghost", source="agent")
     record_title_change("p", "Parent title", source="agent", old="Before")
-    assert kinds("c") == [] and kinds("nope") == [] and kinds("p") == ["title.changed"]
-    assert TimelineEvent.objects.get(session_id="p").data == {"source": "agent", "new": "Parent title", "old": "Before"}
+    assert kinds("c") == ["session.created"] and kinds("nope") == []
+    assert kinds("p") == ["session.created", "title.changed"]
+    assert TimelineEvent.objects.get(session_id="p", kind="title.changed").data == {
+        "source": "agent", "new": "Parent title", "old": "Before",
+    }
     record_title_change("p", "Next", source="user")
     assert TimelineEvent.objects.filter(session_id="p").order_by("-id").first().data["old"] is None
 

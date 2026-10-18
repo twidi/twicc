@@ -6,7 +6,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import persist_session_settings, update_session_title_from_payload
 from tests.test_title_automation import env, session  # noqa: F401  (fixtures reused below)
-from tests.timeline_helpers import kinds, run_with_writer
+from tests.timeline_helpers import kinds, mark_known, run_with_writer
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -53,16 +53,22 @@ def test_placeholder_title_records_source_auto(project):
     from twicc.providers.compute_base import BaseSessionCompute
 
     make(project)
+    mark_known("s1", project.id)
     assert BaseSessionCompute.apply_placeholder_title("s1", "First words")
-    assert TimelineEvent.objects.get(session_id="s1").data == {"source": "auto", "new": "First words", "old": None}
+    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+        "source": "auto", "new": "First words", "old": None,
+    }
 
 
 def test_provider_title_overwrite_records_source_agent(project):
     from twicc.providers.compute_base import BaseSessionCompute
 
     make(project, title="Before", title_origin="user")
+    mark_known("s1", project.id)
     assert BaseSessionCompute._write_provider_title("s1", "From provider")
-    assert TimelineEvent.objects.get(session_id="s1").data == {"source": "agent", "new": "From provider", "old": "Before"}
+    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+        "source": "agent", "new": "From provider", "old": "Before",
+    }
 
 
 def test_settings_change_records_only_changed_bundle_fields(project):
@@ -128,6 +134,7 @@ def test_automatic_title_check_records_source_auto(env, session):  # noqa: F811
     from tests.test_title_automation import NOW
     from twicc.title_cadence import TitleCheckState
 
+    mark_known(session.id, session.project_id)
     async_to_sync(env.module._apply_check)(
         session, TitleCheckState(7, NOW), title="New title", now=NOW, closing=False, succeeded=True)
     row = TimelineEvent.objects.get(session_id=session.id, kind="title.changed")
@@ -139,9 +146,15 @@ def test_codex_title_import_records_auto_for_a_null_title_and_agent_otherwise(pr
 
     make(project, title=None)
     Session.objects.create(id="s2", file_path="s2.jsonl", project=project, provider="codex", title="Old")
+    mark_known("s1", project.id)
+    mark_known("s2", project.id)
     _apply_sync_session_titles_job(SyncSessionTitlesJob({"s1": "Imported", "s2": "Renamed"}, None))
-    assert TimelineEvent.objects.get(session_id="s1").data == {"source": "auto", "new": "Imported", "old": None}
-    assert TimelineEvent.objects.get(session_id="s2").data == {"source": "agent", "new": "Renamed", "old": "Old"}
+    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+        "source": "auto", "new": "Imported", "old": None,
+    }
+    assert TimelineEvent.objects.get(session_id="s2", kind="title.changed").data == {
+        "source": "agent", "new": "Renamed", "old": "Old",
+    }
 
 
 def test_pending_title_flush_records_source_user(project):
@@ -192,3 +205,53 @@ def test_the_hybrid_agent_records_its_chrome_withholding_as_system(project):
     assert row.data == {"changes": {"claude_in_chrome": [True, False]}}
     assert row.actor == "system" and row.reason == "switch-hybrid" and row.project_id == project.id
     assert agent.agent_settings.claude_in_chrome is False
+
+
+def test_an_automatic_or_agent_title_of_an_unknown_session_is_not_recorded(project):
+    from twicc.core.services.session_timeline import record_title_change
+
+    make(project)
+    record_title_change("s1", "Auto", source="auto")
+    record_title_change("s1", "Agent", source="agent", old="Auto")
+    assert kinds("s1") == []
+
+
+def test_a_user_title_of_an_unknown_session_is_recorded(project):
+    from twicc.core.services.session_timeline import record_title_change
+
+    make(project)
+    record_title_change("s1", "Mine", source="user", old=None)
+    assert kinds("s1") == ["title.changed"]
+
+
+def test_the_codex_import_records_nothing_for_an_unknown_session(project):
+    from twicc.providers.codex.titles import SyncSessionTitlesJob, _apply_sync_session_titles_job
+
+    make(project, title=None)
+    _apply_sync_session_titles_job(SyncSessionTitlesJob({"s1": "Imported"}, None))
+    assert Session.objects.get(id="s1").title == "Imported"
+    assert kinds("s1") == []
+
+
+def test_live_slice_titles_of_an_unknown_session_are_not_recorded(project):
+    """The live slice applies its titles through these two writers (compute_base ~4722)."""
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    make(project)
+    assert BaseSessionCompute.apply_placeholder_title("s1", "First words")
+    assert BaseSessionCompute._write_provider_title("s1", "From provider")
+    assert Session.objects.get(id="s1").title == "From provider"
+    assert kinds("s1") == []
+
+
+def test_the_automatic_title_task_records_nothing_for_an_unknown_session(env, session):  # noqa: F811
+    """Same call as test_automatic_title_check_records_source_auto, without mark_known."""
+    from asgiref.sync import async_to_sync
+
+    from tests.test_title_automation import NOW
+    from twicc.title_cadence import TitleCheckState
+
+    async_to_sync(env.module._apply_check)(
+        session, TitleCheckState(7, NOW), title="New title", now=NOW, closing=False, succeeded=True)
+    assert Session.objects.get(id=session.id).title == "New title"
+    assert not TimelineEvent.objects.filter(session_id=session.id, kind="title.changed").exists()

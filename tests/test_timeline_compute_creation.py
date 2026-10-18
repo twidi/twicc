@@ -141,3 +141,14 @@ def test_the_step_is_timed_in_the_hold_diagnostics(project, pokes, monkeypatch):
     assert publish("s1").outcome == "applied"
     assert "compute_final_timeline" in phases
     assert phases[phases.index("compute_final_timeline") - 1] == "compute_final_titles"
+
+
+def test_the_first_compute_records_no_title_and_a_later_change_is_recorded(project):
+    make(project)
+    assert publish("s1", placeholder_titles={"s1": "First words"}).outcome == "applied"
+    assert kinds("s1") == ["session.created"]
+    assert publish("s1", version=100, provider_titles={"s1": "Renamed"}).outcome == "applied"
+    assert kinds("s1") == ["session.created", "title.changed"]
+    assert TimelineEvent.objects.get(kind="title.changed").data == {
+        "source": "agent", "new": "Renamed", "old": "First words",
+    }
