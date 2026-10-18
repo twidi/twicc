@@ -6,7 +6,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
-from twicc.core.services import timeline_backfill
+from twicc.core.services import timeline_backfill, timeline_signal
 from twicc.core.services.session_timeline import _conflict_clause, insert_event_rows, record_event_sync
 from twicc.core.services.timeline_backfill import write_creation_rows_sync
 from tests.timeline_helpers import kinds, log_records_of, mark_known
@@ -118,12 +118,16 @@ def test_a_failure_is_logged_never_raised_and_leaves_no_partial_row(project, mon
         raise RuntimeError("disk full")
 
     monkeypatch.setattr(timeline_backfill, "insert_event_rows", insert_then_fail)
+    pokes = []
+    monkeypatch.setattr(timeline_signal, "poke", lambda: pokes.append(1))
     with log_records_of(timeline_backfill.logger) as records, transaction.atomic():  # the compute's transaction
         assert write() == 0
         Session.objects.filter(id="s1").update(title="still writable")  # the outer transaction is usable
     assert TimelineEvent.objects.count() == 0
     assert Session.objects.get(id="s1").title == "still writable"
-    assert any("disk full" in str(r.exc_info[1]) for r in records if r.exc_info)
+    assert pokes == []  # the outer transaction committed, but nothing was written: no signal
+    failures = [r for r in records if r.exc_info and "disk full" in str(r.exc_info[1])]
+    assert failures and all("s1" in r.getMessage() for r in failures)
 
 
 def test_the_statements_do_not_depend_on_the_timeline_size(project):
