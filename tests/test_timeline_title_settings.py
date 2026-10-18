@@ -234,7 +234,7 @@ def test_the_codex_import_records_nothing_for_an_unknown_session(project):
 
 
 def test_live_slice_titles_of_an_unknown_session_are_not_recorded(project):
-    """The live slice applies its titles through these two writers (compute_base ~4722)."""
+    """The live slice (`BaseSessionCompute._sync_session_slice`) applies its titles through these two writers."""
     from twicc.providers.compute_base import BaseSessionCompute
 
     make(project)
