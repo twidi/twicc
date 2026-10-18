@@ -15,9 +15,10 @@ import { groupHeadIdentity } from './sessions.js'
  *     (1px border, 0.5rem padding) and the header line (title, project, 1.75rem) above its event line.
  *   - `blockEnd`: ADDED to the row that ends a session block: the bottom of the card (0.5rem padding, 1px
  *     border) and the gap to the next block (0.75rem).
- *   - `nav`: the copy of the navigation list (compact-height mode).
+ *   - `band`, `nav`: the room the top row of the list keeps for the "Timeline" band and, in compact-height
+ *     mode, for the navigation list above it (both are drawn over that room, see TimelinePanel.vue).
  */
-export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 75, blockEnd: 21, nav: 96 }
+export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 75, blockEnd: 21, band: 48, nav: 96 }
 
 /**
  * @typedef {Object} DayRow
@@ -87,10 +88,11 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
 }
 
 /**
- * @param {DayRow|EventRow|{type: 'nav'}} row
+ * @param {DayRow|EventRow|{type: 'top', withNav: boolean}} row
  * @returns {number} The height the scroller assumes until it measures the row.
  */
 export function estimateRowHeight(row) {
+    if (row.type === 'top') return ROW_HEIGHT_ESTIMATES.band + (row.withNav ? ROW_HEIGHT_ESTIMATES.nav : 0)
     if (row.type === 'event') {
         const base = row.head ? ROW_HEIGHT_ESTIMATES.head : ROW_HEIGHT_ESTIMATES.event
         return row.last ? base + ROW_HEIGHT_ESTIMATES.blockEnd : base

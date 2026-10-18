@@ -229,7 +229,7 @@ function templateOf(sfc) {
 const GLASS_CLASSES = ['glass-surface', 'glass-sticky', 'glass-veil']
 const GLASS_FILES = ['CommandPickerPopup', 'MessageHistoryPickerPopup', 'FilePickerPopup', 'DirectoryPickerPopup',
     'SessionSwitcher', 'TextSelectionComment', 'HoverInfoPanel', 'UsageGraphDialog', 'ContributionSparklines',
-    'SharedSubagentView', 'ProjectView', 'CommandPalette', 'SettingsPopover', 'SessionHeader', 'ProjectDetailHeader', 'ShareSessionApp', 'ContributionGraphs', 'TimelinePanel']
+    'SharedSubagentView', 'ProjectView', 'CommandPalette', 'SettingsPopover', 'SessionHeader', 'ProjectDetailHeader', 'ShareSessionApp', 'StickyBand']
 
 test('4. glass classes stay away from pane containers', () => {
     for (const name of ['main-content', 'session-layout', 'center-slot', 'dock-region', 'layout-overlay',

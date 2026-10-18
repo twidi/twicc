@@ -114,33 +114,25 @@ test('5. opaque layers inside a card paint --panel-solid, not the transparent to
     }
 })
 
-// The stats provider filter is a neutral glass sticky bar: its no-blur modes paint the card's flat colour.
-test('5b. the provider filter is neutral glass, opaque --panel-solid without the blur', () => {
-    const src = strip(read('../components/activity/ContributionGraphs.vue'))
+// The band at the top of a scope tab (the Stats provider filter, the Timeline header) is one neutral glass sticky
+// bar, StickyBand: its no-blur modes paint the card's flat colour. The two tabs use it, none keeps its own copy.
+test('5b. the sticky band is neutral glass, opaque --panel-solid without the blur, shared by Stats and Timeline', () => {
+    const src = strip(read('../components/ui/StickyBand.vue'))
     const style = src.slice(src.indexOf('<style'))
-    assert.ok(/<template>[\s\S]*class="provider-filter glass-sticky"/.test(src), 'glass-sticky layer')
+    assert.ok(/<template>[\s\S]*class="sticky-band glass-sticky"/.test(src), 'glass-sticky layer')
+    assert.ok(/\.sticky-band \{[^}]*position: sticky;\s*top: 0;/.test(style), 'sticky at the top of its scroll container')
     assert.ok(/--glass-sticky-bg: color-mix\(in oklab, var\(--surface-solid\) 60%, transparent\);/.test(style), 'neutral 60%')
-    for (const selector of ['@media (prefers-reduced-transparency: reduce) {\n    .provider-filter', ':root.reduce-effects .provider-filter']) {
+    for (const selector of ['@media (prefers-reduced-transparency: reduce) {\n    .sticky-band', ':root.reduce-effects .sticky-band']) {
         const at = style.indexOf(selector)
         assert.ok(at >= 0, selector)
         const body = style.slice(at, style.indexOf('}', at))
         assert.ok(body.includes('--glass-sticky-bg: transparent;'), `${selector}: no glass layer`)
         assert.ok(/background: var\(--panel-solid\);/.test(body), `${selector}: paints --panel-solid`)
     }
-})
-
-// The Timeline band is the same neutral glass bar, outside the scroller: same no-blur fallbacks.
-test('5c. the timeline band is neutral glass, opaque --panel-solid without the blur', () => {
-    const src = strip(read('../components/timeline/TimelinePanel.vue'))
-    const style = src.slice(src.indexOf('<style'))
-    assert.ok(/<template>[\s\S]*class="timeline-band glass-sticky"/.test(src), 'glass-sticky layer')
-    assert.ok(/--glass-sticky-bg: color-mix\(in oklab, var\(--surface-solid\) 60%, transparent\);/.test(style), 'neutral 60%')
-    for (const selector of ['@media (prefers-reduced-transparency: reduce) {\n    .timeline-band', ':root.reduce-effects .timeline-band']) {
-        const at = style.indexOf(selector)
-        assert.ok(at >= 0, selector)
-        const body = style.slice(at, style.indexOf('}', at))
-        assert.ok(body.includes('--glass-sticky-bg: transparent;'), `${selector}: no glass layer`)
-        assert.ok(/background: var\(--panel-solid\);/.test(body), `${selector}: paints --panel-solid`)
+    for (const file of ['../components/activity/ContributionGraphs.vue', '../components/timeline/TimelinePanel.vue']) {
+        const user = strip(read(file))
+        assert.ok(/<StickyBand\b/.test(user), `${file} uses StickyBand`)
+        assert.ok(!user.includes('glass-sticky'), `${file} has no glass band of its own`)
     }
 })
 

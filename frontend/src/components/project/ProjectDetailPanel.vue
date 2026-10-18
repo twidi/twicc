@@ -9,7 +9,7 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds'
 import ProjectDetailHeader from './ProjectDetailHeader.vue'
 import { apiFetch } from '../../utils/api'
-import ProjectDetailNavList from './ProjectDetailNavList.vue'
+import ProjectTabNavList from './ProjectTabNavList.vue'
 import ContributionGraphs from '../activity/ContributionGraphs.vue'
 import FilesPanel from '../files/FilesPanel.vue'
 import GitPanel from '../git/GitPanel.vue'
@@ -462,8 +462,7 @@ onBeforeUnmount(() => {
             </wa-tab-panel>
 
             <wa-tab-panel name="stats">
-                <ProjectDetailNavList :project-id="projectId" class="stats-nav-list" />
-                <wa-divider class="stats-nav-list-divider"></wa-divider>
+                <ProjectTabNavList :project-id="projectId" />
                 <ContributionGraphs :project-id="projectId" :project-ids="statsProjectIds" />
             </wa-tab-panel>
 
@@ -585,10 +584,6 @@ wa-divider {
     padding-bottom: 0;
 }
 
-.stats-nav-list, .stats-nav-list-divider {
-    display: none;
-}
-
 /* compact height: see utils/compactHeight.js */
 :where(html.compact-height) .project-detail-panel {
     padding-top: 0;
@@ -597,15 +592,5 @@ wa-divider {
 /* Hide the divider (the tab bar now stays inline in the content) */
 :where(html.compact-height) wa-divider {
     display: none;
-}
-
-:where(html.compact-height) .stats-nav-list {
-    display: flex;
-    padding: var(--wa-space-s) var(--wa-space-m);
-}
-:where(html.compact-height) .stats-nav-list-divider {
-    display: block;
-    --spacing: 0;
-    --width: var(--divider-size);
 }
 </style>

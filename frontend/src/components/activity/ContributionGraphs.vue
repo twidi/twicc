@@ -14,6 +14,7 @@ import ContributionGraph from './ContributionGraph.vue'
 import ContributionSparklines from './ContributionSparklines.vue'
 import { getProviderOptions } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
+import StickyBand from '../ui/StickyBand.vue'
 
 const settingsStore = useSettingsStore()
 const showCosts = computed(() => settingsStore.areCostsShown)
@@ -196,7 +197,7 @@ useStartupPolling(refreshDailyActivity)
     <!-- Provider filter — drives every widget below (overviews + heatmaps/graphs).
          Always rendered (not gated on dailyActivity) so a provider with no data
          can still be switched back to "All providers". -->
-    <div v-if="showProviderSelect" class="provider-filter glass-sticky">
+    <StickyBand v-if="showProviderSelect" class="provider-filter">
         <wa-select
             class="provider-filter-select"
             size="small"
@@ -219,7 +220,7 @@ useStartupPolling(refreshDailyActivity)
                 {{ option.label }}
             </wa-option>
         </wa-select>
-    </div>
+    </StickyBand>
 
     <ActivityDashboard :daily-activity="dailyActivity" :totals="activityTotals" mode="sessions" />
     <ActivityDashboard :daily-activity="dailyActivity" :totals="activityTotals" mode="messages" />
@@ -300,27 +301,6 @@ useStartupPolling(refreshDailyActivity)
 </template>
 
 <style scoped>
-.provider-filter {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    display: flex;
-    justify-content: center;
-    padding: var(--wa-space-xs) 0 var(--wa-space-m);
-    /* Glass (styles/glass.css .glass-sticky): the stats scrolling under it show through, blurred.
-       Same translucency as the shared glass-sticky-bg (60%), but the neutral surface colour
-       instead of the accent tint. */
-    --glass-sticky-bg: color-mix(in oklab, var(--surface-solid) 60%, transparent);
-}
-
-/* Without the blur (reduced transparency, or "Reduce effects" below) the translucent layer would let the
-   stats show through unreadable: the card's opaque colour, as before the glass. */
-@media (prefers-reduced-transparency: reduce) {
-    .provider-filter {
-        --glass-sticky-bg: transparent;
-        background: var(--panel-solid);
-    }
-}
 .provider-filter-select {
     min-width: 12rem;
 }
@@ -376,15 +356,5 @@ useStartupPolling(refreshDailyActivity)
 
 .range-slider {
     width: 8rem;
-}
-</style>
-
-<!-- Unscoped on purpose: Vue's scoped compiler drops the descendant part of a
-     `:global(:root.x) .y` selector, leaving a bare `:root.x` rule. -->
-<style>
-/* "Reduce effects" has no blur either: the opaque card colour, as in the other no-blur modes. */
-:root.reduce-effects .provider-filter {
-    --glass-sticky-bg: transparent;
-    background: var(--panel-solid);
 }
 </style>

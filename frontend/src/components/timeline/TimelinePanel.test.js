@@ -27,6 +27,10 @@ const listenerCounts = () => Object.fromEntries(TIMELINE_EVENT_TYPES.map((type) 
 const RouterLink = { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { 'data-to': JSON.stringify(props.to) }, slots.default?.()) }
 const stub = (tag, textProp) => ({ props: ['projectId', 'label', 'row', 'dayKey'], setup: (props) => () => Vue.h(tag, { 'data-id': props.row?.key ?? props.projectId }, textProp ? props[textProp] : undefined) })
 
+// The two shared pieces of the Stats structure, real (only the navigation list itself is a stub).
+const TabNavList = compileComponent(new URL('../project/ProjectTabNavList.vue', import.meta.url), { './ProjectDetailNavList.vue': stub('nav') })
+const StickyBand = compileComponent(new URL('../ui/StickyBand.vue', import.meta.url))
+
 const isoAt = (n) => new Date(Date.UTC(2026, 9, 14, 10, 0, n)).toISOString().replace('.000Z', '.000000Z')
 const at = (n) => `2026-10-14T10:00:${String(n).padStart(2, '0')}.000000Z`
 const event = (id, fields = {}) => ({ id, kind: 'turn.started', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
@@ -71,7 +75,7 @@ function createFakeScroller() {
                 rendered = props.items.map((item) => item.key)
                 // Like the real scroller, the height of a key that left the list is dropped.
                 for (const key of cache.keys()) if (!rendered.includes(key)) cache.delete(key)
-                return Vue.h('div', { class: 'fake-scroller' }, props.items.map((item) => slots.default({ item })))
+                return Vue.h('div', { class: 'fake-scroller' }, [slots.before?.(), ...props.items.map((item) => slots.default({ item }))])
             }
         },
     }
@@ -121,7 +125,8 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../../utils/timeline/scrollKeeper': scrollKeeperModule,
         '../../utils/timeline/providerLabels': providerLabels,
         '../../utils/timeline/scope': scopeModule,
-        '../project/ProjectDetailNavList.vue': stub('nav'),
+        '../project/ProjectTabNavList.vue': TabNavList,
+        '../ui/StickyBand.vue': StickyBand,
         '../session/detail/items/DaySeparator.vue': { props: ['label', 'dayKey'], setup: (props) => () => Vue.h('div', { class: 'day', 'data-day': props.dayKey }, props.label) },
         '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
         './TimelineEventRow.vue': stub('article'),
@@ -168,10 +173,11 @@ const byClass = (root, name) => descendants(root, (node) => String(node.props.cl
 const textOf = (node) => (node.type === '#comment' ? '' : `${node.text ?? ''}${node.children.map(textOf).join('')}`)
 const rowIds = (root) => descendants(root, (n) => n.type === 'article').map((n) => n.props['data-id'])
 
-test('the band carries the label "Timeline" in the glass-sticky style and nothing else', async (t) => {
+test('the band is the sticky band of Stats (StickyBand) and carries the label "Timeline" and nothing else', async (t) => {
     const root = await mount(t, fixture())
     const [band] = byClass(root, 'timeline-band')
-    assert.match(String(band.props.class), /glass-sticky/)
+    assert.match(String(band.props.class), /\bsticky-band\b/)
+    assert.match(String(band.props.class), /\bglass-sticky\b/)
     assert.equal(textOf(band), 'Timeline')
     assert.equal(descendants(band, (n) => ['input', 'wa-select', 'wa-button'].includes(n.type)).length, 0)
 })
@@ -331,24 +337,24 @@ test('unmounting the page disposes its feed', async (t) => {
 
 const seedsOf = (f) => f.scroller.log.calls.filter(([name]) => name === 'seed')
 
-test('every row gets a height estimate once the scroller exists, the navigation row included', async (t) => {
+test('every row gets a height estimate once the scroller exists, the top room included', async (t) => {
     const f = fixture({ fakeScroller: true, compact: true })
     await mount(t, f)
     const seeds = Object.fromEntries(seedsOf(f).map(([, key, height]) => [key, height]))
     const { ROW_HEIGHT_ESTIMATES: H } = rowsModule
-    assert.equal(seeds['timeline-nav'], H.nav)
+    assert.equal(seeds['timeline-top'], H.band + H.nav, 'compact height: the band and the navigation list')
     assert.equal(seeds['event-3'], H.head, 'the block head: top of the card, header line, event line')
     assert.equal(seeds['event-2'], H.event)
     assert.equal(seeds['event-1'], H.event + H.blockEnd, 'the block end: bottom of the card and the gap')
     assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], H.day)
-    assert.equal(seedsOf(f).length, 5, 'nav row, day separator and three events, once each')
+    assert.equal(seedsOf(f).length, 5, 'top room, day separator and three events, once each')
 })
 
 test('a row the scroller already measured keeps its measure', async (t) => {
     const f = fixture({ fakeScroller: true })
     f.scroller.log.measured.add('event-2')
     await mount(t, f)
-    assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3'])
+    assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3', 'timeline-top'])
 })
 
 test('a row whose head or end status flips is seeded again with the new estimate while it still holds the old seed', async (t) => {
@@ -400,20 +406,31 @@ test('a new scroller (the list came back) is seeded again, and a row that left t
     assert.ok(seedsOf(f).every(([, , , wasRendered]) => wasRendered), 'every seed comes after the row is rendered')
 })
 
-test('compact-height mode: the navigation copy is the first row of the list; normal mode has none', async (t) => {
-    const compact = fixture({ compact: true })
-    const root = await mount(t, compact)
-    assert.equal(byClass(root, 'timeline-nav-list').length >= 1, true)
-    const firstRendered = descendants(root, (n) => n.type === 'nav' || n.type === 'div' && n.props.class === 'day' || n.type === 'article')[0]
-    assert.equal(firstRendered.type, 'nav')
-    const normal = fixture({ compact: false })
-    const root2 = await mount(t, normal)
-    assert.equal(descendants(root2, (n) => n.type === 'nav').length, 0)
-    assert.equal(byClass(root2, 'timeline-band').length, 1, 'the band is outside the scroller in both modes')
+/** The parts of the page in document order: navigation list, band, top room, day separators, event rows. */
+const structure = (root) => descendants(root, (n) => n.type === 'nav' || ['timeline-band', 'timeline-top-room', 'day', 'timeline-state'].some((name) => String(n.props.class ?? '').split(' ').includes(name)) || n.type === 'article')
+    .map((n) => (n.type === 'nav' || n.type === 'article' ? n.type : ['timeline-band', 'timeline-top-room', 'day', 'timeline-state'].find((name) => String(n.props.class).split(' ').includes(name))))
+
+test('the Stats structure in the list: the navigation list (compact height), then the band, both inside the scroller, then the rows', async (t) => {
+    const compact = await mount(t, fixture({ compact: true }))
+    assert.deepEqual(structure(compact), ['nav', 'timeline-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
+    const [scroller] = byClass(compact, 'timeline-scroller')
+    assert.equal(byClass(scroller, 'timeline-band').length, 1, 'the band sticks inside the scroll container of the list')
+    assert.equal(byClass(scroller, 'project-tab-nav').length, 1, 'the navigation list scrolls away with the list')
+    assert.equal(byClass(compact, 'project-tab-nav-divider').length, 1)
+    const normal = await mount(t, fixture({ compact: false }))
+    assert.deepEqual(structure(normal), ['timeline-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
 })
 
-test('compact-height mode: every state (loading, empty, not found, error) carries the navigation copy and its divider; normal mode none', async (t) => {
-    const navigation = (root) => [byClass(root, 'timeline-nav-list').length, byClass(root, 'timeline-nav-divider').length]
+test('the top room is the measured height of the navigation list and the band together', async (t) => {
+    // The test renderer gives every element the same height (600): band alone 600, with the navigation list 1200.
+    const compact = await mount(t, fixture({ compact: true }))
+    assert.equal(compact.children[0].props.style['--timeline-top-height'], '1200px')
+    const normal = await mount(t, fixture({ compact: false }))
+    assert.equal(normal.children[0].props.style['--timeline-top-height'], '600px')
+})
+
+test('compact-height mode: every state (loading, empty, not found, error) carries the navigation list and its divider above the band; normal mode none', async (t) => {
+    const navigation = (root) => [byClass(root, 'project-tab-nav-list').length, byClass(root, 'project-tab-nav-divider').length]
     const loading = await mount(t, fixture({ compact: true, projectsLoaded: false }), 'p1')
     assert.deepEqual(navigation(loading), [1, 1])
     const empty = await mount(t, fixture({ compact: true, workspaces: { w: { projectIds: [] } } }), 'ws:w')
@@ -425,6 +442,8 @@ test('compact-height mode: every state (loading, empty, not found, error) carrie
     assert.deepEqual(navigation(await mount(t, broken)), [1, 1])
     const normal = await mount(t, fixture({ compact: false, projectsLoaded: false }), 'p1')
     assert.deepEqual(navigation(normal), [0, 0])
+    assert.deepEqual(structure(loading), ['nav', 'timeline-band', 'timeline-state'])
+    assert.deepEqual(structure(normal), ['timeline-band', 'timeline-state'])
 })
 
 test('no timeline module imports the router statically (circular imports break the hot reload)', () => {
@@ -438,10 +457,14 @@ test('no timeline module imports the router statically (circular imports break t
     }
 })
 
-test('source pins: the band is outside the scroller, the router is not imported, the bottom pin is off', () => {
+test('source pins: the band and the navigation list take no room over the list, the router is not imported, the bottom pin is off', () => {
     const source = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
-    const template = source.slice(source.indexOf('<template>'), source.indexOf('</template>\n\n<style'))
-    assert.ok(template.indexOf('timeline-band') < template.indexOf('<VirtualScroller'))
+    assert.match(source, /<template #before>\s*<ProjectTabNavList v-if="compactHeight" ref="topNavRef"[^>]*\/>\s*<StickyBand ref="bandRef" class="timeline-band timeline-band--over-list">/)
+    assert.match(source, /\.timeline-band--over-list \{\s*margin-block-end: calc\(-1 \* var\(--timeline-top-height\)\);/)
+    assert.match(source, /\.timeline-top-room \{\s*height: var\(--timeline-top-height\);/)
+    assert.match(source, /\.timeline-top-nav \{\s*position: relative;\s*z-index: 1;/)
+    // No second sticky implementation: the band is the shared one.
+    assert.ok(!/position: sticky/.test(source.slice(source.indexOf('<style'))))
     assert.ok(!/from '\.\.\/\.\.\/router/.test(source) && !/from 'vue-router'.*useRouter/.test(source))
     assert.match(source, /\.timeline-list \.timeline-scroller\.at-bottom \{\s*overflow-anchor: none;/)
     assert.match(source, /\.timeline-list \.timeline-scroller \{\s*flex: 1;\s*min-height: 0;/)
@@ -450,8 +473,15 @@ test('source pins: the band is outside the scroller, the router is not imported,
     assert.match(source, /workspacesStore\.getAllProjectIds\(id\)/)
     assert.ok(!source.includes('getVisibleProjectIds'))
     assert.match(source, /prevent-auto-scroll-to-bottom/)
-    assert.match(source, /@media \(prefers-reduced-transparency: reduce\) \{\s*\.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
-    assert.match(source, /:root\.reduce-effects \.timeline-band \{\s*--glass-sticky-bg: transparent;\s*background: var\(--panel-solid\);/)
+})
+
+test('source pins: Stats uses the same two pieces, the navigation list above its sticky provider filter', () => {
+    const detail = readFileSync(new URL('../project/ProjectDetailPanel.vue', import.meta.url), 'utf8')
+    assert.match(detail, /<wa-tab-panel name="stats">\s*<ProjectTabNavList :project-id="projectId" \/>\s*<ContributionGraphs/)
+    assert.ok(!detail.includes('stats-nav-list'))
+    const graphs = readFileSync(new URL('../activity/ContributionGraphs.vue', import.meta.url), 'utf8')
+    assert.match(graphs, /<template>\s*(?:<!--[\s\S]*?-->\s*)?<StickyBand v-if="showProviderSelect" class="provider-filter">/)
+    assert.ok(!/position: sticky/.test(graphs.slice(graphs.indexOf('<style'))))
 })
 
 // ── Staying current ─────────────────────────────────────────────────────────────────────────────────────────
@@ -525,14 +555,15 @@ test('scrolled down, rows inserted above put the first visible row back; at the 
     f.server.respond = ((respond) => (params) => (params.afterId !== null
         ? { events: [event(4)], has_more: false, truncated: false, latest_id: 4, sessions: {} }
         : respond(params)))(f.server.respond)
-    // The day separator is row 0, event-3 row 1: that is the first visible row (`anchorIndex`).
+    // The top room is row 0, the day separator row 1, event-3 row 2: that is the first visible row (`anchorIndex`).
+    f.scroller.log.anchorIndex = 2
     f.scroller.log.scrollTop = 400
     signal(4)
     await settle()
     const restores = f.scroller.log.calls.filter(([name]) => name !== 'seed')
     assert.equal(restores.length, 1)
-    // The row captured BEFORE the render (event-3, not the event-4 that took its place at index 1) ...
-    assert.deepEqual(restores[0][1], { key: 'event-3', index: 1, offset: 7 })
+    // The row captured BEFORE the render (event-3, not the event-4 that took its place at index 2) ...
+    assert.deepEqual(restores[0][1], { key: 'event-3', index: 2, offset: 7 })
     // ... and put back AFTER the render (the new row is among the rendered ones).
     assert.ok(restores[0][2].includes('event-4'), 'the restore waits for the render')
     f.scroller.log.calls.length = 0
