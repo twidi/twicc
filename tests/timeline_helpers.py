@@ -2,11 +2,15 @@
 """Shared helpers of the timeline tests."""
 
 import asyncio
+import logging
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from django.utils import timezone
 
-from twicc.core.models import TimelineEvent
+from twicc.core.models import Session, TimelineActor, TimelineEvent, TimelineKind
+from twicc.core.timeline import validate_data
 from twicc.providers import db_writer
 from twicc.request_origin import (
     SYSTEM_ORIGIN, UI_ORIGIN, agent_cli_origin, current_origin, human_cli_origin, mcp_external_origin,
@@ -31,6 +35,42 @@ def kinds(session_id):
     """Kinds recorded for ``session_id``, in order."""
     return list(
         TimelineEvent.objects.filter(session_id=session_id).order_by("id").values_list("kind", flat=True)
+    )
+
+
+@contextmanager
+def log_records_of(logger: logging.Logger):
+    """Yield the records ``logger`` emits, captured by a handler on it (independent of propagation).
+
+    The logger is re-enabled for the duration: ``settings_test.py`` sets ``disable_existing_loggers``,
+    so a test that applied that logging config may have disabled it. Both are restored on exit.
+    """
+    records = []
+
+    class Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = Collector(level=logging.DEBUG)
+    was_disabled = logger.disabled
+    logger.disabled = False
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.disabled = was_disabled
+
+
+def mark_known(session_id: str, project_id: str | None = None) -> None:
+    """Make ``session_id`` "known": one ``session.created`` row shaped like the watcher's (no dedupe key)."""
+    provider = Session.objects.filter(id=session_id).values_list("provider", flat=True).first()
+    TimelineEvent.objects.create(
+        session_id=session_id, project_id=project_id, kind=TimelineKind.SESSION_CREATED,
+        occurred_at=timezone.now(), actor=TimelineActor.SYSTEM, provider=provider,
+        data=validate_data(TimelineKind.SESSION_CREATED, {
+            "origin": "external", "provider": provider, "settings": None, "spawned_by": None,
+        }),
     )
 
 

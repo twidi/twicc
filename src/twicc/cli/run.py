@@ -127,17 +127,6 @@ async def _cancel_task(task: asyncio.Task | None, name: str) -> None:
     logger.info("%s stopped", name)
 
 
-async def _guarded_timeline_backfill() -> None:
-    from twicc.core.services.timeline_backfill import run_timeline_backfill
-
-    try:
-        await run_timeline_backfill()
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("Timeline backfill failed")
-
-
 async def _orchestrate_global_search(
     orchestrators,
     shutdown_event: asyncio.Event,
@@ -302,10 +291,8 @@ async def run_server(port: int):
     # the startup writes made since the startup scan of ``main()``.
     from twicc.data_backups_watcher import run_data_backups_watcher
     data_backups_task = asyncio.create_task(run_data_backups_watcher())
-    # The writer is already started (see above); the backfill also does nothing without it.
-    # The signal needs the loop before the backfill can end a run with its one signal.
+    # The signal needs the loop before any writer (compute, watcher, hooks) can request one.
     start_timeline_signal(asyncio.get_running_loop())
-    timeline_backfill_task = asyncio.create_task(_guarded_timeline_backfill(), name="timeline-backfill")
     inline_exports = None
     try:
         from twicc.inline_artifacts.share_exports import get_inline_export_coordinator
@@ -442,7 +429,6 @@ async def run_server(port: int):
             # Finish cancellation of checks and provider pushes before provider or
             # database infrastructure is torn down.
             await _cancel_task(title_auto_task, "Automatic title task")
-            await _cancel_task(timeline_backfill_task, "Timeline backfill")
             stop_timeline_signal()
 
             # Stop cross-provider tasks first. The price sync loop watches
@@ -568,8 +554,6 @@ async def run_server(port: int):
             try:
                 if not title_auto_task.done():
                     await _cancel_task(title_auto_task, "Automatic title task")
-                if not timeline_backfill_task.done():
-                    await _cancel_task(timeline_backfill_task, "Timeline backfill")
             finally:
                 if inline_exports is not None:
                     await inline_exports.stop()

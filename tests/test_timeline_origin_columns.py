@@ -3,11 +3,11 @@
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import ORIGIN_MAPPING, columns, run_with_writer
+from tests.timeline_helpers import ORIGIN_MAPPING, columns
 from twicc.core.models import Project, Session, TimelineActor, TimelineEvent, TimelineKind
 from twicc.core.services import session_timeline
 from twicc.core.services.session_timeline import EventSpec, record_event_sync, record_events_bulk_sync
-from twicc.core.services.timeline_backfill import run_timeline_backfill
+from twicc.core.services.timeline_backfill import write_creation_rows_sync
 from twicc.request_origin import (
     ACTOR_NAME_MAX_LENGTH, ACTOR_REF_MAX_LENGTH, DEFAULT_ORIGIN, SYSTEM_ORIGIN, VIA_MAX_LENGTH, VIA_VALUES,
     RequestOrigin, agent_cli_origin, mcp_session_origin, origin_scope, system_marker,
@@ -194,7 +194,7 @@ def test_the_backfill_writes_null_origin_fields(project):
     Session.objects.create(
         id="s1", file_path="s1.jsonl", project=project, provider="codex", created_at=timezone.now(), hidden=True,
     )
-    run_with_writer(run_timeline_backfill)
+    write_creation_rows_sync("s1")
     rows = list(TimelineEvent.objects.filter(session_id="s1"))
     assert {row.kind for row in rows} == {"session.created", "hidden.started"}
     assert {columns(row) for row in rows} == {("system", None, None, None)}

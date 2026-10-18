@@ -2,7 +2,6 @@
 """The ``timeline_changed`` signal (display design 2026-10-15, sections 9.1 and 9.3)."""
 
 import asyncio
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,9 +14,7 @@ from twicc.core.services import timeline_signal
 from twicc.core.services.session_timeline import (
     EventSpec, insert_event_rows, record_event_sync, record_events_bulk_sync,
 )
-from twicc.core.services.timeline_backfill import run_timeline_backfill
 from twicc.providers import db_writer
-from tests.timeline_helpers import run_with_writer
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -168,22 +165,27 @@ def test_the_raw_batch_insert_itself_is_silent(pokes):
     assert pokes == []
 
 
-def test_the_backfill_is_silent_per_session_and_signals_once_at_the_end_of_a_run_that_wrote(project, pokes):
-    for sid in ("a", "b", "c"):
-        Session.objects.create(
-            id=sid, file_path=f"{sid}.jsonl", project=project, provider="codex",
-            created_at=timezone.now() - timedelta(days=1), archived=True,
-        )
-    run_with_writer(run_timeline_backfill)
-    assert TimelineEvent.objects.count() == 6
+def test_the_creation_rows_request_one_signal_after_commit_and_none_when_nothing_is_written(project, pokes):
+    from twicc.core.services.timeline_backfill import write_creation_rows_sync
+
+    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex",
+                           created_at=timezone.now(), archived=True)
+    with transaction.atomic():
+        assert write_creation_rows_sync("a") == 2
+        assert pokes == []
+    assert pokes == [1]
+    assert write_creation_rows_sync("a") == 0
     assert pokes == [1]
 
 
-def test_a_backfill_run_that_wrote_nothing_sends_nothing(project, pokes):
-    run_with_writer(run_timeline_backfill)
-    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex")  # no created_at
-    run_with_writer(run_timeline_backfill)
-    assert pokes == []
+def test_a_rolled_back_transaction_requests_no_signal(project, pokes):
+    from twicc.core.services.timeline_backfill import write_creation_rows_sync
+
+    Session.objects.create(id="a", file_path="a.jsonl", project=project, provider="codex", created_at=timezone.now())
+    with pytest.raises(RuntimeError), transaction.atomic():
+        write_creation_rows_sync("a")
+        raise RuntimeError("compute failed later")
+    assert pokes == [] and TimelineEvent.objects.count() == 0
 
 
 def test_a_failing_poke_does_not_fail_the_writer(monkeypatch):
@@ -406,16 +408,16 @@ def test_a_message_reaches_a_websocket_client_through_the_updates_group(short_th
 # -- Wiring ---------------------------------------------------------------------------------------------------------
 
 
-def test_the_server_source_starts_the_signal_before_the_backfill_and_stops_it_at_shutdown():
+def test_the_server_source_starts_the_signal_before_the_orchestrators_and_stops_it_at_shutdown():
     source = Path(__import__("twicc.cli.run", fromlist=["run"]).__file__).read_text()
     start = source.index("start_timeline_signal(asyncio.get_running_loop())")
-    backfill = source.index('timeline_backfill_task = asyncio.create_task(_guarded_timeline_backfill()')
-    cancel = source.index('await _cancel_task(timeline_backfill_task, "Timeline backfill")')
-    stop = source.index("stop_timeline_signal()", cancel)
+    orchestrators = source.index("await orchestrators.start_all(")
+    cancel = source.index('await _cancel_task(title_auto_task, "Automatic title task")')
     shutdown = source[cancel:source.index("Stop cross-provider tasks first", cancel)]
-    assert start < backfill and cancel < stop
-    assert "stop_timeline_signal()" in shutdown, "the normal shutdown stops it right after the backfill is cancelled"
+    assert start < orchestrators
+    assert "stop_timeline_signal()" in shutdown, "the normal shutdown stops it right after the title task"
     # The outer ``finally`` (partial start) stops the signal FIRST, so a failing cancel cannot skip it.
     outer = source[source.index("# Own partial coordinator startup"):]
     assert 0 <= outer.index("stop_timeline_signal()") < outer.index("_cancel_task(")
+    assert "timeline_backfill" not in source and "_guarded_timeline_backfill" not in source
     assert "from twicc.core.services.timeline_signal import start_timeline_signal, stop_timeline_signal" in source
