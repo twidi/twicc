@@ -10,7 +10,7 @@ from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, TimelineEvent
 from twicc.core.services.session_timeline import record_event_sync
-from tests.timeline_helpers import kinds, run_with_writer
+from tests.timeline_helpers import kinds, run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -42,7 +42,7 @@ def make_agent(project, **kw):
 
 def transition(agent, state):
     manager = _Manager()
-    return run_with_writer(lambda: manager._persist_process_run_transition(agent, state))
+    return run_with_direct_writes(lambda: manager._persist_process_run_transition(agent, state))
 
 
 def test_register_and_start_records_process_started(project, monkeypatch):
@@ -54,7 +54,7 @@ def test_register_and_start_records_process_started(project, monkeypatch):
     monkeypatch.setattr(manager, "_broadcast_session_updated", AsyncMock())
     monkeypatch.setattr(manager, "_on_state_change", AsyncMock())
     monkeypatch.setattr(manager, "_ensure_timeout_monitor_running", lambda: None)
-    run_with_writer(lambda: manager._register_and_start(agent, "hello", resume=True))
+    run_with_direct_writes(lambda: manager._register_and_start(agent, "hello", resume=True))
     row = TimelineEvent.objects.get(session_id="s1", kind="process.started")
     assert row.data["provider"] == "codex" and row.data["cause"] == "resume" and row.data["hybrid"] is False
     assert row.project_id == project.id and row.actor == "user"
@@ -69,7 +69,7 @@ def test_a_hybrid_agent_records_hybrid_true(project, monkeypatch):
     monkeypatch.setattr(manager, "_broadcast_session_updated", AsyncMock())
     monkeypatch.setattr(manager, "_on_state_change", AsyncMock())
     monkeypatch.setattr(manager, "_ensure_timeout_monitor_running", lambda: None)
-    run_with_writer(lambda: manager._register_and_start(agent, "hello", resume=False))
+    run_with_direct_writes(lambda: manager._register_and_start(agent, "hello", resume=False))
     row = TimelineEvent.objects.get(session_id="s1", kind="process.started")
     assert row.data["hybrid"] is True and row.data["cause"] == "new"
 
@@ -111,8 +111,8 @@ def test_background_work_changes_while_idle_re_emit_turn_ended(project):
     agent._work = WORK
     transition(agent, AgentState.USER_TURN)
     agent._work = None
-    run_with_writer(lambda: manager._persist_background_work(agent, None))
-    run_with_writer(lambda: manager._persist_background_work(agent, None))  # no change: no row
+    run_with_direct_writes(lambda: manager._persist_background_work(agent, None))
+    run_with_direct_writes(lambda: manager._persist_background_work(agent, None))  # no change: no row
     rows = list(TimelineEvent.objects.filter(session_id="s1", kind="turn.ended").order_by("id"))
     assert [r.data for r in rows] == [{"background_work": WORK}, {"background_work": None}]
 
@@ -122,9 +122,9 @@ def test_background_work_changes_during_an_assistant_turn_record_nothing(project
     manager = _Manager()
     transition(agent, AgentState.ASSISTANT_TURN)
     agent._work = WORK
-    run_with_writer(lambda: manager._persist_background_work(agent, WORK))
+    run_with_direct_writes(lambda: manager._persist_background_work(agent, WORK))
     agent._work = None
-    run_with_writer(lambda: manager._persist_background_work(agent, None))
+    run_with_direct_writes(lambda: manager._persist_background_work(agent, None))
     assert kinds("s1") == ["turn.started"]
 
 

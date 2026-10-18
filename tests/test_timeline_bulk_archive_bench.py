@@ -72,6 +72,7 @@ def test_lock_hold_time(name, func):
 
         return await run_under_db_write_lock(lambda: asyncio.to_thread(timed))
 
+    # Real writer: the benchmark measures how long the real DB write lock is held.
     flipped = run_with_writer(call)
     print(f"\n[{name}] {SESSIONS} sessions: lock held {held[0] * 1000:.1f} ms")
     assert len(flipped) == SESSIONS

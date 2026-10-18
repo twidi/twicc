@@ -9,7 +9,7 @@ from django.test.utils import CaptureQueriesContext
 
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import archive_sessions_bulk
-from tests.timeline_helpers import kinds, run_with_writer
+from tests.timeline_helpers import kinds, run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -78,7 +78,7 @@ def test_the_bulk_archive_endpoint_records_one_user_event_per_archived_session(p
             await asyncio.wait_for(task, 10)
         return response
 
-    response = run_with_writer(call)
+    response = run_with_direct_writes(call)
     assert response.status_code == 200 and orjson.loads(response.content) == {"count": 3}
     assert Session.objects.filter(archived=True).count() == 3
     got = {r.session_id: r for r in TimelineEvent.objects.filter(kind="archived.started")}

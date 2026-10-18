@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.timeline_helpers import columns, run_with_writer
+from tests.timeline_helpers import columns, run_with_direct_writes
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services.session_update import (
@@ -45,13 +45,13 @@ def make(project, sid="s1", **kw):
 
 
 def under(origin, factory):
-    """Run ``factory()`` with the DB writer started, inside an origin scope."""
+    """Run ``factory()`` with lock-guarded writes run directly, inside an origin scope."""
 
     async def runner():
         with origin_scope(origin):
             return await factory()
 
-    return run_with_writer(runner)
+    return run_with_direct_writes(runner)
 
 
 def rows(session_id="s1"):
@@ -91,8 +91,8 @@ def test_mute_takes_the_request_origin(project):
 
 def test_with_no_origin_set_every_writer_gives_the_default(project):
     session = make(project)
-    run_with_writer(lambda: apply_session_mute_on_user_turn_change(session, True))
-    run_with_writer(lambda: apply_session_pinned_change(session, "project"))
+    run_with_direct_writes(lambda: apply_session_mute_on_user_turn_change(session, True))
+    run_with_direct_writes(lambda: apply_session_pinned_change(session, "project"))
     assert {columns(r) for r in rows()} == {("user", "ui", None, None)}
 
 
@@ -107,7 +107,7 @@ def _hide_unhide(session, hide, origin):
             patch.object(session_visibility, "_broadcast_session_removed", AsyncMock()), \
             patch.object(session_visibility, "_broadcast_session_updated", AsyncMock()), \
             patch.object(session_visibility, "_broadcast_project_updated", AsyncMock()):
-        return run_with_writer(go)
+        return run_with_direct_writes(go)
 
 
 def test_hide_through_the_compute_executor_keeps_the_origin(project, monkeypatch):

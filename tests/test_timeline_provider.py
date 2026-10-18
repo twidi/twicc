@@ -31,7 +31,7 @@ from twicc.core.services.session_update import (
 from twicc.core.services.timeline_backfill import write_creation_rows_sync
 from twicc.core.services.timeline_boot import reconcile_at_boot
 from twicc.request_origin import UI_ORIGIN
-from tests.timeline_helpers import mark_known, run_with_writer
+from tests.timeline_helpers import mark_known, run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -341,9 +341,9 @@ def test_the_flag_hooks_pass_the_session_provider(project, explicit_hints, no_ag
     from twicc.core.services.session_visibility import _apply_visibility_flag
 
     session = make_session(project)
-    run_with_writer(lambda: apply_session_pinned_change(session, "project"))
-    run_with_writer(lambda: apply_session_mute_on_user_turn_change(session, True))
-    run_with_writer(lambda: apply_session_archived_change(session, True, also_unpin=True))
+    run_with_direct_writes(lambda: apply_session_pinned_change(session, "project"))
+    run_with_direct_writes(lambda: apply_session_mute_on_user_turn_change(session, True))
+    run_with_direct_writes(lambda: apply_session_archived_change(session, True, also_unpin=True))
     _apply_visibility_flag("s1", True)
     rows = TimelineEvent.objects.filter(session_id="s1")
     assert sorted(row.kind for row in rows) == sorted([
@@ -377,7 +377,7 @@ def test_guard_no_row_with_a_session_keeps_a_null_provider_after_any_writer_ran(
     archive_sessions_bulk({"bulk-a"})
     record_title_change("s1", "T", source="auto")
     record_settings_change("s1", {"effort": "low"}, {"effort": "high"})
-    run_with_writer(lambda: apply_session_pinned_change(session, "all"))
+    run_with_direct_writes(lambda: apply_session_pinned_change(session, "all"))
     _apply_visibility_flag("s1", True)
     write_creation_rows_sync("backfilled")
     assert TimelineEvent.objects.filter(session_id__isnull=False).count() >= 9

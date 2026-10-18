@@ -8,7 +8,7 @@ from twicc.agent.process_run_cleanup import CleanupStaleProcessRunsJob, _apply_c
 from twicc.core.models import ProcessRun, Project, Session, SessionItem, TimelineEvent
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.core.services.timeline_boot import reconcile_at_boot, record_backend_ended_clean
-from tests.timeline_helpers import run_with_writer
+from tests.timeline_helpers import run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 WORK = {"subagents": 1, "shells": 0, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
@@ -130,7 +130,7 @@ def test_first_boot_writes_backend_started_with_unknown_machine_restart(project)
 
 def test_clean_previous_instance_gets_no_synthetic_end(project):
     reconcile_at_boot(now=timezone.now(), boot_id="b1")
-    run_with_writer(record_backend_ended_clean)
+    run_with_direct_writes(record_backend_ended_clean)
     reconcile_at_boot(now=timezone.now(), boot_id="b1")
     ended = rows(kind="backend.ended")
     assert [r.data.get("clean") for r in ended] == [True]

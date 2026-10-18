@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import columns, run_with_writer
+from tests.timeline_helpers import columns, run_with_direct_writes
 from twicc.agent.base_agent import BaseAgent
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.agent.stop_origin import StopOriginMixin
@@ -186,7 +186,7 @@ def rows(*kinds_):
 
 
 def die(agent):
-    run_with_writer(lambda: _Manager()._persist_process_run_transition(agent, AgentState.DEAD))
+    run_with_direct_writes(lambda: _Manager()._persist_process_run_transition(agent, AgentState.DEAD))
 
 
 @pytestmark_db
@@ -227,7 +227,7 @@ def test_a_stop_asked_by_b_on_a_session_started_by_a_records_b_from_the_agents_o
         release.set()
         await task
 
-    run_with_writer(scenario)
+    run_with_direct_writes(scenario)
     assert columns(rows("process.ended")[0]) == ("agent", "cli", "sess-B", None)
 
 
@@ -249,7 +249,7 @@ def test_a_stop_from_an_old_cli_with_no_origin_records_the_default_not_the_start
         release.set()
         await task
 
-    run_with_writer(scenario)
+    run_with_direct_writes(scenario)
     assert columns(rows("process.ended")[0]) == ("user", "ui", None, None)
 
 

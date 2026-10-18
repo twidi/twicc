@@ -6,7 +6,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import persist_session_settings, update_session_title_from_payload
 from tests.test_title_automation import env, session  # noqa: F401  (fixtures reused below)
-from tests.timeline_helpers import kinds, mark_known, run_with_writer
+from tests.timeline_helpers import kinds, mark_known, run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -23,7 +23,7 @@ def make(project, **kw):
 def test_user_title_update_records_source_user(project):
     make(project, title="Old")
     with patch("twicc.core.services.session_update.ensure_provider_running"):
-        run_with_writer(lambda: update_session_title_from_payload({"session_id": "s1", "title": "New"}))
+        run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": "s1", "title": "New"}))
     row = TimelineEvent.objects.get(session_id="s1")
     assert row.kind == "title.changed" and row.actor == "user"
     assert row.data == {"source": "user", "new": "New", "old": "Old"}
@@ -32,7 +32,7 @@ def test_user_title_update_records_source_user(project):
 def test_user_title_update_with_the_same_text_records_nothing(project):
     make(project, title="Same")
     with patch("twicc.core.services.session_update.ensure_provider_running"):
-        run_with_writer(lambda: update_session_title_from_payload({"session_id": "s1", "title": "Same"}))
+        run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": "s1", "title": "Same"}))
     assert kinds("s1") == []
 
 
@@ -44,7 +44,7 @@ def test_rest_title_patch_records_source_user(project):
     make(project, title="Old")
     request = RequestFactory().patch("/", data={"title": "New"}, content_type="application/json")
     with patch("twicc.views.ensure_provider_running"):
-        response = run_with_writer(lambda: session_detail(request, project.id, "s1"))
+        response = run_with_direct_writes(lambda: session_detail(request, project.id, "s1"))
     assert response.status_code == 200
     assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "New", "old": "Old"}
 
@@ -112,8 +112,8 @@ def test_set_mode_suggestion_records_a_user_settings_change_once(project):
     from twicc.providers.claude_code.ws import update_session_permission_mode
 
     make(project, permission_mode="default", hidden=True)  # hidden: no broadcast needed
-    run_with_writer(lambda: update_session_permission_mode("s1", "acceptEdits"))
-    run_with_writer(lambda: update_session_permission_mode("s1", "acceptEdits"))
+    run_with_direct_writes(lambda: update_session_permission_mode("s1", "acceptEdits"))
+    run_with_direct_writes(lambda: update_session_permission_mode("s1", "acceptEdits"))
     row = TimelineEvent.objects.get(session_id="s1")
     assert row.data == {"changes": {"permission_mode": ["default", "acceptEdits"]}}
     assert row.actor == "user" and row.reason == "set_mode"
@@ -166,7 +166,7 @@ def test_pending_title_flush_records_source_user(project):
     manager = SimpleNamespace(
         _broadcast_session_updated=lambda sid: BaseAgentManager._broadcast_session_updated(None, sid),
     )
-    run_with_writer(lambda: BaseAgentManager._try_flush_pending_title(
+    run_with_direct_writes(lambda: BaseAgentManager._try_flush_pending_title(
         manager, SimpleNamespace(session_id="s1", provider="codex"), "Chosen"))
     assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "Chosen", "old": None}
 
@@ -200,7 +200,7 @@ def test_the_hybrid_agent_records_its_chrome_withholding_as_system(project):
 
     make(project, claude_in_chrome=True, hidden=True)  # hidden: no broadcast
     agent = SimpleNamespace(session_id="s1", agent_settings=Settings(True))
-    run_with_writer(lambda: HybridClaudeAgent._withhold_chrome(agent))
+    run_with_direct_writes(lambda: HybridClaudeAgent._withhold_chrome(agent))
     row = TimelineEvent.objects.get(session_id="s1", kind="settings.changed")
     assert row.data == {"changes": {"claude_in_chrome": [True, False]}}
     assert row.actor == "system" and row.reason == "switch-hybrid" and row.project_id == project.id

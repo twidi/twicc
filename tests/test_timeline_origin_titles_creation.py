@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import columns, kinds, mark_known, run_with_writer
+from tests.timeline_helpers import columns, kinds, mark_known, run_with_direct_writes
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, Session, SessionType, TimelineEvent
@@ -101,7 +101,7 @@ def test_a_non_user_title_keeps_actor_agent_and_null_origin_fields(project, sour
 def test_the_title_update_service_records_the_drop_origin(project):
     make(project, title="Old")
     with patch("twicc.core.services.session_update.ensure_provider_running"), origin_scope(agent_cli_origin("sess-B")):
-        run_with_writer(lambda: update_session_title_from_payload({"session_id": "s1", "title": "New"}))
+        run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": "s1", "title": "New"}))
     assert columns(TimelineEvent.objects.get(session_id="s1")) == ("agent", "cli", "sess-B", None)
 
 
@@ -144,7 +144,7 @@ def _flush(carrier):
 
     helpers = SimpleNamespace(rename_session=AsyncMock())
     with patch("twicc.providers.helpers.get_provider_helpers", return_value=helpers):
-        return run_with_writer(go)
+        return run_with_direct_writes(go)
 
 
 def test_a_flushed_title_records_the_captured_origin_even_inside_the_system_marker(project):

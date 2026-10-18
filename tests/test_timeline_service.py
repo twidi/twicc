@@ -159,6 +159,7 @@ def test_kinds_without_a_started_payload_copy_nothing(project):
 
 
 def test_async_record_event_runs_under_the_write_lock(project):
+    # Real writer: the test is about the async service under the real DB write lock.
     event = run_with_writer(lambda: record_event(
         TimelineKind.TURN_STARTED, session_id="s1", project_id=project.id, actor=TimelineActor.AGENT))
     assert event is not None and kinds("s1") == ["turn.started"]
