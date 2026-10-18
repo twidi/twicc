@@ -146,21 +146,47 @@ test('the head identity follows the scope: project name on a workspace page, not
     assert.equal(build(events, { scope: { kind: 'worktree', projectId: 'p1' } })[1].identity.showProject, false)
 })
 
+test('the last row of a session block carries the block end; instance rows and day separators never do', () => {
+    const rows = build([
+        ev('2026-10-14T12:00:06.000000Z', 'a'), ev('2026-10-14T12:00:05.000000Z', 'a'), // block a: head, then its end
+        ev('2026-10-14T12:00:04.000000Z', 'b'), // block b: one row, head and end at once
+        ev('2026-10-14T12:00:03.000000Z', null, { kind: 'backend.started', project_id: null }), // instance
+        ev('2026-10-14T12:00:02.000000Z', 'c'), // block c, ended by the day separator below
+        ev('2026-10-13T12:00:00.000000Z', 'c'), // a new block c on the previous day: the last row of the list
+    ])
+    assert.deepEqual(shape(rows), ['day:2026-10-14', 'H:a', 'i:a', 'H:b', 'I:none', 'H:c', 'day:2026-10-13', 'H:c'])
+    assert.deepEqual(rows.map((row) => row.last ?? null), [null, false, true, true, false, true, null, true])
+})
+
+test('a live insertion recomputes the block end: the former last row of a block is not the end any more', () => {
+    const a1 = ev('2026-10-14T12:00:01.000000Z', 'a')
+    const a0 = ev('2026-10-14T12:00:00.000000Z', 'a')
+    assert.equal(build([a1]).find((row) => row.key === `event-${a1.id}`).last, true)
+    assert.equal(build([a1, a0]).find((row) => row.key === `event-${a1.id}`).last, false)
+})
+
 test('row height estimates exist per row type; an unknown type uses the event one', () => {
     assert.equal(estimateRowHeight({ type: 'day' }), ROW_HEIGHT_ESTIMATES.day)
     assert.equal(estimateRowHeight({ type: 'event' }), ROW_HEIGHT_ESTIMATES.event)
-    assert.equal(estimateRowHeight({ type: 'event', head: false, indented: true }), ROW_HEIGHT_ESTIMATES.event)
-    assert.equal(estimateRowHeight({ type: 'event', instance: true, head: false }), ROW_HEIGHT_ESTIMATES.event)
+    assert.equal(estimateRowHeight({ type: 'event', head: false, indented: true, last: false }), ROW_HEIGHT_ESTIMATES.event)
+    assert.equal(estimateRowHeight({ type: 'event', instance: true, head: false, last: false }), ROW_HEIGHT_ESTIMATES.event)
     assert.equal(estimateRowHeight({ type: 'nav' }), ROW_HEIGHT_ESTIMATES.nav)
     assert.equal(estimateRowHeight({ type: 'mystery' }), ROW_HEIGHT_ESTIMATES.event)
     assert.ok(ROW_HEIGHT_ESTIMATES.day !== ROW_HEIGHT_ESTIMATES.event)
 })
 
-test('a group head starts from a taller estimate: its header line sits above its event line', () => {
-    const rows = build([ev('2026-10-14T12:00:01.000000Z', 'a'), ev('2026-10-14T12:00:00.000000Z', 'a')])
-    assert.equal(estimateRowHeight(rows[1]), ROW_HEIGHT_ESTIMATES.head)
-    assert.equal(estimateRowHeight(rows[2]), ROW_HEIGHT_ESTIMATES.event)
+test('a block head starts from a taller estimate (header line, top of the card); a block end adds the bottom of the card and the gap', () => {
+    const rows = build([
+        ev('2026-10-14T12:00:03.000000Z', 'a'), ev('2026-10-14T12:00:02.000000Z', 'a'), ev('2026-10-14T12:00:01.000000Z', 'a'),
+        ev('2026-10-14T12:00:00.000000Z', 'b'),
+    ])
+    const [, head, middle, end, single] = rows
+    assert.equal(estimateRowHeight(head), ROW_HEIGHT_ESTIMATES.head)
+    assert.equal(estimateRowHeight(middle), ROW_HEIGHT_ESTIMATES.event)
+    assert.equal(estimateRowHeight(end), ROW_HEIGHT_ESTIMATES.event + ROW_HEIGHT_ESTIMATES.blockEnd)
+    assert.equal(estimateRowHeight(single), ROW_HEIGHT_ESTIMATES.head + ROW_HEIGHT_ESTIMATES.blockEnd)
     assert.ok(ROW_HEIGHT_ESTIMATES.head > ROW_HEIGHT_ESTIMATES.event)
+    assert.ok(ROW_HEIGHT_ESTIMATES.blockEnd > 0)
 })
 
 test('the next page is requested when the visible range is within ten rows of the end', () => {

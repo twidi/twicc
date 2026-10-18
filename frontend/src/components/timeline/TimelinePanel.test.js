@@ -335,10 +335,12 @@ test('every row gets a height estimate once the scroller exists, the navigation 
     const f = fixture({ fakeScroller: true, compact: true })
     await mount(t, f)
     const seeds = Object.fromEntries(seedsOf(f).map(([, key, height]) => [key, height]))
-    assert.equal(seeds['timeline-nav'], 96)
-    assert.equal(seeds['event-3'], 66, 'the group head: header line + event line')
-    assert.equal(seeds['event-2'], 34)
-    assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], 40)
+    const { ROW_HEIGHT_ESTIMATES: H } = rowsModule
+    assert.equal(seeds['timeline-nav'], H.nav)
+    assert.equal(seeds['event-3'], H.head, 'the block head: top of the card, header line, event line')
+    assert.equal(seeds['event-2'], H.event)
+    assert.equal(seeds['event-1'], H.event + H.blockEnd, 'the block end: bottom of the card and the gap')
+    assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], H.day)
     assert.equal(seedsOf(f).length, 5, 'nav row, day separator and three events, once each')
 })
 
@@ -349,19 +351,24 @@ test('a row the scroller already measured keeps its measure', async (t) => {
     assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3'])
 })
 
-test('a row whose head status flips is seeded again with the new estimate while it still holds the old seed', async (t) => {
+test('a row whose head or end status flips is seeded again with the new estimate while it still holds the old seed', async (t) => {
     const f = fixture({ fakeScroller: true })
     await mount(t, f)
     const seedsFor = (key) => seedsOf(f).filter(([, k]) => k === key).map(([, , height]) => height)
-    assert.deepEqual(seedsFor('event-2'), [34])
+    const { ROW_HEIGHT_ESTIMATES: H } = rowsModule
+    assert.deepEqual(seedsFor('event-2'), [H.event])
     // The head (event-3) leaves the list: event-2 becomes the head of the block.
     f.state.events = f.state.events.filter((e) => e.id !== 3)
     await settle()
-    assert.deepEqual(seedsFor('event-2'), [34, 66])
+    assert.deepEqual(seedsFor('event-2'), [H.event, H.head])
     // Back to a following row: the seed follows again.
     f.state.events = [event(3), ...f.state.events]
     await settle()
-    assert.deepEqual(seedsFor('event-2'), [34, 66, 34])
+    assert.deepEqual(seedsFor('event-2'), [H.event, H.head, H.event])
+    // The end of the block flips too: event-1 leaves, event-2 closes the block.
+    f.state.events = f.state.events.filter((e) => e.id !== 1)
+    await settle()
+    assert.deepEqual(seedsFor('event-2'), [H.event, H.head, H.event, H.event + H.blockEnd])
 })
 
 test('a row measured since its seed keeps its measure when its head status flips', async (t) => {

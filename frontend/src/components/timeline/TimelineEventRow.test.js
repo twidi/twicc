@@ -80,8 +80,10 @@ test('the group head: a header line (provider icon, title link) above its own ev
     assert.equal(byClass(root, 'timeline-row-header').length, 1)
     const [header] = byClass(root, 'timeline-row-header')
     const [line] = byClass(root, 'timeline-event-line')
-    // The header and the event line are siblings: the header is a line of its own, above the event.
-    assert.deepEqual(row.children.filter((n) => n.type !== '#comment').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
+    // The header and the event line are siblings in the card: the header is a line of its own, above the event.
+    const [card] = row.children.filter((n) => n.type !== '#comment')
+    assert.equal(classesOf(card), 'timeline-row-card')
+    assert.deepEqual(card.children.filter((n) => n.type !== '#comment').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
     assert.equal(descendants(line, (n) => n === header).length, 0)
     const link = descendants(header, (n) => n.type === 'a')[0]
     assert.equal(JSON.parse(link.props['data-to']).params.sessionId, 's1')
@@ -293,4 +295,61 @@ test('the event icon and the badge follow the text baseline, so a badge never mo
     assert.ok(!icon.has('height'))
     assert.equal(icon.get('inset-block-start'), '0.125em')
     assert.equal(declarationsOf(row, '.timeline-badge').get('align-self'), 'baseline')
+})
+
+test('a session row is a part of its block card: the head opens it, the last row closes it; an instance row is no card', async (t) => {
+    const three = [
+        make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }),
+        make('turn.started', { occurred_at: '2026-10-14T14:32:08.000000Z' }),
+        make('turn.started'),
+    ]
+    const rowOf = async (events, index) => byClass(await render(t, events, { index }), 'timeline-row')[0]
+    const flags = (row) => ['block', 'head', 'last'].filter((flag) => classesOf(row).split(' ').includes(`timeline-row--${flag}`))
+    assert.deepEqual(flags(await rowOf(three, 0)), ['block', 'head'])
+    assert.deepEqual(flags(await rowOf(three, 1)), ['block'])
+    assert.deepEqual(flags(await rowOf(three, 2)), ['block', 'last'])
+    assert.deepEqual(flags(await rowOf([make('turn.started')], 0)), ['block', 'head', 'last'], 'a one-row block is head and end at once')
+    const instance = await rowOf([make('backend.started', { session_id: null, project_id: null, provider: null, actor: 'system', data: {} })], 0)
+    assert.deepEqual(flags(instance), [])
+    // The card is one box inside the row: the header line and the event line both sit in it.
+    const head = await render(t, three, { index: 0 })
+    const [card] = byClass(head, 'timeline-row-card')
+    assert.equal(byClass(card, 'timeline-row-header').length, 1)
+    assert.equal(byClass(card, 'timeline-event-line').length, 1)
+})
+
+test('the block card CSS: the shared block-card look, drawn in parts across the rows, without a state border', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const style = row.slice(row.indexOf('<style'))
+    const card = declarationsOf(style, '.timeline-row--block .timeline-row-card')
+    assert.equal(card.get('background'), 'var(--block-card-bg)')
+    assert.equal(card.get('border-inline'), '1px solid var(--block-card-border)')
+    assert.equal(card.get('padding-inline'), 'var(--timeline-card-padding)')
+    const head = declarationsOf(style, '.timeline-row--head .timeline-row-card')
+    assert.equal(head.get('border-block-start'), '1px solid var(--block-card-border)')
+    assert.equal(head.get('border-start-start-radius'), 'var(--wa-border-radius-m)')
+    assert.equal(head.get('border-start-end-radius'), 'var(--wa-border-radius-m)')
+    const last = declarationsOf(style, '.timeline-row--last .timeline-row-card')
+    assert.equal(last.get('border-block-end'), '1px solid var(--block-card-border)')
+    assert.equal(last.get('border-end-start-radius'), 'var(--wa-border-radius-m)')
+    assert.equal(last.get('border-end-end-radius'), 'var(--wa-border-radius-m)')
+    // The gap to the next block is outside the card, in the row the scroller measures.
+    assert.equal(declarationsOf(style, '.timeline-row--last').get('padding-block-end'), 'var(--timeline-block-gap)')
+    // The Orchestration cards carry their state in a thick left border; a session block has no state to show.
+    assert.ok(!/border-left|border-inline-start:\s*[2-9]/.test(style))
+    // An instance row is no card, but its content lines up with the content of the cards.
+    assert.equal(declarationsOf(style, '.timeline-row--instance .timeline-row-card').get('padding-inline'), 'calc(var(--timeline-card-padding) + 1px)')
+})
+
+test('the block-card look is declared once and the Orchestration cards read it', () => {
+    const surfaces = readFileSync(new URL('../../styles/surfaces.css', import.meta.url), 'utf8')
+    const dark = surfaces.slice(surfaces.indexOf('.wa-dark {'))
+    const light = surfaces.slice(0, surfaces.indexOf('.wa-dark {'))
+    for (const token of ['--block-card-bg:', '--block-card-border:', '--block-card-shadow:']) {
+        assert.ok(light.includes(token), `light ${token}`)
+        assert.ok(dark.slice(0, dark.indexOf('}')).includes(token), `dark ${token}`)
+    }
+    const orchestration = readFileSync(new URL('../orchestration/OrchestrationPanel.vue', import.meta.url), 'utf8')
+    assert.match(orchestration, /--orch-card-bg: var\(--block-card-bg\);\s*--orch-card-border: var\(--block-card-border\);\s*--orch-card-shadow: var\(--block-card-shadow\);/)
+    assert.ok(!orchestration.includes('.wa-dark .orchestration-panel'), 'no second definition of the look')
 })

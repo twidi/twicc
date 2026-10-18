@@ -588,19 +588,11 @@ onUnmounted(() => {
     container: orch / inline-size;
     height: 100%;
     min-height: 0;
-    /* One card look for the node cards (.ocard) and the summary tiles (.osum-tile). Light: the
-       translucent raised surface and the surface border, no shadow. */
-    --orch-card-bg: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
-    --orch-card-border: var(--wa-color-surface-border);
-    --orch-card-shadow: 0 0 transparent;
-}
-
-/* Dark: the raised surface vanishes over the dark veil, so the card is a lit brand tint over the
-   opaque page surface (the idiom of the tool cards), with a brand hairline and the level-2 depth. */
-.wa-dark .orchestration-panel {
-    --orch-card-bg: color-mix(in oklab, var(--wa-color-brand-60) 24%, var(--surface-solid));
-    --orch-card-border: color-mix(in oklab, var(--wa-color-brand-60) 55%, var(--surface-solid));
-    --orch-card-shadow: var(--depth-2);
+    /* One card look for the node cards (.ocard) and the summary tiles (.osum-tile): the block cards of
+       styles/surfaces.css (light and dark), shared with the Timeline's session blocks. */
+    --orch-card-bg: var(--block-card-bg);
+    --orch-card-border: var(--block-card-border);
+    --orch-card-shadow: var(--block-card-shadow);
 }
 
 .orch-frame {

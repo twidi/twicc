@@ -65,6 +65,13 @@
     --panel-overlay-shadow:
         0 2px 4px oklch(0.2 0.02 275 / 0.08),
         0 14px 18px -14px oklch(0.2 0.02 275 / 0.28);
+
+    /* The block cards inside a panel: the Orchestration tab's node cards and summary tiles, the Timeline's
+       session blocks. One look, declared once, so they cannot drift. Light: the translucent raised surface
+       and the surface border, no shadow. */
+    --block-card-bg: color-mix(in oklab, var(--wa-color-surface-raised) 55%, transparent);
+    --block-card-border: var(--wa-color-surface-border);
+    --block-card-shadow: 0 0 transparent;
 }
 
 .wa-dark {
@@ -92,6 +99,11 @@
     --panel-overlay-shadow:
         0 2px 4px oklch(0 0 0 / 0.45),
         0 14px 18px -14px oklch(0 0 0 / 0.7);
+    /* Dark: the raised surface vanishes over the dark veil, so a block card is a lit brand tint over the
+       opaque page surface (the idiom of the tool cards), with a brand hairline and the level-2 depth. */
+    --block-card-bg: color-mix(in oklab, var(--wa-color-brand-60) 24%, var(--surface-solid));
+    --block-card-border: color-mix(in oklab, var(--wa-color-brand-60) 55%, var(--surface-solid));
+    --block-card-shadow: var(--depth-2);
 }
 
 @media (width < 640px) {

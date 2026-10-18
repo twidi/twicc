@@ -118,11 +118,11 @@ watch(items, async (next) => {
 
 // ── Scroller: estimates, next page ────────────────────────────────────────────────────────────────────────
 
-// A first height estimate per row type (day separator, event line, block head, navigation copy) for the rows the
+// A first height estimate per row type (day separator, event line, block head and end, navigation copy) for the rows the
 // scroller has not measured yet. It runs AFTER the render: the scroller only exists once the first page flipped the
 // view to the list, and it is created again each time the list comes back. A row the scroller already measured keeps
 // its measure (seeding would overwrite it, and no resize would correct it). `seeded` maps a key to the estimate
-// written for it (null: the scroller had its own height): when a live insertion flips a row's head status, the new
+// written for it (null: the scroller had its own height): when a live insertion flips a row's head or end status, the new
 // estimate replaces the old one while the cache still holds that old seed (the row was not measured since). `seeded`
 // follows the list: it is emptied when the scroller goes away and trimmed to the keys still in the list.
 const seeded = new Map()

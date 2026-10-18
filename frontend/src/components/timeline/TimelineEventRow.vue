@@ -8,6 +8,11 @@
 // under the start of the title. The time is a fixed right column; long text wraps in its own column.
 // The current state of a session (archived, hidden, pinned) is not shown: it is not an event.
 //
+// A session block is a card with the look of the Orchestration tab's agent cards (the block-card tokens of
+// styles/surfaces.css), without their state border. The scroller renders one item per event row, so each
+// row draws its part of the card: the head row its top, every row its sides, the last row its bottom and
+// the gap to the next block. An instance row is no card: it is a plain line between the blocks.
+//
 // All the decisions (wording, icon, severity, links, time) are made by the pure modules of
 // utils/timeline/; this component only shows them. Every string from data is rendered as TEXT with
 // interpolation, never as HTML.
@@ -42,12 +47,15 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     <div
         class="timeline-row"
         :class="[`timeline-row--${vm.severity}`, {
+            'timeline-row--block': !row.instance,
             'timeline-row--indented': row.indented,
             'timeline-row--head': row.head,
+            'timeline-row--last': row.last,
             'timeline-row--instance': row.instance,
         }]"
         :data-kind="vm.kind"
     >
+        <div class="timeline-row-card">
         <div v-if="identity" class="timeline-row-header">
             <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" />
             <template v-if="identity.showProject && identity.projectId">
@@ -92,6 +100,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
             </div>
             <span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
         </div>
+        </div>
     </div>
 </template>
 
@@ -103,13 +112,52 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     --timeline-provider-gap: var(--wa-space-xs);
     /* The event icon column: icons have their own widths (auto-width), the column keeps the text aligned. */
     --timeline-icon-width: 1.25rem;
-    padding-inline: var(--wa-space-l);
+    /* The block card: its distance to the panel edges, its inner padding, the gap below it. */
+    --timeline-card-inset: var(--wa-space-m);
+    --timeline-card-padding: var(--wa-space-s);
+    --timeline-block-gap: var(--wa-space-s);
+    padding-inline: var(--timeline-card-inset);
     font-size: var(--wa-font-size-s);
 }
 
-/* A little air above each session block. */
+/* A little air above each session block (it also parts a block from an instance line above it). */
 .timeline-row--head {
     padding-block-start: var(--wa-space-2xs);
+}
+
+/* The gap to what follows the block, outside the card, in the row the scroller measures. */
+.timeline-row--last {
+    padding-block-end: var(--timeline-block-gap);
+}
+
+/* The sides of the card, on every row of the block. The Orchestration cards' shadow (dark mode) is left out: a
+   shadow drawn row by row would show a seam at every row boundary. */
+.timeline-row--block .timeline-row-card {
+    padding-inline: var(--timeline-card-padding);
+    background: var(--block-card-bg);
+    border-inline: 1px solid var(--block-card-border);
+}
+
+/* The top of the card, on the head row (the Orchestration card's top padding). */
+.timeline-row--head .timeline-row-card {
+    padding-block-start: var(--wa-space-xs);
+    border-block-start: 1px solid var(--block-card-border);
+    border-start-start-radius: var(--wa-border-radius-m);
+    border-start-end-radius: var(--wa-border-radius-m);
+}
+
+/* The bottom of the card, on the last row. With the event line's own padding it matches the Orchestration
+   card's bottom padding. */
+.timeline-row--last .timeline-row-card {
+    padding-block-end: var(--wa-space-xs);
+    border-block-end: 1px solid var(--block-card-border);
+    border-end-start-radius: var(--wa-border-radius-m);
+    border-end-end-radius: var(--wa-border-radius-m);
+}
+
+/* No card, but the same content edges as the cards (padding and border): the time column stays one column. */
+.timeline-row--instance .timeline-row-card {
+    padding-inline: calc(var(--timeline-card-padding) + 1px);
 }
 
 /* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */

@@ -1,18 +1,23 @@
 // frontend/src/utils/timeline/rows.js
 //
 // The rows of the list, derived from the ordered events at render time (display design section 5.2):
-// day separators, group heads and indentation. Nothing here is ever stored on the events, so a live
-// insertion or a page append recomputes it and a row's head status can change. Pure.
+// day separators, group heads, indentation and block ends. Nothing here is ever stored on the events, so a
+// live insertion or a page append recomputes it and a row's head or end status can change. Pure.
 
 import { formatDayKey, formatDaySeparatorLabel } from '../date.js'
 import { parseOccurredAt } from './eventTime.js'
 import { groupHeadIdentity } from './sessions.js'
 
 /**
- * Estimated heights (px) the scroller starts from, per row type, before it measures. `head` is an event row
- * that opens a session block: its header line (title, project) sits above its event line.
+ * Estimated heights (px, at the default 16px root size) the scroller starts from, before it measures.
+ *   - `event`: one event line (2rem) and a little more.
+ *   - `head`: an event row that opens a session block: the air above the block (0.25rem), the top of the card
+ *     (1px border, 0.5rem padding) and the header line (title, project, 1.75rem) above its event line.
+ *   - `blockEnd`: ADDED to the row that ends a session block: the bottom of the card (0.5rem padding, 1px
+ *     border) and the gap to the next block (0.75rem).
+ *   - `nav`: the copy of the navigation list (compact-height mode).
  */
-export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 66, nav: 96 }
+export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 75, blockEnd: 21, nav: 96 }
 
 /**
  * @typedef {Object} DayRow
@@ -28,6 +33,7 @@ export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 66, nav: 96 }
  * @property {boolean} instance - A `backend.*` event: no session, never indented, never a head.
  * @property {boolean} head - First event row of its group: it carries the session identity (the block header).
  * @property {boolean} indented - A following row of a group.
+ * @property {boolean} last - Last event row of its group: it closes the session block (never for an instance row).
  * @property {Object|null} identity - `groupHeadIdentity` for a head, else null.
  */
 
@@ -65,8 +71,17 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
             instance,
             head,
             indented: sameGroup,
+            // Known once the next row is: set below.
+            last: false,
             identity: head ? groupHeadIdentity(event, sessions, scope, { isSubagent }) : null,
         })
+    }
+    // A session row ends its block unless the next row continues the same group (an indented row).
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]
+        if (row.type !== 'event' || row.instance) continue
+        const next = rows[index + 1]
+        row.last = !(next?.type === 'event' && next.indented)
     }
     return rows
 }
@@ -76,7 +91,10 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
  * @returns {number} The height the scroller assumes until it measures the row.
  */
 export function estimateRowHeight(row) {
-    if (row.type === 'event' && row.head) return ROW_HEIGHT_ESTIMATES.head
+    if (row.type === 'event') {
+        const base = row.head ? ROW_HEIGHT_ESTIMATES.head : ROW_HEIGHT_ESTIMATES.event
+        return row.last ? base + ROW_HEIGHT_ESTIMATES.blockEnd : base
+    }
     return ROW_HEIGHT_ESTIMATES[row.type] ?? ROW_HEIGHT_ESTIMATES.event
 }
 
