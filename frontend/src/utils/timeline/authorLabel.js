@@ -33,8 +33,8 @@ function text(value) {
  * @returns {AuthorLabel}
  */
 export function describeAuthor(event, { sessions, isSubagent }) {
-    // A backfilled flag row or a `lost` row is dated by estimation and its actor is `system`, although
-    // a user set the flag: no label on any row whose precision is not exact. An unknown precision counts as exact.
+    // A `lost` row is dated by estimation and a creation row read from the session file is `derived`; both
+    // have the `system` actor: no label on any row whose precision is not exact. An unknown precision counts as exact.
     if (event.precision === 'estimated' || event.precision === 'derived') return NO_LABEL
     const { actor, via } = event
     const withVia = (suffix) => (suffix ? ` ${suffix}` : '')

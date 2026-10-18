@@ -136,7 +136,7 @@ test('session.created: origin wording', () => {
     const w = (data) => words(describe('session.created', { actor: 'system', data }))
     assert.equal(w({ origin: 'twicc' }), 'Session created')
     assert.equal(w({ origin: 'external' }), 'Session created from a terminal')
-    assert.equal(w({ origin: 'sync' }), 'Session imported')
+    assert.equal(w({ origin: 'sync' }), 'Session created')
     assert.equal(w({ origin: 'something-else' }), 'Session created')
     assert.equal(w({}), 'Session created')
 })
@@ -146,8 +146,11 @@ test('session.created: the parent appears once, and never next to an agent autho
     const plain = describe('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })
     assert.equal(words(plain), 'Session created by <Parent session>')
     assert.equal(parentPart(plain).mention.link, true)
-    const imported = describe('session.created', { actor: 'system', data: { origin: 'sync', spawned_by: 'parent' } })
-    assert.equal(words(imported), 'Session imported (spawned by <Parent session>)')
+    // A compute-written creation row reads like a live one, parent included.
+    const synced = describe('session.created', { actor: 'system', data: { origin: 'sync', spawned_by: 'parent' } })
+    assert.equal(words(synced), 'Session created by <Parent session>')
+    const external = describe('session.created', { actor: 'system', data: { origin: 'external', spawned_by: 'parent' } })
+    assert.equal(words(external), 'Session created from a terminal (spawned by <Parent session>)')
     const byAgent = describe('session.created', {
         actor: 'agent', via: 'mcp_internal', actor_ref: 'boss', data: { origin: 'twicc', spawned_by: 'parent' },
     })
@@ -241,16 +244,17 @@ test('turn.ended: the background-work badge, plain when there is none or the sha
     assert.equal(words(describe('turn.ended', { data: { background_work: 'weird' } })), 'Turn ended')
 })
 
-test('time: clock in the locale, "~" and a flag for estimated and derived, different captions', () => {
+test('time: clock in the locale, "~", a flag and a caption for estimated only; derived reads as exact', () => {
     const exact = describe('turn.started', {})
-    assert.deepEqual([exact.time.text, exact.time.estimated], ['14:32', false])
+    assert.deepEqual([exact.time.text, exact.time.estimated, exact.time.caption], ['14:32', false, null])
     const estimated = describe('turn.started', { precision: 'estimated' })
     assert.deepEqual([estimated.time.text, estimated.time.estimated], ['~14:32', true])
-    const derived = describe('session.created', { precision: 'derived', actor: 'system', data: { origin: 'sync' } })
-    assert.deepEqual([derived.time.text, derived.time.estimated], ['~14:32', true])
     assert.match(estimated.tooltip, /Estimated: it happened at or before this time/)
-    assert.match(derived.tooltip, /Derived from the session's creation time/)
-    assert.ok(!derived.tooltip.includes('Estimated:') && !estimated.tooltip.includes('Derived from'))
+    // A `derived` time is the session's `created_at`, read from its file: shown like an exact one.
+    const derived = describe('session.created', { precision: 'derived', actor: 'system', data: { origin: 'sync' } })
+    assert.deepEqual([derived.time.text, derived.time.estimated, derived.time.caption], ['14:32', false, null])
+    assert.ok(!derived.tooltip.includes('Estimated:'))
+    assert.match(derived.tooltip, /Precision: derived/)
     const unknown = describe('turn.started', { precision: 'approximate' })
     assert.deepEqual([unknown.time.text, unknown.time.estimated], ['14:32', false])
 })

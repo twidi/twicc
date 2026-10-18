@@ -48,7 +48,7 @@ const FLAG_KINDS = {
 const SESSION_CREATED_BASE = {
     twicc: 'Session created',
     external: 'Session created from a terminal',
-    sync: 'Session imported',
+    sync: 'Session created',
 }
 
 const TITLE_SOURCE_TAGS = { auto: 'automatic', agent: 'by the agent' }
@@ -220,11 +220,10 @@ function describeKind(event, data, context, author) {
 
 function describeTime(event, context) {
     const ms = parseOccurredAt(event.occurred_at)
-    const estimated = event.precision === 'estimated' || event.precision === 'derived'
+    // A `derived` time is the session's `created_at`, read from its file: it is shown like an exact one.
+    const estimated = event.precision === 'estimated'
     const clock = formatClock(ms, context.time)
-    const caption = event.precision === 'estimated'
-        ? 'Estimated: it happened at or before this time'
-        : event.precision === 'derived' ? "Derived from the session's creation time" : null
+    const caption = estimated ? 'Estimated: it happened at or before this time' : null
     return {
         text: estimated ? `~${clock}` : clock,
         estimated,
