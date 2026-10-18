@@ -260,11 +260,37 @@ test('an unknown kind does not break the row', async (t) => {
     assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'plan.approved')
 })
 
+/** The declarations of the first `selector { ... }` rule of a style block, as a property -> value map. */
+function declarationsOf(source, selector) {
+    const start = source.indexOf(`\n${selector} {`)
+    assert.notEqual(start, -1, `rule ${selector}`)
+    const body = source.slice(source.indexOf('{', start) + 1, source.indexOf('}', start))
+    return new Map(body.replace(/\/\*[\s\S]*?\*\//g, '').split(';').map((d) => d.trim()).filter(Boolean)
+        .map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))
+}
+
 test('the layout CSS: a fixed time column that never wraps, a wrapping text column, a truncating header title', () => {
     const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
-    assert.match(row, /\.timeline-event-line \{[^}]*display: grid;[^}]*grid-template-columns: var\(--timeline-icon-width\) minmax\(0, 1fr\) auto;/)
-    assert.match(row, /\.timeline-time \{[^}]*white-space: nowrap;[^}]*font-variant-numeric: tabular-nums;/)
-    assert.match(row, /\.timeline-event-line--indented \{[^}]*padding-inline-start: calc\(var\(--timeline-provider-width\) \+ var\(--timeline-provider-gap\)\);/)
+    const line = declarationsOf(row, '.timeline-event-line')
+    assert.equal(line.get('display'), 'grid')
+    assert.equal(line.get('grid-template-columns'), 'var(--timeline-icon-width) minmax(0, 1fr) auto')
+    assert.equal(line.get('align-items'), 'baseline')
+    const time = declarationsOf(row, '.timeline-time')
+    assert.equal(time.get('white-space'), 'nowrap')
+    assert.equal(time.get('font-variant-numeric'), 'tabular-nums')
+    assert.equal(declarationsOf(row, '.timeline-event-line--indented').get('padding-inline-start'),
+        'calc(var(--timeline-provider-width) + var(--timeline-provider-gap))')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
-    assert.match(mention, /\.timeline-session--truncate \.timeline-session-title \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/)
+    const title = declarationsOf(mention, '.timeline-session--truncate .timeline-session-title')
+    assert.deepEqual([title.get('overflow'), title.get('text-overflow'), title.get('white-space')], ['hidden', 'ellipsis', 'nowrap'])
+})
+
+test('the event icon and the badge follow the text baseline, so a badge never moves the icon off the first line', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const icon = declarationsOf(row, '.timeline-row-icon')
+    // Baseline-aligned like the text (the grid default), never pinned to the top of its cell.
+    assert.ok(!icon.has('align-self') || icon.get('align-self') === 'baseline', icon.get('align-self'))
+    assert.ok(!icon.has('height'))
+    assert.equal(icon.get('inset-block-start'), '0.125em')
+    assert.equal(declarationsOf(row, '.timeline-badge').get('align-self'), 'baseline')
 })

@@ -139,11 +139,12 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     padding-inline-start: calc(var(--timeline-provider-width) + var(--timeline-provider-gap));
 }
 
-/* One line box high, centred in its column: on a wrapped wording it stays on the first line. */
+/* Baseline-aligned with the first line of the text (the grid default), so whatever makes that line taller (a badge)
+   the icon stays on it. Its baseline is its bottom edge: it is lowered by 0.125em, as Font Awesome does inline. */
 .timeline-row-icon {
-    align-self: start;
     justify-self: center;
-    height: 1lh;
+    position: relative;
+    inset-block-start: 0.125em;
     color: var(--wa-color-text-quiet);
 }
 
@@ -191,8 +192,9 @@ a.timeline-project {
     font-size: var(--wa-font-size-xs);
 }
 
+/* On the text baseline, like the icon and the time: the badge, the wording and the icon share one visual line. */
 .timeline-badge {
-    align-self: center;
+    align-self: baseline;
 }
 
 .timeline-error {

@@ -121,9 +121,11 @@ watch(items, async (next) => {
 // A first height estimate per row type (day separator, event line, block head, navigation copy) for the rows the
 // scroller has not measured yet. It runs AFTER the render: the scroller only exists once the first page flipped the
 // view to the list, and it is created again each time the list comes back. A row the scroller already measured keeps
-// its measure (seeding would overwrite it, and no resize would correct it). `seeded` follows the list: it is
-// emptied when the scroller goes away and trimmed to the keys still in the list.
-const seeded = new Set()
+// its measure (seeding would overwrite it, and no resize would correct it). `seeded` maps a key to the estimate
+// written for it (null: the scroller had its own height): when a live insertion flips a row's head status, the new
+// estimate replaces the old one while the cache still holds that old seed (the row was not measured since). `seeded`
+// follows the list: it is emptied when the scroller goes away and trimmed to the keys still in the list.
+const seeded = new Map()
 function seedHeights() {
     const scroller = scrollerRef.value
     if (!scroller) {
@@ -133,11 +135,23 @@ function seedHeights() {
     const keys = new Set()
     for (const row of items.value) {
         keys.add(row.key)
-        if (seeded.has(row.key)) continue
-        seeded.add(row.key)
-        if (scroller.getItemHeight(row.key) === undefined) scroller.seedItemHeight(row.key, estimateRowHeight(row))
+        const estimate = estimateRowHeight(row)
+        if (!seeded.has(row.key)) {
+            const unmeasured = scroller.getItemHeight(row.key) === undefined
+            if (unmeasured) scroller.seedItemHeight(row.key, estimate)
+            seeded.set(row.key, unmeasured ? estimate : null)
+            continue
+        }
+        const previous = seeded.get(row.key)
+        if (previous === null || previous === estimate) continue
+        if (scroller.getItemHeight(row.key) === previous) {
+            scroller.seedItemHeight(row.key, estimate)
+            seeded.set(row.key, estimate)
+        } else {
+            seeded.set(row.key, null)
+        }
     }
-    for (const key of seeded) if (!keys.has(key)) seeded.delete(key)
+    for (const key of seeded.keys()) if (!keys.has(key)) seeded.delete(key)
 }
 watch([items, scrollerRef], seedHeights, { flush: 'post' })
 

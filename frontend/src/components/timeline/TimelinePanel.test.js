@@ -42,6 +42,7 @@ function createFakeScroller() {
         setup(props, { slots, expose, emit }) {
             log.mounts += 1
             let rendered = []
+            const cache = new Map()
             log.emit = (range) => {
                 log.range = { start: range.visibleStartIndex, end: range.visibleEndIndex }
                 emit('update', range)
@@ -49,8 +50,13 @@ function createFakeScroller() {
             log.emitVisible = () => emit('became-visible')
             expose({
                 // The 4th element tells whether the row was already RENDERED when the panel seeded it (the panel seeds after the render).
-                seedItemHeight: (key, height) => log.calls.push(['seed', key, height, rendered.includes(key)]),
-                getItemHeight: (key) => (log.measured.has(key) ? 30 : undefined),
+                // Like the real scroller, a seeded height is in the cache and answered back (per scroller); a
+                // measured key answers its measure (30).
+                seedItemHeight: (key, height) => {
+                    log.calls.push(['seed', key, height, rendered.includes(key)])
+                    cache.set(key, height)
+                },
+                getItemHeight: (key) => (log.measured.has(key) ? 30 : cache.get(key)),
                 getVisibleRange: () => log.range,
                 getScrollState: () => ({ scrollTop: log.scrollTop }),
                 // The first visible row is the one at `anchorIndex` of what is RENDERED NOW: asked before the DOM
@@ -63,6 +69,8 @@ function createFakeScroller() {
             })
             return () => {
                 rendered = props.items.map((item) => item.key)
+                // Like the real scroller, the height of a key that left the list is dropped.
+                for (const key of cache.keys()) if (!rendered.includes(key)) cache.delete(key)
                 return Vue.h('div', { class: 'fake-scroller' }, props.items.map((item) => slots.default({ item })))
             }
         },
@@ -339,6 +347,30 @@ test('a row the scroller already measured keeps its measure', async (t) => {
     f.scroller.log.measured.add('event-2')
     await mount(t, f)
     assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3'])
+})
+
+test('a row whose head status flips is seeded again with the new estimate while it still holds the old seed', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    const seedsFor = (key) => seedsOf(f).filter(([, k]) => k === key).map(([, , height]) => height)
+    assert.deepEqual(seedsFor('event-2'), [34])
+    // The head (event-3) leaves the list: event-2 becomes the head of the block.
+    f.state.events = f.state.events.filter((e) => e.id !== 3)
+    await settle()
+    assert.deepEqual(seedsFor('event-2'), [34, 66])
+    // Back to a following row: the seed follows again.
+    f.state.events = [event(3), ...f.state.events]
+    await settle()
+    assert.deepEqual(seedsFor('event-2'), [34, 66, 34])
+})
+
+test('a row measured since its seed keeps its measure when its head status flips', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f)
+    f.scroller.log.measured.add('event-2')
+    f.state.events = f.state.events.filter((e) => e.id !== 3)
+    await settle()
+    assert.deepEqual(seedsOf(f).filter(([, k]) => k === 'event-2').map(([, , height]) => height), [34])
 })
 
 test('a new scroller (the list came back) is seeded again, and a row that left the list is seeded again if it returns', async (t) => {

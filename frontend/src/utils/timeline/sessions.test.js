@@ -7,18 +7,15 @@ const entry = (fields = {}) => ({
     title: 'My session', project_id: 'proj', provider: 'codex', hidden: false, archived: false, ...fields,
 })
 
-test('a session with an entry is a link with its title, provider and flags', () => {
+test('a session with an entry is a link with its title and provider; an archived one too, with no state field', () => {
     const mention = sessionMention('s1', { s1: entry({ archived: true }) })
-    assert.deepEqual(mention, {
-        id: 's1', title: 'My session', provider: 'codex', projectId: 'proj', link: true, hidden: false, archived: true,
-    })
+    assert.deepEqual(mention, { id: 's1', title: 'My session', provider: 'codex', projectId: 'proj', link: true })
 })
 
-test('a hidden session is plain text with its marker, even when archived too', () => {
+test('a hidden session is plain text, even when archived too; the mention carries no state field', () => {
     const mention = sessionMention('s1', { s1: entry({ hidden: true, archived: true }) })
     assert.equal(mention.link, false)
-    assert.equal(mention.hidden, true)
-    assert.equal(mention.archived, true)
+    assert.ok(!('hidden' in mention) && !('archived' in mention))
 })
 
 test('a session with no entry is plain text: the full id for a head, 8 characters elsewhere', () => {

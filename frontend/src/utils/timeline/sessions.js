@@ -10,8 +10,8 @@
  * @property {string|null} title
  * @property {string|null} project_id
  * @property {string|null} provider
- * @property {boolean} hidden
- * @property {boolean} archived
+ * @property {boolean} hidden - Read for the link rule only.
+ * @property {boolean} archived - Sent by the API; the timeline does not show it (the current state is not an event).
  */
 
 /**
@@ -23,8 +23,6 @@
  * @property {string|null} projectId
  * @property {boolean} link - True only for a session that exists, is not hidden, is not a known
  *   subagent and has a project: the only ones that can be opened.
- * @property {boolean} hidden
- * @property {boolean} archived
  */
 
 /**
@@ -46,8 +44,6 @@ export function sessionMention(sessionId, sessions, { fullId = false, fallbackPr
         provider: entry?.provider ?? fallbackProvider ?? null,
         projectId: entry?.project_id ?? null,
         link: entry !== null && !hidden && !!entry.project_id && !isSubagent(sessionId),
-        hidden,
-        archived: entry?.archived === true,
     }
 }
 
