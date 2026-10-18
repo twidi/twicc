@@ -44,6 +44,15 @@ _RELEVANT_KINDS = (TimelineKind.SESSION_CREATED, *(
 ))
 
 
+#: The only ``Session`` columns :func:`_row` and :func:`_build_rows` read. The session is loaded with
+#: them alone: the row also carries large JSON fields, and a deferred field read later would cost
+#: one more query.
+_SESSION_COLUMNS = (
+    "id", "project_id", "provider", "created_at", "last_updated_at", "spawned_by_id",
+    *(attribute for attribute, _ in _FLAGS),
+)
+
+
 def _row(session: Session, kind: str, occurred_at, precision: str, data: dict | None) -> TimelineEvent:
     return TimelineEvent(
         session_id=session.id, project_id=session.project_id, kind=kind, occurred_at=occurred_at,
@@ -83,17 +92,18 @@ def write_creation_rows_sync(session_id: str, *, require_computed: bool = False)
     """
     try:
         with transaction.atomic():
-            sessions = Session.objects.filter(id=session_id, type=SessionType.SESSION, created_at__isnull=False)
-            if require_computed:
-                sessions = sessions.filter(compute_version__isnull=False)
-            session = sessions.first()
-            if session is None:
-                return 0
+            # The cheap index query first: almost every call is for a known session.
             existing = set(
                 TimelineEvent.objects.filter(session_id=session_id, kind__in=_RELEVANT_KINDS)
                 .values_list("kind", flat=True).distinct()
             )
             if TimelineKind.SESSION_CREATED in existing:
+                return 0
+            sessions = Session.objects.filter(id=session_id, type=SessionType.SESSION, created_at__isnull=False)
+            if require_computed:
+                sessions = sessions.filter(compute_version__isnull=False)
+            session = sessions.only(*_SESSION_COLUMNS).first()
+            if session is None:
                 return 0
             count = insert_event_rows(_build_rows(session, existing))
         if count:

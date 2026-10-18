@@ -144,6 +144,40 @@ def test_the_statements_do_not_depend_on_the_timeline_size(project):
     assert len(busy) == len(empty) <= 12
 
 
+_TRANSACTION_STATEMENTS = ("SAVEPOINT", "RELEASE SAVEPOINT", "ROLLBACK", "BEGIN", "COMMIT")
+
+
+def _statements(captured):
+    """The captured SQL without the transaction-control statements of the writer's savepoint."""
+    return [q["sql"] for q in captured.captured_queries if not q["sql"].lstrip().upper().startswith(
+        _TRANSACTION_STATEMENTS,
+    )]
+
+
+def _session_reads(statements):
+    return [sql for sql in statements if '"core_session"' in sql]
+
+
+def test_a_known_session_costs_one_timeline_query_and_no_session_read(project):
+    make(project, created_at=timezone.now(), archived=True)
+    mark_known("s1", project.id)
+    with CaptureQueriesContext(connection) as captured:
+        assert write() == 0
+    statements = _statements(captured)
+    assert len(statements) == 1, statements
+    assert _session_reads(statements) == []
+
+
+def test_an_unknown_session_is_read_once_with_only_the_columns_the_rows_use(project):
+    make(project, created_at=timezone.now(), archived=True, hidden=True, mute_on_user_turn=True, pinned="all")
+    with CaptureQueriesContext(connection) as captured:
+        assert write() == 5
+    reads = _session_reads(_statements(captured))
+    assert len(reads) == 1, reads
+    for heavy in ("inline_artifacts", "plan_paths", "goals", "tasks", "layout", "annotations"):
+        assert f'"{heavy}"' not in reads[0], heavy
+
+
 def _parity_rows(session_id, project, when=None):
     """Rows covering every kind of value: datetime, nested dict, empty reason, null cause, project."""
     when = when or timezone.now() - timedelta(days=3)
