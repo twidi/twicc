@@ -68,14 +68,6 @@ def recovery_runtime(tmp_path, monkeypatch):
         connections['default'].settings_dict = {**connections['default'].settings_dict, 'NAME': str(path)}
         return function(*args, **kwargs)
 
-    # Historical preparation owns a separate worker and must read this WAL copy.
-    from twicc.providers.statistics_runtime import StatisticsConsumer
-    original_read = StatisticsConsumer._read
-
-    async def preparation(consumer, function, /, *args):
-        return await original_read(consumer, configured, function, args, {})
-
-    monkeypatch.setattr(StatisticsConsumer, '_read', preparation)
     ordinary = db_writer.run_compute_sync
     application = compute_executor.run_compute_application_sync
 

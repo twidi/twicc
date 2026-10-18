@@ -36,8 +36,13 @@ def run_with_writer(factory):
     return asyncio.run(runner())
 
 
-async def _direct_write(coro_factory, **kwargs):
-    """Stand-in for ``run_under_db_write_lock``: run the factory at once, without a lock."""
+async def _direct_write(coro_factory, *, content_activity=False, **kwargs):
+    """Stand-in for ``run_under_db_write_lock``: run the factory at once, without a lock.
+
+    ``content_activity=True`` keeps the real behaviour: the active-session snapshot from the agent registry.
+    """
+    if content_activity:
+        return await db_writer._run_with_content_activity(coro_factory)
     return await coro_factory()
 
 

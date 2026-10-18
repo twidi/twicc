@@ -158,11 +158,22 @@ def test_kinds_without_a_started_payload_copy_nothing(project):
     assert record_event_sync(TimelineKind.ARCHIVED_ENDED, session_id="s1", actor=TimelineActor.USER).data == {}
 
 
-def test_async_record_event_runs_under_the_write_lock(project):
+def test_async_record_event_runs_under_the_write_lock(project, monkeypatch):
+    from twicc.core.services import session_timeline
+    from twicc.providers import db_writer
+
+    held = []
+
+    def watched(*args, **kwargs):
+        held.append(db_writer._db_write_lock.locked())
+        return record_event_sync(*args, **kwargs)
+
+    monkeypatch.setattr(session_timeline, "record_event_sync", watched)
     # Real writer: the test is about the async service under the real DB write lock.
     event = run_with_writer(lambda: record_event(
         TimelineKind.TURN_STARTED, session_id="s1", project_id=project.id, actor=TimelineActor.AGENT))
     assert event is not None and kinds("s1") == ["turn.started"]
+    assert held == [True]  # the sync write ran while the write lock was held
 
 
 def test_record_session_created_writes_the_initial_flags_caused_by_the_creation(project):
