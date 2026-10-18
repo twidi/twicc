@@ -9,7 +9,7 @@
 import { describeAuthor } from './authorLabel.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
 import { formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
-import { arrowPart, textPart, titlePart } from './parts.js'
+import { arrowPart, textPart, valuePart } from './parts.js'
 import { describeSettingsChange } from './settingsDiff.js'
 import { sessionMention } from './sessions.js'
 
@@ -98,7 +98,7 @@ function describeTitleChanged(event, data) {
     const value = (title, label) => {
         const cut = truncateText(title, TITLE_MAX)
         if (cut.truncated) tooltip.push(`${label}: ${title}`)
-        return titlePart(cut.text)
+        return valuePart(cut.text)
     }
     let parts
     if (next === null) parts = [text('Title cleared')]
@@ -238,7 +238,7 @@ function describeTime(event, context) {
  * @property {string} kind
  * @property {string} icon - Font Awesome Free solid name.
  * @property {'neutral'|'success'|'warning'|'danger'} severity
- * @property {Array<Object>} parts - Wording segments (parts.js): `text`, `title` (a value), `arrow`, `session`.
+ * @property {Array<Object>} parts - Wording segments (parts.js): `text`, `value`, `arrow`, `session`.
  * @property {string|null} tag - Small tag at the end of the wording ("automatic", "by the agent").
  * @property {{text: string, title: string}|null} badge - Background-work badge of `turn.ended`.
  * @property {{first: string, rest: string}|null} detail - Monospace first line of an error, with the rest behind an expand control.

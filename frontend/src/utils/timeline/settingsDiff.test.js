@@ -81,12 +81,15 @@ test('empty, missing or malformed changes read "Settings changed"', () => {
 
 test('the parts: text segments with an arrow part between each old and new value, the "+N more" at the end', () => {
     const arrow = { type: 'arrow', label: 'to' }
+    const text = (value) => ({ type: 'text', text: value })
+    const value = (v) => ({ type: 'value', text: v })
+    // The values (old and new) are value parts, like the titles of a rename; the field name stays prose.
     assert.deepEqual(describeSettingsChange({ effort: ['high', 'max'] }, 'set_mode', labels).parts,
-        [{ type: 'text', text: 'Permission mode set: Effort: High' }, arrow, { type: 'text', text: 'Max' }])
+        [text('Permission mode set: Effort: '), value('High'), arrow, value('Max')])
     const changes = { selected_model: ['sonnet', 'opus'], effort: ['high', 'max'], permission_mode: ['default', 'yolo'], fast_mode: [false, true] }
     assert.deepEqual(describeSettingsChange(changes, '', labels).parts, [
-        { type: 'text', text: 'Model: Sonnet' }, arrow, { type: 'text', text: 'Opus, Effort: High' }, arrow,
-        { type: 'text', text: 'Max, Permission: Default' }, arrow, { type: 'text', text: 'YOLO, +1 more' },
+        text('Model: '), value('Sonnet'), arrow, value('Opus'), text(', Effort: '), value('High'), arrow, value('Max'),
+        text(', Permission: '), value('Default'), arrow, value('YOLO'), text(', +1 more'),
     ])
     assert.deepEqual(describeSettingsChange({}, '', labels).parts, [{ type: 'text', text: 'Settings changed' }])
 })

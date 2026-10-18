@@ -80,8 +80,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
                 <span class="timeline-wording">
                     <TimelineWordingPart v-for="(part, index) in wording.lead" :key="index" :part="part" />
                     <span v-if="vm.tag" class="timeline-tag-glue">
-                        <TimelineWordingPart v-if="wording.last" :part="wording.last" />
-                        <wa-tag size="small" variant="neutral" class="timeline-tag">{{ vm.tag }}</wa-tag>
+                        <TimelineWordingPart v-if="wording.last" :part="wording.last" />{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ vm.tag }}</wa-tag>
                     </span>
                 </span>
                 <wa-badge v-if="vm.badge" variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge>
@@ -243,9 +242,9 @@ a.timeline-project {
     display: inline-block;
 }
 
-/* The source of the event ("automatic", "by the agent"): a small tag right after the last word of the wording. */
+/* The source of the event ("automatic", "by the agent"): a small tag right after the last word of the wording (a
+   real space before it, in the template). */
 .timeline-tag {
-    margin-inline-start: var(--wa-space-xs);
     vertical-align: baseline;
 }
 

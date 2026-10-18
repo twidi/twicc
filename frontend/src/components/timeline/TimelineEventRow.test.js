@@ -369,12 +369,14 @@ test('a rename: the two titles are values of their own, the arrow an icon with a
     assert.ok(!textOf(wording).includes('"') && !textOf(wording).includes('->'), 'no raw quotes, no ASCII arrow')
     const [arrow] = descendants(wording, (n) => n.type === 'wa-icon')
     assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right', 'to', 'timeline-arrow'])
+    // Real spaces in the text, not margins: a copy or a screen reader gets separate words.
+    assert.equal(textOf(wording).replace(/\s+/g, ' ').trim(), 'Renamed Old one New one automatic')
     // The order of the flow: "Renamed", old, arrow, new, then the tag, all inside the wording; the last word and the
     // tag are glued in one box, so they wrap together.
     const flow = wording.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
     const label = (n) => (n.type === 'wa-icon' ? 'arrow' : n.type === 'wa-tag' ? `tag:${textOf(n)}` : textOf(n))
     assert.deepEqual(flow.map((n) => (classesOf(n) === 'timeline-tag-glue' ? n.children.filter((c) => c.type !== '#comment').map(label) : label(n))),
-        ['Renamed ', 'Old one', 'arrow', 'New ', ['one', 'tag:automatic']])
+        ['Renamed ', 'Old one', 'arrow', 'New ', ['one', ' ', 'tag:automatic']])
     assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Old one', 'New ', 'one'], 'the glued word keeps the value style')
     const [tag] = descendants(wording, (n) => n.type === 'wa-tag')
     assert.deepEqual([tag.props.size, tag.props.variant, classesOf(tag)], ['small', 'neutral', 'timeline-tag'])
@@ -387,8 +389,11 @@ test('a first title and a settings change use the same parts: the value, the sam
     assert.deepEqual(byClass(titled, 'timeline-value').map(textOf), ['Fresh'])
     assert.equal(byClass(titled, 'timeline-tag').length, 0)
     const settings = await render(t, [make('settings.changed', { data: { changes: { effort: ['low', 'high'] } } })])
-    const [arrow] = descendants(byClass(settings, 'timeline-wording')[0], (n) => n.type === 'wa-icon')
+    const [settingsWording] = byClass(settings, 'timeline-wording')
+    const [arrow] = descendants(settingsWording, (n) => n.type === 'wa-icon')
     assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right', 'to'])
+    assert.deepEqual(byClass(settingsWording, 'timeline-value').map(textOf), ['low', 'high'], 'the setting values are values, like titles')
+    assert.equal(textOf(settingsWording).replace(/\s+/g, ' ').trim(), 'effort: low high')
 })
 
 test('the wording CSS: a value is set apart from the prose, the arrow sits on the text, the tag flows inline', () => {
@@ -400,8 +405,14 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
     const arrow = declarationsOf(partStyle, '.timeline-arrow')
     assert.equal(arrow.get('color'), 'var(--wa-color-text-quiet)')
     assert.equal(arrow.get('vertical-align'), '-0.125em')
+    assert.ok(!arrow.has('margin-inline'), 'the gaps around the arrow are real spaces')
+    assert.match(part, /\{\{ ' ' \}\}<wa-icon name="arrow-right"[^>]*><\/wa-icon>\{\{ ' ' \}\}/)
+    assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/>\{\{ ' ' \}\}<wa-tag /)
     const tag = declarationsOf(style, '.timeline-tag')
     assert.equal(tag.get('vertical-align'), 'baseline')
     assert.ok(!tag.has('display') && !tag.has('flex-basis'), 'never forced onto a line of its own')
+    assert.ok(!tag.has('margin-inline-start'), 'the gap before the tag is a real space')
     assert.equal(declarationsOf(style, '.timeline-tag-glue').get('display'), 'inline-block')
+    // What makes the glue safe on a narrow screen: a last word longer than the line still breaks inside it.
+    assert.equal(declarationsOf(style, '.timeline-row-main').get('overflow-wrap'), 'anywhere')
 })

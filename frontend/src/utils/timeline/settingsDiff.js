@@ -5,7 +5,7 @@
 // stores and the DOM).
 
 import { ARROW } from './eventTime.js'
-import { arrowPart, mergeTextParts, textPart } from './parts.js'
+import { arrowPart, mergeTextParts, textPart, valuePart } from './parts.js'
 
 /** The eight fields of the closed agent-settings bundle (the only keys a payload can carry). */
 const KNOWN_FIELDS = new Set([
@@ -42,13 +42,13 @@ function formatValue(field, value, labels) {
     return labels.choice(field, value) ?? String(value)
 }
 
-/** One change: `[before the arrow, after the arrow]`. */
+/** One change: `[field name, old value, new value]`. */
 function formatChange(field, [oldValue, newValue], labels) {
     const name = labels && KNOWN_FIELDS.has(field) ? labels.field(field) : field
-    return [`${name}: ${formatValue(field, oldValue, labels)}`, formatValue(field, newValue, labels)]
+    return [name, formatValue(field, oldValue, labels), formatValue(field, newValue, labels)]
 }
 
-const asText = ([before, after]) => `${before}${ARROW}${after}`
+const asText = ([name, before, after]) => `${name}: ${before}${ARROW}${after}`
 
 /**
  * @param {*} changes - `data.changes`: `{field: [old, new]}`.
@@ -70,8 +70,9 @@ export function describeSettingsChange(changes, reason, labels) {
     const hidden = lines.length - MAX_SHOWN_CHANGES
     const more = hidden > 0 ? `, +${hidden} more` : ''
     const parts = [textPart(prefix)]
-    shownLines.forEach(([before, after], index) => {
-        parts.push(textPart(index ? `, ${before}` : before), arrowPart(), textPart(after))
+    // The field name is prose; the old and the new value are values, like the titles of a rename.
+    shownLines.forEach(([name, before, after], index) => {
+        parts.push(textPart(`${index ? ', ' : ''}${name}: `), valuePart(before), arrowPart(), valuePart(after))
     })
     parts.push(textPart(more))
     const permission = changes.permission_mode

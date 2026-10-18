@@ -15,10 +15,10 @@ const make = (kind, fields = {}) => ({
     actor_ref: null, actor_name: null, reason: '', data: {}, session_id: 's1', project_id: 'p', provider: 'codex', ...fields,
 })
 const describe = (kind, fields, context = {}) => describeEvent(make(kind, fields), { sessions, time: TIME, ...context })
-// Text as is, a title value in [brackets], the arrow as " → ", a session mention in <angle brackets>.
+// Text as is, a value (a title, a setting value) in [brackets], the arrow as " → ", a session mention in <angle brackets>.
 const words = (vm) => vm.parts.map((part) => {
     if (part.type === 'text') return part.text
-    if (part.type === 'title') return `[${part.text}]`
+    if (part.type === 'value') return `[${part.text}]`
     if (part.type === 'arrow') return ' → '
     return `<${part.mention.title}>`
 }).join('')
@@ -27,7 +27,7 @@ test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
     const cases = [
         ['session.created', { data: { origin: 'twicc' } }, 'Session created', 'plus', 'neutral'],
         ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed [A] → [B]', 'pencil', 'neutral'],
-        ['settings.changed', { data: { changes: { effort: ['low', 'high'] } } }, 'effort: low → high', 'sliders', 'neutral'],
+        ['settings.changed', { data: { changes: { effort: ['low', 'high'] } } }, 'effort: [low] → [high]', 'sliders', 'neutral'],
         ['process.started', { data: { cause: 'new' } }, 'Process started', 'play', 'success'],
         ['process.ended', { reason: 'manual' }, 'Process stopped', 'power-off', 'neutral'],
         ['turn.started', {}, 'Turn started', 'robot', 'neutral'],
@@ -185,17 +185,17 @@ test('title.changed: renamed, titled, cleared, source tags', () => {
 test('title.changed: the titles are value parts (no quotes), the arrow is its own part with a text alternative', () => {
     const vm = describe('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })
     assert.deepEqual(vm.parts, [
-        { type: 'text', text: 'Renamed ' }, { type: 'title', text: 'Old one' }, { type: 'arrow', label: 'to' }, { type: 'title', text: 'New one' },
+        { type: 'text', text: 'Renamed ' }, { type: 'value', text: 'Old one' }, { type: 'arrow', label: 'to' }, { type: 'value', text: 'New one' },
     ])
-    assert.deepEqual(describe('title.changed', { data: { new: 'B' } }).parts, [{ type: 'text', text: 'Titled ' }, { type: 'title', text: 'B' }])
+    assert.deepEqual(describe('title.changed', { data: { new: 'B' } }).parts, [{ type: 'text', text: 'Titled ' }, { type: 'value', text: 'B' }])
     assert.deepEqual(describe('title.changed', { data: { old: 'A' } }).parts, [{ type: 'text', text: 'Title cleared' }])
 })
 
-test('settings.changed: the same arrow part between the old and the new value', () => {
+test('settings.changed: the values are value parts like the titles, with the same arrow part; the field name is prose', () => {
     const vm = describe('settings.changed', { data: { changes: { effort: ['low', 'high'], fast_mode: [false, true] } } })
     assert.deepEqual(vm.parts, [
-        { type: 'text', text: 'effort: low' }, { type: 'arrow', label: 'to' }, { type: 'text', text: 'high, fast_mode: off' },
-        { type: 'arrow', label: 'to' }, { type: 'text', text: 'on' },
+        { type: 'text', text: 'effort: ' }, { type: 'value', text: 'low' }, { type: 'arrow', label: 'to' }, { type: 'value', text: 'high' },
+        { type: 'text', text: ', fast_mode: ' }, { type: 'value', text: 'off' }, { type: 'arrow', label: 'to' }, { type: 'value', text: 'on' },
     ])
 })
 

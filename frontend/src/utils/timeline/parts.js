@@ -3,7 +3,8 @@
 // The segments a timeline wording is made of. The row component renders each type its own way; nothing here is
 // ever HTML. Pure.
 //   - `{type: 'text', text}`: prose.
-//   - `{type: 'title', text}`: a value from data (a session title), styled apart from the prose, without quotes.
+//   - `{type: 'value', text}`: a value from data (a session title, a setting value), styled apart from the prose,
+//     without quotes.
 //   - `{type: 'arrow', label}`: the arrow between an old and a new value; `label` is its text alternative.
 //   - `{type: 'session', mention}`: a session mention (built by sessions.js).
 
@@ -14,8 +15,8 @@ export function textPart(text) {
     return { type: 'text', text }
 }
 
-export function titlePart(text) {
-    return { type: 'title', text }
+export function valuePart(text) {
+    return { type: 'value', text }
 }
 
 export function arrowPart() {
@@ -38,11 +39,11 @@ export function mergeTextParts(parts) {
  *
  * @param {Array<Object>} parts
  * @returns {{lead: Array<Object>, last: Object|null}} `last` is a part of the same type holding the last word (and its
- *   trailing spaces); null when the last part is not text nor a title, or holds no word: `lead` is then `parts`.
+ *   trailing spaces); null when the last part is not text nor a value, or holds no word: `lead` is then `parts`.
  */
 export function splitLastWord(parts) {
     const last = parts[parts.length - 1]
-    if (!last || (last.type !== 'text' && last.type !== 'title')) return { lead: parts, last: null }
+    if (!last || (last.type !== 'text' && last.type !== 'value')) return { lead: parts, last: null }
     const match = /^([\s\S]*\s)?(\S+\s*)$/.exec(last.text)
     if (!match) return { lead: parts, last: null }
     const head = match[1] ?? ''
