@@ -39,9 +39,14 @@ def make_computed_root(project, sid="r", **kw):
 
 
 def mark(sid, reason="rollout_missing"):
-    return _apply_mark_session_unavailable_job(
-        MarkSessionUnavailableJob(Provider.CODEX, sid, reason, asyncio.new_event_loop().create_future()),
-    )
+    # The job needs a future; the apply function never awaits it. The loop is closed right after.
+    loop = asyncio.new_event_loop()
+    try:
+        return _apply_mark_session_unavailable_job(
+            MarkSessionUnavailableJob(Provider.CODEX, sid, reason, loop.create_future()),
+        )
+    finally:
+        loop.close()
 
 
 def test_a_computed_root_marked_unavailable_gets_its_rows_from_the_stored_created_at(project, pokes):
