@@ -61,18 +61,18 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     >
         <div class="timeline-row-card">
         <div v-if="identity" class="timeline-row-header">
-            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" />
-            <template v-if="identity.showProject && identity.projectId">
-                <!-- A plain jump to that project: the router guard keeps the current workspace when the project belongs to it. -->
-                <RouterLink
+            <!-- Real spaces between the pieces of the row, so a copied row reads with separate words. Between flex or
+                 grid items (the title and the project, the main column and the time) they render nothing. -->
+            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" /><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
+                A plain jump to that project: the router guard keeps the current workspace when the project belongs to it.
+                --><RouterLink
                     v-if="knownProject"
                     :to="{ name: 'project', params: { projectId: identity.projectId } }"
                     class="timeline-project"
                 ><ProjectBadge :project-id="identity.projectId" /></RouterLink>
                 <span v-else class="timeline-project timeline-project--plain">{{ identity.projectId }}</span>
             </template>
-        </div>
-        <div class="timeline-event-line" :class="{ 'timeline-event-line--indented': !row.instance }">
+        </div><template v-if="identity">{{ ' ' }}</template><div class="timeline-event-line" :class="{ 'timeline-event-line--indented': !row.instance }">
             <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
             <div class="timeline-row-main">
                 <!-- The parts of utils/timeline/parts.js. The tag is inline content of the wording, glued to its last
@@ -83,13 +83,13 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
                         <TimelineWordingPart v-if="wording.last" :part="wording.last" />{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ vm.tag }}</wa-tag>
                     </span>
                 </span>
-                <wa-badge v-if="vm.badge" variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge>
-                <span v-if="vm.author.parts.length" class="timeline-author">
+                <template v-if="vm.badge">{{ ' ' }}<wa-badge variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge></template>
+                <template v-if="vm.author.parts.length">{{ ' ' }}<span class="timeline-author">
                     <TimelineWordingPart v-for="(part, index) in vm.author.parts" :key="index" :part="part" />
-                </span>
-                <span v-if="vm.detail" class="timeline-error">
+                </span></template>
+                <template v-if="vm.detail">{{ ' ' }}<span class="timeline-error">
                     <code class="timeline-error-line">{{ vm.detail.first }}</code>
-                    <button
+                    <template v-if="vm.detail.rest">{{ ' ' }}</template><button
                         v-if="vm.detail.rest"
                         type="button"
                         class="timeline-row__expand"
@@ -97,10 +97,9 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
                         :aria-controls="errorRestId"
                         @click="expanded = !expanded"
                     >{{ expanded ? 'Show less' : 'Show more' }}</button>
-                    <pre v-if="expanded && vm.detail.rest" :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre>
-                </span>
-            </div>
-            <span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
+                    <template v-if="expanded && vm.detail.rest">{{ ' ' }}<pre :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre></template>
+                </span></template>
+            </div>{{ ' ' }}<span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
         </div>
         </div>
     </div>
@@ -202,13 +201,10 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
 .timeline-row--warning .timeline-row-icon { color: var(--wa-color-warning-60); }
 .timeline-row--danger .timeline-row-icon { color: var(--wa-color-danger-60); }
 
+/* One inline flow, not flex items: the real spaces between the wording, the badge and the author label are rendered
+   (a little margin adds to each), so a copy reads them. The error detail is a block: its own line. */
 .timeline-row-main {
     min-width: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: var(--wa-space-s);
-    row-gap: 0;
     overflow-wrap: anywhere;
 }
 
@@ -259,13 +255,17 @@ a.timeline-project {
 }
 
 .timeline-author {
+    /* With the real space before it, about the room of a small spacing step. */
+    margin-inline-start: var(--wa-space-2xs);
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
 }
 
-/* On the text baseline, like the icon and the time: the badge, the wording and the icon share one visual line. */
+/* On the text baseline, like the icon and the time: the badge, the wording and the icon share one visual line (Web
+   Awesome puts it on `middle`). */
 .timeline-badge {
-    align-self: baseline;
+    vertical-align: baseline;
+    margin-inline-start: var(--wa-space-2xs);
     /* Tighter than Web Awesome's 0.375em, like the tag. */
     padding-block: 0.1em;
     /* Selectable, like the tag: a copied row keeps its background work. */
@@ -273,15 +273,16 @@ a.timeline-project {
     user-select: text;
 }
 
+/* A line of its own under the wording; inside it, the first line, the toggle and the rest flow with real spaces. */
 .timeline-error {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--wa-space-xs);
-    flex-basis: 100%;
+    display: block;
 }
 
+/* Web Awesome's native.css makes every <button> an inline-flex form control: reset to a text-sized inline box. */
 .timeline-row__expand {
+    display: inline-block;
+    vertical-align: baseline;
+    margin-inline-start: var(--wa-space-2xs);
     appearance: none;
     border: none;
     background: none;
@@ -311,7 +312,6 @@ a.timeline-project {
 }
 
 .timeline-error-rest {
-    flex-basis: 100%;
     margin: 0;
     white-space: pre-wrap;
 }

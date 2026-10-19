@@ -88,7 +88,8 @@ test('the group head: a header line (provider icon, title link) above its own ev
     // The header and the event line are siblings in the card: the header is a line of its own, above the event.
     const [card] = row.children.filter((n) => n.type !== '#comment')
     assert.equal(classesOf(card), 'timeline-row-card')
-    assert.deepEqual(card.children.filter((n) => n.type !== '#comment').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
+    // Elements only: the space between the two lines is for a copy, it renders nothing between two blocks.
+    assert.deepEqual(card.children.filter((n) => n.type !== '#comment' && n.type !== '#text').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
     assert.equal(descendants(line, (n) => n === header).length, 0)
     const link = descendants(header, (n) => n.type === 'a')[0]
     assert.equal(JSON.parse(link.props['data-to']).params.sessionId, 's1')
@@ -296,7 +297,23 @@ test('the event icon and the badge follow the text baseline, so a badge never mo
     assert.ok(!icon.has('align-self') || icon.get('align-self') === 'baseline', icon.get('align-self'))
     assert.ok(!icon.has('height'))
     assert.equal(icon.get('inset-block-start'), '0.125em')
-    assert.equal(declarationsOf(row, '.timeline-badge').get('align-self'), 'baseline')
+    // The main column is an inline flow: the badge sits on the text baseline (Web Awesome puts it on `middle`).
+    assert.equal(declarationsOf(row, '.timeline-badge').get('vertical-align'), 'baseline')
+})
+
+test('the main column CSS: one inline flow, so its real spaces are rendered and copied; the error detail on its own line', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const style = row.slice(row.indexOf('<style'))
+    const main = declarationsOf(style, '.timeline-row-main')
+    assert.ok(!main.has('display') && !main.has('column-gap'), 'no flex items: a copy would drop the spaces between them')
+    assert.equal(main.get('overflow-wrap'), 'anywhere')
+    for (const selector of ['.timeline-badge', '.timeline-author', '.timeline-row__expand']) {
+        assert.equal(declarationsOf(style, selector).get('margin-inline-start'), 'var(--wa-space-2xs)', `${selector}: a little room after the real space`)
+    }
+    assert.equal(declarationsOf(style, '.timeline-error').get('display'), 'block')
+    // The native <button> styles of Web Awesome (inline-flex, form-control height) are reset to an inline box of text.
+    const toggle = declarationsOf(style, '.timeline-row__expand')
+    assert.deepEqual([toggle.get('display'), toggle.get('vertical-align'), toggle.get('height')], ['inline-block', 'baseline', 'auto'])
 })
 
 test('a session row is a part of its block card: the head opens it, the last row closes it; an instance row is no card', async (t) => {
@@ -443,4 +460,30 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
     assert.equal(declarationsOf(style, '.timeline-tag-glue').get('display'), 'inline-block')
     // What makes the glue safe on a narrow screen: a last word longer than the line still breaks inside it.
     assert.equal(declarationsOf(style, '.timeline-row-main').get('overflow-wrap'), 'anywhere')
+})
+
+// The text a copy of a whole row gets: every adjacent pair of the row is separated by a real space (the visible
+// spaces of the inline flow, and spaces between the flex and grid items, which render nothing).
+const rowText = (root) => textOf(byClass(root, 'timeline-row')[0])
+
+test('the copied text of every row variant reads with a space between its pieces', async (t) => {
+    const plain = await render(t, [make('process.started', { data: { cause: 'resume', hybrid: true } })])
+    assert.equal(rowText(plain), 'Fix the build p1 Process resumed (hybrid CLI) 14:32')
+    const rename = await render(t, [make('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })])
+    assert.equal(rowText(rename), 'Fix the build p1 Renamed Old one to New one automatic 14:32')
+    const badge = await render(t, [make('turn.ended', { data: { background_work: { subagents: 2, shells: 0, monitors: 0, scheduled_wakeup_at: null, goal: false } } })])
+    assert.match(rowText(badge), /^Fix the build p1 \S.* 2 subagents 14:32$/)
+    const author = await render(t, [make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 's1' })])
+    assert.match(rowText(author), /^Fix the build p1 \S.* by Fix the build \(CLI\) 14:32$/)
+    const error = await render(t, [make('process.ended', { reason: 'error', actor: 'agent', via: 'cli', actor_ref: 's1', data: { error: 'Boom\nat file.js:1' } })])
+    assert.match(rowText(error), /^Fix the build p1 \S.* by Fix the build \(CLI\) Boom Show more 14:32$/)
+    descendants(error, (n) => n.type === 'button')[0].props.onClick()
+    await flush()
+    assert.match(rowText(error), / Boom Show less at file\.js:1 14:32$/)
+    const following = await render(t, [make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }), make('turn.started')], { index: 1 })
+    assert.match(rowText(following), /^\S.* 14:32$/)
+    const instance = await render(t, [make('backend.started', { session_id: null, project_id: null, provider: null, actor: 'system', data: {} })])
+    assert.match(rowText(instance), /^\S.* 14:32$/)
+    // No double spaces anywhere, and nothing glued to the time.
+    for (const root of [plain, rename, badge, author, error, following, instance]) assert.doesNotMatch(rowText(root), / {2}|\S14:32/)
 })
