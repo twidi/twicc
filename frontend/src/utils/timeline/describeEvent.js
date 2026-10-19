@@ -8,7 +8,7 @@
 
 import { describeAuthor } from './authorLabel.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
-import { formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
+import { ESTIMATED_MARK, formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
 import { arrowPart, textPart, valuePart } from './parts.js'
 import { describeSettingsChange } from './settingsDiff.js'
 import { sessionMention } from './sessions.js'
@@ -234,7 +234,7 @@ function describeTime(event, context) {
     const clock = formatClock(ms, context.time)
     const caption = estimated ? 'Estimated: it happened at or before this time' : null
     return {
-        text: estimated ? `~${clock}` : clock,
+        text: estimated ? `${ESTIMATED_MARK}${clock}` : clock,
         estimated,
         caption,
         full: formatFullTime(ms, context.time),

@@ -25,6 +25,7 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
 import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
+import { timeColumnSizer } from '../../utils/timeline/eventTime'
 import { buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
@@ -121,7 +122,13 @@ const itemKey = (item) => item.key
 const topNavRef = ref(null)
 const bandRef = ref(null)
 const topHeight = ref(0)
-const topStyle = computed(() => ({ '--timeline-top-height': `${topHeight.value}px` }))
+// The widest times of the locale, for the time column of every row (TimelineEventRow.vue): computed once, with the
+// clock format of the rows (the context sets no `time` options, like this call).
+const TIME_COLUMN_SIZER = timeColumnSizer()
+const panelStyle = computed(() => ({
+    '--timeline-top-height': `${topHeight.value}px`,
+    '--timeline-time-sizer': TIME_COLUMN_SIZER,
+}))
 let topObserver = null
 
 function measureTop() {
@@ -226,10 +233,10 @@ watch(() => state.events.length, async () => {
 </script>
 
 <template>
-    <div class="timeline-panel" :style="topStyle">
+    <div class="timeline-panel" :style="panelStyle">
         <div v-if="view !== 'list'" class="timeline-state-area">
             <ProjectTabNavList v-if="compactHeight" :project-id="projectId" />
-            <StickyBand class="timeline-band">
+            <StickyBand>
                 <span class="timeline-band-label">Timeline</span>
             </StickyBand>
             <div v-if="view === 'loading'" class="timeline-state" role="status">
@@ -271,7 +278,7 @@ watch(() => state.events.length, async () => {
             >
                 <template #before>
                     <ProjectTabNavList v-if="compactHeight" ref="topNavRef" :project-id="projectId" class="timeline-top-nav" />
-                    <StickyBand ref="bandRef" class="timeline-band timeline-band--over-list">
+                    <StickyBand ref="bandRef" class="timeline-band--over-list">
                         <span class="timeline-band-label">Timeline</span>
                     </StickyBand>
                 </template>

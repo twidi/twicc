@@ -2,7 +2,10 @@
 process.env.TZ = 'Europe/Paris'
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
+
+import { cssPixels, declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 
 import { formatDaySeparatorLabel } from '../date.js'
 import { ROW_HEIGHT_ESTIMATES, buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from './rows.js'
@@ -188,10 +191,31 @@ test('a block head starts from a taller estimate (header line, top of the card);
     assert.equal(estimateRowHeight(single), ROW_HEIGHT_ESTIMATES.head + ROW_HEIGHT_ESTIMATES.blockEnd)
     assert.ok(ROW_HEIGHT_ESTIMATES.head > ROW_HEIGHT_ESTIMATES.event)
     assert.ok(ROW_HEIGHT_ESTIMATES.blockEnd > 0)
-    // Half of the 1rem gap on each side of the card (8px), the card's 1px border and its 0.5rem padding: the top of a
-    // block and its bottom take the same room, around a 1.75rem header line for the head.
-    assert.equal(ROW_HEIGHT_ESTIMATES.head - ROW_HEIGHT_ESTIMATES.event, 8 + 1 + 8 + 28)
-    assert.equal(ROW_HEIGHT_ESTIMATES.blockEnd, 8 + 1 + 8)
+})
+
+test('the block head and block end estimates are the sizes the row CSS declares', () => {
+    // Read from the rules of TimelineEventRow.vue, so a CSS change that leaves an estimate behind fails here. The Web
+    // Awesome space tokens are the default theme's (themes/default.css, --wa-space-scale: 1).
+    const row = readFileSync(new URL('../../components/timeline/TimelineEventRow.vue', import.meta.url), 'utf8')
+    const style = row.slice(row.indexOf('<style'))
+    const vars = new Map([['--wa-space-2xs', '0.25rem'], ['--wa-space-xs', '0.5rem'], ['--wa-space-s', '0.75rem'], ['--wa-space-m', '1rem']])
+    for (const [name, value] of declarationsOf(style, '.timeline-row')) if (name.startsWith('--')) vars.set(name, value)
+    const px = (selector, property) => {
+        const value = declarationsOf(style, selector).get(property)
+        assert.ok(value, `${selector} ${property}`)
+        return cssPixels(value, vars)
+    }
+    // The head: half of the block gap above the card, the card's top border and padding, the header line.
+    const headExtra = px('.timeline-row--head', 'padding-block-start')
+        + px('.timeline-row--head .timeline-row-card', 'border-block-start')
+        + px('.timeline-row--head .timeline-row-card', 'padding-block-start')
+        + px('.timeline-row-header', 'min-height')
+    assert.equal(ROW_HEIGHT_ESTIMATES.head - ROW_HEIGHT_ESTIMATES.event, headExtra)
+    // The end: the card's bottom padding and border, the other half of the block gap below it.
+    const endExtra = px('.timeline-row--last .timeline-row-card', 'padding-block-end')
+        + px('.timeline-row--last .timeline-row-card', 'border-block-end')
+        + px('.timeline-row--last', 'padding-block-end')
+    assert.equal(ROW_HEIGHT_ESTIMATES.blockEnd, endExtra)
 })
 
 test('the next page is requested when the visible range is within ten rows of the end', () => {

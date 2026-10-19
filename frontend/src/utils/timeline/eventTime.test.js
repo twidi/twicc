@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-    ARROW, compareNewestFirst, cursorOf, formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText,
+    ARROW, ESTIMATED_MARK, compareNewestFirst, cssStringOf, cursorOf, formatClock, formatFullTime, parseOccurredAt,
+    splitFirstLine, timeColumnSamples, timeColumnSizer, truncateText,
 } from './eventTime.js'
 
 const event = (occurred_at, id) => ({ occurred_at, id })
@@ -73,4 +74,25 @@ test('splitFirstLine separates the first line from the rest', () => {
 
 test('the arrow of the plain-text forms (tooltips) is one constant', () => {
     assert.equal(ARROW, ' → ')
+})
+
+test('the time column samples: one text per shape of the clock, with the estimated mark, in the locale', () => {
+    // A 24-hour locale: every time has the same shape (tabular digits), one sample.
+    assert.deepEqual(timeColumnSamples({ locale: 'en-GB', timeZone: 'UTC' }), ['~00:59'])
+    // A 12-hour locale: the morning and the afternoon marks, both sampled, so the sizer holds the wider of the two.
+    const twelve = timeColumnSamples({ locale: 'en-US', timeZone: 'UTC' })
+    assert.equal(twelve.length, 2)
+    assert.match(twelve[0], /^~12:59\sAM$/u)
+    assert.match(twelve[1], /^~12:59\sPM$/u)
+    assert.ok(twelve.every((text) => text.startsWith(ESTIMATED_MARK)))
+    // Other digits count as one shape too.
+    assert.equal(timeColumnSamples({ locale: 'ar-EG', timeZone: 'UTC' }).length, 2)
+})
+
+test('the time column sizer is a CSS string of the samples, one per line', () => {
+    assert.equal(timeColumnSizer({ locale: 'en-GB', timeZone: 'UTC' }), '"~00:59"')
+    const twelve = timeColumnSamples({ locale: 'en-US', timeZone: 'UTC' })
+    assert.equal(timeColumnSizer({ locale: 'en-US', timeZone: 'UTC' }), `"${twelve[0]}\\A ${twelve[1]}"`)
+    // Quotes and backslashes of a locale string cannot end the CSS string.
+    assert.equal(cssStringOf(['a"b\\c', 'd']), '"a\\"b\\\\c\\A d"')
 })

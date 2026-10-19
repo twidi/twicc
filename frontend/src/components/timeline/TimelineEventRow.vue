@@ -10,8 +10,9 @@
 //
 // A session block is a card with the look of the Orchestration tab's agent cards (the block-card tokens of
 // styles/surfaces.css), without their state border. The scroller renders one item per event row, so each
-// row draws its part of the card: the head row its top, every row its sides, the last row its bottom and
-// the gap to the next block. An instance row is no card: it is a plain line between the blocks.
+// row draws its part of the card: the head row its top, every row its sides, the last row its bottom. The gap
+// between two blocks is split, outside the card: half above the head row, half below the last row. An instance
+// row is no card: it is a plain line between the blocks.
 //
 // All the decisions (wording, icon, severity, links, time) are made by the pure modules of
 // utils/timeline/; this component only shows them. Every string from data is rendered as TEXT with
@@ -52,7 +53,6 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
         class="timeline-row"
         :class="[`timeline-row--${vm.severity}`, {
             'timeline-row--block': !row.instance,
-            'timeline-row--indented': row.indented,
             'timeline-row--head': row.head,
             'timeline-row--last': row.last,
             'timeline-row--instance': row.instance,
@@ -253,6 +253,9 @@ a.timeline-project {
     padding-inline: 0.5em;
     /* A little more room than the real space before it. */
     margin-inline-start: 0.25em;
+    /* Web Awesome makes the tag host unselectable: a copied row would lose its source. The page rule wins over :host. */
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 .timeline-author {
@@ -265,6 +268,9 @@ a.timeline-project {
     align-self: baseline;
     /* Tighter than Web Awesome's 0.375em, like the tag. */
     padding-block: 0.1em;
+    /* Selectable, like the tag: a copied row keeps its background work. */
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 .timeline-error {
@@ -310,15 +316,25 @@ a.timeline-project {
     white-space: pre-wrap;
 }
 
-/* At least the width of "~00:00", so the text column ends at the same place on every line. */
 .timeline-time {
     justify-self: end;
-    min-width: 6ch;
     text-align: end;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
+}
+
+/* The width of the widest time of the locale on every line ("~23:59", "~11:59 PM"), so the text column ends at the
+   same place: an invisible line of no height holding the samples the panel sets (eventTime.js timeColumnSizer).
+   After the text, so the time keeps the baseline of its text. Generated content: never copied nor announced. */
+.timeline-time::after {
+    content: var(--timeline-time-sizer, "");
+    display: block;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+    white-space: pre;
 }
 
 .timeline-time--estimated {

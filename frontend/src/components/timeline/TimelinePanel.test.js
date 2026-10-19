@@ -7,6 +7,7 @@ import { compileComponent, descendants, flush, makeRenderer, virtualScroller } f
 import { createFeedState, createTimelineFeed } from '../../utils/timeline/feed.js'
 import * as liveEventsModule from '../../utils/timeline/liveEvents.js'
 import * as providerLabels from '../../utils/timeline/providerLabels.js'
+import * as eventTimeModule from '../../utils/timeline/eventTime.js'
 import * as rowsModule from '../../utils/timeline/rows.js'
 import * as scopeModule from '../../utils/timeline/scope.js'
 import * as scrollKeeperModule from '../../utils/timeline/scrollKeeper.js'
@@ -123,6 +124,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../../providers': { getProviderHelpers: () => null },
         '../../utils/compactHeight': { compactHeight },
         '../../utils/timeline/rows': rowsModule,
+        '../../utils/timeline/eventTime': eventTimeModule,
         '../../utils/timeline/liveEvents': liveEventsModule,
         '../../utils/timeline/scrollKeeper': scrollKeeperModule,
         '../../utils/timeline/providerLabels': providerLabels,
@@ -177,7 +179,7 @@ const rowIds = (root) => descendants(root, (n) => n.type === 'article').map((n) 
 
 test('the band is the sticky band of Stats (StickyBand) and carries the label "Timeline" and nothing else', async (t) => {
     const root = await mount(t, fixture())
-    const [band] = byClass(root, 'timeline-band')
+    const [band] = byClass(root, 'sticky-band')
     assert.match(String(band.props.class), /\bsticky-band\b/)
     assert.match(String(band.props.class), /\bglass-sticky\b/)
     assert.equal(textOf(band), 'Timeline')
@@ -409,18 +411,18 @@ test('a new scroller (the list came back) is seeded again, and a row that left t
 })
 
 /** The parts of the page in document order: navigation list, band, top room, day separators, event rows. */
-const structure = (root) => descendants(root, (n) => n.type === 'nav' || ['timeline-band', 'timeline-top-room', 'day', 'timeline-state'].some((name) => String(n.props.class ?? '').split(' ').includes(name)) || n.type === 'article')
-    .map((n) => (n.type === 'nav' || n.type === 'article' ? n.type : ['timeline-band', 'timeline-top-room', 'day', 'timeline-state'].find((name) => String(n.props.class).split(' ').includes(name))))
+const structure = (root) => descendants(root, (n) => n.type === 'nav' || ['sticky-band', 'timeline-top-room', 'day', 'timeline-state'].some((name) => String(n.props.class ?? '').split(' ').includes(name)) || n.type === 'article')
+    .map((n) => (n.type === 'nav' || n.type === 'article' ? n.type : ['sticky-band', 'timeline-top-room', 'day', 'timeline-state'].find((name) => String(n.props.class).split(' ').includes(name))))
 
 test('the Stats structure in the list: the navigation list (compact height), then the band, both inside the scroller, then the rows', async (t) => {
     const compact = await mount(t, fixture({ compact: true }))
-    assert.deepEqual(structure(compact), ['nav', 'timeline-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
+    assert.deepEqual(structure(compact), ['nav', 'sticky-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
     const [scroller] = byClass(compact, 'timeline-scroller')
-    assert.equal(byClass(scroller, 'timeline-band').length, 1, 'the band sticks inside the scroll container of the list')
+    assert.equal(byClass(scroller, 'sticky-band').length, 1, 'the band sticks inside the scroll container of the list')
     assert.equal(byClass(scroller, 'project-tab-nav').length, 1, 'the navigation list scrolls away with the list')
     assert.equal(byClass(compact, 'project-tab-nav-divider').length, 1)
     const normal = await mount(t, fixture({ compact: false }))
-    assert.deepEqual(structure(normal), ['timeline-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
+    assert.deepEqual(structure(normal), ['sticky-band', 'timeline-top-room', 'day', 'article', 'article', 'article'])
 })
 
 test('the top room is the measured height of the navigation list and the band together', async (t) => {
@@ -429,6 +431,11 @@ test('the top room is the measured height of the navigation list and the band to
     assert.equal(compact.children[0].props.style['--timeline-top-height'], '1200px')
     const normal = await mount(t, fixture({ compact: false }))
     assert.equal(normal.children[0].props.style['--timeline-top-height'], '600px')
+})
+
+test('the panel sets the time column sizer once, from the clock format of the rows', async (t) => {
+    const root = await mount(t, fixture())
+    assert.equal(root.children[0].props.style['--timeline-time-sizer'], eventTimeModule.timeColumnSizer())
 })
 
 test('compact-height mode: every state (loading, empty, not found, error) carries the navigation list and its divider above the band; normal mode none', async (t) => {
@@ -444,8 +451,8 @@ test('compact-height mode: every state (loading, empty, not found, error) carrie
     assert.deepEqual(navigation(await mount(t, broken)), [1, 1])
     const normal = await mount(t, fixture({ compact: false, projectsLoaded: false }), 'p1')
     assert.deepEqual(navigation(normal), [0, 0])
-    assert.deepEqual(structure(loading), ['nav', 'timeline-band', 'timeline-state'])
-    assert.deepEqual(structure(normal), ['timeline-band', 'timeline-state'])
+    assert.deepEqual(structure(loading), ['nav', 'sticky-band', 'timeline-state'])
+    assert.deepEqual(structure(normal), ['sticky-band', 'timeline-state'])
 })
 
 test('no timeline module imports the router statically (circular imports break the hot reload)', () => {
@@ -461,7 +468,9 @@ test('no timeline module imports the router statically (circular imports break t
 
 test('source pins: the band and the navigation list take no room over the list, the router is not imported, the bottom pin is off', () => {
     const source = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
-    assert.match(source, /<template #before>\s*<ProjectTabNavList v-if="compactHeight" ref="topNavRef"[^>]*\/>\s*<StickyBand ref="bandRef" class="timeline-band timeline-band--over-list">/)
+    assert.match(source, /<template #before>\s*<ProjectTabNavList v-if="compactHeight" ref="topNavRef"[^>]*\/>\s*<StickyBand ref="bandRef" class="timeline-band--over-list">/)
+    // The band is found by StickyBand's own class: no Timeline class without a rule of its own.
+    assert.ok(!/class="[^"]*\btimeline-band(?![-\w])/.test(source), 'no timeline-band class')
     assert.match(source, /\.timeline-band--over-list \{\s*margin-block-end: calc\(-1 \* var\(--timeline-top-height\)\);/)
     assert.match(source, /\.timeline-top-room \{\s*height: var\(--timeline-top-height\);/)
     assert.match(source, /\.timeline-top-nav \{\s*position: relative;\s*z-index: 1;/)

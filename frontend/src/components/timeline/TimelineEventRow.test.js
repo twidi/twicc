@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as Vue from 'vue'
 
+import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
 import * as describeEventModule from '../../utils/timeline/describeEvent.js'
 import * as partsModule from '../../utils/timeline/parts.js'
@@ -124,7 +125,7 @@ test('the mentions inside the wording and the author label keep the plain varian
 
 test('a following row has no header, and its event line has the same indent as the head one', async (t) => {
     const root = await render(t, [make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }), make('turn.started')], { index: 1 })
-    assert.match(classesOf(byClass(root, 'timeline-row')[0]), /timeline-row--indented/)
+    assert.doesNotMatch(classesOf(byClass(root, 'timeline-row')[0]), /timeline-row--indented/, 'no class without a rule')
     assert.equal(byClass(root, 'timeline-row-header').length, 0)
     assert.equal(byClass(root, 'timeline-session').length, 0)
     assert.match(classesOf(byClass(root, 'timeline-event-line')[0]), /timeline-event-line--indented/)
@@ -266,15 +267,6 @@ test('an unknown kind does not break the row', async (t) => {
     assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'plan.approved')
 })
 
-/** The declarations of the first `selector { ... }` rule of a style block, as a property -> value map. */
-function declarationsOf(source, selector) {
-    const start = source.indexOf(`\n${selector} {`)
-    assert.notEqual(start, -1, `rule ${selector}`)
-    const body = source.slice(source.indexOf('{', start) + 1, source.indexOf('}', start))
-    return new Map(body.replace(/\/\*[\s\S]*?\*\//g, '').split(';').map((d) => d.trim()).filter(Boolean)
-        .map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))
-}
-
 test('the layout CSS: a fixed time column that never wraps, a wrapping text column, a truncating header title', () => {
     const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
     const line = declarationsOf(row, '.timeline-event-line')
@@ -284,6 +276,12 @@ test('the layout CSS: a fixed time column that never wraps, a wrapping text colu
     const time = declarationsOf(row, '.timeline-time')
     assert.equal(time.get('white-space'), 'nowrap')
     assert.equal(time.get('font-variant-numeric'), 'tabular-nums')
+    // The width of the locale's widest time on every line (the sizer the panel sets), so the text column ends at the
+    // same place: an invisible line of no height after the text (the time keeps the baseline of its text).
+    assert.ok(!time.has('min-width'), 'no fixed width in characters: a 12-hour time is wider')
+    const sizer = declarationsOf(row, '.timeline-time::after')
+    assert.deepEqual(['content', 'display', 'height', 'overflow', 'visibility', 'white-space'].map((name) => sizer.get(name)),
+        ['var(--timeline-time-sizer, "")', 'block', '0', 'hidden', 'hidden', 'pre'])
     assert.equal(declarationsOf(row, '.timeline-event-line--indented').get('padding-inline-start'),
         'calc(var(--timeline-provider-width) + var(--timeline-provider-gap))')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
@@ -363,20 +361,23 @@ test('the block-card look is declared once and the Orchestration cards read it',
     assert.ok(!orchestration.includes('.wa-dark .orchestration-panel'), 'no second definition of the look')
 })
 
-test('a rename: the two titles are values of their own, the arrow an icon with a text alternative, the source tag at the end of the wording', async (t) => {
+test('a rename: the two titles are values of their own, the arrow an icon with a hidden text, the source tag at the end of the wording', async (t) => {
     const root = await render(t, [make('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })])
     const [wording] = byClass(root, 'timeline-wording')
     assert.ok(!textOf(wording).includes('"') && !textOf(wording).includes('->'), 'no raw quotes, no ASCII arrow')
     const [arrow] = descendants(wording, (n) => n.type === 'wa-icon')
-    assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right-long', 'to', 'timeline-arrow'])
-    // Real spaces in the text, not margins: a copy or a screen reader gets separate words.
-    assert.equal(textOf(wording).replace(/\s+/g, ' ').trim(), 'Renamed Old one New one automatic')
+    // No label: Web Awesome hides an unlabelled icon from assistive tech, the hidden text says "to" once.
+    assert.deepEqual([arrow.props.name, arrow.props.label, classesOf(arrow)], ['arrow-right-long', undefined, 'timeline-arrow'])
+    assert.deepEqual(byClass(wording, 'timeline-arrow-text').map(textOf), ['to'])
+    // The copied text of the row is complete: real spaces (a no-break one before the arrow), the word of the arrow,
+    // the tag. What a copy gets is the text content: the tag text is selectable (see the CSS test).
+    assert.equal(textOf(byClass(root, 'timeline-row-main')[0]), 'Renamed Old one\u00A0to New one automatic')
     // The order of the flow: "Renamed", old, arrow, new, then the tag, all inside the wording; the last word and the
     // tag are glued in one box, so they wrap together.
     const flow = wording.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
     const label = (n) => (n.type === 'wa-icon' ? 'arrow' : n.type === 'wa-tag' ? `tag:${textOf(n)}` : textOf(n))
     assert.deepEqual(flow.map((n) => (classesOf(n) === 'timeline-tag-glue' ? n.children.filter((c) => c.type !== '#comment').map(label) : label(n))),
-        ['Renamed ', 'Old one', 'arrow', 'New ', ['one', ' ', 'tag:automatic']])
+        ['Renamed ', 'Old one', 'arrow', 'to', 'New ', ['one', ' ', 'tag:automatic']])
     assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Old one', 'New ', 'one'], 'the glued word keeps the value style')
     const [tag] = descendants(wording, (n) => n.type === 'wa-tag')
     assert.deepEqual([tag.props.size, tag.props.variant, classesOf(tag)], ['small', 'neutral', 'timeline-tag'])
@@ -391,9 +392,20 @@ test('a first title and a settings change use the same parts: the value, the sam
     const settings = await render(t, [make('settings.changed', { data: { changes: { effort: ['low', 'high'] } } })])
     const [settingsWording] = byClass(settings, 'timeline-wording')
     const [arrow] = descendants(settingsWording, (n) => n.type === 'wa-icon')
-    assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right-long', 'to'])
+    assert.deepEqual([arrow.props.name, arrow.props.label], ['arrow-right-long', undefined])
     assert.deepEqual(byClass(settingsWording, 'timeline-value').map(textOf), ['low', 'high'], 'the setting values are values, like titles')
-    assert.equal(textOf(settingsWording).replace(/\s+/g, ' ').trim(), 'effort: low high')
+    assert.equal(textOf(settingsWording), 'effort: low\u00A0to high')
+})
+
+test('the arrow never starts a line alone: a no-break space glues it to the old value, a normal space follows its word', async (t) => {
+    const root = await render(t, [make('title.changed', { data: { source: 'user', old: 'Old', new: 'New' } })])
+    const [wording] = byClass(root, 'timeline-wording')
+    // The empty text nodes are the anchors of the arrow's fragment.
+    const nodes = wording.children.filter((n) => n.type !== '#comment' && !(n.type === '#text' && n.text === ''))
+    const at = nodes.findIndex((n) => n.type === 'wa-icon')
+    const codePoints = (text) => [...text].map((c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(' ')
+    assert.deepEqual(nodes.slice(at - 2, at + 4).map((n) => (n.type === '#text' ? `text:${codePoints(n.text)}` : textOf(n) || n.type)),
+        ['Old', 'text:U+00A0', 'wa-icon', 'to', 'text:U+0020', 'New'])
 })
 
 test('the wording CSS: a value is set apart from the prose, the arrow sits on the text, the tag flows inline', () => {
@@ -408,8 +420,20 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
     assert.equal(arrow.get('opacity'), '0.6')
     assert.equal(arrow.get('vertical-align'), '-0.125em')
     assert.equal(arrow.get('margin-inline'), '0.2em', 'a little more room than the spaces alone')
-    // Real spaces stay around the arrow and before the tag: a copy or a screen reader gets separate words.
-    assert.match(part, /\{\{ ' ' \}\}<wa-icon name="arrow-right-long"[^>]*><\/wa-icon>\{\{ ' ' \}\}/)
+    // Real spaces stay around the arrow and before the tag: a copy or a screen reader gets separate words. A no-break
+    // space before the arrow (never alone at the start of a line), its word hidden from the eye after it.
+    assert.match(part, /\{\{ '\\u00A0' \}\}<wa-icon name="arrow-right-long" auto-width class="timeline-arrow"><\/wa-icon><span class="timeline-arrow-text">\{\{ part\.label \}\}<\/span>\{\{ ' ' \}\}/)
+    // The word is hidden in the flow, not taken out of it (no position): a copy reads it inline, without line breaks.
+    const arrowText = declarationsOf(partStyle, '.timeline-arrow-text')
+    assert.deepEqual(['display', 'width', 'height', 'overflow', 'clip-path', 'white-space'].map((name) => arrowText.get(name)),
+        ['inline-block', '1px', '1px', 'hidden', 'inset(50%)', 'nowrap'])
+    assert.ok(!arrowText.has('position'))
+    // Web Awesome sets `user-select: none` on the tag and badge hosts; the page rule wins over `:host`, so a copy
+    // keeps the source and the background work.
+    for (const selector of ['.timeline-tag', '.timeline-badge']) {
+        const rule = declarationsOf(style, selector)
+        assert.deepEqual([rule.get('-webkit-user-select'), rule.get('user-select')], ['text', 'text'], selector)
+    }
     assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/>\{\{ ' ' \}\}<wa-tag /)
     const tag = declarationsOf(style, '.timeline-tag')
     assert.equal(tag.get('vertical-align'), 'baseline')

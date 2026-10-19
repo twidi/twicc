@@ -56,6 +56,50 @@ export function formatClock(ms, { locale, timeZone } = {}) {
     return new Date(ms).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', timeZone })
 }
 
+/** The mark before an estimated time ("~14:32"). */
+export const ESTIMATED_MARK = '~'
+
+/**
+ * The texts the time column must have room for, in the locale of `formatClock`: one per shape of the clock, marked
+ * as estimated (the widest form). The digits are tabular, so two times of one shape have the same width: a 24-hour
+ * locale has one shape ("~00:59"), a 12-hour one has two ("~12:59 AM", "~12:59 PM"), whichever of the two is wider.
+ *
+ * @param {{locale?: string, timeZone?: string}} [options] - The options the rows format their times with.
+ * @returns {Array<string>}
+ */
+export function timeColumnSamples(options = {}) {
+    // 24 consecutive hours cover every local hour, whatever the time zone.
+    const start = Date.UTC(2026, 0, 1, 0, 59)
+    const samples = new Map()
+    for (let hour = 0; hour < 24; hour++) {
+        const text = `${ESTIMATED_MARK}${formatClock(start + hour * 3_600_000, options)}`
+        const shape = text.replace(/\p{Nd}/gu, '0')
+        if (!samples.has(shape)) samples.set(shape, text)
+    }
+    return [...samples.values()]
+}
+
+/**
+ * A CSS string of `lines`, one per line (`\A`), for a `content` declaration.
+ *
+ * @param {Array<string>} lines
+ * @returns {string}
+ */
+export function cssStringOf(lines) {
+    return `"${lines.map((line) => line.replace(/["\\]/g, '\\$&')).join('\\A ')}"`
+}
+
+/**
+ * The time column sizer: the CSS string (custom property `--timeline-time-sizer`) of the time column samples. The
+ * row's time holds an invisible line of it, so the column has the width of the widest time on every line.
+ *
+ * @param {{locale?: string, timeZone?: string}} [options]
+ * @returns {string}
+ */
+export function timeColumnSizer(options) {
+    return cssStringOf(timeColumnSamples(options))
+}
+
 /**
  * Full date and time with seconds in the browser locale (the tooltip of the time).
  *

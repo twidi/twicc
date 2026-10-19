@@ -17,6 +17,7 @@ import { groupHeadIdentity } from './sessions.js'
  *     border) and the other half of the gap (0.5rem).
  *   - `band`, `nav`: the room the top row of the list keeps for the "Timeline" band and, in compact-height
  *     mode, for the navigation list above it (both are drawn over that room, see TimelinePanel.vue).
+ * rows.test.js reads `head - event` and `blockEnd` from the rules of TimelineEventRow.vue: change them together.
  */
 export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 79, blockEnd: 17, band: 48, nav: 96 }
 
