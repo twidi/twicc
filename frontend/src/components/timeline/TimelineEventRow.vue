@@ -61,8 +61,10 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
     >
         <div class="timeline-row-card">
         <div v-if="identity" class="timeline-row-header">
-            <!-- Real spaces between the pieces of the row, so a copied row reads with separate words. Between flex or
-                 grid items (the title and the project, the main column and the time) they render nothing. -->
+            <!-- Real spaces between the pieces of the row. Inside the main column (an inline flow) they are rendered and
+                 a copy gets them. Between flex or grid items (the title and the project, the header and the event line,
+                 the main column and the time) they render nothing and a copy puts a line break there anyway: they only
+                 keep the text content of the row readable. -->
             <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" /><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
                 A plain jump to that project: the router guard keeps the current workspace when the project belongs to it.
                 --><RouterLink
@@ -254,9 +256,12 @@ a.timeline-project {
     user-select: text;
 }
 
+/* One box that wraps as a whole, like the flex item it was (an inline block is still copied inline). With the real
+   space before it, the old 12px gap. */
 .timeline-author {
-    /* With the real space before it, about the room of a small spacing step. */
-    margin-inline-start: var(--wa-space-2xs);
+    display: inline-block;
+    max-width: 100%;
+    margin-inline-start: var(--wa-space-xs);
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
 }
@@ -265,7 +270,8 @@ a.timeline-project {
    Awesome puts it on `middle`). */
 .timeline-badge {
     vertical-align: baseline;
-    margin-inline-start: var(--wa-space-2xs);
+    /* With the real space before it, the old 12px gap. */
+    margin-inline-start: var(--wa-space-xs);
     /* Tighter than Web Awesome's 0.375em, like the tag. */
     padding-block: 0.1em;
     /* Selectable, like the tag: a copied row keeps its background work. */
@@ -311,8 +317,9 @@ a.timeline-project {
     color: var(--wa-color-danger-60);
 }
 
+/* The old 8px gap under the first line (the error is a block, it has no flex gap). */
 .timeline-error-rest {
-    margin: 0;
+    margin: var(--wa-space-xs) 0 0;
     white-space: pre-wrap;
 }
 

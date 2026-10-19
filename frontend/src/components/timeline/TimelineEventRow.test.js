@@ -307,10 +307,17 @@ test('the main column CSS: one inline flow, so its real spaces are rendered and 
     const main = declarationsOf(style, '.timeline-row-main')
     assert.ok(!main.has('display') && !main.has('column-gap'), 'no flex items: a copy would drop the spaces between them')
     assert.equal(main.get('overflow-wrap'), 'anywhere')
-    for (const selector of ['.timeline-badge', '.timeline-author', '.timeline-row__expand']) {
-        assert.equal(declarationsOf(style, selector).get('margin-inline-start'), 'var(--wa-space-2xs)', `${selector}: a little room after the real space`)
+    // The old flex gaps, with the real space (about 4px) counted: 12px before the badge and the author label, 8px
+    // before the error toggle.
+    for (const [selector, margin] of [['.timeline-badge', 'var(--wa-space-xs)'], ['.timeline-author', 'var(--wa-space-xs)'], ['.timeline-row__expand', 'var(--wa-space-2xs)']]) {
+        assert.equal(declarationsOf(style, selector).get('margin-inline-start'), margin, selector)
     }
+    // The author label wraps as one box, as a flex item did (an inline block is still copied inline).
+    const author = declarationsOf(style, '.timeline-author')
+    assert.deepEqual([author.get('display'), author.get('max-width')], ['inline-block', '100%'])
     assert.equal(declarationsOf(style, '.timeline-error').get('display'), 'block')
+    // The expanded rest keeps the old 8px gap under the first line (the error is a block now, no flex gap).
+    assert.match(style, /\n\.timeline-error-rest \{\s*margin: var\(--wa-space-xs\) 0 0;/)
     // The native <button> styles of Web Awesome (inline-flex, form-control height) are reset to an inline box of text.
     const toggle = declarationsOf(style, '.timeline-row__expand')
     assert.deepEqual([toggle.get('display'), toggle.get('vertical-align'), toggle.get('height')], ['inline-block', 'baseline', 'auto'])
