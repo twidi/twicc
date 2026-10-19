@@ -209,12 +209,9 @@ addButton('Markdown theme and tools', themeAndTools)
 addButton('Begin document visibility', beginVisibilityProbe)
 addButton('Finish document visibility', finishVisibilityProbe)
 try {
-    const query = new URLSearchParams(location.search)
-    if (query.has('baseline') || query.has('publicationRateBaseline')) throw new Error('Production conversation entry rejects baseline adapters')
     await import('./invisibleStreaming.js')
     fixture = window.invisibleStreamingFixture
     await waitForMarkdownCondition(() => document.querySelector('#fixture-status')?.textContent === 'Fixture ready')
-    requireCheck(!fixture.baseline && !fixture.publicationRateBaseline, 'Conversation must use production current components')
     ready = true
     status.textContent = 'Markdown conversation ready'
     buttons.forEach(button => { button.disabled = false })

@@ -9,7 +9,7 @@ import { reasoningCompletion, runStreamRetirementScenario } from './streamRetire
 
 const quarantine = installImportedScrollerQuarantine(document)
 const query = new URLSearchParams(location.search)
-query.set('provider', 'codex'); query.delete('baseline'); query.delete('publicationRateBaseline')
+query.set('provider', 'codex')
 history.replaceState(null, '', `${location.pathname}?${query}`)
 const reports = [], requests = []
 const controls = document.createElement('section')
@@ -267,7 +267,7 @@ try {
     locked = startup.requiresReload
     check(startup.status === 'passed', startup.error)
     fixture = window.invisibleStreamingFixture
-    check(fixture.provider === 'codex' && !fixture.baseline && !fixture.publicationRateBaseline, 'Current Codex production fixture is required')
+    check(fixture.provider === 'codex', 'Codex production fixture is required')
     installReads()
     fixture.store.$onAction(({ name, args, after }) => {
         if (name !== '_retireStreamingBlocks' || args[0] !== fixture.ids.mainId) return

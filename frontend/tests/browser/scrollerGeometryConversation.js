@@ -225,8 +225,6 @@ add('Filtered session pagination', async () => {
     } finally { app.unmount(); host.remove() }
 })
 try {
-    const query = new URLSearchParams(location.search)
-    if (query.has('baseline') || query.has('publicationRateBaseline')) throw new Error('Production conversation entry rejects baseline adapters')
     busy = true
     activeAction = { name: 'startup', startedAt: performance.now(), deadlineMs: actionDeadlineMs }
     activeAction.deadlineAt = activeAction.startedAt + actionDeadlineMs
@@ -236,7 +234,6 @@ try {
         quarantineImportedControls()
         const loaded = window.invisibleStreamingFixture
         await waitFor(() => document.querySelector('#fixture-status')?.textContent === 'Fixture ready')
-        check(!loaded.baseline && !loaded.publicationRateBaseline, 'Production current components required')
         return loaded
     }, { timeoutMs: actionDeadlineMs })
     if (startup.status !== 'passed') {
