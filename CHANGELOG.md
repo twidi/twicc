@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace.
 - **Scrollable titles** — On touch screens, swipe a truncated session title or artifact name to read the rest.
 
 ### Changed
