@@ -14,9 +14,11 @@
 //   * The PAGINATION CURSOR is the last row of the last fetched page, never the tail after live inserts.
 //   * Fetched rows are INSERTED by (occurred_at, id) descending. A live row older than the loaded tail is
 //     not inserted while `has_more` is true: the page that reaches it brings it.
-//   * A change of the project-id SET discards list, cursors and queue; a response of an older set is ignored.
+//   * A change of the project-id SET or of the QUERY (the filters, `filters.js` `toQuery`) discards list,
+//     cursors and queue; a response of an older set or query is ignored. Every request carries the query.
 
 import { compareNewestFirst, cursorOf } from './eventTime.js'
+import { queryKey } from './filters.js'
 
 /**
  * @typedef {Object} FeedState
@@ -46,17 +48,17 @@ export function createFeedState() {
  * @param {string|null} [params.before] - `<occurred_at>,<id>`.
  * @param {number|null} [params.afterId]
  * @param {number|null} [params.limit]
- * @param {string|null} [params.provider]
+ * @param {Object<string, string>} [params.query] - The filter parameters (`toQuery`), appended after `project_ids`.
  * @returns {string}
  */
-export function buildTimelineUrl({ projectIds = [], before = null, afterId = null, limit = null, provider = null } = {}) {
-    const query = new URLSearchParams()
-    if (projectIds.length) query.set('project_ids', projectIds.join(','))
-    if (provider) query.set('provider', provider)
-    if (limit !== null) query.set('limit', String(limit))
-    if (before) query.set('before', before)
-    if (afterId !== null) query.set('after_id', String(afterId))
-    const text = query.toString()
+export function buildTimelineUrl({ projectIds = [], before = null, afterId = null, limit = null, query = {} } = {}) {
+    const params = new URLSearchParams()
+    if (projectIds.length) params.set('project_ids', projectIds.join(','))
+    for (const [key, value] of Object.entries(query)) params.set(key, value)
+    if (limit !== null) params.set('limit', String(limit))
+    if (before) params.set('before', before)
+    if (afterId !== null) params.set('after_id', String(afterId))
+    const text = params.toString()
     return `/api/timeline/${text ? `?${text}` : ''}`
 }
 
@@ -87,9 +89,14 @@ function scopeKeyOf(projectIds) {
     return projectIds === null ? null : [...projectIds].sort().join('\u0000')
 }
 
+/** The key of a scope and its query: equal for the same project-id set and an equal query. */
+function feedKeyOf(projectIds, query) {
+    return projectIds === null ? null : `${scopeKeyOf(projectIds)}\u0001${queryKey(query)}`
+}
+
 /**
  * @param {Object} options
- * @param {(params: {projectIds: string[], before: (string|null), afterId: (number|null)}) => Promise<Object>} options.fetchPage
+ * @param {(params: {projectIds: string[], query: Object<string, string>, before: (string|null), afterId: (number|null)}) => Promise<Object>} options.fetchPage
  *   Resolves with the response body of `GET /api/timeline/`; rejects on any failure.
  * @param {FeedState} [options.state]
  * @param {(error: *) => void} [options.onLiveError] - A failed `after_id` fetch is silent: the next signal retries.
@@ -99,6 +106,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
     let chain = Promise.resolve()
     let disposed = false
     let scope = null // string[] (empty = global) or null (nothing to load)
+    let query = {} // the filter parameters of the current generation
     let scopeKey
     let loadPending = false // a first page or a `before` page is queued or running
     let liveQueued = false
@@ -132,7 +140,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         state.loadError = null
         let body
         try {
-            body = await fetchPage({ projectIds: [...scope], before: null, afterId: null })
+            body = await fetchPage({ projectIds: [...scope], query: { ...query }, before: null, afterId: null })
         } catch (error) {
             if (stale(gen)) return
             state.status = 'error'
@@ -170,7 +178,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         state.loadError = null
         let body
         try {
-            body = await fetchPage({ projectIds: [...scope], before: state.pageCursor, afterId: null })
+            body = await fetchPage({ projectIds: [...scope], query: { ...query }, before: state.pageCursor, afterId: null })
         } catch (error) {
             if (stale(gen)) return
             state.loadingMore = false
@@ -203,7 +211,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (!info.force && !(info.latest !== null && info.latest > cursor)) return
         let body
         try {
-            body = await fetchPage({ projectIds: [...scope], before: null, afterId: cursor })
+            body = await fetchPage({ projectIds: [...scope], query: { ...query }, before: null, afterId: cursor })
         } catch (error) {
             if (!stale(gen)) onLiveError(error)
             return
@@ -231,12 +239,13 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         enqueue(runLive)
     }
 
-    function setScope(projectIds) {
+    function setScope(projectIds, nextQuery = {}) {
         if (disposed) return
-        const key = scopeKeyOf(projectIds)
+        const key = feedKeyOf(projectIds, nextQuery)
         if (key === scopeKey) return
         scopeKey = key
         scope = projectIds === null ? null : [...projectIds]
+        query = { ...nextQuery }
         generation += 1
         chain = Promise.resolve()
         reset()
@@ -294,11 +303,13 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
     return {
         state,
         /**
-         * Point the feed at a project-id set. `[]` is the global scope, `null` means "nothing to load yet or at
-         * all" (projects not loaded, empty workspace, unknown project): no request is sent. The SET is compared,
-         * not the order: an unchanged set keeps everything.
+         * Point the feed at a project-id set and a filter query. `[]` is the global scope, `null` means "nothing
+         * to load yet or at all" (projects not loaded, empty workspace, unknown project): no request is sent,
+         * whatever the query. The SET is compared, not the order, and the query by `queryKey`, not its key
+         * order: an unchanged set with an equal query keeps everything. Any other change reloads the first page.
          *
          * @param {string[]|null} projectIds
+         * @param {Object<string, string>} [query] - The `toQuery` parameters every request of this scope carries.
          */
         setScope,
         /** Ask for the next page. A no-op while a load is pending, after a failure (use `retry`) or at the end. */

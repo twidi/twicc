@@ -9,11 +9,12 @@ import { apiFetch } from '../utils/api'
 import { buildTimelineUrl, createFeedState, createTimelineFeed } from '../utils/timeline/feed'
 
 /**
- * @param {{projectIds: string[], before: (string|null), afterId: (number|null)}} params
+ * @param {{projectIds: string[], query: Object<string, string>, before: (string|null), afterId: (number|null)}} params
+ *   `query`: the filter parameters (`utils/timeline/filters.js` `toQuery`).
  * @returns {Promise<Object>} The response body of `GET /api/timeline/`.
  */
-export async function fetchTimelinePage({ projectIds, before, afterId }) {
-    const response = await apiFetch(buildTimelineUrl({ projectIds, before, afterId }))
+export async function fetchTimelinePage({ projectIds, query, before, afterId }) {
+    const response = await apiFetch(buildTimelineUrl({ projectIds, query, before, afterId }))
     if (!response.ok) throw new Error(`Timeline request failed (${response.status})`)
     return response.json()
 }

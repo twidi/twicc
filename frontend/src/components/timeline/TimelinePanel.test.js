@@ -189,7 +189,7 @@ test('the band is the sticky band of Stats (StickyBand) and carries the label "T
 test('the global page loads the feed and renders a day separator then the events newest first', async (t) => {
     const f = fixture()
     const root = await mount(t, f)
-    assert.deepEqual(f.calls, [{ projectIds: [], before: null, afterId: null }])
+    assert.deepEqual(f.calls, [{ projectIds: [], query: {}, before: null, afterId: null }])
     assert.equal(byClass(root, 'day').length, 1)
     assert.deepEqual(rowIds(root), ['event-3', 'event-2', 'event-1'])
 })
@@ -203,7 +203,7 @@ test('while the projects are not loaded the page shows the loading state and sen
     await flush()
     await new Promise((resolve) => setTimeout(resolve, 5))
     await flush()
-    assert.deepEqual(f.calls, [{ projectIds: ['p1'], before: null, afterId: null }])
+    assert.deepEqual(f.calls, [{ projectIds: ['p1'], query: {}, before: null, afterId: null }])
     assert.equal(rowIds(root).length, 3)
 })
 

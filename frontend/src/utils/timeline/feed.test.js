@@ -23,16 +23,18 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     const calls = []
     const held = []
     let holding = false
-    // Instance events (no session, no project) are in every scope, like the endpoint.
+    // Instance events (no session, no project) are in every scope, like the endpoint. Of the filters, only the
+    // session one is modelled: it is enough to tell the answers of two queries apart.
     const inScope = (e, projectIds) => !projectIds.length || e.project_id === null || projectIds.includes(e.project_id)
-    function compute({ projectIds, before, afterId }) {
+    const matches = (e, query = {}) => !query.session || e.session_id === query.session
+    function compute({ projectIds, query, before, afterId }) {
         const latest_id = table.length ? Math.max(...table.map((e) => e.id)) : null
         const sessions = { s1: { title: `T${++counter}`, project_id: 'p1', provider: 'codex', hidden: false, archived: false } }
         if (afterId !== null) {
-            const rows = table.filter((e) => e.id > afterId && inScope(e, projectIds)).sort((a, b) => a.id - b.id)
+            const rows = table.filter((e) => e.id > afterId && inScope(e, projectIds) && matches(e, query)).sort((a, b) => a.id - b.id)
             return { events: rows.slice(0, 500), has_more: false, truncated: rows.length > 500, latest_id, sessions }
         }
-        let rows = table.filter((e) => inScope(e, projectIds)).sort(compareNewestFirst)
+        let rows = table.filter((e) => inScope(e, projectIds) && matches(e, query)).sort(compareNewestFirst)
         if (before) {
             const [time, id] = before.split(',')
             rows = rows.filter((e) => compareNewestFirst(e, { occurred_at: time, id: Number(id) }) > 0)
@@ -453,7 +455,7 @@ test('every after_id fetch uses the current set', async () => {
     server.commit(event(3, at(3), { project_id: 'b' }))
     feed.notifyLatest(3)
     await feed.idle()
-    assert.deepEqual(server.calls.at(-1), { projectIds: ['a', 'b'], before: null, afterId: 2 })
+    assert.deepEqual(server.calls.at(-1), { projectIds: ['a', 'b'], query: {}, before: null, afterId: 2 })
 })
 
 test('a response for a set that is no longer current is ignored, and its queue is dropped', async () => {
@@ -856,4 +858,155 @@ test('an instance event (no session, no project) is listed and inserted in a sco
     feed.notifyLatest(3)
     await feed.idle()
     assert.deepEqual(ids(state), [3, 2, 1])
+})
+
+// Events of two sessions, alternating: s1 has the odd ids, s2 the even ones. Newest is 6.
+const twoSessions = () => [1, 2, 3, 4, 5, 6].map((id) => event(id, at(id), { session_id: id % 2 ? 's1' : 's2' }))
+
+test('the same set with an equal query in another key order sends nothing new', async () => {
+    const { server, feed } = setup(five())
+    feed.setScope(['p1'], { session: 's1', view: 'waits_problems' })
+    await feed.idle()
+    feed.setScope(['p1'], { view: 'waits_problems', session: 's1' })
+    await feed.idle()
+    assert.equal(server.calls.length, 1)
+    assert.deepEqual(server.calls[0].query, { session: 's1', view: 'waits_problems' })
+})
+
+test('the default query is empty: setScope(ids) and setScope(ids, {}) are the same scope', async () => {
+    const { server, feed } = setup(five())
+    feed.setScope(['p1'])
+    await feed.idle()
+    feed.setScope(['p1'], {})
+    await feed.idle()
+    assert.deepEqual(server.calls, [{ projectIds: ['p1'], query: {}, before: null, afterId: null }])
+})
+
+test('a changed query reloads the first page with the new query', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 5])
+    feed.setScope([], { session: 's2' })
+    assert.deepEqual([state.status, state.events.length], ['loading', 0])
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'first'])
+    assert.deepEqual(server.calls[1], { projectIds: [], query: { session: 's2' }, before: null, afterId: null })
+    assert.deepEqual(ids(state), [6, 4])
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'first', 'first'], 'back to no filter reloads too')
+    assert.deepEqual(ids(state), [6, 5])
+})
+
+test('a response of the previous query is dropped', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    server.hold()
+    feed.setScope([], { session: 's1' })
+    await started()
+    feed.setScope([], { session: 's2' })
+    await started()
+    // Both requests are held: A is delivered first, then B.
+    server.release()
+    await feed.idle()
+    assert.deepEqual(server.calls.map((c) => c.query), [{ session: 's1' }, { session: 's2' }])
+    assert.deepEqual(ids(state), [6, 4], 'only the events of query B')
+    assert.ok(state.events.every((e) => e.session_id === 's2'))
+    assert.equal(state.status, 'ready')
+})
+
+test('a before page in flight for the previous query is dropped', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    feed.setScope([], { session: 's1' })
+    await feed.idle()
+    server.hold()
+    feed.loadMore()
+    await started()
+    feed.setScope([], { session: 's2' })
+    server.release()
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 4])
+    assert.deepEqual([state.loadingMore, state.pageCursor], [false, `${at(4)},4`])
+})
+
+test('a live fetch in flight for the previous query is dropped', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    feed.setScope([], { session: 's1' })
+    await feed.idle()
+    server.commit(event(7, at(7), { session_id: 's1' }))
+    server.hold()
+    feed.notifyLatest(7)
+    await started()
+    feed.setScope([], { session: 's2' })
+    server.release()
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 4], 'row 7 of query A never lands')
+    assert.equal(state.liveCursor, 7)
+})
+
+test('before and after_id requests carry the current query', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    feed.setScope(['p1'], { session: 's2' })
+    await feed.idle()
+    feed.loadMore()
+    await feed.idle()
+    server.commit(event(7, at(7), { session_id: 's1' }))
+    server.commit(event(8, at(8), { session_id: 's2' }))
+    feed.notifyLatest(8)
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'before', 'after:6'])
+    assert.deepEqual(server.calls.map((c) => c.query), [{ session: 's2' }, { session: 's2' }, { session: 's2' }])
+    assert.deepEqual(ids(state), [8, 6, 4, 2], 'the row of the other session is not shown')
+    assert.equal(state.liveCursor, 8)
+})
+
+test('a truncated live fetch reloads with the same query', async () => {
+    const { server, feed, state } = setup(twoSessions())
+    feed.setScope(['p1'], { session: 's2' })
+    await feed.idle()
+    const original = server.fetchPage
+    server.fetchPage = async (params) => {
+        server.fetchPage = original
+        server.calls.push({ ...params })
+        return { events: [], has_more: false, truncated: true, latest_id: 700, sessions: {} }
+    }
+    server.commit(event(7, at(7), { session_id: 's2' }))
+    feed.notifyLatest(7)
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:6', 'first'])
+    assert.deepEqual(server.calls.at(-1), { projectIds: ['p1'], query: { session: 's2' }, before: null, afterId: null })
+    assert.deepEqual(ids(state), [7, 6])
+    assert.equal(state.status, 'ready')
+})
+
+test('the query passed to fetchPage is a copy: a caller mutating it changes nothing', async () => {
+    const { server, feed } = setup(twoSessions())
+    const query = { session: 's2' }
+    feed.setScope([], query)
+    await feed.idle()
+    server.calls[0].query.session = 'hacked'
+    query.session = 'other'
+    feed.refresh()
+    await feed.idle()
+    assert.deepEqual(server.calls[1].query, { session: 's2' })
+})
+
+test('a null scope sends nothing whatever the query', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope(null, { session: 's1' })
+    await feed.idle()
+    assert.deepEqual([state.status, server.calls.length], ['idle', 0])
+})
+
+test('buildTimelineUrl appends the query entries after project_ids and percent-encodes them', () => {
+    const url = buildTimelineUrl({
+        projectIds: ['a', 'b'],
+        query: { view: 'waits_problems', families: 'sessions,turns', session: 'x y&z' },
+        limit: 50,
+    })
+    assert.equal(url, '/api/timeline/?project_ids=a%2Cb&view=waits_problems&families=sessions%2Cturns&session=x+y%26z&limit=50')
+    const params = new URL(`http://x${url}`).searchParams
+    assert.deepEqual([params.get('families'), params.get('session')], ['sessions,turns', 'x y&z'])
+    assert.equal(buildTimelineUrl({ query: { provider: 'codex' }, afterId: 3 }), '/api/timeline/?provider=codex&after_id=3')
+    assert.equal(buildTimelineUrl({ query: {} }), '/api/timeline/')
 })
