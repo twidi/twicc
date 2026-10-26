@@ -137,7 +137,7 @@ def test_image_generation_normalizes_native_and_extension_items():
         "savedPath": "/tmp/extension.png",
     }))
 
-    assert native == ("ig-1", "completed", "blue square", "cG5n", "/tmp/native.png", None, None)
+    assert native == ("ig-1", "completed", "blue square", "cG5n", "/tmp/native.png", None, None, None)
     assert extension == (
         "ig-2",
         "failed",
@@ -146,6 +146,7 @@ def test_image_generation_normalizes_native_and_extension_items():
         "/tmp/extension.png",
         True,
         {"type": "usageLimitExceeded", "limitId": "images"},
+        None,
     )
     assert image_generation(_completed({"type": "Extension", "kind": "clock.sleep", "id": "s1"})) is None
 

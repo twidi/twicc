@@ -266,6 +266,7 @@ from .canonical import (
     user_message_is_visible,
     user_message_text,
 )
+from .generated_images import inline_generated_image
 from .code_mode_script import parse_code_mode_output, parse_code_mode_script
 from .pricing import extract_model_info, to_token_usage
 from .provider_errors import (
@@ -3942,6 +3943,11 @@ class CodexSessionCompute(BaseSessionCompute):
                 text=plan_text,
             )
             return _rewrite_in_place(parsed_json, built)
+
+        # Generated image kept as a file reference by the item (no inline
+        # ``result``): load the PNG Codex saved so the item renders as before.
+        if inline_generated_image(parsed_json):
+            return orjson.dumps(parsed_json).decode("utf-8")
 
         # The other Codex rewrite is the cross-provider screenshot tag
         # substitution: ``<twicc:insert-screenshot />`` markers placed

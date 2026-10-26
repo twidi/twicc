@@ -15,6 +15,7 @@ class CanonicalImageGeneration(NamedTuple):
     saved_path: str | None
     transparent_background: bool | None
     failure: object | None
+    file_id: str | None = None
 
 
 def completed_item(record: dict) -> dict | None:
@@ -177,10 +178,11 @@ def image_generation(record: dict) -> CanonicalImageGeneration | None:
         id=item.get("id", ""),
         status=item.get("status", ""),
         revised_prompt=revised_prompt,
-        result=item.get("result", ""),
+        result=item.get("result") or "",
         saved_path=saved_path,
         transparent_background=transparent_background,
         failure=failure,
+        file_id=item.get("fileId") if isinstance(item.get("fileId"), str) else None,
     )
 
 
