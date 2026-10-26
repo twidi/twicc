@@ -170,7 +170,7 @@ def intern_contents(
 
 
 def bind_persisted_items(
-    bindings: Sequence[ContentBinding], *, metadata: Mapping | None = None,
+    bindings: Sequence[ContentBinding], *, metadata: Mapping[str, Mapping | None] | None = None,
 ) -> None:
     """Validate persisted assignments before adding unique session ownership.
 

@@ -34,7 +34,7 @@ def _require_transaction() -> None:
 
 
 @contextmanager
-def ingestion_plaintext_change(session: Session, *, metadata: dict | None = None):
+def ingestion_plaintext_change(session: Session, *, metadata: Mapping[str, Mapping | None] | None = None):
     """Carry prior root proof only after the whole ingestion transaction places changed references.
 
     Watcher inserts bind before its lifecycle and final promotion steps. Nesting
@@ -100,7 +100,8 @@ def record_ingestion_bindings(bindings: Sequence[ContentBinding]) -> None:
 
 
 def initialize_ingestion_session(
-    session: Session, *, invalidate: bool = False, invalidate_mappings: bool = False, metadata: dict | None = None,
+    session: Session, *, invalidate: bool = False, invalidate_mappings: bool = False,
+    metadata: Mapping[str, dict | None] | None = None,
 ) -> None:
     """Prepare touched session/root identities without claiming legacy extraction.
 
@@ -152,7 +153,7 @@ def prepare_ingestion_contents(session: Session, texts: Sequence[str]):
 
 def insert_ingested_items(
     session: Session, items: Sequence[tuple[SessionItem, str]], *, promote: bool = True, prepared=None,
-    metadata: Mapping | None = None,
+    metadata: Mapping[str, Mapping | None] | None = None,
 ) -> set[int]:
     """Persist source/current strings, bind actual inserts, and promote reused hot rows.
 

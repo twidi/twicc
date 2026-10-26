@@ -1,5 +1,6 @@
 """Native-root metadata policy and transaction-owned durable plaintext generations."""
 
+from collections import ChainMap
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime
 from uuid import uuid4
@@ -34,14 +35,17 @@ def native_metadata_row(session: Session) -> dict:
 
 def load_native_metadata(
     session_ids: Iterable[str], *, known: Mapping[str, dict | None] | None = None, ancestors: bool = True,
-) -> dict[str, dict | None]:
+) -> Mapping[str, dict | None]:
     """Load native metadata rows, reusing ``known`` rows and querying only the absent ids.
 
     Every requested id maps to its row, or to ``None`` for a missing session. With
     ``ancestors``, subagent parents are loaded one level at a time, including the
-    parents of ``known`` rows; cycles stop the walk. ``known`` is never mutated.
+    parents of ``known`` rows; cycles stop the walk. ``known`` is never mutated:
+    the result is a view of the loaded rows over ``known`` (no copy, so a caller
+    resolving many roots from one ``known`` mapping stays linear).
     """
-    metadata = dict(known or {})
+    loaded = {}
+    metadata = ChainMap(loaded, known) if known else loaded
     walked = set()
     frontier = set(session_ids)
     while frontier:
@@ -49,8 +53,8 @@ def load_native_metadata(
         missing = sorted(identity for identity in frontier if identity not in metadata)
         for offset in range(0, len(missing), TREE_PAGE_SIZE):
             page = missing[offset:offset + TREE_PAGE_SIZE]
-            metadata.update(dict.fromkeys(page))
-            metadata.update({row['id']: row for row in Session.objects.filter(
+            loaded.update(dict.fromkeys(page))
+            loaded.update({row['id']: row for row in Session.objects.filter(
                 pk__in=page,
             ).values(*NATIVE_METADATA_FIELDS)})
         if not ancestors:
@@ -62,7 +66,7 @@ def load_native_metadata(
     return metadata
 
 
-def _native_root(session_id: str, metadata: Mapping[str, dict | None]) -> str | None:
+def _native_root(session_id: str, metadata: Mapping[str, Mapping | None]) -> str | None:
     """Follow loaded subagent parents to a native root; missing or cyclic ancestry stays unresolved."""
     visited = set()
     while session_id not in visited:
@@ -80,7 +84,7 @@ def _native_root(session_id: str, metadata: Mapping[str, dict | None]) -> str | 
 
 
 def native_root_ids(
-    session_ids: Iterable[str], *, metadata: Mapping[str, dict | None] | None = None,
+    session_ids: Iterable[str], *, metadata: Mapping[str, Mapping | None] | None = None,
 ) -> dict[str, str | None]:
     """Resolve each session's native root (``None`` when unresolved), reusing ``metadata`` rows."""
     requested = tuple(dict.fromkeys(session_ids))
@@ -90,7 +94,7 @@ def native_root_ids(
 
 def resolve_root_decisions(
     session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str], *,
-    metadata: Mapping[str, dict | None] | None = None,
+    metadata: Mapping[str, Mapping | None] | None = None,
 ) -> dict[str, RootDecision]:
     """Resolve content eligibility from bounded native-root metadata batches."""
     return _resolve_root_decisions(session_ids, now, active_root_ids, cold_from_fields, metadata=metadata)
@@ -103,7 +107,7 @@ def resolve_scratch_root_decisions(
     return _resolve_root_decisions(session_ids, now, active_root_ids, scratch_cold_from_fields)
 
 
-def _resolve_root_decisions(session_ids, now, active_root_ids, predicate, metadata=None):
+def _resolve_root_decisions(session_ids, now, active_root_ids, predicate, *, metadata=None):
     """Load native ancestry by metadata batches, including active native descendants."""
     requested = tuple(set(session_ids))
     metadata = load_native_metadata(set(requested) | set(active_root_ids), known=metadata)
@@ -173,7 +177,7 @@ def invalidate_roots(
 
 
 def capture_plaintext_certificate(
-    root_id: str, *, metadata: Mapping[str, dict | None] | None = None, storage_fields: Mapping | None = None,
+    root_id: str, *, metadata: Mapping[str, Mapping | None] | None = None, storage_fields: Mapping | None = None,
 ) -> RootStorageSnapshot | None:
     """Capture a current certificate only while persisted policy still requires plaintext.
 
@@ -183,7 +187,9 @@ def capture_plaintext_certificate(
     storage-state columns, read in this transaction with no write to the root row since.
     """
     _require_writer_transaction()
-    decision = _resolve_root_decisions([root_id], timezone.now(), frozenset(), cold_from_fields, metadata)[root_id]
+    decision = _resolve_root_decisions(
+        [root_id], timezone.now(), frozenset(), cold_from_fields, metadata=metadata,
+    )[root_id]
     if not decision.resolved or decision.root_id != root_id or decision.is_cold:
         return None
     fields = storage_fields
@@ -198,7 +204,7 @@ def capture_plaintext_certificate(
 
 
 def carry_plaintext_certificate(
-    snapshot: RootStorageSnapshot, *, metadata: Mapping[str, dict | None] | None = None,
+    snapshot: RootStorageSnapshot, *, metadata: Mapping[str, Mapping | None] | None = None,
 ) -> bool:
     """Carry caller-owned plaintext preservation evidence to this transaction's final epoch.
 
@@ -208,7 +214,7 @@ def carry_plaintext_certificate(
     """
     _require_writer_transaction()
     decision = _resolve_root_decisions(
-        [snapshot.root_id], timezone.now(), frozenset(), cold_from_fields, metadata,
+        [snapshot.root_id], timezone.now(), frozenset(), cold_from_fields, metadata=metadata,
     )[snapshot.root_id]
     if not decision.resolved or decision.root_id != snapshot.root_id or decision.is_cold:
         return False

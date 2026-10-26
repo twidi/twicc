@@ -33,7 +33,7 @@ import logging
 import os
 import re
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, UTC
 from pathlib import Path
@@ -4307,7 +4307,8 @@ class BaseSessionCompute:
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 
     def _sync_session_slice(
-        self, session: Session, file_path: Path, raw: RawLiveSlice, *, metadata: dict | None = None,
+        self, session: Session, file_path: Path, raw: RawLiveSlice, *,
+        metadata: Mapping[str, dict | None] | None = None,
     ) -> LiveSyncUpdates:
         """Process every selected record through both passes before committing.
 
