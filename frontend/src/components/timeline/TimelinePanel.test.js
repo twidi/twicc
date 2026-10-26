@@ -35,6 +35,23 @@ const stub = (tag, textProp) => ({ props: ['projectId', 'label', 'row', 'dayKey'
 const TabNavList = compileComponent(new URL('../project/ProjectTabNavList.vue', import.meta.url), { './ProjectDetailNavList.vue': stub('nav') })
 const StickyBand = compileComponent(new URL('../ui/StickyBand.vue', import.meta.url))
 
+/**
+ * The filter band (TimelineFilterBand.vue has its own tests): its props, and the calls of its exposed focus
+ * methods, in `log` (`[name, the store's view at the call]`).
+ */
+function createFilterBand(log, filtersStore) {
+    return {
+        props: ['pageId', 'active'],
+        setup(props, { expose }) {
+            expose({
+                focusFiltersButton: () => log.push(['focusFiltersButton', filtersStore.filtersFor(props.pageId).view]),
+                focusSessionPill: () => log.push(['focusSessionPill']),
+            })
+            return () => Vue.h('div', { class: 'filter-band', 'data-page-id': props.pageId, 'data-active': String(props.active) }, 'Timeline')
+        },
+    }
+}
+
 const isoAt = (n) => new Date(Date.UTC(2026, 9, 14, 10, 0, n)).toISOString().replace('.000Z', '.000000Z')
 const at = (n) => `2026-10-14T10:00:${String(n).padStart(2, '0')}.000000Z`
 const event = (id, fields = {}) => ({ id, kind: 'turn.started', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
@@ -126,6 +143,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
     const filtersStore = useTimelineFiltersStore(pinia)
     const filterActions = []
     filtersStore.$onAction(({ name, args }) => { if (name !== 'filtersFor' && name !== 'ensure') filterActions.push([name, ...args]) })
+    const bandCalls = []
     const Panel = compileComponent(new URL('./TimelinePanel.vue', import.meta.url), {
         'vue-router': { RouterLink },
         '../../composables/useTimelineFeed': { useTimelineFeed: () => feed },
@@ -146,8 +164,9 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../session/detail/items/DaySeparator.vue': { props: ['label', 'dayKey'], setup: (props) => () => Vue.h('div', { class: 'day', 'data-day': props.dayKey }, props.label) },
         '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
         './TimelineEventRow.vue': stub('article'),
+        './TimelineFilterBand.vue': createFilterBand(bandCalls, filtersStore),
     })
-    return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller, pinia, filtersStore, filterActions }
+    return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller, pinia, filtersStore, filterActions, bandCalls }
 }
 
 const settle = async () => {
@@ -196,13 +215,20 @@ const stateBlock = (root) => {
     return byClass(scroller, 'timeline-state')[0]
 }
 
-test('the band is the sticky band of Stats (StickyBand) and carries the label "Timeline" and nothing else', async (t) => {
-    const root = await mount(t, fixture())
+test('the band is the sticky band of Stats (StickyBand) and holds the filter band of the page, and nothing else', async (t) => {
+    const root = await mount(t, fixture(), 'p1', { active: false })
     const [band] = byClass(root, 'sticky-band')
     assert.match(String(band.props.class), /\bsticky-band\b/)
     assert.match(String(band.props.class), /\bglass-sticky\b/)
-    assert.equal(textOf(band), 'Timeline')
-    assert.equal(descendants(band, (n) => ['input', 'wa-select', 'wa-button'].includes(n.type)).length, 0)
+    const content = band.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
+    assert.equal(content.length, 1)
+    assert.equal(content[0].props.class, 'filter-band')
+    assert.equal(content[0].props['data-page-id'], 'p1')
+    assert.equal(content[0].props['data-active'], 'false')
+    await root.setActive(true)
+    assert.equal(content[0].props['data-active'], 'true')
+    const source = readFileSync(new URL('./TimelinePanel.vue', import.meta.url), 'utf8')
+    assert.match(source, /<StickyBand ref="bandRef" class="timeline-band--over-list">\s*<TimelineFilterBand ref="filterBandRef" :page-id="projectId" :active="active" \/>\s*<\/StickyBand>/)
 })
 
 test('the global page loads the feed and renders a day separator then the events newest first', async (t) => {
@@ -615,6 +641,21 @@ test('the no-match state shows only after a successful first page with zero even
     // No filter: the unfiltered empty timeline.
     const plain = await mount(t, fixture({ events: [] }))
     assert.equal(textOf(stateBlock(plain)), 'No events yet')
+})
+
+test('the no-match "Clear all" clears the filters, then focuses the Filters button after the next tick', async (t) => {
+    const f = fixture({ events: [] })
+    f.filtersStore.setView('p1', 'waits_problems')
+    const root = await mount(t, f, 'p1')
+    const [clear] = descendants(stateBlock(root), (n) => n.type === 'wa-button')
+    assert.equal(textOf(clear).trim(), 'Clear all')
+    clear.props.onClick()
+    assert.deepEqual(f.bandCalls, [], 'not before the tick')
+    await Vue.nextTick()
+    assert.deepEqual(f.bandCalls, [['focusFiltersButton', 'all']], 'after the filters were cleared')
+    await settle()
+    assert.equal(f.bandCalls.length, 1)
+    assert.deepEqual(f.filterActions.at(-1), ['clearAll', 'p1'])
 })
 
 test('every value of a group checked filters nothing: an empty first page is "No events yet", not the no-match state', async (t) => {

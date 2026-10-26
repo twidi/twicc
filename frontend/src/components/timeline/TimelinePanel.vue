@@ -13,8 +13,8 @@
 // negative bottom margin) and the first row of the list (`top`) keeps the room under them, its height measured
 // from them.
 //
-// The scroller and its ONE band stay mounted through every state (filters design section 3.1): the band will
-// hold the filter controls, and swapping it would close their open panel and lose the keyboard focus. Outside
+// The scroller and its ONE band stay mounted through every state (filters design section 3.1): the band holds the
+// filter controls (TimelineFilterBand.vue), and swapping it would close their open panel and lose the keyboard focus. Outside
 // the list (loading, empty, not found, error, no match), the event rows are replaced by one state item under
 // the top room.
 //
@@ -41,6 +41,7 @@ import DaySeparator from '../session/detail/items/DaySeparator.vue'
 import StickyBand from '../ui/StickyBand.vue'
 import VirtualScroller from '../virtual-scroller/VirtualScroller.vue'
 import TimelineEventRow from './TimelineEventRow.vue'
+import TimelineFilterBand from './TimelineFilterBand.vue'
 
 const props = defineProps({
     /** Project ID, `ws:<id>` of a workspace, or ALL_PROJECTS_ID. */
@@ -153,8 +154,14 @@ const noMatchMessage = computed(() => {
     return selected ? `Nothing matches ${selected.label} with these filters` : 'Nothing matches these filters'
 })
 
-function clearAllFilters() {
+// The filter band, for the focus moves of spec 3.1.
+const filterBandRef = ref(null)
+
+/** The no-match "Clear all": its button disappears with the state, so the focus goes to the Filters button. */
+async function clearAllFilters() {
     filtersStore.clearAll(props.projectId)
+    await nextTick()
+    filterBandRef.value?.focusFiltersButton()
 }
 
 const itemKey = (item) => item.key
@@ -293,7 +300,7 @@ watch(() => state.events.length, async () => {
                 <template #before>
                     <ProjectTabNavList v-if="compactHeight" ref="topNavRef" :project-id="projectId" class="timeline-top-nav" />
                     <StickyBand ref="bandRef" class="timeline-band--over-list">
-                        <span class="timeline-band-label">Timeline</span>
+                        <TimelineFilterBand ref="filterBandRef" :page-id="projectId" :active="active" />
                     </StickyBand>
                 </template>
                 <template #default="{ item }">
@@ -358,11 +365,6 @@ watch(() => state.events.length, async () => {
     min-height: 0;
     display: flex;
     flex-direction: column;
-}
-
-.timeline-band-label {
-    font-weight: var(--wa-font-weight-semibold);
-    color: var(--wa-color-text-quiet);
 }
 
 /* In the list, the navigation list and the band take no room in the flow: the top row keeps it (see the top of
