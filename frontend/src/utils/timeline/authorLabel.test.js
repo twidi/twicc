@@ -24,12 +24,14 @@ test('the table of section 6.3, row by row', () => {
         [{ actor: 'agent', via: 'mcp_internal', actor_ref: 'boss' }, 'by [The boss] (MCP)'],
         [{ actor: 'external', via: 'mcp_external', actor_name: 'ChatGPT' }, 'by ChatGPT (external MCP)'],
         [{ actor: 'external', via: 'mcp_external', actor_name: null }, 'by an external MCP client'],
-        [{ actor: 'system', via: null }, 'automatic'],
+        // No text: the row shows an "automatic" tag (describeEvent.test.js).
+        [{ actor: 'system', via: null }, '<automatic>'],
         [{ actor: 'agent', via: null }, null],
     ]
     for (const [fields, expected] of cases) {
         const author = label(fields)
-        assert.equal(author.kind === 'none' ? null : plainText(author), expected, JSON.stringify(fields))
+        const shown = author.kind === 'none' ? null : author.kind === 'automatic' ? '<automatic>' : plainText(author)
+        assert.equal(shown, expected, JSON.stringify(fields))
         assert.equal(author.unknown, false, JSON.stringify(fields))
     }
 })
@@ -55,7 +57,7 @@ test('"automatic" is not written on backend rows nor on session.created', () => 
     assert.equal(label({ actor: 'system', via: null, kind: 'backend.started' }).kind, 'none')
     assert.equal(label({ actor: 'system', via: null, kind: 'backend.ended' }).kind, 'none')
     assert.equal(label({ actor: 'system', via: null, kind: 'session.created' }).kind, 'none')
-    assert.equal(label({ actor: 'system', via: null, kind: 'process.ended' }).kind, 'text')
+    assert.deepEqual(label({ actor: 'system', via: null, kind: 'process.ended' }), { kind: 'automatic', parts: [], unknown: false })
 })
 
 test('no label on a row whose precision is not exact, for every actor', () => {

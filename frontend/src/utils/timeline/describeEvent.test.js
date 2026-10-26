@@ -40,9 +40,9 @@ test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
         ['hidden.ended', {}, 'Unhidden', 'eye', 'neutral'],
         ['muted.started', {}, 'Muted', 'bell-slash', 'neutral'],
         ['muted.ended', {}, 'Unmuted', 'bell', 'neutral'],
-        ['pinned.started', { data: { scope: 'project' } }, 'Pinned (project)', 'thumbtack', 'neutral'],
-        ['pinned.ended', { data: { scope: 'project' } }, 'Unpinned (was project)', 'thumbtack-slash', 'neutral'],
-        ['backend.started', { session_id: null, data: { version: '1.2.3' } }, 'TwiCC started v1.2.3', 'server', 'neutral'],
+        ['pinned.started', { data: { scope: 'project' } }, 'Pinned', 'thumbtack', 'neutral'],
+        ['pinned.ended', { data: { scope: 'project' } }, 'Unpinned', 'thumbtack-slash', 'neutral'],
+        ['backend.started', { session_id: null, data: { version: '1.2.3' } }, 'TwiCC started', 'server', 'neutral'],
         ['backend.ended', { session_id: null, data: { clean: true } }, 'TwiCC stopped', 'power-off', 'neutral'],
     ]
     assert.equal(cases.length, 19)
@@ -54,7 +54,7 @@ test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
 
 test('an unknown kind shows its raw name with a generic icon and no detail', () => {
     const vm = describe('plan.approved', { data: { anything: 1 } })
-    assert.deepEqual([words(vm), vm.icon, vm.severity, vm.tag, vm.badge, vm.detail], ['plan.approved', 'circle-info', 'neutral', null, null, null])
+    assert.deepEqual([words(vm), vm.icon, vm.severity, vm.tags, vm.badge, vm.detail], ['plan.approved', 'circle-info', 'neutral', [], null, null])
 })
 
 test('data missing or not an object is treated as empty and never throws', () => {
@@ -66,23 +66,23 @@ test('data missing or not an object is treated as empty and never throws', () =>
     }
 })
 
-test('process.ended: every reason has its wording and severity; the table has 15 reasons', () => {
+test('process.ended: every reason has its wording, severity and cause tag; the table has 15 reasons', () => {
     assert.equal(Object.keys(PROCESS_ENDED_REASONS).length, 15)
     const expected = {
-        manual: ['Process stopped', 'neutral'], force: ['Process killed', 'neutral'],
-        archived: ['Process stopped (session archived)', 'neutral'], shutdown: ['Process stopped (TwiCC shutdown)', 'neutral'],
-        'apply-settings': ['Process restarted to apply settings', 'neutral'],
-        'switch-hybrid': ['Process stopped (switch to hybrid)', 'neutral'],
-        timeout_user_turn: ['Process stopped (idle timeout)', 'neutral'], 'cli-exit': ['Hybrid CLI exited', 'neutral'],
-        timeout_starting: ['Process stopped: start timed out', 'warning'],
-        timeout_assistant_turn: ['Process stopped: no activity', 'warning'],
-        cron_restart_timeout: ['Cron restart timed out', 'warning'], lost: ['Process lost (found dead at boot)', 'warning'],
-        auth_required: ['Process stopped: login required', 'danger'], 'startup-failed': ['Process failed to start', 'danger'],
-        error: ['Process crashed', 'danger'],
+        manual: ['Process stopped', 'neutral', []], force: ['Process killed', 'neutral', []],
+        archived: ['Process stopped', 'neutral', ['session archived']], shutdown: ['Process stopped', 'neutral', ['TwiCC shutdown']],
+        'apply-settings': ['Process restarted to apply settings', 'neutral', []],
+        'switch-hybrid': ['Process stopped', 'neutral', ['switch to hybrid']],
+        timeout_user_turn: ['Process stopped', 'neutral', ['idle timeout']], 'cli-exit': ['Hybrid CLI exited', 'neutral', []],
+        timeout_starting: ['Process stopped: start timed out', 'warning', []],
+        timeout_assistant_turn: ['Process stopped: no activity', 'warning', []],
+        cron_restart_timeout: ['Cron restart timed out', 'warning', []], lost: ['Process lost', 'warning', ['found dead at boot']],
+        auth_required: ['Process stopped: login required', 'danger', []], 'startup-failed': ['Process failed to start', 'danger', []],
+        error: ['Process crashed', 'danger', []],
     }
-    for (const [reason, [wording, severity]] of Object.entries(expected)) {
+    for (const [reason, [wording, severity, tags]] of Object.entries(expected)) {
         const vm = describe('process.ended', { reason })
-        assert.deepEqual([words(vm), vm.severity], [wording, severity], reason)
+        assert.deepEqual([words(vm), vm.severity, vm.tags], [wording, severity, tags], reason)
         assert.equal(vm.icon, 'power-off')
     }
 })
@@ -90,7 +90,7 @@ test('process.ended: every reason has its wording and severity; the table has 15
 test('process.ended: an unknown reason reads "Process stopped" with the raw reason in the tooltip', () => {
     for (const reason of ['brand_new', 'constructor', '']) {
         const vm = describe('process.ended', { reason })
-        assert.deepEqual([words(vm), vm.severity], ['Process stopped', 'neutral'], reason)
+        assert.deepEqual([words(vm), vm.severity, vm.tags], ['Process stopped', 'neutral', []], reason)
     }
     assert.match(describe('process.ended', { reason: 'brand_new' }).tooltip, /Reason: brand_new/)
 })
@@ -111,31 +111,33 @@ test('process.ended lost: the upper bound adds "Detected at boot HH:MM" to the t
 
 test('process.started: resumed, hybrid, unknown cause', () => {
     assert.equal(words(describe('process.started', { data: { cause: 'resume' } })), 'Process resumed')
-    assert.equal(words(describe('process.started', { data: { cause: 'resume', hybrid: true } })), 'Process resumed (hybrid CLI)')
-    assert.equal(words(describe('process.started', { data: { cause: 'new', hybrid: true } })), 'Process started (hybrid CLI)')
+    const shown = (vm) => [words(vm), vm.tags]
+    assert.deepEqual(shown(describe('process.started', { data: { cause: 'resume' } })), ['Process resumed', []])
+    assert.deepEqual(shown(describe('process.started', { data: { cause: 'resume', hybrid: true } })), ['Process resumed', ['hybrid CLI']])
+    assert.deepEqual(shown(describe('process.started', { data: { cause: 'new', hybrid: true } })), ['Process started', ['hybrid CLI']])
     assert.equal(words(describe('process.started', { data: { cause: 'cron_restart' } })), 'Process started')
     assert.match(describe('process.started', { data: { twicc_pid: 4242 } }).tooltip, /Process id: 4242/)
 })
 
-test('awaiting_input: request_type wins over tool_name; tool_name is cut near 40 characters', () => {
+test('awaiting_input: request_type wins over tool_name; tool_name is a value, cut near 40 characters', () => {
     const w = (kind, data) => words(describe(kind, { data }))
     const started = 'awaiting_input.started'
     const ended = 'awaiting_input.ended'
-    assert.equal(w(started, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Waiting for approval (Bash)')
+    assert.equal(w(started, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Waiting for approval [Bash]')
     assert.equal(w(started, { request_type: 'tool_approval', tool_name: null }), 'Waiting for approval')
-    assert.equal(w(ended, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Approval handled (Bash)')
+    assert.equal(w(ended, { request_type: 'tool_approval', tool_name: 'Bash' }), 'Approval handled [Bash]')
     assert.equal(w(ended, { request_type: 'tool_approval' }), 'Approval handled')
     assert.equal(w(started, { request_type: 'ask_user_question', tool_name: 'AskUserQuestion' }), 'Question for you')
     assert.equal(w(ended, { request_type: 'ask_user_question', tool_name: 'AskUserQuestion' }), 'Question answered')
-    assert.equal(w(started, { request_type: 'hybrid_terminal', tool_name: 'Bash' }), 'Waiting in the terminal (Bash)')
+    assert.equal(w(started, { request_type: 'hybrid_terminal', tool_name: 'Bash' }), 'Waiting in the terminal [Bash]')
     assert.equal(w(started, { request_type: 'hybrid_terminal' }), 'Waiting in the terminal')
     assert.equal(w(ended, { request_type: 'hybrid_terminal', tool_name: 'Bash' }), 'Terminal input handled')
-    assert.equal(w(started, { request_type: null, tool_name: 'Bash' }), 'Waiting for input (Bash)')
+    assert.equal(w(started, { request_type: null, tool_name: 'Bash' }), 'Waiting for input [Bash]')
     assert.equal(w(started, { request_type: 'future_type' }), 'Waiting for input')
     assert.equal(w(ended, { request_type: 'future_type', tool_name: 'Bash' }), 'Input handled')
     const long = w(started, { request_type: 'tool_approval', tool_name: 'mcp__server__' + 'x'.repeat(100) })
     // TOOL_MAX (40) counts the ellipsis: 39 characters of the name, then the ellipsis.
-    assert.equal(long, `Waiting for approval (${'mcp__server__' + 'x'.repeat(26)}…)`)
+    assert.equal(long, `Waiting for approval [${'mcp__server__' + 'x'.repeat(26)}…]`)
 })
 
 test('session.created: origin wording', () => {
@@ -175,15 +177,15 @@ test('title.changed: renamed, titled, cleared, source tags', () => {
     assert.equal(words(title({ source: 'user', old: '', new: 'B' })), 'Titled [B]')
     assert.equal(words(title({ source: 'user', old: 'A', new: null })), 'Title cleared')
     assert.equal(words(title({ source: 'user', old: 'A', new: '' })), 'Title cleared')
-    assert.equal(title({ source: 'user', new: 'B' }).tag, null)
-    assert.equal(title({ source: 'auto', new: 'B' }).tag, 'automatic')
+    assert.deepEqual(title({ source: 'user', new: 'B' }).tags, [])
+    assert.deepEqual(title({ source: 'auto', new: 'B' }).tags, ['automatic'])
     // The provider wrote it in its own files (a /rename in the CLI, Codex naming its thread): named after the provider.
     const labelsFor = (provider) => ({ claude_code: { product: 'Claude Code' }, codex: { product: 'Codex' } }[provider] ?? null)
-    assert.equal(describe('title.changed', { provider: 'codex', data: { source: 'agent', new: 'B' } }, { labelsFor }).tag, 'from Codex')
-    assert.equal(describe('title.changed', { provider: 'claude_code', data: { source: 'agent', new: 'B' } }, { labelsFor }).tag, 'from Claude Code')
-    assert.equal(title({ source: 'agent', new: 'B' }).tag, 'from the provider')
-    assert.equal(title({ source: 'future', new: 'B' }).tag, null)
-    assert.equal(title({ source: 'constructor', new: 'B' }).tag, null)
+    assert.deepEqual(describe('title.changed', { provider: 'codex', data: { source: 'agent', new: 'B' } }, { labelsFor }).tags, ['from Codex'])
+    assert.deepEqual(describe('title.changed', { provider: 'claude_code', data: { source: 'agent', new: 'B' } }, { labelsFor }).tags, ['from Claude Code'])
+    assert.deepEqual(title({ source: 'agent', new: 'B' }).tags, ['from the provider'])
+    assert.deepEqual(title({ source: 'future', new: 'B' }).tags, [])
+    assert.deepEqual(title({ source: 'constructor', new: 'B' }).tags, [])
 })
 
 test('title.changed: the titles are value parts (no quotes), the arrow is its own part with a text alternative', () => {
@@ -239,23 +241,31 @@ test('settings.changed: a long diff keeps all changes in the tooltip; opening pe
     assert.equal(ARROW, ' → ')
 })
 
-test('pinned: scope wording and fallbacks', () => {
-    const w = (kind, scope) => words(describe(kind, { data: { scope } }))
-    assert.equal(w('pinned.started', 'workspace'), 'Pinned (workspace)')
-    assert.equal(w('pinned.started', 'all'), 'Pinned (all projects)')
-    assert.equal(w('pinned.started', null), 'Pinned')
-    assert.equal(w('pinned.started', 'galaxy'), 'Pinned')
-    assert.equal(w('pinned.ended', 'all'), 'Unpinned (was all projects)')
-    assert.equal(w('pinned.ended', null), 'Unpinned')
-    assert.equal(w('pinned.ended', 'toString'), 'Unpinned')
+test('pinned: scope tag and fallbacks', () => {
+    const w = (kind, scope) => {
+        const vm = describe(kind, { data: { scope } })
+        return [words(vm), vm.tags]
+    }
+    // The scope is a tag at the end of the wording.
+    assert.deepEqual(w('pinned.started', 'project'), ['Pinned', ['project']])
+    assert.deepEqual(w('pinned.started', 'workspace'), ['Pinned', ['workspace']])
+    assert.deepEqual(w('pinned.started', 'all'), ['Pinned', ['all projects']])
+    assert.deepEqual(w('pinned.started', null), ['Pinned', []])
+    assert.deepEqual(w('pinned.started', 'galaxy'), ['Pinned', []])
+    assert.deepEqual(w('pinned.ended', 'all'), ['Unpinned', ['was all projects']])
+    assert.deepEqual(w('pinned.ended', null), ['Unpinned', []])
+    assert.deepEqual(w('pinned.ended', 'toString'), ['Unpinned', []])
 })
 
 test('backend rows: version, machine restart, clean or not, tooltip facts', () => {
     const started = (data) => describe('backend.started', { session_id: null, actor: 'system', data })
-    assert.equal(words(started({ version: null })), 'TwiCC started')
-    assert.equal(words(started({ version: '1.2.3', machine_restarted: true })), 'TwiCC started v1.2.3 after a machine restart')
-    assert.equal(words(started({ version: '1.2.3', machine_restarted: false })), 'TwiCC started v1.2.3')
-    assert.equal(words(started({ version: '1.2.3', machine_restarted: null })), 'TwiCC started v1.2.3')
+    // The version is a tag at the end of the wording, after the machine restart.
+    const shown = (vm) => [words(vm), vm.tags]
+    assert.deepEqual(shown(started({ version: null })), ['TwiCC started', []])
+    assert.deepEqual(shown(started({ version: '' })), ['TwiCC started', []])
+    assert.deepEqual(shown(started({ version: '1.2.3', machine_restarted: true })), ['TwiCC started after a machine restart', ['v1.2.3']])
+    assert.deepEqual(shown(started({ version: '1.2.3', machine_restarted: false })), ['TwiCC started', ['v1.2.3']])
+    assert.deepEqual(shown(started({ version: '1.2.3', machine_restarted: null })), ['TwiCC started', ['v1.2.3']])
     const tooltip = started({ pid: 77, version: '1.2.3', boot_id: 'abc-def' }).tooltip
     assert.ok(tooltip.includes('Process id: 77') && tooltip.includes('Version: 1.2.3') && tooltip.includes('Boot id: abc-def'))
     const ended = (clean) => describe('backend.ended', { session_id: null, actor: 'system', data: { clean } })
@@ -320,4 +330,31 @@ test('the tooltips of process and backend rows carry their technical facts', () 
 test('the author label is part of the view-model', () => {
     const vm = describe('archived.started', { actor: 'user', via: 'cli' })
     assert.equal(vm.author.parts[0].text, 'by you (CLI)')
+})
+
+test('an automatic row: an "automatic" tag at the end of the wording, no author label, never twice', () => {
+    const restarted = describe('process.started', { actor: 'system', via: null, data: { cause: 'resume', hybrid: true } })
+    // After the tags of the kind: the source comes last.
+    assert.deepEqual([words(restarted), restarted.tags, restarted.author.parts], ['Process resumed', ['hybrid CLI', 'automatic'], []])
+    const titled = describe('title.changed', { actor: 'system', via: null, data: { source: 'agent', new: 'B' } })
+    assert.deepEqual(titled.tags, ['from the provider', 'automatic'])
+    // An automatic title already says it.
+    assert.deepEqual(describe('title.changed', { actor: 'system', via: null, data: { source: 'auto', new: 'B' } }).tags, ['automatic'])
+    // Not on the kinds whose wording says it, nor on a row the user caused.
+    assert.deepEqual(describe('backend.ended', { session_id: null, actor: 'system', via: null, data: { clean: true } }).tags, [])
+    assert.deepEqual(describe('process.ended', { actor: 'user', via: 'ui', reason: 'manual' }).tags, [])
+})
+
+test('no "automatic" tag when the wording already says it: a known end reason, an automatic settings reason', () => {
+    const tagsOf = (kind, fields) => describe(kind, { actor: 'system', via: null, ...fields }).tags
+    for (const reason of Object.keys(PROCESS_ENDED_REASONS)) {
+        assert.ok(!tagsOf('process.ended', { reason }).includes('automatic'), reason)
+    }
+    assert.deepEqual(tagsOf('process.ended', { reason: 'shutdown' }), ['TwiCC shutdown'])
+    // A reason this frontend does not know: the tag is the only hint.
+    assert.deepEqual(tagsOf('process.ended', { reason: 'brand_new' }), ['automatic'])
+    const changes = { data: { changes: { effort: ['low', 'high'] } } }
+    assert.deepEqual(tagsOf('settings.changed', { ...changes, reason: 'model_retired' }), [])
+    assert.deepEqual(tagsOf('settings.changed', { ...changes, reason: 'switch-hybrid' }), [])
+    assert.deepEqual(tagsOf('settings.changed', { ...changes, reason: '' }), ['automatic'])
 })

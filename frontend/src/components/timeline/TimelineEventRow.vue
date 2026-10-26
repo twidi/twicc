@@ -1,7 +1,7 @@
 <script setup>
 // TimelineEventRow.vue - One event row of the Timeline, in session blocks (display design section 5.1):
 //   group head:  [provider icon] session title (one line, ellipsis) ............ project
-//                    icon | wording, tag, badge, author label                    | time
+//                    icon | wording, tags, badge, author label                   | time
 //   following:       icon | wording ...                                          | time
 //   instance:    icon | wording (semibold)                                       | time
 // The header line is the head row's own first line; every event line of a session sits at the same indent,
@@ -37,8 +37,8 @@ const props = defineProps({
 const dataStore = useDataStore()
 
 const vm = computed(() => describeEvent(props.row.event, props.context))
-// With a tag, the last word of the wording is kept apart: the two are glued and wrap together.
-const wording = computed(() => (vm.value.tag ? splitLastWord(vm.value.parts) : { lead: vm.value.parts, last: null }))
+// With tags, the last word of the wording is kept apart: the word and the tags are glued and wrap together.
+const wording = computed(() => (vm.value.tags.length ? splitLastWord(vm.value.parts) : { lead: vm.value.parts, last: null }))
 const identity = computed(() => props.row.identity)
 // A project the store does not know (deleted) is shown as plain text, never as a broken link.
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
@@ -77,12 +77,12 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
         </div><template v-if="identity">{{ ' ' }}</template><div class="timeline-event-line" :class="{ 'timeline-event-line--indented': !row.instance }">
             <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
             <div class="timeline-row-main">
-                <!-- The parts of utils/timeline/parts.js. The tag is inline content of the wording, glued to its last
-                     word: they wrap together, the tag is never on a line of its own. -->
+                <!-- The parts of utils/timeline/parts.js. The tags are inline content of the wording, glued to its last
+                     word: they wrap together, a tag is never on a line of its own. -->
                 <span class="timeline-wording">
                     <TimelineWordingPart v-for="(part, index) in wording.lead" :key="index" :part="part" />
-                    <span v-if="vm.tag" class="timeline-tag-glue">
-                        <TimelineWordingPart v-if="wording.last" :part="wording.last" />{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ vm.tag }}</wa-tag>
+                    <span v-if="vm.tags.length" class="timeline-tag-glue">
+                        <TimelineWordingPart v-if="wording.last" :part="wording.last" /><template v-for="tag in vm.tags" :key="tag">{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ tag }}</wa-tag></template>
                     </span>
                 </span>
                 <template v-if="vm.badge">{{ ' ' }}<wa-badge variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge></template>
@@ -240,10 +240,12 @@ a.timeline-project {
     display: inline-block;
 }
 
-/* The source of the event ("automatic", "from Codex"): a small tag right after the last word of the wording (a
-   real space before it, in the template). */
+/* A fact of the event ("v1.97.0") or its source ("automatic", "from Codex"): a small tag right after the last word
+   of the wording (a real space before it, in the template). */
 .timeline-tag {
     vertical-align: baseline;
+    /* Not the semibold of an instance row's wording. */
+    font-weight: var(--wa-font-weight-normal);
     /* Tighter than the form-control height Web Awesome gives a tag: it sits inside a line of text. */
     height: auto;
     line-height: 1.2;

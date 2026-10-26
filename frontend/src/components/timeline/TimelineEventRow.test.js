@@ -73,7 +73,8 @@ test('a plain row: icon with severity, wording and the time on the right with th
     assert.match(classesOf(row), /timeline-row--success/)
     assert.equal(row.props['data-kind'], 'process.started')
     assert.equal(descendants(root, (n) => n.type === 'wa-icon' && String(n.props.class).includes('timeline-row-icon'))[0].props.name, 'play')
-    assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'Process resumed (hybrid CLI)')
+    assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'Process resumed hybrid CLI')
+    assert.deepEqual(byClass(root, 'timeline-tag').map(textOf), ['hybrid CLI'])
     const [time] = byClass(root, 'timeline-time')
     assert.equal(textOf(time), '14:32')
     assert.match(time.props.title, /Precision: exact/)
@@ -400,7 +401,9 @@ test('a rename: the two titles are values of their own, the arrow an icon with a
     // tag are glued in one box, so they wrap together.
     const flow = wording.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
     const label = (n) => (n.type === 'wa-icon' ? 'arrow' : n.type === 'wa-tag' ? `tag:${textOf(n)}` : textOf(n))
-    assert.deepEqual(flow.map((n) => (classesOf(n) === 'timeline-tag-glue' ? n.children.filter((c) => c.type !== '#comment').map(label) : label(n))),
+    // The empty text nodes are the anchors of the tags' fragment.
+    const glued = (n) => n.children.filter((c) => c.type !== '#comment' && !(c.type === '#text' && c.text === '')).map(label)
+    assert.deepEqual(flow.map((n) => (classesOf(n) === 'timeline-tag-glue' ? glued(n) : label(n))),
         ['Renamed ', 'Old one', 'arrow', 'to', 'New ', ['one', ' ', 'tag:automatic']])
     assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Old one', 'New ', 'one'], 'the glued word keeps the value style')
     const [tag] = descendants(wording, (n) => n.type === 'wa-tag')
@@ -458,9 +461,10 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
         const rule = declarationsOf(style, selector)
         assert.deepEqual([rule.get('-webkit-user-select'), rule.get('user-select')], ['text', 'text'], selector)
     }
-    assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/>\{\{ ' ' \}\}<wa-tag /)
+    assert.match(row, /<TimelineWordingPart v-if="wording\.last" :part="wording\.last" \/><template v-for="tag in vm\.tags" :key="tag">\{\{ ' ' \}\}<wa-tag /)
     const tag = declarationsOf(style, '.timeline-tag')
     assert.equal(tag.get('vertical-align'), 'baseline')
+    assert.equal(tag.get('font-weight'), 'var(--wa-font-weight-normal)', 'not the semibold of an instance wording')
     assert.ok(!tag.has('display') && !tag.has('flex-basis'), 'never forced onto a line of its own')
     assert.equal(tag.get('margin-inline-start'), '0.25em', 'a little more room before the tag than the space alone')
     assert.equal(tag.get('padding-inline'), '0.5em', 'narrower than the Web Awesome default (0.75em)')
@@ -475,7 +479,7 @@ const rowText = (root) => textOf(byClass(root, 'timeline-row')[0])
 
 test('the copied text of every row variant reads with a space between its pieces', async (t) => {
     const plain = await render(t, [make('process.started', { data: { cause: 'resume', hybrid: true } })])
-    assert.equal(rowText(plain), 'Fix the build p1 Process resumed (hybrid CLI) 14:32')
+    assert.equal(rowText(plain), 'Fix the build p1 Process resumed hybrid CLI 14:32')
     const rename = await render(t, [make('title.changed', { data: { source: 'auto', old: 'Old one', new: 'New one' } })])
     assert.equal(rowText(rename), 'Fix the build p1 Renamed Old one to New one automatic 14:32')
     const badge = await render(t, [make('turn.ended', { data: { background_work: { subagents: 2, shells: 0, monitors: 0, scheduled_wakeup_at: null, goal: false } } })])
@@ -493,4 +497,38 @@ test('the copied text of every row variant reads with a space between its pieces
     assert.match(rowText(instance), /^\S.* 14:32$/)
     // No double spaces anywhere, and nothing glued to the time.
     for (const root of [plain, rename, badge, author, error, following, instance]) assert.doesNotMatch(rowText(root), / {2}|\S14:32/)
+})
+
+test('an automatic row shows an "automatic" tag glued to its wording, not a quiet author label', async (t) => {
+    const root = await render(t, [make('process.started', { actor: 'system', via: null, data: { cause: 'resume', hybrid: true } })])
+    const [wording] = byClass(root, 'timeline-wording')
+    assert.deepEqual(byClass(wording, 'timeline-tag').map(textOf), ['hybrid CLI', 'automatic'])
+    assert.equal(byClass(root, 'timeline-author').length, 0)
+    assert.equal(textOf(byClass(root, 'timeline-row-main')[0]), 'Process resumed hybrid CLI automatic')
+    // The cause says it: no "automatic" after "TwiCC shutdown".
+    const stopped = await render(t, [make('process.ended', { actor: 'system', via: null, reason: 'shutdown' })])
+    assert.deepEqual(byClass(stopped, 'timeline-tag').map(textOf), ['TwiCC shutdown'])
+    assert.equal(byClass(stopped, 'timeline-author').length, 0)
+})
+
+test('the version of a TwiCC start is a tag, and several tags follow the last word in order', async (t) => {
+    const started = await render(t, [make('backend.started', {
+        session_id: null, project_id: null, provider: null, actor: 'system', data: { version: '1.97.0', machine_restarted: true },
+    })])
+    const [wording] = byClass(started, 'timeline-wording')
+    assert.equal(textOf(wording), 'TwiCC started after a machine restart v1.97.0')
+    assert.deepEqual(byClass(wording, 'timeline-tag').map(textOf), ['v1.97.0'])
+    const titled = await render(t, [make('title.changed', { actor: 'system', via: null, data: { source: 'agent', new: 'B' } })])
+    const [glue] = byClass(titled, 'timeline-tag-glue')
+    const label = (n) => (n.type === 'wa-tag' ? `tag:${textOf(n)}` : textOf(n))
+    assert.deepEqual(glue.children.filter((n) => n.type !== '#comment' && !(n.type === '#text' && n.text === '')).map(label),
+        ['B', ' ', 'tag:from the provider', ' ', 'tag:automatic'])
+})
+
+test('the tool of a request is a value of the wording, like a title', async (t) => {
+    const root = await render(t, [make('awaiting_input.started', { data: { request_type: 'tool_approval', tool_name: 'Bash' } })])
+    const [wording] = byClass(root, 'timeline-wording')
+    assert.equal(textOf(wording), 'Waiting for approval Bash')
+    assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Bash'])
+    assert.equal(byClass(root, 'timeline-tag').length, 0)
 })

@@ -16,24 +16,30 @@ import { sessionMention } from './sessions.js'
 const TITLE_MAX = 80
 const TOOL_MAX = 40
 
-/** Wording of a `process.ended` reason: [text, severity]. The reason set is open (see `describeProcessEnded`). */
+/**
+ * Wording of a `process.ended` reason: [text, severity, tag]. The tag is the cause when the text does not say it
+ * (null otherwise). The reason set is open (see `describeProcessEnded`).
+ */
 export const PROCESS_ENDED_REASONS = {
     manual: ['Process stopped', 'neutral'],
     force: ['Process killed', 'neutral'],
-    archived: ['Process stopped (session archived)', 'neutral'],
-    shutdown: ['Process stopped (TwiCC shutdown)', 'neutral'],
+    archived: ['Process stopped', 'neutral', 'session archived'],
+    shutdown: ['Process stopped', 'neutral', 'TwiCC shutdown'],
     'apply-settings': ['Process restarted to apply settings', 'neutral'],
-    'switch-hybrid': ['Process stopped (switch to hybrid)', 'neutral'],
-    timeout_user_turn: ['Process stopped (idle timeout)', 'neutral'],
+    'switch-hybrid': ['Process stopped', 'neutral', 'switch to hybrid'],
+    timeout_user_turn: ['Process stopped', 'neutral', 'idle timeout'],
     'cli-exit': ['Hybrid CLI exited', 'neutral'],
     timeout_starting: ['Process stopped: start timed out', 'warning'],
     timeout_assistant_turn: ['Process stopped: no activity', 'warning'],
     cron_restart_timeout: ['Cron restart timed out', 'warning'],
-    lost: ['Process lost (found dead at boot)', 'warning'],
+    lost: ['Process lost', 'warning', 'found dead at boot'],
     auth_required: ['Process stopped: login required', 'danger'],
     'startup-failed': ['Process failed to start', 'danger'],
     error: ['Process crashed', 'danger'],
 }
+
+// The settings reasons whose wording already says the change was automatic (the prefixes of settingsDiff.js).
+const AUTOMATIC_SETTINGS_REASONS = new Set(['model_retired', 'switch-hybrid'])
 
 const PIN_SCOPES = { project: 'project', workspace: 'workspace', all: 'all projects' }
 
@@ -52,9 +58,12 @@ const SESSION_CREATED_BASE = {
     sync: 'Session created',
 }
 
+/** The tag of an automatic row (author label `automatic`), and of an automatic title. */
+const AUTOMATIC_TAG = 'automatic'
+
 // `agent`: the provider wrote the title in its own files (a /rename in the CLI, Codex naming its thread); the tag
 // names the provider, see titleSourceTag.
-const TITLE_SOURCE_TAGS = { auto: 'automatic' }
+const TITLE_SOURCE_TAGS = { auto: AUTOMATIC_TAG }
 
 const text = textPart
 
@@ -76,8 +85,9 @@ function toolName(data) {
     return name ? truncateText(name, TOOL_MAX).text : null
 }
 
+/** The wording of a request, the tool name as a value (like a title): "Waiting for approval Bash". */
 function withTool(label, tool) {
-    return tool ? `${label} (${tool})` : label
+    return tool ? [text(`${label} `), valuePart(tool)] : [text(label)]
 }
 
 function describeSessionCreated(event, data, context, author) {
@@ -114,7 +124,7 @@ function describeTitleChanged(event, data, context) {
     else if (previous === null) parts = [text('Titled '), value(next, 'New title')]
     else parts = [text('Renamed '), value(previous, 'Old title'), arrowPart(), value(next, 'New title')]
     return {
-        icon: 'pencil', severity: 'neutral', parts, tag: titleSourceTag(event, data, context), tooltip,
+        icon: 'pencil', severity: 'neutral', parts, tags: [titleSourceTag(event, data, context)], tooltip,
     }
 }
 
@@ -124,18 +134,19 @@ function describeSettings(event, data, context) {
     return {
         icon: 'sliders', severity: change.severity, parts: change.parts,
         tooltip: change.full !== change.text ? [change.full] : [],
+        saysAutomatic: AUTOMATIC_SETTINGS_REASONS.has(event.reason),
     }
 }
 
 function describeProcessStarted(event, data) {
     const label = data.cause === 'resume' ? 'Process resumed' : 'Process started'
     const tooltip = Number.isFinite(data.twicc_pid) ? [`Process id: ${data.twicc_pid}`] : []
-    return { icon: 'play', severity: 'success', parts: [text(data.hybrid === true ? `${label} (hybrid CLI)` : label)], tooltip }
+    return { icon: 'play', severity: 'success', parts: [text(label)], tags: [data.hybrid === true ? 'hybrid CLI' : null], tooltip }
 }
 
 function describeProcessEnded(event, data, context) {
     const known = lookup(PROCESS_ENDED_REASONS, event.reason)
-    const [label, severity] = known ?? ['Process stopped', 'neutral']
+    const [label, severity, cause = null] = known ?? ['Process stopped', 'neutral']
     const tooltip = Number.isFinite(data.twicc_pid) ? [`Process id: ${data.twicc_pid}`] : []
     if (event.reason === 'lost' && asString(data.upper_bound)) {
         const bound = formatClock(parseOccurredAt(data.upper_bound), context.time)
@@ -143,8 +154,11 @@ function describeProcessEnded(event, data, context) {
     }
     const error = event.reason === 'error' ? asString(data.error) : null
     return {
-        icon: 'power-off', severity, parts: [text(label)], tooltip,
+        icon: 'power-off', severity, parts: [text(label)], tags: [cause], tooltip,
         detail: error ? splitFirstLine(error) : null,
+        // A known reason says who stopped it: an automatic end is exactly one that is not deliberate (manual, force,
+        // archived; twicc/agent/timeline_hooks.py `_end_origin`). An unknown reason keeps the tag: it is the only hint.
+        saysAutomatic: known !== undefined,
     }
 }
 
@@ -153,36 +167,36 @@ const AWAITING = {
         started: (tool) => withTool('Waiting for approval', tool),
         ended: (tool) => withTool('Approval handled', tool),
     },
-    ask_user_question: { started: () => 'Question for you', ended: () => 'Question answered' },
+    ask_user_question: { started: () => [text('Question for you')], ended: () => [text('Question answered')] },
     hybrid_terminal: {
         started: (tool) => withTool('Waiting in the terminal', tool),
-        ended: () => 'Terminal input handled',
+        ended: () => [text('Terminal input handled')],
     },
 }
-const AWAITING_OTHER = { started: (tool) => withTool('Waiting for input', tool), ended: () => 'Input handled' }
+const AWAITING_OTHER = { started: (tool) => withTool('Waiting for input', tool), ended: () => [text('Input handled')] }
 
 function describeAwaiting(event, data, phase) {
     const wording = (lookup(AWAITING, data.request_type) ?? AWAITING_OTHER)[phase]
     return {
         icon: phase === 'started' ? 'hand' : 'circle-check',
         severity: phase === 'started' ? 'warning' : 'neutral',
-        parts: [text(wording(toolName(data)))],
+        parts: wording(toolName(data)),
     }
 }
 
 function describePinned(event, data, phase) {
     const scope = lookup(PIN_SCOPES, data.scope) ?? null
-    if (phase === 'started') {
-        return { icon: 'thumbtack', severity: 'neutral', parts: [text(scope ? `Pinned (${scope})` : 'Pinned')] }
-    }
-    return { icon: 'thumbtack-slash', severity: 'neutral', parts: [text(scope ? `Unpinned (was ${scope})` : 'Unpinned')] }
+    if (phase === 'started') return { icon: 'thumbtack', severity: 'neutral', parts: [text('Pinned')], tags: [scope] }
+    return { icon: 'thumbtack-slash', severity: 'neutral', parts: [text('Unpinned')], tags: [scope ? `was ${scope}` : null] }
 }
 
 function describeBackendStarted(event, data) {
     const version = asString(data.version)
-    let label = version ? `TwiCC started v${version}` : 'TwiCC started'
-    if (data.machine_restarted === true) label += ' after a machine restart'
-    return { icon: 'server', severity: 'neutral', parts: [text(label)], tooltip: backendTooltip(data) }
+    const label = data.machine_restarted === true ? 'TwiCC started after a machine restart' : 'TwiCC started'
+    return {
+        icon: 'server', severity: 'neutral', parts: [text(label)], tags: [version ? `v${version}` : null],
+        tooltip: backendTooltip(data),
+    }
 }
 
 function describeBackendEnded(event, data) {
@@ -248,7 +262,8 @@ function describeTime(event, context) {
  * @property {string} icon - Font Awesome Free solid name.
  * @property {'neutral'|'success'|'warning'|'danger'} severity
  * @property {Array<Object>} parts - Wording segments (parts.js): `text`, `value`, `arrow`, `session`.
- * @property {string|null} tag - Small tag at the end of the wording ("automatic", "from Codex").
+ * @property {string[]} tags - Small tags at the end of the wording, in order: facts of the event ("v1.97.0",
+ *   "TwiCC shutdown", "hybrid CLI", "project"), then its source ("automatic", "from Codex").
  * @property {{text: string, title: string}|null} badge - Background-work badge of `turn.ended`.
  * @property {{first: string, rest: string}|null} detail - Monospace first line of an error, with the rest behind an expand control.
  * @property {import('./authorLabel.js').AuthorLabel} author
@@ -279,13 +294,17 @@ export function describeEvent(event, context) {
     if (event.actor_ref) lines.push(`Actor ref: ${event.actor_ref}`)
     if (event.actor_name) lines.push(`Actor name: ${event.actor_name}`)
     if (author.unknown) lines.push(`Actor: ${event.actor}`)
+    // The source last: an automatic row says so with the tag of an automatic title, once, and only when its wording
+    // does not already say it ("TwiCC shutdown", "Model upgraded (retired)").
+    const tags = (described.tags ?? []).filter(Boolean)
+    if (author.kind === 'automatic' && !described.saysAutomatic && !tags.includes(AUTOMATIC_TAG)) tags.push(AUTOMATIC_TAG)
     return {
         id: event.id,
         kind: event.kind,
         icon: described.icon,
         severity: described.severity,
         parts: described.parts,
-        tag: described.tag ?? null,
+        tags,
         badge: described.badge ?? null,
         detail: described.detail ?? null,
         author,

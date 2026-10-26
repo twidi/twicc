@@ -12,6 +12,8 @@ const SELF_EXPLAINING = /^(backend\.|session\.created$)/
 const VIA_SUFFIX = { cli: '(CLI)', mcp_internal: '(MCP)', rpc: '(API)' }
 
 const NO_LABEL = Object.freeze({ kind: 'none', parts: [], unknown: false })
+/** No "by ..." text: the row shows an "automatic" tag (describeEvent.js) unless its wording already says it. */
+const AUTOMATIC = Object.freeze({ kind: 'automatic', parts: [], unknown: false })
 
 function text(value) {
     return { type: 'text', text: value }
@@ -19,7 +21,8 @@ function text(value) {
 
 /**
  * @typedef {Object} AuthorLabel
- * @property {'none'|'text'|'session'} kind - `session` when the label names a session.
+ * @property {'none'|'text'|'session'|'automatic'} kind - `session` when the label names a session; `automatic`
+ *   when the row is automatic: no parts, the row shows a tag instead.
  * @property {Array<{type: 'text', text: string}|{type: 'session', mention: Object}>} parts
  * @property {boolean} unknown - An actor/via combination the table does not know: no label, and the
  *   tooltip must show the raw values.
@@ -58,7 +61,7 @@ export function describeAuthor(event, { sessions, isSubagent }) {
     } else if (actor === 'system') {
         if (via === null || via === undefined) {
             if (SELF_EXPLAINING.test(event.kind)) return NO_LABEL
-            return { kind: 'text', parts: [text('automatic')], unknown: false }
+            return AUTOMATIC
         }
     }
     return { kind: 'none', parts: [], unknown: true }
