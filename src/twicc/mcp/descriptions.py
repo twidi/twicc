@@ -19,14 +19,15 @@ EXTERNAL_DESCRIPTION_SUFFIX = "\nExternal MCP: use explicit IDs. No self or pare
 MCP_DESCRIPTIONS: dict[str, str] = {
     "timeline": """Read recorded timeline events, newest first, with cursor pagination.
 
-Scope: all projects by default, or one of project, workspace, session. Project includes its worktrees; \
-a worktree includes only itself. Session filters use current metadata: annotation, filiation, provider, \
-state and active match sessions before event pagination. Hidden sessions are excluded by default; filiation \
-includes them as in sessions. Use include_hidden or only_hidden. Archived sessions are always included.
+Scope: all projects by default, or project, workspace or session. A project includes its worktrees; \
+a worktree only itself. Session filters use current metadata: annotation, filiation, provider, state, active. \
+Hidden excluded by default; filiation includes them as in sessions. Use include_hidden or only_hidden. \
+Archived sessions always included.
 
-Returns items, pagination (limit, has_more, next_cursor), and compact cited-session metadata. Default limit 20, \
-maximum 100. For older events, pass next_cursor as before with the same filters. No offset or total. \
-Instance events appear in baseline scopes, but explicit session-selection filters exclude them.""",
+Items include session_title, project_name and project_directory. sessions maps cited IDs to current metadata. \
+Workspace scope also returns workspace {id, name}. Unknown labels are null. \
+pagination: limit (default 20, max 100), has_more, next_cursor. Pass next_cursor as before with the same filters. \
+No offset or total. Instance events appear only in baseline scopes without explicit session-selection filters.""",
     "send-message": """Send a message to an existing session.
 
 prompt may be omitted when attach is given. The session keeps its stored agent settings; change them with \

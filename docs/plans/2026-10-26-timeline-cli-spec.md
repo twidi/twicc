@@ -214,6 +214,27 @@ The `sessions` side table provides the existing compact metadata for sessions ci
 It does not contain unrelated sessions. Missing session metadata is omitted without dropping eligible events.
 Actor sessions may appear in that side table even when they are hidden; this does not select their events.
 
+### Current labels
+
+Each item also carries these nullable fields:
+
+- `session_title`: the target session's current title, including a pending title.
+- `project_name`: the current name of the event's recorded project, when assigned.
+- `project_directory`: the recorded project's current directory, when known.
+
+These fields do not change the recorded event payload in `data`.
+Missing session metadata leaves `session_title` null without dropping eligible history.
+Instance events have null session and project labels.
+The `sessions` table also carries `project_name` and `project_directory` for each cited session's current project.
+If a session moved, its current project can differ from an older event's recorded project.
+
+With workspace scope, the response adds `workspace: {id, name}`, even on an empty page.
+Other scopes omit `workspace`. Reuse the workspace definition read during scope resolution.
+
+Enrichment uses only the returned page and its cited sessions.
+Group session and project metadata reads; never issue a metadata query per event or per session.
+Reuse metadata already loaded for explicit project and session scopes.
+
 ## 9. Examples
 
 ```bash

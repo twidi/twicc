@@ -77,6 +77,10 @@ Baseline selections preserve events whose session metadata is missing. `--includ
 
 `items` contains serialized events. `sessions` maps cited session IDs to metadata. Missing sessions have no entry.
 
+Each event also carries `session_title`, `project_name`, and `project_directory`. These are current labels for its target session and recorded project. Unknown labels are null. The `sessions` entries also include `project_name` and `project_directory` for each session's current project.
+
+With `--workspace`, the response also contains `"workspace": {"id": "WORKSPACE_ID", "name": "Workspace name"}`, including on empty pages. Other scopes omit this field.
+
 When `has_more` is true, pass `pagination.next_cursor` unchanged as `--before`. Keep the same scope and filters. Stop when `has_more` is false. There is no `--offset` or `total`.
 
 Newer events do not shift subsequent pages. Pagination is not a snapshot: metadata changes and late events can change subsequent results.
