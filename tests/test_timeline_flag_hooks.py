@@ -7,7 +7,8 @@ from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import (
     apply_session_archived_change, apply_session_mute_on_user_turn_change, apply_session_pinned_change,
 )
-from tests.timeline_helpers import kinds, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import kinds
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

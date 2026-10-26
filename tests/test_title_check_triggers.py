@@ -21,8 +21,14 @@ from twicc.core.services.session_update import apply_session_archived_change
 from twicc.providers import db_writer
 from twicc.providers.helpers import AgentSettings
 from twicc.providers.sessions_watcher import IndexingRequest, ParsedSessionFile, SessionChangeResult
+from tests.db_write_helpers import run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def write_lock_held():
+    """Whether the real DB write lock is held (no lock exists under direct writes)."""
+    return db_writer._db_write_lock is not None and db_writer._db_write_lock.locked()
 
 
 @pytest.fixture
@@ -30,7 +36,7 @@ def requests(monkeypatch):
     recorded = []
 
     def record(session_id, *, closing=False):
-        assert not db_writer._db_write_lock.locked()
+        assert not write_lock_held()
         recorded.append((session_id, closing))
 
     monkeypatch.setattr(title_auto_task, "request_title_check", record)
@@ -39,6 +45,11 @@ def requests(monkeypatch):
 
 
 def run_with_writer(scenario):
+    """Run ``await scenario()`` with the real DB writer.
+
+    Only for a test that asserts a request is made outside the write lock.
+    """
+
     async def run():
         db_writer.start_db_writer()
         try:
@@ -108,6 +119,7 @@ def test_live_indexed_lines_request_outside_lock_without_search_dependency(
         assert result.indexing.new_line_nums
         assert await SessionItem.objects.filter(session_id=session.id).acount() > 0
 
+    # Real writer: the request must be made once the write lock is released.
     run_with_writer(scenario)
     assert requests == [(session.id, False)]
 
@@ -137,7 +149,7 @@ def test_live_request_requires_indexed_top_level_ready_session(tmp_path, monkeyp
             path, parsed, Change.deleted if case == "deleted" else Change.modified, None,
         )
 
-    run_with_writer(scenario)
+    run_with_direct_writes(scenario)
     assert requests == []
 
 
@@ -171,12 +183,13 @@ def test_dead_requests_only_manual_or_force_after_real_manager_cleanup(monkeypat
     recorded = []
 
     def record(session_id, *, closing=False):
-        assert not db_writer._db_write_lock.locked()
+        assert not write_lock_held()
         assert session_id not in manager._agents
         assert agent.process_run is None
         recorded.append((session_id, closing))
 
     monkeypatch.setattr(title_auto_task, "request_title_check", record)
+    # Real writer: the closing request must be made once the write lock is released.
     run_with_writer(lambda: manager._on_state_change(agent))
     session.refresh_from_db()
     assert session.last_stopped_at is not None
@@ -191,7 +204,7 @@ def test_ephemeral_dead_never_requests_title(requests, provider, reason):
     manager, agent = manager_agent(provider, session, ephemeral=True)
     agent._set_state(AgentState.DEAD)
     agent.kill_reason = reason
-    run_with_writer(lambda: manager._on_state_change(agent))
+    run_with_direct_writes(lambda: manager._on_state_change(agent))
     assert requests == []
     assert not Session.objects.filter(id=session.id).exists()
 
@@ -203,7 +216,7 @@ def test_user_turn_finished_does_not_request_title(monkeypatch, requests, provid
     agent._set_state(AgentState.USER_TURN)
     if provider == Provider.CLAUDE_CODE:
         monkeypatch.setattr(manager, "_apply_pending_settings", AsyncMock())
-    run_with_writer(lambda: manager._on_state_change(agent))
+    run_with_direct_writes(lambda: manager._on_state_change(agent))
     assert requests == []
     assert session.id in manager._agents
 
@@ -235,6 +248,7 @@ def test_archive_transition_requests_after_all_teardown(monkeypatch, requests, a
         kill_agent=kill, get_active_agents=lambda: [] if already_dead else [SimpleNamespace(session_id=session.id)],
     ))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", kill_tmux)
+    # Real writer: the closing request must be made once the write lock is released.
     run_with_writer(lambda: apply_session_archived_change(session, True))
     session.refresh_from_db()
     assert session.archived is True
@@ -253,7 +267,7 @@ def test_archive_without_false_to_true_transition_requests_nothing(monkeypatch, 
         kill_agent=AsyncMock(), get_active_agents=list,
     ))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", lambda scope: None)
-    run_with_writer(lambda: apply_session_archived_change(session, after))
+    run_with_direct_writes(lambda: apply_session_archived_change(session, after))
     assert requests == []
 
 
@@ -286,6 +300,7 @@ def test_bulk_archive_requests_only_final_selected_ids(monkeypatch, requests, dr
             await asyncio.gather(*views._DETACHED_TASKS)
         return orjson.loads(response.content)
 
+    # Real writer: the closing requests must be made once the write lock is released.
     result = run_with_writer(scenario)
     assert result["count"] == (3 if dry_run else 2)
     assert set(requests) == (set() if dry_run else {("selected-one", True), ("selected-two", True)})
@@ -307,7 +322,7 @@ def test_startup_initial_sync_does_not_request_title(provider_home, requests, pr
         for payload in payloads:
             await db_writer.run_under_db_write_lock(lambda payload=payload: db_writer._process_thread_message(payload))
 
-    run_with_writer(scenario)
+    run_with_direct_writes(scenario)
     assert Session.objects.filter(id="startup-title").exists()
     assert SessionItem.objects.filter(session_id="startup-title").exists()
     assert requests == []

@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.timeline_helpers import columns, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import columns
 from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services.session_update import (

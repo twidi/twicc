@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import columns, kinds, mark_known, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import columns, kinds, mark_known
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, Session, SessionType, TimelineEvent

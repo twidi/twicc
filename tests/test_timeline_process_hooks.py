@@ -9,7 +9,8 @@ from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, TimelineEvent
 from twicc.core.services.session_timeline import record_event_sync
-from tests.timeline_helpers import kinds, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import kinds
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 from django.utils import timezone
 
-from tests.timeline_helpers import columns, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import columns
 from twicc.agent.base_agent import BaseAgent
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.agent.stop_origin import StopOriginMixin

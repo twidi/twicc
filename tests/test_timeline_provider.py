@@ -30,7 +30,8 @@ from twicc.core.services.session_update import (
 from twicc.core.services.timeline_backfill import write_creation_row_sync
 from twicc.core.services.timeline_boot import reconcile_at_boot
 from twicc.request_origin import UI_ORIGIN
-from tests.timeline_helpers import mark_known, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import mark_known
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

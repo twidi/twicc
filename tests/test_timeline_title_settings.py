@@ -6,7 +6,8 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import persist_session_settings, update_session_title_from_payload
 from tests.test_title_automation import env, session  # noqa: F401  (fixtures reused below)
-from tests.timeline_helpers import kinds, mark_known, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import kinds, mark_known
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

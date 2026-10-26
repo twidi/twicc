@@ -18,6 +18,7 @@ from twicc.core.models import AsyncQuestionState, Project, Session, SessionItem,
 from twicc.core.services import async_questions as service
 from twicc.providers.codex.agent.manager import CodexAgentManager
 from twicc.providers.codex.async_questions import QuestionFact
+from tests.db_write_helpers import run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -75,6 +76,7 @@ def updates(layer):
 
 
 def run_with_writer(callback):
+    """Run ``await callback()`` with the real DB writer: only for a test that drains the writer's queue."""
     from twicc.providers import db_writer
 
     async def run():
@@ -178,7 +180,7 @@ def dismiss_ws(monkeypatch, session, *, item_id="q1", request_id="dismiss-1", ma
         await consumer.receive_json({"type": "codex_dismiss_async_question", "session_id": session.id,
                                      "item_id": item_id, "request_id": request_id})
 
-    run_with_writer(run)
+    run_with_direct_writes(run)
     return consumer
 
 
@@ -260,7 +262,7 @@ def settings_update(monkeypatch, session, setting):
     monkeypatch.setattr(session_update, "ensure_provider_running", lambda *_: None)
     monkeypatch.setattr("twicc.agent.registry.get_agent_manager_registry", lambda: SimpleNamespace(
         get=lambda *_: SimpleNamespace(get_agent_info=lambda *_: None)))
-    return run_with_writer(lambda: session_update.update_session_settings_from_payload(
+    return run_with_direct_writes(lambda: session_update.update_session_settings_from_payload(
         {"session_id": session.id, "updates": {"question_widget": setting}}))
 
 
@@ -307,7 +309,7 @@ def test_browser_settings_only_updates_publish_once(monkeypatch, ready_session, 
     ready_session.question_widget = False
     ready_session.save(update_fields=["question_widget"])
     before = service.read_question_snapshot(ready_session.id)
-    run_with_writer(lambda: consumer._handle_send_message_admitted({
+    run_with_direct_writes(lambda: consumer._handle_send_message_admitted({
         "session_id": ready_session.id, "project_id": ready_session.project_id,
         "text": "", "request_id": "settings", "question_widget": False,
     }))
@@ -369,7 +371,7 @@ def test_committed_dismissal_identity_exists_before_broadcast_and_ack(monkeypatc
                         lambda: SimpleNamespace(get=lambda *_: manager))
     consumer = WSConsumer()
     consumer.send_json = acknowledge
-    run_with_writer(lambda: consumer.receive_json({
+    run_with_direct_writes(lambda: consumer.receive_json({
         "type": "codex_dismiss_async_question", "session_id": ready_session.id,
         "item_id": "q1", "request_id": "identity",
     }))
@@ -559,6 +561,7 @@ def run_real_inventory(monkeypatch):
     orch = orchestrator.CodexOrchestrator()
     monkeypatch.setattr("twicc.providers.state.get_enabled_providers", lambda: {Provider.CODEX})
     monkeypatch.setattr("twicc.orchestrator.get_orchestrator_registry", lambda: SimpleNamespace(get=lambda _: orch))
+    # Real writer: it consumes the producer's payloads and resolves the completion marker.
     run_with_writer(orch._initial_sync_task)
     return orch, drain_results
 

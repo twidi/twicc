@@ -1,6 +1,5 @@
 """Title writers stamp explicit choices and preserve provider-channel origins."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,6 +13,7 @@ from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatch
 from twicc.providers.codex.titles import SyncSessionTitlesJob, _apply_sync_session_titles_job
 from twicc.providers.sessions_watcher import ParsedSessionFile
 from twicc import title_echo
+from tests.db_write_helpers import run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -46,18 +46,6 @@ def broadcasts(monkeypatch):
     return channel.group_send
 
 
-def run_with_writer(coroutine):
-    from twicc.providers import db_writer
-
-    async def scenario():
-        db_writer.start_db_writer()
-        try:
-            return await coroutine
-        finally:
-            await db_writer.stop_db_writer()
-    return asyncio.run(scenario())
-
-
 def assert_user_choice(session, broadcasts, expected):
     session.refresh_from_db()
     assert (session.title, session.title_origin) == (expected, "user")
@@ -73,7 +61,7 @@ def test_rest_same_text_validates_title(session, broadcasts):
     from twicc.views import session_detail
     title_echo.record_automatic_title_push(session.id, "Automatic")
     request = RequestFactory().patch("/", data={"title": "Same"}, content_type="application/json")
-    response = run_with_writer(session_detail(request, session.project_id, session.id))
+    response = run_with_direct_writes(lambda: session_detail(request, session.project_id, session.id))
     assert response.status_code == 200
     assert_user_choice(session, broadcasts, "Same")
 
@@ -81,7 +69,7 @@ def test_rest_same_text_validates_title(session, broadcasts):
 def test_cli_same_text_validates_title(session, broadcasts):
     from twicc.core.services.session_update import update_session_title_from_payload
     title_echo.record_automatic_title_push(session.id, "Automatic")
-    run_with_writer(update_session_title_from_payload({"session_id": session.id, "title": "Same"}))
+    run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": session.id, "title": "Same"}))
     assert_user_choice(session, broadcasts, "Same")
 
 
@@ -92,7 +80,7 @@ def test_pending_flush_validates_title(session, broadcasts):
     manager = SimpleNamespace(
         _broadcast_session_updated=lambda sid: BaseAgentManager._broadcast_session_updated(None, sid),
     )
-    result = run_with_writer(BaseAgentManager._try_flush_pending_title(
+    result = run_with_direct_writes(lambda: BaseAgentManager._try_flush_pending_title(
         manager, SimpleNamespace(session_id=session.id, provider=session.provider), "Chosen"))
     assert result is False  # Provider writeback fails; persistence and notification still succeed.
     assert_user_choice(session, broadcasts, "Chosen")

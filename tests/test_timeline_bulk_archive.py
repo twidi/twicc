@@ -9,7 +9,8 @@ from django.test.utils import CaptureQueriesContext
 
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.session_update import archive_sessions_bulk
-from tests.timeline_helpers import kinds, run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
+from tests.timeline_helpers import kinds
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

@@ -7,7 +7,7 @@ from twicc.agent.process_run_cleanup import CleanupStaleProcessRunsJob, _apply_c
 from twicc.core.models import ProcessRun, Project, Session, SessionItem, TimelineEvent
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.core.services.timeline_boot import reconcile_at_boot, record_backend_ended_clean
-from tests.timeline_helpers import run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes
 
 pytestmark = pytest.mark.django_db(transaction=True)
 WORK = {"subagents": 1, "shells": 0, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
