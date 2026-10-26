@@ -1238,6 +1238,54 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
     # Extraction
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _rewrite_fork_opening(parsed_json: dict, entry_type: str) -> bool:
+        """Rewrite the first two lines of a fork's file in place; True when one changed.
+
+        - assistant, ``parentUuid`` null (a fork's file is the only place a line
+          starts a chain), one ``tool_use`` whose input has ``subagent_type:
+          "fork"`` → a user message holding ``input.prompt``;
+        - user, a ``tool_result`` next to a ``<fork-boilerplate>`` text block →
+          the same content marked ``isMeta`` (a system line), the original kept
+          under ``twiccOriginalContent``.
+        """
+        message = parsed_json.get('message')
+        if not isinstance(message, dict):
+            return False
+        content = message.get('content')
+        if not isinstance(content, list):
+            return False
+        if entry_type == 'assistant':
+            if parsed_json.get('parentUuid') is not None:
+                return False
+            tool_uses = [b for b in content if isinstance(b, dict) and b.get('type') == 'tool_use']
+            if len(tool_uses) != 1 or len(content) != 1:
+                return False
+            tool_input = tool_uses[0].get('input')
+            if not isinstance(tool_input, dict) or tool_input.get('subagent_type') != 'fork':
+                return False
+            prompt = tool_input.get('prompt')
+            if not isinstance(prompt, str) or not prompt.strip():
+                return False
+            parsed_json['twiccOriginalMessage'] = message
+            parsed_json['type'] = 'user'
+            parsed_json['message'] = {'role': 'user', 'content': prompt}
+            return True
+        has_ack = any(isinstance(b, dict) and b.get('type') == 'tool_result' for b in content)
+        has_boilerplate = any(
+            isinstance(b, dict)
+            and b.get('type') == 'text'
+            and isinstance(b.get('text'), str)
+            and b['text'].lstrip().startswith('<fork-boilerplate>')
+            for b in content
+        )
+        if not (has_ack and has_boilerplate):
+            return False
+        parsed_json['twiccOriginalContent'] = content
+        message['content'] = [b for b in content if not (isinstance(b, dict) and b.get('type') == 'tool_result')]
+        parsed_json['isMeta'] = True
+        return True
+
     def _transform_inline_provider(
         self,
         parsed_json: dict,
@@ -1324,6 +1372,16 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                     parsed_json.update(restored)
 
         entry_type = parsed_json.get('type')
+
+        # --- Fork opening (CLI 2.1.302+, ``subagent_type: "fork"``): a fork's
+        # file opens with a copy of the parent's launching ``Agent`` tool_use,
+        # then its ``tool_result`` ack plus the CLI's boilerplate. Turn the
+        # tool_use into the user prompt a classic subagent opens with, and the
+        # ack into a system line. Both are rewritten (never only one) so no
+        # tool_result is left without its tool_use.
+        if parsed_json.get('isSidechain') and entry_type in ('assistant', 'user'):
+            if self._rewrite_fork_opening(parsed_json, entry_type):
+                return orjson.dumps(parsed_json).decode('utf-8')
 
         # --- Assistant-side rewrites: task enrichment + screenshot
         # substitution. Both apply to entry_type == 'assistant', and may
