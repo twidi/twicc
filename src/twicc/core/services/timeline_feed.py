@@ -1,4 +1,3 @@
-# src/twicc/core/services/timeline_feed.py
 """Read side of the timeline: the feed behind ``GET /api/timeline/``.
 
 Design: ``docs/plans/2026-10-15-timeline-display-design.md`` section 7. Everything here is sync and

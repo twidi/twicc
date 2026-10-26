@@ -1,4 +1,3 @@
-# src/twicc/core/services/timeline_boot.py
 """Boot-time timeline reconciliation and backend instance events (design §7)."""
 
 from __future__ import annotations

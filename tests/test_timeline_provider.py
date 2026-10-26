@@ -1,4 +1,3 @@
-# tests/test_timeline_provider.py
 """The ``provider`` column of ``TimelineEvent`` (display design 2026-10-15, section 8)."""
 
 import importlib

@@ -1,4 +1,3 @@
-# src/twicc/core/services/session_timeline.py
 """Recording of timeline events (design §6).
 
 Every hook calls :func:`record_event_sync` (from code already running in a

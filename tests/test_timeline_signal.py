@@ -1,4 +1,3 @@
-# tests/test_timeline_signal.py
 """The ``timeline_changed`` signal (display design 2026-10-15, sections 9.1 and 9.3)."""
 
 import asyncio

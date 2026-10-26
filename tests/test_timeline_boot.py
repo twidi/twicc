@@ -1,4 +1,3 @@
-# tests/test_timeline_boot.py
 from datetime import timedelta
 
 import pytest

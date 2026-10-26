@@ -1,4 +1,3 @@
-# tests/test_timeline_api.py
 """``GET /api/timeline/`` (display design 2026-10-15, sections 7 and 14)."""
 
 import asyncio

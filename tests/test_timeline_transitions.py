@@ -1,4 +1,3 @@
-# tests/test_timeline_transitions.py
 from twicc.core.timeline import EventSpec, process_transition_events
 
 WORK = {"subagents": 0, "shells": 2, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}

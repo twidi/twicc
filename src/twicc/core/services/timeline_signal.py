@@ -1,4 +1,3 @@
-# src/twicc/core/services/timeline_signal.py
 """The light "a new timeline event exists" signal (display design 2026-10-15, section 9.1).
 
 A writer calls :func:`poke_on_commit` after a successful insert. Once the transaction commits, the poke

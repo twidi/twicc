@@ -1,4 +1,3 @@
-# tests/timeline_helpers.py
 """Shared helpers of the timeline tests."""
 
 import asyncio

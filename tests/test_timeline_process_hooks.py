@@ -1,4 +1,3 @@
-# tests/test_timeline_process_hooks.py
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
