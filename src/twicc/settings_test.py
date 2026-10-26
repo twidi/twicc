@@ -42,7 +42,9 @@ paths._undo_env_load()
 #    (``TWICC_PASSWORD_HASH``, ``TWICC_DEBUG``, ``TWICC_BIN`` pointing at the main
 #    repo, ``TWICC_REMOTE_URL``…). Kept: the switches that opt a run into extra
 #    tests; a test that needs any other variable sets it itself.
-_TEST_SWITCHES = frozenset({"TWICC_CLAUDE_INTEGRATION", "TWICC_CODEX_INTEGRATION", "TWICC_UPDATE_FIXTURES"})
+_TEST_SWITCHES = frozenset({
+    "TWICC_CLAUDE_INTEGRATION", "TWICC_CODEX_INTEGRATION", "TWICC_UPDATE_FIXTURES", "TWICC_TIMELINE_BENCH",
+})
 for _key in [key for key in os.environ if key.startswith("TWICC_") and key not in _TEST_SWITCHES]:
     del os.environ[_key]
 # 4. Point the data dir at the throwaway root. ``DEFAULT_DATA_DIR`` keeps the
