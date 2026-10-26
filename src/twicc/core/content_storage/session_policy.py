@@ -22,14 +22,21 @@ def content_decision_from_fields(
 
 
 def resolve_content_decisions(
-    session_ids: Iterable[str], now: datetime, active_ids: frozenset[str],
+    session_ids: Iterable[str], now: datetime, active_ids: frozenset[str], *,
+    metadata: Mapping[str, Mapping | None] | None = None,
 ) -> dict[str, SessionContentDecision]:
-    """Load only requested sessions in bounded metadata queries."""
+    """Load only requested sessions in bounded metadata queries.
+
+    Ids present as keys in ``metadata`` use that row (``None`` = missing session)
+    and are not read again.
+    """
     requested = tuple(dict.fromkeys(session_ids))
-    decisions = {}
-    for offset in range(0, len(requested), TREE_PAGE_SIZE):
-        ids = requested[offset:offset + TREE_PAGE_SIZE]
-        metadata = {row['id']: row for row in Session.objects.filter(pk__in=ids).values('id', *COLD_FIELDS)}
-        decisions.update({identity: content_decision_from_fields(identity, metadata.get(identity), now, active_ids)
-                          for identity in ids})
-    return decisions
+    known = metadata or {}
+    missing = tuple(identity for identity in requested if identity not in known)
+    loaded = {}
+    for offset in range(0, len(missing), TREE_PAGE_SIZE):
+        ids = missing[offset:offset + TREE_PAGE_SIZE]
+        loaded.update({row['id']: row for row in Session.objects.filter(pk__in=ids).values('id', *COLD_FIELDS)})
+    return {identity: content_decision_from_fields(
+        identity, known[identity] if identity in known else loaded.get(identity), now, active_ids,
+    ) for identity in requested}

@@ -1,6 +1,6 @@
 """Native-root metadata policy and transaction-owned durable plaintext generations."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime
 from uuid import uuid4
 
@@ -16,6 +16,10 @@ from twicc.core.models import ContentDictionary, Session, SessionItem, SessionIt
 
 TREE_PAGE_SIZE = 128
 ITEM_PAGE_SIZE = 256
+STORAGE_STATE_FIELDS = (
+    'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',
+)
+NATIVE_METADATA_FIELDS = ('id', 'type', 'parent_session_id', *COLD_FIELDS, *STORAGE_STATE_FIELDS)
 
 
 def _require_writer_transaction() -> None:
@@ -23,11 +27,73 @@ def _require_writer_transaction() -> None:
         raise transaction.TransactionManagementError('Content state writes require a caller-owned transaction')
 
 
+def native_metadata_row(session: Session) -> dict:
+    """Return the native metadata of a freshly loaded instance, shaped like a loaded row."""
+    return {name: getattr(session, name) for name in NATIVE_METADATA_FIELDS}
+
+
+def load_native_metadata(
+    session_ids: Iterable[str], *, known: Mapping[str, dict | None] | None = None, ancestors: bool = True,
+) -> dict[str, dict | None]:
+    """Load native metadata rows, reusing ``known`` rows and querying only the absent ids.
+
+    Every requested id maps to its row, or to ``None`` for a missing session. With
+    ``ancestors``, subagent parents are loaded one level at a time, including the
+    parents of ``known`` rows; cycles stop the walk. ``known`` is never mutated.
+    """
+    metadata = dict(known or {})
+    walked = set()
+    frontier = set(session_ids)
+    while frontier:
+        # Bound SQL parameters and loaded metadata per query.
+        missing = sorted(identity for identity in frontier if identity not in metadata)
+        for offset in range(0, len(missing), TREE_PAGE_SIZE):
+            page = missing[offset:offset + TREE_PAGE_SIZE]
+            metadata.update(dict.fromkeys(page))
+            metadata.update({row['id']: row for row in Session.objects.filter(
+                pk__in=page,
+            ).values(*NATIVE_METADATA_FIELDS)})
+        if not ancestors:
+            break
+        walked |= frontier
+        frontier = {row['parent_session_id'] for row in (metadata[identity] for identity in frontier)
+                    if row is not None and row['type'] == 'subagent' and row['parent_session_id'] is not None
+                    and row['parent_session_id'] not in walked}
+    return metadata
+
+
+def _native_root(session_id: str, metadata: Mapping[str, dict | None]) -> str | None:
+    """Follow loaded subagent parents to a native root; missing or cyclic ancestry stays unresolved."""
+    visited = set()
+    while session_id not in visited:
+        visited.add(session_id)
+        fields = metadata.get(session_id)
+        if fields is None:
+            break
+        parent_id = fields['parent_session_id']
+        if fields['type'] == 'session' and parent_id is None:
+            return session_id
+        if fields['type'] != 'subagent' or parent_id is None:
+            break
+        session_id = parent_id
+    return None
+
+
+def native_root_ids(
+    session_ids: Iterable[str], *, metadata: Mapping[str, dict | None] | None = None,
+) -> dict[str, str | None]:
+    """Resolve each session's native root (``None`` when unresolved), reusing ``metadata`` rows."""
+    requested = tuple(dict.fromkeys(session_ids))
+    loaded = load_native_metadata(requested, known=metadata)
+    return {session_id: _native_root(session_id, loaded) for session_id in requested}
+
+
 def resolve_root_decisions(
-    session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str],
+    session_ids: Iterable[str], now: datetime, active_root_ids: frozenset[str], *,
+    metadata: Mapping[str, dict | None] | None = None,
 ) -> dict[str, RootDecision]:
     """Resolve content eligibility from bounded native-root metadata batches."""
-    return _resolve_root_decisions(session_ids, now, active_root_ids, cold_from_fields)
+    return _resolve_root_decisions(session_ids, now, active_root_ids, cold_from_fields, metadata=metadata)
 
 
 def resolve_scratch_root_decisions(
@@ -37,44 +103,14 @@ def resolve_scratch_root_decisions(
     return _resolve_root_decisions(session_ids, now, active_root_ids, scratch_cold_from_fields)
 
 
-def _resolve_root_decisions(session_ids, now, active_root_ids, predicate):
+def _resolve_root_decisions(session_ids, now, active_root_ids, predicate, metadata=None):
     """Load native ancestry by metadata batches, including active native descendants."""
     requested = tuple(set(session_ids))
-    metadata = {}
-    frontier = set(requested) | set(active_root_ids)
-    while frontier:
-        found = {}
-        # Bound SQL parameters and loaded metadata per query.
-        ids = sorted(frontier)
-        for offset in range(0, len(ids), TREE_PAGE_SIZE):
-            found.update({row['id']: row for row in Session.objects.filter(
-                pk__in=ids[offset:offset + TREE_PAGE_SIZE],
-            ).values('id', 'type', 'parent_session_id', *COLD_FIELDS)})
-        metadata.update(dict.fromkeys(frontier))
-        metadata.update(found)
-        frontier = {row['parent_session_id'] for row in found.values()
-                    if row['type'] == 'subagent' and row['parent_session_id'] is not None
-                    and row['parent_session_id'] not in metadata}
-
-    def native_root(session_id):
-        visited = set()
-        while session_id not in visited:
-            visited.add(session_id)
-            fields = metadata.get(session_id)
-            if fields is None:
-                break
-            parent_id = fields['parent_session_id']
-            if fields['type'] == 'session' and parent_id is None:
-                return session_id
-            if fields['type'] != 'subagent' or parent_id is None:
-                break
-            session_id = parent_id
-        return None
-
-    active = {native_root(session_id) for session_id in active_root_ids}
+    metadata = load_native_metadata(set(requested) | set(active_root_ids), known=metadata)
+    active = {_native_root(session_id, metadata) for session_id in active_root_ids}
     decisions = {}
     for session_id in requested:
-        root_id = native_root(session_id)
+        root_id = _native_root(session_id, metadata)
         if root_id is None:
             decisions[session_id] = RootDecision(None, False, False, False)
         else:
