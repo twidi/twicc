@@ -14,7 +14,7 @@ from django.db import connection, transaction
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from tests.timeline_helpers import run_with_writer
+from tests.db_write_helpers import run_with_writer
 from twicc.core.models import Project, Session, TimelineActor, TimelineEvent, TimelineKind
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.core.services.session_update import archive_sessions_bulk

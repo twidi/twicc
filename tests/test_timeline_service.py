@@ -8,7 +8,8 @@ from twicc.core.models import (
 from twicc.core.services.session_timeline import (
     latest_event_id, project_id_of, record_event, record_event_sync, record_session_created,
 )
-from tests.timeline_helpers import kinds, mark_known, run_with_writer
+from tests.db_write_helpers import run_with_writer
+from tests.timeline_helpers import kinds, mark_known
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

@@ -1,6 +1,5 @@
 """Shared helpers of the timeline tests."""
 
-import asyncio
 import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -10,28 +9,10 @@ from django.utils import timezone
 
 from twicc.core.models import Session, TimelineActor, TimelineEvent, TimelineKind
 from twicc.core.timeline import validate_data
-from twicc.providers import db_writer
 from twicc.request_origin import (
     SYSTEM_ORIGIN, UI_ORIGIN, agent_cli_origin, current_origin, human_cli_origin, mcp_external_origin,
     mcp_session_origin, mcp_token_origin, rpc_origin,
 )
-
-
-def run_with_writer(factory):
-    """Run ``await factory()`` with the real DB writer (and its write lock) started.
-
-    Only for a test about the writer itself; every other test uses
-    :func:`tests.db_write_helpers.run_with_direct_writes`.
-    """
-
-    async def runner():
-        db_writer.start_db_writer()
-        try:
-            return await factory()
-        finally:
-            await db_writer.stop_db_writer()
-
-    return asyncio.run(runner())
 
 
 def kinds(session_id):

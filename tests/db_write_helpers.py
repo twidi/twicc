@@ -1,4 +1,4 @@
-"""Run lock-guarded writes in tests without the real DB writer."""
+"""Run lock-guarded writes in tests: directly (the default), or with the real DB writer."""
 
 import asyncio
 import sys
@@ -8,7 +8,24 @@ from twicc.providers import db_writer
 from twicc.providers.compute_executor import start_compute_executor, stop_compute_executor
 
 
-async def _direct_write(coro_factory, *, content_activity=False, **kwargs):
+def run_with_writer(factory):
+    """Run ``await factory()`` with the real DB writer (and its write lock) started.
+
+    Only for a test about the writer itself (lock holding, admission, priorities, lifecycle);
+    every other test uses :func:`run_with_direct_writes`.
+    """
+
+    async def runner():
+        db_writer.start_db_writer()
+        try:
+            return await factory()
+        finally:
+            await db_writer.stop_db_writer()
+
+    return asyncio.run(runner())
+
+
+async def _direct_write(coro_factory, *, content_activity=False):
     """Stand-in for ``run_under_db_write_lock``: run the factory at once, without a lock.
 
     ``content_activity=True`` keeps the real behaviour: the active-session snapshot from the agent registry.
@@ -43,8 +60,8 @@ def run_with_direct_writes(factory):
     """Run ``await factory()`` with lock-guarded writes run directly: no DB writer, no statistics consumer.
 
     ``run_under_db_write_lock`` becomes a passthrough, ``storage_admission`` a no-op, and the
-    compute executor (``run_compute_sync``) runs for the call. Only a test about the writer itself
-    (lock holding, admission, priorities, lifecycle) starts the real one.
+    compute executor (``run_compute_sync``) runs for the call. Use :func:`run_with_writer` only
+    for a test about the writer itself.
     """
     reals = {name: getattr(db_writer, name) for name in _DIRECT_STAND_INS}
 

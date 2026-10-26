@@ -18,7 +18,7 @@ from twicc.core.models import AsyncQuestionState, Project, Session, SessionItem,
 from twicc.core.services import async_questions as service
 from twicc.providers.codex.agent.manager import CodexAgentManager
 from twicc.providers.codex.async_questions import QuestionFact
-from tests.db_write_helpers import run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes, run_with_writer
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -73,20 +73,6 @@ def layer(monkeypatch):
 def updates(layer):
     return [call.args[1]["data"] for call in layer.group_send.await_args_list
             if call.args[1]["data"]["type"] == "async_questions_updated"]
-
-
-def run_with_writer(callback):
-    """Run ``await callback()`` with the real DB writer: only for a test that drains the writer's queue."""
-    from twicc.providers import db_writer
-
-    async def run():
-        db_writer.start_db_writer()
-        try:
-            return await callback()
-        finally:
-            await db_writer.stop_db_writer()
-
-    return asyncio.run(run())
 
 
 def test_snapshot_requires_existing_authentication(client, session, settings):

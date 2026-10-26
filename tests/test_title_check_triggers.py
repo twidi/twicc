@@ -21,7 +21,7 @@ from twicc.core.services.session_update import apply_session_archived_change
 from twicc.providers import db_writer
 from twicc.providers.helpers import AgentSettings
 from twicc.providers.sessions_watcher import IndexingRequest, ParsedSessionFile, SessionChangeResult
-from tests.db_write_helpers import run_with_direct_writes
+from tests.db_write_helpers import run_with_direct_writes, run_with_writer
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -42,22 +42,6 @@ def requests(monkeypatch):
     monkeypatch.setattr(title_auto_task, "request_title_check", record)
     monkeypatch.setattr(search, "is_initialized", lambda: False)
     return recorded
-
-
-def run_with_writer(scenario):
-    """Run ``await scenario()`` with the real DB writer.
-
-    Only for a test that asserts a request is made outside the write lock.
-    """
-
-    async def run():
-        db_writer.start_db_writer()
-        try:
-            return await scenario()
-        finally:
-            await db_writer.stop_db_writer()
-
-    return asyncio.run(run())
 
 
 def session_file(provider_home, provider, session_id="title-trigger"):
