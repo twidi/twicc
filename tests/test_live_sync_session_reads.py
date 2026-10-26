@@ -428,12 +428,13 @@ def test_live_sync_matches_golden_record(scenario, tmp_path, django_capture_on_c
 # ---------------------------------------------------------------------------
 
 
-# Today's query counts of a one-line slice, under ``frozen_now`` (hot sessions).
+# Exact query counts of a one-line slice, under ``frozen_now`` (hot sessions). Pinned with ``==`` so any added
+# read fails. Before the duplicate ``core_session`` reads were removed: 51 / 53 / 60 / 52.
 BUDGETS: dict[tuple[str, str], int] = {
-    ("claude_code", "root"): 51,
-    ("codex", "root"): 53,
-    ("claude_code", "child"): 60,
-    ("codex", "child"): 52,
+    ("claude_code", "root"): 35,
+    ("codex", "root"): 37,
+    ("claude_code", "child"): 42,
+    ("codex", "child"): 34,
 }
 
 
@@ -482,7 +483,7 @@ BUDGET_CASES = [pytest.param(provider, kind, id=f"{provider}-{kind}")
 @pytest.mark.parametrize("provider,kind", BUDGET_CASES)
 def test_one_line_slice_query_budget(provider, kind, tmp_path):
     count, statements = slice_query_count(provider, kind, tmp_path)
-    assert count <= BUDGETS[(provider, kind)], "\n".join(statements)
+    assert count == BUDGETS[(provider, kind)], "\n".join(statements)
 
 
 @pytest.mark.parametrize("provider,kind", BUDGET_CASES)
