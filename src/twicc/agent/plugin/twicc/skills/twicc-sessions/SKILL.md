@@ -46,6 +46,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 
 ## Related commands
 
+- `$TWICC timeline` — recorded events with the shared session filters and cursor pagination. Skill: `twicc-timeline`.
 - `$TWICC session <session_id|self|parent>` — one session: its row, transcript, wait, stop. Skill: `twicc-session`.
 - `$TWICC topology <ID|self>` — map a spawned-session tree. Skill: `twicc-topology`.
 - `$TWICC project <PROJECT>` / `$TWICC projects` — project details or listing. Skill: `twicc-project` / `twicc-projects`.
