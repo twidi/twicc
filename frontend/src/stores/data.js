@@ -481,6 +481,17 @@ function computeLastToolVisible(items, lastStartedToolId, mode, expandedGroups, 
     return false
 }
 
+// Whether the debug view is forced for a session: its own override or the one of
+// any ancestor (a subagent inherits the override of the session that spawned it).
+function isDebugForced(localState, sessions, sessionId) {
+    const seen = new Set()
+    for (let id = sessionId; id && !seen.has(id); id = sessions[id]?.parent_session_id) {
+        if (localState.sessionDebugOverride[id]) return true
+        seen.add(id)
+    }
+    return false
+}
+
 /**
  * Base MRU eligibility: the session exists in the store, isn't hidden, and isn't
  * a subagent (subagents are reached through their parent, never standalone).
@@ -1271,14 +1282,14 @@ export const useDataStore = defineStore('data', {
             return blocks ? blocks.includes(userMessageLineNum) : false
         },
 
-        // Effective display mode for a session: a per-session debug override
-        // (dev-mode header toggle) wins over the global display mode.
+        // Effective display mode for a session: a debug override (dev-mode header
+        // toggle) on the session or any of its ancestors wins over the global display mode.
         getEffectiveDisplayMode: (state) => (sessionId) =>
-            state.localState.sessionDebugOverride[sessionId]
+            isDebugForced(state.localState, state.sessions, sessionId)
                 ? DISPLAY_MODE.DEBUG
                 : useSettingsStore().getDisplayMode,
 
-        // Whether the session has the debug view forced (drives the header toggle's active state).
+        // Whether the session has its own debug override (drives the header toggle's active state).
         isSessionDebugForced: (state) => (sessionId) =>
             !!state.localState.sessionDebugOverride[sessionId],
 
@@ -3345,9 +3356,10 @@ export const useDataStore = defineStore('data', {
             }
 
             // Get effective display mode from settings store, unless this session
-            // has the dev-mode debug override forced (header toggle), which wins.
+            // or one of its ancestors has the dev-mode debug override forced
+            // (header toggle), which wins.
             const settingsStore = useSettingsStore()
-            const mode = this.localState.sessionDebugOverride[sessionId]
+            const mode = isDebugForced(this.localState, this.sessions, sessionId)
                 ? DISPLAY_MODE.DEBUG
                 : settingsStore.getDisplayMode
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
@@ -4294,8 +4306,9 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Toggle the per-session debug view override (dev-mode header button).
-         * When on, the session renders in DISPLAY_MODE.DEBUG regardless of the
-         * global display mode; toggling off restores the global mode.
+         * When on, the session and all its subagents (any level) render in
+         * DISPLAY_MODE.DEBUG regardless of the global display mode; toggling off
+         * restores the global mode.
          * @param {string} sessionId
          */
         toggleSessionDebug(sessionId) {
@@ -4305,6 +4318,18 @@ export const useDataStore = defineStore('data', {
                 this.localState.sessionDebugOverride[sessionId] = true
             }
             this.recomputeVisualItems(sessionId)
+            // Loaded descendants inherit the override: recompute them too.
+            for (const id of Object.keys(this.sessionItems)) {
+                if (id === sessionId) continue
+                const seen = new Set()
+                for (let cur = this.sessions[id]?.parent_session_id; cur && !seen.has(cur); cur = this.sessions[cur]?.parent_session_id) {
+                    if (cur === sessionId) {
+                        this.recomputeVisualItems(id)
+                        break
+                    }
+                    seen.add(cur)
+                }
+            }
         },
 
         /**

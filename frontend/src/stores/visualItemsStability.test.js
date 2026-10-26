@@ -18,16 +18,17 @@ function section(startText, endText) {
 }
 const helperSource = section('function computeLastToolVisible(', '\n/**')
 const actionSource = section('        recomputeVisualItems(sessionId)', '\n        /**')
+const toggleSource = section('        toggleSessionDebug(sessionId)', '\n        /**')
 let id = 0
-function fixture({ working = false, items = [message(1)] } = {}) {
+function fixture({ working = false, items = [message(1)], sessions = {}, extraItems = {} } = {}) {
     const settings = { getDisplayMode: DISPLAY_MODE.NORMAL, areMessageTimestampsShown: false }
     const deps = { useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
         computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive,
         isLaunchedEphemeral: () => false }
-    const actions = new Function(...Object.keys(deps), `${helperSource}\nreturn { ${actionSource} }`)(...Object.values(deps))
+    const actions = new Function(...Object.keys(deps), `${helperSource}\nreturn { ${actionSource}\n${toggleSource} }`)(...Object.values(deps))
     const store = defineStore(`visual-stability-${++id}`, {
-        state: () => ({ sessions: { main: { id: 'main', provider: 'claude_code' } }, sessionItems: { main: items },
+        state: () => ({ sessions: { main: { id: 'main', provider: 'claude_code' }, ...sessions }, sessionItems: { main: items, ...extraItems },
             processStates: working ? { main: { state: PROCESS_STATE.ASSISTANT_TURN, label: 'working', tools: [] } } : {},
             localState: { failedSends: {}, optimisticMessages: {}, sessionDebugOverride: {}, sessionExpandedGroups: {},
                 sessionDetailedBlocks: {}, streamingBlocks: {}, sessionVisualItems: {}, visualItemCache: {} } }), actions,
@@ -113,4 +114,20 @@ test('working label tools and target changes remain visible', () => {
         assert.notStrictEqual(f.rows().at(-1), before)
         for (const [key, value] of Object.entries(change)) assert.deepEqual(getParsedContent(f.rows().at(-1))[key], value)
     }
+})
+
+test('the debug override of a session applies to its subagents at any level', () => {
+    const items = () => [message(1), message(2, { display_level: DISPLAY_LEVEL.DEBUG_ONLY })]
+    const f = fixture({
+        sessions: { sub: { id: 'sub', parent_session_id: 'main' }, deep: { id: 'deep', parent_session_id: 'sub' }, other: { id: 'other' } },
+        extraItems: { sub: items(), deep: items(), other: items() },
+    })
+    const lines = id => (f.store.localState.sessionVisualItems[id] || []).map(r => r.lineNum)
+    for (const id of ['sub', 'deep', 'other']) f.store.recomputeVisualItems(id)
+    assert.deepEqual(['main', 'sub', 'deep', 'other'].map(id => lines(id).length), [1, 1, 1, 1])
+    f.store.toggleSessionDebug('main')
+    assert.deepEqual(['main', 'sub', 'deep', 'other'].map(id => lines(id).length), [1, 2, 2, 1])
+    assert.equal(f.store.localState.sessionDebugOverride.sub, undefined)
+    f.store.toggleSessionDebug('main')
+    assert.deepEqual(['sub', 'deep'].map(id => lines(id).length), [1, 1])
 })
