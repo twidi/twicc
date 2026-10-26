@@ -14,9 +14,11 @@ Two query shapes matter for speed (measured on SQLite, no ANALYZE as in producti
 Filters (design ``docs/plans/2026-10-26-timeline-filters-design.md`` sections 4.5, 6 and 7): the providers
 and the session filter are scope columns, the view, families and authors are one predicate
 (``timeline_filters.match_q``). A page query has ONE plain scope column, the most selective (the session,
-else the projects, else the providers; the external-author shape below is the exception); the other scope
-columns carry a unary plus, because two plain ones make SQLite pick the wrong index (225 ms against 0.1 ms
-for a session and a provider on a million rows).
+else the projects, else the providers); the other scope columns carry a unary plus, because two plain ones
+make SQLite pick the wrong index (225 ms against 0.1 ms for a session and a provider on a million rows).
+Two exceptions, described at the end of this doc: the instance-family shape reads the instance rows only
+(``session_id IS NULL``, no project or provider column); the external-author shape makes the plain ``actor``
+its scope column.
 ``match_q`` is a plain predicate on top: every ``kind`` comparison in it carries a unary plus, so it never
 drives an index and the query keeps walking its index in order, stopping at ``limit + 1`` matching rows.
 A provider filter keeps every row without a provider: the instance rows, read by their own query as
