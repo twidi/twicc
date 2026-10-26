@@ -66,6 +66,7 @@ from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.background_compute_task import (
     ComputeContext,
     _wait_for_retry_delay,
+    cancel_and_wait,
     read_compute_state,
     retire_compute_run,
     start_compute_process,
@@ -984,9 +985,8 @@ class CodexComputeCoordinator:
         self._retired_run_ids.add(self.ctx.run_id)
         self._done_future = None
         if self._status_pump is not None:
-            self._status_pump.cancel()
-            with suppress(Exception, asyncio.CancelledError):
-                await self._status_pump
+            with suppress(Exception):
+                await cancel_and_wait(self._status_pump)
             self._status_pump = None
         # Not ``stop_background_task``: that one sets ``ctx.stop_event``,
         # which is the coordinator's own exit condition.
@@ -1017,9 +1017,8 @@ class CodexComputeCoordinator:
             self._retired_run_ids.add(run_id)
         self.run_active = False
         if self._status_pump is not None:
-            self._status_pump.cancel()
-            with suppress(Exception, asyncio.CancelledError):
-                await self._status_pump
+            with suppress(Exception):
+                await cancel_and_wait(self._status_pump)
             self._status_pump = None
         delay = 1.0
         while True:
@@ -1396,12 +1395,11 @@ class CodexComputeCoordinator:
         for task in self._pumps:
             task.cancel()
         for task in self._pumps:
-            with suppress(Exception, asyncio.CancelledError):
-                await task
+            with suppress(Exception):
+                await cancel_and_wait(task)
         if self._status_pump is not None:
-            self._status_pump.cancel()
-            with suppress(Exception, asyncio.CancelledError):
-                await self._status_pump
+            with suppress(Exception):
+                await cancel_and_wait(self._status_pump)
         if self._done_future is not None or self.run_active:
             await self._retire_run()
         for session_id in set(self.migration_leases) | set(self.migration_paths):

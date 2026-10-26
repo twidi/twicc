@@ -78,6 +78,24 @@ async def _wait_for_retry_delay(stop_event: asyncio.Event, delay: float) -> bool
     return False
 
 
+async def cancel_and_wait(task: asyncio.Task) -> None:
+    """Cancel a child task and wait for its end, keeping the caller's own cancellation.
+
+    A cancel aimed at the caller while it awaits the child is forwarded to the
+    child, so both surface as the same ``CancelledError``. The caller's cancel
+    count tells them apart: only the child's cancellation is absorbed. Other
+    child exceptions propagate.
+    """
+    current = asyncio.current_task()
+    cancelling = current.cancelling() if current is not None else 0
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        if current is not None and current.cancelling() > cancelling:
+            raise
+
+
 async def read_compute_state[T](
     read: Callable[[list[str]], Awaitable[T]],
     session_ids: list[str],
@@ -858,9 +876,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         try:
                             await asyncio.wait((completion, stopped), return_when=asyncio.FIRST_COMPLETED)
                         finally:
-                            stopped.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await stopped
+                            await cancel_and_wait(stopped)
                         if ctx.stop_event.is_set():
                             break
                         failed_count = completion.result()

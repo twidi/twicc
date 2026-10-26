@@ -357,6 +357,34 @@ def test_old_completion_callback_keeps_new_run_state(monkeypatch):
     asyncio.run(run())
 
 
+def test_finish_run_keeps_caller_cancellation(monkeypatch):
+    """A cancel landing while the run awaits its cancelled status pump must end the coordinator."""
+    async def run():
+        owner = coordinator()
+        owner.run_active = True
+        owner.ctx.command_queue = queue.Queue()
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(0)
+        owner._done_future = done
+        owner._status_pump = asyncio.create_task(owner._status_pump_loop(queue.Queue(), 1))
+        await asyncio.sleep(0)
+
+        async def no_worker(ctx):
+            pass
+
+        monkeypatch.setattr(background_compute, 'stop_compute_worker', no_worker)
+        pump = owner._status_pump
+        finishing = asyncio.create_task(owner._finish_run())
+        # Wait until _finish_run has cancelled the pump and awaits it.
+        while not pump.cancelling():
+            await asyncio.sleep(0)
+        finishing.cancel()
+        await asyncio.gather(finishing, return_exceptions=True)
+        assert finishing.cancelled(), 'the caller cancellation was swallowed by _finish_run'
+        assert pump.cancelled()
+    asyncio.run(run())
+
+
 def test_new_rebuild_request_survives_older_migrated_apply():
     async def run():
         owner = coordinator()
@@ -385,6 +413,7 @@ def test_failed_migration_emits_one_release():
     asyncio.run(run())
 
 
+@pytest.mark.real_retry_delays
 @pytest.mark.django_db(transaction=True)
 def test_other_provider_and_foreground_write_finish_while_codex_cools(recovery_runtime, monkeypatch):
     import sqlite3

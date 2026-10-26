@@ -284,3 +284,66 @@ def test_claude_startup_barrier_allows_indexing_during_permanent_recovery(recove
             await background.retire_compute_run(ctx)
             await db_writer.stop_db_writer()
     asyncio.run(run())
+
+
+def test_cancel_and_wait_absorbs_only_the_child_cancellation():
+    async def scenario():
+        child = asyncio.create_task(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        await background.cancel_and_wait(child)
+        assert child.cancelled()
+
+        async def failing():
+            raise RuntimeError('child failure')
+
+        broken = asyncio.create_task(failing())
+        await asyncio.sleep(0)
+        with pytest.raises(RuntimeError):
+            await background.cancel_and_wait(broken)
+
+        child = asyncio.create_task(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        waiting = asyncio.create_task(background.cancel_and_wait(child))
+        # Wait until the helper has cancelled the child and awaits it.
+        while not child.cancelling():
+            await asyncio.sleep(0)
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+        assert waiting.cancelled() and child.cancelled()
+    asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cancellation_while_run_end_waiter_drains_is_not_lost(recovery_runtime, monkeypatch):
+    """A cancel landing while the run end awaits its cancelled stop waiter must end the task."""
+    path, _ = recovery_runtime
+    real_wait = asyncio.wait
+    landed = []
+
+    async def scenario():
+        db_writer.start_db_writer()
+        ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:RecoveryCompute')
+        task = None
+
+        async def wait_then_cancel(fs, *args, **kwargs):
+            result = await real_wait(fs, *args, **kwargs)
+            # The run-end wait is the only two-waiter wait of the compute task.
+            if asyncio.current_task() is task and len(fs) == 2 and not landed:
+                landed.append(True)
+                # Runs while the task awaits the stop waiter it cancels next.
+                asyncio.get_running_loop().call_soon(task.cancel)
+            return result
+
+        monkeypatch.setattr(asyncio, 'wait', wait_then_cancel)
+        task = asyncio.create_task(background.start_background_compute_task(ctx, work_state=ComputeWorkState()))
+        try:
+            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 20)
+            assert landed
+            assert task.cancelled(), 'the cancellation was swallowed at the end of the run'
+        finally:
+            monkeypatch.setattr(asyncio, 'wait', real_wait)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await background.retire_compute_run(ctx)
+            await db_writer.stop_db_writer()
+    asyncio.run(scenario())
