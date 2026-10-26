@@ -116,7 +116,7 @@ def parse_request(params: Mapping[str, str]) -> FeedRequest:
     return FeedRequest(project_ids, provider, limit, before, after_id)
 
 
-def _keyset(before: tuple[datetime, int]) -> RawSQL:
+def before_condition(before: tuple[datetime, int]) -> RawSQL:
     occurred_at, event_id = before
     return RawSQL(
         "(occurred_at, id) < (%s, %s)",
@@ -128,7 +128,7 @@ def _keyset(before: tuple[datetime, int]) -> RawSQL:
 def _page_querysets(request: FeedRequest) -> list:
     """The main query and, when the main one cannot return them, the instance-events query."""
     ordered = TimelineEvent.objects.order_by("-occurred_at", "-id")
-    keyset = [_keyset(request.before)] if request.before else []
+    keyset = [before_condition(request.before)] if request.before else []
     main = ordered.filter(*keyset)
     if request.project_ids:
         main = main.filter(project_id__in=request.project_ids)
@@ -182,7 +182,7 @@ def _fetch_after(request: FeedRequest) -> tuple[list[TimelineEvent], bool]:
     return rows[:AFTER_ID_CAP], len(rows) > AFTER_ID_CAP
 
 
-def _cited_session_ids(events: list[TimelineEvent]) -> set[str]:
+def cited_session_ids(events: list[TimelineEvent]) -> set[str]:
     cited: set[str] = set()
     for event in events:
         if event.session_id:
@@ -260,5 +260,5 @@ def fetch_feed(request: FeedRequest) -> dict:
         "has_more": has_more,
         "truncated": truncated,
         "latest_id": latest_id,
-        "sessions": build_sessions_table(_cited_session_ids(events)),
+        "sessions": build_sessions_table(cited_session_ids(events)),
     }
