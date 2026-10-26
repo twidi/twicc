@@ -226,6 +226,22 @@ def test_kind_in_qualifies_the_column_and_keeps_the_unary_plus():
     assert '+"core_timelineevent"."kind" IN (' in sql
 
 
+@pytest.mark.django_db
+def test_kind_in_inside_a_same_model_subquery_reads_the_inner_row():
+    started, ended, other_session_end = save(
+        build("turn.started", actor="agent"),
+        build("turn.ended", actor="agent"),
+        build("turn.ended", actor="agent"),
+    )
+    TimelineEvent.objects.filter(id=other_session_end.id).update(session_id="s2")
+    sessions_with_a_start = TimelineEvent.objects.filter(kind_in("turn.started")).values("session_id")
+    queryset = TimelineEvent.objects.filter(session_id__in=sessions_with_a_start)
+
+    assert '+U0."kind" IN (' in str(queryset.query).replace('"U0"', "U0")
+    # Read against the outer row, the subquery would keep only the start and drop the end of the same session.
+    assert set(queryset.values_list("id", flat=True)) == {started.id, ended.id}
+
+
 def plan_of(queryset):
     sql, params = queryset.query.sql_with_params()
     with connection.cursor() as cursor:

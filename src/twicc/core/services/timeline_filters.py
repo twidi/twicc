@@ -6,8 +6,8 @@ feed (``timeline_feed``) applies them. Providers and the session filter are not 
 in the scope part of each query, where they drive an index.
 
 Every comparison on ``kind`` carries a unary plus (``+"core_timelineevent"."kind" IN (...)``, through
-:func:`kind_in`, which also qualifies the column with the table name). Without it, SQLite (no ANALYZE,
-as in production) picks ``idx_timeline_kind`` for a ``kind IN (...)`` and sorts every matching row
+:func:`kind_in`; the column keeps the alias of its query, ``U0`` in a subquery). Without it, SQLite (no
+ANALYZE, as in production) picks ``idx_timeline_kind`` for a ``kind IN (...)`` and sorts every matching row
 before it can return the first page (``USE TEMP B-TREE FOR ORDER BY``). With the plus, the planner
 cannot use that index: the page query keeps walking ``idx_timeline_occurred`` or the scope index in
 order and stops at ``limit + 1`` rows. Same technique as the ``after_id`` scope of the feed.
@@ -18,14 +18,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from django.db import connection
-from django.db.models import BooleanField, Q, TextField, Value
-from django.db.models.expressions import RawSQL
+from django.db.models import CharField, F, Func, Q, TextField, Value
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
-from django.db.models.lookups import Exact
+from django.db.models.lookups import Exact, In
 
-from twicc.core.models import TimelineEvent, TimelineKind, TimelinePrecision
+from twicc.core.models import TimelineKind, TimelinePrecision
 from twicc.request_origin import (
     ACTOR_AGENT,
     ACTOR_EXTERNAL,
@@ -94,15 +92,13 @@ class TimelineFilter(NamedTuple):
 def kind_in(*kinds: str) -> Q:
     """``+kind IN (...)``: a kind comparison that never drives an index (see the module doc).
 
-    The column is qualified with the table name, so a later join with a table that has its own ``kind``
-    column cannot make it ambiguous.
+    Built from Django expressions, not raw SQL: the column compiles through the alias machinery, so it
+    names the right table in a join or in a same-model subquery (``U0``).
     """
     if not kinds:
         raise ValueError("kind_in needs at least one kind")
-    quote = connection.ops.quote_name
-    column = f"{quote(TimelineEvent._meta.db_table)}.{quote('kind')}"
-    placeholders = ", ".join(["%s"] * len(kinds))
-    return Q(RawSQL(f"+{column} IN ({placeholders})", [str(kind) for kind in kinds], output_field=BooleanField()))
+    unindexed_kind = Func(F("kind"), template="+%(expressions)s", output_field=CharField())
+    return Q(In(unindexed_kind, [str(kind) for kind in kinds]))
 
 
 def _generated_title_q() -> Q:
