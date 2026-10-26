@@ -184,16 +184,16 @@ test('a head row has an "Only this session" control after the title, before the 
     assert.equal(onlyControls(root).length, 1)
 })
 
-test('with the session filter on the row\'s session, the control is pressed and labelled "Show every session"', async (t) => {
-    const root = await render(t, [make('turn.started')], { sessionFilterId: 's1' })
-    const [control] = onlyControls(root)
-    assert.equal(control.props['aria-pressed'], 'true')
-    assert.equal(control.props.title, 'Show every session')
-    assert.deepEqual(byClass(control, 'timeline-row-only-text').map(textOf), ['Show every session'])
-    // Another session filtered: this one is not pressed.
-    const other = await render(t, [make('turn.started')], { sessionFilterId: 'parent' })
-    assert.equal(onlyControls(other)[0].props['aria-pressed'], 'false')
-    assert.equal(onlyControls(other)[0].props.title, 'Only this session')
+test('with the session filter on the row\'s session, the control is pressed: same name, the tooltip says what a click does', async (t) => {
+    const states = [[null, 'false', 'Only this session'], ['s1', 'true', 'Show every session'], ['parent', 'false', 'Only this session']]
+    for (const [sessionFilterId, pressed, tooltip] of states) {
+        const [control] = onlyControls(await render(t, [make('turn.started')], { sessionFilterId }))
+        // A toggle button keeps its name in both states (WAI-ARIA APG): `aria-pressed` alone carries the state.
+        assert.deepEqual(byClass(control, 'timeline-row-only-text').map(textOf), ['Only this session'], `filter ${sessionFilterId}`)
+        assert.equal(control.props['aria-pressed'], pressed, `filter ${sessionFilterId}`)
+        assert.equal(control.props.title, tooltip, `filter ${sessionFilterId}`)
+        assert.equal(control.props['aria-label'], undefined, 'the name is the hidden text')
+    }
 })
 
 test('a click emits toggle-session with the id and the side-table title, pressed or not', async (t) => {

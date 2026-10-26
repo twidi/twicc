@@ -54,7 +54,9 @@ const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.get
 // restricted to this session: pressed again, it shows every session.
 const sessionId = computed(() => props.row.event.session_id)
 const onlyThisSession = computed(() => props.sessionFilterId !== null && props.sessionFilterId === sessionId.value)
-const onlyLabel = computed(() => (onlyThisSession.value ? 'Show every session' : 'Only this session'))
+// The name stays "Only this session" in both states (a toggle button's label never changes with its state, WAI-ARIA
+// APG): `aria-pressed` carries the state. The tooltip says what a click does.
+const onlyTooltip = computed(() => (onlyThisSession.value ? 'Show every session' : 'Only this session'))
 
 // The title of the side table, captured by the pill. Not the header mention's: built with the full id as fallback, it
 // would hide the short id the pill shows for an untitled session.
@@ -90,9 +92,12 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
                 type="button"
                 class="timeline-row-only"
                 :aria-pressed="onlyThisSession ? 'true' : 'false'"
-                :title="onlyLabel"
+                :title="onlyTooltip"
                 @click="toggleSession"
-            ><wa-icon name="filter"></wa-icon><span class="timeline-row-only-text">{{ onlyLabel }}</span></button><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
+            ><!--
+                The tooltip is the only visual label of this icon-only control. Unpressed it equals the name: browsers
+                drop an accessible description identical to the name, so it is not announced twice.
+                --><wa-icon name="filter"></wa-icon><span class="timeline-row-only-text">Only this session</span></button><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
                 A plain jump to that project: the router guard keeps the current workspace when the project belongs to it.
                 --><RouterLink
                     v-if="knownProject"
