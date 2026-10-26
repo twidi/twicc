@@ -34,10 +34,10 @@ def selected(**kwargs):
     return set(qs.values_list("id", flat=True))
 
 
-def test_timeline_policy_keeps_hidden_children_out(tree):
+def test_timeline_policy_preserves_filiation_visibility(tree):
     assert selected(
-        spawn_tree="root", archived=True, require_indexed=False, filiation_includes_hidden=False,
-    ) == {"root", "visible", "archived"}
+        spawn_tree="root", archived=True, require_indexed=False,
+    ) == {"root", "visible", "hidden", "archived"}
 
 
 def test_default_policy_preserves_existing_sessions_selection(tree):
@@ -56,7 +56,7 @@ def test_timeline_policy_can_select_unindexed_and_native_sessions(tree):
 ])
 def test_timeline_policy_visibility_flags(tree, visibility, expected):
     assert selected(
-        spawn_tree="root", archived=True, require_indexed=False, filiation_includes_hidden=False, **visibility,
+        spawn_tree="root", archived=True, require_indexed=False, **visibility,
     ) == expected
 
 
@@ -67,7 +67,7 @@ def test_timeline_policy_reuses_state_and_annotations(tree, monkeypatch):
             session_id=sid, provider="codex", twicc_pid=4242, state=state,
             started_at=timezone.now(), last_state_change_at=timezone.now(),
         )
-    policy = {"root_only": False, "require_indexed": False, "filiation_includes_hidden": False}
+    policy = {"root_only": False, "require_indexed": False}
     assert selected(annotation=["team=backend", "ready=true"], active=True, **policy) == {"visible"}
     assert selected(state=["assistant_turn", "user_turn"], **policy) == {"root", "visible"}
     assert selected(annotation=["team=backend", "ready=false"], **policy) == set()

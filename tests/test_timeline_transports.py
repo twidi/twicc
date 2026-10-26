@@ -42,9 +42,13 @@ def rpc(arguments):
     return response.json()
 
 
-def test_explicit_arguments_match_across_transports(history):
+@pytest.mark.parametrize("filiation_visibility", [None, {}, {"include_hidden": True}, {"only_hidden": True}])
+def test_explicit_arguments_match_across_transports(history, filiation_visibility):
     project, events = history
     arguments = {"project": project.id, "annotation": ["team=backend", "ready=true"], "limit": 2}
+    if filiation_visibility is not None:
+        Session.objects.filter(pk="child").update(hidden=True)
+        arguments.update(spawned_by="root", **filiation_visibility)
     local = invoke(render_argv(build_registry()["timeline"], arguments))
     http = rpc(arguments)
     internal = asyncio.run(server.dispatch_tool("timeline", arguments, session_id="root"))

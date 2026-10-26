@@ -51,7 +51,7 @@ States: `starting`, `assistant_turn`, `awaiting_user_input`, `user_turn`, `dead`
 
 Local CLI and internal MCP accept `self` and `parent` for `--session`, `--spawned-by`, and `--descendants`. `--spawn-tree` and `--siblings` accept `self` but reject `parent`. Remote CLI and external MCP require explicit IDs.
 
-**Hidden sessions are excluded by default**, including exact-session and filiation selections. `--include-hidden` includes both visible and hidden sessions. `--only-hidden` selects hidden sessions. These flags are mutually exclusive.
+**Hidden visibility follows `sessions`.** Hidden sessions are excluded by default. Each filiation filter automatically includes hidden sessions. `--include-hidden` includes both visible and hidden sessions. `--only-hidden` selects only hidden sessions, including within filiation selections. These flags are mutually exclusive. An exact-session scope alone does not include a hidden session.
 
 Archived sessions and projects remain eligible. `--include-archived` is a compatibility no-op. Without filiation filters, native subagents remain eligible.
 
@@ -89,10 +89,10 @@ Select visible sessions with an annotation in a workspace:
 $TWICC timeline --workspace WORKSPACE_ID --annotation team=backend
 ```
 
-Include hidden sessions in the tree containing a session:
+Read the tree containing a session, including hidden sessions automatically:
 
 ```bash
-$TWICC timeline --spawn-tree MIDDLE_ID --include-hidden
+$TWICC timeline --spawn-tree MIDDLE_ID
 ```
 
 Read one session, including its events when hidden:

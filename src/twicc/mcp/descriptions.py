@@ -21,8 +21,8 @@ MCP_DESCRIPTIONS: dict[str, str] = {
 
 Scope: all projects by default, or one of project, workspace, session. Project includes its worktrees; \
 a worktree includes only itself. Session filters use current metadata: annotation, filiation, provider, \
-state and active match sessions before event pagination. Hidden sessions stay excluded even with filiation \
-or an explicit session ID; use include_hidden or only_hidden. Archived sessions are always included.
+state and active match sessions before event pagination. Hidden sessions are excluded by default; filiation \
+includes them as in sessions. Use include_hidden or only_hidden. Archived sessions are always included.
 
 Returns items, pagination (limit, has_more, next_cursor), and compact cited-session metadata. Default limit 20, \
 maximum 100. For older events, pass next_cursor as before with the same filters. No offset or total. \

@@ -87,14 +87,14 @@ def test_scope_and_session_filters_intersect(history):
 
 
 @pytest.mark.parametrize("flags, expected", [
-    (["--spawn-tree=A"], {"A", "B", "C", "D"}),
-    (["--spawn-tree=B"], {"A", "B", "C", "D"}),
-    (["--spawn-tree=C"], {"A", "B", "C", "D"}),
+    (["--spawn-tree=A"], {"A", "B", "C", "D", "H"}),
+    (["--spawn-tree=B"], {"A", "B", "C", "D", "H"}),
+    (["--spawn-tree=C"], {"A", "B", "C", "D", "H"}),
     (["--spawn-tree=Z"], {"Z"}),
-    (["--descendants=A"], {"B", "C", "D"}),
+    (["--descendants=A"], {"B", "C", "D", "H"}),
     (["--descendants=B"], {"C"}),
-    (["--spawned-by=A"], {"B", "D"}),
-    (["--siblings=B"], {"D"}),
+    (["--spawned-by=A"], {"B", "D", "H"}),
+    (["--siblings=B"], {"D", "H"}),
     (["--siblings=A"], set()),
     (["--spawn-tree=unknown"], set()),
     (["--descendants=unknown"], set()),
@@ -103,6 +103,18 @@ def test_scope_and_session_filters_intersect(history):
 ])
 def test_all_filiation_filters_reuse_existing_membership(history, flags, expected):
     assert targets(*flags) == expected
+
+
+@pytest.mark.parametrize("filiation, expected", [
+    ("--spawn-tree=B", {"A", "B", "C", "D", "H"}),
+    ("--spawned-by=A", {"B", "D", "H"}),
+    ("--descendants=A", {"B", "C", "D", "H"}),
+    ("--siblings=B", {"D", "H"}),
+])
+@pytest.mark.parametrize("visibility", [None, "--include-hidden", "--only-hidden"])
+def test_filiation_uses_sessions_visibility_rules(history, filiation, expected, visibility):
+    flags = [filiation] + ([visibility] if visibility else [])
+    assert targets(*flags) == ({"H"} if visibility == "--only-hidden" else expected)
 
 
 def test_visibility_and_archived_defaults(history):
@@ -115,6 +127,8 @@ def test_visibility_and_archived_defaults(history):
     assert targets("--include-archived") == targets()
     assert targets("--session=H") == set()
     assert targets("--session=H", "--include-hidden") == {"H"}
+    assert targets("--session=H", "--only-hidden") == {"H"}
+    assert targets("--session=H", "--spawn-tree=A") == {"H"}
 
 
 @pytest.mark.parametrize("expression, expected", [

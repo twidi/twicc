@@ -1537,7 +1537,7 @@ def timeline(
     ),
     active: bool = typer.Option(False, "--active", help="Sessions with any current live process, including user_turn."),
     include_hidden: bool = typer.Option(
-        False, "--include-hidden", help="Include hidden sessions; filiation and explicit IDs do not imply this flag.",
+        False, "--include-hidden", help="Include hidden sessions; filiation filters already include them, as in sessions.",
     ),
     only_hidden: bool = typer.Option(False, "--only-hidden", help="Only hidden sessions; conflicts with --include-hidden."),
     include_archived: bool = typer.Option(
@@ -1549,8 +1549,9 @@ def timeline(
     """Read recorded timeline events, newest first, with cursor pagination.
 
     Choose one scope: all projects (default), --project, --workspace or --session.
-    Session filters use current metadata. Hidden sessions stay excluded even in
-    spawn trees; archived sessions are included. Returns items, pagination
+    Session filters use current metadata. Hidden sessions are excluded unless
+    filiation filters or visibility flags include them. Archived sessions are included.
+    Returns items, pagination
     (limit, has_more, next_cursor), and cited-session metadata.
     """
     from twicc.cli.timeline import main as timeline_main

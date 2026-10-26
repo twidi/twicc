@@ -21,7 +21,7 @@ Use cursor pagination. New events at the front must not shift older-page boundar
 Keep the CLI default page size of 20 events.
 
 Exclude hidden sessions by default. Include archived sessions by default.
-Filiation filters do not implicitly include hidden sessions.
+Filiation filters implicitly include hidden sessions, matching `sessions`.
 
 The response details and edge-case policies below are specification proposals, not additional Human decisions.
 They make the contract reviewable before implementation.
@@ -99,6 +99,9 @@ Different filter categories intersect.
 The filiation arguments are mutually exclusive, as in `sessions`.
 `--state` and `--active` are mutually exclusive.
 `--include-hidden` and `--only-hidden` are mutually exclusive.
+Hidden visibility matches `sessions`: hidden sessions are excluded without filiation or visibility flags.
+Every filiation filter includes hidden sessions automatically; `--only-hidden` narrows that selection to hidden sessions.
+An exact-session scope alone still requires `--include-hidden` or `--only-hidden` for a hidden target.
 
 Annotation operators, typed values, dotted paths, and missing-key behavior match `sessions`.
 Supported process states and contextual filiation references also match `sessions`.
@@ -114,8 +117,6 @@ A conflict returns an empty page. It does not override either selection.
 ### Timeline-specific differences from `sessions`
 
 - Archived sessions remain eligible without a flag.
-- Hidden sessions remain excluded during filiation queries unless visibility flags include them.
-- Selecting a hidden session by explicit ID still requires `--include-hidden` or `--only-hidden`.
 - Timeline eligibility does not require a first user message or a completed content-indexing step.
 - Global, project, and workspace scopes do not impose a session-type restriction on recorded events.
 - Explicit subagent scope remains supported; this does not expand filiation to provider-native subagent trees.
@@ -242,7 +243,7 @@ Equivalent RPC/MCP arguments use the existing snake_case convention:
 1. CLI, RPC, and both MCP contexts return equivalent results for equivalent explicit arguments.
 2. Project/worktree/workspace scopes follow the expansion rules, including archived members and deduplication.
 3. Empty scopes and empty filter intersections return empty pages without broadening the request.
-4. Hidden-session events are absent by default, including explicit session and filiation reads.
+4. Hidden-session events are absent by default, including exact-session reads. Filiation filters include them as in `sessions`.
 5. `--include-hidden` and `--only-hidden` produce their specified visibility selections.
 6. Archived-session history remains available by default.
 7. All session selection filters listed above work, with documented timeline-specific defaults.

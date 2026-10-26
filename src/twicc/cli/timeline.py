@@ -70,7 +70,7 @@ def main(
 
     filiation = any(value is not None for value in (spawned_by, spawn_tree, descendants, siblings))
     selected, _ = build_filtered_queryset(
-        archived=True, require_indexed=False, root_only=filiation, filiation_includes_hidden=False,
+        archived=True, require_indexed=False, root_only=filiation,
         provider=provider, annotation=annotation, spawned_by=spawned_by, spawn_tree=spawn_tree,
         descendants=descendants, siblings=siblings, state=state, active=active,
         include_hidden=include_hidden, only_hidden=only_hidden,

@@ -18,7 +18,7 @@
 - Extract shared logic where necessary instead of duplicating it for the timeline.
 - Select matching sessions before filtering their events; never paginate sessions before paginating events.
 - Exclude hidden sessions by default. Include archived sessions by default.
-- Filiation filters do not implicitly include hidden sessions.
+- Filiation filters implicitly include hidden sessions, matching `sessions`; `--only-hidden` narrows that selection.
 - Keep the CLI default page size of 20 events. Maximum page size: 100. Reject limits outside 1–100.
 - Order events by `occurred_at DESC`, then `id DESC`. Preserve UTC microseconds in cursors.
 - No `offset`, `total`, `after_id`, or legacy `--paginated` argument on this command.
@@ -32,7 +32,7 @@
 
 ## Review Focus
 
-1. A hidden child in a spawn tree stays excluded while `sessions` keeps its existing inclusion rule: Task 1 policy tests.
+1. A hidden child in a spawn tree stays included, matching `sessions`; `--only-hidden` excludes visible children: Tasks 1 and 3 policy tests.
 2. An empty workspace or unknown descendant target never becomes a global or instance-only result: Tasks 2–3 scope tests.
 3. An old recorded event survives missing target metadata; an explicit metadata filter excludes it: Task 2 orphan tests.
 4. Equal timestamps, inserted recent rows, and sparse matches cross page boundaries without skipping existing eligible events: Task 2 cursor tests.
@@ -72,9 +72,9 @@ Preserve any concurrent filter additions; this plan only promotes existing read 
 
 **Interfaces:**
 - Preserve every existing argument and the `(queryset, process_rows)` return shape.
-- Add keyword-only `root_only: bool = True` and `filiation_includes_hidden: bool = True` to `build_filtered_queryset`.
+- Add keyword-only `root_only: bool = True` to `build_filtered_queryset`.
 - `root_only=False` removes only the initial `type="session"` restriction.
-- `filiation_includes_hidden=False` applies the normal hidden exclusion even when a filiation argument resolves.
+- Preserve the shared hidden-session policy, including implicit inclusion during filiation queries.
 - Existing `require_indexed=False` removes the first-message and creation-date eligibility requirements.
 - Existing `archived=True` means include both archived and unarchived sessions.
 
@@ -85,27 +85,26 @@ Include a root with `created_at=None` and `user_message_count=0`.
 Use real ORM rows and existing resolver behavior, not a second fake tree implementation.
 
 ```python
-def test_timeline_policy_keeps_hidden_children_out(tree):
+def test_timeline_policy_preserves_filiation_visibility(tree):
     qs, _ = build_filtered_queryset(
         spawn_tree=tree.root.id, archived=True, require_indexed=False,
-        filiation_includes_hidden=False,
     )
     assert set(qs.values_list("id", flat=True)) == {
-        tree.root.id, tree.visible.id, tree.archived.id,
+        tree.root.id, tree.visible.id, tree.hidden.id, tree.archived.id,
     }
 ```
 
 Additional tests and exact outcomes:
 - `test_default_policy_preserves_existing_sessions_selection`: default tree selection includes hidden children and excludes archived children and native subagents.
 - `test_timeline_policy_can_select_unindexed_and_native_sessions`: `root_only=False, require_indexed=False, archived=True` includes visible native subagents and zero-message roots.
-- `test_timeline_policy_visibility_flags`: hidden child joins with `include_hidden=True`; `only_hidden=True` selects only that child.
+- `test_timeline_policy_visibility_flags`: hidden child stays included with `include_hidden=True`; `only_hidden=True` selects only that child.
 - `test_timeline_policy_reuses_state_and_annotations`: annotations AND-combine; repeated states OR-combine; `active` includes `user_turn`.
 
 - [ ] **Step 2: Run the new test module and confirm failure on the new keywords.**
 
 Run: `cd /home/twidi/dev/twicc-poc && uv run pytest tests/test_timeline_session_selection.py -q`.
 
-- [ ] **Step 3: Extend the existing builder with the two policy parameters.**
+- [ ] **Step 3: Extend the existing builder with the root-only policy parameter.**
 
 Keep the resolver calls, typed annotation parser, scope expansion, provider validation, and process-state code in their existing shared path.
 Do not copy those blocks into the timeline command. Preserve lazy Django setup and return values.
@@ -187,7 +186,7 @@ Select matching target IDs through `selected_sessions.order_by().values("id")` a
 Do not materialize all matching IDs or expand them into a Python `IN` list.
 
 Without required metadata, also admit events whose non-null target ID is absent from `Session` entirely.
-Use absence from all sessions, not absence from the filtered selection. Hidden known targets must stay excluded.
+Use absence from all sessions, not absence from the filtered selection. Known targets outside the selection must stay excluded.
 With required metadata, admit only selected target IDs.
 
 Read instance events separately only when `include_instance=True` and the project scope is not empty.
@@ -247,7 +246,7 @@ Named tests and assertions:
 - `test_exact_session_scope_includes_no_descendants_or_instance_events`: target's events only, including an explicit known subagent.
 - `test_scope_and_session_filters_intersect`: project plus tree and session plus annotation/state each narrow; mismatches return empty.
 - `test_all_filiation_filters_reuse_existing_membership`: root/middle/leaf spawn-tree, standalone root, proper descendants, direct children, siblings without target, unsupported `parent` forms, unknown target empty.
-- `test_visibility_and_archived_defaults`: default excludes hidden, tree does not override; include/only flags work; archived events remain with and without `--include-archived`.
+- `test_visibility_and_archived_defaults`: default excludes hidden, filiation includes them; include/only flags work; archived events remain with and without `--include-archived`.
 - `test_annotations_use_existing_typed_operators`: equality, inequality, existence, absence, membership, typed values, and repeated-AND matching.
 - `test_process_filters_use_current_state`: all five states, repeated OR, active with idle user_turn, no live backend, and backend PID isolation.
 - `test_instance_policy_depends_on_supplied_filters`: baseline scopes include instance rows; each restrictive argument in spec §6 excludes them. Include explicit `--state` containing all five states.
@@ -274,7 +273,7 @@ Resolve a single session through `resolve_explicit_ids([session])`; require the 
 Resolve workspace membership through `read_workspaces`; use the shared project expansion helpers once.
 Represent global as `None` and empty workspace as `()` throughout.
 
-Call the shared builder with `archived=True`, `require_indexed=False`, and `filiation_includes_hidden=False`.
+Call the shared builder with `archived=True` and `require_indexed=False`, preserving shared visibility rules.
 Set `root_only=True` when any filiation argument is supplied, preserving existing root-session filiation membership.
 Otherwise set `root_only=False`, so recorded native-subagent events remain eligible.
 Forward provider, state, active, annotation, filiation, and visibility arguments unchanged.
@@ -375,7 +374,7 @@ Body: describe generated transport parity, read-only availability, and caller id
 Follow `tests/test_sessions_wait_reply_documentation.py` for loading tracked skill files.
 Assert command discovery links resolve to the new skill.
 Assert the option inventory covers the actual public timeline options, including `--before` and compatibility-only `--include-archived`.
-Assert documented output uses cursor fields and does not advertise offset pagination or implicit hidden inclusion.
+Assert documented output uses cursor fields and does not advertise offset pagination or hidden inclusion without filiation or visibility flags.
 In `SKILLS-AND-CLI.md`'s shared Paging section, explicitly assert that timeline is named as the cursor-pagination exception.
 The general text must no longer claim every listing accepts `--offset` or shares the four offset-pagination fields.
 

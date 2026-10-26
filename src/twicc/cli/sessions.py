@@ -9,7 +9,7 @@ def build_filtered_queryset(
     include_hidden=False, only_hidden=False,
     spawned_by=None, spawn_tree=None, descendants=None, siblings=None,
     annotation=None, provider=None, state=None, active=False,
-    require_indexed=True, root_only: bool = True, filiation_includes_hidden: bool = True,
+    require_indexed=True, root_only: bool = True,
 ):
     """Resolve every ``sessions`` filter into a queryset, before any window.
 
@@ -21,9 +21,8 @@ def build_filtered_queryset(
     instead of listing. Keeping one implementation is what stops the two from
     drifting into answering the same question differently.
 
-    Timeline reads disable indexing and root-only eligibility. They also keep
-    hidden sessions excluded during filiation queries. Existing callers retain
-    their defaults through ``root_only`` and ``filiation_includes_hidden``.
+    Timeline reads disable indexing and, without filiation, root-only
+    eligibility. Every caller uses the same hidden-session selection rules.
     """
     import django
 
@@ -62,25 +61,20 @@ def build_filtered_queryset(
     if not archived:
         qs = qs.filter(archived=False)
 
-    # When filtering by spawned_by / spawn_tree / descendants, the caller is
+    # When filtering by spawned_by / spawn_tree / descendants / siblings, the caller is
     # explicitly asking about filiation — show every matching session in the
     # tree whatever its visibility. The hidden=False default only applies to
     # unscoped listings, where it keeps the output aligned with what the
-    # UI displays. Timeline callers can disable this filiation exception.
+    # UI displays.
     # --only-hidden still narrows further if requested.
     if only_hidden:
         qs = qs.filter(hidden=True)
     elif (
         not include_hidden
-        and (
-            not filiation_includes_hidden
-            or (
-                spawned_by_id is None
-                and spawn_root_id is None
-                and descendants_ids is None
-                and siblings_ids is None
-            )
-        )
+        and spawned_by_id is None
+        and spawn_root_id is None
+        and descendants_ids is None
+        and siblings_ids is None
     ):
         qs = qs.filter(hidden=False)
 

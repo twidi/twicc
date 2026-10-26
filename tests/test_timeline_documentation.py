@@ -43,7 +43,7 @@ def test_published_timeline_examples_select_events_and_advance_cursor(monkeypatc
         elif "--limit 1" in arguments:
             assert [e["id"] for e in body["items"]] == [events[2].id]
             cursor = body["pagination"]["next_cursor"]
-        elif "--include-hidden" in arguments:
+        elif "--include-hidden" in arguments or "--spawn-tree" in arguments:
             assert len(body["items"]) == 3
         else:
             assert body["items"] == []
