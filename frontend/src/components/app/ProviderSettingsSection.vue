@@ -27,6 +27,7 @@ import { useSettingsStore } from '../../stores/settings'
 import AgentSettingsPresetsDialog from './AgentSettingsPresetsDialog.vue'
 import AgentSettingsDefaultsPicker from '../message/AgentSettingsDefaultsPicker.vue'
 import HelpTextLink from '../help/HelpTextLink.vue'
+import HoverDetailsToggle from '../message/HoverDetailsToggle.vue'
 import HybridModeExplainer from '../message/HybridModeExplainer.vue'
 
 const props = defineProps({
@@ -181,6 +182,7 @@ function onOrchestrationToggle(event) {
             <div class="matrix-heading">
                 <label class="setting-group-label">Model &amp; effort picker</label>
                 <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
+                <HoverDetailsToggle />
             </div>
             <AgentSettingsDefaultsPicker
                 :provider="provider"

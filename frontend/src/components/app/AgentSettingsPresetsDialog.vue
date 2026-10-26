@@ -29,6 +29,7 @@ import AgentSettingsDefaultsPicker from '../message/AgentSettingsDefaultsPicker.
 import AgentSettingsSummaryView from '../message/AgentSettingsSummaryView.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
 import HelpTextLink from '../help/HelpTextLink.vue'
+import HoverDetailsToggle from '../message/HoverDetailsToggle.vue'
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -349,6 +350,7 @@ function handleSave() {
                 <div class="matrix-heading">
                     <label class="form-label">Model &amp; effort picker</label>
                     <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
+                    <HoverDetailsToggle />
                 </div>
                 <AgentSettingsDefaultsPicker
                     :provider="props.provider"

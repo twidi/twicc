@@ -217,7 +217,7 @@ function cancelHide() {
 function onGridPointerMove(e) {
     if (settingsStore.isTouchDevice) return
     const { tip } = tipForEvent(e)
-    if (!tip) { scheduleHide(); return }
+    if (!tip || !taskStore.hoverDetails) { scheduleHide(); return }
     cancelHide()
     activeTip.value = tip
     positionPanel({
@@ -299,6 +299,9 @@ watch(cellTips, () => {
 
 // Re-place with the real measured size once the (new) content has painted — the
 // first show and every touch long-press otherwise use the fallback estimate.
+// "Hide details" closes a panel that is still open.
+watch(() => taskStore.hoverDetails, (on) => { if (!on) activeTip.value = null })
+
 watch(activeTip, (t) => { if (t) nextTick(applyPosition) })
 
 onMounted(() => {
