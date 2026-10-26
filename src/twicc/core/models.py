@@ -2355,6 +2355,11 @@ class TimelineEvent(models.Model):
             # The display feed (design 2026-10-15, section 8): the global feed and the provider filter.
             models.Index(fields=["occurred_at", "id"], name="idx_timeline_occurred"),
             models.Index(fields=["provider", "occurred_at", "id"], name="idx_timeline_provider"),
+            # The "External MCP" author filter (design 2026-10-26-timeline-filters, section 7): rows so rare that
+            # an ordered walk of any other index reads the whole scope. Partial: no cost for the other rows.
+            models.Index(
+                fields=["occurred_at", "id"], condition=models.Q(actor="external"), name="idx_timeline_external",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

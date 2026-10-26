@@ -622,3 +622,38 @@ def test_a_scoped_provider_filter_keeps_the_project_index(busy):
 def test_the_after_id_query_with_filters_still_scans_a_primary_key_range(busy, params):
     _, plan = plan_of(timeline_feed._after_queryset(parse_request({**params, "after_id": "5"})))
     assert "INTEGER PRIMARY KEY" in plan and "idx_timeline" not in plan, plan
+
+
+EXTERNAL_SCOPES = [{}, {"project_ids": "-tl-api-a"}, {"project_ids": "-tl-api-a,-tl-api-b"}, {"provider": "codex"},
+                   {"project_ids": "-tl-api-a", "provider": "codex"}]
+
+
+@pytest.mark.parametrize("scope", EXTERNAL_SCOPES)
+def test_an_external_author_filter_walks_the_partial_external_index(busy, scope):
+    # ``idx_timeline_external`` (actor = 'external' only): the scope columns carry a unary plus, so the page
+    # query walks that tiny index in order instead of reading the whole scope for rows that are rare.
+    for before in ({}, {"before": CURSOR}):
+        request = parse_request({"authors": "external_mcp", **scope, **before})
+        _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+        assert "idx_timeline_external" in plan, plan
+        assert "USE TEMP B-TREE" not in plan and "MULTI-INDEX OR" not in plan, plan
+
+
+@pytest.mark.parametrize("authors", ["you", "external_mcp,you", "unknown,external_mcp"])
+def test_other_author_filters_keep_the_scope_index(busy, authors):
+    for scope, index_name in (({}, "idx_timeline_occurred"), ({"project_ids": "-tl-api-a"}, "idx_timeline_project")):
+        request = parse_request({"authors": authors, **scope, "before": CURSOR})
+        _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+        assert index_name in plan and "idx_timeline_external" not in plan, plan
+        assert "USE TEMP B-TREE" not in plan and "MULTI-INDEX OR" not in plan, plan
+
+
+@pytest.mark.parametrize("scope", EXTERNAL_SCOPES)
+def test_an_instance_family_filter_reads_the_instance_rows_only(busy, scope):
+    # Only instance rows carry the ``twicc`` kinds: one query on the session index (``session_id IS NULL``).
+    for before in ({}, {"before": CURSOR}):
+        queries = timeline_feed._page_querysets(parse_request({"families": "twicc", **scope, **before}))
+        assert len(queries) == 1
+        sql, plan = plan_of(queries[0])
+        assert '"session_id" IS NULL' in sql
+        assert "idx_timeline_session (session_id=?" in plan and "USE TEMP B-TREE" not in plan, plan

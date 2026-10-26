@@ -22,6 +22,15 @@ A provider filter keeps every row without a provider: the instance rows, read by
 before, and the session rows no source could name, read by a third query on the provider index
 (``provider IS NULL``). The ``after_id`` fetch reads the scope range first (``truncated`` speaks of the
 range), then applies ``match_q`` to the ids of that range.
+
+Two filters select so few rows that walking the scope index in order would read the whole scope before
+the page fills (measured by ``tests/test_timeline_filters_bench.py`` on a million rows):
+
+* A family filter on instance families alone (``INSTANCE_FAMILIES``, ``twicc``): only instance rows carry
+  those kinds, so the page is the instance query alone (session index, ``session_id IS NULL``).
+* An author filter on external authors alone (``EXTERNAL_AUTHORS``): ``match_q`` keeps a plain
+  ``actor = 'external'``, served by the partial index ``idx_timeline_external``. That comparison is then the
+  plain scope column of the main query: the projects and the providers carry a unary plus.
 """
 
 from __future__ import annotations
@@ -38,7 +47,16 @@ from django.db.models.lookups import In, IsNull
 
 from twicc.core.enums import Provider
 from twicc.core.models import Session, TimelineActor, TimelineEvent, TimelineKind
-from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, VIEWS, TimelineFilter, match_q, unindexed
+from twicc.core.services.timeline_filters import (
+    AUTHORS,
+    EXTERNAL_AUTHORS,
+    FAMILIES,
+    INSTANCE_FAMILIES,
+    VIEWS,
+    TimelineFilter,
+    match_q,
+    unindexed,
+)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -164,9 +182,10 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
 def _page_querysets(request: FeedRequest) -> list:
     """The queries of one page, merged by :func:`_fetch_page` (see the module doc).
 
-    With a session filter: one query on the session index. Otherwise the main query, the instance-events
-    query when the scope or a provider filter excludes them from the main one, and the query of the session
-    rows without a provider when a provider filter is set.
+    With a session filter: one query on the session index. With a family filter on instance families alone:
+    the instance query alone. Otherwise the main query, the instance-events query when the scope or a
+    provider filter excludes them from the main one, and the query of the session rows without a provider
+    when a provider filter is set.
     """
     flt = request.filter
     ordered = TimelineEvent.objects.order_by("-occurred_at", "-id")
@@ -180,13 +199,19 @@ def _page_querysets(request: FeedRequest) -> list:
             provider = unindexed("provider")
             query = query.filter(Q(In(provider, flt.providers)) | Q(IsNull(provider, True)))
         return [query]
+    if flt.families and set(flt.families) <= INSTANCE_FAMILIES:
+        # Instance rows are in every scope and under every provider filter (design 4.5).
+        return [ordered.filter(*common, session_id__isnull=True)]
     main = ordered.filter(*common)
+    # The plain scope column: the external actor of ``match_q``, else the projects, else the providers.
+    actor_driven = bool(flt.authors) and set(flt.authors) <= EXTERNAL_AUTHORS
     if request.project_ids:
-        main = main.filter(project_id__in=request.project_ids)
-        if flt.providers:
+        main = main.filter(*unindexed_projects) if actor_driven else main.filter(project_id__in=request.project_ids)
+    if flt.providers:
+        if request.project_ids or actor_driven:
             main = main.filter(In(unindexed("provider"), flt.providers))
-    elif flt.providers:
-        main = main.filter(provider__in=flt.providers)
+        else:
+            main = main.filter(provider__in=flt.providers)
     queries = [main]
     if request.project_ids or flt.providers:
         # Instance events have no project and no provider: the filters above exclude them.

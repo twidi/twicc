@@ -228,3 +228,48 @@ def test_instance_rows_follow_the_twicc_family_and_the_authors():
     assert ids(call(authors="automatic").json()) == [boot.id]
     assert ids(call(authors="unknown").json()) == [unclean.id]
     assert ids(call(authors="automatic", after_id=0).json()) == [boot.id]
+
+
+@pytest.mark.parametrize("params", [{}, {"provider": "codex"}, {"project_ids": "a"}, {"project_ids": "a,b"},
+                                    {"project_ids": "a", "provider": "claude_code"}])
+def test_the_twicc_family_reads_the_instance_rows_in_every_scope(projects, params):
+    a, b = projects
+    params = {**params}
+    if "project_ids" in params:
+        params["project_ids"] = ",".join({"a": a.id, "b": b.id}[key] for key in params["project_ids"].split(","))
+    boot = make_instance_event(at=1)
+    make_event("turn.started", project=a, at=2)
+    make_event("process.started", project=b, session_id="s9", at=3, provider=None)
+    unclean = make_unclean_end(at=4)
+    older = make_instance_event(at=0)
+    assert ids(call(**params, families="twicc").json()) == [unclean.id, boot.id, older.id]
+    page = call(**params, families="twicc", limit=2).json()
+    assert ids(page) == [unclean.id, boot.id] and page["has_more"] is True
+    assert ids(next_page({**params, "families": "twicc", "limit": 2}, page)) == [older.id]
+    assert ids(call(**params, families="twicc", view="waits_problems").json()) == [unclean.id]
+
+
+@pytest.mark.parametrize("params", [{}, {"provider": "codex"}, {"project_ids": "a"}, {"project_ids": "a,b"},
+                                    {"project_ids": "a", "provider": "codex"}])
+def test_the_external_author_keeps_its_scope_and_provider(projects, params):
+    a, b = projects
+    params = {**params}
+    if "project_ids" in params:
+        params["project_ids"] = ",".join({"a": a.id, "b": b.id}[key] for key in params["project_ids"].split(","))
+    external = {"actor": "external", "via": "mcp_external"}
+    first = make_event("settings.changed", project=a, at=1, provider="codex", **external)
+    make_event("settings.changed", project=a, at=2, provider="codex", actor="user", via="ui")
+    other_provider = make_event("settings.changed", project=a, at=3, provider="claude_code", **external)
+    other_project = make_event("settings.changed", project=b, session_id="s9", at=4, provider="codex", **external)
+    forged = make_event("settings.changed", project=a, at=5, provider="codex", actor="external", via="ui")
+    last = make_event("archived.started", project=a, at=6, provider="codex", **external)
+    expected = [last, other_project, other_provider, first]
+    if params.get("project_ids") == a.id:
+        expected.remove(other_project)
+    if "provider" in params:
+        expected.remove(other_provider)
+    assert ids(call(**params, authors="external_mcp").json()) == [row.id for row in expected]
+    page = call(**params, authors="external_mcp", limit=1).json()
+    assert ids(page) == [last.id] and page["has_more"] is True
+    assert ids(next_page({**params, "authors": "external_mcp", "limit": 1}, page)) == [expected[1].id]
+    assert forged.id in ids(call(**params, authors="unknown").json())
