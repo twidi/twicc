@@ -10,7 +10,9 @@ Every comparison on ``kind`` carries a unary plus (``+"core_timelineevent"."kind
 ANALYZE, as in production) picks ``idx_timeline_kind`` for a ``kind IN (...)`` and sorts every matching row
 before it can return the first page (``USE TEMP B-TREE FOR ORDER BY``). With the plus, the planner
 cannot use that index: the page query keeps walking ``idx_timeline_occurred`` or the scope index in
-order and stops at ``limit + 1`` rows. Same technique as the ``after_id`` scope of the feed.
+order and stops at ``limit + 1`` rows. Same technique as the ``after_id`` scope of the feed. The helper
+behind it, :func:`unindexed`, also serves the feed's secondary scope columns (``+project_id``,
+``+provider``) in its page queries.
 """
 
 from __future__ import annotations
@@ -90,10 +92,13 @@ class TimelineFilter(NamedTuple):
 
 
 def unindexed(column: str) -> Func:
-    """``+column``: a column that never drives an index (see the module doc).
+    """``+column``: the column, kept out of the planner's index choice.
 
-    Built from Django expressions, not raw SQL: the column compiles through the alias machinery, so it
-    names the right table in a join or in a same-model subquery (``U0``).
+    SQLite (no ANALYZE, as in production) picks an index from any plain comparison on an indexed column,
+    which can be the wrong one: a ``kind IN (...)`` drives ``idx_timeline_kind`` and sorts every matching
+    row, a second scope column steals the index of the first. With a unary plus the comparison still
+    filters, but no index serves it. Built from Django expressions, not raw SQL: the column compiles
+    through the alias machinery, so it names the right table in a join or in a same-model subquery (``U0``).
     """
     return Func(F(column), template="+%(expressions)s", output_field=CharField())
 
