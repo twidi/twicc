@@ -7,10 +7,15 @@ from django.utils import timezone
 from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
     NATIVE_METADATA_FIELDS,
+    capture_plaintext_certificate,
+    carry_plaintext_certificate,
+    ensure_known_storage_incarnation,
+    invalidate_roots,
     load_native_metadata,
     native_metadata_row,
     native_root_ids,
     resolve_root_decisions,
+    session_plaintext_metadata,
 )
 from twicc.core.models import Project, Session
 
@@ -118,3 +123,76 @@ def test_content_decisions_load_only_ids_absent_from_metadata(tree, django_asser
                                               metadata=metadata)
     assert decisions == expected
     assert not decisions['missing'].resolved
+
+
+@pytest.fixture
+def certified():
+    """A hot native root holding a plaintext certificate, with a hot certified child."""
+    root = make_session('certified', storage_incarnation='root-incarnation', content_storage_version=1,
+                        created_at=timezone.now() - timedelta(days=1))
+    child = make_session('certified-child', type='subagent', parent_session=root,
+                         storage_incarnation='child-incarnation', content_storage_version=1,
+                         created_at=timezone.now())
+    return root, child
+
+
+def test_ensure_known_incarnation_keeps_one_write(certified, django_assert_num_queries):
+    root, _child = certified
+    with django_assert_num_queries(1) as captured:
+        assert ensure_known_storage_incarnation(root.id, 'root-incarnation') == 'root-incarnation'
+    assert captured.captured_queries[0]['sql'].startswith('UPDATE')
+
+    bare = make_session('bare', created_at=timezone.now())
+    with django_assert_num_queries(1) as captured:
+        incarnation = ensure_known_storage_incarnation(bare.id, None)
+    assert captured.captured_queries[0]['sql'].startswith('UPDATE')
+    assert incarnation
+    assert Session.objects.values_list('storage_incarnation', flat=True).get(pk=bare.id) == incarnation
+
+
+def test_capture_from_metadata_and_storage_fields_reads_nothing(certified, django_assert_num_queries):
+    root, _child = certified
+    with django_assert_num_queries(2):
+        expected = capture_plaintext_certificate(root.id)
+    assert expected is not None
+    metadata = load_native_metadata([root.id])
+    with django_assert_num_queries(0):
+        assert capture_plaintext_certificate(root.id, metadata=metadata, storage_fields=metadata[root.id]) == expected
+    with django_assert_num_queries(1):
+        assert capture_plaintext_certificate(root.id, metadata=metadata) == expected
+
+
+@pytest.mark.parametrize('from_metadata', [False, True])
+def test_carry_from_metadata_keeps_epoch_read(certified, from_metadata, django_assert_num_queries):
+    root, _child = certified
+    snapshot = capture_plaintext_certificate(root.id)
+    assert snapshot is not None
+    invalidate_roots([root.id])
+    kwargs = {'metadata': load_native_metadata([root.id])} if from_metadata else {}
+    with django_assert_num_queries(2 if from_metadata else 3):
+        assert carry_plaintext_certificate(snapshot, **kwargs)
+    fields = Session.objects.values('content_state_epoch', 'plaintext_verified_epoch').get(pk=root.id)
+    assert fields['content_state_epoch'] == fields['plaintext_verified_epoch'] == snapshot.epoch + 1
+
+
+def test_plaintext_metadata_from_fields_keeps_the_probe(certified, django_assert_num_queries):
+    _root, child = certified
+    with django_assert_num_queries(2):
+        expected = session_plaintext_metadata(child.id)
+    assert expected
+    metadata = load_native_metadata([child.id])
+    with django_assert_num_queries(1):
+        assert session_plaintext_metadata(child.id, fields=metadata[child.id]) == expected
+
+
+@pytest.mark.parametrize('from_metadata', [False, True])
+def test_invalidate_roots_targets_from_metadata(certified, from_metadata, effects, django_assert_num_queries,
+                                                django_capture_on_commit_callbacks):
+    root, child = certified
+    kwargs = {'metadata': load_native_metadata([child.id])} if from_metadata else {}
+    with (django_capture_on_commit_callbacks(execute=True) as callbacks,
+          django_assert_num_queries(1 if from_metadata else 2)):
+        invalidate_roots([root.id], promotion_targets=[child.id], **kwargs)
+    assert len(callbacks) == 1
+    assert effects.wakeups == [child.id]
+    assert Session.objects.values_list('content_state_epoch', flat=True).get(pk=root.id) == 5

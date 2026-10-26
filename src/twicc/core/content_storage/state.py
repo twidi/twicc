@@ -133,7 +133,24 @@ def ensure_storage_incarnation(session_id: str) -> str:
     return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
 
 
-def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str] = ()) -> None:
+def ensure_known_storage_incarnation(session_id: str, known: str | None) -> str:
+    """Initialize legacy identity once, reusing ``known`` (read in this transaction) instead of a re-read.
+
+    The conditional ``UPDATE`` always runs: it stays the write that reserves the writer lock.
+    """
+    _require_writer_transaction()
+    incarnation = str(uuid4())
+    if Session.objects.filter(pk=session_id, storage_incarnation__isnull=True).update(storage_incarnation=incarnation):
+        return incarnation
+    if known:
+        return known
+    return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
+
+
+def invalidate_roots(
+    root_ids: Iterable[str], *, promotion_targets: Iterable[str] = (),
+    metadata: Mapping[str, Mapping | None] | None = None,
+) -> None:
     """Fence native-root mutations separately from the sessions that require plaintext promotion."""
     _require_writer_transaction()
     roots = tuple(set(root_ids))
@@ -148,26 +165,30 @@ def invalidate_roots(root_ids: Iterable[str], *, promotion_targets: Iterable[str
     from twicc.providers.write_coordinator import write_priority
 
     priority = write_priority.get()
-    decisions = resolve_content_decisions(targets, timezone.now(), active_session_ids.get())
+    decisions = resolve_content_decisions(targets, timezone.now(), active_session_ids.get(), metadata=metadata)
     for session_id, decision in decisions.items():
         if decision.resolved and not decision.is_cold:
             transaction.on_commit(lambda session_id=session_id, priority=priority:
                                   request_root_promotion(session_id, priority=priority))
 
 
-def capture_plaintext_certificate(root_id: str) -> RootStorageSnapshot | None:
+def capture_plaintext_certificate(
+    root_id: str, *, metadata: Mapping[str, dict | None] | None = None, storage_fields: Mapping | None = None,
+) -> RootStorageSnapshot | None:
     """Capture a current certificate only while persisted policy still requires plaintext.
 
     Wall-clock aging can permit compression without changing the epoch. Runtime
     activity cannot turn that old certificate into proof of current plaintext.
+    ``metadata`` rows feed the root decision. ``storage_fields`` holds the root's
+    storage-state columns, read in this transaction with no write to the root row since.
     """
     _require_writer_transaction()
-    decision = resolve_root_decision(root_id, timezone.now(), frozenset())
+    decision = _resolve_root_decisions([root_id], timezone.now(), frozenset(), cold_from_fields, metadata)[root_id]
     if not decision.resolved or decision.root_id != root_id or decision.is_cold:
         return None
-    fields = Session.objects.filter(pk=root_id).values(
-        'storage_incarnation', 'content_storage_version', 'content_state_epoch', 'plaintext_verified_epoch',
-    ).first()
+    fields = storage_fields
+    if fields is None:
+        fields = Session.objects.filter(pk=root_id).values(*STORAGE_STATE_FIELDS).first()
     if (fields is None or not fields['storage_incarnation']
             or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
             or fields['content_state_epoch'] is None
@@ -176,14 +197,19 @@ def capture_plaintext_certificate(root_id: str) -> RootStorageSnapshot | None:
     return RootStorageSnapshot(root_id, fields['storage_incarnation'], fields['content_state_epoch'])
 
 
-def carry_plaintext_certificate(snapshot: RootStorageSnapshot) -> bool:
+def carry_plaintext_certificate(
+    snapshot: RootStorageSnapshot, *, metadata: Mapping[str, dict | None] | None = None,
+) -> bool:
     """Carry caller-owned plaintext preservation evidence to this transaction's final epoch.
 
     The caller proves every changed root reference is plaintext, or that only
     descendants/lifecycle metadata changed. Never use this to finish restoration.
+    ``metadata`` rows feed the root decision only: the epoch is always read again.
     """
     _require_writer_transaction()
-    decision = resolve_root_decision(snapshot.root_id, timezone.now(), frozenset())
+    decision = _resolve_root_decisions(
+        [snapshot.root_id], timezone.now(), frozenset(), cold_from_fields, metadata,
+    )[snapshot.root_id]
     if not decision.resolved or decision.root_id != snapshot.root_id or decision.is_cold:
         return False
     epoch = Session.objects.values_list('content_state_epoch', flat=True).get(pk=snapshot.root_id)
@@ -275,15 +301,17 @@ def _snapshot_matches(snapshot: RootStorageSnapshot | SessionPromotionSnapshot) 
     return _native_root_identity(snapshot.root_id) == snapshot.root_id
 
 
-def session_plaintext_metadata(session_id: str) -> bool:
+def session_plaintext_metadata(session_id: str, *, fields: Mapping | None = None) -> bool:
     """Check complete extraction and both plaintext slots for one session without loading content bytes.
 
     Callers hold one read snapshot or the writer transaction. SQL probes keep
     Python memory and query count bounded. A native parent's certificate never authorizes a child.
+    ``fields`` (``content_storage_version``, ``storage_incarnation``) replaces the session row read.
     """
     if not connection.in_atomic_block:
         raise transaction.TransactionManagementError('Plaintext metadata requires a caller-owned transaction')
-    fields = Session.objects.filter(pk=session_id).values('content_storage_version', 'storage_incarnation').first()
+    if fields is None:
+        fields = Session.objects.filter(pk=session_id).values('content_storage_version', 'storage_incarnation').first()
     if (fields is None or fields['content_storage_version'] != CONTENT_STORAGE_VERSION
             or not fields['storage_incarnation']):
         return False
