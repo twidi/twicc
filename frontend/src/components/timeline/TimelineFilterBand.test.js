@@ -136,7 +136,7 @@ const Elsewhere = { setup: () => () => Vue.h('section', 'a session') }
  * another view (it is deactivated, not unmounted). Returns the root, the store, its recorded actions, the focus
  * log and the props.
  */
-async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false, keepAlive = false } = {}) {
+async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false, keepAlive = false, stickyBand = true } = {}) {
     controllerCalls = []
     // The band reads the focused element when the panel closes.
     setGlobal(t, 'document', { activeElement: null })
@@ -167,6 +167,13 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
                 return true
             },
         })
+        // The listeners added in code (`addEventListener`), as `[type, listener, capture]`.
+        element.listeners = []
+        element.addEventListener = (type, listener, capture) => { element.listeners.push([type, listener, capture]) }
+        element.removeEventListener = (type, listener, capture) => {
+            const index = element.listeners.findIndex((entry) => entry[0] === type && entry[1] === listener && entry[2] === capture)
+            if (index >= 0) element.listeners.splice(index, 1)
+        }
         element.closest = (selector) => {
             assert.match(selector, /^\.[\w-]+$/, 'the test renderer knows class selectors only')
             for (let current = element; current; current = current.parent) {
@@ -195,9 +202,12 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     const shown = Vue.ref(true)
     const renderBands = () => Array.from({ length: bands }, (_, index) => Vue.h(Band, { ...props, ref: (instance) => { bandRefs[index] = instance } }))
     const app = renderer.createApp({
-        render: () => Vue.h('div', { class: 'sticky-band glass-sticky' }, keepAlive
-            ? [Vue.h(Vue.KeepAlive, null, { default: () => (shown.value ? renderBands()[0] : Vue.h(Elsewhere)) })]
-            : renderBands()),
+        render: () => {
+            const content = keepAlive
+                ? [Vue.h(Vue.KeepAlive, null, { default: () => (shown.value ? renderBands()[0] : Vue.h(Elsewhere)) })]
+                : renderBands()
+            return stickyBand ? Vue.h('div', { class: 'sticky-band glass-sticky' }, content) : Vue.h('div', { class: 'no-band' }, content)
+        },
     })
     app.use(pinia)
     app.mount(root)
@@ -474,53 +484,61 @@ test('the popover handlers are wired to the controller and ignore events of nest
     assertSame(Vue.toRaw(controllerCalls[2][1].button), filtersButtonOf(root))
 })
 
-test('a band click on a view keeps the panel open; a click on the Filters button does not', async (t) => {
-    const { root } = await mount(t)
-    const [band] = byClass(root, 'timeline-filter-band')
-    const popover = popoverOf(root)
-    const hide = () => {
-        const event = { target: popover, currentTarget: popover, prevented: false, preventDefault() { event.prevented = true } }
-        popover.props.onWaHide(event)
-        return event.prevented
-    }
-    popover.props.onWaShow({ target: popover, currentTarget: popover })
-    controllerCalls = []
-    band.props.onClickCapture({ target: radiosOf(root)[1] })
-    assertSame(Vue.toRaw(controllerCalls[0][2].band), byClass(root, 'sticky-band')[0], 'the whole sticky band')
-    assertSame(Vue.toRaw(controllerCalls[0][2].button), filtersButtonOf(root))
-    assert.equal(hide(), true)
-    band.props.onClickCapture({ target: filtersButtonOf(root) })
-    assert.equal(hide(), false)
-})
+/** The capture `click` listeners added on a node. */
+const captureClicks = (node) => node.listeners.filter(([type, , capture]) => type === 'click' && capture === true)
 
-test('a click on the padding of the sticky band is a click in the band: the panel stays open', async (t) => {
-    const { root } = await mount(t)
+/** The popover's own `wa-hide`, as Web Awesome dispatches it: returns whether the close was cancelled. */
+function hideVetoed(popover) {
+    const event = { target: popover, currentTarget: popover, prevented: false, preventDefault() { event.prevented = true } }
+    popover.props.onWaHide(event)
+    return event.prevented
+}
+
+test('the band-click listener is a capture listener on the StickyBand element itself, removed at unmount', async (t) => {
+    const { root, unmount } = await mount(t)
     const [stickyBand] = byClass(root, 'sticky-band')
     const [band] = byClass(root, 'timeline-filter-band')
-    const popover = popoverOf(root)
-    const hide = () => {
-        const event = { target: popover, currentTarget: popover, prevented: false, preventDefault() { event.prevented = true } }
-        popover.props.onWaHide(event)
-        return event.prevented
-    }
-    popover.props.onWaShow({ target: popover, currentTarget: popover })
-    controllerCalls = []
-    band.props.onClickCapture({ target: stickyBand })
-    assertSame(Vue.toRaw(controllerCalls[0][2].band), stickyBand, 'the band boundary is the StickyBand root')
-    assert.equal(hide(), true)
-    // Outside the sticky band (the list): it closes.
-    band.props.onClickCapture({ target: root })
-    assert.equal(hide(), false)
+    assert.equal(captureClicks(stickyBand).length, 1)
+    assert.equal(band.listeners.length, 0, 'nothing on the band root: a click on the padding would never reach it')
+    assert.ok(!SOURCE.includes('@click.capture'), 'no template listener on a descendant')
+    unmount()
+    assert.equal(captureClicks(stickyBand).length, 0)
 })
 
-test('without a StickyBand around it, the band boundary is the band root', async (t) => {
-    const { root } = await mount(t)
-    const [band] = byClass(root, 'timeline-filter-band')
-    // Detach the wrapper's class: no `.sticky-band` ancestor any more.
-    byClass(root, 'sticky-band')[0].props.class = 'other'
+test('a click on the padding of the sticky band, on a view or on a pill keeps the panel open; the Filters button and the list do not', async (t) => {
+    const { root, store } = await mount(t)
+    store.toggle('p1', 'families', 'turns')
+    await flush()
+    const [stickyBand] = byClass(root, 'sticky-band')
+    const [[, listener]] = captureClicks(stickyBand)
+    const popover = popoverOf(root)
+    popover.props.onWaShow({ target: popover, currentTarget: popover })
     controllerCalls = []
-    band.props.onClickCapture({ target: radiosOf(root)[0] })
+    // The real path: the listener registered on the StickyBand, called with the event's target.
+    listener({ target: stickyBand })
+    assertSame(Vue.toRaw(controllerCalls[0][2].band), stickyBand, 'the boundary is the StickyBand element')
+    assertSame(Vue.toRaw(controllerCalls[0][2].button), filtersButtonOf(root))
+    assert.equal(hideVetoed(popover), true, 'the padding')
+    assert.equal(hideVetoed(popover), false, 'one shot')
+    listener({ target: radiosOf(root)[1] })
+    assert.equal(hideVetoed(popover), true, 'a view')
+    listener({ target: byClass(root, 'timeline-filter-pill-remove')[0] })
+    assert.equal(hideVetoed(popover), true, 'a pill remove control')
+    listener({ target: filtersButtonOf(root) })
+    assert.equal(hideVetoed(popover), false, 'the Filters button')
+    // A click in the list never reaches the StickyBand's listener: nothing arms the veto.
+    assert.equal(hideVetoed(popover), false, 'the list')
+})
+
+test('without a StickyBand around it, the listener and the boundary are the band root', async (t) => {
+    const { root, unmount } = await mount(t, { stickyBand: false })
+    const [band] = byClass(root, 'timeline-filter-band')
+    const [[, listener]] = captureClicks(band)
+    controllerCalls = []
+    listener({ target: radiosOf(root)[0] })
     assertSame(Vue.toRaw(controllerCalls[0][2].band), band)
+    unmount()
+    assert.equal(captureClicks(band).length, 0)
 })
 
 test('a page detached by KeepAlive with the panel open closes it from the code; it stays closed on return', async (t) => {
@@ -575,7 +593,8 @@ test('source pin: the band does not use v-popover-focus-fix (it would undo the f
     const template = SOURCE.slice(SOURCE.indexOf('<template>'), SOURCE.indexOf('<style'))
     assert.ok(!template.includes('v-popover-focus-fix'))
     assert.ok(!/^import .*(?:vPopoverFocusFix|directives\/)/m.test(SOURCE), 'no directive import')
-    assert.match(SOURCE, /@click\.capture="onBandClick"/)
+    assert.match(SOURCE, /addEventListener\('click', onBandClick, true\)/)
+    assert.match(SOURCE, /removeEventListener\('click', onBandClick, true\)/)
 })
 
 // ── Layout levels ──────────────────────────────────────────────────────────────────────────────────────────

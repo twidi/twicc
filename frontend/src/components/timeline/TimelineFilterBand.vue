@@ -78,11 +78,24 @@ function setRemoveRef(group, element) {
 const controller = createPanelController()
 
 // The band is the whole sticky band (StickyBand.vue, spec 3.1), its padding included: a click there is not a click
-// outside the band (spec 3.2).
+// outside the band (spec 3.2). The capture listener sits on that element itself (the band root when there is no
+// StickyBand around it): a click on the padding has the StickyBand as target, and a capture listener on one of its
+// descendants would never see it. The same element is the boundary of the veto.
+let bandBoundary = null
+
 function onBandClick(event) {
-    const root = rootRef.value
-    controller.onBandClick(event, { band: root?.closest?.('.sticky-band') ?? root, button: buttonRef.value })
+    controller.onBandClick(event, { band: bandBoundary, button: buttonRef.value })
 }
+
+onMounted(() => {
+    const root = rootRef.value
+    bandBoundary = root?.closest?.('.sticky-band') ?? root
+    bandBoundary?.addEventListener('click', onBandClick, true)
+})
+onBeforeUnmount(() => {
+    bandBoundary?.removeEventListener('click', onBandClick, true)
+    bandBoundary = null
+})
 
 // The popover's own events only: a nested wa-checkbox or wa-button fires none of these today, but any wa-* child
 // that does would bubble here.
@@ -257,7 +270,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 </script>
 
 <template>
-    <div ref="rootRef" class="timeline-filter-band" @click.capture="onBandClick">
+    <div ref="rootRef" class="timeline-filter-band">
         <div ref="lineRef" :class="['timeline-filter-line', `timeline-filter-line--${layout}`]">
             <span class="timeline-filter-title">Timeline</span>
             <div ref="controlsRef" class="timeline-filter-controls">
