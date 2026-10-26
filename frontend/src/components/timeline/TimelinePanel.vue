@@ -164,6 +164,20 @@ async function clearAllFilters() {
     filterBandRef.value?.focusFiltersButton()
 }
 
+// "Only this session" in a block header (filters design section 3.4). The list reloads under the control, so the
+// focus goes to a fixed place (spec 3.1): the session pill's remove control when the filter is set, the Filters button
+// when it is released. The band's methods also cover a Filters panel close under way (the click closed it).
+const sessionFilterId = computed(() => filters.value.session?.id ?? null)
+
+async function toggleSession({ id, title }) {
+    const releasing = sessionFilterId.value === id
+    if (releasing) filtersStore.clearSession(props.projectId)
+    else filtersStore.setSession(props.projectId, { id, title })
+    await nextTick()
+    if (releasing) filterBandRef.value?.focusFiltersButton()
+    else filterBandRef.value?.focusSessionPill()
+}
+
 const itemKey = (item) => item.key
 
 // ── The room under the navigation list and the band ───────────────────────────────────────────────────────
@@ -334,7 +348,13 @@ watch(() => state.events.length, async () => {
                             </wa-callout>
                         </div>
                     </template>
-                    <TimelineEventRow v-else :row="item" :context="context" />
+                    <TimelineEventRow
+                        v-else
+                        :row="item"
+                        :context="context"
+                        :session-filter-id="sessionFilterId"
+                        @toggle-session="toggleSession"
+                    />
                 </template>
             </VirtualScroller>
 

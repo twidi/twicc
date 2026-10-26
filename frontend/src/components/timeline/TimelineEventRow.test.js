@@ -6,6 +6,7 @@ import * as Vue from 'vue'
 import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
 import * as describeEventModule from '../../utils/timeline/describeEvent.js'
+import * as filtersModule from '../../utils/timeline/filters.js'
 import * as partsModule from '../../utils/timeline/parts.js'
 import { buildTimelineRows } from '../../utils/timeline/rows.js'
 
@@ -52,12 +53,15 @@ function textOf(node) {
 /** The links inside the session mentions (the project name is a link too). */
 const sessionLinks = (root) => byClass(root, 'timeline-session').flatMap((mention) => descendants(mention, (n) => n.type === 'a'))
 
-async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions } = {}) {
+/** `emitted`: the `toggle-session` payloads of the row, in order. */
+async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [] } = {}) {
     const rows = buildTimelineRows(events, { sessions: sessionTable, scope, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
         .filter((row) => row.type === 'event')
     const { renderer, root } = makeRenderer()
     const context = { sessions: sessionTable, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }
-    const app = renderer.createApp({ render: () => Vue.h(Row, { row: rows[index], context }) })
+    const app = renderer.createApp({
+        render: () => Vue.h(Row, { row: rows[index], context, sessionFilterId, onToggleSession: (payload) => emitted.push(payload) }),
+    })
     app.mount(root)
     t.after(() => app.unmount())
     await flush()
@@ -158,6 +162,103 @@ test('every event line has its time: head, following and instance rows', async (
     }
 })
 
+const onlyControls = (root) => byClass(root, 'timeline-row-only')
+
+test('a head row has an "Only this session" control after the title, before the project, not pressed', async (t) => {
+    const root = await render(t, [make('turn.started')])
+    const [header] = byClass(root, 'timeline-row-header')
+    const [control] = onlyControls(header)
+    assert.equal(control.type, 'button')
+    assert.equal(control.props.type, 'button')
+    assert.equal(control.props['aria-pressed'], 'false')
+    assert.equal(control.props.title, 'Only this session')
+    // The visible part is the filter icon (no label: hidden from assistive tech); the name is a visually hidden text.
+    const [icon] = descendants(control, (n) => n.type === 'wa-icon')
+    assert.deepEqual([icon.props.name, icon.props.label], ['filter', undefined])
+    assert.deepEqual(byClass(control, 'timeline-row-only-text').map(textOf), ['Only this session'])
+    // The header's flex items, in order: the title, the control, the project.
+    const items = header.children.filter((n) => n.type !== '#comment' && n.type !== '#text')
+    const name = (n) => ['timeline-session', 'timeline-row-only', 'timeline-project'].find((c) => classesOf(n).split(' ').includes(c))
+    assert.deepEqual(items.map(name), ['timeline-session', 'timeline-row-only', 'timeline-project'])
+    // Only the head row carries it: one per block.
+    assert.equal(onlyControls(root).length, 1)
+})
+
+test('with the session filter on the row\'s session, the control is pressed and labelled "Show every session"', async (t) => {
+    const root = await render(t, [make('turn.started')], { sessionFilterId: 's1' })
+    const [control] = onlyControls(root)
+    assert.equal(control.props['aria-pressed'], 'true')
+    assert.equal(control.props.title, 'Show every session')
+    assert.deepEqual(byClass(control, 'timeline-row-only-text').map(textOf), ['Show every session'])
+    // Another session filtered: this one is not pressed.
+    const other = await render(t, [make('turn.started')], { sessionFilterId: 'parent' })
+    assert.equal(onlyControls(other)[0].props['aria-pressed'], 'false')
+    assert.equal(onlyControls(other)[0].props.title, 'Only this session')
+})
+
+test('a click emits toggle-session with the id and the side-table title, pressed or not', async (t) => {
+    const emitted = []
+    const root = await render(t, [make('turn.started')], { emitted })
+    onlyControls(root)[0].props.onClick()
+    assert.equal(emitted.length, 1)
+    assert.deepEqual(Object.entries(emitted[0]), [['id', 's1'], ['title', 'Fix the build']])
+    const pressedEmitted = []
+    const pressed = await render(t, [make('turn.started')], { sessionFilterId: 's1', emitted: pressedEmitted })
+    onlyControls(pressed)[0].props.onClick()
+    assert.deepEqual(Object.entries(pressedEmitted[0]), [['id', 's1'], ['title', 'Fix the build']])
+})
+
+test('an untitled session emits title null (not the full id of the header), and its pill shows the short id', async (t) => {
+    const untitled = { 'abcdef0123456789': { title: '', project_id: 'p1', provider: 'codex', hidden: false, archived: false } }
+    for (const sessionTable of [untitled, {}]) {
+        const emitted = []
+        const root = await render(t, [make('turn.started', { session_id: 'abcdef0123456789' })], { sessionTable, emitted })
+        // The header itself shows the full id.
+        assert.equal(textOf(byClass(root, 'timeline-session-title')[0]), 'abcdef0123456789')
+        onlyControls(root)[0].props.onClick()
+        assert.deepEqual(Object.entries(emitted[0]), [['id', 'abcdef0123456789'], ['title', null]])
+        const filters = { ...filtersModule.createFilters(), session: emitted[0] }
+        const pills = filtersModule.groupPills(filters, { providerLabel: (p) => p })
+        assert.equal(pills.length, 1)
+        assert.deepEqual([pills[0].group, pills[0].label, pills[0].shown.join()], ['session', 'Session', 'abcdef01'])
+    }
+})
+
+test('a following row and an instance row have no "Only this session" control', async (t) => {
+    const following = await render(t, [make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }), make('turn.started')], { index: 1 })
+    assert.equal(onlyControls(following).length, 0)
+    const instance = await render(t, [make('backend.started', { session_id: null, project_id: null, provider: null, actor: 'system', data: {} })])
+    assert.equal(onlyControls(instance).length, 0)
+    assert.equal(descendants(instance, (n) => n.type === 'button').length, 0)
+})
+
+test('the "Only this session" CSS: a native button reset, never copied, hidden until hover or focus only with a hover pointer', () => {
+    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const style = row.slice(row.indexOf('<style'))
+    const control = declarationsOf(style, '.timeline-row-only')
+    // Web Awesome's native.css makes every <button> a form control: reset like the error toggle.
+    assert.deepEqual(['appearance', 'border', 'background', 'padding', 'height', 'flex'].map((name) => control.get(name)),
+        ['none', 'none', 'none', 'var(--wa-space-3xs)', 'auto', '0 0 auto'])
+    // Visible by default (a touch screen has no hover): never hidden outside the hover media query.
+    assert.ok(!control.has('opacity') && !control.has('visibility') && control.get('display') !== 'none')
+    assert.ok(!/\n\.timeline-row-only[^{]*\{[^}]*opacity:\s*0[;\s]/.test(style.slice(0, style.indexOf('@media (hover: hover)'))))
+    // A copy of the row never gets its label.
+    assert.deepEqual([control.get('-webkit-user-select'), control.get('user-select')], ['none', 'none'])
+    // With a hover pointer: hidden until the header is hovered or the control has the keyboard focus (or is pressed).
+    const start = style.indexOf('@media (hover: hover) {')
+    assert.notEqual(start, -1)
+    const media = style.slice(start, style.indexOf('\n}', start)).replace(/\n {4}/g, '\n')
+    assert.equal(declarationsOf(media, '.timeline-row-only').get('opacity'), '0')
+    const shown = declarationsOf(media, '.timeline-row-header:hover .timeline-row-only,\n.timeline-row-only:focus-visible,\n.timeline-row-only[aria-pressed="true"]')
+    assert.equal(shown.get('opacity'), '1')
+    assert.equal(declarationsOf(style, '.timeline-row-only:focus-visible').get('outline'), 'var(--wa-focus-ring)')
+    // The hidden text stays in the flow (no position): the positioned pattern is blockified.
+    const text = declarationsOf(style, '.timeline-row-only-text')
+    assert.deepEqual(['display', 'width', 'height', 'overflow', 'clip-path', 'white-space'].map((name) => text.get(name)),
+        ['inline-block', '1px', '1px', 'hidden', 'inset(50%)', 'nowrap'])
+    assert.ok(!text.has('position'))
+})
+
 test('the header carries no state marker: a hidden and archived session is plain text, an archived one keeps its link', async (t) => {
     const stateIcon = (n) => n.type === 'wa-icon' && ['box-archive', 'eye-slash', 'thumbtack'].includes(n.props.name)
     const hidden = await render(t, [make('turn.started', { session_id: 'secret', provider: 'claude_code' })])
@@ -234,21 +335,23 @@ test('an error shows its first line, with the rest behind an expand control', as
     const root = await render(t, [make('process.ended', { reason: 'error', data: { error: 'Boom\nat file.js:1' } })])
     assert.equal(textOf(byClass(root, 'timeline-error-line')[0]), 'Boom')
     assert.equal(byClass(root, 'timeline-error-rest').length, 0)
-    const [toggle] = descendants(root, (n) => n.type === 'button')
+    const [toggle] = byClass(root, 'timeline-row__expand')
     assert.equal(textOf(toggle), 'Show more')
     assert.equal(toggle.props['aria-expanded'], 'false')
     toggle.props.onClick()
     await flush()
-    const expandedToggle = descendants(root, (n) => n.type === 'button')[0]
+    const expandedToggle = byClass(root, 'timeline-row__expand')[0]
     assert.equal(expandedToggle.props['aria-expanded'], 'true')
     assert.equal(expandedToggle.props['aria-controls'], byClass(root, 'timeline-error-rest')[0].props.id)
     assert.equal(textOf(byClass(root, 'timeline-error-rest')[0]), 'at file.js:1')
-    assert.equal(textOf(descendants(root, (n) => n.type === 'button')[0]), 'Show less')
+    assert.equal(textOf(byClass(root, 'timeline-row__expand')[0]), 'Show less')
 })
 
 test('an error with a single line has no expand control', async (t) => {
     const root = await render(t, [make('process.ended', { reason: 'error', data: { error: 'Boom' } })])
-    assert.equal(descendants(root, (n) => n.type === 'button').length, 0)
+    assert.equal(byClass(root, 'timeline-row__expand').length, 0)
+    // The only button left is the header's "Only this session".
+    assert.deepEqual(descendants(root, (n) => n.type === 'button').map(classesOf), ['timeline-row-only'])
 })
 
 test('strings from data are text, never markup', async (t) => {
@@ -475,7 +578,10 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
 
 // The text a copy of a whole row gets: every adjacent pair of the row is separated by a real space (the visible
 // spaces of the inline flow, and spaces between the flex and grid items, which render nothing).
-const rowText = (root) => textOf(byClass(root, 'timeline-row')[0])
+// The "Only this session" control is not copied (`user-select: none`, pinned in its CSS test).
+const copiedText = (node) => (classesOf(node).split(' ').includes('timeline-row-only') ? '' : node.type === '#comment' ? ''
+    : `${node.text ?? ''}${node.children.map(copiedText).join('')}`)
+const rowText = (root) => copiedText(byClass(root, 'timeline-row')[0])
 
 test('the copied text of every row variant reads with a space between its pieces', async (t) => {
     const plain = await render(t, [make('process.started', { data: { cause: 'resume', hybrid: true } })])
@@ -488,7 +594,7 @@ test('the copied text of every row variant reads with a space between its pieces
     assert.match(rowText(author), /^Fix the build p1 \S.* by Fix the build \(CLI\) 14:32$/)
     const error = await render(t, [make('process.ended', { reason: 'error', actor: 'agent', via: 'cli', actor_ref: 's1', data: { error: 'Boom\nat file.js:1' } })])
     assert.match(rowText(error), /^Fix the build p1 \S.* by Fix the build \(CLI\) Boom Show more 14:32$/)
-    descendants(error, (n) => n.type === 'button')[0].props.onClick()
+    byClass(error, 'timeline-row__expand')[0].props.onClick()
     await flush()
     assert.match(rowText(error), / Boom Show less at file\.js:1 14:32$/)
     const following = await render(t, [make('turn.ended', { occurred_at: '2026-10-14T14:32:09.000000Z', data: { background_work: null } }), make('turn.started')], { index: 1 })

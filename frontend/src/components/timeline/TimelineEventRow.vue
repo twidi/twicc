@@ -1,6 +1,6 @@
 <script setup>
 // TimelineEventRow.vue - One event row of the Timeline, in session blocks (display design section 5.1):
-//   group head:  [provider icon] session title (one line, ellipsis) ............ project
+//   group head:  [provider icon] session title (one line, ellipsis) ..... [only] project
 //                    icon | wording, tags, badge, author label                   | time
 //   following:       icon | wording ...                                          | time
 //   instance:    icon | wording (semibold)                                       | time
@@ -32,6 +32,13 @@ const props = defineProps({
     row: { type: Object, required: true },
     /** Facts the wording needs: `{sessions, labelsFor, isSubagent}`. */
     context: { type: Object, required: true },
+    /** The id of the session the timeline is restricted to (filters design section 3.4), else null. */
+    sessionFilterId: { type: String, default: null },
+})
+
+const emit = defineEmits({
+    /** "Only this session" pressed on the head row: `{id, title}`, `title` null for an untitled session. */
+    'toggle-session': (payload) => typeof payload?.id === 'string',
 })
 
 const dataStore = useDataStore()
@@ -42,6 +49,18 @@ const wording = computed(() => (vm.value.tags.length ? splitLastWord(vm.value.pa
 const identity = computed(() => props.row.identity)
 // A project the store does not know (deleted) is shown as plain text, never as a broken link.
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
+
+// "Only this session" (filters design section 3.4), on the head row of a session block. Pressed when the timeline is
+// restricted to this session: pressed again, it shows every session.
+const sessionId = computed(() => props.row.event.session_id)
+const onlyThisSession = computed(() => props.sessionFilterId !== null && props.sessionFilterId === sessionId.value)
+const onlyLabel = computed(() => (onlyThisSession.value ? 'Show every session' : 'Only this session'))
+
+// The title of the side table, captured by the pill. Not the header mention's: built with the full id as fallback, it
+// would hide the short id the pill shows for an untitled session.
+function toggleSession() {
+    emit('toggle-session', { id: sessionId.value, title: props.context.sessions?.[sessionId.value]?.title || null })
+}
 
 const expanded = ref(false)
 // Unique per row, so the toggle can point at the text it shows.
@@ -65,7 +84,15 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
                  a copy gets them. Between flex or grid items (the title and the project, the header and the event line,
                  the main column and the time) they render nothing and a copy puts a line break there anyway: they only
                  keep the text content of the row readable. -->
-            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" /><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
+            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" /><!--
+                No real space around it: a copy skips it (user-select: none), the space before the project is enough.
+                --><button
+                type="button"
+                class="timeline-row-only"
+                :aria-pressed="onlyThisSession ? 'true' : 'false'"
+                :title="onlyLabel"
+                @click="toggleSession"
+            ><wa-icon name="filter"></wa-icon><span class="timeline-row-only-text">{{ onlyLabel }}</span></button><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
                 A plain jump to that project: the router guard keeps the current workspace when the project belongs to it.
                 --><RouterLink
                     v-if="knownProject"
@@ -174,6 +201,67 @@ const errorRestId = computed(() => `timeline-error-rest-${props.row.event.id}`)
 
 .timeline-row-title {
     flex: 1 1 auto;
+}
+
+/* "Only this session": an icon button between the title and the project. Web Awesome's native.css makes every
+   <button> an inline-flex form control: reset like the error toggle. Its label is never part of a copied row. */
+.timeline-row-only {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    appearance: none;
+    border: none;
+    background: none;
+    padding: var(--wa-space-3xs);
+    height: auto;
+    border-radius: var(--wa-border-radius-s);
+    font: inherit;
+    font-size: var(--wa-font-size-xs);
+    line-height: 1;
+    color: var(--wa-color-text-quiet);
+    cursor: pointer;
+    transition: opacity var(--wa-transition-fast), color var(--wa-transition-fast);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.timeline-row-only:hover {
+    color: var(--wa-color-text-normal);
+}
+
+.timeline-row-only[aria-pressed="true"] {
+    color: var(--wa-color-brand-60);
+}
+
+.timeline-row-only:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+/* Its name, out of sight but in the flow (the pattern of the arrow's word, TimelineWordingPart.vue). */
+.timeline-row-only-text {
+    display: inline-block;
+    width: 1px;
+    height: 1px;
+    margin-inline-end: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* With a hover pointer, the control shows on the header's hover and on keyboard focus (filters design section 3.4),
+   and stays while pressed: the block says which session the timeline is restricted to. A touch screen always shows it. */
+@media (hover: hover) {
+    .timeline-row-only {
+        opacity: 0;
+    }
+
+    .timeline-row-header:hover .timeline-row-only,
+    .timeline-row-only:focus-visible,
+    .timeline-row-only[aria-pressed="true"] {
+        opacity: 1;
+    }
 }
 
 /* Three columns: event icon | text (wraps under its own start) | time (never wraps, never pushed). */

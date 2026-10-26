@@ -52,6 +52,20 @@ function createFilterBand(log, filtersStore) {
     }
 }
 
+/**
+ * The event row (TimelineEventRow.vue has its own tests): an `article` with the row key and the session filter it is
+ * given; `onToggle(payload)` is its `toggle-session` emit.
+ */
+const EventRow = {
+    props: ['row', 'context', 'sessionFilterId'],
+    emits: ['toggle-session'],
+    setup: (props, { emit }) => () => Vue.h('article', {
+        'data-id': props.row.key,
+        'data-session-filter': props.sessionFilterId,
+        onToggle: (payload) => emit('toggle-session', payload),
+    }),
+}
+
 const isoAt = (n) => new Date(Date.UTC(2026, 9, 14, 10, 0, n)).toISOString().replace('.000Z', '.000000Z')
 const at = (n) => `2026-10-14T10:00:${String(n).padStart(2, '0')}.000000Z`
 const event = (id, fields = {}) => ({ id, kind: 'turn.started', occurred_at: at(id), session_id: 's1', project_id: 'p1', provider: 'codex', actor: 'agent', precision: 'exact', data: {}, ...fields })
@@ -163,7 +177,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../ui/StickyBand.vue': StickyBand,
         '../session/detail/items/DaySeparator.vue': { props: ['label', 'dayKey'], setup: (props) => () => Vue.h('div', { class: 'day', 'data-day': props.dayKey }, props.label) },
         '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
-        './TimelineEventRow.vue': stub('article'),
+        './TimelineEventRow.vue': EventRow,
         './TimelineFilterBand.vue': createFilterBand(bandCalls, filtersStore),
     })
     return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller, pinia, filtersStore, filterActions, bandCalls }
@@ -656,6 +670,45 @@ test('the no-match "Clear all" clears the filters, then focuses the Filters butt
     await settle()
     assert.equal(f.bandCalls.length, 1)
     assert.deepEqual(f.filterActions.at(-1), ['clearAll', 'p1'])
+})
+
+test('"Only this session" from a row sets the session filter, then focuses the session pill after the next tick', async (t) => {
+    const f = fixture()
+    const root = await mount(t, f, 'p1')
+    const [first] = descendants(root, (n) => n.type === 'article')
+    assert.equal(first.props['data-session-filter'], null, 'no session filtered yet')
+    first.props.onToggle({ id: 's1', title: 'My session' })
+    assert.deepEqual(f.filterActions, [['setSession', 'p1', { id: 's1', title: 'My session' }]])
+    assert.deepEqual(f.bandCalls, [], 'not before the tick')
+    await Vue.nextTick()
+    assert.deepEqual(f.bandCalls, [['focusSessionPill']])
+    await settle()
+    assert.deepEqual(f.calls.at(-1), { projectIds: ['p1'], query: { session: 's1' }, before: null, afterId: null })
+    // Every row is told which session is filtered.
+    assert.deepEqual(descendants(root, (n) => n.type === 'article').map((n) => n.props['data-session-filter']), ['s1', 's1', 's1'])
+    // Pressed again on the same session: released, then the focus goes to the Filters button.
+    descendants(root, (n) => n.type === 'article')[0].props.onToggle({ id: 's1', title: 'My session' })
+    assert.deepEqual(f.filterActions.at(-1), ['clearSession', 'p1'])
+    assert.equal(f.bandCalls.length, 1, 'not before the tick')
+    await Vue.nextTick()
+    assert.deepEqual(f.bandCalls, [['focusSessionPill'], ['focusFiltersButton', 'all']])
+    await settle()
+    assert.equal(f.filtersStore.filtersFor('p1').session, null)
+    assert.deepEqual(f.calls.at(-1), { projectIds: ['p1'], query: {}, before: null, afterId: null })
+    assert.equal(f.bandCalls.length, 2)
+})
+
+test('"Only this session" on another session replaces the filtered one, and keeps the other filters', async (t) => {
+    const f = fixture()
+    f.filtersStore.setView('p1', 'without_turns')
+    f.filtersStore.setSession('p1', { id: 's1', title: 'My session' })
+    const root = await mount(t, f, 'p1')
+    descendants(root, (n) => n.type === 'article')[0].props.onToggle({ id: 's2', title: null })
+    await Vue.nextTick()
+    assert.deepEqual(f.filterActions.at(-1), ['setSession', 'p1', { id: 's2', title: null }])
+    assert.deepEqual(f.bandCalls, [['focusSessionPill']])
+    const filters = f.filtersStore.filtersFor('p1')
+    assert.deepEqual([filters.view, filters.session.id, filters.session.title], ['without_turns', 's2', null])
 })
 
 test('every value of a group checked filters nothing: an empty first page is "No events yet", not the no-match state', async (t) => {
