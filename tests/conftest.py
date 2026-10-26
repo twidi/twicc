@@ -5,6 +5,7 @@ import itertools
 import os
 import re
 from collections import defaultdict, deque
+from datetime import timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -14,7 +15,13 @@ from django.conf import settings
 
 from twicc import provider_homes
 
+from tests.codex_agent_run_fixtures import T0
+
 pytest_plugins = ["tests.content_storage_helpers", "tests.migration_templates"]
+
+# The clock of ``frozen_now``: one day after the agent-run fixture lines, so
+# their sessions stay hot (the cold policy starts at 30 days).
+NOW = T0 + timedelta(days=1)
 
 
 # One counter per directory name prefix, for the whole run (see ``tmp_path``).
@@ -309,3 +316,59 @@ def provider_home(tmp_path, monkeypatch) -> ProviderHomeDirs:
     # Runs before monkeypatch restores the environment: the next resolution
     # (empty cache) reads the restored settings_test values.
     provider_homes.reset_cache()
+
+
+@pytest.fixture
+def frozen_now(monkeypatch):
+    """Freeze ``django.utils.timezone.now`` at :data:`NOW`.
+
+    The content-storage modules call ``timezone.now()`` through the module, so
+    this one patch covers them. Without it, sessions dated around ``T0`` turn
+    cold 30 days later and both the cold/hot decisions and the query counts of
+    a live slice change. A test that needs another clock patches
+    ``timezone.now`` again after this fixture.
+    """
+    from django.utils import timezone
+
+    monkeypatch.setattr(timezone, "now", lambda: NOW)
+    return NOW
+
+
+class ContentStorageEffects(NamedTuple):
+    """What the content storage scheduled: promotion wakeups and cold-cache invalidations, in call order."""
+    wakeups: list
+    cold: list
+
+
+@pytest.fixture
+def effects(monkeypatch) -> ContentStorageEffects:
+    """Record every promotion wakeup and cold-cache invalidation, then run the real one.
+
+    Both functions are imported lazily by their callers, so patching the module
+    attribute catches every call. Invalidations are recorded when scheduled
+    (inside the transaction), wakeups when they run (after commit).
+    """
+    from twicc.core.content_storage import cold_cache, lifecycle
+
+    recorded = ContentStorageEffects([], [])
+    request_root_promotion = lifecycle.request_root_promotion
+    schedule_cold_invalidation = cold_cache.schedule_cold_invalidation
+
+    def recording_request_root_promotion(session_id, *args, **kwargs):
+        recorded.wakeups.append(session_id)
+        return request_root_promotion(session_id, *args, **kwargs)
+
+    def recording_schedule_cold_invalidation(session_ids, *, mappings=False, lifecycle_session_ids=None, **kwargs):
+        session_ids = list(session_ids)
+        if lifecycle_session_ids is not None:
+            lifecycle_session_ids = list(lifecycle_session_ids)
+        recorded.cold.append((
+            sorted(session_ids), mappings, sorted(lifecycle_session_ids) if lifecycle_session_ids is not None else None,
+        ))
+        return schedule_cold_invalidation(
+            session_ids, mappings=mappings, lifecycle_session_ids=lifecycle_session_ids, **kwargs,
+        )
+
+    monkeypatch.setattr(lifecycle, "request_root_promotion", recording_request_root_promotion)
+    monkeypatch.setattr(cold_cache, "schedule_cold_invalidation", recording_schedule_cold_invalidation)
+    return recorded
