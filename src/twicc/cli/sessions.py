@@ -9,7 +9,7 @@ def build_filtered_queryset(
     include_hidden=False, only_hidden=False,
     spawned_by=None, spawn_tree=None, descendants=None, siblings=None,
     annotation=None, provider=None, state=None, active=False,
-    require_indexed=True,
+    require_indexed=True, root_only: bool = True, filiation_includes_hidden: bool = True,
 ):
     """Resolve every ``sessions`` filter into a queryset, before any window.
 
@@ -20,6 +20,10 @@ def build_filtered_queryset(
     Shared with ``sessions stop``, which selects the same way and then acts
     instead of listing. Keeping one implementation is what stops the two from
     drifting into answering the same question differently.
+
+    Timeline reads disable indexing and root-only eligibility. They also keep
+    hidden sessions excluded during filiation queries. Existing callers retain
+    their defaults through ``root_only`` and ``filiation_includes_hidden``.
     """
     import django
 
@@ -44,7 +48,9 @@ def build_filtered_queryset(
 
     from twicc.core.models import Session
 
-    qs = Session.objects.filter(type="session").order_by("-mtime")
+    qs = Session.objects.order_by("-mtime")
+    if root_only:
+        qs = qs.filter(type="session")
     if require_indexed:
         # The listing's notion of a session worth showing: one whose transcript
         # has been read far enough to have a date and a first user message.
@@ -60,15 +66,21 @@ def build_filtered_queryset(
     # explicitly asking about filiation — show every matching session in the
     # tree whatever its visibility. The hidden=False default only applies to
     # unscoped listings, where it keeps the output aligned with what the
-    # UI displays. --only-hidden still narrows further if requested.
+    # UI displays. Timeline callers can disable this filiation exception.
+    # --only-hidden still narrows further if requested.
     if only_hidden:
         qs = qs.filter(hidden=True)
     elif (
         not include_hidden
-        and spawned_by_id is None
-        and spawn_root_id is None
-        and descendants_ids is None
-        and siblings_ids is None
+        and (
+            not filiation_includes_hidden
+            or (
+                spawned_by_id is None
+                and spawn_root_id is None
+                and descendants_ids is None
+                and siblings_ids is None
+            )
+        )
     ):
         qs = qs.filter(hidden=False)
 
