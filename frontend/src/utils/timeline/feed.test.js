@@ -991,6 +991,22 @@ test('the query passed to fetchPage is a copy: a caller mutating it changes noth
     assert.deepEqual(server.calls[1].query, { session: 's2' })
 })
 
+test('a null or undefined query means no filter and does not throw', async () => {
+    const { server, feed } = setup(five())
+    feed.setScope(['p1'], null)
+    await feed.idle()
+    assert.deepEqual(server.calls, [{ projectIds: ['p1'], query: {}, before: null, afterId: null }])
+    feed.setScope(['p1'], undefined)
+    feed.setScope(['p1'], {})
+    await feed.idle()
+    assert.equal(server.calls.length, 1, 'null, undefined and {} are the same query')
+    feed.setScope(['p1'], { session: 's1' })
+    await feed.idle()
+    feed.setScope(['p1'], null)
+    await feed.idle()
+    assert.deepEqual(server.calls.map((c) => c.query), [{}, { session: 's1' }, {}], 'back to null clears the filter')
+})
+
 test('a null scope sends nothing whatever the query', async () => {
     const { server, feed, state } = setup(five())
     feed.setScope(null, { session: 's1' })

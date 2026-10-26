@@ -239,13 +239,14 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         enqueue(runLive)
     }
 
-    function setScope(projectIds, nextQuery = {}) {
+    function setScope(projectIds, nextQuery) {
         if (disposed) return
-        const key = feedKeyOf(projectIds, nextQuery)
+        const filterQuery = nextQuery ?? {} // null or undefined: no filter
+        const key = feedKeyOf(projectIds, filterQuery)
         if (key === scopeKey) return
         scopeKey = key
         scope = projectIds === null ? null : [...projectIds]
-        query = { ...nextQuery }
+        query = { ...filterQuery }
         generation += 1
         chain = Promise.resolve()
         reset()
@@ -309,7 +310,8 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
          * order: an unchanged set with an equal query keeps everything. Any other change reloads the first page.
          *
          * @param {string[]|null} projectIds
-         * @param {Object<string, string>} [query] - The `toQuery` parameters every request of this scope carries.
+         * @param {Object<string, string>|null} [query] - The `toQuery` parameters every request of this scope carries;
+         *   null or omitted means no filter.
          */
         setScope,
         /** Ask for the next page. A no-op while a load is pending, after a failure (use `retry`) or at the end. */

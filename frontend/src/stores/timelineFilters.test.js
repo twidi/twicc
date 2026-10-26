@@ -17,6 +17,10 @@ test('filtersFor on an unknown page returns the frozen default and adds no entry
     const filters = store.filtersFor('global')
     assert.deepEqual(filters, createFilters())
     assert.equal(Object.isFrozen(filters), true)
+    for (const group of ['families', 'providers', 'authors']) {
+        assert.equal(Object.isFrozen(filters[group]), true, `${group} is frozen too`)
+        assert.throws(() => filters[group].push('x'), TypeError)
+    }
     assert.equal(store.filtersFor('p:other'), filters, 'one shared default')
     assert.deepEqual(Object.keys(store.byPage), [])
 })

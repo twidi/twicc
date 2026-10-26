@@ -12,10 +12,17 @@ import { defineStore, acceptHMRUpdate } from 'pinia'
 import { AUTHORS, FAMILIES, PROVIDERS, createFilters, toggleValue } from '../utils/timeline/filters.js'
 
 /**
- * The filters of a page that has none yet, shared by every such page. Frozen: assigning one of its fields
- * throws instead of leaking into every other page. The actions never touch it (they write the page's entry).
+ * The filters of a page that has none yet, shared by every such page. Frozen with its arrays: assigning a
+ * field or pushing into a group throws instead of leaking into every other page. The actions never touch it
+ * (they write the page's entry).
  */
-const DEFAULT_FILTERS = Object.freeze(createFilters())
+const DEFAULT_FILTERS = (() => {
+    const filters = createFilters()
+    for (const value of Object.values(filters)) {
+        if (Array.isArray(value)) Object.freeze(value)
+    }
+    return Object.freeze(filters)
+})()
 
 /** The constant order of each panel group. */
 const GROUP_ORDERS = {
