@@ -9,7 +9,12 @@ from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, StatisticsQueueEntry, DailyActivity
 from twicc.providers.live_aggregates import apply_contribution_changes, item_contributions, session_contribution
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated 2026-10-14: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 15, tzinfo=UTC)),
+]
 
 
 def make_session(name='root', **kwargs):

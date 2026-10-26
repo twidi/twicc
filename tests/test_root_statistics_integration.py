@@ -11,7 +11,12 @@ from twicc.providers.compute_base import BaseSessionCompute
 from twicc.providers.live_aggregates import enqueue_sessions
 from tests.statistics_helpers import drain_statistics
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated 2026-10-14: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 15, 12, tzinfo=UTC)),
+]
 STAMP = datetime(2026, 10, 14, 12, tzinfo=UTC)
 
 

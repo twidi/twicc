@@ -45,6 +45,9 @@ from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 
 T0 = datetime(2026, 9, 27, 10, tzinfo=UTC)
 
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = pytest.mark.usefixtures("frozen_now")
+
 AGENT = "a1111111111111111"  # spawned by the root
 OTHER = "a2222222222222222"  # a subagent that sends control calls
 LEGACY = "a1b2c3d"  # legacy 7-character agent id

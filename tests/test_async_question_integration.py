@@ -31,7 +31,12 @@ from twicc.providers.codex.compute import get_compute
 from twicc.providers.helpers import AgentSettings
 from twicc.providers.live_sync import LiveSyncLimits
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated 2026-10-05: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 6, 9, 12, tzinfo=UTC)),
+]
 
 # Recorded question content from the two protocol observations in spec section 2.
 OBSERVED = [

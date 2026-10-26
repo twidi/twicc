@@ -4,6 +4,7 @@ import asyncio
 import threading
 import sqlite3
 from contextlib import suppress
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import orjson
@@ -93,6 +94,11 @@ def test_authenticated_initialization_and_pong_survive_heavy_writer(monkeypatch,
     asyncio.run(run())
 
 
+# ``records_for`` dates its lines 2026-09-29: tests replaying them freeze the clock one day later so the
+# content storage sees hot sessions.
+FROZEN_AFTER_RECORDS = datetime(2026, 9, 30, 10, tzinfo=UTC)
+
+
 def records_for(provider):
     if provider == 'codex':
         return [call('reuse'), output('reuse', 'Process running with session ID 42'),
@@ -152,6 +158,8 @@ def replay_wal_database(tmp_path, monkeypatch):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('provider', ['claude_code', 'codex'])
 @pytest.mark.parametrize('current', [False, True])
+@pytest.mark.usefixtures("frozen_now")
+@pytest.mark.frozen_now_at(FROZEN_AFTER_RECORDS)
 def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monkeypatch, provider, current, replay_wal_database):
     """Removing requeue, prior-line resolution, or bounded dedup breaks parity."""
     from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
@@ -253,6 +261,8 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize('provider', ['claude_code', 'codex'])
+@pytest.mark.usefixtures("frozen_now")
+@pytest.mark.frozen_now_at(FROZEN_AFTER_RECORDS)
 def test_new_watcher_session_has_immediate_live_baseline(tmp_path, provider):
     """A newly watched session must not depend on a completed startup compute job."""
     from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute

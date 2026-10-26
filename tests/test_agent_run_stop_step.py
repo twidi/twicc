@@ -82,7 +82,8 @@ from tests.test_claude_agent_runs import (
 )
 from tests.test_codex_agent_runs_live import LiveReplay
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("compute_executor_started")]
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("compute_executor_started", "frozen_now")]
 
 PROJECT = "stop-step-project"
 

@@ -17,7 +17,12 @@ from tests.tree_aggregate_helpers import begin_history_replacement
 from tests.statistics_helpers import drain_statistics as drain_aggregates
 from twicc.providers.helpers import get_provider_helpers
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated 2026-09-20 to 2026-09-30: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 1, tzinfo=UTC)),
+]
 
 
 def make_session(name='s', **kwargs):

@@ -56,6 +56,9 @@ from tests.codex_agent_run_fixtures import (
 )
 from tests.test_codex_agent_runs_batch import play as play_batch
 
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = pytest.mark.usefixtures("frozen_now")
+
 
 # ---------------------------------------------------------------------------
 # Harness

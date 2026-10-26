@@ -71,6 +71,9 @@ from tests.codex_agent_run_fixtures import (
     fixture_v1_notification,
 )
 
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = pytest.mark.usefixtures("frozen_now")
+
 # A subagent file's mtime, far after every line: the rows must carry the line
 # time, never this (the batch sets the child's ``last_stopped_at`` to it).
 CHILD_MTIME = at(86_400).timestamp()

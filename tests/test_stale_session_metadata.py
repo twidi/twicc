@@ -4,6 +4,7 @@ Only the callers that need the conversation (send-message) refuse it.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +13,9 @@ from twicc.cli._drop_request.session_lookup import SessionLookupError, ensure_co
 from twicc.core.models import Project, Session
 from twicc.core.services import session_update
 from twicc.providers import db_writer
+
+# The session is dated 2026-10-17: freeze the clock one day later so the content storage sees a hot session.
+pytestmark = [pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 18, tzinfo=UTC))]
 
 
 @pytest.fixture

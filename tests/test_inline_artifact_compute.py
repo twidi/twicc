@@ -3,6 +3,7 @@
 import base64
 import queue
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import orjson
@@ -17,6 +18,9 @@ from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 from twicc.providers.codex.compute import CodexSessionCompute
 from twicc.providers.live_sync import LiveSyncLimits
 
+
+# The lines are dated 2026-10-08: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 9, 10, tzinfo=UTC))]
 
 TAG = '<twicc:inline-artifact id="preferences" src="inline-artifacts/preferences/index.html" />'
 TEXT = '😀\r\n\r\n  ' + TAG + '\r\n'

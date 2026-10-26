@@ -17,6 +17,9 @@ from twicc.core.models import DailyActivity, Project, Session, SessionItem
 from twicc.providers import db_writer
 from twicc.providers.compute_base import BaseSessionCompute, ComputeApplyResult
 
+# The lines are dated 2026-09-29: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 9, 30, tzinfo=UTC))]
+
 
 def _blocked_work(started: threading.Event, release: threading.Event):
     started.set()

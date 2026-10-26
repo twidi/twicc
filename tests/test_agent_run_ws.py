@@ -39,7 +39,8 @@ from tests.test_claude_agent_runs import (
     text_resumed_ack,
 )
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.usefixtures("frozen_now")]
 
 PAYLOAD_KEYS = {
     "root_session_id", "owner_session_id", "agent_session_id", "tool_use_id", "tool_use_line_num", "kind",

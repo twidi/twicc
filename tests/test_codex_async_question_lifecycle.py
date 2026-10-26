@@ -1,6 +1,7 @@
 """Canonical recovery and SDK settlement use the same durable question facts."""
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,12 @@ import orjson
 
 from twicc.providers.codex import async_questions as protocol
 from twicc.providers.codex.agent.agent import CodexAgent
+
+# The lines are dated 2026-10-05: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 6, 9, 12, tzinfo=UTC)),
+]
 
 
 def record(kind, *, turn="t1", second=1, **data):

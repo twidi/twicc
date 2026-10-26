@@ -42,6 +42,10 @@ from twicc.providers.codex.compute import get_compute
 
 _NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 
+# The lines are dated 2026-10-05 and 2026-10-08: freeze the clock one day later so the content storage
+# sees hot sessions.
+pytestmark = [pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 9, 10, tzinfo=UTC))]
+
 
 def _codex_line(type_: str, payload_type: str, payload_extra: dict | None = None, **top) -> str:
     """Return a single Codex JSONL line (JSON string)."""

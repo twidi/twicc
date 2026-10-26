@@ -60,7 +60,8 @@ OTHER = "live-process-other"
 NESTED = "live-process-nested"
 
 
-pytestmark = pytest.mark.usefixtures("compute_executor_started")
+# The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = pytest.mark.usefixtures("compute_executor_started", "frozen_now")
 
 
 @pytest.mark.parametrize("delay, running", [(0, False), (30, False), (30.001, True)])

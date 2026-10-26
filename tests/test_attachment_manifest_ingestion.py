@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import queue
+from datetime import UTC, datetime
 from pathlib import Path
 
 import orjson
@@ -37,6 +38,9 @@ from twicc.providers.codex.canonical import (
 )
 from twicc.providers.codex.compute import CodexSessionCompute
 from twicc.providers.codex.helpers import CodexHelpers
+
+# The lines are dated 2026-10-04: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 5, 12, tzinfo=UTC))]
 
 CLAUDE_SID = "6f1d2c3b-4a59-4e8f-9a0b-1c2d3e4f5a6b"
 CODEX_SID = "01a106b9-2844-7091-831f-c8a10f1f6bd1"

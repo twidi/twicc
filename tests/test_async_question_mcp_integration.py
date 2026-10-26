@@ -26,7 +26,13 @@ from twicc.providers.codex.rollout_migration import (
     _insert_replace_codex_history_chunk,
 )
 
-pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.parametrize("env", ["codex"], indirect=True)]
+# The lines are dated 2026-10-05: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.parametrize("env", ["codex"], indirect=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 6, 9, 12, tzinfo=UTC)),
+]
 env = test_mcp_events_turns.env
 
 

@@ -10,7 +10,12 @@ from django.test.utils import CaptureQueriesContext
 
 from twicc.core.models import AgentLink, Project, Session, SessionItem
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# The lines are dated 2026-10-14: freeze the clock one day later so the content storage sees hot sessions.
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.usefixtures("frozen_now"),
+    pytest.mark.frozen_now_at(datetime(2026, 10, 15, tzinfo=UTC)),
+]
 NOW = datetime(2026, 10, 14, tzinfo=UTC)
 
 

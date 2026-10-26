@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import queue
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -73,8 +74,11 @@ def watcher_for(provider):
     return getattr(module, name)()
 
 
+# ``session_file`` dates its lines 2026-10-04: freeze the clock one day later so the content storage sees a hot session.
 @pytest.mark.parametrize("provider", list(Provider))
 @pytest.mark.parametrize("search_failure", [False, True])
+@pytest.mark.usefixtures("frozen_now")
+@pytest.mark.frozen_now_at(datetime(2026, 10, 5, 12, tzinfo=UTC))
 def test_live_indexed_lines_request_outside_lock_without_search_dependency(
     provider_home, monkeypatch, requests, provider, search_failure,
 ):

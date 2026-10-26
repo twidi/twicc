@@ -69,6 +69,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "real_retry_delays: keep the compute retry waits at their real length (see short_compute_retries)",
     )
+    config.addinivalue_line(
+        "markers", "frozen_now_at(instant): the instant ``frozen_now`` freezes instead of NOW (see frozen_now)",
+    )
     if not settings.configured:
         settings.configure()
     django.setup()
@@ -320,19 +323,22 @@ def provider_home(tmp_path, monkeypatch) -> ProviderHomeDirs:
 
 
 @pytest.fixture
-def frozen_now(monkeypatch):
+def frozen_now(request, monkeypatch):
     """Freeze ``django.utils.timezone.now`` at :data:`NOW`.
 
     The content-storage modules call ``timezone.now()`` through the module, so
     this one patch covers them. Without it, sessions dated around ``T0`` turn
     cold 30 days later and both the cold/hot decisions and the query counts of
-    a live slice change. A test that needs another clock patches
-    ``timezone.now`` again after this fixture.
+    a live slice change. A module whose lines use another fixed date sets the
+    ``frozen_now_at(instant)`` marker, one day after its own dates. A test that
+    needs another clock patches ``timezone.now`` again after this fixture.
     """
     from django.utils import timezone
 
-    monkeypatch.setattr(timezone, "now", lambda: NOW)
-    return NOW
+    marker = request.node.get_closest_marker("frozen_now_at")
+    now = marker.args[0] if marker else NOW
+    monkeypatch.setattr(timezone, "now", lambda: now)
+    return now
 
 
 class ContentStorageEffects(NamedTuple):

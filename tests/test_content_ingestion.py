@@ -1,5 +1,6 @@
 """Initial and live ingestion commit exact source and transformed content together."""
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import orjson
@@ -333,6 +334,9 @@ def test_hot_append_carries_certificate_without_plaintext_request(monkeypatch, c
         assert state.require_plaintext_search(owner.id).epoch == owner.content_state_epoch
 
 
+# The line is dated 2026-10-15: freeze the clock one day later so the content storage sees a hot session.
+@pytest.mark.usefixtures("frozen_now")
+@pytest.mark.frozen_now_at(datetime(2026, 10, 16, 10, tzinfo=UTC))
 def test_watcher_carries_certificate_after_deferred_promotion(tmp_path, monkeypatch, content_row_factory):
     from django.db import transaction
     from twicc.core.content_storage import lifecycle, state
