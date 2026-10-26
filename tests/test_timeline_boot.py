@@ -242,3 +242,20 @@ def test_an_unreadable_version_never_loses_the_reconciliation(project, monkeypat
     reconcile_at_boot(now=timezone.now(), boot_id="b1")
     assert [r.kind for r in rows(session_id="s1")] == ["turn.ended", "process.ended"]
     assert rows(kind="backend.started")[0].data["version"] is None
+
+
+def test_every_backend_row_is_an_instance_row(project):
+    # The feed reads ``families=twicc`` from the instance rows only (``timeline_filters.INSTANCE_FAMILIES``):
+    # every ``backend.*`` row must be written without a session, a project or a provider.
+    reconcile_at_boot(now=timezone.now(), boot_id="b1")             # boot start
+    run_with_direct_writes(record_backend_ended_clean)              # clean end
+    reconcile_at_boot(now=timezone.now(), boot_id="b1")             # second boot start
+    stale_run(project)                                              # a process the second instance leaves behind
+    reconcile_at_boot(now=timezone.now(), boot_id="b1")             # unclean end of the second instance
+    backend = list(TimelineEvent.objects.filter(kind__startswith="backend.").order_by("id"))
+    assert [(r.kind, r.data.get("clean")) for r in backend] == [
+        ("backend.started", None), ("backend.ended", True), ("backend.started", None),
+        ("backend.ended", False), ("backend.started", None),
+    ]
+    assert all(r.session_id is None and r.project_id is None and r.provider is None for r in backend)
+    assert rows(session_id="s1", kind="process.ended")  # the session rows of the same reconciliation have one

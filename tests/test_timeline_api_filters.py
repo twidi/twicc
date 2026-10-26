@@ -260,16 +260,24 @@ def test_the_external_author_keeps_its_scope_and_provider(projects, params):
     first = make_event("settings.changed", project=a, at=1, provider="codex", **external)
     make_event("settings.changed", project=a, at=2, provider="codex", actor="user", via="ui")
     other_provider = make_event("settings.changed", project=a, at=3, provider="claude_code", **external)
+    # A session row no source could name a provider for: a provider filter keeps it (null-provider query).
+    unnamed = make_event("settings.changed", project=a, session_id="s8", at=3.5, provider=None, **external)
     other_project = make_event("settings.changed", project=b, session_id="s9", at=4, provider="codex", **external)
     forged = make_event("settings.changed", project=a, at=5, provider="codex", actor="external", via="ui")
     last = make_event("archived.started", project=a, at=6, provider="codex", **external)
-    expected = [last, other_project, other_provider, first]
+    expected = [last, other_project, unnamed, other_provider, first]
     if params.get("project_ids") == a.id:
         expected.remove(other_project)
     if "provider" in params:
         expected.remove(other_provider)
+    assert unnamed in expected
     assert ids(call(**params, authors="external_mcp").json()) == [row.id for row in expected]
-    page = call(**params, authors="external_mcp", limit=1).json()
+    seen, page = [], call(**params, authors="external_mcp", limit=1).json()
     assert ids(page) == [last.id] and page["has_more"] is True
-    assert ids(next_page({**params, "authors": "external_mcp", "limit": 1}, page)) == [expected[1].id]
+    seen += ids(page)
+    while page["has_more"]:
+        page = next_page({**params, "authors": "external_mcp", "limit": 1}, page)
+        seen += ids(page)
+    # Each row once, in time order, across page boundaries (the null-provider row included).
+    assert seen == [row.id for row in expected]
     assert forged.id in ids(call(**params, authors="unknown").json())

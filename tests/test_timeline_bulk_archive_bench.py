@@ -1,5 +1,5 @@
 """Opt-in benchmark of the bulk archive write. Run with:
-TWICC_TIMELINE_BENCH=1 TWICC_DATA_DIR=$PWD uv run pytest tests/test_timeline_bulk_archive_bench.py -s -v
+TWICC_TIMELINE_BENCH=1 uv run pytest tests/test_timeline_bulk_archive_bench.py -s -v
 It prints the time the DB write lock is held and the write statement counts, before (the old
 single-transaction implementation, kept here as a reference) and after; it asserts only
 structural facts, not a performance gate."""

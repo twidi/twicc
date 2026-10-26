@@ -41,6 +41,7 @@ import statistics
 import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 import pytest
 from django.db import connection
@@ -198,6 +199,23 @@ def _generate():
     return author_counts, provider_counts, session_counts, problems, session_project
 
 
+class Timing(NamedTuple):
+    kind: str  # "single" or "combination"
+    label: str
+    scope: str
+    page: str
+    median_ms: float
+    events: int
+    params: dict
+
+    @property
+    def bound_ms(self) -> int:
+        return SINGLE_BOUND_MS if self.kind == "single" else COMBINATION_BOUND_MS
+
+    def describe(self) -> str:
+        return f"{self.kind} {self.label} [{self.scope}, {self.page}]: {self.median_ms:.2f} ms"
+
+
 def _session_near_50(session_counts, session_project, project_indexes):
     """The session of one of ``project_indexes`` whose row count is the nearest to 50."""
     candidates = [sid for sid in session_counts if session_project[int(sid[2:])] in project_indexes]
@@ -215,9 +233,10 @@ def _timed(params):
 
 
 def _plans(params):
+    request = parse_request(params)
     lines = []
-    for queryset in timeline_feed._page_querysets(parse_request(params)):
-        sql, sql_params = queryset[: parse_request(params).limit + 1].query.sql_with_params()
+    for queryset in timeline_feed._page_querysets(request):
+        sql, sql_params = queryset[: request.limit + 1].query.sql_with_params()
         with connection.cursor() as cursor:
             cursor.execute("EXPLAIN QUERY PLAN " + sql, sql_params)
             lines.append(" | ".join(str(row[-1]) for row in cursor.fetchall()))
@@ -249,7 +268,7 @@ def test_filtered_feed_speed():
     middle = TimelineEvent.objects.order_by("occurred_at", "id")[ROWS // 2]
     pages = {"first": {}, "before": {"before": f"{format_occurred_at(middle.occurred_at)},{middle.id}"}}
 
-    results = []  # (kind, label, scope, page, median_ms, events, params)
+    results: list[Timing] = []
     for scope, (scope_params, project_indexes) in scopes.items():
         session_id = _session_near_50(session_counts, session_project, set(project_indexes))
         singles = [(f"view={view}", {"view": view}) for view in VIEWS]
@@ -269,27 +288,22 @@ def test_filtered_feed_speed():
                 for page, page_params in pages.items():
                     params = {**scope_params, **case_params, **page_params}
                     median, count = _timed(params)
-                    results.append((kind, label, scope, page, median, count, params))
+                    results.append(Timing(kind, label, scope, page, median, count, params))
 
     print(f"\n{'kind':<12} {'case':<62} {'scope':<10} {'page':<7} {'median ms':>10} {'events':>7}")
-    for kind, label, scope, page, median, count, _ in results:
-        print(f"{kind:<12} {label:<62} {scope:<10} {page:<7} {median:>10.2f} {count:>7}")
+    for result in results:
+        print(f"{result.kind:<12} {result.label:<62} {result.scope:<10} {result.page:<7} "
+              f"{result.median_ms:>10.2f} {result.events:>7}")
 
-    slowest = sorted(results, key=lambda result: result[4], reverse=True)[:3]
+    slowest = sorted(results, key=lambda result: result.median_ms, reverse=True)[:3]
     print("\nThe three slowest cases:")
-    for kind, label, scope, page, median, _, params in slowest:
-        print(f"\n{kind} {label} [{scope}, {page}]: {median:.2f} ms")
-        for plan in _plans(params):
+    for result in slowest:
+        print(f"\n{result.describe()}")
+        for plan in _plans(result.params):
             print(f"  {plan}")
 
-    worst = {
-        kind: max((result for result in results if result[0] == kind), key=lambda result: result[4])
-        for kind in ("single", "combination")
-    }
-    for kind, result in worst.items():
-        print(f"Worst {kind}: {result[1]} [{result[2]}, {result[3]}] {result[4]:.2f} ms")
-    failures = [
-        result for result in results
-        if result[4] >= (SINGLE_BOUND_MS if result[0] == "single" else COMBINATION_BOUND_MS)
-    ]
-    assert not failures, "\n".join(f"{r[0]} {r[1]} [{r[2]}, {r[3]}]: {r[4]:.2f} ms" for r in failures)
+    for kind in ("single", "combination"):
+        worst = max((result for result in results if result.kind == kind), key=lambda result: result.median_ms)
+        print(f"Worst {worst.describe()}")
+    failures = [result for result in results if result.median_ms >= result.bound_ms]
+    assert not failures, "\n".join(result.describe() for result in failures)

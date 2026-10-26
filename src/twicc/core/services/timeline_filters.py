@@ -57,8 +57,10 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "twicc": (TimelineKind.BACKEND_STARTED, TimelineKind.BACKEND_ENDED),
 }
 
-#: The families only instance rows carry: ``backend.*`` is written without a session, a project or a provider.
-#: The feed reads a filter on these families alone from the instance rows only.
+#: The families only instance rows carry. Invariant: ``timeline_boot`` writes every ``backend.*`` row (boot start,
+#: clean end, unclean end) without a session, a project or a provider; ``tests/test_timeline_boot.py``
+#: (``test_every_backend_row_is_an_instance_row``) pins it. The feed reads a filter on these families alone from the
+#: instance rows only.
 INSTANCE_FAMILIES: frozenset[str] = frozenset({"twicc"})
 
 #: The "Done by" values of section 4.3, in rule order: the first rule that fits a row wins.
