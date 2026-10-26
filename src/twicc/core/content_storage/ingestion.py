@@ -16,8 +16,8 @@ from twicc.core.content_storage.references import (
 )
 from twicc.core.content_storage.session_policy import content_decision_from_fields, resolve_content_decisions
 from twicc.core.content_storage.state import (
-    capture_plaintext_certificate, carry_plaintext_certificate,
-    ensure_storage_incarnation, invalidate_roots, resolve_root_decision,
+    capture_plaintext_certificate, carry_plaintext_certificate, ensure_known_storage_incarnation,
+    ensure_storage_incarnation, invalidate_roots, native_root_ids, resolve_root_decision,
 )
 from twicc.core.content_storage.types import ContentBinding, RootStorageSnapshot
 from twicc.core.models import Session, SessionItem, SessionItemContent
@@ -34,18 +34,25 @@ def _require_transaction() -> None:
 
 
 @contextmanager
-def ingestion_plaintext_change(session: Session):
+def ingestion_plaintext_change(session: Session, *, metadata: dict | None = None):
     """Carry prior root proof only after the whole ingestion transaction places changed references.
 
     Watcher inserts bind before its lifecycle and final promotion steps. Nesting
     shares the outer proof, so no intermediate epoch becomes certified.
+    ``metadata`` holds native rows read in this transaction before its first write;
+    they feed the certificate capture only, never the final carry.
     """
     _require_transaction()
     proof = _ingestion_proof.get()
     if proof is not None and proof[0] == session.id:
         yield
         return
-    certificate = capture_plaintext_certificate(session.id)
+    if metadata is None:
+        certificate = capture_plaintext_certificate(session.id)
+    else:
+        certificate = capture_plaintext_certificate(
+            session.id, metadata=metadata, storage_fields=metadata.get(session.id),
+        )
     required_ids = set()
     token = _ingestion_proof.set((session.id, required_ids, certificate))
     try:
@@ -93,26 +100,45 @@ def record_ingestion_bindings(bindings: Sequence[ContentBinding]) -> None:
 
 
 def initialize_ingestion_session(
-    session: Session, *, invalidate: bool = False, invalidate_mappings: bool = False,
+    session: Session, *, invalidate: bool = False, invalidate_mappings: bool = False, metadata: dict | None = None,
 ) -> None:
-    """Prepare touched session/root identities without claiming legacy extraction."""
+    """Prepare touched session/root identities without claiming legacy extraction.
+
+    ``metadata`` holds native rows read in this transaction with no write to their
+    storage state since. An incarnation set once never changes, so a row holding
+    one needs no write; the values written here are written through into the rows.
+    """
     if invalidate_mappings:
         from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
 
         schedule_cold_invalidation([session.id], mappings=True)
-    session.storage_incarnation = ensure_storage_incarnation(session.id)
-    decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
-    if decision.resolved:
-        ensure_storage_incarnation(decision.root_id)
-        if invalidate:
-            certificate = (capture_plaintext_certificate(decision.root_id)
-                           if decision.root_id != session.id else None)
-            # New extracted sessions require no restoration. Legacy initialization
-            # retains an explicit wakeup, with the epoch also supporting recovery.
-            targets = [session.id] if session.content_storage_version != CONTENT_STORAGE_VERSION else ()
-            invalidate_roots([decision.root_id], promotion_targets=targets)
-            if certificate is not None:
-                carry_plaintext_certificate(certificate)
+    if metadata is None:
+        session.storage_incarnation = ensure_storage_incarnation(session.id)
+        decision = resolve_root_decision(session.id, timezone.now(), active_session_ids.get())
+        resolved, root_id = decision.resolved, decision.root_id
+        if resolved and root_id != session.id:
+            ensure_storage_incarnation(root_id)
+    else:
+        # The conditional UPDATE always runs: it stays the slice's first write (writer-lock reservation).
+        row = metadata[session.id]
+        session.storage_incarnation = row['storage_incarnation'] = ensure_known_storage_incarnation(
+            session.id, row['storage_incarnation'],
+        )
+        root_id = native_root_ids([session.id], metadata=metadata)[session.id]
+        resolved = root_id is not None
+        root_row = metadata.get(root_id) if resolved else None
+        if resolved and root_id != session.id and (root_row is None or not root_row['storage_incarnation']):
+            incarnation = ensure_known_storage_incarnation(root_id, None)
+            if root_row is not None:
+                root_row['storage_incarnation'] = incarnation
+    if resolved and invalidate:
+        certificate = capture_plaintext_certificate(root_id) if root_id != session.id else None
+        # New extracted sessions require no restoration. Legacy initialization
+        # retains an explicit wakeup, with the epoch also supporting recovery.
+        targets = [session.id] if session.content_storage_version != CONTENT_STORAGE_VERSION else ()
+        invalidate_roots([root_id], promotion_targets=targets)
+        if certificate is not None:
+            carry_plaintext_certificate(certificate)
 
 
 def prepare_ingestion_contents(session: Session, texts: Sequence[str]):

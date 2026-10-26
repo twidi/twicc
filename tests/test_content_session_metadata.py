@@ -289,3 +289,58 @@ def test_bulk_lifecycle_change_keeps_wakeups_and_epochs(effects, django_capture_
     assert storage_epochs('bulk1-root') == (5, 4)
     assert storage_epochs('bulk2-root') == (5, 4)
     assert storage_epochs('bulk1-child') == (4, 4)
+
+
+def stored_incarnation(session_id):
+    return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
+
+
+@pytest.mark.parametrize(('target', 'budget'), [
+    pytest.param('root', 5, id='root'),
+    pytest.param('child', 8, id='child'),
+])
+def test_initialize_without_metadata_skips_root_is_session(target, budget, django_assert_num_queries):
+    from django.db import transaction
+
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session
+
+    root, child = make_certified_tree('plain')
+    session = Session.objects.get(pk=(root if target == 'root' else child).id)
+    expected = stored_incarnation(session.id)
+    # Each budget holds this atomic block's SAVEPOINT and RELEASE. A root is not ensured twice.
+    with django_assert_num_queries(budget), transaction.atomic():
+        initialize_ingestion_session(session)
+    assert session.storage_incarnation == stored_incarnation(session.id) == expected
+    assert stored_incarnation(root.id) == 'plain-root-incarnation'
+
+
+@pytest.mark.parametrize(('target', 'root_incarnation', 'session_incarnation', 'budget'), [
+    pytest.param('root', True, True, 3, id='root'),
+    pytest.param('child', True, True, 3, id='child-root-has-incarnation'),
+    pytest.param('child', False, True, 4, id='child-root-without-incarnation'),
+    pytest.param('root', False, False, 3, id='session-without-incarnation'),
+])
+def test_initialize_with_metadata(target, root_incarnation, session_incarnation, budget,
+                                  django_assert_num_queries):
+    from django.db import transaction
+
+    from twicc.core.content_storage.ingestion import initialize_ingestion_session
+
+    root, child = make_certified_tree('known')
+    if not root_incarnation:
+        Session.objects.filter(pk=root.id).update(storage_incarnation=None)
+    target_id = (root if target == 'root' else child).id
+    if not session_incarnation:
+        Session.objects.filter(pk=target_id).update(storage_incarnation=None)
+    session = Session.objects.get(pk=target_id)
+    metadata = load_native_metadata([session.id], known={session.id: native_metadata_row(session)})
+    # Each budget holds this atomic block's SAVEPOINT and RELEASE; the session's UPDATE is the first write.
+    with django_assert_num_queries(budget) as captured, transaction.atomic():
+        initialize_ingestion_session(session, metadata=metadata)
+    assert captured.captured_queries[1]['sql'].startswith('UPDATE')
+    assert session.storage_incarnation
+    assert session.storage_incarnation == stored_incarnation(session.id) == metadata[session.id]['storage_incarnation']
+    assert stored_incarnation(root.id)
+    assert stored_incarnation(root.id) == metadata[root.id]['storage_incarnation']
+    if session_incarnation:
+        assert session.storage_incarnation == f'known-{target}-incarnation'

@@ -4292,19 +4292,30 @@ class BaseSessionCompute:
             else:
                 raw = read_live_slice(file_path, offset=session.last_offset, limits=limits)
                 from twicc.core.content_storage.ingestion import ingestion_plaintext_change
+                from twicc.core.content_storage.state import load_native_metadata, native_metadata_row
 
-                with ingestion_plaintext_change(session):
-                    updates = self._sync_session_slice(session, file_path, raw)
+                # The slice's ancestry, read once before its first write and shared (mutable on
+                # purpose: the incarnation write is written through). Ancestry and cold-policy
+                # columns stay current until the lifecycle write; storage-state values only until
+                # the slice's first content-storage write.
+                metadata = load_native_metadata([session.id], known={session.id: native_metadata_row(session)})
+                with ingestion_plaintext_change(session, metadata=metadata):
+                    updates = self._sync_session_slice(session, file_path, raw, metadata=metadata)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 
-    def _sync_session_slice(self, session: Session, file_path: Path, raw: RawLiveSlice) -> LiveSyncUpdates:
-        """Process every selected record through both passes before committing."""
+    def _sync_session_slice(
+        self, session: Session, file_path: Path, raw: RawLiveSlice, *, metadata: dict | None = None,
+    ) -> LiveSyncUpdates:
+        """Process every selected record through both passes before committing.
+
+        ``metadata`` holds the slice-start native rows (see :meth:`sync_session_slice`).
+        """
         from twicc.core.content_storage.ingestion import (
             initialize_ingestion_session, insert_ingested_items, promote_ingested_items,
         )
 
-        initialize_ingestion_session(session)
+        initialize_ingestion_session(session, metadata=metadata)
         before_session = session_contribution(session)
         session.last_offset = raw.end_offset
         session.mtime = file_path.stat().st_mtime
