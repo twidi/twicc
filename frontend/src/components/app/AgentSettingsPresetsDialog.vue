@@ -28,8 +28,7 @@ import { DEFAULT_SENTINEL } from '../../composables/useSessionAgentSettings'
 import AgentSettingsDefaultsPicker from '../message/AgentSettingsDefaultsPicker.vue'
 import AgentSettingsSummaryView from '../message/AgentSettingsSummaryView.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
-import HelpTextLink from '../help/HelpTextLink.vue'
-import HoverDetailsToggle from '../message/HoverDetailsToggle.vue'
+import MatrixHeadingLinks from '../message/MatrixHeadingLinks.vue'
 
 const props = defineProps({
     open: { type: Boolean, default: false },
@@ -349,8 +348,7 @@ function handleSave() {
             <div class="form-group">
                 <div class="matrix-heading">
                     <label class="form-label">Model &amp; effort picker</label>
-                    <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
-                    <HoverDetailsToggle />
+                    <MatrixHeadingLinks />
                 </div>
                 <AgentSettingsDefaultsPicker
                     :provider="props.provider"

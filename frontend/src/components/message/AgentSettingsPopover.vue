@@ -18,8 +18,7 @@ import AgentSettingsSummaryView from './AgentSettingsSummaryView.vue'
 import AgentSettingsMatrix from './AgentSettingsMatrix.vue'
 import AgentSettingsBenchmarkTask from './AgentSettingsBenchmarkTask.vue'
 import AgentSettingsSwitches from './AgentSettingsSwitches.vue'
-import HelpTextLink from '../help/HelpTextLink.vue'
-import HoverDetailsToggle from './HoverDetailsToggle.vue'
+import MatrixHeadingLinks from './MatrixHeadingLinks.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import PermissionModeIcon from '../ui/PermissionModeIcon.vue'
 import { buildSwitchRows } from '../../utils/agentSwitchRows'
@@ -554,8 +553,7 @@ onBeforeUnmount(() => {
                 <!-- Heading above the matrix + a link to the score help page. -->
                 <div class="matrix-heading">
                     <span class="setting-label">Model &amp; effort picker</span>
-                    <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
-                    <HoverDetailsToggle />
+                    <MatrixHeadingLinks />
                 </div>
 
                 <!-- Provider × model × effort matrix — owns those three fields. -->
