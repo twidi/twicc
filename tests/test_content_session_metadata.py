@@ -196,3 +196,96 @@ def test_invalidate_roots_targets_from_metadata(certified, from_metadata, effect
     assert len(callbacks) == 1
     assert effects.wakeups == [child.id]
     assert Session.objects.values_list('content_state_epoch', flat=True).get(pk=root.id) == 5
+
+
+def make_certified_tree(prefix, *, root_kwargs=None, child_kwargs=None):
+    """A certified, versioned native root with a versioned child, both with an incarnation."""
+    root = make_session(f'{prefix}-root', storage_incarnation=f'{prefix}-root-incarnation',
+                        content_storage_version=1, **(root_kwargs or {}))
+    child = make_session(f'{prefix}-child', type='subagent', parent_session=root,
+                         storage_incarnation=f'{prefix}-child-incarnation', content_storage_version=1,
+                         **(child_kwargs or {}))
+    return root, child
+
+
+def storage_epochs(session_id):
+    fields = Session.objects.values('content_state_epoch', 'plaintext_verified_epoch').get(pk=session_id)
+    return fields['content_state_epoch'], fields['plaintext_verified_epoch']
+
+
+@pytest.mark.parametrize(('target', 'changed', 'budget'), [
+    pytest.param('root', False, 7, id='root-unchanged'),
+    pytest.param('child', False, 8, id='child-unchanged'),
+    pytest.param('root', True, 10, id='root-changed'),
+    pytest.param('child', True, 13, id='child-changed'),
+])
+def test_lifecycle_change_budget(target, changed, budget, django_assert_num_queries):
+    from django.db import transaction
+
+    from twicc.core.content_storage.lifecycle import save_lifecycle
+
+    recent = {'created_at': timezone.now() - timedelta(days=1), 'last_updated_at': timezone.now() - timedelta(hours=1)}
+    root, child = make_certified_tree('budget', root_kwargs=recent, child_kwargs=recent)
+    session = root if target == 'root' else child
+    if changed:
+        session.last_updated_at += timedelta(seconds=5)
+    # Each budget holds 2 SAVEPOINT and 2 RELEASE: this atomic block and ``lifecycle_change``'s own.
+    with django_assert_num_queries(budget), transaction.atomic():
+        save_lifecycle(session, update_fields=['last_updated_at'])
+    if changed:
+        assert storage_epochs(root.id) == (5, 5)
+    else:
+        assert storage_epochs(root.id) == (4, 4)
+
+
+def test_reparent_carries_old_root_certificate_without_after_ancestry():
+    from twicc.core.content_storage.lifecycle import update_lifecycle
+
+    recent = {'created_at': timezone.now() - timedelta(days=1)}
+    r1, child = make_certified_tree('r1', root_kwargs=recent, child_kwargs=recent)
+    r2, _other_child = make_certified_tree('r2', root_kwargs=recent, child_kwargs=recent)
+    update_lifecycle(Session.objects.filter(pk=child.id), parent_session=r2)
+    # Certificates are captured for the old roots only: the old root is carried, the new one is not.
+    assert storage_epochs(r1.id) == (5, 5)
+    assert storage_epochs(r2.id) == (5, 4)
+    assert native_root_ids([child.id]) == {child.id: r2.id}
+
+
+def test_carry_uses_after_write_policy():
+    from twicc.core.content_storage.lifecycle import update_lifecycle
+
+    old = {'created_at': timezone.now() - timedelta(days=20), 'last_updated_at': timezone.now() - timedelta(days=20)}
+    root, _child = make_certified_tree('archive', root_kwargs=old, child_kwargs=old)
+    assert storage_epochs(root.id) == (4, 4)
+    update_lifecycle(Session.objects.filter(pk=root.id), archived=True)
+    # Archived for 20 days, the root is cold after the write: the carry refuses.
+    assert storage_epochs(root.id) == (5, 4)
+
+    recent = {'created_at': timezone.now() - timedelta(days=1)}
+    demoted, _demoted_child = make_certified_tree('demoted', root_kwargs=recent, child_kwargs=recent)
+    other, _other_child = make_certified_tree('other', root_kwargs=recent, child_kwargs=recent)
+    update_lifecycle(Session.objects.filter(pk=demoted.id), type='subagent', parent_session=other)
+    # A former root is no longer a native root after the write: the carry refuses.
+    assert storage_epochs(demoted.id) == (5, 4)
+    assert storage_epochs(other.id) == (5, 4)
+
+
+def test_bulk_lifecycle_change_keeps_wakeups_and_epochs(effects, django_capture_on_commit_callbacks):
+    from django.db import transaction
+
+    from twicc.core.content_storage.lifecycle import update_lifecycle
+
+    # Cold while archived (15 days), hot once unarchived (30 days).
+    old = {'archived': True, 'created_at': timezone.now() - timedelta(days=20),
+           'last_updated_at': timezone.now() - timedelta(days=20)}
+    r1, child = make_certified_tree('bulk1', root_kwargs=old, child_kwargs=old)
+    r2 = make_session('bulk2-root', storage_incarnation='bulk2-root-incarnation', content_storage_version=1, **old)
+    ids = [r1.id, child.id, r2.id]
+    with django_capture_on_commit_callbacks(execute=True), transaction.atomic():
+        assert update_lifecycle(Session.objects.filter(pk__in=ids), archived=False) == 3
+    assert sorted(effects.wakeups) == ['bulk1-child', 'bulk1-root', 'bulk2-root']
+    assert effects.cold == [(['bulk1-child', 'bulk1-root', 'bulk2-root'], False,
+                             ['bulk1-child', 'bulk1-root', 'bulk2-root'])]
+    assert storage_epochs('bulk1-root') == (5, 4)
+    assert storage_epochs('bulk2-root') == (5, 4)
+    assert storage_epochs('bulk1-child') == (4, 4)

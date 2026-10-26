@@ -11,8 +11,8 @@ from django.utils import timezone
 from twicc.core.content_storage.policy import COLD_FIELDS
 from twicc.core.content_storage.session_policy import resolve_content_decisions
 from twicc.core.content_storage.state import (
-    TREE_PAGE_SIZE, capture_plaintext_certificate, carry_plaintext_certificate,
-    invalidate_roots, resolve_root_decisions, session_plaintext_metadata,
+    capture_plaintext_certificate, carry_plaintext_certificate, invalidate_roots, load_native_metadata,
+    native_root_ids, session_plaintext_metadata,
 )
 from twicc.core.models import Session
 from twicc.providers.write_coordinator import WritePriority, write_priority
@@ -38,39 +38,31 @@ def request_root_promotion(session_id: str, *, priority: WritePriority | None = 
             logger.exception('Content promotion wakeup failed for session %s', session_id)
 
 
-def _metadata(ids):
-    metadata = {}
-    for offset in range(0, len(ids), TREE_PAGE_SIZE):
-        metadata.update({row['id']: row for row in Session.objects.filter(
-            pk__in=ids[offset:offset + TREE_PAGE_SIZE],
-        ).values('id', *LIFECYCLE_FIELDS)})
-    return metadata
-
-
-def _root_map(ids):
-    decisions = resolve_root_decisions(ids, timezone.now(), active_session_ids.get())
-    # Unresolved identities cannot publish readiness, including a former root cycle.
-    return {session_id: decision.root_id if decision.resolved else session_id
-            for session_id, decision in decisions.items()}
-
-
 @contextmanager
 def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: bool = False):
     """Invalidate changed lifecycle metadata and both native roots in the actual write transaction."""
     with transaction.atomic():
         ids = tuple(set(session_ids))
-        before = _metadata(ids)
-        old_roots = _root_map(ids)
+        before_rows = load_native_metadata(ids)
+        before = {sid: before_rows[sid] for sid in ids if before_rows[sid] is not None}
+        # Unresolved identities cannot publish readiness, including a former root cycle.
+        old_roots = {sid: root or sid for sid, root in native_root_ids(ids, metadata=before_rows).items()}
         # Compare persisted policy. Runtime activity may precede the timestamp write.
-        old_decisions = resolve_content_decisions(ids, timezone.now(), frozenset())
-        certificates = {root: capture_plaintext_certificate(root) for root in set(old_roots.values())}
+        old_decisions = resolve_content_decisions(ids, timezone.now(), frozenset(), metadata=before_rows)
+        # ``before_rows`` are still current: nothing is written between their read and these captures.
+        certificates = {root: capture_plaintext_certificate(root, metadata=before_rows,
+                                                            storage_fields=before_rows.get(root))
+                        for root in set(old_roots.values())}
         yield
-        after = _metadata(ids)
+        after_rows = load_native_metadata(ids, ancestors=False)
+        after = {sid: after_rows[sid] for sid in ids if after_rows[sid] is not None}
         changed = {sid for sid in ids if sid not in before or sid not in after
                    or any(before[sid][field] != after[sid][field] for field in LIFECYCLE_FIELDS)}
         if not changed:
             return
-        roots = set(_root_map(changed).values())
+        # The new state is read after the write, with the fresh ancestors of the changed rows.
+        after_rows = load_native_metadata(changed, known=after_rows)
+        roots = {root or sid for sid, root in native_root_ids(changed, metadata=after_rows).items()}
         for session_id in changed:
             roots.add(old_roots[session_id])
         from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
@@ -79,20 +71,24 @@ def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: 
                        or any(before[identity][field] != after[identity][field]
                               for field in ('type', 'parent_session_id')) for identity in changed)
         schedule_cold_invalidation(changed | roots, mappings=mappings, lifecycle_session_ids=changed)
-        decisions = resolve_content_decisions(changed, timezone.now(), active_session_ids.get())
+        decisions = resolve_content_decisions(changed, timezone.now(), active_session_ids.get(), metadata=after_rows)
         from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
 
         # Deferred inspection retains a targeted obligation; a root proof covers only its own references.
+        # ``after_rows`` are still current here: nothing has been written since their read.
         targets = {sid for sid, decision in decisions.items()
                    if decision.resolved and not decision.is_cold
                    and (old_decisions[sid].is_cold
                         or (certificates.get(sid) is None and not ingestion_preserves_plaintext(sid)
-                            and (defer_plaintext_inspection or not session_plaintext_metadata(sid))))}
-        invalidate_roots(roots, promotion_targets=targets)
+                            and (defer_plaintext_inspection
+                                 or not session_plaintext_metadata(sid, fields=after_rows[sid]))))}
+        invalidate_roots(roots, promotion_targets=targets, metadata=after_rows)
+        # The epoch UPDATE of ``invalidate_roots`` and earlier carries write neither the ancestry nor the
+        # cold-policy columns of ``after_rows``; each carry still reads the epoch it compares.
         for root in roots:
             certificate = certificates.get(root)
             if certificate is not None:
-                carry_plaintext_certificate(certificate)
+                carry_plaintext_certificate(certificate, metadata=after_rows)
 
 
 def update_lifecycle(queryset, *, defer_plaintext_inspection: bool = False, **updates) -> int:
