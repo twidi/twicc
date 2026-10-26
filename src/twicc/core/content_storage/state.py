@@ -33,9 +33,9 @@ def native_metadata_row(session: Session) -> dict:
     return {name: getattr(session, name) for name in NATIVE_METADATA_FIELDS}
 
 
-def load_native_metadata(
-    session_ids: Iterable[str], *, known: Mapping[str, dict | None] | None = None, ancestors: bool = True,
-) -> Mapping[str, dict | None]:
+def load_native_metadata[Row: Mapping](
+    session_ids: Iterable[str], *, known: Mapping[str, Row | None] | None = None, ancestors: bool = True,
+) -> Mapping[str, Row | dict | None]:
     """Load native metadata rows, reusing ``known`` rows and querying only the absent ids.
 
     Every requested id maps to its row, or to ``None`` for a missing session. With
