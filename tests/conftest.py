@@ -14,7 +14,7 @@ from django.conf import settings
 
 from twicc import provider_homes
 
-pytest_plugins = ["tests.content_storage_helpers"]
+pytest_plugins = ["tests.content_storage_helpers", "tests.migration_templates"]
 
 
 # One counter per directory name prefix, for the whole run (see ``tmp_path``).
@@ -56,11 +56,40 @@ def compute_executor_started():
         asyncio.run(stop_compute_executor())
 
 
-def pytest_configure():
+def pytest_configure(config):
     """Configure Django settings before tests run."""
+    config.addinivalue_line(
+        "markers", "real_retry_delays: keep the compute retry waits at their real length (see short_compute_retries)",
+    )
     if not settings.configured:
         settings.configure()
     django.setup()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def warm_compute_workers():
+    """Start the compute workers from the preloaded forkserver (see :mod:`tests.warm_spawn`)."""
+    from tests.warm_spawn import WarmSpawnProcess
+    from twicc.providers import background_compute_task
+
+    context = background_compute_task._mp_ctx
+    context.Process = WarmSpawnProcess
+    yield
+    del context.Process
+
+
+@pytest.fixture(autouse=True, scope="session")
+def no_post_migrate_after_flush():
+    """Skip the ``post_migrate`` signal of the flush that ends each ``transaction=True`` test.
+
+    Its only receiver recreates the ``contenttypes`` rows (one query per model
+    and app), about 20 ms per flush; neither TwiCC nor a test reads them. A
+    real ``migrate`` still sends the signal.
+    """
+    from unittest.mock import patch
+
+    with patch("django.core.management.commands.flush.emit_post_migrate_signal"):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -113,6 +142,32 @@ def short_db_writer_polls(monkeypatch):
     from twicc.providers import db_writer
 
     monkeypatch.setattr(db_writer, "asyncio", _ShortSleepAsyncio())
+
+
+@pytest.fixture(autouse=True)
+def short_compute_retries(request, monkeypatch):
+    """Cut the background compute's retry waits to 10 ms.
+
+    After a failed run, retirement or Codex initialization, both compute
+    coordinators wait before trying again (from 1 s, doubled up to 60 s),
+    through ``_wait_for_retry_delay``. A recovery test pays that wait once or
+    twice for nothing: the retry still happens, through the same stop-aware
+    wait, in the same order. The backoff values stay real, and so do the
+    per-session retry deadlines (tests assert both on the coordinators). A
+    test about the wait itself carries the ``real_retry_delays`` marker.
+    """
+    if request.node.get_closest_marker("real_retry_delays"):
+        return
+    from twicc.providers import background_compute_task
+    from twicc.providers.codex import background_compute
+
+    real_wait = background_compute_task._wait_for_retry_delay
+
+    async def short_wait(stop_event, delay):
+        return await real_wait(stop_event, min(delay, 0.01))
+
+    monkeypatch.setattr(background_compute_task, "_wait_for_retry_delay", short_wait)
+    monkeypatch.setattr(background_compute, "_wait_for_retry_delay", short_wait)
 
 
 @pytest.fixture(autouse=True)

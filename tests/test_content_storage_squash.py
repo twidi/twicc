@@ -25,8 +25,9 @@ ORIGINALS = SQUASH.replaces
 
 
 @pytest.fixture(scope='module')
-def storage_predecessor(tmp_path_factory, django_db_blocker):
+def storage_predecessor(tmp_path_factory, django_db_blocker, migrated_145):
     path = tmp_path_factory.mktemp('storage_predecessor') / 'template.sqlite3'
+    shutil.copyfile(migrated_145, path)
     with default_alias_database(path, django_db_blocker) as db:
         executor = MigrationExecutor(db)
         executor.migrate([PREVIOUS])

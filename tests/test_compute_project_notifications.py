@@ -137,7 +137,16 @@ def test_persistent_run_flushes_projects_without_duplicate_progress(recovery_run
                     await asyncio.sleep(.01)
             await asyncio.sleep(.15)
             assert project_notifications.count('project') == 1
-            assert not task.done() and ctx.process.is_alive()
+            assert not task.done()
+            if provider == Provider.CODEX:
+                # The Codex coordinator retires its worker once no candidate is left and stays idle until the
+                # next run; how long the worker takes to exit is not part of the contract.
+                async with asyncio.timeout(2):
+                    while owner.run_active or ctx.process is not None:
+                        await asyncio.sleep(.01)
+                assert not task.done()
+            else:
+                assert ctx.process.is_alive()
             assert writer_progress == []
             assert all(total == 6 for (_, total), _ in progress)
             assert not any(done for _, done in progress)

@@ -235,6 +235,11 @@ REPLAY_MODES = {
 }
 
 
+# The batch rows of a fixture, played once: the batch reads only the fixture's
+# lines, so all eight replays of a fixture compare with the same rows.
+_BATCH_ROWS: dict[str, dict[str, list]] = {}
+
+
 @pytest.mark.parametrize("mode", sorted(REPLAY_MODES))
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
 @pytest.mark.parametrize("current", [False, True], ids=["stale_history", "indexed_history"])
@@ -272,10 +277,11 @@ def test_batch_live_parity(db, tmp_path, name, mode, current, monkeypatch):
     # A fresh DB for the batch: drop the live sessions and every row they own.
     Session.objects.filter(project_id=PROJECT_ID).delete()
     assert rows(fixture) == {"interactions": [], "run_ends": [], "results": []}
-    play_batch(fixture)
-    batch = rows(fixture)
+    if name not in _BATCH_ROWS:
+        play_batch(fixture)
+        _BATCH_ROWS[name] = rows(fixture)
 
-    assert live == batch
+    assert live == _BATCH_ROWS[name]
 
 
 # ---------------------------------------------------------------------------

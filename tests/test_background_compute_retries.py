@@ -2,9 +2,12 @@
 
 import asyncio
 
+import pytest
+
 from twicc.providers import background_compute_task
 
 
+@pytest.mark.real_retry_delays
 def test_explicit_stop_interrupts_retry_wait():
     async def scenario():
         stop = asyncio.Event()

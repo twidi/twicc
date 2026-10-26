@@ -137,26 +137,54 @@ def test_rpc_gate_uses_existing_error_envelope():
     assert 'warming' in result.error
 
 
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize('command', [cli_session.content, cli_session.messages])
-def test_contains_snapshot_cannot_mix_ready_epoch_and_new_hot_reference(command, tmp_path, monkeypatch, capsysbinary):
-    """A WAL writer commits between the gate and count; the reader retains its epoch."""
-    import sqlite3
+def _file_database(path):
+    """Make a new connection to the SQLite file ``path`` the default one; return it and the one it replaces."""
     from copy import deepcopy
 
-    from django.core.management import call_command
     from django.db import connections
     from django.db.backends.sqlite3.base import DatabaseWrapper
 
-    # Build only a new synthetic test database. No instance database is copied.
     original_connection = connections['default']
     config = deepcopy(original_connection.settings_dict)
-    database = tmp_path / 'snapshot.sqlite'
-    config['NAME'] = str(database)
+    config['NAME'] = str(path)
     isolated = DatabaseWrapper(config, alias='default')
     connections._connections.default = isolated
+    return isolated, original_connection
+
+
+@pytest.fixture(scope='module')
+def migrated_snapshot_template(tmp_path_factory, django_db_blocker):
+    """A new synthetic database file with every migration applied, built once for the module."""
+    from django.core.management import call_command
+    from django.db import connections
+
+    path = tmp_path_factory.mktemp('snapshot_template') / 'snapshot.sqlite'
+    with django_db_blocker.unblock():
+        isolated, original_connection = _file_database(path)
+        try:
+            call_command('migrate', verbosity=0, interactive=False)
+        finally:
+            isolated.close()
+            connections._connections.default = original_connection
+    return path
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('command', [cli_session.content, cli_session.messages])
+def test_contains_snapshot_cannot_mix_ready_epoch_and_new_hot_reference(
+    command, tmp_path, monkeypatch, capsysbinary, migrated_snapshot_template,
+):
+    """A WAL writer commits between the gate and count; the reader retains its epoch."""
+    import shutil
+    import sqlite3
+
+    from django.db import connections
+
+    # Build only a new synthetic test database. No instance database is copied.
+    database = tmp_path / 'snapshot.sqlite'
+    shutil.copyfile(migrated_snapshot_template, database)
+    isolated, original_connection = _file_database(database)
     try:
-        call_command('migrate', verbosity=0, interactive=False)
         with isolated.cursor() as cursor:
             cursor.execute('PRAGMA journal_mode=WAL')
         session = make_session()
