@@ -1,0 +1,41 @@
+"""The filter keys of the Timeline tab (frontend/src/utils/timeline/filters.js) match the backend definitions.
+
+Filters design (docs/plans/2026-10-26-timeline-filters-design.md), sections 4.1 to 4.4: the keys the frontend sends
+to ``GET /api/timeline/`` and the problem reasons are copied on both sides; this test pins that the copies agree.
+"""
+
+import subprocess
+from pathlib import Path
+
+import orjson
+
+from twicc.core.enums import Provider
+from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, PROBLEM_REASONS, VIEWS
+
+JAVASCRIPT = """
+import { AUTHORS, FAMILIES, PROVIDERS, VIEWS } from './frontend/src/utils/timeline/filters.js';
+import { PROCESS_ENDED_REASONS } from './frontend/src/utils/timeline/describeEvent.js';
+const values = (entries) => entries.map((entry) => entry.value);
+const problemReasons = Object.entries(PROCESS_ENDED_REASONS)
+    .filter(([, [, severity]]) => severity === 'warning' || severity === 'danger')
+    .map(([reason]) => reason);
+console.log(JSON.stringify({
+    views: values(VIEWS), families: values(FAMILIES), authors: values(AUTHORS), providers: PROVIDERS, problemReasons,
+}));
+"""
+
+
+def test_frontend_keys_match_the_backend():
+    result = subprocess.run(
+        ["node", "--input-type=module", "--eval", JAVASCRIPT],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    frontend = orjson.loads(result.stdout)
+    assert frontend["views"] == list(VIEWS)
+    assert frontend["families"] == list(FAMILIES)
+    assert frontend["authors"] == list(AUTHORS)
+    assert frontend["providers"] == [provider.value for provider in Provider]
+    assert len(frontend["problemReasons"]) == len(set(frontend["problemReasons"]))
+    assert set(frontend["problemReasons"]) == PROBLEM_REASONS
