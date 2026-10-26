@@ -145,14 +145,6 @@ export function activeCount(filters) {
     return GROUPS.reduce((count, { group, order }) => count + checkedValues(filters[group], order).length, 0)
 }
 
-/**
- * @param {TimelineFilters} filters
- * @returns {boolean} A view other than `all`, a checked value or a session filter (the no-match state, 3.5).
- */
-export function isFiltered(filters) {
-    return viewOf(filters) !== DEFAULT_VIEW || activeCount(filters) > 0 || sessionOf(filters) !== null
-}
-
 function pill(group, label, values) {
     return {
         group, label, values,

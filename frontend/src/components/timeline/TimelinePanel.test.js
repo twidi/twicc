@@ -715,7 +715,8 @@ test('every value of a group checked filters nothing: an empty first page is "No
     // Spec 4.5: checking every value of a group is the same as checking none. The query is empty, so is the timeline.
     const f = fixture({ events: [] })
     for (const { value } of filtersModule.FAMILIES) f.filtersStore.toggle('__all__', 'families', value)
-    assert.equal(filtersModule.isFiltered(f.filtersStore.filtersFor('__all__')), true, 'the checked values still show as checked')
+    const checked = filtersModule.activeCount(f.filtersStore.filtersFor('__all__'))
+    assert.equal(checked, filtersModule.FAMILIES.length, 'the checked values still show as checked')
     const root = await mount(t, f)
     assert.deepEqual(f.calls, [{ projectIds: [], query: {}, before: null, afterId: null }])
     assert.equal(textOf(stateBlock(root)), 'No events yet')

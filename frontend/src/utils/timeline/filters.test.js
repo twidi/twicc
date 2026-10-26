@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-    activeCount, AUTHORS, createFilters, FAMILIES, groupPills, isFiltered, PROVIDERS, queryKey, toggleValue, toQuery,
-    VIEWS,
+    activeCount, AUTHORS, createFilters, FAMILIES, groupPills, PROVIDERS, queryKey, toggleValue, toQuery, VIEWS,
 } from './filters.js'
 
 const familyKeys = FAMILIES.map((family) => family.value)
@@ -101,15 +100,6 @@ test('activeCount counts the checked panel values, not the view nor the session'
     assert.equal(activeCount(filters({ families: ['turns', 'twicc'], providers: ['codex'], authors: ['you'] })), 4)
 })
 
-test('isFiltered for each trigger', () => {
-    assert.equal(isFiltered(createFilters()), false)
-    assert.equal(isFiltered(filters({ view: 'without_turns' })), true)
-    assert.equal(isFiltered(filters({ families: ['turns'] })), true)
-    assert.equal(isFiltered(filters({ providers: ['codex'] })), true)
-    assert.equal(isFiltered(filters({ authors: ['unknown'] })), true)
-    assert.equal(isFiltered(filters({ session: { id: 's', title: null } })), true)
-})
-
 test('groupPills: one pill per non-empty group, in order, then the session', () => {
     const pills = groupPills(filters({
         view: 'waits_problems',
@@ -159,14 +149,12 @@ test('groupPills: no pill without a checked value nor a session', () => {
 test('a session without an id is no session filter, everywhere', () => {
     const noId = filters({ session: { id: '', title: 'Ghost' } })
     assert.deepEqual(toQuery(noId), {})
-    assert.equal(isFiltered(noId), false)
     assert.deepEqual(groupPills(noId, { providerLabel }), [])
 })
 
-test('an empty view is the default view, everywhere', () => {
+test('an empty view is the default view', () => {
     const noView = filters({ view: '' })
     assert.deepEqual(toQuery(noView), {})
-    assert.equal(isFiltered(noView), false)
 })
 
 test('an unknown value in a list counts nowhere', () => {
@@ -176,5 +164,4 @@ test('an unknown value in a list counts nowhere', () => {
     assert.deepEqual(groupPills(bogus, { providerLabel }).map((pill) => pill.group), ['families'])
     const onlyBogus = filters({ providers: ['other'] })
     assert.equal(activeCount(onlyBogus), 0)
-    assert.equal(isFiltered(onlyBogus), false)
 })
