@@ -17,6 +17,16 @@ MAX_DESCRIPTION_LENGTH = 1024
 EXTERNAL_DESCRIPTION_SUFFIX = "\nExternal MCP: use explicit IDs. No self or parent references."
 
 MCP_DESCRIPTIONS: dict[str, str] = {
+    "timeline": """Read recorded timeline events, newest first, with cursor pagination.
+
+Scope: all projects by default, or one of project, workspace, session. Project includes its worktrees; \
+a worktree includes only itself. Session filters use current metadata: annotation, filiation, provider, \
+state and active match sessions before event pagination. Hidden sessions stay excluded even with filiation \
+or an explicit session ID; use include_hidden or only_hidden. Archived sessions are always included.
+
+Returns items, pagination (limit, has_more, next_cursor), and compact cited-session metadata. Default limit 20, \
+maximum 100. For older events, pass next_cursor as before with the same filters. No offset or total. \
+Instance events appear in baseline scopes, but explicit session-selection filters exclude them.""",
     "send-message": """Send a message to an existing session.
 
 prompt may be omitted when attach is given. The session keeps its stored agent settings; change them with \

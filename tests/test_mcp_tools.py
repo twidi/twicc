@@ -4,6 +4,15 @@ from twicc.mcp.tools import build_mcp_registry, iter_mcp_tools
 from twicc.rpc.generator import build_registry
 
 
+def test_timeline_is_discoverable_and_read_only():
+    assert "timeline" in build_registry()
+    tool = next(t for t in iter_mcp_tools() if t.name == "timeline")
+    assert tool.annotations.read_only_hint is True
+    assert "session" in tool.input_schema["properties"]
+    assert "before" in tool.input_schema["properties"]
+    assert "offset" not in tool.input_schema["properties"]
+
+
 def test_selection_matches_the_skill_surface():
     reg = build_mcp_registry()
     paths = set(reg)

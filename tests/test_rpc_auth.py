@@ -102,6 +102,14 @@ def test_allowlist_entries_are_real_registry_paths():
     assert not unknown, f"allowlist references unknown commands: {sorted(unknown)}"
 
 
+def test_cookie_read_scope_allows_timeline(client, protected, tokens_store, transactional_db):
+    _login(client)
+    response = _post(client, "/rpc/timeline", b'{"limit": 1}')
+    assert response.status_code == 200
+    assert response.json()["exit_code"] == 0
+    assert response.json()["result"]["pagination"]["limit"] == 1
+
+
 def test_allowlist_excludes_known_write_commands():
     """Mutating commands must never be reachable with an ambient cookie."""
     dangerous = {

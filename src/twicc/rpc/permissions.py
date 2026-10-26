@@ -68,6 +68,7 @@ COOKIE_READONLY_COMMANDS: frozenset[str] = frozenset(
         "artifacts",
         "topology",
         "search",
+        "timeline",
         "status",
         "usage",
         "info",
