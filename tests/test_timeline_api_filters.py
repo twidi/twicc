@@ -116,6 +116,25 @@ def test_rows_without_a_provider_are_kept_once_across_pages(projects):
     assert ids(page_two) == [unnamed.id, first.id] and page_two["has_more"] is False
 
 
+@pytest.mark.parametrize("scoped", [False, True])
+def test_every_query_of_a_page_applies_the_filter(projects, scoped):
+    # The main, the instance and the null-provider queries each get the predicate: a row on any of them
+    # that does not match is dropped.
+    a = projects[0]
+    turn = make_event("turn.started", project=a, at=1, provider="codex")
+    make_event("process.started", project=a, at=2, provider="codex")          # main query, no match
+    make_instance_event(at=3)                                                  # instance query, no match
+    make_event("process.started", project=a, session_id="s9", at=4, provider=None)  # null-provider, no match
+    unnamed_turn = make_event("turn.started", project=a, session_id="s9", at=5, provider=None)
+    params = {"provider": "codex", "families": "turns"}
+    if scoped:
+        params["project_ids"] = a.id
+    expected = [unnamed_turn.id, turn.id]
+    assert ids(call(**params).json()) == expected
+    assert ids(call(**params, limit=1).json()) == expected[:1]
+    assert ids(call(**params, after_id=0).json()) == sorted(expected)
+
+
 def test_rows_without_a_provider_are_kept_in_the_global_scope_too():
     codex = make_event(at=1, provider="codex")
     make_event(at=2, provider="claude_code")

@@ -89,16 +89,20 @@ class TimelineFilter(NamedTuple):
     session_id: str | None = None
 
 
-def kind_in(*kinds: str) -> Q:
-    """``+kind IN (...)``: a kind comparison that never drives an index (see the module doc).
+def unindexed(column: str) -> Func:
+    """``+column``: a column that never drives an index (see the module doc).
 
     Built from Django expressions, not raw SQL: the column compiles through the alias machinery, so it
     names the right table in a join or in a same-model subquery (``U0``).
     """
+    return Func(F(column), template="+%(expressions)s", output_field=CharField())
+
+
+def kind_in(*kinds: str) -> Q:
+    """``+kind IN (...)``: a kind comparison that never drives an index (see the module doc)."""
     if not kinds:
         raise ValueError("kind_in needs at least one kind")
-    unindexed_kind = Func(F("kind"), template="+%(expressions)s", output_field=CharField())
-    return Q(In(unindexed_kind, [str(kind) for kind in kinds]))
+    return Q(In(unindexed("kind"), [str(kind) for kind in kinds]))
 
 
 def _generated_title_q() -> Q:

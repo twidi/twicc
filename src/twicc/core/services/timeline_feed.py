@@ -32,13 +32,13 @@ from datetime import UTC, datetime
 from typing import NamedTuple
 
 from django.db import connection
-from django.db.models import BooleanField, CharField, F, Func, Q
+from django.db.models import BooleanField, Q
 from django.db.models.expressions import RawSQL
 from django.db.models.lookups import In, IsNull
 
 from twicc.core.enums import Provider
 from twicc.core.models import Session, TimelineActor, TimelineEvent, TimelineKind
-from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, VIEWS, TimelineFilter, match_q
+from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, VIEWS, TimelineFilter, match_q, unindexed
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -161,14 +161,6 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
     )
 
 
-def _unindexed(column: str) -> Func:
-    """``+column``: a scope column that never drives an index (see the module doc).
-
-    An expression, not raw SQL, as ``timeline_filters.kind_in``: the column compiles with its query's alias.
-    """
-    return Func(F(column), template="+%(expressions)s", output_field=CharField())
-
-
 def _page_querysets(request: FeedRequest) -> list:
     """The queries of one page, merged by :func:`_fetch_page` (see the module doc).
 
@@ -181,18 +173,18 @@ def _page_querysets(request: FeedRequest) -> list:
     common = [before_condition(request.before)] if request.before else []
     if (match := match_q(flt)) is not None:
         common.append(match)
-    unindexed_projects = [Q(In(_unindexed("project_id"), request.project_ids))] if request.project_ids else []
+    unindexed_projects = [Q(In(unindexed("project_id"), request.project_ids))] if request.project_ids else []
     if flt.session_id is not None:
         query = ordered.filter(*common, *unindexed_projects, session_id=flt.session_id)
         if flt.providers:
-            provider = _unindexed("provider")
+            provider = unindexed("provider")
             query = query.filter(Q(In(provider, flt.providers)) | Q(IsNull(provider, True)))
         return [query]
     main = ordered.filter(*common)
     if request.project_ids:
         main = main.filter(project_id__in=request.project_ids)
         if flt.providers:
-            main = main.filter(In(_unindexed("provider"), flt.providers))
+            main = main.filter(In(unindexed("provider"), flt.providers))
     elif flt.providers:
         main = main.filter(provider__in=flt.providers)
     queries = [main]

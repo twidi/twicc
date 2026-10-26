@@ -239,7 +239,7 @@ def test_a_row_that_both_queries_return_is_listed_once(projects):
     ({"session": "s1", "project_ids": "-tl-api-a"}, 1),
     ({"session": "s1", "project_ids": "-tl-api-a", "provider": "codex"}, 1),
 ])
-def test_the_instance_events_query_runs_in_every_case_but_the_global_one_without_provider(params, queries):
+def test_the_number_of_page_queries_per_scope_and_filter(params, queries):
     assert len(timeline_feed._page_querysets(parse_request(params))) == queries
 
 
@@ -579,9 +579,10 @@ def test_a_family_or_view_filter_keeps_the_ordered_index_and_sorts_nothing(busy,
 @pytest.mark.parametrize("params", FILTER_PARAMS)
 def test_a_family_or_view_filter_in_a_multi_project_scope_never_uses_the_kind_index(busy, params):
     # A multi-value ``IN`` sorts per value (harmless: SQLite stops at the limit per value).
-    request = parse_request({**params, "project_ids": "-tl-api-a,-tl-api-b", "before": CURSOR})
-    _, plan = plan_of(timeline_feed._page_querysets(request)[0])
-    assert "idx_timeline_kind" not in plan and "MULTI-INDEX OR" not in plan, plan
+    for before in ({}, {"before": CURSOR}):
+        request = parse_request({**params, "project_ids": "-tl-api-a,-tl-api-b", **before})
+        _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+        assert "idx_timeline_kind" not in plan and "MULTI-INDEX OR" not in plan, plan
 
 
 @pytest.mark.parametrize("params", [
