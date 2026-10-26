@@ -526,8 +526,12 @@ test('a click on the padding of the sticky band, on a view or on a pill keeps th
     assert.equal(hideVetoed(popover), true, 'a pill remove control')
     listener({ target: filtersButtonOf(root) })
     assert.equal(hideVetoed(popover), false, 'the Filters button')
-    // A click in the list never reaches the StickyBand's listener: nothing arms the veto.
-    assert.equal(hideVetoed(popover), false, 'the list')
+    // A click in the list does not reach this listener in a real DOM (its target is outside the StickyBand). Even
+    // when a click outside the boundary reaches it, right after a band click armed the veto, it disarms it: the
+    // `contains` boundary is checked, not only the listener's place.
+    listener({ target: radiosOf(root)[2] })
+    listener({ target: root })
+    assert.equal(hideVetoed(popover), false, 'a target outside the StickyBand')
 })
 
 test('without a StickyBand around it, the listener and the boundary are the band root', async (t) => {
