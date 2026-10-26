@@ -344,3 +344,100 @@ def test_initialize_with_metadata(target, root_incarnation, session_incarnation,
     assert stored_incarnation(root.id) == metadata[root.id]['storage_incarnation']
     if session_incarnation:
         assert session.storage_incarnation == f'known-{target}-incarnation'
+
+
+def bound_setup(prefix, target):
+    """A certified hot tree with one stored item of ``target`` and its unbound binding."""
+    from django.db import transaction
+
+    from twicc.core.content_storage.references import intern_contents
+    from twicc.core.content_storage.types import ContentBinding
+    from twicc.core.models import SessionItem
+
+    recent = {'created_at': timezone.now() - timedelta(days=1)}
+    root, child = make_certified_tree(prefix, root_kwargs=recent, child_kwargs=recent)
+    owner = child if target == 'child' else root
+    text = f'{prefix} content'
+    with transaction.atomic():
+        content_id = intern_contents([text], owner.provider)[text]
+    item = SessionItem.objects.create(session=owner, line_num=1, content='', current_content_id=content_id)
+    return root, owner, [ContentBinding(item.id, owner.id, content_id, None)]
+
+
+def storage_certificate(session_id):
+    fields = Session.objects.values('content_state_epoch', 'plaintext_verified_epoch').get(pk=session_id)
+    return fields, fields['content_state_epoch'] == fields['plaintext_verified_epoch']
+
+
+@pytest.mark.parametrize(('target', 'saved'), [
+    pytest.param('child', 4, id='child-certified-root'),
+    pytest.param('root', 1, id='root'),
+])
+def test_bind_with_metadata_skips_ancestry_reads(target, saved):
+    from django.db import connection, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    from twicc.core.content_storage.references import bind_persisted_items
+
+    results = []
+    for prefix, from_metadata in (('fresh', False), ('known', True)):
+        root, owner, bindings = bound_setup(prefix, target)
+        kwargs = {'metadata': load_native_metadata([owner.id])} if from_metadata else {}
+        with CaptureQueriesContext(connection) as queries, transaction.atomic():
+            bind_persisted_items(bindings, **kwargs)
+        results.append((len(queries), storage_certificate(root.id), storage_certificate(owner.id)))
+    (fresh_count, *fresh_state), (known_count, *known_state) = results
+    # Child: its ancestry (2), the capture's and the carry's root resolution (1 each). Root: its resolution.
+    assert fresh_count - known_count == saved
+    assert fresh_state == known_state
+    # A child binding carries its root's certificate; a root binding leaves its own epoch uncertified.
+    assert fresh_state[0][1] is (target == 'child')
+
+
+def test_insert_with_metadata_skips_policy_read():
+    from django.db import connection, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    from twicc.core.content_storage.ingestion import INSERT_BATCH_SIZE, insert_ingested_items
+    from twicc.core.models import SessionItem
+
+    root, _child = make_certified_tree('insert', root_kwargs={'created_at': timezone.now() - timedelta(days=1)})
+    lines = range(1, INSERT_BATCH_SIZE + 11)
+    metadata = load_native_metadata([root.id])
+    results = []
+    for kwargs in ({}, {'metadata': metadata}):
+        with transaction.atomic():
+            session = Session.objects.get(pk=root.id)
+            items = [(SessionItem(session=session, line_num=line, content=f'current {line}'), f'source {line}')
+                     for line in lines]
+            with CaptureQueriesContext(connection) as queries:
+                inserted = insert_ingested_items(session, items, **kwargs)
+            stored = list(SessionItem.objects.filter(session_id=root.id).order_by('line_num').values_list(
+                'line_num', 'current_content__sha256', 'current_content__codec',
+                'original_content__sha256', 'original_content__codec',
+            ))
+            results.append((len(queries), inserted, stored, storage_certificate(root.id)))
+            transaction.set_rollback(True)
+    (fresh_count, *fresh_state), (known_count, *known_state) = results
+    assert fresh_state[0] == set(lines)
+    assert len(fresh_state[1]) == len(lines)
+    # Per batch: the cold-policy read and the root resolution of ``bind_persisted_items``.
+    assert fresh_count - known_count == 4
+    assert fresh_state == known_state
+
+
+def test_multibatch_child_slice_keeps_root_certified(tmp_path, monkeypatch, effects,
+                                                    django_capture_on_commit_callbacks):
+    import orjson
+
+    from tests.test_live_sync_session_reads import (
+        FIXTURE, ROOT, SliceReplay, certified_root_multibatch_child,
+    )
+
+    replay = SliceReplay(tmp_path, monkeypatch, django_capture_on_commit_callbacks, effects)
+    # The scenario certifies the root, syncs a 121-line child slice (3 insert batches), then checks the root.
+    certified_root_multibatch_child(replay)
+    epoch, verified = storage_epochs(ROOT)
+    assert epoch is not None and verified == epoch
+    stored = orjson.loads(FIXTURE.read_bytes())['certified_root_multibatch_child']
+    assert orjson.loads(orjson.dumps(replay.records)) == stored

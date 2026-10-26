@@ -4296,8 +4296,10 @@ class BaseSessionCompute:
 
                 # The slice's ancestry, read once before its first write and shared (mutable on
                 # purpose: the incarnation write is written through). Ancestry and cold-policy
-                # columns stay current until the lifecycle write; storage-state values only until
-                # the slice's first content-storage write.
+                # columns stay current until the lifecycle write, their only writer in a slice.
+                # A storage-state value stays current only until a write to its own row other than
+                # the written-through incarnation (epoch bumps, certificate carries): later readers,
+                # such as the bindings, read the storage state fresh.
                 metadata = load_native_metadata([session.id], known={session.id: native_metadata_row(session)})
                 with ingestion_plaintext_change(session, metadata=metadata):
                     updates = self._sync_session_slice(session, file_path, raw, metadata=metadata)
@@ -4489,10 +4491,11 @@ class BaseSessionCompute:
             # *before* the one that wrote it.
             processed_items.append((current_line_num, item.timestamp, parsed))
 
-            # Pre-compute display_level + kind (no group info yet)
-            metadata = self.compute_item_metadata(parsed)
-            item.display_level = metadata['display_level']
-            item.kind = metadata['kind']
+            # Pre-compute display_level + kind (no group info yet). Not ``metadata``: that name
+            # holds the slice-start native rows, passed to the insert below.
+            item_metadata = self.compute_item_metadata(parsed)
+            item.display_level = item_metadata['display_level']
+            item.kind = item_metadata['kind']
 
             # Track compact summary for session.compacted flag
             if item.kind == ItemKind.COMPACT_SUMMARY:
@@ -4637,8 +4640,12 @@ class BaseSessionCompute:
             session=session, line_num__in=[item.line_num for item in items_only],
         )
         before_existing_live = item_contributions(existing_live_items)
+        # The insert runs before the lifecycle write: the slice-start ancestry and cold-policy
+        # columns are still current for each batch's cold decision and bindings, which read the
+        # storage state fresh (each batch's invalidation and carry change it).
         inserted_line_nums = insert_ingested_items(
             session, [(item, source_texts[item.line_num]) for item in items_only], promote=False,
+            metadata=metadata,
         )
         append_history_facts(session.id, history.facts)
         if async_question_facts:

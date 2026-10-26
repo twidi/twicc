@@ -1,6 +1,6 @@
 """Bounded initial/live inserts under the existing writer transaction."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from itertools import islice
@@ -152,12 +152,15 @@ def prepare_ingestion_contents(session: Session, texts: Sequence[str]):
 
 def insert_ingested_items(
     session: Session, items: Sequence[tuple[SessionItem, str]], *, promote: bool = True, prepared=None,
+    metadata: Mapping | None = None,
 ) -> set[int]:
     """Persist source/current strings, bind actual inserts, and promote reused hot rows.
 
     Source strings are captured before any transform. Current overrides remain
     available for the caller's unsaved-item second pass. Ignored lines retain
     their existing references and do not authorize unused-content promotion.
+    ``metadata`` holds native rows whose ancestry and cold-policy columns are still
+    current; they feed each batch's cold decision and bindings, never storage state.
     """
     _require_transaction()
     with ingestion_plaintext_change(session):
@@ -181,7 +184,9 @@ def insert_ingested_items(
             if not candidates:
                 continue
             batch_prepared = None
-            cold = resolve_content_decisions([session.id], timezone.now(), active_session_ids.get())[session.id].is_cold
+            cold = resolve_content_decisions(
+                [session.id], timezone.now(), active_session_ids.get(), metadata=metadata,
+            )[session.id].is_cold
             if prepared is not None and cold:
                 wanted = set(texts)
                 batch_prepared = dict(prepared_by_text[text] for text in wanted if text in prepared_by_text)
@@ -202,7 +207,7 @@ def insert_ingested_items(
             bindings = [ContentBinding(i.id, i.session_id, i.current_content_id, i.original_content_id) for i in actual]
             if promote:
                 promote_ingested_items(session, [(item, original) for item, original, _ in candidates])
-            bind_persisted_items(bindings)
+            bind_persisted_items(bindings, metadata=metadata)
             inserted.update(i.line_num for i in actual)
         return inserted
 

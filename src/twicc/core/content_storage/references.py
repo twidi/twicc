@@ -20,7 +20,8 @@ from django.utils import timezone
 
 from twicc.core.content_storage.codec import ContentIntegrityError, encode_plain, encode_cold
 from twicc.core.content_storage.state import (
-    capture_plaintext_certificate, carry_plaintext_certificate, invalidate_roots, resolve_root_decision,
+    capture_plaintext_certificate, carry_plaintext_certificate, invalidate_roots, native_root_ids,
+    resolve_root_decision,
 )
 from twicc.core.content_storage.types import ContentBinding, PreparedInternContent
 from twicc.core.content_storage.writes import write_content_owners
@@ -168,8 +169,15 @@ def intern_contents(
     return result
 
 
-def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
-    """Validate persisted assignments before adding unique session ownership."""
+def bind_persisted_items(
+    bindings: Sequence[ContentBinding], *, metadata: Mapping | None = None,
+) -> None:
+    """Validate persisted assignments before adding unique session ownership.
+
+    ``metadata`` holds native rows whose ancestry and cold-policy columns are still
+    current; they feed the root resolution, the captures and the carries. Their
+    storage-state values are never used: every capture and carry reads them fresh.
+    """
     _require_transaction()
     actual = {row[0]: row[1:] for row in SessionItem.objects.filter(pk__in=[b.item_id for b in bindings])
               .values_list('id', 'session_id', 'current_content_id', 'original_content_id')}
@@ -190,18 +198,24 @@ def bind_persisted_items(bindings: Sequence[ContentBinding]) -> None:
         row.session_ids = sorted(set(row.session_ids) | additions[row.id])
         changed.append(row)
     write_content_owners(changed)
-    roots = set()
-    for session_id in {binding.session_id for binding in bindings}:
-        decision = resolve_root_decision(session_id, timezone.now(), frozenset())
-        if decision.resolved:
-            roots.add(decision.root_id)
-    # Ingestion owns exact-reference promotion. A binding alone only fences the graph.
     owners = {binding.session_id for binding in bindings}
+    if metadata is None:
+        roots = set()
+        for session_id in owners:
+            decision = resolve_root_decision(session_id, timezone.now(), frozenset())
+            if decision.resolved:
+                roots.add(decision.root_id)
+    else:
+        # The caller's rows were read before any lifecycle write of this transaction, the only writer
+        # of their ancestry and cold-policy columns. Each batch's invalidation and carry change the
+        # storage state, so the captures get no storage fields and the carries re-read the epoch.
+        roots = {root for root in native_root_ids(owners, metadata=metadata).values() if root is not None}
+    # Ingestion owns exact-reference promotion. A binding alone only fences the graph.
     certificates = [certificate for root in roots - owners
-                    if (certificate := capture_plaintext_certificate(root)) is not None]
+                    if (certificate := capture_plaintext_certificate(root, metadata=metadata)) is not None]
     invalidate_roots(roots)
     for certificate in certificates:
-        carry_plaintext_certificate(certificate)
+        carry_plaintext_certificate(certificate, metadata=metadata)
     from twicc.core.content_storage.ingestion import record_ingestion_bindings
 
     record_ingestion_bindings(bindings)
