@@ -1519,6 +1519,51 @@ def codex(ctx: typer.Context) -> None:
     codex_main(ctx.args)
 
 
+@app.command()
+def timeline(
+    project: str = typer.Option(None, "--project", help="Project ID or path; includes its own worktrees."),
+    workspace: str = typer.Option(None, "--workspace", help="Workspace ID; includes members and their worktrees."),
+    session: str = typer.Option(None, "--session", help="Only this session's events; ID, self or parent."),
+    provider: str = typer.Option(None, "--provider", help="Filter by the session's current provider."),
+    annotation: list[str] = typer.Option(
+        [], "--annotation", help="Current session annotation filter; repeatable and AND-combined, as in sessions.",
+    ),
+    spawned_by: str = typer.Option(None, "--spawned-by", help="Direct children of ID, self or parent."),
+    spawn_tree: str = typer.Option(None, "--spawn-tree", help="Whole spawn tree containing ID or self, root included."),
+    descendants: str = typer.Option(None, "--descendants", help="Proper descendants of ID, self or parent."),
+    siblings: str = typer.Option(None, "--siblings", help="Other children of the target's spawner; ID or self."),
+    state: list[str] = typer.Option(
+        [], "--state", help="Current process state; repeatable and OR-combined, as in sessions.",
+    ),
+    active: bool = typer.Option(False, "--active", help="Sessions with any current live process, including user_turn."),
+    include_hidden: bool = typer.Option(
+        False, "--include-hidden", help="Include hidden sessions; filiation and explicit IDs do not imply this flag.",
+    ),
+    only_hidden: bool = typer.Option(False, "--only-hidden", help="Only hidden sessions; conflicts with --include-hidden."),
+    include_archived: bool = typer.Option(
+        False, "--include-archived", help="Compatibility flag: archived sessions are already included by default.",
+    ),
+    limit: int = typer.Option(None, "--limit", help="Maximum events per page (default: 20; range: 1–100)."),
+    before: str = typer.Option(None, "--before", help="Previous next_cursor value; keep the same filters for older pages."),
+) -> None:
+    """Read recorded timeline events, newest first, with cursor pagination.
+
+    Choose one scope: all projects (default), --project, --workspace or --session.
+    Session filters use current metadata. Hidden sessions stay excluded even in
+    spawn trees; archived sessions are included. Returns items, pagination
+    (limit, has_more, next_cursor), and cited-session metadata.
+    """
+    from twicc.cli.timeline import main as timeline_main
+
+    timeline_main(
+        project=derive_project_id(project)[0] if project is not None else None,
+        workspace=workspace, session=session, provider=provider, annotation=annotation,
+        spawned_by=spawned_by, spawn_tree=spawn_tree, descendants=descendants, siblings=siblings,
+        state=state, active=active, include_hidden=include_hidden, only_hidden=only_hidden,
+        include_archived=include_archived, limit=limit, before=before,
+    )
+
+
 @app.command(help="Query the TwiCC search index using raw Tantivy query syntax.")
 def search(
     query: str = typer.Argument(help="Tantivy query string (e.g. 'websocket', 'body:websocket AND from_role:user')"),
