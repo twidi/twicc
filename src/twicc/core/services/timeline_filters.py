@@ -5,11 +5,12 @@ Design: ``docs/plans/2026-10-26-timeline-filters-design.md`` sections 4.1 (views
 feed (``timeline_feed``) applies them. Providers and the session filter are not here: the feed puts them
 in the scope part of each query, where they drive an index.
 
-Every comparison on ``kind`` carries a unary plus (``+kind IN (...)``, through :func:`kind_in`). Without
-it, SQLite (no ANALYZE, as in production) picks ``idx_timeline_kind`` for a ``kind IN (...)`` and sorts
-every matching row before it can return the first page (``USE TEMP B-TREE FOR ORDER BY``). With the plus,
-the planner cannot use that index: the page query keeps walking ``idx_timeline_occurred`` or the scope
-index in order and stops at ``limit + 1`` rows. Same technique as the ``after_id`` scope of the feed.
+Every comparison on ``kind`` carries a unary plus (``+"core_timelineevent"."kind" IN (...)``, through
+:func:`kind_in`, which also qualifies the column with the table name). Without it, SQLite (no ANALYZE,
+as in production) picks ``idx_timeline_kind`` for a ``kind IN (...)`` and sorts every matching row
+before it can return the first page (``USE TEMP B-TREE FOR ORDER BY``). With the plus, the planner
+cannot use that index: the page query keeps walking ``idx_timeline_occurred`` or the scope index in
+order and stops at ``limit + 1`` rows. Same technique as the ``after_id`` scope of the feed.
 """
 
 from __future__ import annotations
@@ -17,13 +18,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
+from django.db import connection
 from django.db.models import BooleanField, Q, TextField, Value
 from django.db.models.expressions import RawSQL
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 
-from twicc.core.models import TimelineKind, TimelinePrecision
+from twicc.core.models import TimelineEvent, TimelineKind, TimelinePrecision
 from twicc.request_origin import (
     ACTOR_AGENT,
     ACTOR_EXTERNAL,
@@ -90,9 +92,17 @@ class TimelineFilter(NamedTuple):
 
 
 def kind_in(*kinds: str) -> Q:
-    """``+kind IN (...)``: a kind comparison that never drives an index (see the module doc)."""
+    """``+kind IN (...)``: a kind comparison that never drives an index (see the module doc).
+
+    The column is qualified with the table name, so a later join with a table that has its own ``kind``
+    column cannot make it ambiguous.
+    """
+    if not kinds:
+        raise ValueError("kind_in needs at least one kind")
+    quote = connection.ops.quote_name
+    column = f"{quote(TimelineEvent._meta.db_table)}.{quote('kind')}"
     placeholders = ", ".join(["%s"] * len(kinds))
-    return Q(RawSQL(f"+kind IN ({placeholders})", [str(kind) for kind in kinds], output_field=BooleanField()))
+    return Q(RawSQL(f"+{column} IN ({placeholders})", [str(kind) for kind in kinds], output_field=BooleanField()))
 
 
 def _generated_title_q() -> Q:
@@ -147,6 +157,8 @@ def author_q(author: str) -> Q:
 def authors_q(authors: tuple[str, ...]) -> Q | None:
     """OR of the checked authors; ``None`` when none or all are checked (every row has one author)."""
     checked = set(authors)
+    if unknown := checked - set(AUTHORS):
+        raise ValueError(f"unknown authors: {sorted(unknown)!r}")
     if not checked or checked >= set(AUTHORS):
         return None
     q = Q()

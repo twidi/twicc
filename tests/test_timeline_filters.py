@@ -4,6 +4,7 @@ import itertools
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.db import connection
 
 from twicc.core.models import TimelineEvent, TimelineKind
 from twicc.core.services.timeline_filters import (
@@ -16,6 +17,7 @@ from twicc.core.services.timeline_filters import (
     author_q,
     authors_q,
     families_q,
+    kind_in,
     match_q,
     problem_q,
     view_q,
@@ -97,28 +99,28 @@ def test_the_author_partition_is_total_and_disjoint():
 
 
 AUTHOR_EXAMPLES = [
-    ("derived creation by the system", build("session.created", precision="derived"), "unknown"),
-    ("estimated lost process end", build("process.ended", precision="estimated", reason="lost"), "unknown"),
-    ("exact creation by the system", build("session.created"), "unknown"),
-    ("user through the API", build("archived.started", actor="user", via="rpc"), "you"),
-    ("user through the UI", build("archived.started", actor="user", via="ui"), "you"),
-    ("agent through the CLI", build("archived.started", actor="agent", via="cli"), "agent_cli_mcp"),
-    ("the session's agent turn", build("turn.started", actor="agent"), "session_agent"),
-    ("generated title", build("title.changed", actor="agent", data={"source": "auto"}), "automatic"),
-    ("provider title", build("title.changed", actor="agent", data={"source": "agent"}), "session_agent"),
-    ("shutdown process end", build("process.ended", reason="shutdown"), "automatic"),
-    ("external MCP", build("archived.started", actor="external", via="mcp_external"), "external_mcp"),
-    ("external through the CLI", build("archived.started", actor="external", via="cli"), "unknown"),
-    ("user through the external MCP", build("archived.started", actor="user", via="mcp_external"), "unknown"),
-    ("unknown actor", build("archived.started", actor="ghost"), "unknown"),
+    ("derived creation by the system", {"kind": "session.created", "precision": "derived"}, "unknown"),
+    ("estimated lost process end", {"kind": "process.ended", "precision": "estimated", "reason": "lost"}, "unknown"),
+    ("exact creation by the system", {"kind": "session.created"}, "unknown"),
+    ("user through the API", {"kind": "archived.started", "actor": "user", "via": "rpc"}, "you"),
+    ("user through the UI", {"kind": "archived.started", "actor": "user", "via": "ui"}, "you"),
+    ("agent through the CLI", {"kind": "archived.started", "actor": "agent", "via": "cli"}, "agent_cli_mcp"),
+    ("the session's agent turn", {"kind": "turn.started", "actor": "agent"}, "session_agent"),
+    ("generated title", {"kind": "title.changed", "actor": "agent", "data": {"source": "auto"}}, "automatic"),
+    ("provider title", {"kind": "title.changed", "actor": "agent", "data": {"source": "agent"}}, "session_agent"),
+    ("shutdown process end", {"kind": "process.ended", "reason": "shutdown"}, "automatic"),
+    ("external MCP", {"kind": "archived.started", "actor": "external", "via": "mcp_external"}, "external_mcp"),
+    ("external through the CLI", {"kind": "archived.started", "actor": "external", "via": "cli"}, "unknown"),
+    ("user through the external MCP", {"kind": "archived.started", "actor": "user", "via": "mcp_external"}, "unknown"),
+    ("unknown actor", {"kind": "archived.started", "actor": "ghost"}, "unknown"),
 ]
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(("row", "author"), [(row, author) for _, row, author in AUTHOR_EXAMPLES],
+@pytest.mark.parametrize(("fields", "author"), [(fields, author) for _, fields, author in AUTHOR_EXAMPLES],
                          ids=[label for label, _, _ in AUTHOR_EXAMPLES])
-def test_author_examples_from_the_spec(row, author):
-    (saved,) = save(row)
+def test_author_examples_from_the_spec(fields, author):
+    (saved,) = save(build(**fields))
     assert author_of(as_mapping(saved)) == author
     assert matching_ids(author_q(author)) == {saved.id}
 
@@ -188,6 +190,12 @@ def test_authors_or_their_values():
     assert agent.id not in matching_ids(authors_q(("you", "automatic")))
     with pytest.raises(ValueError):
         author_q("nobody")
+    with pytest.raises(ValueError):
+        authors_q(("you", "nobody"))
+    with pytest.raises(ValueError):
+        authors_q(("nobody",))
+    with pytest.raises(ValueError):
+        match_q(TimelineFilter(authors=("nobody",)))
 
 
 @pytest.mark.django_db
@@ -206,3 +214,33 @@ def test_match_q_is_none_without_filters_and_ands_the_groups():
 
     view_only = TimelineFilter(view="without_turns", authors=("automatic",))
     assert matching_ids(match_q(view_only)) == {shutdown.id}
+
+
+def test_kind_in_needs_a_kind():
+    with pytest.raises(ValueError):
+        kind_in()
+
+
+def test_kind_in_qualifies_the_column_and_keeps_the_unary_plus():
+    sql = str(TimelineEvent.objects.filter(kind_in("turn.started")).query)
+    assert '+"core_timelineevent"."kind" IN (' in sql
+
+
+def plan_of(queryset):
+    sql, params = queryset.query.sql_with_params()
+    with connection.cursor() as cursor:
+        cursor.execute("EXPLAIN QUERY PLAN " + sql, params)
+        return " | ".join(str(row[-1]) for row in cursor.fetchall())
+
+
+@pytest.mark.django_db
+def test_a_families_filtered_page_query_walks_the_time_index_in_order():
+    save(*[build(kind, actor="agent") for kind in TimelineKind.values for _ in range(5)])
+    page = TimelineEvent.objects.order_by("-occurred_at", "-id")
+
+    plan = plan_of(page.filter(families_q(("turns", "waits")))[:51])
+    assert "idx_timeline_occurred" in plan
+    assert "idx_timeline_kind" not in plan and "USE TEMP B-TREE" not in plan
+    # Control: without the unary plus the planner takes the kind index and sorts (what ``kind_in`` avoids).
+    control = plan_of(page.filter(kind__in=FAMILIES["turns"] + FAMILIES["waits"])[:51])
+    assert "idx_timeline_kind" in control and "USE TEMP B-TREE" in control
