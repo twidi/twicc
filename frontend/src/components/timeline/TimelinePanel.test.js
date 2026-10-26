@@ -617,6 +617,17 @@ test('the no-match state shows only after a successful first page with zero even
     assert.equal(textOf(stateBlock(plain)), 'No events yet')
 })
 
+test('every value of a group checked filters nothing: an empty first page is "No events yet", not the no-match state', async (t) => {
+    // Spec 4.5: checking every value of a group is the same as checking none. The query is empty, so is the timeline.
+    const f = fixture({ events: [] })
+    for (const { value } of filtersModule.FAMILIES) f.filtersStore.toggle('__all__', 'families', value)
+    assert.equal(filtersModule.isFiltered(f.filtersStore.filtersFor('__all__')), true, 'the checked values still show as checked')
+    const root = await mount(t, f)
+    assert.deepEqual(f.calls, [{ projectIds: [], query: {}, before: null, afterId: null }])
+    assert.equal(textOf(stateBlock(root)), 'No events yet')
+    assert.equal(byClass(root, 'timeline-no-match-message').length, 0)
+})
+
 test('a page keeps its filters when shown again', async (t) => {
     const projects = { pA: { id: 'pA' }, pB: { id: 'pB' } }
     const f = fixture({ projects })

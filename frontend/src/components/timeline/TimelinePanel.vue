@@ -31,7 +31,7 @@ import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
 import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
 import { timeColumnSizer } from '../../utils/timeline/eventTime'
-import { VIEWS, isFiltered, queryKey, toQuery } from '../../utils/timeline/filters'
+import { VIEWS, queryKey, toQuery } from '../../utils/timeline/filters'
 import { buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
@@ -78,6 +78,9 @@ const scope = computed(() => resolveTimelineScope({
 const filters = computed(() => filtersStore.filtersFor(props.projectId))
 const filterQuery = computed(() => toQuery(filters.value))
 const filterQueryKey = computed(() => queryKey(filterQuery.value))
+// What the server is asked decides whether the list is filtered: a group with every value checked filters nothing
+// (filters design section 4.5), so its query is empty, like no filter at all.
+const UNFILTERED_QUERY_KEY = queryKey({})
 
 // The list's scroller (VirtualScroller.vue), mounted with the panel and kept through every state.
 const scrollerRef = ref(null)
@@ -121,7 +124,7 @@ const eventRows = computed(() => buildTimelineRows(state.events, {
 
 /**
  * Which block of the page is visible: the list, or one of the states. "No match" (filters design section 3.5)
- * only follows a successful first page: loading and error win over it.
+ * only follows a successful first page whose query filters something: loading and error win over it.
  */
 const view = computed(() => {
     if (scope.value.state === 'loading') return 'loading'
@@ -130,7 +133,7 @@ const view = computed(() => {
     if (state.status === 'error') return 'error'
     if (state.status !== 'ready') return 'loading'
     if (state.events.length) return 'list'
-    return isFiltered(filters.value) ? 'no-match' : 'empty'
+    return filterQueryKey.value !== UNFILTERED_QUERY_KEY ? 'no-match' : 'empty'
 })
 
 // The room kept under the navigation list and the band (see the top of the file), then the event rows or the
@@ -209,8 +212,9 @@ watch(items, async (next) => {
 // row the scroller already measured keeps its measure (seeding would overwrite it, and no resize would correct it).
 // `seeded` maps a key to the estimate written for it (null: the scroller had its own height): when a live insertion
 // flips a row's head or end status, the new estimate replaces the old one while the cache still holds that old seed
-// (the row was not measured since). `seeded` follows the list: it is emptied when the scroller goes away and trimmed
-// to the keys still in the list, so a row that left (the state item replaced it) is seeded again when it returns.
+// (the row was not measured since). `seeded` follows the list: it is trimmed to the keys still in the list, so a row
+// that left (the state item replaced it) is seeded again when it returns. The scroller stays while the panel is
+// mounted; the empty-scroller guard only runs before its first render.
 const seeded = new Map()
 function seedHeights() {
     const scroller = scrollerRef.value
