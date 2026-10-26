@@ -16,10 +16,12 @@ CLI_ENRICHED_KEYS: tuple[str, ...] = (
 )
 
 
-def cli_session_payloads(sessions: Iterable) -> list[dict]:
+def cli_session_payloads(
+    sessions: Iterable, *, project_directories: dict[str, str | None] | None = None,
+) -> list[dict]:
     """Serialize and enrich ``sessions`` (``Session`` rows), in input order.
 
-    One query at most, for the project directories the cache lacks.
+    Reuse supplied project directories, or query once for directories the cache lacks.
     ``artifacts_dir`` (from the serializer) is always the path to write to. (``has_artifacts`` says
     whether it holds anything only when the backend runs the command — MCP,
     RPC; in a terminal process the artifacts watcher never started and it is
@@ -34,7 +36,10 @@ def cli_session_payloads(sessions: Iterable) -> list[dict]:
     from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
     sessions = list(sessions)
-    directories = project_directories_cached(s.project_id for s in sessions if s.project_id)
+    directories = (
+        project_directories if project_directories is not None
+        else project_directories_cached(s.project_id for s in sessions if s.project_id)
+    )
     payloads = []
     for session in sessions:
         data = serialize_session(session)

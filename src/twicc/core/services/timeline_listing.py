@@ -7,19 +7,54 @@ from django.db.models import Q, QuerySet
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services.timeline_feed import (
     before_condition,
-    build_sessions_table,
     cited_session_ids,
     format_occurred_at,
     serialize_event,
 )
 
 
+def _reference_tables(
+    events: list[TimelineEvent], *, known_projects: dict[str, Project] | None,
+    known_sessions: dict[str, Session] | None, full: bool, process_rows: dict | None,
+) -> tuple[dict, dict]:
+    """Load page references in batches and reuse the existing public payloads."""
+    from twicc.cli._process_state import attach_process_blocks, load_process_rows, resolve_listing_twicc_pid
+    from twicc.cli._session_payload import cli_session_payloads
+    from twicc.core.serializers import serialize_project, slim_session
+    from twicc.project_icons import load_repo_icon_cache
+
+    cited = cited_session_ids(events)
+    sessions = {sid: row for sid, row in (known_sessions or {}).items() if sid in cited}
+    sessions.update(Session.objects.in_bulk(cited - sessions.keys()))
+    project_ids = {event.project_id for event in events if event.project_id}
+    project_ids.update(row.project_id for row in sessions.values() if row.project_id)
+    projects = {pid: row for pid, row in (known_projects or {}).items() if pid in project_ids}
+    projects.update(Project.objects.in_bulk(project_ids - projects.keys()))
+
+    payloads = cli_session_payloads(
+        [sessions[sid] for sid in sorted(sessions)],
+        project_directories={pid: row.directory for pid, row in projects.items()},
+    )
+    if not full:
+        payloads = [slim_session(row) for row in payloads]
+    if process_rows is None:
+        roots = [row["id"] for row in payloads if row.get("parent_session_id") is None]
+        process_rows = load_process_rows(roots, resolve_listing_twicc_pid()) if roots else {}
+    attach_process_blocks(payloads, process_rows, slim=not full)
+    if projects:
+        load_repo_icon_cache()
+    return (
+        {row["id"]: row for row in payloads},
+        {pid: serialize_project(projects[pid]) for pid in sorted(projects)},
+    )
+
+
 def fetch_timeline_page(
     *, project_ids: tuple[str, ...] | None, session_id: str | None,
     selected_sessions: QuerySet, require_session_metadata: bool,
     include_instance: bool, limit: int, before: tuple[datetime, int] | None,
-    known_projects: dict[str, dict] | None = None, known_sessions: dict[str, dict] | None = None,
-    workspace: dict | None = None,
+    known_projects: dict[str, Project] | None = None, known_sessions: dict[str, Session] | None = None,
+    workspace: dict | None = None, full: bool = False, process_rows: dict | None = None,
 ) -> dict:
     """Select eligible target events before applying the event page boundary.
 
@@ -54,34 +89,14 @@ def fetch_timeline_page(
     if has_more:
         last = events[-1]
         next_cursor = f"{format_occurred_at(last.occurred_at)},{last.id}"
-    sessions = build_sessions_table(cited_session_ids(events), known_sessions=known_sessions)
-    project_ids_needed = {event.project_id for event in events if event.project_id}
-    project_ids_needed.update(row["project_id"] for row in sessions.values() if row["project_id"])
-    projects = dict(known_projects or {})
-    missing = project_ids_needed - projects.keys()
-    if missing:
-        projects.update((row["id"], row) for row in Project.objects.filter(id__in=sorted(missing)).values(
-            "id", "name", "directory",
-        ))
-
-    # Event projects are recorded history; cited sessions carry their current projects.
-    items = []
-    for event in events:
-        project = projects.get(event.project_id, {})
-        item = serialize_event(event)
-        item.update(
-            session_title=sessions.get(event.session_id, {}).get("title"),
-            project_name=project.get("name") or None,
-            project_directory=project.get("directory") or None,
-        )
-        items.append(item)
-    for row in sessions.values():
-        project = projects.get(row["project_id"], {})
-        row.update(project_name=project.get("name") or None, project_directory=project.get("directory") or None)
+    sessions, projects = _reference_tables(
+        events, known_projects=known_projects, known_sessions=known_sessions, full=full, process_rows=process_rows,
+    )
     result = {
-        "items": items,
+        "items": [serialize_event(event) for event in events],
         "pagination": {"limit": limit, "has_more": has_more, "next_cursor": next_cursor},
         "sessions": sessions,
+        "projects": projects,
     }
     if workspace is not None:
         result["workspace"] = workspace

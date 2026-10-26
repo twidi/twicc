@@ -1,15 +1,18 @@
 """Timeline orchestration with shared session selection and scope validation."""
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from twicc.cli._output import emit_error, emit_json, resolve_limit
+
+if TYPE_CHECKING:
+    from twicc.core.models import Project, Session
 
 
 class TimelineScope(NamedTuple):
     project_ids: tuple[str, ...] | None
     session_id: str | None
-    projects: dict[str, dict]
-    sessions: dict[str, dict]
+    projects: dict[str, "Project"]
+    sessions: dict[str, "Session"]
     workspace: dict | None
 
 
@@ -23,7 +26,7 @@ def resolve_timeline_scope(
     from twicc.workspaces import read_workspaces
 
     if project is not None:
-        metadata = Project.objects.filter(pk=project).values("id", "name", "directory").first()
+        metadata = Project.objects.filter(pk=project).first()
         if metadata is None:
             emit_error(f"Error: project '{project}' not found.")
         return TimelineScope(tuple(project_scope_ids(project)), None, {project: metadata}, {}, None)
@@ -33,13 +36,11 @@ def resolve_timeline_scope(
             emit_error(f"Error: workspace '{workspace}' not found.")
         return TimelineScope(
             tuple(expand_project_ids_with_worktrees(definition.get("projectIds", []))), None, {}, {},
-            {"id": workspace, "name": definition.get("name") or None},
+            definition,
         )
     if session is not None:
         session_id = resolve_explicit_ids([session])[0]
-        metadata = Session.objects.filter(pk=session_id).values(
-            "id", "title", "project_id", "provider", "hidden", "archived",
-        ).first()
+        metadata = Session.objects.filter(pk=session_id).first()
         if metadata is None:
             emit_error(f"Error: session '{session_id}' not found.")
         return TimelineScope(None, session_id, {}, {session_id: metadata}, None)
@@ -53,7 +54,7 @@ def main(
     descendants: str | None = None, siblings: str | None = None,
     state: list[str] | None = None, active: bool = False,
     include_hidden: bool = False, only_hidden: bool = False, include_archived: bool = False,
-    limit: int | None = None, before: str | None = None,
+    limit: int | None = None, before: str | None = None, full: bool = False,
 ) -> None:
     """Return a timeline page. Session filters use current metadata."""
     import django
@@ -79,7 +80,7 @@ def main(
         emit_error(f"Error: {exc}", code=2)
 
     filiation = any(value is not None for value in (spawned_by, spawn_tree, descendants, siblings))
-    selected, _ = build_filtered_queryset(
+    selected, process_rows = build_filtered_queryset(
         archived=True, require_indexed=False, root_only=filiation,
         provider=provider, annotation=annotation, spawned_by=spawned_by, spawn_tree=spawn_tree,
         descendants=descendants, siblings=siblings, state=state, active=active,
@@ -100,4 +101,5 @@ def main(
         require_session_metadata=require_metadata,
         include_instance=not require_metadata and scope.project_ids != (), limit=limit, before=boundary,
         known_projects=scope.projects, known_sessions=scope.sessions, workspace=scope.workspace,
+        full=full, process_rows=process_rows,
     ))

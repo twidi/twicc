@@ -1545,6 +1545,7 @@ def timeline(
     ),
     limit: int = typer.Option(None, "--limit", help="Maximum events per page (default: 20; range: 1–100)."),
     before: str = typer.Option(None, "--before", help="Previous next_cursor value; keep the same filters for older pages."),
+    full: bool = typer.Option(False, "--full", help=FULL_HELP),
 ) -> None:
     """Read recorded timeline events, newest first, with cursor pagination.
 
@@ -1562,7 +1563,7 @@ def timeline(
         workspace=workspace, session=session, provider=provider, annotation=annotation,
         spawned_by=spawned_by, spawn_tree=spawn_tree, descendants=descendants, siblings=siblings,
         state=state, active=active, include_hidden=include_hidden, only_hidden=only_hidden,
-        include_archived=include_archived, limit=limit, before=before,
+        include_archived=include_archived, limit=limit, before=before, full=full,
     )
 
 
