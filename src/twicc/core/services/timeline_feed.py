@@ -10,6 +10,18 @@ Two query shapes matter for speed (measured on SQLite, no ANALYZE as in producti
 * ``after_id`` reads a primary-key range. The scope columns carry a unary plus (``+project_id``) so the
   planner cannot pick a project or provider index, which would read every event of the scope for a
   handful of new rows.
+
+Filters (design ``docs/plans/2026-10-26-timeline-filters-design.md`` sections 4.5, 6 and 7): the providers
+and the session filter are scope columns, the view, families and authors are one predicate
+(``timeline_filters.match_q``). A page query has ONE plain scope column, the most selective (the session,
+else the projects, else the providers); the other scope columns carry a unary plus, because two plain ones
+make SQLite pick the wrong index (225 ms against 0.1 ms for a session and a provider on a million rows).
+``match_q`` is a plain predicate on top: every ``kind`` comparison in it carries a unary plus, so it never
+drives an index and the query keeps walking its index in order, stopping at ``limit + 1`` matching rows.
+A provider filter keeps every row without a provider: the instance rows, read by their own query as
+before, and the session rows no source could name, read by a third query on the provider index
+(``provider IS NULL``). The ``after_id`` fetch reads the scope range first (``truncated`` speaks of the
+range), then applies ``match_q`` to the ids of that range.
 """
 
 from __future__ import annotations
@@ -20,11 +32,13 @@ from datetime import UTC, datetime
 from typing import NamedTuple
 
 from django.db import connection
-from django.db.models import BooleanField
+from django.db.models import BooleanField, CharField, F, Func, Q
 from django.db.models.expressions import RawSQL
+from django.db.models.lookups import In, IsNull
 
 from twicc.core.enums import Provider
 from twicc.core.models import Session, TimelineActor, TimelineEvent, TimelineKind
+from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, VIEWS, TimelineFilter, match_q
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -36,6 +50,7 @@ SESSION_LOOKUP_CHUNK = 500
 
 _INTEGER = re.compile(r"[+-]?\d+")
 _MAX_INTEGER_TEXT = 24
+_PROVIDERS = tuple(provider.value for provider in Provider)
 
 
 class FeedError(ValueError):
@@ -44,10 +59,10 @@ class FeedError(ValueError):
 
 class FeedRequest(NamedTuple):
     project_ids: tuple[str, ...]  # empty = the global scope
-    provider: str | None
     limit: int
     before: tuple[datetime, int] | None  # (occurred_at in UTC, id)
     after_id: int | None
+    filter: TimelineFilter = TimelineFilter()
 
 
 def format_occurred_at(value: datetime) -> str:
@@ -88,17 +103,38 @@ def parse_cursor(text: str) -> tuple[datetime, int]:
     return occurred_at, event_id
 
 
+def _items(params: Mapping[str, str], name: str) -> tuple[str, ...]:
+    """A comma list: items stripped, empty ones dropped, duplicates collapsed, order kept."""
+    return tuple(dict.fromkeys(item.strip() for item in (params.get(name) or "").split(",") if item.strip()))
+
+
+def _keys(params: Mapping[str, str], name: str, allowed: tuple[str, ...]) -> tuple[str, ...]:
+    """A comma list of keys of ``allowed``; every key of ``allowed`` is the same as none (``()``, design 4.5)."""
+    keys = _items(params, name)
+    if unknown := [key for key in keys if key not in allowed]:
+        raise FeedError(f"Unknown {name}: {', '.join(repr(key[:40]) for key in unknown[:5])}.")
+    if set(keys) >= set(allowed):
+        return ()
+    return keys
+
+
+def _parse_filter(params: Mapping[str, str]) -> TimelineFilter:
+    view = (params.get("view") or "").strip() or "all"
+    if view not in VIEWS:
+        raise FeedError(f"Unknown view: {view[:40]!r}.")
+    return TimelineFilter(
+        view=view,
+        families=_keys(params, "families", tuple(FAMILIES)),
+        authors=_keys(params, "authors", AUTHORS),
+        providers=_keys(params, "provider", _PROVIDERS),
+        session_id=(params.get("session") or "").strip() or None,
+    )
+
+
 def parse_request(params: Mapping[str, str]) -> FeedRequest:
     """Validate the query string. Raises :class:`FeedError` (HTTP 400)."""
-    project_ids = tuple(dict.fromkeys(
-        item.strip() for item in (params.get("project_ids") or "").split(",") if item.strip()
-    ))
-    provider = None
-    if params.get("provider"):
-        try:
-            provider = Provider(params["provider"]).value
-        except ValueError:
-            raise FeedError(f"Unknown provider: {params['provider']!r}.") from None
+    project_ids = _items(params, "project_ids")
+    flt = _parse_filter(params)
     limit = DEFAULT_LIMIT
     if "limit" in params:
         limit = _integer("limit", params["limit"])
@@ -113,7 +149,7 @@ def parse_request(params: Mapping[str, str]) -> FeedRequest:
         after_id = _integer("after_id", params["after_id"])
         if not 0 <= after_id <= MAX_EVENT_ID:
             raise FeedError("after_id must be between 0 and 2**63 - 1.")
-    return FeedRequest(project_ids, provider, limit, before, after_id)
+    return FeedRequest(project_ids, limit, before, after_id, flt)
 
 
 def before_condition(before: tuple[datetime, int]) -> RawSQL:
@@ -125,19 +161,47 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
     )
 
 
+def _unindexed(column: str) -> Func:
+    """``+column``: a scope column that never drives an index (see the module doc).
+
+    An expression, not raw SQL, as ``timeline_filters.kind_in``: the column compiles with its query's alias.
+    """
+    return Func(F(column), template="+%(expressions)s", output_field=CharField())
+
+
 def _page_querysets(request: FeedRequest) -> list:
-    """The main query and, when the main one cannot return them, the instance-events query."""
+    """The queries of one page, merged by :func:`_fetch_page` (see the module doc).
+
+    With a session filter: one query on the session index. Otherwise the main query, the instance-events
+    query when the scope or a provider filter excludes them from the main one, and the query of the session
+    rows without a provider when a provider filter is set.
+    """
+    flt = request.filter
     ordered = TimelineEvent.objects.order_by("-occurred_at", "-id")
-    keyset = [before_condition(request.before)] if request.before else []
-    main = ordered.filter(*keyset)
+    common = [before_condition(request.before)] if request.before else []
+    if (match := match_q(flt)) is not None:
+        common.append(match)
+    unindexed_projects = [Q(In(_unindexed("project_id"), request.project_ids))] if request.project_ids else []
+    if flt.session_id is not None:
+        query = ordered.filter(*common, *unindexed_projects, session_id=flt.session_id)
+        if flt.providers:
+            provider = _unindexed("provider")
+            query = query.filter(Q(In(provider, flt.providers)) | Q(IsNull(provider, True)))
+        return [query]
+    main = ordered.filter(*common)
     if request.project_ids:
         main = main.filter(project_id__in=request.project_ids)
-    if request.provider:
-        main = main.filter(provider=request.provider)
+        if flt.providers:
+            main = main.filter(In(_unindexed("provider"), flt.providers))
+    elif flt.providers:
+        main = main.filter(provider__in=flt.providers)
     queries = [main]
-    if request.project_ids or request.provider:
+    if request.project_ids or flt.providers:
         # Instance events have no project and no provider: the filters above exclude them.
-        queries.append(ordered.filter(*keyset, session_id__isnull=True))
+        queries.append(ordered.filter(*common, session_id__isnull=True))
+    if flt.providers:
+        # Session rows no source could name a provider for: a provider filter keeps them (design 4.5).
+        queries.append(ordered.filter(*common, *unindexed_projects, provider__isnull=True, session_id__isnull=False))
     return queries
 
 
@@ -152,16 +216,28 @@ def _fetch_page(request: FeedRequest) -> tuple[list[TimelineEvent], bool]:
     return rows[: request.limit], len(rows) > request.limit
 
 
+def _placeholders(values: tuple[str, ...]) -> str:
+    return ", ".join(["%s"] * len(values))
+
+
 def _after_scope(request: FeedRequest) -> RawSQL | None:
-    """Scope of an ``after_id`` fetch, instance events included, with unary-plus columns (see the module doc)."""
+    """Scope of an ``after_id`` fetch, with unary-plus columns (see the module doc).
+
+    Instance events are included, unless a session filter is set (it hides them, design 4.5).
+    """
+    flt = request.filter
     clauses: list[str] = []
     params: list[str] = []
     if request.project_ids:
-        clauses.append(f"+project_id IN ({', '.join(['%s'] * len(request.project_ids))})")
+        clauses.append(f"+project_id IN ({_placeholders(request.project_ids)})")
         params.extend(request.project_ids)
-    if request.provider:
-        clauses.append("+provider = %s")
-        params.append(request.provider)
+    if flt.providers:
+        clauses.append(f"(+provider IN ({_placeholders(flt.providers)}) OR +provider IS NULL)")
+        params.extend(flt.providers)
+    if flt.session_id is not None:
+        clauses.append("+session_id = %s")
+        params.append(flt.session_id)
+        return RawSQL(f"({' AND '.join(clauses)})", params, output_field=BooleanField())
     if not clauses:
         return None
     return RawSQL(f"(({' AND '.join(clauses)}) OR +session_id IS NULL)", params, output_field=BooleanField())
@@ -177,9 +253,19 @@ def _after_queryset(request: FeedRequest):
 
 
 def _fetch_after(request: FeedRequest) -> tuple[list[TimelineEvent], bool]:
-    """Events with an id above ``after_id``, id ascending, at most :data:`AFTER_ID_CAP`, and ``truncated``."""
-    rows = list(_after_queryset(request))
-    return rows[:AFTER_ID_CAP], len(rows) > AFTER_ID_CAP
+    """Events with an id above ``after_id``, id ascending, and ``truncated``.
+
+    The cap applies to the scope range, before the view, families and authors: ``truncated`` says the range
+    holds more than :data:`AFTER_ID_CAP` rows, even when fewer of them match, so the client reloads.
+    """
+    match = match_q(request.filter)
+    if match is None:
+        rows = list(_after_queryset(request))
+        return rows[:AFTER_ID_CAP], len(rows) > AFTER_ID_CAP
+    range_ids = list(_after_queryset(request).values_list("id", flat=True))
+    truncated = len(range_ids) > AFTER_ID_CAP
+    rows = list(TimelineEvent.objects.filter(match, id__in=range_ids[:AFTER_ID_CAP]).order_by("id"))
+    return rows, truncated
 
 
 def cited_session_ids(events: list[TimelineEvent]) -> set[str]:

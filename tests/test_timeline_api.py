@@ -14,6 +14,7 @@ from twicc.auth.middleware import _is_data_path
 from twicc.core.models import Project, Session, TimelineEvent
 from twicc.core.services import timeline_feed
 from twicc.core.services.timeline_feed import AFTER_ID_CAP, FeedError, parse_request
+from twicc.core.services.timeline_filters import TimelineFilter
 from twicc.pending_titles import pop_pending_title, set_pending_title
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -230,9 +231,13 @@ def test_a_row_that_both_queries_return_is_listed_once(projects):
 
 @pytest.mark.parametrize("params,queries", [
     ({}, 1),                                          # global, no provider: the main query already holds them
-    ({"provider": "codex"}, 2),                       # global with a provider: a second query
+    ({"provider": "codex"}, 3),                       # global with a provider: instance + null-provider queries
     ({"project_ids": "-tl-api-a"}, 2),                # scoped
-    ({"project_ids": "-tl-api-a", "provider": "codex"}, 2),
+    ({"project_ids": "-tl-api-a", "provider": "codex"}, 3),
+    ({"session": "s1"}, 1),                           # a session filter: one query, no instance row
+    ({"session": "s1", "provider": "codex"}, 1),
+    ({"session": "s1", "project_ids": "-tl-api-a"}, 1),
+    ({"session": "s1", "project_ids": "-tl-api-a", "provider": "codex"}, 1),
 ])
 def test_the_instance_events_query_runs_in_every_case_but_the_global_one_without_provider(params, queries):
     assert len(timeline_feed._page_querysets(parse_request(params))) == queries
@@ -245,7 +250,8 @@ def test_the_provider_filter_keeps_only_that_provider_and_instance_events():
     codex = make_event(at=1, provider="codex")
     make_event(at=2, provider="claude_code")
     boot = make_instance_event(at=3)
-    assert ids(call(provider="codex").json()) == [boot.id, codex.id]
+    unnamed = make_event(session_id="s9", at=4, provider=None)  # a session row no source could name
+    assert ids(call(provider="codex").json()) == [unnamed.id, boot.id, codex.id]
 
 
 @pytest.mark.parametrize("params", [
@@ -294,7 +300,7 @@ def test_the_documented_limits():
 
 def test_parse_request_defaults_and_normalisation():
     request = parse_request({"project_ids": "a,b,a", "provider": "codex"})
-    assert request == timeline_feed.FeedRequest(("a", "b"), "codex", 50, None, None)
+    assert request == timeline_feed.FeedRequest(("a", "b"), 50, None, None, TimelineFilter(providers=("codex",)))
     assert parse_request({"limit": " 7 "}).limit == 7
     with pytest.raises(FeedError):
         parse_request({"limit": "0"})
@@ -552,3 +558,66 @@ def test_the_after_id_query_scans_a_primary_key_range_never_a_scope_index(busy, 
     _, plan = plan_of(timeline_feed._after_queryset(request))
     assert "INTEGER PRIMARY KEY" in plan
     assert "idx_timeline_project" not in plan and "idx_timeline_provider" not in plan
+
+
+FILTER_PARAMS = [{"families": "turns"}, {"families": "sessions,processes"}, {"view": "without_turns"},
+                 {"view": "waits_problems"}]
+
+
+@pytest.mark.parametrize("scope", [None, "-tl-api-a"])
+@pytest.mark.parametrize("params", FILTER_PARAMS)
+def test_a_family_or_view_filter_keeps_the_ordered_index_and_sorts_nothing(busy, params, scope):
+    scope_params = {"project_ids": scope} if scope else {}
+    for before in ({}, {"before": CURSOR}):
+        request = parse_request({**params, **scope_params, **before})
+        _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+        assert "USE TEMP B-TREE" not in plan, plan
+        assert "idx_timeline_kind" not in plan and "MULTI-INDEX OR" not in plan, plan
+        assert ("idx_timeline_project" if scope else "idx_timeline_occurred") in plan, plan
+
+
+@pytest.mark.parametrize("params", FILTER_PARAMS)
+def test_a_family_or_view_filter_in_a_multi_project_scope_never_uses_the_kind_index(busy, params):
+    # A multi-value ``IN`` sorts per value (harmless: SQLite stops at the limit per value).
+    request = parse_request({**params, "project_ids": "-tl-api-a,-tl-api-b", "before": CURSOR})
+    _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+    assert "idx_timeline_kind" not in plan and "MULTI-INDEX OR" not in plan, plan
+
+
+@pytest.mark.parametrize("params", [
+    {"session": "s1"},
+    {"session": "s1", "provider": "codex"},
+    {"session": "s1", "project_ids": "-tl-api-a"},
+    {"session": "s1", "provider": "codex", "project_ids": "-tl-api-a"},
+    {"session": "s1", "provider": "codex", "project_ids": "-tl-api-a,-tl-api-b", "families": "turns"},
+])
+def test_a_session_filter_uses_the_session_index(busy, params):
+    for before in ({}, {"before": CURSOR}):
+        (query,) = timeline_feed._page_querysets(parse_request({**params, **before}))
+        _, plan = plan_of(query)
+        assert "USING INDEX idx_timeline_session (" in plan, plan
+        assert "USE TEMP B-TREE" not in plan, plan
+
+
+@pytest.mark.parametrize("scope", [None, "-tl-api-a", "-tl-api-a,-tl-api-b"])
+def test_the_null_provider_query_uses_the_provider_index(busy, scope):
+    params = {"provider": "codex", "before": CURSOR}
+    if scope:
+        params["project_ids"] = scope
+    _, plan = plan_of(timeline_feed._page_querysets(parse_request(params))[2])
+    assert "idx_timeline_provider" in plan and "USE TEMP B-TREE" not in plan, plan
+
+
+def test_a_scoped_provider_filter_keeps_the_project_index(busy):
+    request = parse_request({"provider": "codex", "project_ids": "-tl-api-a", "before": CURSOR})
+    _, plan = plan_of(timeline_feed._page_querysets(request)[0])
+    assert "idx_timeline_project" in plan and "USE TEMP B-TREE" not in plan, plan
+
+
+@pytest.mark.parametrize("params", [
+    {"session": "s1"}, {"session": "s1", "provider": "codex", "project_ids": "-tl-api-a"},
+    {"families": "turns", "provider": "codex"},
+])
+def test_the_after_id_query_with_filters_still_scans_a_primary_key_range(busy, params):
+    _, plan = plan_of(timeline_feed._after_queryset(parse_request({**params, "after_id": "5"})))
+    assert "INTEGER PRIMARY KEY" in plan and "idx_timeline" not in plan, plan

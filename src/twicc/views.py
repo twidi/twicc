@@ -3418,14 +3418,24 @@ async def timeline(request):
 
     Query params (all optional):
         project_ids: Comma-separated project ids. Empty or missing means the global scope.
-        provider: Provider key; unknown value: 400. Instance events (``backend.*``) are always included.
+        provider: Comma-separated provider keys. Rows without a provider (instance events ``backend.*``,
+                  session rows no source could name) are always included.
+        view: ``all`` (default), ``without_turns`` or ``waits_problems``.
+        families: Comma-separated event families (``sessions``, ``processes``, ``turns``, ``waits``,
+                  ``settings``, ``organization``, ``twicc``).
+        authors: Comma-separated "Done by" values (``unknown``, ``automatic``, ``you``, ``agent_cli_mcp``,
+                 ``external_mcp``, ``session_agent``).
+        session: A session id: only its rows, instance events excluded.
+        In each comma list, empty items are dropped and a list naming every value is no filter; an unknown
+        value or view: 400. The filters apply to the first page, ``before`` pages and ``after_id``.
         limit: Page size, 1..100 (default 50, larger values are capped to 100); anything else: 400.
         before: Keyset cursor ``<occurred_at>,<id>``, the exact string the server returned.
         after_id: Live fetch: events with a greater id, id ascending, at most 500 (``truncated``).
                   Mutually exclusive with ``before``.
 
     Returns ``{"events", "has_more", "truncated", "latest_id", "sessions"}``. Read-only.
-    Design: ``docs/plans/2026-10-15-timeline-display-design.md`` section 7.
+    Design: ``docs/plans/2026-10-15-timeline-display-design.md`` section 7; filters:
+    ``docs/plans/2026-10-26-timeline-filters-design.md`` sections 4 to 7.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
