@@ -10,7 +10,7 @@
 
 **Spec:** `docs/plans/2026-10-26-timeline-cli-spec.md` (commit `eaa7266ee`). Read the entire spec before execution.
 
-**Metadata follow-up:** CLI/RPC/MCP events include current session titles and project names/directories. Workspace scope returns its ID and name. Batch metadata reads, reuse resolved scope metadata, and keep REST response shapes unchanged. Query-budget and transport checks live in `tests/test_timeline_enrichment.py` and `tests/test_timeline_transports.py`.
+**Metadata follow-up:** Keep event IDs and centralize standard serialized references in `sessions` and `projects`. Sessions match `twicc sessions`, with `--full` for every field. Projects and the selected workspace use their complete serialized forms. Batch metadata reads, reuse resolved scope model instances and process rows, and keep REST response shapes unchanged. Query-budget and transport checks live in `tests/test_timeline_enrichment.py` and `tests/test_timeline_transports.py`.
 
 ## Global Constraints
 
@@ -131,7 +131,7 @@ Body: explain the two opt-in policies and preservation of existing caller defaul
 
 **Interfaces:**
 - Rename `_keyset(before)` to `before_condition(before)` and `_cited_session_ids(events)` to `cited_session_ids(events)` in `timeline_feed.py`; update its internal call sites.
-- Reuse `parse_cursor(text)`, `format_occurred_at(value)`, and `serialize_event(event)` unchanged. Let `build_sessions_table` reuse known session rows without changing its default REST output.
+- Reuse `parse_cursor(text)`, `format_occurred_at(value)`, and `serialize_event(event)` unchanged. Keep the compact REST `build_sessions_table` unchanged. Use the shared CLI session payload and process helpers for CLI references.
 - Produce this sync read function in `timeline_listing.py`:
 
 ```python
@@ -139,17 +139,17 @@ def fetch_timeline_page(
     *, project_ids: tuple[str, ...] | None, session_id: str | None,
     selected_sessions: QuerySet, require_session_metadata: bool,
     include_instance: bool, limit: int, before: tuple[datetime, int] | None,
-    known_projects: dict[str, dict] | None = None, known_sessions: dict[str, dict] | None = None,
-    workspace: dict | None = None,
+    known_projects: dict[str, Project] | None = None, known_sessions: dict[str, Session] | None = None,
+    workspace: dict | None = None, full: bool = False, process_rows: dict | None = None,
 ) -> dict:
     ...
 ```
 
 `None` project IDs means global. `()` means a strictly empty scope.
 `selected_sessions` is an unsliced `Session` queryset from Task 1, with scope restrictions applied by Task 3.
-The service returns `items`, `pagination`, and `sessions`, plus `workspace` for workspace scope, as spec §8.
-Reuse known project/session rows from scope resolution. Fetch remaining project labels in one grouped query after paging.
-The cited-session table and event fields share those loaded metadata rows.
+The service returns `items`, `pagination`, `sessions` and `projects`, plus the complete `workspace` for workspace scope, as spec §8. Session payloads reuse the standard CLI projection and process serialization, with `full` controlling the projection.
+Reuse known project/session rows from scope resolution. Fetch remaining project models in one grouped query after paging.
+The reference tables share those loaded metadata rows; events keep only their recorded fields.
 
 - [ ] **Step 1: Write event-level selection and paging tests.**
 
@@ -164,7 +164,7 @@ def test_empty_project_scope_never_means_global(selected_sessions):
     )
     assert page == {
         "items": [], "pagination": {"limit": 20, "has_more": False, "next_cursor": None},
-        "sessions": {},
+        "sessions": {}, "projects": {},
     }
 ```
 
@@ -226,7 +226,7 @@ Body: explain metadata eligibility, bounded event paging, orphan history, and un
 - Create: `tests/test_cli_timeline.py`
 
 **Interfaces:**
-- Produce `main(*, project: str | None = None, workspace: str | None = None, session: str | None = None, provider: str | None = None, annotation: list[str] | None = None, spawned_by: str | None = None, spawn_tree: str | None = None, descendants: str | None = None, siblings: str | None = None, state: list[str] | None = None, active: bool = False, include_hidden: bool = False, only_hidden: bool = False, include_archived: bool = False, limit: int | None = None, before: str | None = None) -> None`.
+- Produce `main(*, project: str | None = None, workspace: str | None = None, session: str | None = None, provider: str | None = None, annotation: list[str] | None = None, spawned_by: str | None = None, spawn_tree: str | None = None, descendants: str | None = None, siblings: str | None = None, state: list[str] | None = None, active: bool = False, include_hidden: bool = False, only_hidden: bool = False, include_archived: bool = False, limit: int | None = None, before: str | None = None, full: bool = False) -> None`.
 - Main consumes canonical project IDs; the Typer wrapper uses `derive_project_id` exactly as other commands do.
 - Produce `TimelineScope(NamedTuple)` in `cli/timeline.py` with `project_ids: tuple[str, ...] | None`, `session_id: str | None`, loaded `projects` and `sessions` metadata maps, and optional `workspace` metadata.
 - Produce `resolve_timeline_scope(*, project: str | None, workspace: str | None, session: str | None) -> TimelineScope`.

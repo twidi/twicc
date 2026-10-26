@@ -71,15 +71,18 @@ Baseline selections preserve events whose session metadata is missing. `--includ
 {
   "items": [],
   "pagination": {"limit": 20, "has_more": false, "next_cursor": null},
-  "sessions": {}
+  "sessions": {},
+  "projects": {}
 }
 ```
 
-`items` contains serialized events. `sessions` maps cited session IDs to metadata. Missing sessions have no entry.
+`items` contains serialized events with their IDs. Session titles and project labels live in the reference tables.
 
-Each event also carries `session_title`, `project_name`, and `project_directory`. These are current labels for its target session and recorded project. Unknown labels are null. The `sessions` entries also include `project_name` and `project_directory` for each session's current project.
+`sessions` maps cited session IDs to the same payload as `twicc sessions`, including agent settings and `process`. It uses the reduced projection by default. `--full` returns every session field and the full process block, like `twicc sessions --full`. Missing sessions have no entry.
 
-With `--workspace`, the response also contains `"workspace": {"id": "WORKSPACE_ID", "name": "Workspace name"}`, including on empty pages. Other scopes omit this field.
+`projects` maps cited project IDs to complete serialized project objects, including `name` and `directory`. It covers the returned events and their cited sessions. Only references from the returned page are included.
+
+With `--workspace`, `workspace` contains the complete object returned by `twicc workspace`, including on empty pages. Other scopes omit this field. `--full` changes only session metadata.
 
 When `has_more` is true, pass `pagination.next_cursor` unchanged as `--before`. Keep the same scope and filters. Stop when `has_more` is false. There is no `--offset` or `total`.
 
@@ -103,6 +106,12 @@ Read one session, including its events when hidden:
 
 ```bash
 $TWICC timeline --session SESSION_ID --include-hidden
+```
+
+Include complete session metadata:
+
+```bash
+$TWICC timeline --session SESSION_ID --include-hidden --full
 ```
 
 Select either process state:

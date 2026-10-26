@@ -24,8 +24,9 @@ a worktree only itself. Session filters use current metadata: annotation, filiat
 Hidden excluded by default; filiation includes them as in sessions. Use include_hidden or only_hidden. \
 Archived sessions always included.
 
-Items include session_title, project_name and project_directory. sessions maps cited IDs to current metadata. \
-Workspace scope also returns workspace {id, name}. Unknown labels are null. \
+Events carry IDs; sessions and projects map cited IDs to serialized objects. Sessions use the sessions command's \
+reduced format; full=true includes every session field and the full process block. Projects are fully serialized. \
+Workspace scope also returns the complete workspace object. \
 pagination: limit (default 20, max 100), has_more, next_cursor. Pass next_cursor as before with the same filters. \
 No offset or total. Instance events appear only in baseline scopes without explicit session-selection filters.""",
     "send-message": """Send a message to an existing session.

@@ -23,7 +23,7 @@ Keep the CLI default page size of 20 events.
 Exclude hidden sessions by default. Include archived sessions by default.
 Filiation filters implicitly include hidden sessions, matching `sessions`.
 
-The response details and edge-case policies below are specification proposals, not additional Human decisions.
+The response details and edge-case policies below define the reviewed contract, including subsequent Human-requested metadata changes.
 They make the contract reviewable before implementation.
 
 ### Out of scope
@@ -122,7 +122,7 @@ A conflict returns an empty page. It does not override either selection.
 - Explicit subagent scope remains supported; this does not expand filiation to provider-native subagent trees.
 
 The existing `sessions` command keeps its behavior.
-Output projections such as `--full` and legacy pagination switches are not session filters and are not copied.
+The `--full` projection applies to referenced sessions, independently of selection. Legacy pagination switches are not copied.
 
 ### Current-state consequences
 
@@ -200,7 +200,8 @@ Do not expose internal deduplication or write-control fields.
     "has_more": false,
     "next_cursor": null
   },
-  "sessions": {}
+  "sessions": {},
+  "projects": {}
 }
 ```
 
@@ -210,30 +211,26 @@ Otherwise, `next_cursor` is null.
 An empty page always has `has_more: false` and `next_cursor: null`.
 
 There is no `offset` or `total` field. This is an explicit cursor-pagination contract, not an offset envelope.
-The `sessions` side table provides the existing compact metadata for sessions cited by returned events.
+The `sessions` side table provides standard CLI session payloads for sessions cited by returned events.
 It does not contain unrelated sessions. Missing session metadata is omitted without dropping eligible events.
 Actor sessions may appear in that side table even when they are hidden; this does not select their events.
 
-### Current labels
+### Serialized references
 
-Each item also carries these nullable fields:
+Events retain their recorded shape. Do not repeat `session_title`, `project_name` or `project_directory` in them.
 
-- `session_title`: the target session's current title, including a pending title.
-- `project_name`: the current name of the event's recorded project, when assigned.
-- `project_directory`: the recorded project's current directory, when known.
+- `sessions`: the same payload as `twicc sessions`, including effective settings and `process`. Use the standard reduced projection by default. `--full` returns the complete session payload and full process block.
+- `projects`: complete `serialize_project` output, keyed by project ID, for projects cited by the events and their sessions.
+- `workspace`: the complete object returned by `twicc workspace` for workspace scope, even on empty pages. Other scopes omit this key.
 
-These fields do not change the recorded event payload in `data`.
-Missing session metadata leaves `session_title` null without dropping eligible history.
-Instance events have null session and project labels.
-The `sessions` table also carries `project_name` and `project_directory` for each cited session's current project.
-If a session moved, its current project can differ from an older event's recorded project.
+`--full` changes only the session projection. It does not change event selection, cursor boundaries or project/workspace serialization.
+Session titles use the existing pending-title handling. Missing sessions have no entry; eligible recorded history remains present.
 
-With workspace scope, the response adds `workspace: {id, name}`, even on an empty page.
-Other scopes omit `workspace`. Reuse the workspace definition read during scope resolution.
-
-Enrichment uses only the returned page and its cited sessions.
-Group session and project metadata reads; never issue a metadata query per event or per session.
-Reuse metadata already loaded for explicit project and session scopes.
+Load only the returned page's references, excluding lookahead rows.
+Group session, project and process reads; never issue a metadata query per event or per session.
+Reuse fully loaded model instances from explicit project and session scopes. Do not defer serializer fields.
+Pass loaded project directories to the shared CLI enrichment to avoid another project lookup.
+Reuse process rows already loaded by a state filter. Read the selected workspace definition once.
 
 ## 9. Examples
 

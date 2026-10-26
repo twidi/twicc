@@ -1552,9 +1552,9 @@ def timeline(
     Choose one scope: all projects (default), --project, --workspace or --session.
     Session filters use current metadata. Hidden sessions are excluded unless
     filiation filters or visibility flags include them. Archived sessions are included.
-    Returns items with session_title, project_name and project_directory;
-    pagination (limit, has_more, next_cursor); and cited-session metadata.
-    Workspace scope also returns workspace (id, name). Unknown labels are null.
+    Returns items, pagination (limit, has_more, next_cursor), sessions and projects.
+    Sessions use the sessions command's format: reduced by default, complete with --full.
+    Projects are fully serialized. Workspace scope also returns the complete workspace.
     """
     from twicc.cli.timeline import main as timeline_main
 
