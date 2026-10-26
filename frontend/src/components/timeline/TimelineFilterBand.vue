@@ -11,7 +11,7 @@
 // its own row), `compact` (short view labels, the button's label visually hidden; the button wraps under the
 // views when it still does not fit). Nothing scrolls sideways.
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { useTimelineFiltersStore } from '../../stores/timelineFilters'
 import { getProviderHelpers } from '../../providers'
 import { AUTHORS, FAMILIES, PROVIDERS, VIEWS, activeCount, groupPills } from '../../utils/timeline/filters'
@@ -77,8 +77,11 @@ function setRemoveRef(group, element) {
 
 const controller = createPanelController()
 
+// The band is the whole sticky band (StickyBand.vue, spec 3.1), its padding included: a click there is not a click
+// outside the band (spec 3.2).
 function onBandClick(event) {
-    controller.onBandClick(event, { band: rootRef.value, button: buttonRef.value })
+    const root = rootRef.value
+    controller.onBandClick(event, { band: root?.closest?.('.sticky-band') ?? root, button: buttonRef.value })
 }
 
 // The popover's own events only: a nested wa-checkbox or wa-button fires none of these today, but any wa-* child
@@ -98,9 +101,18 @@ function onPopoverAfterHide(event) {
     controller.onAfterHide({ button: buttonRef.value })
 }
 
+// The panel is closed when the timeline leaves the screen (spec 5): the tab changes (`active`), or the page is
+// detached by KeepAlive (a session opened) or unmounted, which may happen without `active` changing first. A
+// detached popover has lost its document listeners: left open, it would still be open on return.
+function closePanelFromCode() {
+    if (popoverRef.value) controller.closeFromCode(popoverRef.value)
+}
+
 watch(() => props.active, (active) => {
-    if (!active && popoverRef.value) controller.closeFromCode(popoverRef.value)
+    if (!active) closePanelFromCode()
 })
+onDeactivated(closePanelFromCode)
+onBeforeUnmount(closePanelFromCode)
 
 const filtersButton = () => buttonRef.value
 
@@ -156,6 +168,12 @@ async function clearAll() {
 // happens when the available width (the `clientWidth` of that line, which fills its row) reaches the record of
 // the level above, and writes nothing. A level change is measured again once rendered (`settled`): a reading of
 // the DOM of the previous level would be stale.
+//
+// The ResizeObserver callback never measures: it asks for one animation frame that does (utils/detailsMotion.js does
+// the same). A level change resizes the band, so the panel's own observer on StickyBand (the top room) sees it;
+// done inside the observer broadcast, that resize would land on an already-notified (shallower) target, and the
+// browser reports "ResizeObserver loop completed with undelivered notifications". The cost: the frame of the
+// resize is painted at the previous level (clipped, never scrolled sideways); the frame after it has the new one.
 
 const layout = ref('line')
 const records = { line: null, stacked: null }
@@ -207,16 +225,31 @@ watch(count, () => {
 }, { flush: 'post' })
 
 let observer = null
+let frame = 0
+
+/** One measure in the next animation frame, outside any ResizeObserver broadcast (see above). */
+function scheduleMeasure() {
+    if (frame) return
+    frame = requestAnimationFrame(() => {
+        frame = 0
+        measure()
+    })
+}
+
 onMounted(() => {
     measure()
     if (typeof ResizeObserver === 'undefined') return
-    observer = new ResizeObserver(measure)
+    observer = new ResizeObserver(scheduleMeasure)
     // The lines AND their children: a child that grows (a label) does not always resize its line.
     for (const element of [lineRef.value, controlsRef.value, viewsRef.value?.$el, buttonRef.value]) {
         if (element) observer.observe(element)
     }
 })
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+    observer?.disconnect()
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
+})
 
 const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compact'
     ? { value: view.value, label: view.short, title: view.label }

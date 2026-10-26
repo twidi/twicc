@@ -13,9 +13,6 @@ import { createPanelController } from '../../utils/timeline/panelController.js'
 const SOURCE = readFileSync(new URL('./TimelineFilterBand.vue', import.meta.url), 'utf8')
 const STYLE = SOURCE.slice(SOURCE.indexOf('<style'))
 
-// The band reads the focused element when the panel closes.
-globalThis.document = { activeElement: null }
-
 const SegmentedControl = compileComponent(new URL('../ui/SegmentedControl.vue', import.meta.url), {
     '../../composables/useGlideInk': { useGlideInk: () => {} },
 })
@@ -80,6 +77,34 @@ function widthsOf(element, root, width) {
     return { scroll: width, client: width }
 }
 
+/** Set a global for one test, restored after it. */
+function setGlobal(t, name, value) {
+    const had = Object.hasOwn(globalThis, name)
+    const previous = globalThis[name]
+    globalThis[name] = value
+    t.after(() => {
+        if (had) globalThis[name] = previous
+        else delete globalThis[name]
+    })
+}
+
+/** A fake requestAnimationFrame, set on `globalThis` for one test: the callbacks wait in `frames`. */
+function installAnimationFrames(t) {
+    const frames = []
+    setGlobal(t, 'requestAnimationFrame', (callback) => frames.push(callback))
+    setGlobal(t, 'cancelAnimationFrame', (id) => { frames[id - 1] = null })
+    /** Run the frames asked so far (and the ones they ask), as the browser does before its next paints. */
+    const runFrames = () => {
+        for (let index = 0; index < frames.length; index++) {
+            const callback = frames[index]
+            frames[index] = null
+            callback?.()
+        }
+        frames.length = 0
+    }
+    return { frames, runFrames }
+}
+
 /** A fake ResizeObserver, set on `globalThis` for one test. */
 function installResizeObserver(t) {
     const observers = []
@@ -103,12 +128,19 @@ function installResizeObserver(t) {
     return observers
 }
 
+const Elsewhere = { setup: () => () => Vue.h('section', 'a session') }
+
 /**
- * Mount one band (or two, `count: 2`) in one app, with a fresh Pinia unless one is given.
- * Returns the root, the store, its recorded actions, the focus log and the props.
+ * Mount one band (or two, `bands: 2`) in one app, inside the StickyBand element (`.sticky-band`), with a fresh
+ * Pinia unless one is given. `keepAlive`: the band is the child of a KeepAlive, `setShown(false)` swaps it for
+ * another view (it is deactivated, not unmounted). Returns the root, the store, its recorded actions, the focus
+ * log and the props.
  */
-async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false } = {}) {
+async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false, keepAlive = false } = {}) {
     controllerCalls = []
+    // The band reads the focused element when the panel closes.
+    setGlobal(t, 'document', { activeElement: null })
+    const { frames, runFrames } = installAnimationFrames(t)
     const observers = resizeObserver ? installResizeObserver(t) : []
     const store = useTimelineFiltersStore(pinia)
     const actions = []
@@ -135,6 +167,13 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
                 return true
             },
         })
+        element.closest = (selector) => {
+            assert.match(selector, /^\.[\w-]+$/, 'the test renderer knows class selectors only')
+            for (let current = element; current; current = current.parent) {
+                if (classesOf(current).split(' ').includes(selector.slice(1))) return current
+            }
+            return null
+        }
         element.contains = (other) => {
             for (let current = other; current; current = current.parent) if (current === element) return true
             return false
@@ -153,20 +192,28 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     rootNode = root
     const props = Vue.reactive({ pageId, active })
     const bandRefs = []
+    const shown = Vue.ref(true)
+    const renderBands = () => Array.from({ length: bands }, (_, index) => Vue.h(Band, { ...props, ref: (instance) => { bandRefs[index] = instance } }))
     const app = renderer.createApp({
-        render: () => Array.from({ length: bands }, (_, index) => Vue.h(Band, { ...props, ref: (instance) => { bandRefs[index] = instance } })),
+        render: () => Vue.h('div', { class: 'sticky-band glass-sticky' }, keepAlive
+            ? [Vue.h(Vue.KeepAlive, null, { default: () => (shown.value ? renderBands()[0] : Vue.h(Elsewhere)) })]
+            : renderBands()),
     })
     app.use(pinia)
     app.mount(root)
-    t.after(() => app.unmount())
+    let mounted = true
+    t.after(() => { if (mounted) app.unmount() })
     await flush()
-    /** Resize the panel: every observer fires, as the browser does after a layout. */
+    /** Resize the panel: every observer fires, as the browser does after a layout, then the frames they ask run. */
     const resize = async (next) => {
         view.width = next
         for (const observer of observers) if (!observer.disconnected) observer.callback([])
+        runFrames()
         await flush()
     }
-    return { root, store, actions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog }
+    const setShown = async (value) => { shown.value = value; await flush() }
+    const unmount = () => { app.unmount(); mounted = false }
+    return { root, store, actions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog, frames, runFrames, setShown, unmount }
 }
 
 const popoverOf = (root) => descendants(root, (node) => node.type === 'wa-popover')[0]
@@ -439,11 +486,73 @@ test('a band click on a view keeps the panel open; a click on the Filters button
     popover.props.onWaShow({ target: popover, currentTarget: popover })
     controllerCalls = []
     band.props.onClickCapture({ target: radiosOf(root)[1] })
-    assertSame(Vue.toRaw(controllerCalls[0][2].band), band)
+    assertSame(Vue.toRaw(controllerCalls[0][2].band), byClass(root, 'sticky-band')[0], 'the whole sticky band')
     assertSame(Vue.toRaw(controllerCalls[0][2].button), filtersButtonOf(root))
     assert.equal(hide(), true)
     band.props.onClickCapture({ target: filtersButtonOf(root) })
     assert.equal(hide(), false)
+})
+
+test('a click on the padding of the sticky band is a click in the band: the panel stays open', async (t) => {
+    const { root } = await mount(t)
+    const [stickyBand] = byClass(root, 'sticky-band')
+    const [band] = byClass(root, 'timeline-filter-band')
+    const popover = popoverOf(root)
+    const hide = () => {
+        const event = { target: popover, currentTarget: popover, prevented: false, preventDefault() { event.prevented = true } }
+        popover.props.onWaHide(event)
+        return event.prevented
+    }
+    popover.props.onWaShow({ target: popover, currentTarget: popover })
+    controllerCalls = []
+    band.props.onClickCapture({ target: stickyBand })
+    assertSame(Vue.toRaw(controllerCalls[0][2].band), stickyBand, 'the band boundary is the StickyBand root')
+    assert.equal(hide(), true)
+    // Outside the sticky band (the list): it closes.
+    band.props.onClickCapture({ target: root })
+    assert.equal(hide(), false)
+})
+
+test('without a StickyBand around it, the band boundary is the band root', async (t) => {
+    const { root } = await mount(t)
+    const [band] = byClass(root, 'timeline-filter-band')
+    // Detach the wrapper's class: no `.sticky-band` ancestor any more.
+    byClass(root, 'sticky-band')[0].props.class = 'other'
+    controllerCalls = []
+    band.props.onClickCapture({ target: radiosOf(root)[0] })
+    assertSame(Vue.toRaw(controllerCalls[0][2].band), band)
+})
+
+test('a page detached by KeepAlive with the panel open closes it from the code; it stays closed on return', async (t) => {
+    const { root, setShown } = await mount(t, { keepAlive: true })
+    const popover = popoverOf(root)
+    popover.open = true
+    popover.props.onWaShow({ target: popover, currentTarget: popover })
+    controllerCalls = []
+    // A session opened: the page is deactivated while `active` is still true.
+    await setShown(false)
+    assert.equal(byClass(root, 'timeline-filter-band').length, 0, 'detached')
+    assert.deepEqual(controllerCalls.map(([name]) => name), ['closeFromCode'])
+    assert.equal(popover.open, false)
+    await setShown(true)
+    assertSame(popoverOf(root), popover, 'the same band, reactivated')
+    assert.equal(popover.open, false)
+    assert.deepEqual(controllerCalls.map(([name]) => name), ['closeFromCode'])
+})
+
+test('unmounting the band with the panel open closes it from the code', async (t) => {
+    const { root, unmount } = await mount(t)
+    const popover = popoverOf(root)
+    popover.open = true
+    popover.props.onWaShow({ target: popover, currentTarget: popover })
+    controllerCalls = []
+    unmount()
+    assert.deepEqual(controllerCalls.map(([name]) => name), ['closeFromCode'])
+    assert.equal(popover.open, false)
+})
+
+test('the document global of the band tests is restored after each test', () => {
+    assert.ok(!Object.hasOwn(globalThis, 'document') || globalThis.document?.activeElement === undefined)
 })
 
 test('leaving the timeline closes the panel from the code; on return it stays closed', async (t) => {
@@ -557,15 +666,46 @@ test('the count disappearing from compact measures again from the first level', 
     assert.equal(levelOf(root), 'stacked', 'without the count the views line fits (436 px)')
 })
 
+test('the ResizeObserver callback never changes the level itself: it asks one frame, which measures', async (t) => {
+    const { root, observers, view, frames, runFrames, levelLog } = await mount(t, { resizeObserver: true, width: 600 })
+    view.width = 300
+    observers[0].callback([])
+    observers[0].callback([])
+    // The callback and the microtask checkpoint after it: still inside the broadcast, no level change.
+    await flush()
+    assert.equal(levelOf(root), 'line')
+    assert.equal(frames.filter(Boolean).length, 1, 'two callbacks, one frame')
+    levelLog.length = 0
+    runFrames()
+    await flush()
+    assert.equal(levelOf(root), 'compact', 'the frame measures, then the rendered level is measured again')
+    assert.deepEqual(levelLog, ['stacked', 'compact'])
+    assert.equal(frames.length, 0)
+    assert.match(SOURCE, /observer = new ResizeObserver\(scheduleMeasure\)/)
+})
+
+test('a frame still asked at unmount is cancelled', async (t) => {
+    const { observers, view, frames, unmount } = await mount(t, { resizeObserver: true, width: 600 })
+    view.width = 300
+    observers[0].callback([])
+    assert.equal(frames.filter(Boolean).length, 1)
+    unmount()
+    assert.equal(frames.filter(Boolean).length, 0)
+    assert.equal(observers[0].disconnected, true)
+})
+
 test('a second measure before the render of a level change reads nothing (the DOM is still the previous level)', async (t) => {
-    const { root, observers, view, levelLog } = await mount(t, { resizeObserver: true, width: 600 })
+    const { root, observers, view, frames, levelLog } = await mount(t, { resizeObserver: true, width: 600 })
     // 440 px: the line overflows (532), the views line with full labels fits (436): `stacked`. Read on the DOM of
     // the `line` level, the views line would look overflowing (its content overflows its shrunk box) and the band
     // would wrongly go to `compact`.
     view.width = 440
+    observers[0].callback([])
+    const [frame] = frames
     levelLog.length = 0
-    observers[0].callback([])
-    observers[0].callback([])
+    // Two measures in the same task, before Vue renders the first level change.
+    frame()
+    frame()
     await flush()
     assert.equal(levelOf(root), 'stacked')
     assert.deepEqual(levelLog, ['stacked'], 'no detour through compact')

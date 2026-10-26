@@ -13,10 +13,10 @@
 // negative bottom margin) and the first row of the list (`top`) keeps the room under them, its height measured
 // from them.
 //
-// The scroller and its ONE band stay mounted through every state (filters design section 3.1): the band holds the
-// filter controls (TimelineFilterBand.vue), and swapping it would close their open panel and lose the keyboard focus. Outside
-// the list (loading, empty, not found, error, no match), the event rows are replaced by one state item under
-// the top room.
+// The scroller and its ONE band stay mounted through every state (filters design section 3.1): the band holds
+// the filter controls (TimelineFilterBand.vue), and swapping it would close their open panel and lose the
+// keyboard focus. Outside the list (loading, empty, not found, error, no match), the event rows are replaced by
+// one state item under the top room.
 //
 // The data side lives in utils/timeline/ (pure, tested): which events the scope asks for, the fetch queue,
 // the grouping into rows and the wording of each row. This component wires them to the stores and the DOM.
