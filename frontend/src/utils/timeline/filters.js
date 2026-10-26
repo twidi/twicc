@@ -87,10 +87,25 @@ export function toggleValue(list, value, order) {
     return order.filter((key) => checked.has(key))
 }
 
-/** The checked values of a group in constant order, or null when the group does not filter (none or all, 4.5). */
+/** The checked values of a group: its known keys only, in constant order. Every function below reads these. */
+function checkedValues(list, order) {
+    return order.filter((key) => list.includes(key))
+}
+
+/** The checked values of a group, or null when the group does not filter (none or all, 4.5). */
 function effectiveValues(list, order) {
-    const values = order.filter((key) => list.includes(key))
+    const values = checkedValues(list, order)
     return values.length === 0 || values.length === order.length ? null : values
+}
+
+/** The view, `all` when unset. */
+function viewOf(filters) {
+    return filters.view || DEFAULT_VIEW
+}
+
+/** The session filter when it names a session (an id), else null. */
+function sessionOf(filters) {
+    return filters.session?.id ? filters.session : null
 }
 
 /**
@@ -102,12 +117,14 @@ function effectiveValues(list, order) {
  */
 export function toQuery(filters) {
     const query = {}
-    if (filters.view && filters.view !== DEFAULT_VIEW) query.view = filters.view
+    const view = viewOf(filters)
+    if (view !== DEFAULT_VIEW) query.view = view
     for (const { group, param, order } of GROUPS) {
         const values = effectiveValues(filters[group], order)
         if (values) query[param] = values.join(',')
     }
-    if (filters.session?.id) query.session = filters.session.id
+    const session = sessionOf(filters)
+    if (session) query.session = session.id
     return query
 }
 
@@ -125,7 +142,7 @@ export function queryKey(query) {
  *   the session filter do not count.
  */
 export function activeCount(filters) {
-    return GROUPS.reduce((count, { group }) => count + filters[group].length, 0)
+    return GROUPS.reduce((count, { group, order }) => count + checkedValues(filters[group], order).length, 0)
 }
 
 /**
@@ -133,7 +150,7 @@ export function activeCount(filters) {
  * @returns {boolean} A view other than `all`, a checked value or a session filter (the no-match state, 3.5).
  */
 export function isFiltered(filters) {
-    return filters.view !== DEFAULT_VIEW || activeCount(filters) > 0 || Boolean(filters.session)
+    return viewOf(filters) !== DEFAULT_VIEW || activeCount(filters) > 0 || sessionOf(filters) !== null
 }
 
 function pill(group, label, values) {
@@ -167,13 +184,13 @@ function pill(group, label, values) {
 export function groupPills(filters, { providerLabel }) {
     const pills = []
     for (const { group, label, order, valueLabels } of GROUPS) {
-        const values = order.filter((key) => filters[group].includes(key))
+        const values = checkedValues(filters[group], order)
         const labelOf = valueLabels ? (value) => valueLabels[value] : providerLabel
         if (values.length) pills.push(pill(group, label, values.map(labelOf)))
     }
-    if (filters.session) {
-        const { id, title } = filters.session
-        pills.push(pill('session', 'Session', [title || String(id).slice(0, SHORT_ID_LENGTH)]))
+    const session = sessionOf(filters)
+    if (session) {
+        pills.push(pill('session', 'Session', [session.title || String(session.id).slice(0, SHORT_ID_LENGTH)]))
     }
     return pills
 }

@@ -37,5 +37,4 @@ def test_frontend_keys_match_the_backend():
     assert frontend["families"] == list(FAMILIES)
     assert frontend["authors"] == list(AUTHORS)
     assert frontend["providers"] == [provider.value for provider in Provider]
-    assert len(frontend["problemReasons"]) == len(set(frontend["problemReasons"]))
-    assert set(frontend["problemReasons"]) == PROBLEM_REASONS
+    assert sorted(frontend["problemReasons"]) == sorted(PROBLEM_REASONS)

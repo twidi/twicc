@@ -155,3 +155,26 @@ test('groupPills: the session falls back to the short id', () => {
 test('groupPills: no pill without a checked value nor a session', () => {
     assert.deepEqual(groupPills(filters({ view: 'without_turns' }), { providerLabel }), [])
 })
+
+test('a session without an id is no session filter, everywhere', () => {
+    const noId = filters({ session: { id: '', title: 'Ghost' } })
+    assert.deepEqual(toQuery(noId), {})
+    assert.equal(isFiltered(noId), false)
+    assert.deepEqual(groupPills(noId, { providerLabel }), [])
+})
+
+test('an empty view is the default view, everywhere', () => {
+    const noView = filters({ view: '' })
+    assert.deepEqual(toQuery(noView), {})
+    assert.equal(isFiltered(noView), false)
+})
+
+test('an unknown value in a list counts nowhere', () => {
+    const bogus = filters({ families: ['bogus', 'turns'], providers: ['other'], authors: ['nobody'] })
+    assert.equal(activeCount(bogus), 1)
+    assert.deepEqual(toQuery(bogus), { families: 'turns' })
+    assert.deepEqual(groupPills(bogus, { providerLabel }).map((pill) => pill.group), ['families'])
+    const onlyBogus = filters({ providers: ['other'] })
+    assert.equal(activeCount(onlyBogus), 0)
+    assert.equal(isFiltered(onlyBogus), false)
+})
