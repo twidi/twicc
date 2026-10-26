@@ -196,16 +196,19 @@ def cited_session_ids(events: list[TimelineEvent]) -> set[str]:
     return cited
 
 
-def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
+def build_sessions_table(session_ids: set[str], *, known_sessions: dict[str, dict] | None = None) -> dict[str, dict]:
     """The side table: one slim entry per session that has a row. An id with no row gets no entry."""
     from twicc.pending_titles import get_pending_title
 
     table: dict[str, dict] = {}
+    known_sessions = known_sessions or {}
     ordered = sorted(session_ids)
     for start in range(0, len(ordered), SESSION_LOOKUP_CHUNK):
-        rows = Session.objects.filter(id__in=ordered[start:start + SESSION_LOOKUP_CHUNK]).values(
+        chunk = ordered[start:start + SESSION_LOOKUP_CHUNK]
+        rows = [known_sessions[sid] for sid in chunk if sid in known_sessions]
+        rows.extend(Session.objects.filter(id__in=[sid for sid in chunk if sid not in known_sessions]).values(
             "id", "title", "project_id", "provider", "hidden", "archived",
-        )
+        ))
         for row in rows:
             table[row["id"]] = {
                 "title": get_pending_title(row["id"]) or row["title"] or None,

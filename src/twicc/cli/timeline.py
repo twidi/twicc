@@ -8,6 +8,9 @@ from twicc.cli._output import emit_error, emit_json, resolve_limit
 class TimelineScope(NamedTuple):
     project_ids: tuple[str, ...] | None
     session_id: str | None
+    projects: dict[str, dict]
+    sessions: dict[str, dict]
+    workspace: dict | None
 
 
 def resolve_timeline_scope(
@@ -20,20 +23,27 @@ def resolve_timeline_scope(
     from twicc.workspaces import read_workspaces
 
     if project is not None:
-        if not Project.objects.filter(pk=project).exists():
+        metadata = Project.objects.filter(pk=project).values("id", "name", "directory").first()
+        if metadata is None:
             emit_error(f"Error: project '{project}' not found.")
-        return TimelineScope(tuple(project_scope_ids(project)), None)
+        return TimelineScope(tuple(project_scope_ids(project)), None, {project: metadata}, {}, None)
     if workspace is not None:
         definition = next((w for w in read_workspaces().get("workspaces", []) if w.get("id") == workspace), None)
         if definition is None:
             emit_error(f"Error: workspace '{workspace}' not found.")
-        return TimelineScope(tuple(expand_project_ids_with_worktrees(definition.get("projectIds", []))), None)
+        return TimelineScope(
+            tuple(expand_project_ids_with_worktrees(definition.get("projectIds", []))), None, {}, {},
+            {"id": workspace, "name": definition.get("name") or None},
+        )
     if session is not None:
         session_id = resolve_explicit_ids([session])[0]
-        if not Session.objects.filter(pk=session_id).exists():
+        metadata = Session.objects.filter(pk=session_id).values(
+            "id", "title", "project_id", "provider", "hidden", "archived",
+        ).first()
+        if metadata is None:
             emit_error(f"Error: session '{session_id}' not found.")
-        return TimelineScope(None, session_id)
-    return TimelineScope(None, None)
+        return TimelineScope(None, session_id, {}, {session_id: metadata}, None)
+    return TimelineScope(None, None, {}, {}, None)
 
 
 def main(
@@ -89,4 +99,5 @@ def main(
         project_ids=scope.project_ids, session_id=scope.session_id, selected_sessions=selected,
         require_session_metadata=require_metadata,
         include_instance=not require_metadata and scope.project_ids != (), limit=limit, before=boundary,
+        known_projects=scope.projects, known_sessions=scope.sessions, workspace=scope.workspace,
     ))

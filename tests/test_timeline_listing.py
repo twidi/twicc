@@ -123,7 +123,7 @@ def test_event_fields_and_side_table_match_existing_serialization(corpus):
         body = page()
         assert set(body["items"][0]) == {
             "id", "kind", "occurred_at", "precision", "actor", "via", "actor_ref", "actor_name", "reason",
-            "data", "session_id", "project_id", "provider",
+            "data", "session_id", "session_title", "project_id", "project_name", "project_directory", "provider",
         }
         assert body["items"][0]["occurred_at"] == "2026-10-14T10:00:00.123456Z"
         assert body["items"][0]["id"] == row.id

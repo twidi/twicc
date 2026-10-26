@@ -24,11 +24,13 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 @pytest.fixture
 def history():
-    project = Project.objects.create(id="-timeline-transport", directory="/tmp/timeline-transport")
+    project = Project.objects.create(
+        id="-timeline-transport", name="Transport project", directory="/tmp/timeline-transport",
+    )
     root = Session.objects.create(id="root", project=project, provider="codex", file_path="root.jsonl")
     Session.objects.create(
         id="child", project=project, provider="codex", file_path="child.jsonl", spawned_by=root,
-        annotations={"team": "backend", "ready": True},
+        annotations={"team": "backend", "ready": True}, title="Child session",
     )
     events = [make_event(session_id="child", project=project, at=i) for i in range(4)]
     return project, events
@@ -43,9 +45,16 @@ def rpc(arguments):
 
 
 @pytest.mark.parametrize("filiation_visibility", [None, {}, {"include_hidden": True}, {"only_hidden": True}])
-def test_explicit_arguments_match_across_transports(history, filiation_visibility):
+@pytest.mark.parametrize("scope", ["project", "workspace"])
+def test_explicit_arguments_match_across_transports(history, filiation_visibility, scope, monkeypatch):
     project, events = history
     arguments = {"project": project.id, "annotation": ["team=backend", "ready=true"], "limit": 2}
+    if scope == "workspace":
+        monkeypatch.setattr("twicc.workspaces.read_workspaces", lambda: {"workspaces": [
+            {"id": "transport-ws", "name": "Transport workspace", "projectIds": [project.id]},
+        ]})
+        del arguments["project"]
+        arguments["workspace"] = "transport-ws"
     if filiation_visibility is not None:
         Session.objects.filter(pk="child").update(hidden=True)
         arguments.update(spawned_by="root", **filiation_visibility)
@@ -67,6 +76,11 @@ def test_explicit_arguments_match_across_transports(history, filiation_visibilit
     assert local.exit_code == http["exit_code"] == internal["exit_code"] == external["exit_code"] == 0
     assert local.result == http["result"] == internal["result"] == external["result"]
     assert [e["id"] for e in local.result["items"]] == [events[3].id, events[2].id]
+    assert local.result["items"][0]["session_title"] == "Child session"
+    assert local.result["items"][0]["project_name"] == "Transport project"
+    assert local.result["items"][0]["project_directory"] == "/tmp/timeline-transport"
+    if scope == "workspace":
+        assert local.result["workspace"] == {"id": "transport-ws", "name": "Transport workspace"}
 
 
 def test_cursor_round_trip_across_transports(history):
