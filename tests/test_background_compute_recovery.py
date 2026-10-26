@@ -1,7 +1,7 @@
 """Automatic recovery uses real worker pipes, writer jobs, and isolated SQLite."""
 
 import asyncio
-from contextlib import closing
+from contextlib import closing, suppress
 import os
 from pathlib import Path
 import sqlite3
@@ -313,6 +313,66 @@ def test_cancel_and_wait_absorbs_only_the_child_cancellation():
     asyncio.run(scenario())
 
 
+def test_cancel_and_wait_ignores_a_cancel_the_caller_already_handled():
+    """Only a cancel landing during the helper counts: an earlier one, caught without uncancel(), does not."""
+    async def caller():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        child = asyncio.create_task(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        await background.cancel_and_wait(child)
+        return child.cancelled()
+
+    async def scenario():
+        task = asyncio.create_task(caller())
+        await asyncio.sleep(0)
+        task.cancel()
+        assert await task is True
+        assert task.cancelling() == 1
+    asyncio.run(scenario())
+
+
+def test_cancel_and_wait_keeps_the_caller_cancel_when_the_child_swallows_it():
+    """A child that swallows its cancels and returns normally must not swallow the caller's cancel."""
+    async def scenario():
+        release = asyncio.Event()
+
+        async def stubborn():
+            while not release.is_set():
+                with suppress(asyncio.CancelledError):
+                    await release.wait()
+            return 'ended'
+
+        # Without a cancel aimed at the caller, the helper returns normally.
+        child = asyncio.create_task(stubborn())
+        await asyncio.sleep(0)
+        helper = asyncio.create_task(background.cancel_and_wait(child))
+        while not child.cancelling():
+            await asyncio.sleep(0)
+        release.set()
+        assert await helper is None
+        assert child.result() == 'ended'
+
+        release = asyncio.Event()
+        child = asyncio.create_task(stubborn())
+        await asyncio.sleep(0)
+        waiting = asyncio.create_task(background.cancel_and_wait(child))
+        # Wait until the helper has cancelled the child and awaits it.
+        while not child.cancelling():
+            await asyncio.sleep(0)
+        waiting.cancel()
+        # The caller's cancel is forwarded to the child, which swallows it too.
+        while child.cancelling() < 2:
+            await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(waiting, return_exceptions=True)
+        assert child.result() == 'ended'
+        assert waiting.cancelled()
+    asyncio.run(scenario())
+
+
 @pytest.mark.django_db(transaction=True)
 def test_cancellation_while_run_end_waiter_drains_is_not_lost(recovery_runtime, monkeypatch):
     """A cancel landing while the run end awaits its cancelled stop waiter must end the task."""
@@ -325,10 +385,19 @@ def test_cancellation_while_run_end_waiter_drains_is_not_lost(recovery_runtime, 
         ctx = background.ComputeContext(Provider.CLAUDE_CODE, 123, f'{__name__}:RecoveryCompute')
         task = None
 
+        def is_run_end_wait(fs):
+            """The run end waits on the writer's plain completion Future and a ``stop_event`` waiter task."""
+            futures = [waiter for waiter in fs if not isinstance(waiter, asyncio.Task)]
+            tasks = [waiter for waiter in fs if isinstance(waiter, asyncio.Task)]
+            if len(futures) != 1 or len(tasks) != 1:
+                return False
+            frame = tasks[0].get_coro().cr_frame
+            return frame is not None and frame.f_locals.get('self') is ctx.stop_event
+
         async def wait_then_cancel(fs, *args, **kwargs):
+            run_end = asyncio.current_task() is task and is_run_end_wait(fs)
             result = await real_wait(fs, *args, **kwargs)
-            # The run-end wait is the only two-waiter wait of the compute task.
-            if asyncio.current_task() is task and len(fs) == 2 and not landed:
+            if run_end and not landed:
                 landed.append(True)
                 # Runs while the task awaits the stop waiter it cancels next.
                 asyncio.get_running_loop().call_soon(task.cancel)

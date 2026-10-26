@@ -83,8 +83,9 @@ async def cancel_and_wait(task: asyncio.Task) -> None:
 
     A cancel aimed at the caller while it awaits the child is forwarded to the
     child, so both surface as the same ``CancelledError``. The caller's cancel
-    count tells them apart: only the child's cancellation is absorbed. Other
-    child exceptions propagate.
+    count tells them apart: only the child's cancellation is absorbed. The
+    caller's cancel is raised even when the child swallows it and returns
+    normally. Other child exceptions propagate.
     """
     current = asyncio.current_task()
     cancelling = current.cancelling() if current is not None else 0
@@ -94,6 +95,9 @@ async def cancel_and_wait(task: asyncio.Task) -> None:
     except asyncio.CancelledError:
         if current is not None and current.cancelling() > cancelling:
             raise
+        return
+    if current is not None and current.cancelling() > cancelling:
+        raise asyncio.CancelledError
 
 
 async def read_compute_state[T](
