@@ -56,3 +56,14 @@ def test_repeated_read_failures_back_off_until_explicit_stop():
     ))
     assert result == ['failed']
     assert delays == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+
+
+@pytest.mark.real_retry_delays
+def test_failed_session_retry_deadline_is_its_backoff_from_now():
+    import time
+
+    from twicc.providers.compute_selection import compute_retry_deadline
+
+    before = time.monotonic()
+    deadline = compute_retry_deadline(60)
+    assert before + 60 <= deadline <= time.monotonic() + 60

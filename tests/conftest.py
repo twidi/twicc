@@ -146,28 +146,35 @@ def short_db_writer_polls(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def short_compute_retries(request, monkeypatch):
-    """Cut the background compute's retry waits to 10 ms.
+    """Cut the background compute's retry delays to 10 ms.
 
-    After a failed run, retirement or Codex initialization, both compute
-    coordinators wait before trying again (from 1 s, doubled up to 60 s),
-    through ``_wait_for_retry_delay``. A recovery test pays that wait once or
-    twice for nothing: the retry still happens, through the same stop-aware
-    wait, in the same order. The backoff values stay real, and so do the
-    per-session retry deadlines (tests assert both on the coordinators). A
-    test about the wait itself carries the ``real_retry_delays`` marker.
+    After a failure, both compute coordinators wait before trying again (from
+    1 s, doubled up to 60 s): through ``_wait_for_retry_delay`` after a failed
+    run, retirement or Codex initialization, and until the deadline of
+    ``compute_retry_deadline`` before selecting a failed session again. A
+    recovery test pays those delays once or twice for nothing: the retry
+    still happens, through the same stop-aware wait or deadline, in the same
+    order. The backoff values stay real (tests assert them on the
+    coordinators). A test about the delays themselves carries the
+    ``real_retry_delays`` marker.
     """
     if request.node.get_closest_marker("real_retry_delays"):
         return
-    from twicc.providers import background_compute_task
+    from twicc.providers import background_compute_task, compute_selection
     from twicc.providers.codex import background_compute
 
     real_wait = background_compute_task._wait_for_retry_delay
+    real_deadline = compute_selection.compute_retry_deadline
 
     async def short_wait(stop_event, delay):
         return await real_wait(stop_event, min(delay, 0.01))
 
-    monkeypatch.setattr(background_compute_task, "_wait_for_retry_delay", short_wait)
-    monkeypatch.setattr(background_compute, "_wait_for_retry_delay", short_wait)
+    def short_deadline(delay):
+        return real_deadline(min(delay, 0.01))
+
+    for module in (background_compute_task, background_compute):
+        monkeypatch.setattr(module, "_wait_for_retry_delay", short_wait)
+        monkeypatch.setattr(module, "compute_retry_deadline", short_deadline)
 
 
 @pytest.fixture(autouse=True)

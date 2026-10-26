@@ -42,7 +42,7 @@ from asgiref.sync import sync_to_async
 
 from twicc.providers.compute_ipc import ComputeResultStream, ComputeStatusSender, ComputeStopFlag
 from twicc.providers.compute_selection import (
-    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
+    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
 )
 from twicc.core.enums import Provider
 from twicc.logging_context import current_provider
@@ -624,7 +624,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
     def failed(sid):
         delay = min(retry_delays.get(sid, .5) * 2, 60.0)
         retry_delays[sid] = delay
-        retry_at[sid] = time.monotonic() + delay
+        retry_at[sid] = compute_retry_deadline(delay)
         classify(active_root)
 
     for sid, mtime in initial:

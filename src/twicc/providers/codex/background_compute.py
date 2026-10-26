@@ -73,7 +73,7 @@ from twicc.providers.background_compute_task import (
     stop_compute_worker,
 )
 from twicc.providers.compute_selection import (
-    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS,
+    COMPUTE_MIN_SOURCE_AGE_SECONDS, COMPUTE_STATUS_POLL_SECONDS, compute_retry_deadline,
 )
 from twicc.providers.db_writer import (
     ComputeApplied,
@@ -743,7 +743,7 @@ class CodexComputeCoordinator:
         self._record_outcome(failure.session_id, "unavailable" if failure.unavailable_reason else "failed")
         delay = min(self._retry_delays.get(failure.session_id, 0.5) * 2, 60.0)
         self._retry_delays[failure.session_id] = delay
-        self._retry_at[failure.session_id] = time.monotonic() + delay
+        self._retry_at[failure.session_id] = compute_retry_deadline(delay)
         await self._classify_initial(failure.session_id)
         await self._classify_blocked_tree(failure.session_id)
         logger.error(

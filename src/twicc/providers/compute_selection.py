@@ -1,11 +1,17 @@
 """Shared source-age selection rules, independent of Django worker setup."""
 
+import time
 from typing import NamedTuple
 
 
 COMPUTE_MIN_SOURCE_AGE_SECONDS = 30.0
 COMPUTE_SELECTION_POLL_SECONDS = 1.0
 COMPUTE_STATUS_POLL_SECONDS = 0.05
+
+
+def compute_retry_deadline(delay: float) -> float:
+    """Return the monotonic time at which a failed session may be selected again, ``delay`` seconds from now."""
+    return time.monotonic() + delay
 
 
 def compute_age_delay(mtime: float, now: float) -> float:
