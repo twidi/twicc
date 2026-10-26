@@ -179,6 +179,17 @@ test('row height estimates exist per row type; an unknown type uses the event on
     assert.ok(ROW_HEIGHT_ESTIMATES.day !== ROW_HEIGHT_ESTIMATES.event)
 })
 
+test('the state item (loading, empty, not found, error, no match) has its own estimate, whatever its state', () => {
+    for (const state of ['loading', 'empty', 'not-found', 'error', 'no-match']) {
+        assert.equal(estimateRowHeight({ key: 'timeline-state', type: 'state', state }), ROW_HEIGHT_ESTIMATES.state)
+    }
+    // At least the block's own padding (TimelinePanel.vue `.timeline-state`: --wa-space-2xl above and below, 2.5rem
+    // each with the default theme's --wa-space-scale: 1) and one line of text.
+    const panel = readFileSync(new URL('../../components/timeline/TimelinePanel.vue', import.meta.url), 'utf8')
+    assert.match(panel, /\.timeline-state \{[^}]*padding: var\(--wa-space-2xl\) var\(--wa-space-l\);/)
+    assert.ok(ROW_HEIGHT_ESTIMATES.state >= 2 * 40 + 24)
+})
+
 test('a block head starts from a taller estimate (header line, top of the card); a block end adds the bottom of the card and the gap', () => {
     const rows = build([
         ev('2026-10-14T12:00:03.000000Z', 'a'), ev('2026-10-14T12:00:02.000000Z', 'a'), ev('2026-10-14T12:00:01.000000Z', 'a'),

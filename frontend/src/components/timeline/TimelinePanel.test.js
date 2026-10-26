@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import { createPinia } from 'pinia'
 import * as Vue from 'vue'
 
-import { compileComponent, descendants, flush, makeRenderer, virtualScroller } from '../../../tests/helpers/scrollerComponentHarness.js'
+import { useTimelineFiltersStore } from '../../stores/timelineFilters.js'
+import { compileComponent, deferred, descendants, flush, makeRenderer, virtualScroller } from '../../../tests/helpers/scrollerComponentHarness.js'
 import { createFeedState, createTimelineFeed } from '../../utils/timeline/feed.js'
 import * as liveEventsModule from '../../utils/timeline/liveEvents.js'
 import * as providerLabels from '../../utils/timeline/providerLabels.js'
 import * as eventTimeModule from '../../utils/timeline/eventTime.js'
+import * as filtersModule from '../../utils/timeline/filters.js'
 import * as rowsModule from '../../utils/timeline/rows.js'
 import * as scopeModule from '../../utils/timeline/scope.js'
 import * as scrollKeeperModule from '../../utils/timeline/scrollKeeper.js'
@@ -85,7 +88,11 @@ function createFakeScroller() {
     return { log, component }
 }
 
-function fixture({ events = [event(3), event(2), event(1)], hasMore = false, projectsLoaded = true, compact = false, projects = { p1: { id: 'p1' } }, workspaces = {}, fakeScroller = false } = {}) {
+/**
+ * `pinia`: share the filters memory between two fixtures (two panels of the app). `filtersStore` is the real store
+ * of that memory; `filterActions` records every action called on it (`[name, ...args]`).
+ */
+function fixture({ events = [event(3), event(2), event(1)], hasMore = false, projectsLoaded = true, compact = false, projects = { p1: { id: 'p1' } }, workspaces = {}, fakeScroller = false, pinia = createPinia() } = {}) {
     const calls = []
     const state = Vue.reactive(createFeedState())
     const server = {
@@ -116,6 +123,9 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
     })
     const compactHeight = Vue.ref(compact)
     const scroller = fakeScroller ? createFakeScroller() : null
+    const filtersStore = useTimelineFiltersStore(pinia)
+    const filterActions = []
+    filtersStore.$onAction(({ name, args }) => { if (name !== 'filtersFor' && name !== 'ensure') filterActions.push([name, ...args]) })
     const Panel = compileComponent(new URL('./TimelinePanel.vue', import.meta.url), {
         'vue-router': { RouterLink },
         '../../composables/useTimelineFeed': { useTimelineFeed: () => feed },
@@ -123,6 +133,8 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../../stores/workspaces': { useWorkspacesStore: () => workspacesStore },
         '../../providers': { getProviderHelpers: () => null },
         '../../utils/compactHeight': { compactHeight },
+        '../../stores/timelineFilters': { useTimelineFiltersStore: () => filtersStore },
+        '../../utils/timeline/filters': filtersModule,
         '../../utils/timeline/rows': rowsModule,
         '../../utils/timeline/eventTime': eventTimeModule,
         '../../utils/timeline/liveEvents': liveEventsModule,
@@ -135,7 +147,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
         './TimelineEventRow.vue': stub('article'),
     })
-    return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller }
+    return { Panel, feed, state, calls, server, dataStore, workspacesStore, compactHeight, scroller, pinia, filtersStore, filterActions }
 }
 
 const settle = async () => {
@@ -153,6 +165,7 @@ async function mount(t, f, projectId = '__all__', { active = true } = {}) {
     t.after(() => { if (mounted) app.unmount() })
     await settle()
     root.setActive = async (value) => { props.active = value; await settle() }
+    root.setProjectId = async (value) => { props.projectId = value; await settle() }
     root.unmount = () => { app.unmount(); mounted = false }
     return root
 }
@@ -176,6 +189,12 @@ function assertRenderableCallouts(root) {
 const byClass = (root, name) => descendants(root, (node) => String(node.props.class ?? '').split(' ').includes(name))
 const textOf = (node) => (node.type === '#comment' ? '' : `${node.text ?? ''}${node.children.map(textOf).join('')}`)
 const rowIds = (root) => descendants(root, (n) => n.type === 'article').map((n) => n.props['data-id'])
+/** The state block, found INSIDE the scroller (the state is an item of the list, under the band). */
+const stateBlock = (root) => {
+    const [scroller] = byClass(root, 'timeline-scroller')
+    assert.ok(scroller, 'the scroller is always there')
+    return byClass(scroller, 'timeline-state')[0]
+}
 
 test('the band is the sticky band of Stats (StickyBand) and carries the label "Timeline" and nothing else', async (t) => {
     const root = await mount(t, fixture())
@@ -198,7 +217,7 @@ test('while the projects are not loaded the page shows the loading state and sen
     const f = fixture({ projectsLoaded: false })
     const root = await mount(t, f, 'p1')
     assert.equal(f.calls.length, 0)
-    assert.match(textOf(byClass(root, 'timeline-state')[0]), /Loading/)
+    assert.match(textOf(stateBlock(root)), /Loading/)
     f.dataStore.projectsLoaded = true
     await flush()
     await new Promise((resolve) => setTimeout(resolve, 5))
@@ -211,11 +230,11 @@ test('a workspace with no project shows the empty state and sends nothing; an un
     const empty = fixture({ workspaces: { w: { projectIds: [] } } })
     const root = await mount(t, empty, 'ws:w')
     assert.equal(empty.calls.length, 0)
-    assert.equal(textOf(byClass(root, 'timeline-state')[0]), 'No events yet')
+    assert.equal(textOf(stateBlock(root)), 'No events yet')
     const unknown = fixture()
     const root2 = await mount(t, unknown, 'ws:ghost')
     assert.equal(unknown.calls.length, 0)
-    assert.match(textOf(byClass(root2, 'timeline-state')[0]), /Loading/)
+    assert.match(textOf(stateBlock(root2)), /Loading/)
 })
 
 test('a workspace sends every project id, and a change of the set reloads the first page', async (t) => {
@@ -233,23 +252,24 @@ test('an unknown project shows "Project not found" with a link to All Projects a
     const f = fixture()
     const root = await mount(t, f, 'ghost')
     assert.equal(f.calls.length, 0)
-    const [stateBlock] = byClass(root, 'timeline-state')
-    assert.match(textOf(stateBlock), /Project not found/)
-    const [link] = descendants(stateBlock, (n) => n.type === 'a')
+    const block = stateBlock(root)
+    assert.match(textOf(block), /Project not found/)
+    const [link] = descendants(block, (n) => n.type === 'a')
     assert.deepEqual(JSON.parse(link.props['data-to']), { name: 'projects-all' })
 })
 
 test('an empty feed shows the empty state and no end-of-list marker', async (t) => {
     const root = await mount(t, fixture({ events: [] }))
-    assert.equal(textOf(byClass(root, 'timeline-state')[0]), 'No events yet')
-    assert.equal(byClass(root, 'timeline-list').length, 0)
+    assert.equal(textOf(stateBlock(root)), 'No events yet')
+    assert.equal(byClass(root, 'timeline-footer').length, 0)
+    assert.deepEqual(rowIds(root), [])
 })
 
 test('a failed first page shows an inline error whose Retry reloads', async (t) => {
     const f = fixture()
     f.server.fail = true
     const root = await mount(t, f)
-    const callout = descendants(root, (n) => n.type === 'wa-callout')[0]
+    const callout = descendants(stateBlock(root), (n) => n.type === 'wa-callout')[0]
     assert.match(textOf(callout), /Failed to load the timeline/)
     assertRenderableCallouts(root)
     f.server.fail = false
@@ -341,24 +361,25 @@ test('unmounting the page disposes its feed', async (t) => {
 
 const seedsOf = (f) => f.scroller.log.calls.filter(([name]) => name === 'seed')
 
-test('every row gets a height estimate once the scroller exists, the top room included', async (t) => {
+test('every row gets a height estimate once the scroller exists, the top room and the state item included', async (t) => {
     const f = fixture({ fakeScroller: true, compact: true })
     await mount(t, f)
     const seeds = Object.fromEntries(seedsOf(f).map(([, key, height]) => [key, height]))
     const { ROW_HEIGHT_ESTIMATES: H } = rowsModule
     assert.equal(seeds['timeline-top'], H.band + H.nav, 'compact height: the band and the navigation list')
+    assert.equal(seeds['timeline-state'], H.state, 'the loading state of the first page')
     assert.equal(seeds['event-3'], H.head, 'the block head: top of the card, header line, event line')
     assert.equal(seeds['event-2'], H.event)
     assert.equal(seeds['event-1'], H.event + H.blockEnd, 'the block end: bottom of the card and the gap')
     assert.equal(seeds[Object.keys(seeds).find((key) => key.startsWith('daysep-'))], H.day)
-    assert.equal(seedsOf(f).length, 5, 'top room, day separator and three events, once each')
+    assert.equal(seedsOf(f).length, 6, 'top room, loading state, day separator and three events, once each')
 })
 
 test('a row the scroller already measured keeps its measure', async (t) => {
     const f = fixture({ fakeScroller: true })
     f.scroller.log.measured.add('event-2')
     await mount(t, f)
-    assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3', 'timeline-top'])
+    assert.deepEqual(seedsOf(f).map(([, key]) => key).sort(), ['daysep-2026-10-14', 'event-1', 'event-3', 'timeline-state', 'timeline-top'])
 })
 
 test('a row whose head or end status flips is seeded again with the new estimate while it still holds the old seed', async (t) => {
@@ -390,16 +411,18 @@ test('a row measured since its seed keeps its measure when its head status flips
     assert.deepEqual(seedsOf(f).filter(([, k]) => k === 'event-2').map(([, , height]) => height), [34])
 })
 
-test('a new scroller (the list came back) is seeded again, and a row that left the list is seeded again if it returns', async (t) => {
+test('a row that left the list is seeded again when it returns (the scroller stays through every state)', async (t) => {
     const f = fixture({ fakeScroller: true })
-    await mount(t, f, 'p1')
+    const root = await mount(t, f, 'p1')
     assert.equal(f.scroller.log.mounts, 1)
     assert.equal(seedsOf(f).filter(([, key]) => key === 'event-3').length, 1)
+    // The rows leave for the loading state, then come back.
     f.dataStore.projectsLoaded = false
     await settle()
+    assert.deepEqual(rowIds(root), [])
     f.dataStore.projectsLoaded = true
     await settle()
-    assert.equal(f.scroller.log.mounts, 2, 'the scroller was destroyed and created again')
+    assert.equal(f.scroller.log.mounts, 1, 'the same scroller')
     assert.equal(seedsOf(f).filter(([, key]) => key === 'event-3').length, 2)
     const all = f.state.events
     f.state.events = [all[0]]
@@ -451,8 +474,8 @@ test('compact-height mode: every state (loading, empty, not found, error) carrie
     assert.deepEqual(navigation(await mount(t, broken)), [1, 1])
     const normal = await mount(t, fixture({ compact: false, projectsLoaded: false }), 'p1')
     assert.deepEqual(navigation(normal), [0, 0])
-    assert.deepEqual(structure(loading), ['nav', 'sticky-band', 'timeline-state'])
-    assert.deepEqual(structure(normal), ['sticky-band', 'timeline-state'])
+    assert.deepEqual(structure(loading), ['nav', 'sticky-band', 'timeline-top-room', 'timeline-state'])
+    assert.deepEqual(structure(normal), ['sticky-band', 'timeline-top-room', 'timeline-state'])
 })
 
 test('no timeline module imports the router statically (circular imports break the hot reload)', () => {
@@ -495,6 +518,174 @@ test('source pins: Stats uses the same two pieces, the navigation list above its
     const graphs = readFileSync(new URL('../activity/ContributionGraphs.vue', import.meta.url), 'utf8')
     assert.match(graphs, /<template>\s*(?:<!--[\s\S]*?-->\s*)?<StickyBand v-if="showProviderSelect" class="provider-filter">/)
     assert.ok(!/position: sticky/.test(graphs.slice(graphs.indexOf('<style'))))
+})
+
+// ── One band for every state, the filters ──────────────────────────────────────────────────────────────────
+
+const page = (events) => ({ events, has_more: false, truncated: false, latest_id: events.length ? events[0].id : null, sessions: {} })
+const callouts = (root) => descendants(root, (n) => n.type === 'wa-callout')
+
+test('the band is mounted once and is the same element across loading, list, empty and error', async (t) => {
+    const f = fixture({ projectsLoaded: false, workspaces: { w: { projectIds: ['p1'] } } })
+    const root = await mount(t, f, 'ws:w')
+    const bands = () => byClass(root, 'sticky-band')
+    assert.equal(bands().length, 1)
+    const band = bands()[0]
+    const sameNode = () => bands().length === 1 && bands()[0] === band
+    assert.match(textOf(stateBlock(root)), /Loading/)
+    f.dataStore.projectsLoaded = true
+    await settle()
+    assert.equal(rowIds(root).length, 3, 'the list')
+    assert.equal(sameNode(), true)
+    f.server.respond = () => page([])
+    f.workspacesStore.workspaces.w = { projectIds: ['p1', 'p2'] }
+    await settle()
+    assert.equal(textOf(stateBlock(root)), 'No events yet')
+    assert.equal(sameNode(), true)
+    f.server.fail = true
+    f.workspacesStore.workspaces.w = { projectIds: ['p1', 'p2', 'p3'] }
+    await settle()
+    assert.match(textOf(stateBlock(root)), /Failed to load the timeline/)
+    assert.equal(sameNode(), true)
+})
+
+test('a filter change reloads the first page with the new query and scrolls to the top', async (t) => {
+    const f = fixture({ fakeScroller: true })
+    await mount(t, f, 'p1')
+    const tops = () => f.scroller.log.calls.filter(([name]) => name === 'top').length
+    assert.equal(tops(), 0, 'the first load does not move the scroll')
+    f.filtersStore.setView('p1', 'waits_problems')
+    f.filtersStore.toggle('p1', 'families', 'processes')
+    await settle()
+    const query = filtersModule.toQuery(f.filtersStore.filtersFor('p1'))
+    assert.deepEqual(query, { view: 'waits_problems', families: 'processes' })
+    assert.deepEqual(f.calls, [
+        { projectIds: ['p1'], query: {}, before: null, afterId: null },
+        { projectIds: ['p1'], query, before: null, afterId: null },
+    ])
+    assert.equal(tops(), 1)
+    assert.equal(f.scroller.log.mounts, 1, 'the scroller stays')
+    // An action that leaves the query as it is reloads nothing.
+    f.filtersStore.resetPanel('p1')
+    f.filtersStore.toggle('p1', 'families', 'processes')
+    await settle()
+    assert.equal(f.calls.length, 2)
+})
+
+test('the no-match state shows only after a successful first page with zero events and a filter set', async (t) => {
+    // Filters set, first page in flight: loading, not "no match".
+    const slow = fixture({ fakeScroller: true })
+    slow.filtersStore.setView('p1', 'waits_problems')
+    const pending = deferred()
+    slow.server.respond = () => pending.promise
+    const root = await mount(t, slow, 'p1')
+    assert.match(textOf(stateBlock(root)), /Loading/)
+    assert.ok(!textOf(root).includes('Nothing matches'))
+    pending.resolve(page([]))
+    await settle()
+    const block = stateBlock(root)
+    assert.equal(textOf(byClass(block, 'timeline-no-match-message')[0]), 'Nothing matches Waits & problems with these filters')
+    const [clear] = descendants(block, (n) => n.type === 'wa-button')
+    assert.equal(textOf(clear).trim(), 'Clear all')
+    clear.props.onClick()
+    await settle()
+    assert.deepEqual(slow.filterActions, [['setView', 'p1', 'waits_problems'], ['clearAll', 'p1']])
+    assert.deepEqual(slow.calls.at(-1).query, {}, 'Clear all reloads without a filter')
+    assert.equal(textOf(stateBlock(root)), 'No events yet')
+
+    // Error wins over it.
+    const broken = fixture({ events: [] })
+    broken.filtersStore.toggle('__all__', 'providers', 'codex')
+    broken.server.fail = true
+    const root2 = await mount(t, broken)
+    assert.match(textOf(stateBlock(root2)), /Failed to load the timeline/)
+    assert.ok(!textOf(root2).includes('Nothing matches'))
+
+    // A panel value with the `all` view: the message names no view.
+    const panel = fixture({ events: [] })
+    panel.filtersStore.toggle('__all__', 'authors', 'you')
+    const root3 = await mount(t, panel)
+    assert.equal(textOf(byClass(stateBlock(root3), 'timeline-no-match-message')[0]), 'Nothing matches these filters')
+
+    // Only a session filter: filtered too.
+    const session = fixture({ events: [] })
+    session.filtersStore.setSession('__all__', { id: 's9', title: 'Other' })
+    assert.match(textOf(stateBlock(await mount(t, session))), /Nothing matches these filters/)
+
+    // No filter: the unfiltered empty timeline.
+    const plain = await mount(t, fixture({ events: [] }))
+    assert.equal(textOf(stateBlock(plain)), 'No events yet')
+})
+
+test('a page keeps its filters when shown again', async (t) => {
+    const projects = { pA: { id: 'pA' }, pB: { id: 'pB' } }
+    const f = fixture({ projects })
+    const root = await mount(t, f, 'pA')
+    f.filtersStore.toggle('pA', 'families', 'processes')
+    await settle()
+    const filtered = { families: 'processes' }
+    assert.deepEqual(f.calls.at(-1), { projectIds: ['pA'], query: filtered, before: null, afterId: null })
+    await root.setProjectId('pB')
+    assert.deepEqual(f.calls.at(-1), { projectIds: ['pB'], query: {}, before: null, afterId: null })
+    await root.setProjectId('pA')
+    assert.deepEqual(f.calls.at(-1), { projectIds: ['pA'], query: filtered, before: null, afterId: null })
+    // Another panel of the same app (the page mounted again): the same memory.
+    const again = fixture({ projects, pinia: f.pinia })
+    await mount(t, again, 'pA')
+    assert.deepEqual(again.calls, [{ projectIds: ['pA'], query: filtered, before: null, afterId: null }])
+    assert.deepEqual(filtersModule.toQuery(f.filtersStore.filtersFor('pB')), {})
+})
+
+test('loadMore is never asked while the state item is shown', async (t) => {
+    const nearEnd = { startIndex: 0, endIndex: 2, visibleStartIndex: 0, visibleEndIndex: 2 }
+    const watchLoadMore = (f) => {
+        const asked = { count: 0 }
+        const original = f.feed.loadMore
+        f.feed.loadMore = () => { asked.count += 1; original() }
+        return asked
+    }
+    // Loading (projects not loaded), then empty, then error: the end of the list is always in view.
+    for (const make of [
+        () => fixture({ fakeScroller: true, projectsLoaded: false }),
+        () => fixture({ fakeScroller: true, events: [] }),
+        () => { const f = fixture({ fakeScroller: true }); f.server.fail = true; return f },
+    ]) {
+        const f = make()
+        const asked = watchLoadMore(f)
+        await mount(t, f, 'p1')
+        f.scroller.log.range = { start: 0, end: 2 }
+        f.scroller.log.emit(nearEnd)
+        f.scroller.log.emitVisible()
+        await settle()
+        assert.equal(asked.count, 0)
+    }
+    // A list, then a filter change whose first page is in flight: the loading state item replaces the rows.
+    const f = fixture({ fakeScroller: true, events: sixty(), hasMore: true })
+    const root = await mount(t, f, 'p1')
+    const asked = watchLoadMore(f)
+    const pending = deferred()
+    f.server.respond = () => pending.promise
+    f.filtersStore.setView('p1', 'without_turns')
+    await settle()
+    assert.match(textOf(stateBlock(root)), /Loading/)
+    f.scroller.log.range = { start: 0, end: 2 }
+    f.scroller.log.emit(nearEnd)
+    f.scroller.log.emitVisible()
+    await settle()
+    assert.equal(asked.count, 0)
+    assert.equal(beforeRequests(f), 0)
+    pending.resolve(page([]))
+    await settle()
+})
+
+test('a failed first page shows one error, not the "load more" footer too', async (t) => {
+    const f = fixture()
+    f.server.fail = true
+    const root = await mount(t, f)
+    assert.equal(f.state.loadError.phase, 'first')
+    assert.equal(callouts(root).length, 1)
+    assert.equal(byClass(root, 'timeline-footer').length, 0)
+    assert.ok(!textOf(root).includes('Failed to load more events'))
 })
 
 // ── Staying current ─────────────────────────────────────────────────────────────────────────────────────────

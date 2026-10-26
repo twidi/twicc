@@ -11,8 +11,12 @@
 // sit in the scroller's `before` slot (a sticky element must be in the container it sticks to). The scroller
 // knows nothing of that slot: it lays its rows out from 0. So the two take no room in the flow (the band's
 // negative bottom margin) and the first row of the list (`top`) keeps the room under them, its height measured
-// from them. Outside the list (loading, empty, error), the state area is a plain scroll container: the band
-// sticks there the same way.
+// from them.
+//
+// The scroller and its ONE band stay mounted through every state (filters design section 3.1): the band will
+// hold the filter controls, and swapping it would close their open panel and lose the keyboard focus. Outside
+// the list (loading, empty, not found, error, no match), the event rows are replaced by one state item under
+// the top room.
 //
 // The data side lives in utils/timeline/ (pure, tested): which events the scope asks for, the fetch queue,
 // the grouping into rows and the wording of each row. This component wires them to the stores and the DOM.
@@ -21,11 +25,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTimelineFeed } from '../../composables/useTimelineFeed'
 import { ALL_PROJECTS_ID, useDataStore } from '../../stores/data'
+import { useTimelineFiltersStore } from '../../stores/timelineFilters'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { getProviderHelpers } from '../../providers'
 import { compactHeight } from '../../utils/compactHeight'
 import { bindTimelineEvents } from '../../utils/timeline/liveEvents'
 import { timeColumnSizer } from '../../utils/timeline/eventTime'
+import { VIEWS, isFiltered, queryKey, toQuery } from '../../utils/timeline/filters'
 import { buildTimelineRows, estimateRowHeight, isEventRowKey, isNearEnd } from '../../utils/timeline/rows'
 import { createLabelsFor } from '../../utils/timeline/providerLabels'
 import { resolveTimelineScope } from '../../utils/timeline/scope'
@@ -51,6 +57,7 @@ const props = defineProps({
 
 const dataStore = useDataStore()
 const workspacesStore = useWorkspacesStore()
+const filtersStore = useTimelineFiltersStore()
 const feed = useTimelineFeed()
 const state = feed.state
 
@@ -66,8 +73,21 @@ const scope = computed(() => resolveTimelineScope({
     projectScopeIds: (id) => dataStore.getProjectScopeIds(id),
 }))
 
-// The feed compares the SET of ids: a project added, removed or archived reloads the first page.
-watch(() => scope.value.projectIds, (ids) => feed.setScope(ids), { immediate: true })
+// The filters of this page (filters design section 5): kept by the store per page id, so a page shown again,
+// or mounted again, finds its own. Read only here; the band changes them through the store's actions.
+const filters = computed(() => filtersStore.filtersFor(props.projectId))
+const filterQuery = computed(() => toQuery(filters.value))
+const filterQueryKey = computed(() => queryKey(filterQuery.value))
+
+// The list's scroller (VirtualScroller.vue), mounted with the panel and kept through every state.
+const scrollerRef = ref(null)
+
+// The feed compares the SET of ids and the query: a project added, removed or archived, or a filter change,
+// reloads the first page. A filter change also brings the scroll back to the top (filters design section 6).
+watch([() => scope.value.projectIds, filterQueryKey], ([ids, key], previous) => {
+    feed.setScope(ids, filterQuery.value)
+    if (previous && key !== previous[1]) scrollerRef.value?.scrollToTop()
+}, { immediate: true })
 
 // ── Staying current (design section 9.2) ───────────────────────────────────────────────────────────────────
 // The page is kept alive per scope: it keeps fetching while hidden and renders nothing. The signal and the
@@ -99,20 +119,40 @@ const eventRows = computed(() => buildTimelineRows(state.events, {
     isSubagent: context.value.isSubagent,
 }))
 
-// The room kept under the navigation list and the band (see the top of the file).
-const TOP_ROW = Object.freeze({ key: 'timeline-top', type: 'top', withNav: false })
-const TOP_ROW_WITH_NAV = Object.freeze({ key: 'timeline-top', type: 'top', withNav: true })
-const items = computed(() => [compactHeight.value ? TOP_ROW_WITH_NAV : TOP_ROW, ...eventRows.value])
-
-/** Which block of the page is visible. */
+/**
+ * Which block of the page is visible: the list, or one of the states. "No match" (filters design section 3.5)
+ * only follows a successful first page: loading and error win over it.
+ */
 const view = computed(() => {
     if (scope.value.state === 'loading') return 'loading'
     if (scope.value.state === 'empty') return 'empty'
     if (scope.value.state === 'not-found') return 'not-found'
     if (state.status === 'error') return 'error'
     if (state.status !== 'ready') return 'loading'
-    return state.events.length ? 'list' : 'empty'
+    if (state.events.length) return 'list'
+    return isFiltered(filters.value) ? 'no-match' : 'empty'
 })
+
+// The room kept under the navigation list and the band (see the top of the file), then the event rows or the
+// one state item. Every item is a constant per shape: the scroller sees the same objects while nothing changed.
+const TOP_ROW = Object.freeze({ key: 'timeline-top', type: 'top', withNav: false })
+const TOP_ROW_WITH_NAV = Object.freeze({ key: 'timeline-top', type: 'top', withNav: true })
+const STATE_ITEMS = Object.freeze(Object.fromEntries(['loading', 'empty', 'not-found', 'error', 'no-match']
+    .map((name) => [name, Object.freeze({ key: 'timeline-state', type: 'state', state: name })])))
+const items = computed(() => [
+    compactHeight.value ? TOP_ROW_WITH_NAV : TOP_ROW,
+    ...(view.value === 'list' ? eventRows.value : [STATE_ITEMS[view.value]]),
+])
+
+/** The no-match message names the view when it is not `all`: some views can never match some filters. */
+const noMatchMessage = computed(() => {
+    const selected = VIEWS.find((entry) => entry.value === filters.value.view && entry.value !== 'all')
+    return selected ? `Nothing matches ${selected.label} with these filters` : 'Nothing matches these filters'
+})
+
+function clearAllFilters() {
+    filtersStore.clearAll(props.projectId)
+}
 
 const itemKey = (item) => item.key
 
@@ -152,7 +192,6 @@ watch([bandRef, topNavRef], ([band, nav]) => {
 onBeforeUnmount(() => topObserver?.disconnect())
 
 // ── Scroll: rows inserted above the view must not move it ─────────────────────────────────────────────────
-const scrollerRef = ref(null)
 // Anchored on event rows only: the top room and the day separators keep their index when rows land below them.
 const scrollKeeper = createScrollKeeper(() => scrollerRef.value, { isAnchorKey: isEventRowKey })
 
@@ -165,13 +204,13 @@ watch(items, async (next) => {
 
 // ── Scroller: estimates, next page ────────────────────────────────────────────────────────────────────────
 
-// A first height estimate per row type (day separator, event line, block head and end, top room) for the rows the
-// scroller has not measured yet. It runs AFTER the render: the scroller only exists once the first page flipped the
-// view to the list, and it is created again each time the list comes back. A row the scroller already measured keeps
-// its measure (seeding would overwrite it, and no resize would correct it). `seeded` maps a key to the estimate
-// written for it (null: the scroller had its own height): when a live insertion flips a row's head or end status, the new
-// estimate replaces the old one while the cache still holds that old seed (the row was not measured since). `seeded`
-// follows the list: it is emptied when the scroller goes away and trimmed to the keys still in the list.
+// A first height estimate per row type (day separator, event line, block head and end, top room, state item) for the
+// rows the scroller has not measured yet. It runs AFTER the render (the scroller exists once the panel is mounted). A
+// row the scroller already measured keeps its measure (seeding would overwrite it, and no resize would correct it).
+// `seeded` maps a key to the estimate written for it (null: the scroller had its own height): when a live insertion
+// flips a row's head or end status, the new estimate replaces the old one while the cache still holds that old seed
+// (the row was not measured since). `seeded` follows the list: it is emptied when the scroller goes away and trimmed
+// to the keys still in the list, so a row that left (the state item replaced it) is seeded again when it returns.
 const seeded = new Map()
 function seedHeights() {
     const scroller = scrollerRef.value
@@ -234,36 +273,7 @@ watch(() => state.events.length, async () => {
 
 <template>
     <div class="timeline-panel" :style="panelStyle">
-        <div v-if="view !== 'list'" class="timeline-state-area">
-            <ProjectTabNavList v-if="compactHeight" :project-id="projectId" />
-            <StickyBand>
-                <span class="timeline-band-label">Timeline</span>
-            </StickyBand>
-            <div v-if="view === 'loading'" class="timeline-state" role="status">
-                <wa-spinner></wa-spinner>
-                <span>Loading…</span>
-            </div>
-            <div v-else-if="view === 'empty'" class="timeline-state">No events yet</div>
-            <div v-else-if="view === 'not-found'" class="timeline-state">
-                <span>Project not found</span>
-                <RouterLink :to="{ name: 'projects-all' }">Back to All Projects</RouterLink>
-            </div>
-            <div v-else class="timeline-state">
-                <!-- wa-callout has a default slot and an icon slot only: the button goes in the default one. -->
-                <wa-callout variant="danger">
-                    <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                    <div class="timeline-error-content">
-                        <span>Failed to load the timeline</span>
-                        <wa-button variant="danger" appearance="outlined" size="small" @click="feed.retry()">
-                            <wa-icon name="arrow-rotate-right" slot="start"></wa-icon>
-                            Retry
-                        </wa-button>
-                    </div>
-                </wa-callout>
-            </div>
-        </div>
-
-        <div v-else class="timeline-list">
+        <div class="timeline-list">
             <VirtualScroller
                 ref="scrollerRef"
                 class="timeline-scroller"
@@ -285,6 +295,34 @@ watch(() => state.events.length, async () => {
                 <template #default="{ item }">
                     <div v-if="item.type === 'top'" class="timeline-top-room" aria-hidden="true"></div>
                     <DaySeparator v-else-if="item.type === 'day'" :label="item.label" :day-key="item.dayKey" />
+                    <template v-else-if="item.type === 'state'">
+                        <div v-if="item.state === 'loading'" class="timeline-state" role="status">
+                            <wa-spinner></wa-spinner>
+                            <span>Loading…</span>
+                        </div>
+                        <div v-else-if="item.state === 'empty'" class="timeline-state">No events yet</div>
+                        <div v-else-if="item.state === 'no-match'" class="timeline-state">
+                            <span class="timeline-no-match-message">{{ noMatchMessage }}</span>
+                            <wa-button appearance="outlined" size="small" @click="clearAllFilters">Clear all</wa-button>
+                        </div>
+                        <div v-else-if="item.state === 'not-found'" class="timeline-state">
+                            <span>Project not found</span>
+                            <RouterLink :to="{ name: 'projects-all' }">Back to All Projects</RouterLink>
+                        </div>
+                        <div v-else class="timeline-state">
+                            <!-- wa-callout has a default slot and an icon slot only: the button goes in the default one. -->
+                            <wa-callout variant="danger">
+                                <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+                                <div class="timeline-error-content">
+                                    <span>Failed to load the timeline</span>
+                                    <wa-button variant="danger" appearance="outlined" size="small" @click="feed.retry()">
+                                        <wa-icon name="arrow-rotate-right" slot="start"></wa-icon>
+                                        Retry
+                                    </wa-button>
+                                </div>
+                            </wa-callout>
+                        </div>
+                    </template>
                     <TimelineEventRow v-else :row="item" :context="context" />
                 </template>
             </VirtualScroller>
@@ -292,7 +330,8 @@ watch(() => state.events.length, async () => {
             <div v-if="state.loadingMore" class="timeline-footer" role="status">
                 <wa-spinner></wa-spinner>
             </div>
-            <div v-else-if="state.loadError" class="timeline-footer timeline-footer--error">
+            <!-- A failed first page is the error state item: only a failed older page shows here. -->
+            <div v-else-if="state.loadError?.phase === 'before'" class="timeline-footer timeline-footer--error">
                 <!-- wa-callout has a default slot and an icon slot only: the button goes in the default one. -->
                 <wa-callout variant="danger">
                     <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
@@ -356,12 +395,6 @@ watch(() => state.events.length, async () => {
    A newest-first list must never do that: loading older events would drag the view down. */
 .timeline-list .timeline-scroller.at-bottom {
     overflow-anchor: none;
-}
-
-.timeline-state-area {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
 }
 
 .timeline-state {

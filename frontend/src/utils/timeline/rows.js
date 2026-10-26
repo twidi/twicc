@@ -17,9 +17,11 @@ import { groupHeadIdentity } from './sessions.js'
  *     border) and the other half of the gap (0.5rem).
  *   - `band`, `nav`: the room the top row of the list keeps for the "Timeline" band and, in compact-height
  *     mode, for the navigation list above it (both are drawn over that room, see TimelinePanel.vue).
+ *   - `state`: the one item that replaces the event rows while the list is loading, empty, not found, failed or
+ *     matches nothing: the padding of the block (2.5rem above and below) and one or two lines of content.
  * rows.test.js reads `head - event` and `blockEnd` from the rules of TimelineEventRow.vue: change them together.
  */
-export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 79, blockEnd: 17, band: 48, nav: 96 }
+export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 79, blockEnd: 17, band: 48, nav: 96, state: 128 }
 
 /**
  * @typedef {Object} DayRow
@@ -94,7 +96,7 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
 }
 
 /**
- * @param {DayRow|EventRow|{type: 'top', withNav: boolean}} row
+ * @param {DayRow|EventRow|{type: 'top', withNav: boolean}|{type: 'state', state: string}} row
  * @returns {number} The height the scroller assumes until it measures the row.
  */
 export function estimateRowHeight(row) {
