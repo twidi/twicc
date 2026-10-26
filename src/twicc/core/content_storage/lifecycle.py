@@ -75,16 +75,19 @@ def lifecycle_change(session_ids: Iterable[str], *, defer_plaintext_inspection: 
         from twicc.core.content_storage.ingestion import ingestion_preserves_plaintext
 
         # Deferred inspection retains a targeted obligation; a root proof covers only its own references.
-        # ``after_rows`` are still current here: nothing has been written since their read.
+        # The plaintext probe's storage fields in ``after_rows`` are still current: nothing has been
+        # written since their read.
         targets = {sid for sid, decision in decisions.items()
                    if decision.resolved and not decision.is_cold
                    and (old_decisions[sid].is_cold
                         or (certificates.get(sid) is None and not ingestion_preserves_plaintext(sid)
                             and (defer_plaintext_inspection
                                  or not session_plaintext_metadata(sid, fields=after_rows[sid]))))}
+        # ``invalidate_roots`` decides its targets' promotion from ``after_rows`` after its own epoch
+        # UPDATE, and each carry resolves its root from them after that UPDATE and earlier carries. These
+        # writes change only storage-state columns, never the ancestry or cold-policy columns the decisions
+        # read; each carry still reads the epoch it compares.
         invalidate_roots(roots, promotion_targets=targets, metadata=after_rows)
-        # The epoch UPDATE of ``invalidate_roots`` and earlier carries write neither the ancestry nor the
-        # cold-policy columns of ``after_rows``; each carry still reads the epoch it compares.
         for root in roots:
             certificate = certificates.get(root)
             if certificate is not None:

@@ -139,13 +139,11 @@ class SliceReplay:
         self.paths: dict[str, Path] = {}
         self.providers: dict[str, str] = {}
         self.records: list[dict] = []
-        self.lines: dict[str, tuple[str, ...]] = {}
 
     def codex(self, fixture: CodexAgentRunFixture) -> LiveReplay:
         live = LiveReplay(fixture, self.tmp_path, compute=self.computes[Provider.CODEX])
         for fixture_session in fixture.sessions:
             self.track(fixture_session.session_id, live.paths[fixture_session.session_id], Provider.CODEX)
-            self.lines[fixture_session.session_id] = fixture_session.lines
         return live
 
     def session(self, session_id: str, provider: str, *, parent_id: str | None = None) -> Session:
@@ -428,8 +426,9 @@ def test_live_sync_matches_golden_record(scenario, tmp_path, django_capture_on_c
 # ---------------------------------------------------------------------------
 
 
-# Exact query counts of a one-line slice, under ``frozen_now`` (hot sessions). Pinned with ``==`` so any added
-# read fails. Before the duplicate ``core_session`` reads were removed: 51 / 53 / 60 / 52.
+# Exact query counts of a one-line slice, under ``frozen_now`` (hot sessions). Pinned with ``==``: any change
+# in the count fails, so a removed read lowers its budget on purpose. Before the duplicate ``core_session``
+# reads were removed: 51 / 53 / 60 / 52.
 BUDGETS: dict[tuple[str, str], int] = {
     ("claude_code", "root"): 35,
     ("codex", "root"): 37,

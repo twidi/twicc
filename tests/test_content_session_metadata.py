@@ -88,6 +88,34 @@ def test_load_native_metadata_terminates_on_cycles_and_marks_missing_rows():
     assert all(decisions[identity].root_id is None and not decisions[identity].resolved for identity in ids)
 
 
+def test_load_native_metadata_pages_each_level(monkeypatch):
+    import re
+
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from twicc.core.content_storage import state
+
+    monkeypatch.setattr(state, 'TREE_PAGE_SIZE', 2)
+    root = make_session('page-root')
+    parents = [make_session(f'page-parent-{index}', type='subagent', parent_session=root) for index in range(3)]
+    children = [make_session(f'page-child-{index}', type='subagent', parent_session=parent)
+                for index, parent in enumerate(parents)]
+    requested = [child.id for child in children] + ['page-missing']
+    with CaptureQueriesContext(connection) as queries:
+        metadata = load_native_metadata(requested)
+    # One query per page of at most 2 sorted ids, level by level: children (and the missing id), parents, root.
+    assert [re.findall(r"'(page-[^']+)'", query['sql']) for query in queries] == [
+        ['page-child-0', 'page-child-1'], ['page-child-2', 'page-missing'],
+        ['page-parent-0', 'page-parent-1'], ['page-parent-2'],
+        ['page-root'],
+    ]
+    assert set(metadata) == {*requested, *(parent.id for parent in parents), root.id}
+    assert metadata['page-missing'] is None
+    for session in (root, *parents, *children):
+        assert metadata[session.id] == native_metadata_row(Session.objects.get(pk=session.id))
+
+
 def test_native_root_ids_resolve_through_subagents(tree):
     root, child = tree
     assert native_root_ids([child.id, root.id]) == {child.id: root.id, root.id: root.id}
@@ -291,6 +319,44 @@ def test_bulk_lifecycle_change_keeps_wakeups_and_epochs(effects, django_capture_
     assert storage_epochs('bulk1-child') == (4, 4)
 
 
+def test_lifecycle_change_with_a_deleted_row(effects, django_capture_on_commit_callbacks):
+    from twicc.core.content_storage.lifecycle import lifecycle_change
+
+    recent = {'created_at': timezone.now() - timedelta(days=1)}
+    root, child = make_certified_tree('deleted', root_kwargs=recent, child_kwargs=recent)
+    with django_capture_on_commit_callbacks(execute=True), lifecycle_change([child.id]):
+        Session.objects.filter(pk=child.id).delete()
+    assert not Session.objects.filter(pk=child.id).exists()
+    # The deleted row has no decision, so no promotion; the mappings of both identities are invalidated.
+    assert effects.wakeups == []
+    assert effects.cold == [(['deleted-child', 'deleted-root'], True, ['deleted-child'])]
+    # The old root is fenced and its certificate carried to the new epoch.
+    assert storage_epochs(root.id) == (5, 5)
+
+
+@pytest.mark.parametrize(('version', 'wakeups'), [
+    pytest.param(None, ['orphan'], id='legacy'),
+    pytest.param(1, [], id='versioned'),
+])
+def test_lifecycle_change_with_an_unresolved_parent(version, wakeups, effects, django_capture_on_commit_callbacks):
+    from twicc.core.content_storage.lifecycle import update_lifecycle
+
+    recent = {'created_at': timezone.now() - timedelta(days=1)}
+    # A subagent whose parent is a subagent without a parent: the chain reaches no native root.
+    parent = make_session('orphan-parent', type='subagent', **recent)
+    orphan = make_session('orphan', type='subagent', parent_session=parent, storage_incarnation='orphan-incarnation',
+                          content_storage_version=version, **recent)
+    assert native_root_ids([orphan.id]) == {orphan.id: None}
+    with django_capture_on_commit_callbacks(execute=True):
+        update_lifecycle(Session.objects.filter(pk=orphan.id), last_updated_at=timezone.now())
+    # The unresolved session stands for its own root: it is fenced, with no certificate to carry.
+    assert effects.cold == [(['orphan'], False, ['orphan'])]
+    # Its own policy is hot: a legacy session needs promotion, a versioned one already holds plaintext.
+    assert effects.wakeups == wakeups
+    assert storage_epochs(orphan.id) == (5, 4)
+    assert storage_epochs(parent.id) == (4, 4)
+
+
 def stored_incarnation(session_id):
     return Session.objects.values_list('storage_incarnation', flat=True).get(pk=session_id)
 
@@ -364,11 +430,6 @@ def bound_setup(prefix, target):
     return root, owner, [ContentBinding(item.id, owner.id, content_id, None)]
 
 
-def storage_certificate(session_id):
-    fields = Session.objects.values('content_state_epoch', 'plaintext_verified_epoch').get(pk=session_id)
-    return fields, fields['content_state_epoch'] == fields['plaintext_verified_epoch']
-
-
 @pytest.mark.parametrize(('target', 'saved'), [
     pytest.param('child', 4, id='child-certified-root'),
     pytest.param('root', 1, id='root'),
@@ -385,13 +446,14 @@ def test_bind_with_metadata_skips_ancestry_reads(target, saved):
         kwargs = {'metadata': load_native_metadata([owner.id])} if from_metadata else {}
         with CaptureQueriesContext(connection) as queries, transaction.atomic():
             bind_persisted_items(bindings, **kwargs)
-        results.append((len(queries), storage_certificate(root.id), storage_certificate(owner.id)))
+        results.append((len(queries), storage_epochs(root.id), storage_epochs(owner.id)))
     (fresh_count, *fresh_state), (known_count, *known_state) = results
     # Child: its ancestry (2), the capture's and the carry's root resolution (1 each). Root: its resolution.
     assert fresh_count - known_count == saved
     assert fresh_state == known_state
     # A child binding carries its root's certificate; a root binding leaves its own epoch uncertified.
-    assert fresh_state[0][1] is (target == 'child')
+    epoch, verified = fresh_state[0]
+    assert (epoch == verified) is (target == 'child')
 
 
 def test_insert_with_metadata_skips_policy_read():
@@ -416,7 +478,7 @@ def test_insert_with_metadata_skips_policy_read():
                 'line_num', 'current_content__sha256', 'current_content__codec',
                 'original_content__sha256', 'original_content__codec',
             ))
-            results.append((len(queries), inserted, stored, storage_certificate(root.id)))
+            results.append((len(queries), inserted, stored, storage_epochs(root.id)))
             transaction.set_rollback(True)
     (fresh_count, *fresh_state), (known_count, *known_state) = results
     assert fresh_state[0] == set(lines)

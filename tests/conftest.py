@@ -1,6 +1,7 @@
 """Pytest configuration for Django tests."""
 
 import asyncio
+import inspect
 import itertools
 import os
 import re
@@ -358,16 +359,18 @@ def effects(monkeypatch) -> ContentStorageEffects:
         recorded.wakeups.append(session_id)
         return request_root_promotion(session_id, *args, **kwargs)
 
-    def recording_schedule_cold_invalidation(session_ids, *, mappings=False, lifecycle_session_ids=None, **kwargs):
-        session_ids = list(session_ids)
-        if lifecycle_session_ids is not None:
-            lifecycle_session_ids = list(lifecycle_session_ids)
+    signature = inspect.signature(schedule_cold_invalidation)
+
+    def recording_schedule_cold_invalidation(*args, **kwargs):
+        # Callers pass collections (never one-shot iterators): recording them leaves the call unchanged.
+        call = signature.bind(*args, **kwargs)
+        call.apply_defaults()
+        lifecycle_session_ids = call.arguments["lifecycle_session_ids"]
         recorded.cold.append((
-            sorted(session_ids), mappings, sorted(lifecycle_session_ids) if lifecycle_session_ids is not None else None,
+            sorted(call.arguments["session_ids"]), call.arguments["mappings"],
+            sorted(lifecycle_session_ids) if lifecycle_session_ids is not None else None,
         ))
-        return schedule_cold_invalidation(
-            session_ids, mappings=mappings, lifecycle_session_ids=lifecycle_session_ids, **kwargs,
-        )
+        return schedule_cold_invalidation(*args, **kwargs)
 
     monkeypatch.setattr(lifecycle, "request_root_promotion", recording_request_root_promotion)
     monkeypatch.setattr(cold_cache, "schedule_cold_invalidation", recording_schedule_cold_invalidation)
