@@ -448,7 +448,7 @@ test('8. invariants: individual transforms, scaled by --motion-amount, hover ins
     assertMotionInvariants(keyframeEntries(componentTree('../components/session/detail/items/TodoContent.vue'), 'todo-check-pop'), 'todo-check-pop')
 })
 
-test('9. snippet chips: lift on hover, press as scale, clip room in the narrow composer', () => {
+test('9. snippet chips: no hover movement, press as scale', () => {
     const tree = componentTree('../components/message/MessageSnippetsBar.vue')
     const flat = flatten(tree)
     const rule = (selector, where = () => true) => {
@@ -459,28 +459,22 @@ test('9. snippet chips: lift on hover, press as scale, clip room in the narrow c
     const base = rule('.snippet-btn').rule
     assert.deepEqual(splitTopLevel(base.decls.transition), [
         'background-color 0.1s', 'border-color 0.1s',
-        'scale var(--motion-dur-1) var(--motion-ease)', 'translate var(--motion-dur-2) var(--motion-ease-spring)',
+        'scale var(--motion-dur-1) var(--motion-ease)',
     ])
     const hover = rule('.snippet-btn:hover')
     assert.ok(inHoverMedia(hover.ancestors))
-    assert.equal(hover.rule.decls.translate, '0 calc(-1px * var(--motion-amount))')
+    assert.equal(hover.rule.decls.translate, undefined)
     const press = rule('.snippet-btn:active').rule
     assert.equal(press.decls.scale, 'calc(1 - 0.05 * var(--motion-amount))')
     const disabledHover = rule('.snippet-btn.snippet-disabled:hover')
     assert.ok(inHoverMedia(disabledHover.ancestors))
     assert.equal(disabledHover.rule.decls.scale, 'none')
-    assert.equal(disabledHover.rule.decls.translate, 'none')
     assert.equal(disabledHover.rule.decls.transform, undefined)
     const disabledPress = rule('.snippet-btn.snippet-disabled:active').rule
     assert.equal(disabledPress.decls.scale, 'none')
     const transforms = flat.filter((e) => 'transform' in e.rule.decls).map((e) => e.rule.selector)
     assert.deepEqual(transforms, [], 'no snippet rule declares transform')
-
-    const narrow = tree.filter((n) => n.type === 'at' && n.prelude === '@container message-input (width < 40rem)')
-    assert.equal(narrow.length, 1, 'one top-level narrow container query')
-    const bar = findRule(narrow[0].children, ['.message-snippets-bar'])
-    assert.equal(bar.decls['padding-block-start'], '1px')
-    assert.equal(bar.decls['margin-block-start'], '-1px')
+    assert.deepEqual(flat.filter((e) => 'translate' in e.rule.decls).map((e) => e.rule.selector), [], 'no snippet rule declares translate')
 })
 
 test('10. session rows, Send icon, settings gear', () => {
