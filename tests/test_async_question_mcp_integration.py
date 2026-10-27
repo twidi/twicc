@@ -26,12 +26,9 @@ from twicc.providers.codex.rollout_migration import (
     _insert_replace_codex_history_chunk,
 )
 
-# The lines are dated 2026-10-05: freeze the clock one day later so the content storage sees hot sessions.
 pytestmark = [
     pytest.mark.django_db(transaction=True),
     pytest.mark.parametrize("env", ["codex"], indirect=True),
-    pytest.mark.usefixtures("frozen_now"),
-    pytest.mark.frozen_now_at(datetime(2026, 10, 6, 9, 12, tzinfo=UTC)),
 ]
 env = test_mcp_events_turns.env
 
@@ -100,6 +97,10 @@ def test_async_question_keeps_blocking_request_schema(env):
     assert service.read_question_snapshot(env.session.id)["batches"][0]["status"] == "ready"
 
 
+# The only test that recomputes lines dated 2026-10-05 (the others date theirs with ``env.clock``, in 1970): freeze
+# the clock one day later so the content storage sees a hot session.
+@pytest.mark.usefixtures("frozen_now")
+@pytest.mark.frozen_now_at(datetime(2026, 10, 6, 9, 12, tzinfo=UTC))
 def test_history_replacement_preserves_question_decisions_until_mcp_adopts_new_epoch(env, monkeypatch):
     from tests.test_codex_async_question_lifecycle import record
 
