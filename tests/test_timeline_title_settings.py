@@ -298,3 +298,56 @@ def test_the_automatic_title_task_records_nothing_for_an_unknown_session(env, se
         session, TitleCheckState(7, NOW), title="New title", now=NOW, closing=False, succeeded=True)
     assert Session.objects.get(id=session.id).title == "New title"
     assert not TimelineEvent.objects.filter(session_id=session.id, kind="title.changed").exists()
+
+
+# --- A user title over the unrecorded placeholder ---------------------------------------------------------------
+
+
+def test_a_user_title_over_the_unrecorded_placeholder_is_the_first_title(project):
+    make(project, title="First words of the prompt", title_origin="auto")
+    with patch("twicc.core.services.session_update.ensure_provider_running"):
+        run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": "s1", "title": "Chosen"}))
+    assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "Chosen", "old": None}
+
+
+def test_a_user_title_over_a_recorded_automatic_title_keeps_it(project):
+    from twicc.core.services.session_timeline import record_title_change
+
+    make(project, title="Generated", title_origin="auto")
+    mark_known("s1", project.id)
+    record_title_change("s1", "Generated", source="auto")
+    with patch("twicc.core.services.session_update.ensure_provider_running"):
+        run_with_direct_writes(lambda: update_session_title_from_payload({"session_id": "s1", "title": "Chosen"}))
+    assert TimelineEvent.objects.filter(session_id="s1", kind="title.changed").order_by("-id").first().data == {
+        "source": "user", "new": "Chosen", "old": "Generated",
+    }
+
+
+def test_a_rest_title_over_the_unrecorded_placeholder_is_the_first_title(project):
+    from django.test import RequestFactory
+
+    from twicc.views import session_detail
+
+    make(project, title="First words of the prompt", title_origin="auto")
+    request = RequestFactory().patch("/", data={"title": "Chosen"}, content_type="application/json")
+    with patch("twicc.views.ensure_provider_running"):
+        assert run_with_direct_writes(lambda: session_detail(request, project.id, "s1")).status_code == 200
+    assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "Chosen", "old": None}
+
+
+def test_a_creation_title_flushed_after_the_placeholder_is_the_first_title(project):
+    """The title a parent session gives at creation lands after the placeholder of the first prompt."""
+    from types import SimpleNamespace
+
+    from twicc.agent.base_manager import BaseAgentManager
+
+    make(project, title="First words of the prompt", title_origin="auto")
+    mark_known("s1", project.id)
+    manager = SimpleNamespace(
+        _broadcast_session_updated=lambda sid: BaseAgentManager._broadcast_session_updated(None, sid),
+    )
+    run_with_direct_writes(lambda: BaseAgentManager._try_flush_pending_title(
+        manager, SimpleNamespace(session_id="s1", provider="codex"), "Chosen"))
+    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+        "source": "user", "new": "Chosen", "old": None,
+    }

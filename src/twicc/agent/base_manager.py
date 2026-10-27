@@ -880,8 +880,9 @@ class BaseAgentManager:
 
         try:
             async def _persist_session_title() -> int:
-                old_title = await sync_to_async(
-                    lambda: Session.objects.filter(id=session_id).values_list("title", flat=True).first()
+                old_title, old_origin = await sync_to_async(
+                    lambda: Session.objects.filter(id=session_id).values_list("title", "title_origin").first()
+                    or (None, None)
                 )()
                 updated = await sync_to_async(
                     Session.objects.filter(id=session_id).update
@@ -889,7 +890,8 @@ class BaseAgentManager:
                 # Retries of a failed provider rename re-run this update: only a real change is an event.
                 if updated and old_title != pending:
                     await asyncio.to_thread(
-                        record_title_change, session_id, pending, source="user", old=old_title, origin=origin,
+                        record_title_change, session_id, pending, source="user", old=old_title, old_origin=old_origin,
+                        origin=origin,
                     )
                 return updated
             rows_updated = await run_under_db_write_lock(_persist_session_title)

@@ -1183,14 +1183,16 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             title = validation.title
 
             # 1. Update DB immediately, under the shared DB write lock.
-            old_title = session.title
+            old_title, old_origin = session.title, session.title_origin
             session.title = title
             session.title_origin = "user"
 
             async def _save_title() -> None:
                 await session.asave(update_fields=["title", "title_origin"])
                 if title != old_title:
-                    await asyncio.to_thread(record_title_change, session.id, title, source="user", old=old_title)
+                    await asyncio.to_thread(
+                        record_title_change, session.id, title, source="user", old=old_title, old_origin=old_origin,
+                    )
 
             await run_under_db_write_lock(_save_title)
             needs_broadcast = True

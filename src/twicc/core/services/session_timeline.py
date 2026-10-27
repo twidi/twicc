@@ -428,11 +428,13 @@ def record_session_created(
 
 
 def record_title_change(
-    session_id: str, title: str, *, source: str, old: str | None = None, origin: RequestOrigin | None = None,
+    session_id: str, title: str, *, source: str, old: str | None = None, old_origin: str | None = None,
+    origin: RequestOrigin | None = None,
 ) -> None:
     """Write ``title.changed``. ``source`` is ``"auto"``, ``"user"`` or ``"agent"``.
 
-    ``old`` is the previous title when the caller knows it (``None`` otherwise).
+    ``old`` is the previous title when the caller knows it (``None`` otherwise), ``old_origin`` its
+    ``title_origin`` (``"auto"``, ``"user"`` or ``""``) when the caller read it before the write.
 
     A ``user`` title is request-caused: it takes ``origin`` when the caller captured one (a deferred
     flush), else the carrier, else the default. A title from another source comes from compute, the
@@ -445,19 +447,25 @@ def record_title_change(
     row) is its initial title, not a change: no event (spec 2026-10-18, C7). A ``user`` title is
     always written.
 
-    The first ``auto`` / ``agent`` title of a session is written as its first title (``old`` is
-    ``None``): the title it replaces was never recorded (the placeholder made from the first prompt,
-    or an initial title of C7), so a rename from it would show a title the timeline never had.
+    The first title event of a session is written as its first title (``old`` is ``None``) when the
+    title it replaces was never recorded and is automatic: the placeholder made from the first prompt,
+    or an initial title of C7. A rename from it would show a title the timeline never had. This holds
+    for every ``auto`` / ``agent`` title, and for a ``user`` title that replaces an ``auto`` one (a
+    title given at creation, flushed after the placeholder). A ``user`` title that replaces a title
+    of another origin keeps it.
     """
     try:
         row = Session.objects.filter(id=session_id).values_list("project_id", "type", "provider").first()
         if row is None or row[1] == SessionType.SUBAGENT:
             return
-        if source != "user":
-            if not TimelineEvent.objects.filter(session_id=session_id, kind=TimelineKind.SESSION_CREATED).exists():
-                return
-            if not TimelineEvent.objects.filter(session_id=session_id, kind=TimelineKind.TITLE_CHANGED).exists():
-                old = None
+        if source != "user" and not TimelineEvent.objects.filter(
+            session_id=session_id, kind=TimelineKind.SESSION_CREATED,
+        ).exists():
+            return
+        if old is not None and (source != "user" or old_origin == "auto") and not TimelineEvent.objects.filter(
+            session_id=session_id, kind=TimelineKind.TITLE_CHANGED,
+        ).exists():
+            old = None
         who = {"origin": origin} if source == "user" else {"actor": TimelineActor.AGENT}
         record_event_sync(
             TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0], provider=row[2],
