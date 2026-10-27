@@ -113,7 +113,7 @@ test('active preview keeps unread suppression without active row styling', () =>
     }
     const component = runInNewContext(`${compiled}; component`, context)
     const props = { session: { id: 'same-session' }, active: true, highlightActive: false,
-        showMenu: false, highlighted: false, compactView: false, selectionEnabled: false }
+        showMenu: false, highlighted: false, compactView: false, selectionEnabled: false, treeRow: null }
     const row = component.setup(props, { expose() {}, emit() {} })
     assert.equal(row.showActiveStyle?.value, false)
     assert.equal(row.hasUnread.value, false)

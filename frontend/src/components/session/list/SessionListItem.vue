@@ -17,6 +17,7 @@ import { formatDate } from '../../../utils/date'
 import { sessionRouteLocation } from '../../../utils/sessionRoute'
 import { projectPathTitle } from '../../../utils/projectName'
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
+import { TREE_MAX_INDENT_LEVEL } from '../../../utils/sessionTree'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, SESSION_TIME_FORMAT } from '../../../constants'
 import {
     archiveStopLabel,
@@ -86,6 +87,12 @@ const props = defineProps({
     filterProjectId: {
         type: String,
         default: null
+    },
+    // Session tree metadata for this row (null = flat list, rendered as before):
+    // { depth, hasChildren, expanded, summary: ?{ descendants, active, unread, pinned, latestDate }, hint: ?string }
+    treeRow: {
+        type: Object,
+        default: null
     }
 })
 
@@ -93,7 +100,20 @@ function rowId(name) {
     return `${props.idPrefix}${name}-${props.session.id}`
 }
 
-const emit = defineEmits(['select', 'drop-data', 'selection-click'])
+const emit = defineEmits(['select', 'drop-data', 'selection-click', 'toggle-tree'])
+
+/** Indentation steps of a tree row, capped. Carried by the wrapper, never by the button. */
+const treeIndentLevel = computed(() => props.treeRow ? Math.min(props.treeRow.depth, TREE_MAX_INDENT_LEVEL) : 0)
+
+/** Collapsed row with hidden descendants: shows the summary line. */
+const treeSummary = computed(() =>
+    props.treeRow?.hasChildren && !props.treeRow.expanded ? props.treeRow.summary : null
+)
+
+function handleToggleTree(event) {
+    event.stopPropagation()
+    emit('toggle-tree', props.session)
+}
 
 const showActiveStyle = computed(() => props.active && props.highlightActive)
 
@@ -466,15 +486,31 @@ function handleMenuSelect(event) {
             'session-item-wrapper--compact': compactView,
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
+            'session-item-wrapper--tree': !!treeRow,
             'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
             'sidebar-row-wrapper--selected': selected,
         }"
+        :style="treeRow ? { '--tree-indent-level': treeIndentLevel } : undefined"
         @dragenter="selectionEnabled && onDragenter($event)"
         @dragleave="selectionEnabled && onDragleave($event)"
         @dragover="selectionEnabled && onDragover($event)"
         @drop="selectionEnabled && onDrop($event)"
     >
+        <!-- Tree toggle (outside the row button: no nested buttons). A spacer keeps leaf rows aligned. -->
+        <button
+            v-if="treeRow?.hasChildren"
+            :id="rowId('tree-toggle')"
+            type="button"
+            class="tree-toggle"
+            :aria-expanded="treeRow.expanded ? 'true' : 'false'"
+            :aria-label="treeRow.expanded ? 'Collapse child sessions' : 'Expand child sessions'"
+            @click="handleToggleTree"
+            @mousedown.stop
+        >
+            <wa-icon :name="treeRow.expanded ? 'chevron-down' : 'chevron-right'"></wa-icon>
+        </button>
+        <span v-else-if="treeRow" class="tree-toggle-spacer" aria-hidden="true"></span>
         <wa-button
             :id="rowId('session-button')"
             :href="sessionHref"
@@ -490,6 +526,7 @@ function handleMenuSelect(event) {
             @click="handleClick"
             @mousedown="handleMousedown"
         >
+            <div v-if="treeRow?.hint" class="tree-hint">↰ from {{ treeRow.hint }}</div>
             <div class="session-name-row">
                 <!-- Compact mode: inline project color dot (instead of full ProjectBadge line) -->
                 <ProjectMark
@@ -557,6 +594,31 @@ function handleMenuSelect(event) {
                     class="compact-process-indicator"
                 />
                 <AppTooltip :hoist="!!idPrefix" v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="rowId('compact-process-indicator')">{{ processTooltip }}</AppTooltip>
+            </div>
+            <!-- Collapsed tree row: summary of the hidden descendants -->
+            <div v-if="treeSummary" class="tree-summary">
+                <span :id="rowId('tree-summary-count')" class="tree-summary-item">
+                    <wa-icon auto-width name="sitemap"></wa-icon>{{ treeSummary.descendants }}
+                </span>
+                <AppTooltip :hoist="!!idPrefix" :for="rowId('tree-summary-count')">Hidden child sessions</AppTooltip>
+                <span v-if="treeSummary.active" :id="rowId('tree-summary-active')" class="tree-summary-item">
+                    <ProcessIndicator state="assistant_turn" size="small" :animate-states="animateStates" />{{ treeSummary.active }}
+                </span>
+                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.active" :for="rowId('tree-summary-active')">Child sessions with a running process</AppTooltip>
+                <span v-if="treeSummary.unread" :id="rowId('tree-summary-unread')" class="tree-summary-item tree-summary-unread">
+                    <wa-icon auto-width name="eye"></wa-icon>{{ treeSummary.unread }}
+                </span>
+                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.unread" :for="rowId('tree-summary-unread')">Child sessions with new content to read</AppTooltip>
+                <span v-if="treeSummary.pinned" :id="rowId('tree-summary-pinned')" class="tree-summary-item tree-summary-pinned">
+                    <wa-icon auto-width name="thumbtack"></wa-icon>{{ treeSummary.pinned }}
+                </span>
+                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.pinned" :for="rowId('tree-summary-pinned')">Pinned child sessions</AppTooltip>
+                <template v-if="treeSummary.latestDate != null">
+                    <span :id="rowId('tree-summary-date')" class="tree-summary-item tree-summary-date">
+                        <wa-icon auto-width name="clock" variant="regular"></wa-icon>{{ formatDate(treeSummary.latestDate, { smart: true }) }}
+                    </span>
+                    <AppTooltip :hoist="!!idPrefix" :for="rowId('tree-summary-date')">Latest activity among child sessions</AppTooltip>
+                </template>
             </div>
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
             <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
@@ -743,6 +805,88 @@ function handleMenuSelect(event) {
    menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {
     padding-inline: var(--sidebar-row-inset, var(--wa-space-2xs));
+}
+
+/* Tree rows: the wrapper carries the indentation (the button keeps its base box, which the
+   gliding ink measures) and lays out the toggle column before the row button. */
+.session-item-wrapper--tree {
+    display: flex;
+    align-items: flex-start;
+    padding-inline-start: calc(
+        var(--sidebar-row-inset, var(--wa-space-2xs)) + var(--tree-indent-level, 0) * var(--wa-space-m)
+    );
+}
+
+.session-item-wrapper--tree > .session-item {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+}
+
+/* Native button: Web Awesome's native.css forces a height and display, reset them. */
+.tree-toggle,
+.tree-toggle-spacer {
+    flex: 0 0 1.25rem;
+    width: 1.25rem;
+}
+
+.tree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: auto;
+    align-self: stretch;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--wa-color-text-quiet);
+    font-size: var(--wa-font-size-xs);
+    cursor: pointer;
+}
+
+.tree-toggle:hover,
+.tree-toggle:focus-visible {
+    color: var(--wa-color-text-normal);
+}
+
+.tree-hint {
+    font-size: var(--wa-font-size-2xs);
+    font-weight: var(--wa-font-weight-body);
+    color: var(--wa-color-text-quiet);
+    margin-bottom: var(--wa-space-3xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tree-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wa-space-xs);
+    margin-top: var(--wa-space-3xs);
+    font-size: var(--wa-font-size-xs);
+    font-weight: var(--wa-font-weight-body);
+    color: var(--wa-color-text-quiet);
+}
+
+.tree-summary-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-3xs);
+}
+
+.tree-summary-unread {
+    color: var(--wa-color-warning-60);
+}
+
+.tree-summary-pinned {
+    color: var(--wa-color-yellow-80);
+}
+
+.tree-summary-date {
+    margin-left: auto;
 }
 
 .session-item-wrapper--no-menu .session-name {
