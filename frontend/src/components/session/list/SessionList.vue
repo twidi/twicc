@@ -14,7 +14,7 @@ import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansion'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
-import { buildSessionTree, flattenTree } from '../../../utils/sessionTree.js'
+import { buildSessionTree, flattenTree, treeActivity } from '../../../utils/sessionTree.js'
 import { isSessionUnread } from '../../../utils/sessions'
 import { retainSessionArray } from '../../../utils/sessionLists.js'
 import { matchQuery } from '../../../utils/textFilter'
@@ -171,26 +171,41 @@ watch([tree, settled], ([t, ok]) => {
 const treeRows = computed(() => tree.value ? flattenTree(tree.value, expansion.isExpanded) : null)
 
 const NO_TREE_ROWS = new Map()
-const sameSummary = (a, b) => a.descendants === b.descendants && a.active === b.active
-    && a.unread === b.unread && a.pinned === b.pinned && a.latestDate === b.latestDate
+const ACTIVITY_KEYS = ['processCount', 'pendingRequestCount', 'hasAssistantTurn', 'activeCronCount',
+    'backgroundShellCount', 'unreadCount']
+const sameActivity = (a, b) => a === b || (!!a && !!b && ACTIVITY_KEYS.every(key => a[key] === b[key]))
+const sameThrough = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])
+const sameRowMeta = (a, b) => a.depth === b.depth && a.isLast === b.isLast && sameThrough(a.through, b.through)
+    && a.hasChildren === b.hasChildren && a.expanded === b.expanded && a.hint === b.hint
+    && sameActivity(a.activity, b.activity)
 // Per-row tree metadata. An unchanged entry keeps its previous object, so an mtime tick
-// of an active session does not re-render every row.
+// of an active session does not re-render every row. `activity` is the cumulative activity
+// (the node and every descendant) of a collapsed parent, computed only for those rows.
 const treeRowMeta = computed(previous => {
     if (!tree.value) return NO_TREE_ROWS
     const meta = new Map()
-    for (const { id, depth } of treeRows.value) {
+    for (const { id, depth, isLast, through } of treeRows.value) {
         const node = tree.value.nodes.get(id)
+        const hasChildren = node.childIds.length > 0
+        const expanded = expansion.isExpanded(id)
         const next = {
             depth,
-            hasChildren: node.childIds.length > 0,
-            expanded: expansion.isExpanded(id),
-            summary: node.summary,
+            isLast,
+            through,
+            hasChildren,
+            expanded,
+            activity: hasChildren && !expanded
+                ? treeActivity([id, ...node.descendantIds], {
+                    processStates: store.processStates,
+                    sessions: sessionId => store.sessions[sessionId] ?? null,
+                    viewedId: props.sessionId,
+                    isUnread: isSessionUnread,
+                })
+                : null,
             hint: depth === 0 && node.hintParent ? getSessionDisplayName(node.hintParent) : null,
         }
         const old = previous?.get(id)
-        meta.set(id, old && old.depth === next.depth && old.hasChildren === next.hasChildren
-            && old.expanded === next.expanded && old.hint === next.hint
-            && sameSummary(old.summary, next.summary) ? old : next)
+        meta.set(id, old && sameRowMeta(old, next) ? old : next)
     }
     return meta
 })

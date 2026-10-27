@@ -62,3 +62,13 @@ test('the parent hint falls back to the shared display name', () => {
     assert.ok(sfc.includes('getSessionDisplayName(node.hintParent)'))
     assert.ok(!sfc.includes('node.hintParent?.title'))
 })
+
+test('row metadata carries the guide data and the cumulative activity, compared field by field', () => {
+    assert.ok(sfc.includes('treeActivity('))
+    assert.ok(sfc.includes('[id, ...node.descendantIds]'))
+    assert.match(sfc, /activity: hasChildren && !expanded\s*\? treeActivity\(/)
+    assert.ok(sfc.includes('sameThrough(a.through, b.through)'))
+    assert.ok(sfc.includes('sameActivity(a.activity, b.activity)'))
+    assert.ok(!sfc.includes('sameSummary'))
+    assert.ok(!sfc.includes('node.summary'))
+})

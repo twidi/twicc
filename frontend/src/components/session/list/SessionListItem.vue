@@ -18,7 +18,8 @@ import { getSessionDisplayName } from '../../../utils/sessionTitle'
 import { sessionRouteLocation } from '../../../utils/sessionRoute'
 import { projectPathTitle } from '../../../utils/projectName'
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
-import { TREE_MAX_INDENT_LEVEL } from '../../../utils/sessionTree'
+import { TREE_MAX_INDENT_LEVEL, treeGuides } from '../../../utils/sessionTree'
+import { processActivityDisplayMode } from '../../../utils/processActivity'
 import { PROCESS_STATE, PROCESS_STATE_COLORS, SESSION_TIME_FORMAT } from '../../../constants'
 import {
     archiveStopLabel,
@@ -33,6 +34,7 @@ import ProjectBadge from '../../project/ProjectBadge.vue'
 import ProjectMark from '../../project/ProjectMark.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import ProcessDuration from '../../ui/ProcessDuration.vue'
+import ProcessActivityIndicator from '../../ui/ProcessActivityIndicator.vue'
 import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import ScrollableText from '../../ui/ScrollableText.vue'
@@ -90,7 +92,10 @@ const props = defineProps({
         default: null
     },
     // Session tree metadata for this row (null = flat list, rendered as before):
-    // { depth, hasChildren, expanded, summary: ?{ descendants, active, unread, pinned, latestDate }, hint: ?string }
+    // { depth, isLast, through, hasChildren, expanded, activity, hint }
+    // `through`: per ancestor column, whether its guide line continues through this row.
+    // `activity`: cumulative `summarizeProcessActivity` result of a collapsed parent (the node and
+    // all its descendants), null otherwise.
     treeRow: {
         type: Object,
         default: null
@@ -106,9 +111,20 @@ const emit = defineEmits(['select', 'drop-data', 'selection-click', 'toggle-tree
 /** Indentation steps of a tree row, capped. Carried by the wrapper, never by the button. */
 const treeIndentLevel = computed(() => props.treeRow ? Math.min(props.treeRow.depth, TREE_MAX_INDENT_LEVEL) : 0)
 
-/** Collapsed row with hidden descendants: shows the summary line. */
-const treeSummary = computed(() =>
-    props.treeRow?.hasChildren && !props.treeRow.expanded ? props.treeRow.summary : null
+/** Guide lines of a child row (null for roots and flat rows). */
+const guides = computed(() => props.treeRow ? treeGuides(props.treeRow) : null)
+
+/** Expanded parent whose children are indented: its guide starts under the arrow. */
+const showGuideStub = computed(() =>
+    !!props.treeRow?.hasChildren && props.treeRow.expanded && props.treeRow.depth < TREE_MAX_INDENT_LEVEL
+)
+
+/**
+ * Display mode of the cumulative indicator of a collapsed parent (null: the row keeps its
+ * own indicators). It takes the place of the process, pending-request and unread indicators.
+ */
+const cumulativeMode = computed(() =>
+    props.treeRow?.activity ? processActivityDisplayMode(props.treeRow.activity) : null
 )
 
 function handleToggleTree(event) {
@@ -479,6 +495,7 @@ function handleMenuSelect(event) {
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
             'session-item-wrapper--tree': !!treeRow,
+            'session-item-wrapper--tree-parent': !!treeRow?.hasChildren,
             'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
             'sidebar-row-wrapper--selected': selected,
@@ -489,7 +506,16 @@ function handleMenuSelect(event) {
         @dragover="selectionEnabled && onDragover($event)"
         @drop="selectionEnabled && onDrop($event)"
     >
-        <!-- Tree toggle (outside the row button: no nested buttons). A spacer keeps leaf rows aligned. -->
+        <!-- Guide lines (decorative): the ancestors' lines, the row's own line and elbow, and the stub under an expanded parent's arrow -->
+        <template v-if="guides || showGuideStub">
+            <span v-for="column in guides?.columns" :key="column" class="tree-guide" :style="{ '--tree-column': column }" aria-hidden="true"></span>
+            <template v-if="guides">
+                <span class="tree-guide" :class="{ 'tree-guide--ends': guides.ownEnds }" :style="{ '--tree-column': guides.ownColumn }" aria-hidden="true"></span>
+                <span class="tree-elbow" :style="{ '--tree-column': guides.ownColumn }" aria-hidden="true"></span>
+            </template>
+            <span v-if="showGuideStub" class="tree-guide tree-guide--stub" :style="{ '--tree-column': treeIndentLevel }" aria-hidden="true"></span>
+        </template>
+        <!-- Tree toggle (outside the row button: no nested buttons). Only rows with children have one. -->
         <button
             v-if="treeRow?.hasChildren"
             :id="rowId('tree-toggle')"
@@ -502,7 +528,6 @@ function handleMenuSelect(event) {
         >
             <wa-icon :name="treeRow.expanded ? 'chevron-down' : 'chevron-right'"></wa-icon>
         </button>
-        <span v-else-if="treeRow" class="tree-toggle-spacer" aria-hidden="true"></span>
         <wa-button
             :id="rowId('session-button')"
             :href="sessionHref"
@@ -560,23 +585,23 @@ function handleMenuSelect(event) {
                 ></wa-icon>
                 <!-- Compact mode: unread indicator (highest priority) -->
                 <wa-icon
-                    v-if="compactView && hasUnread"
+                    v-if="compactView && !cumulativeMode && hasUnread"
                     :id="rowId('compact-unread')"
                     name="eye"
                     class="compact-unread-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && hasUnread" :for="rowId('compact-unread')">New content to read<template v-if="processState"> · {{ processTooltip }}</template></AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread" :for="rowId('compact-unread')">New content to read<template v-if="processState"> · {{ processTooltip }}</template></AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
-                    v-if="compactView && !hasUnread && pendingRequest"
+                    v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest"
                     :id="rowId('compact-pending-request')"
                     name="hand"
                     class="compact-pending-request-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
                 <!-- Compact mode: process indicator (hidden when unread or pending request is shown) -->
                 <ProcessIndicator
-                    v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest"
+                    v-if="compactView && !cumulativeMode && processState && !session.ephemeral && !hasUnread && !pendingRequest"
                     :id="rowId('compact-process-indicator')"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
@@ -585,37 +610,18 @@ function handleMenuSelect(event) {
                     :animate-states="animateStates"
                     class="compact-process-indicator"
                 />
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="rowId('compact-process-indicator')">{{ processTooltip }}</AppTooltip>
-            </div>
-            <!-- Collapsed tree row: summary of the hidden descendants -->
-            <div v-if="treeSummary" class="tree-summary">
-                <span :id="rowId('tree-summary-count')" class="tree-summary-item">
-                    <wa-icon auto-width name="sitemap"></wa-icon>{{ treeSummary.descendants }}
-                </span>
-                <AppTooltip :hoist="!!idPrefix" :for="rowId('tree-summary-count')">Hidden child sessions</AppTooltip>
-                <span v-if="treeSummary.active" :id="rowId('tree-summary-active')" class="tree-summary-item">
-                    <ProcessIndicator state="assistant_turn" size="small" :animate-states="animateStates" />{{ treeSummary.active }}
-                </span>
-                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.active" :for="rowId('tree-summary-active')">Child sessions with a running process</AppTooltip>
-                <span v-if="treeSummary.unread" :id="rowId('tree-summary-unread')" class="tree-summary-item tree-summary-unread">
-                    <wa-icon auto-width name="eye"></wa-icon>{{ treeSummary.unread }}
-                </span>
-                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.unread" :for="rowId('tree-summary-unread')">Child sessions with new content to read</AppTooltip>
-                <span v-if="treeSummary.pinned" :id="rowId('tree-summary-pinned')" class="tree-summary-item tree-summary-pinned">
-                    <wa-icon auto-width name="thumbtack"></wa-icon>{{ treeSummary.pinned }}
-                </span>
-                <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.pinned" :for="rowId('tree-summary-pinned')">Pinned child sessions</AppTooltip>
-                <template v-if="treeSummary.latestDate != null">
-                    <span :id="rowId('tree-summary-date')" class="tree-summary-item tree-summary-date">
-                        <wa-icon auto-width name="clock" variant="regular"></wa-icon><wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(treeSummary.latestDate)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
-                        <template v-else>{{ formatDate(treeSummary.latestDate, { smart: true }) }}</template>
-                    </span>
-                    <AppTooltip :hoist="!!idPrefix" :for="rowId('tree-summary-date')">Latest activity among child sessions</AppTooltip>
-                </template>
+                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="rowId('compact-process-indicator')">{{ processTooltip }}</AppTooltip>
+                <!-- Collapsed tree row, compact: the cumulative indicator replaces the three above -->
+                <ProcessActivityIndicator
+                    v-if="compactView && cumulativeMode"
+                    :summary="treeRow.activity"
+                    size="small"
+                    class="compact-process-indicator"
+                />
             </div>
             <!-- Project badge line (hidden in compact mode, dot is shown inline instead) -->
             <!-- When unread + no process: show unread indicator on the project line (right-aligned) -->
-            <div v-if="!compactView && (effectiveShowProjectName || hasCodeComments || (hasUnread && !processState))" class="session-project-row">
+            <div v-if="!compactView && (effectiveShowProjectName || hasCodeComments || (hasUnread && !processState && !cumulativeMode))" class="session-project-row">
                 <ProjectBadge v-if="effectiveShowProjectName" :project-id="session.project_id" class="session-project" />
                 <wa-icon
                     v-if="hasCodeComments"
@@ -624,60 +630,68 @@ function handleMenuSelect(event) {
                     class="session-comments-indicator"
                 ></wa-icon>
                 <wa-icon
-                    v-if="hasUnread && !processState"
+                    v-if="hasUnread && !processState && !cumulativeMode"
                     :id="rowId('standalone-unread')"
                     name="eye"
                     class="unread-indicator standalone-unread-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="hasUnread && !processState" :for="rowId('standalone-unread')">New content to read</AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="hasUnread && !processState && !cumulativeMode" :for="rowId('standalone-unread')">New content to read</AppTooltip>
             </div>
-            <!-- Process info row (only shown when process is active, hidden in compact mode) -->
+            <!-- Process info row (hidden in compact mode): the own process (memory, duration, indicator) and/or
+                 the cumulative indicator of a collapsed tree parent, which takes the place of the own indicators -->
             <div
-                v-if="!compactView && processState && !session.ephemeral"
+                v-if="!compactView && ((processState && !session.ephemeral) || cumulativeMode)"
                 class="process-info"
-                :style="{ color: getProcessColor(processState.state) }"
+                :style="processState && !session.ephemeral ? { color: getProcessColor(processState.state) } : undefined"
             >
                 <span :id="rowId('process-memory')" class="process-memory">
-                    <template v-if="processState.memory">
+                    <template v-if="processState && !session.ephemeral && processState.memory">
                         {{ formatMemory(processState.memory) }}
                     </template>
                 </span>
-                <AppTooltip :hoist="!!idPrefix" :for="rowId('process-memory')">{{ providerLabel }} memory usage</AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-memory')">{{ providerLabel }} memory usage</AppTooltip>
 
                 <span :id="rowId('process-duration')" class="process-duration">
                     <ProcessDuration
-                        v-if="processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
+                        v-if="processState && !session.ephemeral && processState.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at"
                         :state-changed-at="processState.state_changed_at"
                     />
                 </span>
-                <AppTooltip :hoist="!!idPrefix" :for="rowId('process-duration')">Assistant turn duration</AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-duration')">Assistant turn duration</AppTooltip>
 
                 <span class="process-indicator-cell">
-                    <wa-icon
-                        v-if="pendingRequest"
-                        :id="rowId('pending-request')"
-                        name="hand"
-                        class="pending-request-indicator"
-                    ></wa-icon>
-                    <AppTooltip :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
-                    <!-- Unread indicator replaces process indicator when unread -->
-                    <wa-icon
-                        v-if="hasUnread"
-                        :id="rowId('process-unread')"
-                        name="eye"
-                        class="unread-indicator"
-                    ></wa-icon>
-                    <AppTooltip :hoist="!!idPrefix" v-if="hasUnread" :for="rowId('process-unread')">New content to read · {{ processTooltip }}</AppTooltip>
-                    <ProcessIndicator
-                        v-else
-                        :id="rowId('process-indicator')"
-                        :state="processState.state"
-                        :has-active-crons="hasActiveCrons"
-                        :background-shells="userTurnBackgroundShells"
+                    <ProcessActivityIndicator
+                        v-if="cumulativeMode"
+                        :summary="treeRow.activity"
                         size="small"
-                        :animate-states="animateStates"
                     />
-                    <AppTooltip :hoist="!!idPrefix" v-if="!hasUnread" :for="rowId('process-indicator')">{{ processTooltip }}</AppTooltip>
+                    <template v-else>
+                        <wa-icon
+                            v-if="pendingRequest"
+                            :id="rowId('pending-request')"
+                            name="hand"
+                            class="pending-request-indicator"
+                        ></wa-icon>
+                        <AppTooltip :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
+                        <!-- Unread indicator replaces process indicator when unread -->
+                        <wa-icon
+                            v-if="hasUnread"
+                            :id="rowId('process-unread')"
+                            name="eye"
+                            class="unread-indicator"
+                        ></wa-icon>
+                        <AppTooltip :hoist="!!idPrefix" v-if="hasUnread" :for="rowId('process-unread')">New content to read · {{ processTooltip }}</AppTooltip>
+                        <ProcessIndicator
+                            v-else
+                            :id="rowId('process-indicator')"
+                            :state="processState.state"
+                            :has-active-crons="hasActiveCrons"
+                            :background-shells="userTurnBackgroundShells"
+                            size="small"
+                            :animate-states="animateStates"
+                        />
+                        <AppTooltip :hoist="!!idPrefix" v-if="!hasUnread" :for="rowId('process-indicator')">{{ processTooltip }}</AppTooltip>
+                    </template>
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
@@ -800,30 +814,35 @@ function handleMenuSelect(event) {
     padding-inline: var(--sidebar-row-inset, var(--wa-space-2xs));
 }
 
-/* Tree rows: the wrapper carries the indentation (the button keeps its base box, which the
-   gliding ink measures) and lays out the toggle column before the row button. */
+/* Tree rows. The wrapper carries the indentation (the button keeps its base box, which the
+   gliding ink measures): one step per level, capped. A row without children reserves no space,
+   so a leaf at depth 0 is laid out exactly like a flat row.
+   --tree-step is the arrow's width AND the indentation step: a parent's arrow centre is the
+   guide column of its children, and each elbow ends at the child's box (arrow or button). */
 .session-item-wrapper--tree {
-    display: flex;
-    align-items: flex-start;
+    --tree-step: 1.25rem;
+    --tree-line: var(--wa-border-width-s) solid var(--sidebar-divider-color, var(--wa-color-surface-border));
     padding-inline-start: calc(
-        var(--sidebar-row-inset, var(--wa-space-2xs)) + var(--tree-indent-level, 0) * var(--wa-space-m)
+        var(--sidebar-row-inset, var(--wa-space-2xs)) + var(--tree-indent-level, 0) * var(--tree-step)
     );
 }
 
-.session-item-wrapper--tree > .session-item {
+/* Parent rows: the arrow comes before the row button. */
+.session-item-wrapper--tree-parent {
+    display: flex;
+    align-items: flex-start;
+}
+
+.session-item-wrapper--tree-parent > .session-item {
     flex: 1 1 0;
     width: auto;
     min-width: 0;
 }
 
 /* Native button: Web Awesome's native.css forces a height and display, reset them. */
-.tree-toggle,
-.tree-toggle-spacer {
-    flex: 0 0 1.25rem;
-    width: 1.25rem;
-}
-
 .tree-toggle {
+    flex: 0 0 var(--tree-step);
+    width: var(--tree-step);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -843,6 +862,37 @@ function handleMenuSelect(event) {
     color: var(--wa-color-text-normal);
 }
 
+/* Guide lines (the wrapper is the positioning context). Column c is centred on the arrow of
+   the ancestor at depth c. The vertical line spans the whole row; it stops at the elbow for the
+   last child. The stub continues an expanded parent's line from under its arrow. */
+.tree-guide,
+.tree-elbow {
+    position: absolute;
+    pointer-events: none;
+    inset-inline-start: calc(
+        var(--sidebar-row-inset, var(--wa-space-2xs)) + var(--tree-column, 0) * var(--tree-step) + var(--tree-step) / 2
+    );
+}
+
+.tree-guide {
+    inset-block: 0;
+    border-inline-start: var(--tree-line);
+}
+
+.tree-guide--ends {
+    inset-block-end: 50%;
+}
+
+.tree-guide--stub {
+    inset-block-start: calc(50% + 0.5rem);
+}
+
+.tree-elbow {
+    inset-block-start: 50%;
+    inline-size: calc(var(--tree-step) / 2 - 2px);
+    border-block-start: var(--tree-line);
+}
+
 .tree-hint {
     font-size: var(--wa-font-size-2xs);
     font-weight: var(--wa-font-weight-body);
@@ -851,35 +901,6 @@ function handleMenuSelect(event) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.tree-summary {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--wa-space-xs);
-    margin-top: var(--wa-space-3xs);
-    font-size: var(--wa-font-size-xs);
-    font-weight: var(--wa-font-weight-body);
-    color: var(--wa-color-text-quiet);
-}
-
-.tree-summary-item {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--wa-space-3xs);
-}
-
-.tree-summary-unread {
-    color: var(--wa-color-warning-60);
-}
-
-.tree-summary-pinned {
-    color: var(--wa-color-yellow-80);
-}
-
-.tree-summary-date {
-    margin-left: auto;
 }
 
 .session-item-wrapper--no-menu .session-name {
