@@ -4,6 +4,7 @@
  */
 
 import { sessionSortComparator } from './sessionSort.js'
+import { summarizeProcessActivity } from './processActivity.js'
 
 const isParticipant = (session) => !session.ephemeral && !session.draft
 
@@ -137,20 +138,19 @@ export function buildSessionTree(candidates, {
         walk(node.childIds)
 
         node.effective = { pinned, active, activeKey, dateKey }
-        const summary = { descendants: ordered.length, active: 0, unread: 0, pinned: 0, latestDate: null }
+        const summary = { descendants: ordered.length, pinned: 0, latestDate: null }
         const triggerIds = []
         for (const dId of ordered) {
             const d = nodes.get(dId).session
             const dActive = processStates[dId] != null
             const dUnread = dId !== viewedId && !!isUnread(d, processStates[dId])
             const dPinned = !!d.pinned
-            if (dActive) summary.active++
-            if (dUnread) summary.unread++
             if (dPinned) summary.pinned++
             if (dActive || dUnread || dPinned) triggerIds.push(dId)
         }
         summary.latestDate = dateKey > session.mtime ? dateKey : null
         node.summary = summary
+        node.descendantIds = ordered
         node.triggerIds = triggerIds
 
         proxies.set(id, {
@@ -168,6 +168,33 @@ export function buildSessionTree(candidates, {
     rootIds.sort(byEffective)
 
     return { nodes, rootIds }
+}
+
+/**
+ * Aggregated activity of a node's descendants (the collapsed pill indicator).
+ * Skips synthetic, ephemeral and hidden sessions, like the project badges.
+ *
+ * @param {string[]} descendantIds
+ * @param {{
+ *   processStates: Object,
+ *   sessions: (id: string) => ?Object,
+ *   viewedId: ?string,
+ *   isUnread: (session: Object, processState: ?Object) => boolean,
+ * }} opts
+ * @returns {ReturnType<typeof summarizeProcessActivity>}
+ */
+export function descendantActivity(descendantIds, { processStates, sessions, viewedId, isUnread }) {
+    const states = []
+    let unreadCount = 0
+    for (const id of descendantIds) {
+        const ps = processStates[id]
+        if (ps?.synthetic || ps?.extra?.ephemeral) continue
+        const session = sessions(id)
+        if (session?.hidden) continue
+        if (ps) states.push(ps)
+        if (session && id !== viewedId && isUnread(session, ps)) unreadCount++
+    }
+    return summarizeProcessActivity(states, unreadCount)
 }
 
 /** Deepest indentation level the row visuals render. */
