@@ -27,14 +27,23 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     // session one is modelled: it is enough to tell the answers of two queries apart.
     const inScope = (e, projectIds) => !projectIds.length || e.project_id === null || projectIds.includes(e.project_id)
     const matches = (e, query = {}) => !query.session || e.session_id === query.session
+    // The sessions hidden NOW: the endpoint leaves their rows out of every read.
+    const hidden = new Set()
+    const visible = (e) => !hidden.has(e.session_id)
     function compute({ projectIds, query, before, afterId }) {
         const latest_id = table.length ? Math.max(...table.map((e) => e.id)) : null
         const sessions = { s1: { title: `T${++counter}`, project_id: 'p1', provider: 'codex', hidden: false, archived: false } }
         if (afterId !== null) {
-            const rows = table.filter((e) => e.id > afterId && inScope(e, projectIds) && matches(e, query)).sort((a, b) => a.id - b.id)
-            return { events: rows.slice(0, 500), has_more: false, truncated: rows.length > 500, latest_id, sessions }
+            const range = table.filter((e) => e.id > afterId && inScope(e, projectIds) && matches(e, query)).sort((a, b) => a.id - b.id)
+            const capped = range.slice(0, 500)
+            const toggled = (kind, now) => [...new Set(capped.filter((e) => e.kind === kind && hidden.has(e.session_id) === now)
+                .map((e) => e.session_id))].sort()
+            return {
+                events: capped.filter(visible), has_more: false, truncated: range.length > 500, latest_id, sessions,
+                hidden_sessions: toggled('hidden.started', true), shown_sessions: toggled('hidden.ended', false),
+            }
         }
-        let rows = table.filter((e) => inScope(e, projectIds) && matches(e, query)).sort(compareNewestFirst)
+        let rows = table.filter((e) => inScope(e, projectIds) && matches(e, query) && visible(e)).sort(compareNewestFirst)
         if (before) {
             const [time, id] = before.split(',')
             rows = rows.filter((e) => compareNewestFirst(e, { occurred_at: time, id: Number(id) }) > 0)
@@ -45,8 +54,15 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     return {
         table,
         calls,
+        hidden,
         commit(e) {
             table.push(e)
+        },
+        /** Hide (or show again) a session: the flag flips and its `hidden.started` (`hidden.ended`) row is written. */
+        setHidden(sessionId, value, id, time) {
+            if (value) hidden.add(sessionId)
+            else hidden.delete(sessionId)
+            table.push(event(id, time, { kind: value ? 'hidden.started' : 'hidden.ended', session_id: sessionId }))
         },
         hold() {
             holding = true
@@ -1025,4 +1041,248 @@ test('buildTimelineUrl appends the query entries after project_ids and percent-e
     assert.deepEqual([params.get('families'), params.get('session')], ['sessions,turns', 'x y&z'])
     assert.equal(buildTimelineUrl({ query: { provider: 'codex' }, afterId: 3 }), '/api/timeline/?provider=codex&after_id=3')
     assert.equal(buildTimelineUrl({ query: {} }), '/api/timeline/')
+})
+
+// -- Hidden sessions: a session hidden or shown again while the list is open ---------------------------------
+
+/** Session of each id: s2 owns the ids of `s2Ids`, s1 every other one. Times increase with the id. */
+const rowsOf = (count, s2Ids) => Array.from({ length: count }, (_, index) => index + 1)
+    .map((id) => event(id, at(id), { session_id: s2Ids.includes(id) ? 's2' : 's1' }))
+const labels = (server) => server.calls.map((c) => {
+    const base = c.afterId !== null ? `after:${c.afterId}` : c.before ? `before:${c.before.split(',')[1]}` : 'first'
+    return c.query.session ? `${base}@${c.query.session}` : base
+})
+
+test('the rows of a session hidden while the list is open are removed in place: cursors and has_more stay', async () => {
+    const { server, feed, state } = setup(rowsOf(6, [2, 3, 5]), { pageSize: 4 })
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 5, 4, 3])
+    const kept = state.events.find((e) => e.id === 6)
+    server.setHidden('s2', true, 7, at(7))
+    feed.notifyLatest(7)
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 4], 'the rows of s2 are gone, its hidden.started row never lands')
+    assert.equal(state.events[0], kept, 'the other rows are the same objects')
+    assert.deepEqual([state.hasMore, state.pageCursor, state.liveCursor], [true, `${at(3)},3`, 7])
+    assert.deepEqual(labels(server), ['first', 'after:6'], 'nothing is reloaded')
+    // The next page still starts at the last fetched row, though that row (3, of s2) left the list.
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual(labels(server).at(-1), 'before:3')
+    assert.deepEqual(ids(state), [6, 4, 1])
+    assert.equal(state.hasMore, false)
+})
+
+test('a response without hidden sessions keeps the same array', async () => {
+    const { server, feed, state } = setup(rowsOf(4, [2]), { pageSize: 4 })
+    feed.setScope([])
+    await feed.idle()
+    const list = state.events
+    feed.refresh()
+    await feed.idle()
+    assert.equal(state.events, list)
+    assert.equal(server.calls.length, 2)
+})
+
+test('a removal that empties the list while older pages remain loads the next page', async () => {
+    const { server, feed, state } = setup(rowsOf(6, [3]), { pageSize: 3 })
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(ids(state), [6, 5, 4])
+    server.setHidden('s1', true, 7, at(7))
+    feed.notifyLatest(7)
+    await feed.idle()
+    // Every loaded row was of s1: the list is empty but older pages remain, so the next one is loaded. It holds
+    // the visible row 3.
+    assert.deepEqual(labels(server), ['first', 'after:6', 'before:4'])
+    assert.deepEqual(ids(state), [3])
+})
+
+test('a back-dated live row newer than the page cursor survives the removal of the tail', async () => {
+    const { server, feed, state } = setup(rowsOf(6, [4]), { pageSize: 3 })
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual([ids(state), state.pageCursor], [[6, 5, 4], `${at(4)},4`])
+    server.setHidden('s2', true, 7, at(7))
+    server.commit(event(8, at(4, 500), { session_id: 's1' })) // between the cursor (4) and the new tail (5)
+    feed.notifyLatest(8)
+    await feed.idle()
+    // The page cursor, not the tail, is the edge of the loaded window: a page from it would never bring row 8.
+    assert.deepEqual(ids(state), [6, 5, 8])
+    assert.equal(state.pageCursor, `${at(4)},4`)
+})
+
+test('mergeEvents takes the floor, when given, as the edge of the loaded window', () => {
+    const list = [event(6, at(6)), event(5, at(5))]
+    const between = event(8, at(4, 500))
+    const older = event(9, at(3))
+    const floor = { occurred_at: at(4), id: 4 }
+    assert.deepEqual(mergeEvents(list, [between, older], { hasMore: true, live: true, floor }).map((e) => e.id), [6, 5, 8])
+    assert.deepEqual(mergeEvents(list, [between], { hasMore: true, live: true }), list, 'without a floor, the tail')
+})
+
+test('a session shown again is merged back inside the loaded window, older rows left to the pages', async () => {
+    const { server, feed, state } = setup(rowsOf(8, [2, 5, 7]), { pageSize: 3 })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual([ids(state), state.pageCursor, state.hasMore], [[8, 6, 4], `${at(4)},4`, true])
+    server.setHidden('s2', false, 9, at(9))
+    feed.notifyLatest(9)
+    await feed.idle()
+    // The session's newest page [9, 7, 5] is inside the window; the next one [2] is older than row 4: dropped.
+    assert.deepEqual(labels(server), ['first', 'after:8', 'first@s2', 'before:5@s2'])
+    assert.deepEqual(ids(state), [9, 8, 7, 6, 5, 4])
+    assert.deepEqual([state.pageCursor, state.hasMore, state.liveCursor], [`${at(4)},4`, true, 9])
+    feed.loadMore()
+    await feed.idle()
+    assert.deepEqual(ids(state), [9, 8, 7, 6, 5, 4, 3, 2, 1], 'the page brings row 2 in its place')
+})
+
+test('the backfill stops at the page that reaches below the oldest loaded event', async () => {
+    const { server, feed, state } = setup(rowsOf(8, [2, 3, 7]), { pageSize: 3 })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual(ids(state), [8, 6, 5])
+    server.setHidden('s2', false, 9, at(9))
+    feed.notifyLatest(9)
+    await feed.idle()
+    // [9, 7, 3]: row 3 is older than row 5, so this page reached the edge; no second page though has_more.
+    assert.deepEqual(labels(server), ['first', 'after:8', 'first@s2'])
+    assert.deepEqual(ids(state), [9, 8, 7, 6, 5])
+})
+
+test('with no older page left, the backfill pages to the end of the session', async () => {
+    const { server, feed, state } = setup(rowsOf(6, [1, 2, 4]), { pageSize: 10 })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    assert.deepEqual([ids(state), state.hasMore], [[6, 5, 3], false])
+    // A small page now, so the backfill needs several.
+    const original = server.fetchPage.bind(server)
+    server.fetchPage = async (params) => {
+        const body = await original(params)
+        if (!params.query.session) return body
+        return { ...body, events: body.events.slice(0, 2), has_more: body.events.length > 2 || body.has_more }
+    }
+    server.setHidden('s2', false, 7, at(7))
+    feed.notifyLatest(7)
+    await feed.idle()
+    assert.deepEqual(labels(server), ['first', 'after:6', 'first@s2', 'before:4@s2'])
+    assert.deepEqual(ids(state), [7, 6, 5, 4, 3, 2, 1])
+})
+
+test('a shown session is skipped when the list already filters on another session', async () => {
+    const { server, feed, state } = setup(rowsOf(4, [2]), { pageSize: 10 })
+    feed.setScope([], { session: 's1' })
+    await feed.idle()
+    const original = server.fetchPage.bind(server)
+    server.fetchPage = async (params) => {
+        const body = await original(params)
+        return params.afterId !== null ? { ...body, shown_sessions: ['s2'] } : body
+    }
+    feed.refresh()
+    await feed.idle()
+    assert.deepEqual(labels(server), ['first@s1', 'after:4@s1'])
+    assert.deepEqual(ids(state), [4, 3, 1])
+})
+
+test('a shown session that the list filters on is backfilled with that same filter', async () => {
+    const { server, feed, state } = setup(rowsOf(4, [2, 3]), { pageSize: 10 })
+    server.hidden.add('s2')
+    feed.setScope([], { session: 's2', view: 'without_turns' })
+    await feed.idle()
+    assert.deepEqual(ids(state), [])
+    server.setHidden('s2', false, 5, at(5))
+    feed.notifyLatest(5)
+    await feed.idle()
+    assert.deepEqual(labels(server), ['first@s2', 'after:4@s2', 'first@s2'])
+    assert.deepEqual(server.calls.at(-1).query, { session: 's2', view: 'without_turns' })
+    assert.deepEqual(ids(state), [5, 3, 2])
+})
+
+test('a filter change drops a backfill in flight and the ones still queued', async () => {
+    const { server, feed, state } = setup(rowsOf(6, [2, 4]), { pageSize: 10 })
+    server.hidden.add('s2')
+    server.hidden.add('s3')
+    feed.setScope([])
+    await feed.idle()
+    server.commit(event(7, at(7), { session_id: 's3' }))
+    // Hold only the backfills: the live fetch answers, the first backfill waits at the gate.
+    const gates = []
+    const original = server.fetchPage.bind(server)
+    server.fetchPage = async (params) => {
+        const body = await original(params)
+        if (['s2', 's3'].includes(params.query.session)) await new Promise((resolve) => gates.push(resolve))
+        return body
+    }
+    server.setHidden('s2', false, 8, at(8))
+    server.setHidden('s3', false, 9, at(9))
+    feed.notifyLatest(9)
+    // Bounded: without a backfill nothing ever reaches the gate.
+    for (let turn = 0; turn < 50 && !gates.length; turn += 1) await started()
+    assert.deepEqual(labels(server), ['first', 'after:6', 'first@s2'])
+    // The new query lists s1 alone: a stale backfill would bring the rows of s2 into it.
+    feed.setScope([], { session: 's1' })
+    await feed.idle()
+    // The held answer comes back after the new first page landed (the old queue is not the one `idle` waits on).
+    for (const open of gates.splice(0)) open()
+    for (let turn = 0; turn < 10; turn += 1) await started()
+    await feed.idle()
+    assert.deepEqual(gates, [], 'nothing else reached the gate')
+    assert.deepEqual(labels(server), ['first', 'after:6', 'first@s2', 'first@s1'], 'the s3 backfill is never sent')
+    assert.deepEqual(ids(state), [6, 5, 3, 1], 'only the new first page')
+})
+
+test('a truncated reset drops the backfills queued for the old list', async () => {
+    const { server, feed, state } = setup(rowsOf(4, [2]), { pageSize: 10 })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    const original = server.fetchPage.bind(server)
+    let afterCalls = 0
+    let openFirstLive = null
+    server.fetchPage = async (params) => {
+        const body = await original(params)
+        if (params.afterId === null) return body
+        afterCalls += 1
+        if (afterCalls > 1) return { ...body, truncated: true }
+        // The first live fetch reports s2 shown, once the test let a second signal in while it runs.
+        await new Promise((resolve) => { openFirstLive = resolve })
+        return { ...body, shown_sessions: ['s2'] }
+    }
+    server.hidden.delete('s2')
+    server.commit(event(5, at(5)))
+    feed.notifyLatest(5)
+    for (let turn = 0; turn < 50 && !openFirstLive; turn += 1) await started()
+    // The follow-up fetch of this signal is queued before the backfill, and comes back truncated.
+    server.commit(event(6, at(6)))
+    feed.notifyLatest(6)
+    openFirstLive()
+    await feed.idle()
+    assert.deepEqual(labels(server), ['first', 'after:4', 'after:5', 'first'])
+    assert.deepEqual(ids(state), [6, 5, 4, 3, 2, 1])
+})
+
+test('a failed backfill is silent and leaves the list as it was', async () => {
+    const { server, feed, state, liveErrors } = setup(rowsOf(4, [2]), { pageSize: 10 })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    const original = server.fetchPage.bind(server)
+    server.fetchPage = async (params) => {
+        if (params.query.session) {
+            server.calls.push({ ...params })
+            throw new Error('down')
+        }
+        return original(params)
+    }
+    server.setHidden('s2', false, 5, at(5))
+    feed.notifyLatest(5)
+    await feed.idle()
+    assert.deepEqual(labels(server), ['first', 'after:4', 'first@s2'])
+    assert.deepEqual(ids(state), [5, 4, 3, 1])
+    assert.deepEqual([liveErrors.length, state.status, state.loadError], [1, 'ready', null])
 })

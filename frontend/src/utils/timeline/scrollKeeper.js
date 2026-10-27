@@ -2,7 +2,9 @@
 //
 // Keeps the view still when rows are inserted ABOVE it (display design section 9.2, "Scroll"):
 //   * at the top, new rows simply appear at the top;
-//   * scrolled down, the content on screen must not move.
+//   * scrolled down, the content on screen must not move;
+//   * rows removed in place (a session hidden while the list is open) take the row being read with them: the next
+//     event row that stayed takes its place on screen.
 // The simple virtual scroller has no insertion anchoring of its own, so the page captures the first visible
 // row before the list changes and puts it back afterwards. Pure: the scroller is handed in.
 
@@ -41,20 +43,49 @@ export function chooseAnchor(anchor, positions, isAnchorKey) {
 }
 
 /**
+ * The anchor's replacement when its row left the list (the rows of a session hidden while the list is open): the
+ * first row AFTER it in the old layout that is still in the new list and passes `isAnchorKey`, at the place on screen
+ * it had (the same computation as `chooseAnchor`). Its index is the one of the new list.
+ *
+ * @param {{key: *, index: number, offset: number}} anchor
+ * @param {Array<{key: *, top: number}>|undefined} positions - The layout captured with the anchor (old list).
+ * @param {Map<*, number>} indexByKey - Position of every row of the new list.
+ * @param {(key: *) => boolean} isAnchorKey
+ * @returns {{key: *, index: number, offset: number}|null} Null when no row after the anchor survived.
+ */
+export function survivingAnchor(anchor, positions, indexByKey, isAnchorKey) {
+    const anchorTop = positions?.[anchor.index]?.key === anchor.key ? positions[anchor.index].top : undefined
+    if (anchorTop === undefined) return null
+    for (let index = anchor.index + 1; index < positions.length; index += 1) {
+        const row = positions[index]
+        if (!isAnchorKey(row.key) || !indexByKey.has(row.key)) continue
+        return { key: row.key, index: indexByKey.get(row.key), offset: anchor.offset - (row.top - anchorTop) }
+    }
+    return null
+}
+
+/**
  * What to do once the new list is rendered.
  *
- * @param {{atTop: boolean, anchor: (Object|null)}|null} snapshot - Taken before the change.
+ * @param {{atTop: boolean, anchor: (Object|null), positions: (Array|undefined)}|null} snapshot - Taken before the change.
  * @param {Map<*, number>} indexByKey - Position of every row of the new list.
- * @returns {'none'|'anchor'|'top'}
+ * @param {Object} [options]
+ * @param {(key: *) => boolean} [options.isAnchorKey] - Rows the view may be anchored on (default: every row).
+ * @returns {{action: 'none'|'anchor'|'top', anchor: (Object|null)}} `anchor`: where `anchor` scrolls to.
  */
-export function planScrollRestore(snapshot, indexByKey) {
-    if (!snapshot || snapshot.atTop || !snapshot.anchor) return 'none'
+export function planScrollRestore(snapshot, indexByKey, { isAnchorKey = () => true } = {}) {
+    if (!snapshot || snapshot.atTop || !snapshot.anchor) return { action: 'none', anchor: null }
     const index = indexByKey.get(snapshot.anchor.key)
-    // The row the user was reading is gone (another scope, a reload): start from the top.
-    if (index === undefined) return 'top'
+    if (index === undefined) {
+        // The row the user was reading is gone. Removed in place: the next row that stayed keeps its place on
+        // screen. Nothing after it stayed (another scope, a reload): start from the top.
+        const replacement = survivingAnchor(snapshot.anchor, snapshot.positions, indexByKey, isAnchorKey)
+        return replacement ? { action: 'anchor', anchor: replacement } : { action: 'top', anchor: null }
+    }
     // Same position: rows were added below (an older page), nothing moved. Do not touch the scroll then, the
     // user may be scrolling at this very moment.
-    return index === snapshot.anchor.index ? 'none' : 'anchor'
+    if (index === snapshot.anchor.index) return { action: 'none', anchor: null }
+    return { action: 'anchor', anchor: snapshot.anchor }
 }
 
 /**
@@ -71,6 +102,9 @@ export function createScrollKeeper(getScroller, { isAnchorKey = () => true } = {
             return {
                 atTop: scroller.getScrollState().scrollTop <= TOP_EPSILON,
                 anchor: chooseAnchor(scroller.getScrollAnchor(), scroller.positions, isAnchorKey),
+                // The old layout, for the rows after the anchor. Not copied: the scroller replaces its frozen array
+                // on every change (virtualScrollGeometry.js), so this one stays the layout of the old list.
+                positions: scroller.positions,
             }
         },
 
@@ -78,8 +112,8 @@ export function createScrollKeeper(getScroller, { isAnchorKey = () => true } = {
         restore(snapshot, indexByKey) {
             const scroller = getScroller()
             if (!scroller) return
-            const action = planScrollRestore(snapshot, indexByKey)
-            if (action === 'anchor') scroller.scrollToAnchor(snapshot.anchor)
+            const { action, anchor } = planScrollRestore(snapshot, indexByKey, { isAnchorKey })
+            if (action === 'anchor') scroller.scrollToAnchor(anchor)
             else if (action === 'top') scroller.scrollToTop()
         },
     }

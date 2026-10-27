@@ -16,6 +16,12 @@
 //     not inserted while `has_more` is true: the page that reaches it brings it.
 //   * A change of the project-id SET or of the QUERY (the filters, `filters.js` `toQuery`) discards list,
 //     cursors and queue; a response of an older set or query is ignored. Every request carries the query.
+//   * HIDDEN SESSIONS: the server leaves out the rows of a session hidden at read time. An `after_id` response
+//     names the sessions hidden (`hidden_sessions`) or shown again (`shown_sessions`) inside its range: the rows
+//     of a hidden one leave the list in place (cursors and `has_more` untouched); a shown one is BACKFILLED, its
+//     rows fetched (the query plus `session=<id>`) from the newest down to the pagination cursor and merged.
+//     Nothing is reloaded. The edge of the loaded window is the pagination cursor, not the tail, which a
+//     removal may have made newer.
 
 import { compareNewestFirst, cursorOf } from './eventTime.js'
 import { queryKey } from './filters.js'
@@ -63,16 +69,30 @@ export function buildTimelineUrl({ projectIds = [], before = null, afterId = nul
 }
 
 /**
+ * The position a `before` cursor names, as an event-like `{occurred_at, id}` (`compareNewestFirst` accepts it).
+ *
+ * @param {string|null} cursor - `<occurred_at>,<id>`.
+ * @returns {{occurred_at: string, id: number}|null}
+ */
+export function positionOfCursor(cursor) {
+    if (!cursor) return null
+    const comma = cursor.lastIndexOf(',')
+    return { occurred_at: cursor.slice(0, comma), id: Number(cursor.slice(comma + 1)) }
+}
+
+/**
  * Insert fetched rows into the list by (occurred_at, id) descending.
  *
  * @param {Array<Object>} list - Newest first.
  * @param {Array<Object>} incoming - In any order.
- * @param {{hasMore: boolean, live: boolean}} options - `live`: rows of an `after_id` fetch.
+ * @param {{hasMore: boolean, live: boolean, floor: ({occurred_at: string, id: number}|null|undefined)}} options -
+ *   `live`: rows of an `after_id` fetch. `floor`: the edge of the loaded window (the pagination cursor), when the
+ *   tail may be newer than it (rows of a hidden session left the list); defaults to the tail.
  * @returns {Array<Object>} `list` itself when nothing was added, else a new array.
  */
-export function mergeEvents(list, incoming, { hasMore, live }) {
+export function mergeEvents(list, incoming, { hasMore, live, floor }) {
     const known = new Set(list.map((event) => event.id))
-    const tail = list.length ? list[list.length - 1] : null
+    const tail = floor ?? (list.length ? list[list.length - 1] : null)
     const accepted = []
     for (const event of incoming) {
         if (known.has(event.id)) continue
@@ -225,9 +245,60 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
             enqueue(runFirst)
             return
         }
-        state.events = mergeEvents(state.events, body.events, { hasMore: state.hasMore, live: true })
+        removeSessions(body.hidden_sessions)
+        // The edge of the window is the pagination cursor, not the tail: a removal may have taken the tail away.
+        const floor = positionOfCursor(state.pageCursor)
+        state.events = mergeEvents(state.events, body.events, { hasMore: state.hasMore, live: true, floor })
         mergeSessions(body.sessions)
         if (body.latest_id !== null && body.latest_id !== undefined && body.latest_id > cursor) state.liveCursor = body.latest_id
+        for (const sessionId of body.shown_sessions ?? []) {
+            // Under a filter on another session, a shown session has nothing to bring.
+            if (!query.session || query.session === sessionId) queueBackfill(sessionId, null)
+        }
+        // The removal emptied the list while older pages remain: nothing on screen would ask for the next one.
+        if (!state.events.length && state.hasMore) loadMore()
+    }
+
+    /** Drop, in place, every loaded row of the sessions hidden since (the `hidden_sessions` of an `after_id` fetch). */
+    function removeSessions(sessionIds) {
+        if (!sessionIds?.length) return
+        const hidden = new Set(sessionIds)
+        if (!state.events.some((event) => hidden.has(event.session_id))) return
+        state.events = state.events.filter((event) => !hidden.has(event.session_id))
+    }
+
+    function queueBackfill(sessionId, before) {
+        enqueue((gen) => runBackfill(gen, sessionId, before))
+    }
+
+    /**
+     * One page of the rows of a session shown again (`shown_sessions`), newest first, kept inside the loaded window:
+     * with older pages still to load, a row older than the pagination cursor is dropped (the page that reaches it
+     * brings it). Pages until one reaches that edge, or until the end of the session when every page is loaded.
+     *
+     * Like every task, a scope or query change drops it (the generation). A truncated live fetch resets the list and
+     * queues the first page BEHIND the backfills already queued: they find no list (`status` is not `ready`) and
+     * stop, and the first page reads every row of the session anyway.
+     */
+    async function runBackfill(gen, sessionId, before) {
+        if (state.status !== 'ready') return
+        let body
+        try {
+            body = await fetchPage({ projectIds: [...scope], query: { ...query, session: sessionId }, before, afterId: null })
+        } catch (error) {
+            // Silent, like a failed live fetch: the rows of the session come back with the next reload.
+            if (!stale(gen)) onLiveError(error)
+            return
+        }
+        if (stale(gen)) return
+        const floor = state.hasMore ? positionOfCursor(state.pageCursor) : null
+        const rows = floor ? body.events.filter((event) => compareNewestFirst(event, floor) <= 0) : body.events
+        state.events = mergeEvents(state.events, rows, { hasMore: false, live: false })
+        mergeSessions(body.sessions)
+        const last = [...body.events].sort(compareNewestFirst).at(-1)
+        if (body.has_more !== true || !last) return
+        if (floor && compareNewestFirst(last, floor) >= 0) return // this page reached the edge of the window
+        queueBackfill(sessionId, cursorOf(last))
     }
 
     function requestLive({ latest = null, force = false }) {

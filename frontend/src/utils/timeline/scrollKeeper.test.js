@@ -67,12 +67,14 @@ test('no anchor (an empty list) or no scroller: nothing happens', () => {
 })
 
 test('planScrollRestore', () => {
-    assert.equal(planScrollRestore(null, new Map()), 'none')
-    assert.equal(planScrollRestore({ atTop: true, anchor }, indexes('a', 'b', 'c', 'event-7')), 'none')
-    assert.equal(planScrollRestore({ atTop: false, anchor: null }, indexes('event-7')), 'none')
-    assert.equal(planScrollRestore({ atTop: false, anchor }, indexes('a', 'b', 'c', 'd', 'event-7')), 'anchor')
-    assert.equal(planScrollRestore({ atTop: false, anchor }, indexes('a', 'b', 'c', 'event-7')), 'none')
-    assert.equal(planScrollRestore({ atTop: false, anchor }, new Map()), 'top')
+    const action = (...args) => planScrollRestore(...args).action
+    assert.equal(action(null, new Map()), 'none')
+    assert.equal(action({ atTop: true, anchor }, indexes('a', 'b', 'c', 'event-7')), 'none')
+    assert.equal(action({ atTop: false, anchor: null }, indexes('event-7')), 'none')
+    assert.equal(action({ atTop: false, anchor }, indexes('a', 'b', 'c', 'd', 'event-7')), 'anchor')
+    assert.deepEqual(planScrollRestore({ atTop: false, anchor }, indexes('a', 'b', 'c', 'd', 'event-7')).anchor, anchor)
+    assert.equal(action({ atTop: false, anchor }, indexes('a', 'b', 'c', 'event-7')), 'none')
+    assert.equal(action({ atTop: false, anchor }, new Map()), 'top')
 })
 
 // Rows that never move on an insertion: the top room (index 0) and a day separator whose new rows land below it.
@@ -104,4 +106,51 @@ test('scrolled within the top room, a live insertion still puts the visible even
     // A new event lands above event-7: the room and the separator keep their index, event-7 moves.
     keeper.restore(snapshot, indexes('timeline-top', 'daysep-2026-10-14', 'event-8', 'event-7', 'event-6'))
     assert.deepEqual(scroller.calls, [['anchor', { key: 'event-7', index: 2, offset: -59 }]])
+})
+
+// Rows removed in place (the rows of a session hidden while the list is open): the row being read may be one of them.
+const layout = [
+    { key: 'timeline-top', top: 0, height: 49 },
+    { key: 'daysep-2026-10-14', top: 49, height: 40 },
+    { key: 'event-7', top: 89, height: 34 },
+    { key: 'daysep-2026-10-13', top: 123, height: 40 },
+    { key: 'event-6', top: 163, height: 34 },
+    { key: 'event-5', top: 197, height: 34 },
+]
+const reading = { key: 'event-7', index: 2, offset: 10 }
+
+test('the row being read is removed: the next surviving event row takes its place on screen', () => {
+    const snapshot = { atTop: false, anchor: reading, positions: layout }
+    // event-7 is gone; the day separator after it survives but is not an event row: event-6 is the anchor.
+    const plan = planScrollRestore(snapshot, indexes('timeline-top', 'daysep-2026-10-14', 'daysep-2026-10-13', 'event-6',
+        'event-5'), { isAnchorKey: isEvent })
+    // event-6 started 74 px below event-7: it stays 64 px below the top of the view, where it was.
+    assert.deepEqual(plan, { action: 'anchor', anchor: { key: 'event-6', index: 3, offset: 10 - 74 } })
+    // event-7 and event-6 are gone: event-5.
+    assert.deepEqual(
+        planScrollRestore(snapshot, indexes('timeline-top', 'daysep-2026-10-14', 'event-5'), { isAnchorKey: isEvent }),
+        { action: 'anchor', anchor: { key: 'event-5', index: 2, offset: 10 - 108 } },
+    )
+})
+
+test('the row being read is removed and no event row after it survives: back to the top', () => {
+    const snapshot = { atTop: false, anchor: reading, positions: layout }
+    const plan = planScrollRestore(snapshot, indexes('timeline-top', 'daysep-2026-10-14', 'daysep-2026-10-13'),
+        { isAnchorKey: isEvent })
+    assert.equal(plan.action, 'top')
+    // A row BEFORE the anchor that survives does not count: only the rows after it keep the view still.
+    const above = { atTop: false, anchor: { key: 'event-6', index: 4, offset: 3 }, positions: layout }
+    assert.equal(planScrollRestore(above, indexes('timeline-top', 'event-7'), { isAnchorKey: isEvent }).action, 'top')
+    // No layout captured (an older scroller): the top, as before.
+    assert.equal(planScrollRestore({ atTop: false, anchor: reading }, indexes('event-6')).action, 'top')
+})
+
+test('the keeper captures the layout and anchors on the next surviving row after a removal', () => {
+    const scroller = { ...fakeScroller({ scrollTop: 99, anchor: reading }), positions: layout }
+    const keeper = createScrollKeeper(() => scroller, { isAnchorKey: isEvent })
+    const snapshot = keeper.capture()
+    assert.equal(snapshot.positions, layout)
+    // The separator after event-7 stays too, but the keeper only anchors on event rows.
+    keeper.restore(snapshot, indexes('timeline-top', 'daysep-2026-10-14', 'daysep-2026-10-13', 'event-6', 'event-5'))
+    assert.deepEqual(scroller.calls, [['anchor', { key: 'event-6', index: 3, offset: -64 }]])
 })
