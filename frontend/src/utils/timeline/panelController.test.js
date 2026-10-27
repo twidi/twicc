@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createPanelController } from './panelController.js'
+import { createPanelController, panelMaxHeight } from './panelController.js'
 
 /**
  * A small world: a document focus, elements that know their parent (for `contains`), the band, the Filters
@@ -220,4 +220,13 @@ test('the module is pure: no Vue, no DOM global', async () => {
     const source = readFileSync(new URL('./panelController.js', import.meta.url), 'utf8')
     assert.ok(!/^import /m.test(source), 'no import')
     assert.ok(!/\b(?:document|window)\./.test(source.replace(/\/\/.*$/gm, '')), 'no document or window')
+})
+
+test('panelMaxHeight: the room under the button, minus the popover chrome, never under 10rem', () => {
+    // 16px root: chrome = 8 + 2 + 16 × 4.125 = 76px.
+    assert.equal(panelMaxHeight({ anchorBottom: 200, viewportHeight: 1000, remPx: 16 }), 724)
+    assert.equal(panelMaxHeight({ anchorBottom: 900, viewportHeight: 1000, remPx: 16 }), 160, 'the 10rem floor')
+    assert.equal(panelMaxHeight({ anchorBottom: 200, viewportHeight: 1000, remPx: 20 }), 707, 'follows the font size')
+    assert.equal(panelMaxHeight({ anchorBottom: undefined, viewportHeight: 1000, remPx: 16 }), null)
+    assert.equal(panelMaxHeight({ anchorBottom: 200, viewportHeight: 1000, remPx: Number.NaN }), null)
 })

@@ -15,7 +15,8 @@ import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, use
 import { useTimelineFiltersStore } from '../../stores/timelineFilters'
 import { getProviderHelpers } from '../../providers'
 import { AUTHORS, FAMILIES, PROVIDERS, VIEWS, activeCount, groupPills } from '../../utils/timeline/filters'
-import { createPanelController } from '../../utils/timeline/panelController'
+import { createPanelController, panelMaxHeight } from '../../utils/timeline/panelController'
+import ProviderIcon from '../ui/ProviderIcon.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
 const props = defineProps({
@@ -49,7 +50,7 @@ const buttonId = `${uid}-filters`
 /** The panel groups (spec 3.2), their values in constant order. */
 const PANEL_GROUPS = [
     { group: 'families', label: 'Events', options: FAMILIES },
-    { group: 'providers', label: 'Provider', options: PROVIDERS.map((value) => ({ value, label: providerLabel(value) })) },
+    { group: 'providers', label: 'Provider', options: PROVIDERS.map((value) => ({ value, label: providerLabel(value), provider: value })) },
     { group: 'authors', label: 'Done by', options: AUTHORS },
 ].map((entry) => ({ ...entry, labelId: `${uid}-${entry.group}` }))
 
@@ -102,7 +103,23 @@ onBeforeUnmount(() => {
 function onPopoverShow(event) {
     if (event.target !== event.currentTarget) return
     controller.onShow()
+    measurePanelRoom()
+    globalThis.addEventListener?.('resize', measurePanelRoom)
 }
+
+// The room under the button, measured when the panel opens and on each resize while it is open: the panel scrolls
+// inside it instead of running past the viewport.
+const panelRoom = ref(null)
+function measurePanelRoom() {
+    const anchor = buttonRef.value?.getBoundingClientRect?.()
+    const remPx = parseFloat(globalThis.getComputedStyle?.(document.documentElement)?.fontSize)
+    panelRoom.value = panelMaxHeight({
+        anchorBottom: anchor?.bottom,
+        viewportHeight: globalThis.visualViewport?.height ?? globalThis.innerHeight,
+        remPx,
+    })
+}
+onBeforeUnmount(() => globalThis.removeEventListener?.('resize', measurePanelRoom))
 
 function onPopoverHide(event) {
     if (event.target !== event.currentTarget) return
@@ -111,6 +128,7 @@ function onPopoverHide(event) {
 
 function onPopoverAfterHide(event) {
     if (event.target !== event.currentTarget) return
+    globalThis.removeEventListener?.('resize', measurePanelRoom)
     controller.onAfterHide({ button: buttonRef.value })
 }
 
@@ -297,7 +315,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     @wa-hide="onPopoverHide"
                     @wa-after-hide="onPopoverAfterHide"
                 >
-                    <div class="timeline-filter-panel">
+                    <div class="timeline-filter-panel" :style="panelRoom ? { maxHeight: `${panelRoom}px` } : null">
                         <div
                             v-for="entry in PANEL_GROUPS"
                             :key="entry.group"
@@ -306,14 +324,18 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                             :aria-labelledby="entry.labelId"
                         >
                             <div :id="entry.labelId" class="timeline-filter-group-label">{{ entry.label }}</div>
-                            <wa-checkbox
-                                v-for="option in entry.options"
-                                :key="option.value"
-                                size="small"
-                                :checked="isChecked(entry.group, option.value)"
-                                :hint="option.hint"
-                                @change="toggle(entry.group, option.value)"
-                            >{{ option.label }}</wa-checkbox>
+                            <div class="timeline-filter-options">
+                                <!-- The hint is part of the label (small, quiet, right under it), not the checkbox's own
+                                     `hint`, which sits apart under the control. -->
+                                <wa-checkbox
+                                    v-for="option in entry.options"
+                                    :key="option.value"
+                                    size="small"
+                                    class="timeline-filter-option"
+                                    :checked="isChecked(entry.group, option.value)"
+                                    @change="toggle(entry.group, option.value)"
+                                ><span class="timeline-filter-option-text"><span class="timeline-filter-option-label"><ProviderIcon v-if="option.provider" :provider="option.provider" class="timeline-filter-option-icon" />{{ option.label }}</span><span v-if="option.hint" class="timeline-filter-option-hint">{{ option.hint }}</span></span></wa-checkbox>
+                            </div>
                         </div>
                         <div class="timeline-filter-panel-actions">
                             <wa-button size="small" appearance="plain" @click="resetPanel">Reset</wa-button>
@@ -454,11 +476,14 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 }
 
 .timeline-filter-popover {
-    --max-width: min(22rem, calc(100vw - 2rem));
+    --max-width: min(32rem, calc(100vw - 2rem));
 }
 
-/* A short window never hides the end of the panel: it scrolls inside. */
+/* A definite width: the popover's body is `width: max-content`, which would collapse the auto-fill grid below to one
+   column. 28rem fits two columns; a narrow screen gets one (the body's padding and the screen margin are kept out).
+   The panel scrolls inside the room under its button (measured, set inline), this max height being the fallback. */
 .timeline-filter-panel {
+    width: min(28rem, calc(100vw - 5rem));
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
@@ -474,13 +499,47 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 }
 
 .timeline-filter-group-label {
+    font-size: var(--wa-font-size-2xs);
     font-weight: var(--wa-font-weight-semibold);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--wa-color-text-quiet);
+}
+
+/* Two columns when the panel has the room, one on a narrow screen. */
+.timeline-filter-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+    gap: var(--wa-space-xs) var(--wa-space-m);
+}
+
+/* The checkbox stays on the first line of its label, the hint under the label. */
+.timeline-filter-option::part(base) {
+    align-items: flex-start;
+}
+
+.timeline-filter-option-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.timeline-filter-option-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+}
+
+.timeline-filter-option-hint {
+    font-size: var(--wa-font-size-xs);
+    line-height: var(--wa-line-height-condensed);
     color: var(--wa-color-text-quiet);
 }
 
 .timeline-filter-panel-actions {
     display: flex;
     justify-content: flex-end;
+    padding-block-start: var(--wa-space-xs);
+    border-block-start: 1px solid var(--wa-color-surface-border);
 }
 
 /* The pills wrap: the band grows by a line, never sideways. */

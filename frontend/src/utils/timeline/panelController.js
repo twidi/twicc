@@ -135,3 +135,18 @@ export function createPanelController({ setTimeout = globalThis.setTimeout } = {
         },
     }
 }
+
+/**
+ * The height the Filters panel may take under its button, so the popover never runs past the bottom of the viewport
+ * (it would overflow the page and break its scroll). The popover adds its own chrome around the panel: the distance
+ * to the button, the arrow, the body's padding on both sides and its border; a small margin keeps it off the edge.
+ *
+ * @param {{anchorBottom: number, viewportHeight: number, remPx: number}} metrics - Pixels; `remPx` is the root font size.
+ * @returns {number|null} The panel's max height in pixels, never under 10rem; null when a metric is missing.
+ */
+export function panelMaxHeight({ anchorBottom, viewportHeight, remPx }) {
+    if (![anchorBottom, viewportHeight, remPx].every(Number.isFinite) || remPx <= 0) return null
+    // distance 8px + arrow 0.375rem + body padding 2 × 1.5rem + border 2px + margin 0.75rem
+    const chrome = 8 + 2 + remPx * (0.375 + 3 + 0.75)
+    return Math.max(Math.round(remPx * 10), Math.floor(viewportHeight - anchorBottom - chrome))
+}

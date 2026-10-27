@@ -8,7 +8,7 @@ import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
 import { useTimelineFiltersStore } from '../../stores/timelineFilters.js'
 import * as filtersModule from '../../utils/timeline/filters.js'
-import { createPanelController } from '../../utils/timeline/panelController.js'
+import { createPanelController, panelMaxHeight } from '../../utils/timeline/panelController.js'
 
 const SOURCE = readFileSync(new URL('./TimelineFilterBand.vue', import.meta.url), 'utf8')
 const STYLE = SOURCE.slice(SOURCE.indexOf('<style'))
@@ -18,6 +18,7 @@ const SegmentedControl = compileComponent(new URL('../ui/SegmentedControl.vue', 
 })
 
 // Claude Code names itself; the other provider has no helpers: its raw key is its label.
+const ProviderIcon = { props: ['provider'], setup: (props) => () => Vue.h('i', { 'data-provider': props.provider }) }
 const providers = { getProviderHelpers: (provider) => (provider === 'claude_code' ? { constructor: { serviceProductLabel: 'Claude Code' } } : null) }
 
 /**
@@ -33,6 +34,7 @@ const spiedController = {
             return method(...callArgs)
         }]))
     },
+    panelMaxHeight,
 }
 
 const byClass = (root, name) => descendants(root, (node) => String(node.props.class ?? '').split(' ').includes(name))
@@ -151,6 +153,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
         '../../utils/timeline/filters': filtersModule,
         '../../utils/timeline/panelController': spiedController,
         '../ui/SegmentedControl.vue': SegmentedControl,
+        '../ui/ProviderIcon.vue': ProviderIcon,
     })
     const focusLog = []
     const blurLog = []
@@ -306,10 +309,22 @@ test('the panel lists the three groups in constant order, with the family hints 
         assert.equal(group.props['aria-labelledby'], label.props.id)
     }
     const boxes = groups.map((group) => descendants(group, (node) => node.type === 'wa-checkbox'))
-    assert.deepEqual(boxes[0].map((box) => textOf(box)), filtersModule.FAMILIES.map((family) => family.label))
-    assert.deepEqual(boxes[0].map((box) => box.props.hint), filtersModule.FAMILIES.map((family) => family.hint))
-    assert.deepEqual(boxes[1].map((box) => textOf(box)), ['Claude Code', 'codex'], 'the product name, else the raw key')
-    assert.deepEqual(boxes[2].map((box) => textOf(box)), ['Unknown', 'Automatic', 'You', 'Agent via CLI/MCP', 'External MCP', "The session's agent"])
+    // Every box sits in the group's options grid.
+    for (const [index, group] of groups.entries()) {
+        const [grid] = byClass(group, 'timeline-filter-options')
+        assert.equal(descendants(grid, (node) => node.type === 'wa-checkbox').length, boxes[index].length)
+    }
+    const labelsOf = (list) => list.map((box) => textOf(byClass(box, 'timeline-filter-option-label')[0]))
+    const hintsOf = (list) => list.map((box) => byClass(box, 'timeline-filter-option-hint').map(textOf)[0] ?? null)
+    assert.deepEqual(labelsOf(boxes[0]), filtersModule.FAMILIES.map((family) => family.label))
+    // The hint is part of the label, not the checkbox's own `hint` attribute.
+    assert.deepEqual(hintsOf(boxes[0]), filtersModule.FAMILIES.map((family) => family.hint))
+    assert.ok(boxes.flat().every((box) => box.props.hint === undefined))
+    assert.deepEqual(labelsOf(boxes[1]), ['Claude Code', 'codex'], 'the product name, else the raw key')
+    // Each provider shows its icon before its name.
+    assert.deepEqual(boxes[1].map((box) => descendants(box, (node) => node.type === 'i')[0]?.props['data-provider']), ['claude_code', 'codex'])
+    assert.deepEqual(labelsOf(boxes[2]), ['Unknown', 'Automatic', 'You', 'Agent via CLI/MCP', 'External MCP', "The session's agent"])
+    assert.deepEqual(hintsOf(boxes[2]), boxes[2].map(() => null))
     assert.ok(boxes.flat().every((box) => box.props.checked === false))
     // Checking goes through the store's action, and the box shows the store's state.
     boxes[1][1].props.onChange({ target: boxes[1][1] })
@@ -815,4 +830,16 @@ test('the views and the button are the elements that carry the classes (the Segm
     const [views, button] = elementsOf(controls)
     assert.ok(classesOf(views).includes('segmented-control') && classesOf(views).includes('timeline-filter-views'))
     assertSame(button, filtersButtonOf(root))
+})
+
+test('the panel layout: two columns when there is room, small-caps group titles, a ruled footer', () => {
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-popover').get('--max-width'), 'min(32rem, calc(100vw - 2rem))')
+    // A definite width: the popover body is `width: max-content`, which collapses an auto-fill grid to one column.
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-panel').get('width'), 'min(28rem, calc(100vw - 5rem))')
+    const grid = declarationsOf(STYLE, '.timeline-filter-options')
+    assert.deepEqual([grid.get('display'), grid.get('grid-template-columns')], ['grid', 'repeat(auto-fill, minmax(12rem, 1fr))'])
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-group-label').get('text-transform'), 'uppercase')
+    const hint = declarationsOf(STYLE, '.timeline-filter-option-hint')
+    assert.deepEqual([hint.get('font-size'), hint.get('color')], ['var(--wa-font-size-xs)', 'var(--wa-color-text-quiet)'])
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-panel-actions').get('border-block-start'), '1px solid var(--wa-color-surface-border)')
 })
