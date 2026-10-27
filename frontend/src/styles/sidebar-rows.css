@@ -50,6 +50,12 @@
     margin-bottom: var(--wa-shadow-offset-y-s);
 }
 
+.sidebar-row.session-item--has-pill::part(base) {
+    /* A tree row with a pill keeps room for it at the end (it sits at the bottom right, under
+       the row's action menu trigger). Rows without a pill are unchanged. */
+    padding-inline-end: calc(var(--wa-space-xs) + 3.5rem);
+}
+
 .sidebar-row::part(label) {
     width: 100%;
     text-align: left;

@@ -14,7 +14,7 @@ import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansion'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
-import { buildSessionTree, flattenTree } from '../../../utils/sessionTree.js'
+import { buildSessionTree, flattenTree, descendantActivity } from '../../../utils/sessionTree.js'
 import { isSessionUnread } from '../../../utils/sessions'
 import { retainSessionArray } from '../../../utils/sessionLists.js'
 import { matchQuery } from '../../../utils/textFilter'
@@ -171,26 +171,43 @@ watch([tree, settled], ([t, ok]) => {
 const treeRows = computed(() => tree.value ? flattenTree(tree.value, expansion.isExpanded) : null)
 
 const NO_TREE_ROWS = new Map()
-const sameSummary = (a, b) => a.descendants === b.descendants && a.active === b.active
-    && a.unread === b.unread && a.pinned === b.pinned && a.latestDate === b.latestDate
+const sameFields = (a, b) => Object.keys(a).every(key => a[key] === b[key])
+const sameList = (a, b) => a.length === b.length && a.every((value, index) => value === b[index])
+const sameActivity = (a, b) => a === b || (a !== null && b !== null && sameFields(a, b))
 // Per-row tree metadata. An unchanged entry keeps its previous object, so an mtime tick
 // of an active session does not re-render every row.
 const treeRowMeta = computed(previous => {
     if (!tree.value) return NO_TREE_ROWS
     const meta = new Map()
-    for (const { id, depth } of treeRows.value) {
+    for (const { id, depth, isLast, through } of treeRows.value) {
         const node = tree.value.nodes.get(id)
+        const hasChildren = node.childIds.length > 0
+        const expanded = expansion.isExpanded(id)
         const next = {
             depth,
-            hasChildren: node.childIds.length > 0,
-            expanded: expansion.isExpanded(id),
-            summary: node.summary,
+            isLast,
+            through,
+            hasChildren,
+            expanded,
+            count: node.summary.descendants,
+            pinned: node.summary.pinned,
+            latestDate: node.summary.latestDate,
+            activity: hasChildren && !expanded
+                ? descendantActivity(node.descendantIds, {
+                    processStates: store.processStates,
+                    sessions: sessionId => store.sessions[sessionId] ?? null,
+                    viewedId: props.sessionId,
+                    isUnread: isSessionUnread,
+                })
+                : null,
             hint: depth === 0 && node.hintParent ? getSessionDisplayName(node.hintParent) : null,
         }
         const old = previous?.get(id)
-        meta.set(id, old && old.depth === next.depth && old.hasChildren === next.hasChildren
-            && old.expanded === next.expanded && old.hint === next.hint
-            && sameSummary(old.summary, next.summary) ? old : next)
+        meta.set(id, old && old.depth === next.depth && old.isLast === next.isLast
+            && old.hasChildren === next.hasChildren && old.expanded === next.expanded
+            && old.count === next.count && old.pinned === next.pinned
+            && old.latestDate === next.latestDate && old.hint === next.hint
+            && sameList(old.through, next.through) && sameActivity(old.activity, next.activity) ? old : next)
     }
     return meta
 })
