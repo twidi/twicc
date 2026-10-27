@@ -13,7 +13,7 @@ const WordingPart = compileComponent(new URL('../../timeline/TimelineWordingPart
 const AppTooltip = { props: ['for', 'trigger'], setup: (_, { slots }) => () => Vue.h('span', { class: 'app-tooltip' }, slots.default?.()) }
 const settings = Vue.reactive({ areMessageTimestampsShown: true, isTouchDevice: false })
 const Line = compileComponent(new URL('../../timeline/TimelineEventLine.vue', import.meta.url), {
-    '../../stores/settings': { useSettingsStore: () => settings }, '../ui/AppTooltip.vue': AppTooltip,
+    '../../stores/settings': { useSettingsStore: () => settings }, '../ui/AppTooltip.vue': AppTooltip, './TimelineSessionMention.vue': Mention,
     '../../utils/timeline/parts': parts, './TimelineWordingPart.vue': WordingPart,
 })
 const Notice = compileComponent(new URL('./SessionEventNotice.vue', import.meta.url), {

@@ -66,3 +66,35 @@ export function describeAuthor(event, { sessions, isSubagent }) {
     }
     return { kind: 'none', parts: [], unknown: true }
 }
+
+/**
+ * The key of a row's author, the same for two rows whose "by ..." label names the same author: null when the row
+ * shows no label. Consecutive rows of one key form an author run (display: the label once, under the run's last row).
+ *
+ * @param {Object} event
+ * @returns {string|null}
+ */
+export function authorRunKey(event) {
+    const label = describeAuthor(event, { sessions: {} })
+    if (!label.parts.length) return null
+    return [event.actor, event.via, event.actor_ref, event.actor_name].map((value) => value ?? '').join('\u0000')
+}
+
+/**
+ * The place of a row in its author run, from the keys of its neighbors in the same block (null past the block's
+ * edges): null for a row without label, `single` for a run of one row, else `first`, `middle` or `last`.
+ *
+ * @param {string|null} previousKey
+ * @param {string|null} key
+ * @param {string|null} nextKey
+ * @returns {null|'single'|'first'|'middle'|'last'}
+ */
+export function authorRunPosition(previousKey, key, nextKey) {
+    if (key === null) return null
+    const withPrevious = previousKey === key
+    const withNext = nextKey === key
+    if (withPrevious && withNext) return 'middle'
+    if (withPrevious) return 'last'
+    if (withNext) return 'first'
+    return 'single'
+}

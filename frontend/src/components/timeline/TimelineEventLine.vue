@@ -8,6 +8,7 @@ import { computed, ref, useId } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { splitLastWord } from '../../utils/timeline/parts'
 import AppTooltip from '../ui/AppTooltip.vue'
+import TimelineSessionMention from './TimelineSessionMention.vue'
 import TimelineWordingPart from './TimelineWordingPart.vue'
 
 const props = defineProps({
@@ -21,7 +22,14 @@ const props = defineProps({
     instance: { type: Boolean, default: false },
     /** Show the time on the right (the chat follows its "message timestamps" setting). */
     showTime: { type: Boolean, default: true },
+    /** Place in its author run (`authorRunPosition`, utils/timeline/authorLabel.js): the "by ..." label shows once,
+     *  under the run's last row, and a rule joins the rows of a run. Null: the label shows on its own row. */
+    authorRun: { type: String, default: null },
 })
+
+// Inside a run, only the last row carries the label.
+const showAuthor = computed(() => props.vm.author.parts.length > 0 && props.authorRun !== 'first' && props.authorRun !== 'middle')
+const runClass = computed(() => (['first', 'middle', 'last'].includes(props.authorRun) ? `timeline-event-line--run-${props.authorRun}` : null))
 
 // With tags, the last word of the wording is kept apart: the word and the tags are glued and wrap together.
 const wording = computed(() => (props.vm.tags.length ? splitLastWord(props.vm.parts) : { lead: props.vm.parts, last: null }))
@@ -35,7 +43,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 </script>
 
 <template>
-    <div class="timeline-event-line" :class="[`timeline-event-line--${vm.severity}`, { 'timeline-event-line--indented': indented, 'timeline-event-line--instance': instance }]">
+    <div class="timeline-event-line" :class="[`timeline-event-line--${vm.severity}`, { 'timeline-event-line--indented': indented, 'timeline-event-line--instance': instance }, runClass]">
         <wa-icon :name="vm.icon" class="timeline-row-icon" auto-width :title="vm.tooltip"></wa-icon>
         <div class="timeline-row-main">
             <!-- The parts of utils/timeline/parts.js. The tags are inline content of the wording, glued to its last
@@ -47,8 +55,13 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
                 </span>
             </span>
             <template v-if="vm.badge">{{ ' ' }}<wa-badge variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge></template>
-            <template v-if="vm.author.parts.length">{{ ' ' }}<span class="timeline-author">
-                <TimelineWordingPart v-for="(part, index) in vm.author.parts" :key="index" :part="part" />
+            <!-- The author on a line of its own, always one line: a session title is cut with an ellipsis, its full
+                 title in the tooltip. A real space before it keeps a copied row readable. -->
+            <template v-if="showAuthor">{{ ' ' }}<span class="timeline-author">
+                <template v-for="(part, index) in vm.author.parts" :key="index">
+                    <TimelineSessionMention v-if="part.type === 'session'" :mention="part.mention" ellipsis />
+                    <span v-else class="timeline-author-text">{{ part.text }}</span>
+                </template>
             </span></template>
             <template v-if="vm.detail">{{ ' ' }}<span class="timeline-error">
                 <code class="timeline-error-line">{{ vm.detail.first }}</code>
@@ -71,6 +84,10 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 .timeline-event-line {
     /* The event icon column: icons have their own widths (auto-width), the column keeps the text aligned. */
     --timeline-icon-width: 1.25rem;
+    /* The start padding of the line (an indented line of a session block), the author line's height. */
+    --timeline-line-indent: 0rem;
+    --timeline-author-height: calc(var(--wa-font-size-xs) * 1.5);
+    position: relative;
     display: grid;
     grid-template-columns: var(--timeline-icon-width) minmax(0, 1fr) auto;
     column-gap: var(--wa-space-s);
@@ -80,7 +97,33 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 }
 
 .timeline-event-line--indented {
-    padding-inline-start: calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem));
+    --timeline-line-indent: calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem));
+    padding-inline-start: var(--timeline-line-indent);
+}
+
+/* The rule that joins the rows of an author run, in the gap between the icons and the text: from the first row's
+   text down to the last row's author line, drawn in parts across the rows (each row is one scroller item). */
+.timeline-event-line--run-first::before,
+.timeline-event-line--run-middle::before,
+.timeline-event-line--run-last::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - 1px);
+    /* The border of the band or the block card around it (styles/surfaces.css), in both schemes. */
+    border-inline-start: 2px solid var(--block-card-border);
+}
+
+.timeline-event-line--run-first::before {
+    inset-block-start: var(--wa-space-xs);
+    border-start-start-radius: 2px;
+    border-start-end-radius: 2px;
+}
+
+.timeline-event-line--run-last::before {
+    inset-block-end: calc(var(--wa-space-2xs) + var(--timeline-author-height));
+    border-end-start-radius: 2px;
+    border-end-end-radius: 2px;
 }
 
 /* Baseline-aligned with the first line of the text (the grid default), so whatever makes that line taller (a badge)
@@ -131,14 +174,31 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
     user-select: text;
 }
 
-/* One box that wraps as a whole, like the flex item it was (an inline block is still copied inline). With the real
-   space before it, the old 12px gap. */
+/* A line of its own under the wording, never wrapped: the session title shrinks (TimelineSessionMention `ellipsis`),
+   "by" and the source keep their size. A flex line: the spaces at the edges of its texts render nothing, the gap
+   draws them; a copy still gets them. */
 .timeline-author {
-    display: inline-block;
-    max-width: 100%;
-    margin-inline-start: var(--wa-space-xs);
+    display: flex;
+    /* Its height is known: the run rule of the last row ends above it. */
+    line-height: 1.5;
+    align-items: baseline;
+    column-gap: 0.3em;
+    min-width: 0;
+    white-space: nowrap;
     color: var(--wa-color-text-quiet);
     font-size: var(--wa-font-size-xs);
+}
+
+.timeline-author-text {
+    flex: none;
+}
+
+/* A label of text alone ("by an external MCP client …"): it is the part that shrinks. */
+.timeline-author-text:only-child {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* On the text baseline, like the icon and the time: the badge, the wording and the icon share one visual line (Web

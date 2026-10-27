@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { describeAuthor } from './authorLabel.js'
+import { authorRunKey, authorRunPosition, describeAuthor } from './authorLabel.js'
 
 const sessions = {
     boss: { title: 'The boss', project_id: 'p', provider: 'claude_code', hidden: false, archived: false },
@@ -89,4 +89,23 @@ test('an external client name is cut near 80 characters', () => {
     // The cut name counts 80 characters, ellipsis included.
     assert.ok(plainText(author).includes(`${'N'.repeat(79)}…`))
     assert.ok(!plainText(author).includes('N'.repeat(80)))
+})
+
+test('the author run key: one per labelled author, null without a label', () => {
+    const event = (fields) => ({ kind: 'archived.started', precision: 'exact', actor: 'agent', via: 'mcp_internal', actor_ref: 'a', actor_name: null, ...fields })
+    assert.equal(authorRunKey(event()), authorRunKey(event({ kind: 'hidden.started' })))
+    assert.notEqual(authorRunKey(event()), authorRunKey(event({ actor_ref: 'b' })))
+    assert.notEqual(authorRunKey(event()), authorRunKey(event({ via: 'cli' })))
+    assert.equal(authorRunKey(event({ actor: 'user', via: 'ui' })), null)
+    assert.equal(authorRunKey(event({ precision: 'estimated' })), null)
+    assert.equal(authorRunKey(event({ actor: 'system', via: null })), null)
+})
+
+test('the place in an author run, from the keys of the neighbors', () => {
+    assert.equal(authorRunPosition('a', null, 'a'), null)
+    assert.equal(authorRunPosition(null, 'a', null), 'single')
+    assert.equal(authorRunPosition('b', 'a', 'b'), 'single')
+    assert.equal(authorRunPosition(null, 'a', 'a'), 'first')
+    assert.equal(authorRunPosition('a', 'a', 'a'), 'middle')
+    assert.equal(authorRunPosition('a', 'a', null), 'last')
 })

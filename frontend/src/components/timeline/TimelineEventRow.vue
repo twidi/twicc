@@ -104,6 +104,7 @@ function toggleSession() {
             :event-id="row.event.id"
             :indented="!row.instance"
             :instance="row.instance"
+            :author-run="row.authorRun ?? null"
         />
         </div>
     </div>

@@ -13,6 +13,8 @@ const props = defineProps({
     /** First and last row of a run of events: the band opens and closes there. */
     first: { type: Boolean, default: true },
     last: { type: Boolean, default: true },
+    /** Place in its author run inside the band (`authorRunPosition`): the label shows under the run's last row. */
+    authorRun: { type: String, default: null },
 })
 const settingsStore = useSettingsStore()
 const vm = computed(() => describeEvent(props.event, props.context))
@@ -21,7 +23,7 @@ const vm = computed(() => describeEvent(props.event, props.context))
 <template>
     <div class="session-event-notice" :class="{ 'session-event-notice--first': first, 'session-event-notice--last': last }" :data-kind="vm.kind">
         <div class="session-event-band">
-            <TimelineEventLine :vm="vm" :event-id="event.id" :show-time="settingsStore.areMessageTimestampsShown" />
+            <TimelineEventLine :vm="vm" :event-id="event.id" :show-time="settingsStore.areMessageTimestampsShown" :author-run="authorRun" />
         </div>
     </div>
 </template>

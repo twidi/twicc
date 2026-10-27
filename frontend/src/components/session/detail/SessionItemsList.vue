@@ -11,6 +11,7 @@ import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
 import { captureEventScroll, planEventScrollRestore, eventStructureChanged } from '../../../utils/chatEvents/scroll.js'
 import { isSessionEvent, isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
+import { authorRunKey, authorRunPosition } from '../../../utils/timeline/authorLabel.js'
 import { getParsedContent, hasContent } from '../../../utils/parsedContent'
 import { pendingSessionSearch } from '../../../utils/pendingSearch'
 import { createComputePendingHint } from '../../../utils/computePendingHint.js'
@@ -1623,12 +1624,15 @@ function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
     return count
 }
 
-// First and last row of each run of events: the notices of a run share one band, each row draws its part.
+// First and last row of each run of events: the notices of a run share one band, each row draws its part. Inside
+// a band, the place of each notice in its author run: the "by ..." label shows once, under the run's last row.
 const eventRunEdges = computed(() => {
     const rows = displayItems.value, edges = new Map()
+    const keyAt = i => (isSessionEvent(rows[i]) ? authorRunKey(rows[i].event) : null)
     rows.forEach((row, i) => {
         if (!isSessionEvent(row)) return
-        edges.set(row.lineNum, { first: !isSessionEvent(rows[i - 1]), last: !isSessionEvent(rows[i + 1]) })
+        edges.set(row.lineNum, { first: !isSessionEvent(rows[i - 1]), last: !isSessionEvent(rows[i + 1]),
+            authorRun: authorRunPosition(keyAt(i - 1), keyAt(i), keyAt(i + 1)) })
     })
     return edges
 })
@@ -1637,7 +1641,7 @@ const eventRunEdges = computed(() => {
 // each row, so streaming does not subscribe the entire scroller to every delta.
 function rowMemo(item) {
     const edges = eventRunEdges.value.get(item.lineNum)
-    return [edges ? `${edges.first}${edges.last}` : null, props.projectId, props.sessionId, props.parentSessionId,
+    return [edges ? `${edges.first}${edges.last}${edges.authorRun}` : null, props.projectId, props.sessionId, props.parentSessionId,
         item.isGroupHead ? groupCommentsCount(item.segmentRange?.head ?? item.lineNum, item.segmentRange?.tail ?? item.groupTail) : 0,
         item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0,
         item.isGroupHead ? groupReveal.isHeadLeaving(item.lineNum) : false,
@@ -2385,6 +2389,7 @@ defineExpose({
                             :context="eventContext"
                             :first="eventRunEdges.get(item.lineNum)?.first ?? true"
                             :last="eventRunEdges.get(item.lineNum)?.last ?? true"
+                            :author-run="eventRunEdges.get(item.lineNum)?.authorRun ?? null"
                         />
 
                         <!-- Placeholder (no content loaded yet) -->

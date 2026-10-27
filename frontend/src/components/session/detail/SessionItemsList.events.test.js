@@ -10,6 +10,7 @@ import { isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
 import { projectEventSegments, setEventSegmentExpanded } from '../../../utils/chatEvents/segments.js'
 import { computeVisualItems } from '../../../utils/visualItems.js'
 import { compileComponent, makeRenderer, descendants, flush } from '../../../../tests/helpers/scrollerComponentHarness.js'
+import { authorRunKey, authorRunPosition } from '../../../utils/timeline/authorLabel.js'
 function loadFunction(path, name, dependencies) {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export function /g, 'function ')
     return new Function(...Object.keys(dependencies), `${source}; return ${name}`)(...Object.values(dependencies))
@@ -91,13 +92,17 @@ test('external event-segment comment scope excludes the synthetic streaming tail
     assert.deepEqual(row.segmentRange, { head: 2, tail: 3 })
     assert.equal(memo(row)[4], 1)
 })
-test('runs of events: first and last rows of each run, broken by any other row', () => {
+test('runs of events: first and last rows of each run, broken by any other row; author runs inside a band', () => {
     const source = listSource.slice(listSource.indexOf('const eventRunEdges = computed('), listSource.indexOf('\n})', listSource.indexOf('const eventRunEdges = computed(')) + 3)
-    const ev = n => ({ lineNum: `event:${n}`, isSessionEvent: true })
-    const displayItems = Vue.ref([ev(1), ev(2), ev(3), { lineNum: 5 }, ev(4), { lineNum: 'daysep', isDaySeparator: true }, ev(5)])
-    const edges = new Function('computed', 'displayItems', 'isSessionEvent', `${source}; return eventRunEdges`)(Vue.computed, displayItems, item => item?.isSessionEvent === true)
-    assert.deepEqual([...edges.value].map(([key, v]) => `${key}:${v.first ? 'f' : ''}${v.last ? 'l' : ''}`),
-        ['event:1:f', 'event:2:', 'event:3:l', 'event:4:fl', 'event:5:fl'])
+    const by = ref => ({ actor: 'agent', via: 'mcp_internal', actor_ref: ref, precision: 'exact' })
+    const ev = (n, author = {}) => ({ lineNum: `event:${n}`, isSessionEvent: true, event: { kind: 'archived.started', ...author } })
+    const displayItems = Vue.ref([ev(1, by('a')), ev(2, by('a')), ev(3, by('b')), { lineNum: 5 }, ev(4, by('a')),
+        { lineNum: 'daysep', isDaySeparator: true }, ev(5), ev(6, by('a')), ev(7, by('a')), ev(8, by('a'))])
+    const edges = new Function('computed', 'displayItems', 'isSessionEvent', 'authorRunKey', 'authorRunPosition', `${source}; return eventRunEdges`)(
+        Vue.computed, displayItems, item => item?.isSessionEvent === true, authorRunKey, authorRunPosition)
+    assert.deepEqual([...edges.value].map(([key, v]) => `${key}:${v.first ? 'f' : ''}${v.last ? 'l' : ''}:${v.authorRun}`),
+        ['event:1:f:first', 'event:2::last', 'event:3:l:single', 'event:4:fl:single', 'event:5:f:null',
+            'event:6::first', 'event:7::middle', 'event:8:l:last'])
 })
 test('source search opens only its projected segment; string keys bypass transcript preload', async () => {
     const rows = Vue.ref([{ lineNum: 'event:7', isSessionEvent: true }, { lineNum: 5, content: null }]), expanded = [], loaded = [], jumps = []

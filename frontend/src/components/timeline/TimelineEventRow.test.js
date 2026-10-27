@@ -29,6 +29,7 @@ const Line = compileComponent(new URL('./TimelineEventLine.vue', import.meta.url
     '../../stores/settings': { useSettingsStore: () => ({ isTouchDevice: false }) },
     '../ui/AppTooltip.vue': AppTooltip,
     '../../utils/timeline/parts': partsModule,
+    './TimelineSessionMention.vue': Mention,
     './TimelineWordingPart.vue': WordingPart,
 })
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
@@ -129,14 +130,30 @@ test('the header title is one truncating line with the full title as tooltip, li
     assert.equal(plainTitle.props.title, 'Hidden one')
 })
 
-test('the mentions inside the wording and the author label keep the plain variant: no tooltip, no truncation', async (t) => {
+test('the mention inside the wording keeps the plain variant; the author label cuts its title with the full one as tooltip', async (t) => {
     const created = await render(t, [make('session.created', { actor: 'user', via: 'ui', data: { origin: 'twicc', spawned_by: 'parent' } })])
+    const [inWording] = byClass(byClass(created, 'timeline-wording')[0], 'timeline-session')
+    assert.doesNotMatch(classesOf(inWording), /timeline-session--(truncate|ellipsis)/)
+    assert.equal(byClass(inWording, 'timeline-session-title')[0].props.title ?? null, null)
     const labelled = await render(t, [make('archived.started', { actor: 'agent', via: 'cli', actor_ref: 'parent' })])
-    for (const container of [byClass(created, 'timeline-wording')[0], byClass(labelled, 'timeline-author')[0]]) {
-        const [mention] = byClass(container, 'timeline-session')
-        assert.doesNotMatch(classesOf(mention), /timeline-session--truncate/)
-        assert.equal(byClass(mention, 'timeline-session-title')[0].props.title ?? null, null)
-    }
+    const [byAuthor] = byClass(byClass(labelled, 'timeline-author')[0], 'timeline-session')
+    assert.match(classesOf(byAuthor), /timeline-session--ellipsis/)
+    assert.doesNotMatch(classesOf(byAuthor), /timeline-session--truncate/)
+    assert.equal(byClass(byAuthor, 'timeline-session-title')[0].props.title, 'The parent')
+})
+
+test('the author line CSS: a line of its own that never wraps; the session title shrinks, "by" and the source do not', () => {
+    const line = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
+    const style = line.slice(line.indexOf('<style'))
+    const author = declarationsOf(style, '.timeline-author')
+    assert.deepEqual(['display', 'white-space', 'min-width'].map((name) => author.get(name)), ['flex', 'nowrap', '0'])
+    assert.equal(declarationsOf(style, '.timeline-author-text').get('flex'), 'none')
+    const alone = declarationsOf(style, '.timeline-author-text:only-child')
+    assert.deepEqual(['flex', 'overflow', 'text-overflow'].map((name) => alone.get(name)), ['0 1 auto', 'hidden', 'ellipsis'])
+    const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
+    assert.equal(declarationsOf(mention, '.timeline-session--ellipsis').get('flex'), '0 1 auto')
+    const title = declarationsOf(mention, '.timeline-session--ellipsis .timeline-session-title')
+    assert.deepEqual(['overflow', 'text-overflow', 'white-space', 'min-width'].map((name) => title.get(name)), ['hidden', 'ellipsis', 'nowrap', '0'])
 })
 
 test('a following row has no header, and its event line has the same indent as the head one', async (t) => {
@@ -397,8 +414,9 @@ test('the layout CSS: a fixed time column that never wraps, a wrapping text colu
     const sizer = declarationsOf(row, '.timeline-time::after')
     assert.deepEqual(['content', 'display', 'height', 'overflow', 'visibility', 'white-space'].map((name) => sizer.get(name)),
         ['var(--timeline-time-sizer, "")', 'block', '0', 'hidden', 'hidden', 'pre'])
-    assert.equal(declarationsOf(row, '.timeline-event-line--indented').get('padding-inline-start'),
-        'calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem))')
+    const indented = declarationsOf(row, '.timeline-event-line--indented')
+    assert.equal(indented.get('--timeline-line-indent'), 'calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem))')
+    assert.equal(indented.get('padding-inline-start'), 'var(--timeline-line-indent)')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
     const title = declarationsOf(mention, '.timeline-session--truncate .timeline-session-title')
     assert.deepEqual([title.get('overflow'), title.get('text-overflow'), title.get('white-space')], ['hidden', 'ellipsis', 'nowrap'])
@@ -421,14 +439,10 @@ test('the main column CSS: one inline flow, so its real spaces are rendered and 
     const main = declarationsOf(style, '.timeline-row-main')
     assert.ok(!main.has('display') && !main.has('column-gap'), 'no flex items: a copy would drop the spaces between them')
     assert.equal(main.get('overflow-wrap'), 'anywhere')
-    // The old flex gaps, with the real space (about 4px) counted: 12px before the badge and the author label, 8px
-    // before the error toggle.
-    for (const [selector, margin] of [['.timeline-badge', 'var(--wa-space-xs)'], ['.timeline-author', 'var(--wa-space-xs)'], ['.timeline-row__expand', 'var(--wa-space-2xs)']]) {
+    // The old flex gaps, with the real space (about 4px) counted: 12px before the badge, 8px before the error toggle.
+    for (const [selector, margin] of [['.timeline-badge', 'var(--wa-space-xs)'], ['.timeline-row__expand', 'var(--wa-space-2xs)']]) {
         assert.equal(declarationsOf(style, selector).get('margin-inline-start'), margin, selector)
     }
-    // The author label wraps as one box, as a flex item did (an inline block is still copied inline).
-    const author = declarationsOf(style, '.timeline-author')
-    assert.deepEqual([author.get('display'), author.get('max-width')], ['inline-block', '100%'])
     assert.equal(declarationsOf(style, '.timeline-error').get('display'), 'block')
     // The expanded rest keeps the old 8px gap under the first line (the error is a block now, no flex gap).
     assert.match(style, /\n\.timeline-error-rest \{\s*margin: var\(--wa-space-xs\) 0 0;/)
@@ -648,4 +662,34 @@ test('the tool of a request is a value of the wording, like a title', async (t) 
     assert.equal(textOf(wording), 'Waiting for approval Bash')
     assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Bash'])
     assert.equal(byClass(root, 'timeline-tag').length, 0)
+})
+
+test('an author run: the label once, under its last row; a rule joins the rows; another author starts a new run', async (t) => {
+    const by = (ref, time) => make('archived.started', { actor: 'agent', via: 'mcp_internal', actor_ref: ref, occurred_at: `2026-10-14T14:32:0${time}.000000Z` })
+    // Newest first: rows 0 and 1 by "parent", row 2 by "s1".
+    const events = [by('parent', 3), by('parent', 2), by('s1', 1)]
+    const labels = []
+    const runs = []
+    for (const index of [0, 1, 2]) {
+        const root = await render(t, events, { index })
+        labels.push(byClass(root, 'timeline-author').map(textOf).join(''))
+        runs.push(classesOf(byClass(root, 'timeline-event-line')[0]).match(/timeline-event-line--run-(\w+)/)?.[1] ?? null)
+    }
+    assert.deepEqual(labels, ['', 'by The parent (MCP)', 'by Fix the build (MCP)'])
+    assert.deepEqual(runs, ['first', 'last', null])
+})
+
+test('the author run rule CSS: in the gap between the icons and the text, from the first row down to the author line', () => {
+    const line = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
+    const style = line.slice(line.indexOf('<style'))
+    const rule = declarationsOf(style, '.timeline-event-line--run-first::before,\n.timeline-event-line--run-middle::before,\n.timeline-event-line--run-last::before')
+    assert.equal(rule.get('inset-inline-start'), 'calc(var(--timeline-line-indent) + var(--timeline-icon-width) + var(--wa-space-s) / 2 - 1px)')
+    assert.equal(rule.get('inset-block'), '0')
+    assert.equal(rule.get('border-inline-start'), '2px solid var(--block-card-border)')
+    // The last row's own rule comes after the shared one, whose selector list ends with the same selector.
+    const own = style.slice(style.indexOf('\n.timeline-event-line--run-first::before {'))
+    assert.equal(declarationsOf(own, '.timeline-event-line--run-last::before').get('inset-block-end'), 'calc(var(--wa-space-2xs) + var(--timeline-author-height))')
+    // The height the last row's rule leaves for the author line is the line's own height.
+    assert.equal(declarationsOf(style, '.timeline-author').get('line-height'), '1.5')
+    assert.equal(declarationsOf(style, '.timeline-event-line').get('--timeline-author-height'), 'calc(var(--wa-font-size-xs) * 1.5)')
 })

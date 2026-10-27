@@ -17,6 +17,8 @@ const props = defineProps({
     mention: { type: Object, required: true },
     /** One line with an ellipsis, the full title as tooltip, the icon in a fixed box (the block header). */
     truncate: { type: Boolean, default: false },
+    /** One line with an ellipsis and the full title as tooltip, the icon inline (the "by <session>" author line). */
+    ellipsis: { type: Boolean, default: false },
 })
 
 const route = useRoute()
@@ -24,11 +26,11 @@ const route = useRoute()
 const location = computed(() => (props.mention.link
     ? sessionRouteLocation({ id: props.mention.id, project_id: props.mention.projectId }, route)
     : null))
-const tooltip = computed(() => (props.truncate ? props.mention.title : null))
+const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention.title : null))
 </script>
 
 <template>
-    <span class="timeline-session" :class="{ 'timeline-session--truncate': truncate }">
+    <span class="timeline-session" :class="{ 'timeline-session--truncate': truncate, 'timeline-session--ellipsis': ellipsis }">
         <!-- The box keeps its width with no icon, so the title start (and the event lines under it) never moves. -->
         <span v-if="truncate" class="timeline-session-lead">
             <ProviderIcon v-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
@@ -71,6 +73,19 @@ a.timeline-session-title:hover {
 .timeline-session--truncate {
     align-items: center;
     gap: var(--timeline-provider-gap, var(--wa-space-xs));
+}
+
+/* The author line: the title shrinks first, the icon and the text around the mention keep their size. */
+.timeline-session--ellipsis {
+    flex: 0 1 auto;
+}
+
+.timeline-session--ellipsis .timeline-session-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow-wrap: normal;
 }
 
 .timeline-session-lead {

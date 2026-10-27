@@ -5,6 +5,7 @@
 // live insertion or a page append recomputes it and a row's head or end status can change. Pure.
 
 import { formatDayKey, formatDaySeparatorLabel } from '../date.js'
+import { authorRunKey, authorRunPosition } from './authorLabel.js'
 import { parseOccurredAt } from './eventTime.js'
 import { groupHeadIdentity } from './sessions.js'
 
@@ -39,6 +40,8 @@ export const ROW_HEIGHT_ESTIMATES = { day: 40, event: 34, head: 79, blockEnd: 17
  * @property {boolean} indented - A following row of a group.
  * @property {boolean} last - Last event row of its group: it closes the session block (never for an instance row).
  * @property {Object|null} identity - `groupHeadIdentity` for a head, else null.
+ * @property {null|'single'|'first'|'middle'|'last'} authorRun - Place in its author run inside the session block
+ *   (`authorRunPosition`): the "by ..." label shows once, under the run's last row. Null for an instance row.
  */
 
 /** Whether a row key is an event row's (`event-<id>`), not a day separator nor the top room of the list. */
@@ -83,6 +86,8 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
             // Known once the next row is: set below.
             last: false,
             identity: head ? groupHeadIdentity(event, sessions, scope, { isSubagent }) : null,
+            // Known once the block is: set below.
+            authorRun: null,
         })
     }
     // A session row ends its block unless the next row continues the same group (an indented row).
@@ -91,6 +96,14 @@ export function buildTimelineRows(events, { sessions, scope, isSubagent, dayKeyO
         if (row.type !== 'event' || row.instance) continue
         const next = rows[index + 1]
         row.last = !(next?.type === 'event' && next.indented)
+    }
+    // Author runs never cross a block edge.
+    const keys = rows.map((row) => (row.type === 'event' && !row.instance ? authorRunKey(row.event) : null))
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]
+        if (row.type !== 'event') continue
+        row.authorRun = row.instance ? null : authorRunPosition(
+            row.indented ? keys[index - 1] : null, keys[index], row.last ? null : keys[index + 1])
     }
     return rows
 }
