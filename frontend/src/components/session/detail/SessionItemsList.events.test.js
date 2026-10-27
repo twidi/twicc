@@ -85,11 +85,19 @@ test('external event-segment comment scope excludes the synthetic streaming tail
     const row = computeVisualItems(projection.items, DISPLAY_MODE.SIMPLIFIED, projection.expandedHeads)[0]
     const countSource = listSource.slice(listSource.indexOf('function groupCommentsCount('), listSource.indexOf('\n}', listSource.indexOf('function groupCommentsCount(')) + 2)
     const memoSource = listSource.slice(listSource.indexOf('function rowMemo('), listSource.indexOf('\n}', listSource.indexOf('function rowMemo(')) + 2)
-    const deps = { commentedToolLineNums: Vue.ref(new Set([3, 8])), props: {}, blockCommentsCount: () => 0,
+    const deps = { eventRunEdges: Vue.ref(new Map()), commentedToolLineNums: Vue.ref(new Set([3, 8])), props: {}, blockCommentsCount: () => 0,
         groupReveal: { isHeadLeaving: () => false, headLeaveClass: () => null, headLeaveStyle: () => null } }
     const memo = new Function(...Object.keys(deps), `${countSource}; ${memoSource}; return rowMemo`)(...Object.values(deps))
     assert.deepEqual(row.segmentRange, { head: 2, tail: 3 })
-    assert.equal(memo(row)[3], 1)
+    assert.equal(memo(row)[4], 1)
+})
+test('runs of events: first and last rows of each run, broken by any other row', () => {
+    const source = listSource.slice(listSource.indexOf('const eventRunEdges = computed('), listSource.indexOf('\n})', listSource.indexOf('const eventRunEdges = computed(')) + 3)
+    const ev = n => ({ lineNum: `event:${n}`, isSessionEvent: true })
+    const displayItems = Vue.ref([ev(1), ev(2), ev(3), { lineNum: 5 }, ev(4), { lineNum: 'daysep', isDaySeparator: true }, ev(5)])
+    const edges = new Function('computed', 'displayItems', 'isSessionEvent', `${source}; return eventRunEdges`)(Vue.computed, displayItems, item => item?.isSessionEvent === true)
+    assert.deepEqual([...edges.value].map(([key, v]) => `${key}:${v.first ? 'f' : ''}${v.last ? 'l' : ''}`),
+        ['event:1:f', 'event:2:', 'event:3:l', 'event:4:fl', 'event:5:fl'])
 })
 test('source search opens only its projected segment; string keys bypass transcript preload', async () => {
     const rows = Vue.ref([{ lineNum: 'event:7', isSessionEvent: true }, { lineNum: 5, content: null }]), expanded = [], loaded = [], jumps = []

@@ -24,7 +24,10 @@ const Mention = compileComponent(new URL('./TimelineSessionMention.vue', import.
     '../ui/ProviderIcon.vue': ProviderIcon,
 })
 const WordingPart = compileComponent(new URL('./TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
+const AppTooltip = { props: ['for', 'trigger'], setup: (_, { slots }) => () => Vue.h('span', { class: 'app-tooltip' }, slots.default?.()) }
 const Line = compileComponent(new URL('./TimelineEventLine.vue', import.meta.url), {
+    '../../stores/settings': { useSettingsStore: () => ({ isTouchDevice: false }) },
+    '../ui/AppTooltip.vue': AppTooltip,
     '../../utils/timeline/parts': partsModule,
     './TimelineWordingPart.vue': WordingPart,
 })
@@ -48,8 +51,11 @@ const make = (kind, fields = {}) => ({
     actor_ref: null, actor_name: null, reason: '', data: {}, session_id: 's1', project_id: 'p1', provider: 'codex', ...fields,
 })
 
+const rawText = (node) => node.type === '#comment' ? '' : `${node.text ?? ''}${node.children.map(rawText).join('')}`
+
+/** The visible text: a tooltip's text is shown only on hover, never in the row's text. */
 function textOf(node) {
-    if (node.type === '#comment') return ''
+    if (node.type === '#comment' || String(node.props.class ?? '') === 'app-tooltip') return ''
     return `${node.text ?? ''}${node.children.map(textOf).join('')}`
 }
 
@@ -83,8 +89,9 @@ test('a plain row: icon with severity, wording and the time on the right with th
     assert.equal(textOf(byClass(root, 'timeline-wording')[0]), 'Process resumed hybrid CLI')
     assert.deepEqual(byClass(root, 'timeline-tag').map(textOf), ['hybrid CLI'])
     const [time] = byClass(root, 'timeline-time')
-    assert.equal(textOf(time), '14:32')
-    assert.match(time.props.title, /Precision: exact/)
+    assert.match(textOf(time), /^14:32/)
+    // The time's tooltip shows the date in the format of the chat's message timestamps.
+    assert.match(rawText(byClass(root, 'app-tooltip')[0]), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/)
 })
 
 test('the group head: a header line (provider icon, title link) above its own event line', async (t) => {
@@ -583,7 +590,7 @@ test('the wording CSS: a value is set apart from the prose, the arrow sits on th
 // The text a copy of a whole row gets: every adjacent pair of the row is separated by a real space (the visible
 // spaces of the inline flow, and spaces between the flex and grid items, which render nothing).
 // The "Only this session" control is not copied (`user-select: none`, pinned in its CSS test).
-const copiedText = (node) => (classesOf(node).split(' ').includes('timeline-row-only') ? '' : node.type === '#comment' ? ''
+const copiedText = (node) => (['timeline-row-only', 'app-tooltip'].some((name) => classesOf(node).split(' ').includes(name)) ? '' : node.type === '#comment' ? ''
     : `${node.text ?? ''}${node.children.map(copiedText).join('')}`)
 const rowText = (root) => copiedText(byClass(root, 'timeline-row')[0])
 

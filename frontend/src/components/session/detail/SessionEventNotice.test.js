@@ -10,10 +10,14 @@ const Mention = compileComponent(new URL('../../timeline/TimelineSessionMention.
     '../ui/ProviderIcon.vue': { props: ['provider'], setup: props => () => Vue.h('i', props.provider) },
 })
 const WordingPart = compileComponent(new URL('../../timeline/TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
+const AppTooltip = { props: ['for', 'trigger'], setup: (_, { slots }) => () => Vue.h('span', { class: 'app-tooltip' }, slots.default?.()) }
+const settings = Vue.reactive({ areMessageTimestampsShown: true, isTouchDevice: false })
 const Line = compileComponent(new URL('../../timeline/TimelineEventLine.vue', import.meta.url), {
+    '../../stores/settings': { useSettingsStore: () => settings }, '../ui/AppTooltip.vue': AppTooltip,
     '../../utils/timeline/parts': parts, './TimelineWordingPart.vue': WordingPart,
 })
 const Notice = compileComponent(new URL('./SessionEventNotice.vue', import.meta.url), {
+    '../../../stores/settings': { useSettingsStore: () => settings },
     '../../../utils/timeline/describeEvent.js': description, '../../timeline/TimelineEventLine.vue': Line,
 })
 const event = (kind, extra = {}) => ({ id: 1, session_id: 's', kind, occurred_at: '2026-10-27T14:32:00.000000Z', precision: 'exact', actor: 'user', data: {}, ...extra })
@@ -51,4 +55,15 @@ test('stable reactive context updates actor links behind scroller memo', async t
     assert.ok(text(root).includes('Before')); assert.equal(descendants(root, n => n.type === 'a').length, 1)
     context.sessions = { actor: { title: 'After', project_id: 'p', provider: 'claude_code', hidden: true } }; await flush()
     assert.ok(text(root).includes('After')); assert.equal(descendants(root, n => n.type === 'a').length, 0)
+})
+test('the time follows the message timestamps setting; the wording is not semibold', async t => {
+    settings.areMessageTimestampsShown = false
+    t.after(() => { settings.areMessageTimestampsShown = true })
+    const root = await mount(t, event('turn.started'))
+    assert.equal(descendants(root, n => String(n.props.class).includes('timeline-time')).length, 0)
+    assert.equal(descendants(root, n => String(n.props.class).includes('timeline-event-line--instance')).length, 0)
+    settings.areMessageTimestampsShown = true
+    const shown = await mount(t, event('turn.started'))
+    assert.equal(descendants(shown, n => String(n.props.class).includes('timeline-time')).length, 1)
+    assert.equal(descendants(shown, n => n.props?.class === 'app-tooltip').length, 1)
 })

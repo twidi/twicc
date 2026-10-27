@@ -9,6 +9,7 @@
 import { describeAuthor } from './authorLabel.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
 import { ESTIMATED_MARK, formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
+import { formatFullDateTime } from '../date.js'
 import { arrowPart, textPart, valuePart } from './parts.js'
 import { describeSettingsChange } from './settingsDiff.js'
 import { sessionMention } from './sessions.js'
@@ -252,6 +253,8 @@ function describeTime(event, context) {
         estimated,
         caption,
         full: formatFullTime(ms, context.time),
+        // The tooltip of the time, in the format of the chat's message timestamps ("YYYY-MM-DD HH:MM:SS", local time).
+        stamp: Number.isFinite(ms) ? formatFullDateTime(ms) : '',
     }
 }
 

@@ -1623,10 +1623,21 @@ function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
     return count
 }
 
+// First and last row of each run of events: the notices of a run share one band, each row draws its part.
+const eventRunEdges = computed(() => {
+    const rows = displayItems.value, edges = new Map()
+    rows.forEach((row, i) => {
+        if (!isSessionEvent(row)) return
+        edges.set(row.lineNum, { first: !isSessionEvent(rows[i - 1]), last: !isSessionEvent(rows[i + 1]) })
+    })
+    return edges
+})
+
 // Parent-owned slot dependencies. Parsed content stays a reactive read inside
 // each row, so streaming does not subscribe the entire scroller to every delta.
 function rowMemo(item) {
-    return [props.projectId, props.sessionId, props.parentSessionId,
+    const edges = eventRunEdges.value.get(item.lineNum)
+    return [edges ? `${edges.first}${edges.last}` : null, props.projectId, props.sessionId, props.parentSessionId,
         item.isGroupHead ? groupCommentsCount(item.segmentRange?.head ?? item.lineNum, item.segmentRange?.tail ?? item.groupTail) : 0,
         item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0,
         item.isGroupHead ? groupReveal.isHeadLeaving(item.lineNum) : false,
@@ -2368,7 +2379,13 @@ defineExpose({
                             :day-key="item.dayKey"
                         />
 
-                        <SessionEventNotice v-else-if="item.isSessionEvent" :event="item.event" :context="eventContext" />
+                        <SessionEventNotice
+                            v-else-if="item.isSessionEvent"
+                            :event="item.event"
+                            :context="eventContext"
+                            :first="eventRunEdges.get(item.lineNum)?.first ?? true"
+                            :last="eventRunEdges.get(item.lineNum)?.last ?? true"
+                        />
 
                         <!-- Placeholder (no content loaded yet) -->
                         <div

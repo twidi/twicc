@@ -4,8 +4,10 @@
 // looks the same in both. It decides nothing: the view model comes from `describeEvent` (utils/timeline/). Every
 // string from data is rendered as TEXT with interpolation, never as HTML.
 
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
+import { useSettingsStore } from '../../stores/settings'
 import { splitLastWord } from '../../utils/timeline/parts'
+import AppTooltip from '../ui/AppTooltip.vue'
 import TimelineWordingPart from './TimelineWordingPart.vue'
 
 const props = defineProps({
@@ -17,10 +19,16 @@ const props = defineProps({
     indented: { type: Boolean, default: false },
     /** A plain line between the blocks: its wording is semibold. */
     instance: { type: Boolean, default: false },
+    /** Show the time on the right (the chat follows its "message timestamps" setting). */
+    showTime: { type: Boolean, default: true },
 })
 
 // With tags, the last word of the wording is kept apart: the word and the tags are glued and wrap together.
 const wording = computed(() => (props.vm.tags.length ? splitLastWord(props.vm.parts) : { lead: props.vm.parts, last: null }))
+const settingsStore = useSettingsStore()
+const timeId = `timeline-time-${useId()}`
+// No hover on a touch device: a tap opens the tooltip (AppTooltip closes it on the next outside tap).
+const tooltipTrigger = computed(() => (settingsStore.isTouchDevice ? 'click' : 'hover focus'))
 const expanded = ref(false)
 // Unique per row, so the toggle can point at the text it shows.
 const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
@@ -54,7 +62,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
                 >{{ expanded ? 'Show less' : 'Show more' }}</button>
                 <template v-if="expanded && vm.detail.rest">{{ ' ' }}<pre :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre></template>
             </span></template>
-        </div>{{ ' ' }}<span class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }" :title="vm.tooltip">{{ vm.time.text }}</span>
+        </div><template v-if="showTime">{{ ' ' }}<span :id="timeId" class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }">{{ vm.time.text }}</span><AppTooltip :for="timeId" :trigger="tooltipTrigger" force>{{ vm.time.stamp }}<template v-if="vm.time.caption"><br>{{ vm.time.caption }}</template></AppTooltip></template>
     </div>
 </template>
 
