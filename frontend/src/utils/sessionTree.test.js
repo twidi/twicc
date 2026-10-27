@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree, flattenTree, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
+import { buildSessionTree, flattenTree, extendTreeCandidates, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -231,4 +231,61 @@ test('isExpanded = () => true lists the whole forest in display order', () => {
 
 test('TREE_MAX_INDENT_LEVEL is 3', () => {
     assert.equal(TREE_MAX_INDENT_LEVEL, 3)
+})
+
+const extend = (natural, all, { inScope = () => true, passes = () => true } = {}) =>
+    extendTreeCandidates(natural, {
+        sessionsById: Object.fromEntries(all.map(x => [x.id, x])),
+        isInScope: inScope,
+        passesFilter: passes,
+    }).map(x => x.id).sort()
+
+test('extension adds an old in-scope ancestor', () => {
+    const root = s('root'), mid = s('mid', { spawned_by: 'root' }), leaf = s('leaf', { spawned_by: 'mid' })
+    assert.deepEqual(extend([leaf], [root, mid, leaf]), ['mid', 'root'])
+})
+
+test('extension adds an old in-scope descendant', () => {
+    const root = s('root'), kid = s('kid', { spawned_by: 'root' }), grand = s('grand', { spawned_by: 'kid' })
+    assert.deepEqual(extend([root], [root, kid, grand]), ['grand', 'kid'])
+})
+
+test('extension skips out-of-scope, hidden, sub-agent and draft sessions', () => {
+    const root = s('root')
+    const all = [
+        root,
+        s('out', { spawned_by: 'root', project_id: 'other' }),
+        s('hid', { spawned_by: 'root', hidden: true }),
+        s('sub', { spawned_by: 'root', parent_session_id: 'x' }),
+        s('dra', { spawned_by: 'root', draft: true }),
+        s('arc', { spawned_by: 'root', archived: true }),
+        s('ok', { spawned_by: 'root' }),
+    ]
+    assert.deepEqual(
+        extend([root], all, { inScope: x => x.project_id === 'p', passes: x => !x.archived }),
+        ['ok'])
+})
+
+test('extension links through an out-of-scope middle session', () => {
+    const root = s('root'), mid = s('mid', { spawned_by: 'root', project_id: 'other' })
+    const leaf = s('leaf', { spawned_by: 'mid' })
+    const inScope = x => x.project_id === 'p'
+    assert.deepEqual(extend([leaf], [root, mid, leaf], { inScope }), ['root'])
+    assert.deepEqual(extend([root], [root, mid, leaf], { inScope }), ['leaf'])
+})
+
+test('extension does not cross a hidden middle session', () => {
+    const root = s('root'), mid = s('mid', { spawned_by: 'root', hidden: true })
+    const leaf = s('leaf', { spawned_by: 'mid' })
+    assert.deepEqual(extend([leaf], [root, mid, leaf]), [])
+    assert.deepEqual(extend([root], [root, mid, leaf]), [])
+})
+
+test('extension does not cross a draft or ephemeral middle session', () => {
+    for (const flag of [{ draft: true }, { ephemeral: true }]) {
+        const root = s('root'), mid = s('mid', { spawned_by: 'root', ...flag })
+        const leaf = s('leaf', { spawned_by: 'mid' })
+        assert.deepEqual(extend([leaf], [root, mid, leaf]), [], JSON.stringify(flag))
+        assert.deepEqual(extend([root], [root, mid, leaf]), [], JSON.stringify(flag))
+    }
 })

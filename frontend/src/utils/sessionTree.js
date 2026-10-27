@@ -191,3 +191,61 @@ export function flattenTree(tree, isExpanded) {
     for (const id of tree.rootIds) visit(id, 0)
     return rows
 }
+
+/**
+ * Loaded sessions that must join the natural list so the tree is complete:
+ * every in-scope session linked to a participant of `natural` by a
+ * `spawned_by` chain (ancestor or descendant). Walks stop at hidden,
+ * sub-agent, ephemeral and draft sessions, exactly like `buildSessionTree`.
+ * The chain may pass through out-of-scope sessions, which are not added.
+ *
+ * @param {Object[]} natural
+ * @param {{
+ *   sessionsById: Object<string, Object>,
+ *   isInScope: (session: Object) => boolean,
+ *   passesFilter: (session: Object) => boolean,
+ * }} opts
+ * @returns {Object[]}
+ */
+export function extendTreeCandidates(natural, { sessionsById, isInScope, passesFilter }) {
+    const naturalIds = new Set(natural.map((session) => session.id))
+    const childrenOf = new Map()
+    for (const session of Object.values(sessionsById)) {
+        if (!session.spawned_by) continue
+        if (!childrenOf.has(session.spawned_by)) childrenOf.set(session.spawned_by, [])
+        childrenOf.get(session.spawned_by).push(session)
+    }
+
+    const found = new Map()
+    const visited = new Set()
+    const consider = (session) => {
+        if (naturalIds.has(session.id) || found.has(session.id)) return
+        if (isInScope(session) && passesFilter(session)) found.set(session.id, session)
+    }
+    const walkUp = (session) => {
+        let currentId = session.spawned_by
+        while (currentId && !visited.has(currentId)) {
+            visited.add(currentId)
+            const current = sessionsById[currentId]
+            if (!current || isBlocking(current)) return
+            consider(current)
+            currentId = current.spawned_by
+        }
+    }
+    const walkDown = (session) => {
+        for (const child of childrenOf.get(session.id) || []) {
+            if (visited.has(child.id) || isBlocking(child)) continue
+            visited.add(child.id)
+            consider(child)
+            walkDown(child)
+        }
+    }
+
+    for (const member of natural) {
+        if (!isParticipant(member)) continue
+        visited.add(member.id)
+        walkUp(member)
+        if (!isBlocking(member)) walkDown(member)
+    }
+    return [...found.values()]
+}

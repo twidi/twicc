@@ -5,13 +5,14 @@ import { reactive } from 'vue'
 import { getStableSessionList, retainSessionArray } from './sessionLists.js'
 import { sessionSortComparator } from './sessionSort.js'
 import { hasUnreadContent } from './sessions.js'
+import { extendTreeCandidates } from './sessionTree.js'
 
 const source = readFileSync(new URL('./sidebarSessions.js', import.meta.url), 'utf8')
     .replace(/^import .*$/gm, '').replace(/export function /g, 'function ')
 const computeSidebarSessionBlocks = new Function('sessionSortComparator', 'ALL_PROJECTS_ID',
-    'isWorkspaceProjectId', 'extractWorkspaceId', 'hasUnreadContent', 'retainSessionArray',
+    'isWorkspaceProjectId', 'extractWorkspaceId', 'hasUnreadContent', 'retainSessionArray', 'extendTreeCandidates',
     `${source}; return computeSidebarSessionBlocks`)(sessionSortComparator, '__all__',
-    id => id.startsWith('workspace:'), id => id.slice(10), hasUnreadContent, retainSessionArray)
+    id => id.startsWith('workspace:'), id => id.slice(10), hasUnreadContent, retainSessionArray, extendTreeCandidates)
 
 function fixture(scope) {
     const data = reactive({ sessions: {
@@ -53,4 +54,30 @@ test('real scope visibility pin and archive changes still update sidebar blocks'
     options.showActiveAcrossFilters = true
     const active = computeSidebarSessionBlocks(options, next)
     assert.deepEqual(active.crossFilterActive.map(s => s.id), ['c'])
+})
+
+function paginatedAncestorFixture() {
+    const { data, options } = fixture('p')
+    data.sessions.old = { id: 'old', project_id: 'p', mtime: 1, pinned: 'all', spawned_by: null }
+    data.sessions.a.spawned_by = 'old'
+    // Simulate the pagination window: only `a` and `b` are naturally listed.
+    const all = data.getAllSessions
+    Object.defineProperty(data, 'getProjectSessions', { value: () => all.filter(s => s.id !== 'old') })
+    Object.defineProperty(data, 'getAllSessions', { value: all.filter(s => s.id !== 'old') })
+    options.effectiveProjectId = '__all__'
+    return { data, options }
+}
+
+test('with showAsTree an in-scope pinned ancestor beyond the pagination window is in natural and not in crossFilterPinned', () => {
+    const { options } = paginatedAncestorFixture()
+    const blocks = computeSidebarSessionBlocks({ ...options, showAsTree: true })
+    assert.ok(blocks.natural.some(s => s.id === 'old'))
+    assert.deepEqual(blocks.crossFilterPinned.map(s => s.id), [])
+})
+
+test('without showAsTree the same data leaves it in crossFilterPinned', () => {
+    const { options } = paginatedAncestorFixture()
+    const blocks = computeSidebarSessionBlocks(options)
+    assert.ok(!blocks.natural.some(s => s.id === 'old'))
+    assert.deepEqual(blocks.crossFilterPinned.map(s => s.id), ['old'])
 })

@@ -24,6 +24,7 @@ import { sessionSortComparator, ALL_PROJECTS_ID } from '../stores/data'
 import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds'
 import { hasUnreadContent } from './sessions'
 import { retainSessionArray } from './sessionLists.js'
+import { extendTreeCandidates } from './sessionTree.js'
 
 /**
  * Build the archived-filter predicate. The currently-selected session is
@@ -58,6 +59,10 @@ function makeArchiveFilter({ data, showArchived, showArchivedProjects, sessionId
  * @param {boolean} opts.showArchived
  * @param {boolean} opts.showArchivedProjects
  * @param {boolean} opts.showActiveAcrossFilters
+ * @param {boolean} [opts.showAsTree=false] - "Show as tree" mode: `natural`
+ *     is extended with the loaded in-scope sessions linked to it by a
+ *     `spawned_by` chain (see `extendTreeCandidates`). They count as natural
+ *     (never in a cross-filter block nor `extra`). Flat mode is unchanged.
  *
  * @returns {{
  *     extra: ?Object,
@@ -75,6 +80,7 @@ export function computeSidebarSessionBlocks({
     showArchived,
     showArchivedProjects,
     showActiveAcrossFilters,
+    showAsTree = false,
 }, previous) {
     const passesArchiveFilter = makeArchiveFilter({
         data, showArchived, showArchivedProjects, sessionId,
@@ -83,26 +89,41 @@ export function computeSidebarSessionBlocks({
     // 1. Natural scope — sessions that belong to the current filter.
     //    Already sorted by `sessionSortComparator` via the store getter.
     let natural
+    let isInScope
     if (isWorkspaceProjectId(effectiveProjectId)) {
         const wsId = extractWorkspaceId(effectiveProjectId)
         const visibleIds = new Set(workspaces.getVisibleProjectIds(wsId))
+        isInScope = s => visibleIds.has(s.project_id)
         natural = data.getAllSessions.filter(s => visibleIds.has(s.project_id))
     } else if (effectiveProjectId === ALL_PROJECTS_ID) {
+        isInScope = () => true
         natural = data.getAllSessions
     } else if (effectiveProjectId) {
         // A main repo aggregates its worktrees' sessions (their content belongs
         // to the whole); a plain project shows only its own.
         const scopeIds = data.getProjectScopeIds(effectiveProjectId)
+        const scopeSet = new Set(scopeIds)
+        isInScope = s => scopeSet.has(s.project_id)
         if (scopeIds.length > 1) {
-            const scopeSet = new Set(scopeIds)
             natural = data.getAllSessions.filter(s => scopeSet.has(s.project_id))
         } else {
             natural = data.getProjectSessions(effectiveProjectId)
         }
     } else {
+        isInScope = () => true
         natural = data.getAllSessions
     }
     natural = natural.filter(passesArchiveFilter)
+    if (showAsTree) {
+        const extension = extendTreeCandidates(natural, {
+            sessionsById: data.sessions,
+            isInScope,
+            passesFilter: passesArchiveFilter,
+        })
+        if (extension.length) {
+            natural = [...natural, ...extension].sort(sessionSortComparator(data.processStates))
+        }
+    }
     const naturalIds = new Set(natural.map(s => s.id))
 
     // 2. Cross-filter pinned — `all` always, `workspace` when the active
