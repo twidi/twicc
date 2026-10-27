@@ -172,6 +172,11 @@ ignore = [
 "tests/test_mcp_oauth_compatibility.py" = ["F401", "F811"]
 # Same pattern: `fast_loop` and `live_twicc` from `test_wait_reply.py` are autouse.
 "tests/test_wait_background.py" = ["F401", "F811"]
+# Same pattern: `retry_scenario`, `writer_state`, `content_row_factory`, `env` and `session`
+# are fixtures shared by import between these modules.
+"tests/test_content_maintenance_metrics.py" = ["F401", "F811"]
+"tests/test_content_maintenance_retry.py" = ["F401", "F811"]
+"tests/test_title_auto_task.py" = ["F401", "F811"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "twicc.settings_test"

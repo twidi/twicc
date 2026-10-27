@@ -1,7 +1,7 @@
 """Automatic checks preserve user choices and complete provider writeback."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -20,7 +20,7 @@ from twicc.providers.hermetic import HermeticGuardViolation
 from twicc.title_cadence import TitleCheckState
 
 pytestmark = pytest.mark.django_db(transaction=True)
-NOW = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 4, 12, tzinfo=UTC)
 OLD = NOW - timedelta(minutes=15)
 
 

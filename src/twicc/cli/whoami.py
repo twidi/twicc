@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from twicc.cli._output import WHOAMI_FULL_HELP, emit_error, emit_json
+from twicc.cli._output import WHOAMI_FULL_HELP, emit_json
 
 
 def whoami_cmd(

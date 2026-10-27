@@ -605,7 +605,7 @@ def replay_upgrade():
     statements = []
     connection.connection.set_trace_callback(statements.append)
     after_first = executor.apply_migration(base.clone(), first)
-    after_squash = executor.apply_migration(after_first.clone(), squash)
+    executor.apply_migration(after_first.clone(), squash)
     executor.unapply_migration(after_first.clone(), squash)
     executor.unapply_migration(base.clone(), first)
     connection.connection.set_trace_callback(None)
@@ -621,7 +621,7 @@ def replay_upgrade():
 def benchmark():
     results = []
     for rows, payload_bytes in [(10_000, 256), (100_000, 256), (100_000, 4096)]:
-        def seed(connection):
+        def seed(connection, rows=rows, payload_bytes=payload_bytes):
             payload = "x" * payload_bytes
             connection.connection.executemany('INSERT INTO probe_child(id,parent_id,label) VALUES (?,?,?)',
                                               ((row + 2, 1, payload) for row in range(rows - 1)))

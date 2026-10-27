@@ -279,8 +279,8 @@ def test_instance_configuration_flags(project, monkeypatch, share_url, configure
 def test_instance_configuration_defaults(project, monkeypatch):
     monkeypatch.setattr(snapshot, "read_message_snippets_config", lambda: {"snippets": {}})
     monkeypatch.setattr(snapshot, "read_terminal_config", lambda: {"snippets": {}, "combos": []})
-    monkeypatch.setattr(snapshot, "read_layouts", lambda: {})
-    monkeypatch.setattr(snapshot, "read_synced_settings", lambda: {})
+    monkeypatch.setattr(snapshot, "read_layouts", dict)
+    monkeypatch.setattr(snapshot, "read_synced_settings", dict)
     block = snapshot.build_instance_block()
     assert block["message_snippets_bucket"] == "0"
     assert block["terminal_snippets_bucket"] == "0"

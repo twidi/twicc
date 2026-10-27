@@ -495,7 +495,7 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
         for name in ("init_manifest", "init_help_manifest", "stop_version_check_task", "stop_search_index_task",
                      "shutdown_search_index"):
             monkeypatch.setattr(run, name, lambda: None)
-        monkeypatch.setattr(run, "get_active_indexing_tasks", lambda: [])
+        monkeypatch.setattr(run, "get_active_indexing_tasks", list)
         for name in (
             "twicc.mcp.oauth.storage.enforce_password_requirement",
             "twicc.agent.process_run_cleanup.cleanup_stale_process_runs",

@@ -11,6 +11,7 @@ Live checks are also flushed to OUTPUT.checks.jsonl as they complete.
 import argparse
 import asyncio
 import os
+from itertools import pairwise
 from pathlib import Path
 import sys
 import time
@@ -37,7 +38,7 @@ def validate_fixture(data: dict) -> None:
         counts = case.get("check_counts")
         if (not isinstance(counts, list) or not counts
                 or any(type(n) is not int or not 1 <= n <= len(messages) for n in counts)
-                or any(a >= b for a, b in zip(counts, counts[1:]))):
+                or any(a >= b for a, b in pairwise(counts))):
             raise ValueError("check_counts must be increasing integers within messages")
         subjects = case.get("expected_subjects")
         if not isinstance(subjects, list) or not all(isinstance(s, str) and s.strip() for s in subjects):
