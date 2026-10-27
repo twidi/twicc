@@ -63,6 +63,7 @@ export const SETTINGS_SCHEMA = {
     showArchivedProjects: false,
     showArchivedWorkspaces: false,
     showActiveAcrossFilters: false,
+    showSessionsAsTree: false,
     showHiddenFiles: false,
     showGitIgnoredFiles: false,
     // Whether the user dismissed the text-selection comment widget's help hint
@@ -182,6 +183,7 @@ const SETTINGS_VALIDATORS = {
     showArchivedProjects: (v) => typeof v === 'boolean',
     showArchivedWorkspaces: (v) => typeof v === 'boolean',
     showActiveAcrossFilters: (v) => typeof v === 'boolean',
+    showSessionsAsTree: (v) => typeof v === 'boolean',
     showHiddenFiles: (v) => typeof v === 'boolean',
     showGitIgnoredFiles: (v) => typeof v === 'boolean',
     selectionCommentHintDismissed: (v) => typeof v === 'boolean',
@@ -399,6 +401,7 @@ export const useSettingsStore = defineStore('settings', {
         isShowArchivedProjects: (state) => state.showArchivedProjects,
         isShowArchivedWorkspaces: (state) => state.showArchivedWorkspaces,
         isShowActiveAcrossFilters: (state) => state.showActiveAcrossFilters,
+        isShowSessionsAsTree: (state) => state.showSessionsAsTree,
         isShowHiddenFiles: (state) => state.showHiddenFiles,
         isShowGitIgnoredFiles: (state) => state.showGitIgnoredFiles,
         getNotifUserTurnSound: (state) => state.notifUserTurnSound,
@@ -877,6 +880,17 @@ export const useSettingsStore = defineStore('settings', {
         },
 
         /**
+         * Set show sessions as tree mode.
+         * Toggled only from the session list options dropdown.
+         * @param {boolean} enabled
+         */
+        setShowSessionsAsTree(enabled) {
+            if (SETTINGS_VALIDATORS.showSessionsAsTree(enabled)) {
+                this.showSessionsAsTree = enabled
+            }
+        },
+
+        /**
          * Set show archived projects mode.
          * This setting is not exposed in the settings panel — it is only
          * toggled from the home page project list.
@@ -1273,6 +1287,7 @@ export function initSettings() {
             showArchivedProjects: store.showArchivedProjects,
             showArchivedWorkspaces: store.showArchivedWorkspaces,
             showActiveAcrossFilters: store.showActiveAcrossFilters,
+            showSessionsAsTree: store.showSessionsAsTree,
             showHiddenFiles: store.showHiddenFiles,
             showGitIgnoredFiles: store.showGitIgnoredFiles,
             selectionCommentHintDismissed: store.selectionCommentHintDismissed,
