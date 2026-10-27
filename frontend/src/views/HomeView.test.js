@@ -15,7 +15,7 @@ const [root] = elements(descriptor.template.ast)
 const rail = elements(root).find(node => node.tag === 'SidebarRail')
 
 // Compile the actual setup. Replace browser/store dependencies at their boundaries.
-function setup() {
+function setup(storeState = {}) {
     const routes = []
     const events = []
     const newSessions = []
@@ -27,7 +27,7 @@ function setup() {
         provideHomeCardCascade() {}, useStartupPolling() {},
         useNewSessionCreation: () => projectId => newSessions.push(projectId),
         useRouter: () => ({ push: route => routes.push(JSON.parse(JSON.stringify(route))) }),
-        useDataStore: () => ({ getProjects: [], weeklyActivity: {} }),
+        useDataStore: () => ({ getProjects: [], weeklyActivity: {}, ...storeState }),
         useWorkspacesStore: () => ({}),
         usePeersStore: () => ({ inboxCount: 3 }),
         usePeerSystemConfigured: () => ref(true),
@@ -91,4 +91,12 @@ test('Home rail passes the selected project to the shared New session handler', 
     assert.equal(attrs(rail)['@new-session'], 'handleNewSession')
     state[attrs(rail)['@new-session']]('chosen-project')
     assert.deepEqual(newSessions, ['chosen-project'])
+})
+
+test('Home shows the loading state until the first fetch ends, unless projects are already shown', () => {
+    const isLoading = storeState => setup(storeState).state.isLoading.value
+    assert.equal(isLoading({ projectsLoaded: false }), true, 'nothing loaded yet')
+    assert.equal(isLoading({ projectsLoaded: true }), false, 'first fetch ended')
+    assert.equal(isLoading({ projectsLoaded: false, getProjects: [{ id: 'p' }] }), false, 'projects already shown')
+    assert.equal(isLoading({ projectsLoaded: true, isProjectsListLoading: true }), true, 'store flag raised')
 })

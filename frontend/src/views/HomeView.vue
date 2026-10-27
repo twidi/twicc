@@ -50,7 +50,12 @@ const totalSessionsCount = computed(() =>
 )
 
 // Loading and error states
-const isLoading = computed(() => store.isProjectsListLoading)
+// Also loading until the first home fetch has ended while nothing is shown yet: the store raises its
+// flag only once that fetch starts (after the first render). Rendering the content in that gap mounts
+// every card, then tears it all down for the spinner and mounts it again.
+const isLoading = computed(() =>
+    store.isProjectsListLoading || (!store.projectsLoaded && !store.getProjects.length)
+)
 const hasError = computed(() => store.didProjectsListFailToLoad)
 
 function handleProjectSelect(project) {
