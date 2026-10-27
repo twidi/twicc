@@ -16,12 +16,13 @@ import { blockTargets, nextBlockTarget, prevBlockTarget } from '../utils/chatBlo
  * @param {import('vue').Ref} options.scrollerRef - Ref on the VirtualScroller component.
  * @param {import('vue').Ref<Array>} options.visualItems - The rendered items.
  * @param {import('vue').Ref<Array>} [options.displayItems] - Rows including retained exits.
+ * @param {() => void} [options.onNavigate] - Record user intent before a request queues.
  * @param {(lineNum: any, offset: number) => Promise<any>} options.scrollToItem - Bring one
  *   item to the top of the viewport, stopping `offset` pixels short of it, and
  *   loading whatever it needs first.
  * @param {(edge: 'top' | 'bottom') => Promise<any>} options.scrollToEdge - Reach an extreme.
  */
-export function useChatNavigation({ scrollerRef, visualItems, displayItems = visualItems, scrollToItem, scrollToEdge }) {
+export function useChatNavigation({ scrollerRef, visualItems, displayItems = visualItems, onNavigate = () => {}, scrollToItem, scrollToEdge }) {
     const targets = computed(() => blockTargets(visualItems.value))
 
     // ── Leading gap ──────────────────────────────────────────────────────────
@@ -145,6 +146,7 @@ export function useChatNavigation({ scrollerRef, visualItems, displayItems = vis
     let queued = null
 
     async function run(request) {
+        onNavigate()
         if (running) {
             queued = mergeRequest(queued, request)
             return

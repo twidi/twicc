@@ -60,7 +60,7 @@ test('source search opens only its projected segment; string keys bypass transcr
         props: { sessionId: 's' }, store: { localState: { sessionEventSegments: { s: [{ head: 2, members: [2, 3] }, { head: 6, members: [6, 7] }] } },
             getEffectiveDisplayMode: () => DISPLAY_MODE.SIMPLIFIED, expandGroup: (_, head) => expanded.push(head),
             recomputeVisualItems: () => { rows.value = [...rows.value, { lineNum: 7, content: '{}' }] }, loadSessionItemsRanges: async (...args) => loaded.push(args) },
-        DISPLAY_MODE, nextTick: Vue.nextTick, LOAD_BUFFER: 1, isTranscriptLoadCandidate, lineNumsToRanges: lines => lines, scrollToFirstHighlight: () => {} }
+        noteScrollIntent: () => {}, DISPLAY_MODE, nextTick: Vue.nextTick, LOAD_BUFFER: 1, isTranscriptLoadCandidate, lineNumsToRanges: lines => lines, scrollToFirstHighlight: () => {} }
     const scroll = new Function(...Object.keys(dependencies), `let scrollToLineNumGeneration=0; ${scrollSource}; return scrollToLineNum`)(...Object.values(dependencies))
     assert.equal(await scroll('event:7', { highlight: false }), true); assert.deepEqual(loaded, [])
     assert.equal(await scroll(7, { highlight: false }), true); assert.deepEqual(expanded, [6]); assert.deepEqual(jumps, ['event:7', 7])

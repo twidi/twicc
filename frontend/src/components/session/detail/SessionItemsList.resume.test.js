@@ -13,10 +13,13 @@ const parentResume = new Function('watch', 'nextTick', 'unref', 'scrollerRef', '
     let itemCountAtDeactivation = null
     let wasNearBottomAtDeactivation = false
     let savedScrollAnchor = null
+    let scrollIntent = 0, scrollIntentAtDeactivation = null
     ${source.slice(start, end)}
     return {
         handlePostResume,
+        navigate() { scrollIntent++ },
         save(count, nearBottom) {
+            scrollIntentAtDeactivation = scrollIntent
             itemCountAtDeactivation = count
             wasNearBottomAtDeactivation = nearBottom
             savedScrollAnchor = { index: 5, key: 'row-5', offset: 0 }
@@ -113,4 +116,14 @@ test('reactivation without a new row clears saved state without a bottom overrid
     await nextTick()
     assert.equal(view.bottomAttempts(), 0)
     assert.equal(view.parent.saved().itemCountAtDeactivation, null)
+})
+
+test('new navigation while a hidden resume waits cancels its old bottom override', async t => {
+    const view = mountResume(t)
+    view.parent.save(10, true); view.child.suspend(); view.container.clientHeight = 0
+    view.items.value = [...view.items.value, { id: 'event:7' }]
+    view.container.domHeight = 440
+    await nextTick(); view.child.resume(); view.parent.navigate()
+    view.container.clientHeight = 200; view.child.resume(); await nextTick(); await nextTick()
+    assert.equal(view.bottomAttempts(), 0)
 })

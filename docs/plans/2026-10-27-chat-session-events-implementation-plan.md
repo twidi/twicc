@@ -10,7 +10,7 @@
 
 **Spec:** [Session events specification](2026-10-27-chat-session-events-spec.md). Read the entire specification before executing this plan.
 
-**Status:** Implementation authorized. Tasks 1–6 complete; remaining tasks run inline with a final independent review.
+**Status:** Implementation authorized. Tasks 1–7 complete; remaining tasks run inline with a final independent review.
 
 ## Global Constraints
 
@@ -586,7 +586,7 @@ Body: explain loading exclusions, tool animation membership, segment comments, a
 - `revision` is existing `scroller.getScrollRevision()`, not a new scroller API.
 - Reuse `chooseAnchor`/`survivingAnchor` math where compatible. Do not reuse Timeline's special no-correction-at-top rule.
 
-- [ ] **Step 1: Add structural-scroll tests.**
+- [x] **Step 1: Add structural-scroll tests.**
 
 Test initial complete publication, backdated live insertion, truncated recovery replacement, and tool-group splitting above the viewport.
 Pin these cases:
@@ -604,12 +604,12 @@ Also test: same anchor index but changed preceding row keys/heights; anchor dele
 no surviving row; a viewport at scrollTop=0 reading a source row; hidden pane/KeepAlive resume; and a detail expansion changing row height.
 Events-only leading/trailing lists must remain valid anchors.
 
-- [ ] **Step 2: Run scroll tests and confirm new failures.**
+- [x] **Step 2: Run scroll tests and confirm new failures.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/scroll.test.js src/components/session/detail/SessionItemsList.scroll.test.js src/components/session/detail/SessionItemsList.resume.test.js`.
 Expected: new structural-event cases FAIL because the transaction does not exist.
 
-- [ ] **Step 3: Implement one chat-owned structural-scroll transaction.**
+- [x] **Step 3: Implement one chat-owned structural-scroll transaction.**
 
 Watch the actual scroller `displayItems` in pre-flush. Capture old positions, anchor, bottom state, intent, and scroll revision before geometry updates.
 Compare ordered row keys and segment-control state to detect event-related structural changes, including equal-length replacements.
@@ -629,13 +629,13 @@ When suspended or inactive, defer restoration to the existing saved-anchor/resum
 Event catch-up on activation follows the same captured near-bottom rule and user-intent guard.
 Preserve the VirtualScroller instance, its key-based measurement cache, stream-swap floors, and initial reveal behavior.
 
-- [ ] **Step 4: Run scroll and existing scroller tests.**
+- [x] **Step 4: Run scroll and existing scroller tests.**
 
 Run the Step 2 command.
 Run: `cd /home/twidi/dev/twicc-poc/frontend && npm test`.
 Expected: all PASS. Inspect any failure before broadening the implementation.
 
-- [ ] **Step 5: Commit structural-scroll preservation.**
+- [x] **Step 5: Commit structural-scroll preservation.**
 
 Subject: `fix(chat): preserve reading position when event rows change`.
 Body: explain anchor restoration, user-intent precedence, bottom behavior, and unchanged height measurement ownership.

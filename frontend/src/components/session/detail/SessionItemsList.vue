@@ -9,6 +9,7 @@ import { DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
+import { captureEventScroll, planEventScrollRestore, eventStructureChanged } from '../../../utils/chatEvents/scroll.js'
 import { isSessionEvent, isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
 import { getParsedContent, hasContent } from '../../../utils/parsedContent'
 import { pendingSessionSearch } from '../../../utils/pendingSearch'
@@ -79,6 +80,9 @@ const sessionActive = inject('sessionActive', ref(true))
 // Track whether items were added while the session was inactive,
 // and whether the user was near the bottom before deactivation.
 // Used on reactivation to decide if we should auto-scroll to bottom.
+let scrollIntent = 0
+let scrollIntentAtDeactivation = null
+function noteScrollIntent() { scrollIntent++ }
 let itemCountAtDeactivation = null
 let wasNearBottomAtDeactivation = false
 
@@ -531,6 +535,31 @@ const exits = useListExit({
     getHeight: lineNum => scrollerRef.value?.getItemHeight(lineNum) ?? 0,
 })
 const { displayItems } = exits
+
+// Event structural scroll transaction.
+let pendingEventScroll = null
+watch(displayItems, (next, previous) => {
+    if (!eventStructureChanged(previous, next) || pendingEventScroll) return
+    const scroller = scrollerRef.value
+    if (!scroller || !sessionActive.value || !props.viewActive || unref(scroller.suspended)
+        || scroller.getScrollState()?.clientHeight === 0) return
+    const transaction = { scroller, sessionId: props.sessionId,
+        snapshot: captureEventScroll({ scroller, rows: previous, intent: scrollIntent }) }
+    pendingEventScroll = transaction
+    nextTick(() => {
+        if (pendingEventScroll !== transaction) return
+        pendingEventScroll = null
+        if (scrollerRef.value !== scroller || props.sessionId !== transaction.sessionId
+            || !sessionActive.value || !props.viewActive || unref(scroller.suspended)
+            || scroller.getScrollState()?.clientHeight === 0) return
+        const decision = planEventScrollRestore({ snapshot: transaction.snapshot, rows: displayItems.value,
+            positions: scroller.positions, intent: scrollIntent, revision: scroller.getScrollRevision() })
+        if (decision.action === 'anchor') scroller.scrollToAnchor(decision.anchor)
+        else if (decision.action === 'bottom') scrollToBottomUntilStable()
+    })
+}, { flush: 'pre' })
+// End event structural scroll transaction.
+
 const rowClass = item => exits.exitClass(item) ?? groupReveal.itemClass(item) ?? entrance.itemClass(item)
 const rowStyle = item => exits.exitStyle(item) ?? groupReveal.itemStyle(item) ?? entrance.itemStyle(item)
 
@@ -648,6 +677,8 @@ onDeactivated(() => {
     // Entrances in flight end here; while inactive, arriving rows only update the baseline.
     entrance.clear()
 
+    pendingEventScroll = null
+    scrollIntentAtDeactivation = scrollIntent
     // Capture state for reactivation: track item count and scroll position
     itemCountAtDeactivation = visualItems.value?.length ?? null
     const scroller = scrollerRef.value
@@ -711,12 +742,14 @@ function handlePostResume() {
         itemCountAtDeactivation !== null
         && visualItems.value?.length > itemCountAtDeactivation
         && wasNearBottomAtDeactivation
+        && scrollIntentAtDeactivation === scrollIntent
     ) {
         scrollToBottomUntilStable()
     }
 
     // Clear saved state now that we've handled reactivation
     itemCountAtDeactivation = null
+    scrollIntentAtDeactivation = null
     wasNearBottomAtDeactivation = false
     savedScrollAnchor = null
 }
@@ -981,6 +1014,8 @@ watch(
 watch(
     () => visualItems.value?.length,
     async (newLength, oldLength) => {
+        // The displayItems transaction owns event-related structure changes.
+        if (visualItems.value.some(isSessionEvent) || displayItems.value.some(isSessionEvent)) return
         // Only handle additions (not initial load or removals)
         if (!newLength || !oldLength || newLength <= oldLength) return
 
@@ -1188,6 +1223,7 @@ function onItemResized() {
 
 /** A gesture owns the scroll immediately, including during the stability wait. */
 function onUserScroll() {
+    noteScrollIntent()
     if (edgeScrollOperation) edgeScrollOperation.cancelled = true
     isAutoScrollingToBottom.value = false
     pendingScrollToBottom = null
@@ -1940,6 +1976,7 @@ let scrollToLineNumGeneration = 0
  * @returns {Promise<boolean>} true if the item was successfully scrolled into view
  */
 async function scrollToLineNum(lineNum, options = {}) {
+    noteScrollIntent()
     const { align = 'center', offset = 0, highlight = true } = options
     const generation = ++scrollToLineNumGeneration
     const scroller = scrollerRef.value
@@ -2090,6 +2127,7 @@ const {
     scrollerRef,
     visualItems,
     displayItems,
+    onNavigate: noteScrollIntent,
     // `align: 'start'` pins the block to the top of the viewport, so the reader
     // gets the whole screen to read it. scrollToIndex clamps to the maximum
     // scroll, so the last block simply lands as high as it can go.
