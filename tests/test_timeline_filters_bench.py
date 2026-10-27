@@ -90,6 +90,8 @@ AUTHOR_SHARES = {"session_agent": 60, "automatic": 25, "unknown": 8, "you": 6, "
 PROBLEM_SHARE_OF_PROCESS_ENDED = 0.10
 #: Share of the session rows without a provider; with the instance rows, ~0.1 % of all rows.
 NULL_PROVIDER_SHARE = 0.0005
+#: Share of the sessions that are hidden: every page query leaves their rows out (a subquery on the hidden sessions).
+HIDDEN_SESSION_SHARE = 0.01
 
 COMBINATIONS = [
     ("all", "turns", "session_agent", "claude_code", False),
@@ -151,11 +153,12 @@ def _generate():
     # then gives every project its share of the rows.
     session_project = rng.choices(range(PROJECTS), weights=PROJECT_SHARES, k=SESSIONS)
     session_provider = rng.choices(["claude_code", "codex"], weights=[70, 30], k=SESSIONS)
+    session_hidden = [rng.random() < HIDDEN_SESSION_SHARE for _ in range(SESSIONS)]
     now = timezone.now()
     Session.objects.bulk_create([
         Session(id=f"bs{index:05d}", file_path=f"bs{index:05d}.jsonl", project=projects[session_project[index]],
                 provider=session_provider[index], title=f"Session {index}", created_at=now,
-                last_updated_at=now, mtime=float(index))
+                last_updated_at=now, mtime=float(index), hidden=session_hidden[index])
         for index in range(SESSIONS)
     ], batch_size=BATCH)
 
@@ -196,7 +199,7 @@ def _generate():
                 occurred_at=T0 + timedelta(seconds=index * STEP_SECONDS + rng.random() * (STEP_SECONDS - 1)),
             ))
         TimelineEvent.objects.bulk_create(events, batch_size=BATCH)
-    return author_counts, provider_counts, session_counts, problems, session_project
+    return author_counts, provider_counts, session_counts, problems, session_project, session_hidden
 
 
 class Timing(NamedTuple):
@@ -216,9 +219,12 @@ class Timing(NamedTuple):
         return f"{self.kind} {self.label} [{self.scope}, {self.page}]: {self.median_ms:.2f} ms"
 
 
-def _session_near_50(session_counts, session_project, project_indexes):
-    """The session of one of ``project_indexes`` whose row count is the nearest to 50."""
-    candidates = [sid for sid in session_counts if session_project[int(sid[2:])] in project_indexes]
+def _session_near_50(session_counts, session_project, session_hidden, project_indexes):
+    """The visible session of one of ``project_indexes`` whose row count is the nearest to 50."""
+    candidates = [
+        sid for sid in session_counts
+        if session_project[int(sid[2:])] in project_indexes and not session_hidden[int(sid[2:])]
+    ]
     return min(candidates, key=lambda sid: (abs(session_counts[sid] - 50), sid))
 
 
@@ -245,7 +251,7 @@ def _plans(params):
 
 def test_filtered_feed_speed():
     started = time.perf_counter()
-    author_counts, provider_counts, session_counts, problems, session_project = _generate()
+    author_counts, provider_counts, session_counts, problems, session_project, session_hidden = _generate()
     print(f"\nGenerated {ROWS} events in {time.perf_counter() - started:.0f} s")
 
     # The mix of section 7, measured through the same rules as the filter (``author_of``).
@@ -255,6 +261,8 @@ def test_filtered_feed_speed():
         assert abs(author_share[author] - expected) <= 1, (author, author_share[author])
     print("Providers (%):", {key: round(100 * value / ROWS, 3) for key, value in provider_counts.items()})
     print(f"Problems: {100 * problems / ROWS:.3f} %")
+    hidden_rows = sum(count for sid, count in session_counts.items() if session_hidden[int(sid[2:])])
+    print(f"Hidden sessions: {sum(session_hidden)} ({100 * hidden_rows / ROWS:.2f} % of the rows)")
     scopes = {
         "global": ({}, range(PROJECTS)),
         "workspace": ({"project_ids": ",".join(WORKSPACE)}, range(1, 21)),
@@ -270,7 +278,7 @@ def test_filtered_feed_speed():
 
     results: list[Timing] = []
     for scope, (scope_params, project_indexes) in scopes.items():
-        session_id = _session_near_50(session_counts, session_project, set(project_indexes))
+        session_id = _session_near_50(session_counts, session_project, session_hidden, set(project_indexes))
         singles = [(f"view={view}", {"view": view}) for view in VIEWS]
         singles += [(f"family={family}", {"families": family}) for family in FAMILIES]
         singles += [(f"author={author}", {"authors": author}) for author in AUTHORS]

@@ -34,6 +34,13 @@ the page fills (measured by ``tests/test_timeline_filters_bench.py`` on a millio
 * An author filter on external authors alone (``EXTERNAL_AUTHORS``): ``match_q`` keeps a plain
   ``actor = 'external'``, served by the partial index ``idx_timeline_external``. That comparison is then the
   plain scope column of the main query: the projects and the providers carry a unary plus.
+
+Hidden sessions: every read leaves out the rows of a session hidden NOW (``Session.hidden`` at read time, not at
+the time of the event). The page queries carry :func:`visible_sessions_q`, an uncorrelated subquery on the partial
+index ``idx_session_hidden`` under a ``NOT``, so it never drives the index choice. The ``after_id`` fetch drops those
+rows from its range in Python and names the sessions hidden or shown again inside the range (``hidden_sessions``,
+``shown_sessions``), so an open list drops or merges them in place. Instance rows always stay; a visible row that
+only cites a hidden session (``actor_ref``, ``data.spawned_by``) stays too.
 """
 
 from __future__ import annotations
@@ -182,6 +189,17 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
     )
 
 
+def visible_sessions_q() -> Q:
+    """The rows of no session hidden NOW (``Session.hidden`` at read time, not at the time of the event).
+
+    One uncorrelated subquery, read once through the partial index ``idx_session_hidden``. Django guards the
+    nullable column (``NOT (session_id IN (...) AND session_id IS NOT NULL)``): an instance row (``session_id IS
+    NULL``) survives, where a bare ``NOT IN`` would be NULL for it as soon as one session is hidden. The comparison
+    sits under a ``NOT``, so it never drives an index: each page query keeps its own index choice.
+    """
+    return ~Q(session_id__in=Session.objects.filter(hidden=True).values("id"))
+
+
 def _page_querysets(request: FeedRequest) -> list:
     """The queries of one page, merged by :func:`_fetch_page` (see the module doc).
 
@@ -192,7 +210,9 @@ def _page_querysets(request: FeedRequest) -> list:
     """
     flt = request.filter
     ordered = TimelineEvent.objects.order_by("-occurred_at", "-id")
-    common = [before_condition(request.before)] if request.before else []
+    common = [visible_sessions_q()]
+    if request.before:
+        common.append(before_condition(request.before))
     if (match := match_q(flt)) is not None:
         common.append(match)
     unindexed_projects = [Q(In(unindexed("project_id"), request.project_ids))] if request.project_ids else []
@@ -272,20 +292,53 @@ def _after_queryset(request: FeedRequest):
     return queryset.order_by("id")[: AFTER_ID_CAP + 1]
 
 
-def _fetch_after(request: FeedRequest) -> tuple[list[TimelineEvent], bool]:
-    """Events with an id above ``after_id``, id ascending, and ``truncated``.
+def hidden_session_ids(session_ids: set[str]) -> set[str]:
+    """The ids of ``session_ids`` whose session is hidden now (an id with no row is not hidden)."""
+    hidden: set[str] = set()
+    ordered = sorted(session_ids)
+    for start in range(0, len(ordered), SESSION_LOOKUP_CHUNK):
+        hidden.update(
+            Session.objects.filter(id__in=ordered[start:start + SESSION_LOOKUP_CHUNK], hidden=True)
+            .order_by().values_list("id", flat=True)
+        )
+    return hidden
 
-    The cap applies to the scope range, before the view, families and authors: ``truncated`` says the range
-    holds more than :data:`AFTER_ID_CAP` rows, even when fewer of them match, so the client reloads.
+
+class AfterResult(NamedTuple):
+    events: list[TimelineEvent]
+    truncated: bool
+    hidden_sessions: list[str]  # a ``hidden.started`` row in the range, hidden now
+    shown_sessions: list[str]  # a ``hidden.ended`` row in the range, visible now
+
+
+def _fetch_after(request: FeedRequest) -> AfterResult:
+    """Events with an id above ``after_id``, id ascending, ``truncated`` and the sessions hidden or shown.
+
+    The cap applies to the scope range, before the view, families and authors and before the hidden sessions:
+    ``truncated`` says the range holds more than :data:`AFTER_ID_CAP` rows, even when fewer of them are returned,
+    so the client reloads. The rows of a session hidden now are left out (as on every page), and the range names
+    the sessions whose visibility changed inside it, by their state NOW: a session hidden then shown again in the
+    same range is only shown. These two lists ignore the view, families and authors: a filtered list still holds
+    the rows of such a session, which it must drop or merge in place.
     """
     match = match_q(request.filter)
-    if match is None:
-        rows = list(_after_queryset(request))
-        return rows[:AFTER_ID_CAP], len(rows) > AFTER_ID_CAP
-    range_ids = list(_after_queryset(request).values_list("id", flat=True))
-    truncated = len(range_ids) > AFTER_ID_CAP
-    rows = list(TimelineEvent.objects.filter(match, id__in=range_ids[:AFTER_ID_CAP]).order_by("id"))
-    return rows, truncated
+    queryset = _after_queryset(request)
+    # With a filter the range is only read for its ids (and what the visibility needs): the rows come after.
+    rows = list(queryset if match is None else queryset.values_list("id", "session_id", "kind", named=True))
+    truncated = len(rows) > AFTER_ID_CAP
+    rows = rows[:AFTER_ID_CAP]
+    hidden = hidden_session_ids({row.session_id for row in rows if row.session_id})
+    hidden_sessions = sorted({
+        row.session_id for row in rows if row.kind == TimelineKind.HIDDEN_STARTED and row.session_id in hidden
+    })
+    shown_sessions = sorted({
+        row.session_id for row in rows
+        if row.kind == TimelineKind.HIDDEN_ENDED and row.session_id and row.session_id not in hidden
+    })
+    rows = [row for row in rows if row.session_id not in hidden]
+    if match is not None:
+        rows = list(TimelineEvent.objects.filter(match, id__in=[row.id for row in rows]).order_by("id"))
+    return AfterResult(rows, truncated, hidden_sessions, shown_sessions)
 
 
 def cited_session_ids(events: list[TimelineEvent]) -> set[str]:
@@ -355,9 +408,11 @@ def fetch_feed(request: FeedRequest) -> dict:
     from a result that claims it.
     """
     latest_id = latest_event_id()
+    visibility = {}
     if request.after_id is not None:
-        events, truncated = _fetch_after(request)
-        has_more = False
+        after = _fetch_after(request)
+        events, has_more, truncated = after.events, False, after.truncated
+        visibility = {"hidden_sessions": after.hidden_sessions, "shown_sessions": after.shown_sessions}
     else:
         events, has_more = _fetch_page(request)
         truncated = False
@@ -367,4 +422,5 @@ def fetch_feed(request: FeedRequest) -> dict:
         "truncated": truncated,
         "latest_id": latest_id,
         "sessions": build_sessions_table(cited_session_ids(events)),
+        **visibility,
     }

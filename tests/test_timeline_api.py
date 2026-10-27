@@ -470,7 +470,8 @@ def test_a_user_actor_ref_is_not_looked_up_as_a_session(projects):
 
 def test_the_side_table_applies_the_pending_title_override_and_flags(projects):
     make_session(projects[0], "s1", title="Stored", hidden=True)
-    make_event(project=projects[0], at=1)
+    # The rows of a hidden session are left out: a visible row cites it (its agent did something).
+    make_event(project=projects[0], session_id="s2", actor="agent", via="cli", actor_ref="s1", at=1)
     set_pending_title("s1", "Pending")
     try:
         entry = call().json()["sessions"]["s1"]
