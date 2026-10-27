@@ -100,12 +100,15 @@ test('pagination that does not advance fails instead of looping', async () => {
     assert.equal(f.state.status, 'error'); assert.equal(f.requests.length, 2)
 })
 
-test('the creation, the turns and the first process start have no row; later starts keep theirs', async () => {
-    const f = fixture(), kind = (id, k) => ({ ...event(id), kind: k })
-    await initial(f, [kind(5, 'process.started'), kind(1, 'session.created'), kind(2, 'process.started'), kind(3, 'turn.started'), kind(4, 'turn.ended'), kind(6, 'title.changed')])
+test('the creation, the turns and the start of a new session have no row; a resume keeps its row', async () => {
+    const f = fixture(), kind = (id, k, data = {}) => ({ ...event(id), kind: k, data })
+    await initial(f, [kind(1, 'session.created'), kind(2, 'process.started', { cause: 'new' }), kind(3, 'turn.started'),
+        kind(4, 'turn.ended'), kind(5, 'process.started', { cause: 'resume' }), kind(6, 'title.changed')])
     assert.deepEqual(f.state.snapshot.events.map(e => e.id), [5, 6])
-    // A start arriving live is not the first one: the first stays hidden.
-    f.controller.notifyLatest(500); await tick()
-    f.requests.at(-1).resolve(body([kind(7, 'process.started')], { latest_id: 500 })); await f.controller.idle()
-    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [5, 6, 7])
+})
+
+test('a session older than the timeline: its first recorded start is a resume and keeps its row', async () => {
+    const f = fixture(), kind = (id, k, data = {}) => ({ ...event(id), kind: k, data })
+    await initial(f, [kind(1, 'session.created'), kind(2, 'process.started', { cause: 'resume' })])
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [2])
 })
