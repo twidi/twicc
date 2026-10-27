@@ -1,6 +1,9 @@
 // Complete snapshots for one loaded chat. The Timeline page keeps its progressive feed.
 import { compareNewestFirst, cursorOf } from '../timeline/eventTime.js'
 
+/** Kinds with no row in the chat: turns are the chat's own flow, the creation is its first message. */
+const HIDDEN_KINDS = new Set(['turn.started', 'turn.ended', 'session.created'])
+
 export function createSessionEventHistoryState() {
     return { status: 'idle', snapshot: null, error: null }
 }
@@ -9,8 +12,10 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
     let started = false, disposed = false, hidden = false
     let full = true, force = false, latest = 0, cursor = 0
     let running = null, activeRequest = null
+    // The first process start of the session: it is the session's own beginning, like its creation, so no row.
+    let firstStartId = null
     const stopped = () => disposed || hidden
-    const selected = event => event.session_id === sessionId && event.kind !== 'turn.started' && event.kind !== 'turn.ended'
+    const selected = event => event.session_id === sessionId && !HIDDEN_KINDS.has(event.kind)
 
     async function request(before, afterId) {
         activeRequest = new AbortController()
@@ -37,7 +42,9 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
     function publish(target) {
         const previous = state.snapshot
         const known = new Map(previous?.events.map(event => [event.id, event]) ?? [])
-        const events = [...target.events.values()].map(event => known.get(event.id) ?? event).sort((a, b) => compareNewestFirst(b, a))
+        const all = [...target.events.values()].sort((a, b) => compareNewestFirst(b, a))
+        if (firstStartId === null) firstStartId = all.find(event => event.kind === 'process.started')?.id ?? null
+        const events = all.filter(event => event.id !== firstStartId).map(event => known.get(event.id) ?? event)
         const sessions = {}
         for (const [id, value] of Object.entries(target.sessions)) {
             const old = previous?.sessions[id]
@@ -58,6 +65,7 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
     async function loadComplete() {
         state.status = state.snapshot ? 'recovering' : 'loading'
         while (!stopped()) {
+            firstStartId = null
             const target = { events: new Map(), sessions: {} }
             let response = await request(null, null)
             if (!response) return
