@@ -1,52 +1,39 @@
 <script setup>
+// SessionEventNotice.vue - One session event in the chat: the event line of the Timeline, without its session block.
 import { computed } from 'vue'
 import { describeEvent } from '../../../utils/timeline/describeEvent.js'
-import TimelineWordingPart from '../../timeline/TimelineWordingPart.vue'
+import TimelineEventLine from '../../timeline/TimelineEventLine.vue'
 
 const props = defineProps({ event: { type: Object, required: true }, context: { type: Object, required: true } })
 const vm = computed(() => describeEvent(props.event, props.context))
-const details = computed(() => {
-    const lines = [vm.value.tooltip]
-    if (vm.value.detail) lines.push([vm.value.detail.first, vm.value.detail.rest].filter(Boolean).join('\n'))
-    const tool = props.event.data?.tool_name
-    if (typeof tool === 'string') lines.push(`Tool: ${tool}`)
-    return lines.filter(Boolean).join('\n')
-})
 </script>
 
 <template>
-    <div class="session-event-notice" :class="`session-event-notice--${vm.severity}`" :data-kind="vm.kind">
-        <div class="session-event-main">
-            <wa-icon :name="vm.icon" auto-width aria-hidden="true"></wa-icon>{{ ' ' }}
-            <span><TimelineWordingPart v-for="(part, index) in vm.parts" :key="index" :part="part" /></span>
-            <span v-for="tag in vm.tags" :key="tag">{{ ' · ' + tag }}</span>
-            <span v-if="vm.badge">{{ ' · ' + vm.badge.text }}</span>
-            <span v-if="vm.author.parts.length">{{ ' ' }}<TimelineWordingPart v-for="(part, index) in vm.author.parts" :key="index" :part="part" /></span>
-            {{ ' ' }}<time :datetime="event.occurred_at" :aria-label="vm.time.full" :title="vm.time.full">{{ vm.time.text }}</time>
-        </div>
-        <details v-if="details" class="session-event-details">
-            <summary>Details</summary>
-            <pre>{{ details }}</pre>
-        </details>
+    <div class="session-event-notice" :data-kind="vm.kind">
+        <TimelineEventLine :vm="vm" :event-id="event.id" instance />
     </div>
 </template>
 
 <style scoped>
 .session-event-notice {
-    padding: var(--wa-space-s) var(--wa-space-m);
+    padding-inline: var(--wa-space-m);
+    /* Room above the first notice of a run: the top edge of the chat, the end of the block before. */
+    padding-block-start: var(--card-spacing, var(--wa-space-l));
     min-width: 0;
     max-width: 100%;
-    text-align: center;
-    overflow-wrap: anywhere;
     font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-quiet);
 }
-.session-event-main { min-width: 0; }
-.session-event-main > wa-icon { margin-inline-end: var(--wa-space-2xs); }
-.session-event-notice--warning .session-event-main > wa-icon { color: var(--wa-color-warning-on-quiet); }
-.session-event-notice--danger .session-event-main > wa-icon { color: var(--wa-color-danger-on-quiet); }
-time { margin-inline-start: var(--wa-space-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.session-event-details { margin-block-start: var(--wa-space-2xs); }
-summary { display: inline list-item; cursor: pointer; font-size: var(--wa-font-size-xs); }
-pre { margin-block: var(--wa-space-xs) 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; user-select: text; }
+</style>
+
+<style>
+/* Notices of one run keep only the line's own spacing between them. */
+.session-items .virtual-scroller-item:has(.session-event-notice) + .virtual-scroller-item .session-event-notice {
+    padding-block-start: 0;
+}
+
+/* A user message after a notice sits at the distance of a first message, not the larger one it keeps after the
+   agent's blocks (SessionItem.vue). */
+.session-items .virtual-scroller-item:has(.session-event-notice) + .virtual-scroller-item .session-item[data-kind="user_message"] {
+    margin-top: calc(var(--card-spacing) - var(--main-shadow-size));
+}
 </style>

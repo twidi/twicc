@@ -24,14 +24,17 @@ const Mention = compileComponent(new URL('./TimelineSessionMention.vue', import.
     '../ui/ProviderIcon.vue': ProviderIcon,
 })
 const WordingPart = compileComponent(new URL('./TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
+const Line = compileComponent(new URL('./TimelineEventLine.vue', import.meta.url), {
+    '../../utils/timeline/parts': partsModule,
+    './TimelineWordingPart.vue': WordingPart,
+})
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
     'vue-router': { RouterLink },
     '../../stores/data': { useDataStore: () => dataStore },
     '../../utils/timeline/describeEvent': describeEventModule,
-    '../../utils/timeline/parts': partsModule,
     '../project/ProjectBadge.vue': ProjectBadge,
     './TimelineSessionMention.vue': Mention,
-    './TimelineWordingPart.vue': WordingPart,
+    './TimelineEventLine.vue': Line,
 })
 
 const sessions = {
@@ -94,7 +97,7 @@ test('the group head: a header line (provider icon, title link) above its own ev
     const [card] = row.children.filter((n) => n.type !== '#comment')
     assert.equal(classesOf(card), 'timeline-row-card')
     // Elements only: the space between the two lines is for a copy, it renders nothing between two blocks.
-    assert.deepEqual(card.children.filter((n) => n.type !== '#comment' && n.type !== '#text').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--indented'])
+    assert.deepEqual(card.children.filter((n) => n.type !== '#comment' && n.type !== '#text').map(classesOf), ['timeline-row-header', 'timeline-event-line timeline-event-line--neutral timeline-event-line--indented'])
     assert.equal(descendants(line, (n) => n === header).length, 0)
     const link = descendants(header, (n) => n.type === 'a')[0]
     assert.equal(JSON.parse(link.props['data-to']).params.sessionId, 's1')
@@ -373,7 +376,7 @@ test('an unknown kind does not break the row', async (t) => {
 })
 
 test('the layout CSS: a fixed time column that never wraps, a wrapping text column, a truncating header title', () => {
-    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const row = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
     const line = declarationsOf(row, '.timeline-event-line')
     assert.equal(line.get('display'), 'grid')
     assert.equal(line.get('grid-template-columns'), 'var(--timeline-icon-width) minmax(0, 1fr) auto')
@@ -388,14 +391,14 @@ test('the layout CSS: a fixed time column that never wraps, a wrapping text colu
     assert.deepEqual(['content', 'display', 'height', 'overflow', 'visibility', 'white-space'].map((name) => sizer.get(name)),
         ['var(--timeline-time-sizer, "")', 'block', '0', 'hidden', 'hidden', 'pre'])
     assert.equal(declarationsOf(row, '.timeline-event-line--indented').get('padding-inline-start'),
-        'calc(var(--timeline-provider-width) + var(--timeline-provider-gap))')
+        'calc(var(--timeline-provider-width, 0rem) + var(--timeline-provider-gap, 0rem))')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
     const title = declarationsOf(mention, '.timeline-session--truncate .timeline-session-title')
     assert.deepEqual([title.get('overflow'), title.get('text-overflow'), title.get('white-space')], ['hidden', 'ellipsis', 'nowrap'])
 })
 
 test('the event icon and the badge follow the text baseline, so a badge never moves the icon off the first line', () => {
-    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const row = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
     const icon = declarationsOf(row, '.timeline-row-icon')
     // Baseline-aligned like the text (the grid default), never pinned to the top of its cell.
     assert.ok(!icon.has('align-self') || icon.get('align-self') === 'baseline', icon.get('align-self'))
@@ -406,7 +409,7 @@ test('the event icon and the badge follow the text baseline, so a badge never mo
 })
 
 test('the main column CSS: one inline flow, so its real spaces are rendered and copied; the error detail on its own line', () => {
-    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const row = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
     const style = row.slice(row.indexOf('<style'))
     const main = declarationsOf(style, '.timeline-row-main')
     assert.ok(!main.has('display') && !main.has('column-gap'), 'no flex items: a copy would drop the spaces between them')
@@ -467,7 +470,8 @@ test('the block card CSS: the shared block-card look, drawn in parts across the 
     // below the end: an instance line (or a day separator) between two blocks has the same space above and below it.
     assert.equal(declarationsOf(style, '.timeline-row--head').get('padding-block-start'), 'calc(var(--timeline-block-gap) / 2)')
     assert.equal(declarationsOf(style, '.timeline-row--last').get('padding-block-end'), 'calc(var(--timeline-block-gap) / 2)')
-    const instanceLine = declarationsOf(style, '.timeline-event-line')
+    const lineStyle = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
+    const instanceLine = declarationsOf(lineStyle.slice(lineStyle.indexOf('<style')), '.timeline-event-line')
     assert.equal(instanceLine.get('padding-block'), 'var(--wa-space-2xs)', 'the instance line itself is symmetric')
     assert.ok(!/\.timeline-row--instance \{[^}]*padding-block/.test(style), 'no extra space on one side of an instance row')
     // The Orchestration cards carry their state in a thick left border; a session block has no state to show.
@@ -539,7 +543,7 @@ test('the arrow never starts a line alone: a no-break space glues it to the old 
 })
 
 test('the wording CSS: a value is set apart from the prose, the arrow sits on the text, the tag flows inline', () => {
-    const row = readFileSync(new URL('./TimelineEventRow.vue', import.meta.url), 'utf8')
+    const row = readFileSync(new URL('./TimelineEventLine.vue', import.meta.url), 'utf8')
     const style = row.slice(row.indexOf('<style'))
     const part = readFileSync(new URL('./TimelineWordingPart.vue', import.meta.url), 'utf8')
     const partStyle = part.slice(part.indexOf('<style'))

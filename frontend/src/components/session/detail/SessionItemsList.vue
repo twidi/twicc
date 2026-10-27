@@ -2263,11 +2263,8 @@ defineExpose({
             />
         </Transition>
 
-        <div v-if="(eventHistoryPending || eventHistory.state.value?.status === 'error') && !unavailableReason && !isComputePending" class="session-event-history-status" role="status">
-            <span v-if="eventHistoryPending">{{ eventHistory.state.value.snapshot ? 'Updating session events…' : 'Loading session events…' }}</span>
-            <template v-else-if="eventHistory.state.value.status === 'error'">
-                <span>Failed to load session events</span>{{ ' ' }}<button type="button" @click="eventHistory.retry">Retry</button>
-            </template>
+        <div v-if="eventHistory.state.value?.status === 'error' && !unavailableReason && !isComputePending" class="session-event-history-status" role="status">
+            <span>Failed to load session events</span>{{ ' ' }}<button type="button" @click="eventHistory.retry">Retry</button>
         </div>
 
         <!-- The chat's stage: the states below and the scroll area, with the skeleton

@@ -195,9 +195,9 @@ test("history loading preserves a reader inside the observer's near-bottom zone"
 })
 
 // Execute the actual independent status template without mounting unrelated composer panes.
-test('event status distinguishes initial load, recovery, failure and retry', async t => {
+test('event status shows nothing while loading or recovering, then failure and retry', async t => {
     const { compileTemplate } = await import('@vue/compiler-sfc')
-    const start = source.indexOf('        <div v-if="(eventHistoryPending')
+    const start = source.indexOf('        <div v-if="eventHistory.state.value?.status === \'error\'')
     const end = source.indexOf('        <!-- The chat\'s stage:', start)
     assert.ok(start >= 0 && end > start)
     const { code } = compileTemplate({ source: source.slice(start, end), filename: 'event-status.vue', id: 'event-status', compilerOptions: { mode: 'function' } })
@@ -207,10 +207,10 @@ test('event status distinguishes initial load, recovery, failure and retry', asy
     const app = renderer.createApp({ render, setup: () => ({ eventHistory: { state, retry: () => retries.push(true) },
         eventHistoryPending: Vue.computed(() => ['loading', 'recovering'].includes(state.value.status)), unavailableReason: false, isComputePending: false }) })
     app.mount(root); t.after(() => app.unmount())
-    const flatten = node => `${node.text || ''}${node.children.map(flatten).join('')}`
-    assert.match(flatten(root), /Loading session events/)
+    const flatten = node => node.type === '#comment' ? '' : `${node.text || ''}${node.children.map(flatten).join('')}`
+    assert.equal(flatten(root).trim(), '')
     state.value = { status: 'recovering', snapshot: { events: [{ id: 1 }] } }; await flush()
-    assert.match(flatten(root), /Updating session events/)
+    assert.equal(flatten(root).trim(), '')
     state.value.status = 'error'; await flush(); assert.match(flatten(root), /Failed to load session events/)
     const findButton = node => node.type === 'button' ? node : node.children.map(findButton).find(Boolean)
     findButton(root).props.onClick(); assert.equal(retries.length, 1)
