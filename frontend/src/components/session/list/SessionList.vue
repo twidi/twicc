@@ -26,6 +26,7 @@ import { useGlideInk } from '../../../composables/useGlideInk'
 import { useSidebarScrollbar } from '../../../composables/useSidebarScrollbar'
 import { activeRowBase, entranceOffset, revealBands, revealMargins } from '../../../utils/sidebarRows'
 import { hasScrollerPaginationProgress } from '../../../utils/scrollerLoadWindow.js'
+import { getSessionDisplayName } from '../../../utils/sessionTitle'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
 import SessionListItem from './SessionListItem.vue'
 import SidebarListSeparator from '../../sidebar/SidebarListSeparator.vue'
@@ -184,7 +185,7 @@ const treeRowMeta = computed(previous => {
             hasChildren: node.childIds.length > 0,
             expanded: expansion.isExpanded(id),
             summary: node.summary,
-            hint: depth === 0 ? (node.hintParent?.title || null) : null,
+            hint: depth === 0 && node.hintParent ? getSessionDisplayName(node.hintParent) : null,
         }
         const old = previous?.get(id)
         meta.set(id, old && old.depth === next.depth && old.hasChildren === next.hasChildren
@@ -212,10 +213,7 @@ const sessions = computed(previous => {
     if (!query) return allSessions.value
 
     const next = allSessions.value.filter(session => {
-        const displayName = (session.draft && !session.title)
-            ? 'New session'
-            : (session.title || session.id)
-        return matchQuery(query, displayName)
+        return matchQuery(query, getSessionDisplayName(session))
     })
     return retainSessionArray(previous, next)
 })
@@ -578,6 +576,8 @@ function ancestorPath(t, id) {
     return path
 }
 let lastRevealed = null
+// A re-enabled tree or a scope change is a fresh first render: forget the reveal mark.
+watch([treeActive, () => props.projectId], () => { lastRevealed = null })
 const revealRescroll = shallowRef(null)
 watch([() => props.sessionId, tree], ([id, t]) => {
     if (!t || !id || !t.nodes.has(id)) return

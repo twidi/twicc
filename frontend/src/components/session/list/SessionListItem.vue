@@ -14,6 +14,7 @@ import { useDataStore } from '../../../stores/data'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
+import { getSessionDisplayName } from '../../../utils/sessionTitle'
 import { sessionRouteLocation } from '../../../utils/sessionRoute'
 import { projectPathTitle } from '../../../utils/projectName'
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
@@ -286,15 +287,6 @@ const relativeTimeFormat = computed(() =>
 // Only assistant_turn should animate in session list
 const animateStates = ['assistant_turn']
 
-/**
- * Get display name for session (title if available, "New session" for drafts, otherwise ID).
- */
-function getSessionDisplayName(session) {
-    if (session.draft && !session.title) {
-        return 'New session'
-    }
-    return session.title || session.id
-}
 
 /**
  * Get the color for a process state.
@@ -615,7 +607,8 @@ function handleMenuSelect(event) {
                 <AppTooltip :hoist="!!idPrefix" v-if="treeSummary.pinned" :for="rowId('tree-summary-pinned')">Pinned child sessions</AppTooltip>
                 <template v-if="treeSummary.latestDate != null">
                     <span :id="rowId('tree-summary-date')" class="tree-summary-item tree-summary-date">
-                        <wa-icon auto-width name="clock" variant="regular"></wa-icon>{{ formatDate(treeSummary.latestDate, { smart: true }) }}
+                        <wa-icon auto-width name="clock" variant="regular"></wa-icon><wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(treeSummary.latestDate)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
+                        <template v-else>{{ formatDate(treeSummary.latestDate, { smart: true }) }}</template>
                     </span>
                     <AppTooltip :hoist="!!idPrefix" :for="rowId('tree-summary-date')">Latest activity among child sessions</AppTooltip>
                 </template>

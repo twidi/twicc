@@ -76,6 +76,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../composables/useGlideInk': { useGlideInk() {} },
         '../../../composables/useSidebarScrollbar': { useSidebarScrollbar() {} },
         '../../../utils/sidebarRows': { activeRowBase() {}, entranceOffset() {}, revealBands() {}, revealMargins() {} },
+        '../../../utils/sessionTitle': { getSessionDisplayName: s => s.title || s.id },
         '../../../utils/scrollerLoadWindow.js': helpers,
         '../../virtual-scroller/VirtualScroller.vue': actualScroller,
         './SessionListItem.vue': row, '../../sidebar/SidebarListSeparator.vue': row,

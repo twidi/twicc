@@ -53,3 +53,12 @@ test('data store declares and sets activeProcessesReceived', () => {
     assert.ok(dataStore.includes('activeProcessesReceived: false,'))
     assert.ok(dataStore.includes('this.activeProcessesReceived = true'))
 })
+
+test('the reveal mark resets when the tree is toggled or the scope changes', () => {
+    assert.match(sfc, /watch\(\[treeActive, \(\) => props\.projectId\], \(\) => \{ lastRevealed = null \}\)/)
+})
+
+test('the parent hint falls back to the shared display name', () => {
+    assert.ok(sfc.includes('getSessionDisplayName(node.hintParent)'))
+    assert.ok(!sfc.includes('node.hintParent?.title'))
+})

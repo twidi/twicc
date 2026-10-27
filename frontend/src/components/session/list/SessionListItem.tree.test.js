@@ -45,6 +45,10 @@ test('collapsed summary and parent hint render from treeRow', () => {
     assert.match(source, /treeSummary\.latestDate != null[\s\S]*?formatDate\(treeSummary\.latestDate/)
 })
 
+test('collapsed summary date honours the relative time setting like the row date', () => {
+    assert.match(source, /v-if="useRelativeTime" :date\.prop="timestampToDate\(treeSummary\.latestDate\)"/)
+})
+
 test('template compiles', () => {
     const script = compileScript(descriptor, { id: 'tree-test' })
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: 'SessionListItem.vue', id: 'tree-test',
