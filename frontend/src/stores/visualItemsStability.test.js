@@ -156,3 +156,15 @@ test('events preserve logical flags and the retained conversation response acros
         const old = f.rows(); f.store.recomputeVisualItems('main'); assert.strictEqual(f.rows(), old)
     }
 })
+test('working status follows the displayed event segment containing its last tool', () => {
+    const tool = line => message(line, { timestamp: `2026-10-27T00:00:0${line}Z`, display_level: DISPLAY_LEVEL.COLLAPSIBLE, group_head: 2, group_tail: 4,
+        content: JSON.stringify({ message: { content: [{ type: 'tool_use', id: `tool-${line}`, name: 'Read' }] } }) })
+    const f = fixture({ working: true, items: [message(1, { kind: 'user_message', timestamp: '2026-10-27T00:00:01Z' }), tool(2), tool(3), tool(4)] })
+    f.settings.getDisplayMode = DISPLAY_MODE.SIMPLIFIED
+    f.store.processStates.main.lastStartedToolId = 'tool-4'
+    f.store.localState.sessionEventHistory.main = { snapshot: { events: [{ id: 7, occurred_at: '2026-10-27T00:00:03Z' }], sessions: {} } }
+    f.store.recomputeVisualItems('main')
+    f.store.localState.sessionEventSegments.main = f.store.localState.sessionEventSegments.main.map(segment => ({ ...segment, expanded: segment.head === 3 }))
+    f.store.recomputeVisualItems('main')
+    assert.equal(getParsedContent(f.rows().find(row => row.syntheticKind === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind)).lastToolVisible, true)
+})

@@ -3526,40 +3526,13 @@ export const useDataStore = defineStore('data', {
                     group_head: null,
                     group_tail: null,
                 }
-                // Whether the tool card the working-message refers to is actually
-                // visible on screen. The component drops the parenthesised target
-                // when the user can already see the card right above; in modes
-                // where tools are hidden by default (simplified groups, conversation
-                // blocks), keep the target unless the user has opened the relevant
-                // group/block.
-                const lastToolVisible = computeLastToolVisible(
-                    items,
-                    processState?.lastStartedToolId,
-                    mode,
-                    expandedGroups,
-                    isCurrentBlockDetailed,
-                )
-                // The working message's visible state (status label + active
-                // tools) lives in _parsedContent, which the stabilizer
-                // (visualItemEqual) skips. Without a top-level field that
-                // changes with it, a label/tools change with nothing else
-                // moving — e.g. a Codex /compact flipping the label to
-                // "compacting" with no new items arriving — would reuse the
-                // cached placeholder and never re-render. This signature
-                // forces re-stabilization when the visible state changes.
-                workingMessage.workingStatusKey = JSON.stringify([
-                    isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label || null,
-                    isLaunchedEphemeral(this.sessions[sessionId]) ? [] : processState?.tools || [],
-                    isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.lastStartedToolId || null,
-                    lastToolVisible,
-                ])
                 setParsedContent(workingMessage, {
                     type: 'assistant',
                     syntheticKind,
                     label: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label || null,
                     tools: isLaunchedEphemeral(this.sessions[sessionId]) ? [] : processState?.tools || [],
                     lastStartedToolId: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.lastStartedToolId || null,
-                    lastToolVisible,
+                    lastToolVisible: false,
                     message: {
                         role: 'assistant',
                         content: []
@@ -3592,6 +3565,14 @@ export const useDataStore = defineStore('data', {
             for (const { lineNum, startIndex } of projection.internalTransfers) {
                 const groups = (this.localState.sessionInternalExpandedGroups[sessionId] ||= {})[lineNum] ||= []
                 if (!groups.includes(startIndex)) groups.push(startIndex)
+            }
+            if (workingMessage) {
+                const status = getParsedContent(workingMessage)
+                status.lastToolVisible = computeLastToolVisible(projection.items, processState?.lastStartedToolId,
+                    mode, projection.expandedHeads, isCurrentBlockDetailed)
+                // The stabilizer skips parsed content. Include every mutable status field.
+                workingMessage.workingStatusKey = JSON.stringify([status.label, status.tools,
+                    status.lastStartedToolId, status.lastToolVisible])
             }
             let visualItems = computeVisualItems(projection.items, mode, projection.expandedHeads, isAssistantTurn, detailedBlocks)
 

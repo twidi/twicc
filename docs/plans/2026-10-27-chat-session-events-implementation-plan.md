@@ -10,7 +10,7 @@
 
 **Spec:** [Session events specification](2026-10-27-chat-session-events-spec.md). Read the entire specification before executing this plan.
 
-**Status:** Implementation authorized. Tasks 1–7 complete; remaining tasks run inline with a final independent review.
+**Status:** Tasks 1–8 complete. Final independent code review pending.
 
 ## Global Constraints
 
@@ -652,7 +652,7 @@ Body: explain anchor restoration, user-intent precedence, bottom behavior, and u
 - Produces: an integrated deferred-network test fixture and a recorded acceptance result for A1–A25.
 - The fixture injects network and scroller boundaries. It executes production projection and state transitions.
 
-- [ ] **Step 1: Add integrated contract tests before changing any implementation in this task.**
+- [x] **Step 1: Add integrated contract tests before changing any implementation in this task.**
 
 Use both Claude-style connected content and Codex-style tool items.
 Include 201 initial events, two independently toggled tool segments, a reconnect truncation, one failed recovery page, and a successful retry.
@@ -671,12 +671,12 @@ Also integrate: persisted events-only chat; actor targeting another session; hid
 metadata hydration; streaming/optimistic replacement; compact correction; midnight; timestamp toggle; and scroll cancellation.
 Use earlier pure tests for exhaustive permutations. Do not duplicate every unit test here.
 
-- [ ] **Step 2: Run integrated tests and investigate any failure.**
+- [x] **Step 2: Run integrated tests and investigate any failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/stores/sessionEvents.integration.test.js src/components/session/detail/SessionItemsList.events.test.js`.
 Expected: all PASS. A failure requires a regression test in the owning earlier task's module before correction.
 
-- [ ] **Step 3: Run the frontend suite and production build.**
+- [x] **Step 3: Run the frontend suite and production build.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && npm test`.
 Run: `cd /home/twidi/dev/twicc-poc/frontend && npm run build`.
@@ -684,7 +684,7 @@ Expected: tests PASS and build exits 0. No package installation or backend comma
 Check shared navigation and event-free visualItems tests because the public share viewer uses those helpers.
 Do not add events to the share viewer or change its API.
 
-- [ ] **Step 4: Validate rendered behavior in an available development instance.**
+- [x] **Step 4: Validate rendered behavior in an available development instance.**
 
 Use an already-running suitable instance. If none exists, request the user's explicit server-start instruction before starting one.
 This constraint comes from repository operations rules; it does not block offline tests or the build.
@@ -694,7 +694,7 @@ Verify anchor preservation above the viewport, follow-bottom then scroll-away, K
 Use fixtures or existing recorded events. Do not create noisy live session events solely for screenshots.
 Record unavailable manual scenarios as unverified. Never report browser validation without running it.
 
-- [ ] **Step 5: Record acceptance coverage and commit integration tests.**
+- [x] **Step 5: Record acceptance coverage and commit integration tests.**
 
 Subject: `test(chat): verify session events across recovery and display modes`.
 Body: identify the combined recovery/state scenario, tested providers, test/build results, and any unverified browser checks.
@@ -736,8 +736,55 @@ Reviewers evaluate implementation feasibility and missing regression coverage wi
 The corrected contracts appear in Tasks 3, 5, and 6. All three reviewers finish with PASS.
 This is a document review. Product tests and browser validation are planned, not executed during planning.
 
-## Execution handoff
+## Execution record
 
-Implementation requires a separate user instruction after plan review.
-Recommended method: subagent-driven execution, with sequential task implementation and independent review gates.
-The projection, group state, and scroll contracts need independent review because mistakes can hide events or move the reader.
+The user authorizes inline implementation with `superpowers:executing-plans` on 2026-10-27.
+Each task has its own commit. A fresh internal reviewer checks the complete change after Task 8.
+
+### Acceptance validation
+
+| Scenarios | Executed evidence |
+|---|---|
+| A1–A3 | History selection tests, notice family tests, target/actor integration tests |
+| A4–A7 | Microsecond placement, source boundaries, connected controls, 20-tool provider fixtures, segment inheritance tests |
+| A8–A9 | Full-transcript conversation projection, retained assistant identity, empty-assistant tests |
+| A10–A11 | Event-aware midnight traversal, compact correction, timestamp setting tests |
+| A12–A15 | 201-event traversal, first-page watermark, deferred writes, truncated recovery, failed page and Retry tests |
+| A16–A17 | Captured anchor/offset, equal-length replacement, bottom ownership and input/navigation cancellation tests |
+| A18 | Loaded-session ownership, hide/unload aborts, disposed response and fresh activation tests |
+| A19 | Metadata hydration preserves event keys; loading candidates contain only real numeric source lines |
+| A20 | Provider-specific streaming retirement, internal expansion transfer and optimistic replacement integration tests |
+| A21 | Persisted events-only store and rendering/loading tests |
+| A22 | Missing/regressing source timestamp placement tests |
+| A23 | Full plain-text details, markup escaping, memoized reactive actor metadata; browser keyboard check |
+| A24 | KeepAlive, suspended panes and newer navigation intent tests |
+| A25 | Both providers: mixed segment states, failed recovery retains the published snapshot, inserted event splits only the closed segment |
+
+### Browser checks
+
+Use the existing Vite instance on port 5173 and backend on port 3500. No server restart is requested or performed.
+Open the current recorded Codex session in a separate Chrome tab.
+Observe independent event loading while the composer remains present.
+Verify centered individual process/creation/title notices in the real chat, among transcript rows.
+Use the first-message control and open native Details with Return. Verify the full provenance text and measured expansion.
+
+The following browser scenarios remain unverified: a manufactured 20-tool/event split in all four modes; network failure/Retry;
+events-only history; midnight and timestamp toggling; narrow-pane resizing; backdated live insertion; KeepAlive/pane switching;
+streaming reconciliation and follow-bottom cancellation. Automated tests cover their state and projection contracts.
+No test session, TimelineEvent, or external message is created for browser validation.
+
+### Verification limitations
+
+The existing `motion.test.js:451` snippet-hover assertion fails before this feature and remains unchanged.
+A timing-sensitive `useVirtualScroll.test.js:174` test fails once during a concurrent build; all 51 scroller tests pass on a focused rerun.
+A concurrent `npm ci` interrupts a later verification. The final rerun starts after dependency installation ends.
+Final verification counts and the independent review result follow below.
+
+### Final task verification
+
+- Targeted integration, navigation and visual stability: 22 tests pass.
+- Full frontend suite: 3536 pass, 1 known unrelated snippet-motion failure, 3537 total.
+- The isolated 51-test scroller rerun passes. The final full run also passes that timing-sensitive case.
+- The integration run exposes one status regression: an expanded event segment still reports its last tool as hidden.
+  A failing visual stability test reproduces it. The corrected status reads projected group metadata and expanded heads.
+- Production build: all six Vite bundles exit 0 after the interrupted run is repeated. Existing dynamic-import warnings remain.
