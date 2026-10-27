@@ -496,6 +496,7 @@ function handleMenuSelect(event) {
             'session-item-wrapper--drag-pending': isDragPending,
             'session-item-wrapper--selected': selected,
             'session-item-wrapper--tree': !!treeRow,
+            'session-item-wrapper--pill': treeRow?.hasChildren,
             'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
             'sidebar-row-wrapper--selected': selected,
@@ -701,6 +702,7 @@ function handleMenuSelect(event) {
                 <span class="tree-pill-count">{{ treeRow.count }}</span>
                 <ProcessActivityIndicator
                     v-if="treeActivityMode"
+                    class="tree-pill-indicator"
                     :summary="treeRow.activity"
                     :tooltip="false"
                     size="small"
@@ -827,6 +829,28 @@ function handleMenuSelect(event) {
     );
 }
 
+/* A row with a pill is a flex line: [row button, takes the free width] [pill] [menu column].
+   The menu stays absolutely placed over the end padding. */
+.session-item-wrapper--pill {
+    display: flex;
+    align-items: flex-start;
+}
+
+.session-item-wrapper--pill:not(.session-item-wrapper--no-menu) {
+    padding-inline-end: calc(var(--wa-space-xs) + var(--sidebar-row-menu-column, 2rem));
+}
+
+.session-item-wrapper--pill > .session-item {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+}
+
+/* The menu no longer overlaps the button: the title keeps its full width. */
+.session-item-wrapper--pill .session-name {
+    margin-right: 0;
+}
+
 /* Guide lines: one vertical segment per continuing ancestor level, plus the row's own elbow.
    The wrapper is the positioning context (position: relative in sidebar-rows.css). */
 .tree-guides {
@@ -870,15 +894,11 @@ function handleMenuSelect(event) {
 .tree-pill {
     display: inline-flex;
     align-items: center;
+    flex: none;
     gap: var(--wa-space-3xs);
-    position: absolute;
-    /* Just left of the row menu column: never over the menu trigger. */
-    right: calc(var(--wa-space-xs) + var(--sidebar-row-menu-column, 2rem) + var(--wa-space-3xs));
-    /* On the title line (first line of the row), never on the meta line. */
-    top: var(--wa-space-xs);
-    z-index: 1;
+    /* On the title line (first line of the row), right after the row button. */
+    margin: var(--wa-space-xs) 0 0 var(--wa-space-3xs);
     height: auto;
-    margin: 0;
     padding: 0 var(--wa-space-xs);
     border: 1px solid var(--wa-color-surface-border);
     border-radius: var(--wa-border-radius-pill);
@@ -890,10 +910,21 @@ function handleMenuSelect(event) {
     cursor: pointer;
 }
 
+/* native.css puts a 0.75em end margin on an icon followed by text: the chevron sits next
+   to the count. */
+.tree-pill > wa-icon {
+    margin: 0;
+}
+
+/* Count to indicator: the flex gap (2px) plus 3px. */
+.tree-pill-indicator {
+    margin-inline-start: 3px;
+}
+
 /* Compact rows are one line: centre the pill on it. */
 .session-item-wrapper--compact .tree-pill {
-    top: 50%;
-    transform: translateY(-50%);
+    align-self: center;
+    margin-top: 0;
 }
 
 .tree-pill:hover,

@@ -73,21 +73,32 @@ test('the old toggle column, leaf spacer and collapsed summary are gone', () => 
     assert.ok(!/\.session-item-wrapper--tree \{[^}]*display: flex/.test(source))
 })
 
-test('the pill sits left of the menu column, which the reserve also covers (no magic constant)', () => {
+test('the pill is a flex sibling right after the row button, with no fixed reserve', () => {
     const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
-    assert.match(source, /\.tree-pill \{[^}]*right: calc\([^;]*var\(--sidebar-row-menu-column[^;]*\);/)
-    assert.match(source, /\.tree-pill \{[^}]*top: var\(--wa-space-xs\);/)
-    assert.ok(!/\.tree-pill \{[^}]*bottom:/.test(source), 'never anchored to the meta line')
-    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*top: 50%;/)
+    assert.match(source, /'session-item-wrapper--pill': treeRow\?\.hasChildren/)
+    assert.match(source, /\.session-item-wrapper--pill \{[^}]*display: flex;/)
+    assert.match(source, /\.session-item-wrapper--pill > \.session-item \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/)
+    assert.match(source, /\.session-item-wrapper--pill:not\(\.session-item-wrapper--no-menu\) \{[^}]*var\(--sidebar-row-menu-column/)
+    assert.match(source, /\.session-item-wrapper--pill \.session-name \{\s*margin-right: 0;/)
+    assert.match(source, /\.tree-pill \{[^}]*flex: none;/)
+    assert.ok(!/\.tree-pill \{[^}]*position: absolute/.test(source))
+    assert.ok(!/\.tree-pill \{[^}]*(right|bottom):/.test(source))
+    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*align-self: center;/)
     assert.match(css, /--sidebar-row-menu-column: 2rem;/)
-    assert.match(css, /session-item--has-pill::part\(base\) \{[^}]*var\(--sidebar-row-menu-column\)[^}]*var\(--sidebar-row-pill-reserve\)/)
-    assert.ok(!css.includes('3.5rem'))
+    assert.ok(!css.includes('pill-reserve') && !source.includes('pill-reserve') && !css.includes('3.5rem'))
+})
+
+test('inside the pill: no chevron margin from native.css, a gap before the indicator', () => {
+    assert.match(source, /\.tree-pill > wa-icon \{\s*margin: 0;/)
+    assert.match(source, /\.tree-pill \{[^}]*gap: var\(--wa-space-3xs\);/)
+    assert.match(source, /\.tree-pill-indicator \{\s*margin-inline-start: 3px;/)
+    assert.match(source, /class="tree-pill-indicator"/)
 })
 
 test('the row reserves end padding only when it carries a pill', () => {
     assert.match(source, /'session-item--has-pill': treeRow\?\.hasChildren/)
     const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
-    assert.match(css, /\.sidebar-row\.session-item--has-pill::part\(base\) \{[^}]*padding-inline-end:/)
+    assert.match(css, /\.sidebar-row\.session-item--has-pill::part\(base\) \{[^}]*padding-inline-end: var\(--wa-space-3xs\)/)
 })
 
 test('template compiles', () => {

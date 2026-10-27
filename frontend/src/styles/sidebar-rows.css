@@ -38,11 +38,9 @@
     width: 100%;
 }
 
-/* Width of the menu column at the row's end, and the room a tree pill takes next to it
-   (chevron, a three-digit count, the activity indicator). */
+/* Width of the menu column at the row's end (the menu is absolutely placed over it). */
 :where(.sidebar-row-wrapper) {
     --sidebar-row-menu-column: 2rem;
-    --sidebar-row-pill-reserve: 4.5rem;
 }
 
 .sidebar-row {
@@ -58,11 +56,10 @@
 }
 
 .sidebar-row.session-item--has-pill::part(base) {
-    /* A tree row with a pill keeps room at the end for the menu column and the pill, which
-       sits just left of the menu trigger. Rows without a pill are unchanged. */
-    padding-inline-end: calc(
-        var(--wa-space-xs) + var(--sidebar-row-menu-column) + var(--wa-space-3xs) + var(--sidebar-row-pill-reserve)
-    );
+    /* A tree row with a pill ends before the pill (a sibling of the row button, in the
+       wrapper's flex line), so it needs no room for the menu: a small end padding only.
+       Rows without a pill are unchanged. */
+    padding-inline-end: var(--wa-space-3xs);
 }
 
 .sidebar-row::part(label) {
