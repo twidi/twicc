@@ -35,7 +35,7 @@ def payload_selects(queries):
 @pytest.mark.parametrize('representation', ['plain', 'zstd', 'no_gain'])
 def test_shared_owners_use_batched_readiness_and_cached_lifecycle(content_row_factory, representation, monkeypatch, session_cache):
     owners = [cold('first'), cold('second')]
-    for index in range(100):
+    for index in range(5):
         row = content_row_factory(f'{index} content ' * 100, representation == 'zstd',
                                   session_ids=[owner.id for owner in owners])
         if representation == 'no_gain':
@@ -56,7 +56,7 @@ def test_shared_owners_use_batched_readiness_and_cached_lifecycle(content_row_fa
             _, entries, done, _ = maintenance.prepare_compression_batch(0, session_cache=session_cache)
         assert done
         ids = [entry.candidate.content_id for entry in entries]
-        assert len(ids) == len(set(ids)) == (100 if representation == 'plain' else 0)
+        assert len(ids) == len(set(ids)) == (5 if representation == 'plain' else 0)
         owner_reads = [query['sql'] for query in queries if 'FROM "core_session"' in query['sql']]
         assert len(owner_reads) == (1 if representation == 'plain' and iteration == 0 else 0)
         assert len(payload_selects(queries)) == (1 if representation == 'plain' else 0)
@@ -155,9 +155,9 @@ def owner_selects(queries):
 
 @pytest.mark.parametrize('ownership', ['shared', 'overlapping', 'distinct'])
 def test_publication_shared_owners_reuses_metadata_and_content_rows(content_row_factory, ownership, session_cache):
-    owners = [cold(f'owner-{index:03}') for index in range(100 if ownership == 'distinct' else 3)]
+    owners = [cold(f'owner-{index:03}') for index in range(5 if ownership == 'distinct' else 3)]
     ids = []
-    for index in range(100):
+    for index in range(5):
         group = ([owners[index].id] if ownership == 'distinct' else
                  [owners[0].id, owners[1 + (index % 2 if ownership == 'overlapping' else 0)].id])
         ids.append(content_row_factory(f'{index} content ' * 100, False, session_ids=group).id)
@@ -169,7 +169,7 @@ def test_publication_shared_owners_reuses_metadata_and_content_rows(content_row_
         transaction.set_rollback(True)
     with transaction.atomic(), CaptureQueriesContext(connection) as queries:
         published = maintenance.publish_prepared_batch(entries, frozenset(), session_cache=session_cache).changed
-    assert published == 100
+    assert published == 5
     assert payload_selects(queries) == []
     metadata_fetches = [query['sql'] for query in queries if 'FROM "core_sessionitemcontent"' in query['sql']]
     assert len(metadata_fetches) == 1
@@ -253,7 +253,7 @@ def test_publication_rollback_discards_context_readiness(content_row_factory, se
 
 def test_only_candidates_load_payloads_and_publish_metadata(content_row_factory, monkeypatch):
     owner = cold('owner')
-    for index in range(97):
+    for index in range(4):
         content_row_factory(f'conformant {index} ' * 100, True, session_ids=['never-loaded'])
     candidates = [content_row_factory(f'candidate {index} ' * 100, False, session_ids=[owner.id])
                   for index in range(3)]

@@ -87,12 +87,14 @@ def test_native_metadata_row_matches_loaded_values(settings, use_tz, monkeypatch
 
 
 @pytest.mark.parametrize(('target', 'budget'), [('root', 1), ('child', 2)])
-def test_compute_validation_reads_each_native_level_once(certified, target, budget, django_assert_num_queries):
+@pytest.mark.parametrize('progressive', [False, True])
+def test_compute_validation_reads_each_native_level_once(certified, target, budget, progressive, django_assert_num_queries):
     from tests.test_content_extraction import message
     from twicc.core.content_storage import extraction
 
     root, child = certified
-    operation = extraction.begin_compute_application(message(root if target == 'root' else child))
+    operation = extraction.begin_compute_application(message(root if target == 'root' else child),
+                                                     progressive_facts=progressive)
     try:
         with django_assert_num_queries(budget):
             assert extraction.validate_compute_application(operation)

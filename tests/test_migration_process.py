@@ -55,7 +55,7 @@ def first_migration(command, **kwargs):
                        '--settings=twicc.settings_migration', '--verbosity=0']
     # This test covers the real child, custom driver, and log routing. The
     # full graph runs in fresh-install and installed-wheel integration tests.
-    return popen([*command, 'core', '0001'], **kwargs)
+    return popen([*command, 'core', '0001', '--skip-checks'], **kwargs)
 migration_process.subprocess.Popen = first_migration
 migration_process.run_migrations()
 assert not any(name.startswith('twicc.db.backends.sqlite3') for name in sys.modules)
@@ -74,8 +74,12 @@ def test_child_failure_preserves_traceback_in_backend_log(tmp_path):
     result = probe(tmp_path, """
 import django
 django.setup()
-from twicc.db.migration_process import run_migrations
-run_migrations()
+from twicc.db import migration_process
+popen = migration_process.subprocess.Popen
+# Database corruption must fail in the real child. URL checks add unrelated
+# provider/SDK startup work before SQLite can report the corruption.
+migration_process.subprocess.Popen = lambda command, **kwargs: popen([*command, '--skip-checks'], **kwargs)
+migration_process.run_migrations()
 """, DJANGO_SETTINGS_MODULE="twicc.settings")
     assert result.returncode != 0
     log = (tmp_path / "logs/backend.log").read_text()

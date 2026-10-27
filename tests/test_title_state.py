@@ -63,7 +63,8 @@ def test_serializer_reports_no_pending_title(db):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("original_history", [False, True], ids=["squash", "original-0148-0149"])
-def test_migration_preserves_legacy_titles_with_frozen_origin(original_history, private_current_migration_database):
+@pytest.mark.parametrize("historical_migration_database", [PREDECESSOR], indirect=True)
+def test_migration_preserves_legacy_titles_with_frozen_origin(original_history, historical_migration_database):
     executor = MigrationExecutor(connection)
     assert TITLE_MIGRATION in executor.loader.graph.nodes
     migration = executor.loader.get_migration(*TITLE_MIGRATION)

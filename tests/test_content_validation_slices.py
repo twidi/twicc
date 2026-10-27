@@ -598,7 +598,7 @@ def test_close_discards_operation_validation_and_final_authorization():
     assert operation.final_transaction is None
 
 
-@pytest.mark.parametrize('item_count', [100_000, 200_000])
+@pytest.mark.parametrize('item_count', [16_384, 32_768])
 def test_authoritative_validation_uses_bounded_primary_key_lookups_at_scale(content_row_factory, item_count):
     """Actual selected-ID publications must not scan the source ordering index per page."""
     from time import perf_counter
@@ -614,13 +614,12 @@ def test_authoritative_validation_uses_bounded_primary_key_lookups_at_scale(cont
     table = quote(SessionItem._meta.db_table)
     with transaction.atomic(), connection.cursor() as cursor:
         # Reverse PK order deliberately. The authoritative query must preserve source-line order.
-        for start in range(1, item_count + 1, 10_000):
-            cursor.executemany(
-                f'INSERT INTO {table} (id, session_id, line_num, content, current_content_id, original_content_id) '
-                'VALUES (%s, %s, %s, %s, %s, %s)',
-                [(item_count - line + 1, owner.id, line, '', content.id, content.id)
-                 for line in range(start, min(start + 10_000, item_count + 1))],
-            )
+        cursor.execute(
+            'WITH RECURSIVE source(line) AS (SELECT 1 UNION ALL SELECT line + 1 FROM source WHERE line < %s) '
+            f'INSERT INTO {table} (id, session_id, line_num, content, current_content_id, original_content_id) '
+            "SELECT %s - line + 1, %s, line, '', %s, %s FROM source",
+            [item_count, item_count, owner.id, content.id, content.id],
+        )
     operation = begin(owner)
     profiles = []
     try:

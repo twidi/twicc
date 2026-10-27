@@ -19,7 +19,7 @@ from twicc.data_backups_watcher import run_data_backups_watcher
 
 pytestmark = pytest.mark.usefixtures("fresh_data_dir")
 
-FAST = {"step_ms": 50, "debounce_ms": 500, "rust_timeout_ms": 100}
+FAST = {"step_ms": 10, "debounce_ms": 100, "rust_timeout_ms": 20}
 
 
 def _root():
@@ -65,7 +65,7 @@ def test_a_change_takes_one_version():
         task = await _start_synced()
         (_root() / "settings.json").write_bytes(b'{"publicBaseUrl": "https://x"}')
         await _wait_for(lambda: len(_versions("settings.json")) == 1)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.1)
         assert len(_versions("settings.json")) == 1
         await _stop(task)
 
@@ -74,14 +74,14 @@ def test_a_change_takes_one_version():
 
 def test_a_burst_takes_one_version():
     async def scenario():
-        task = await _start_synced(step_ms=200, debounce_ms=500)
-        for i in range(13):  # one write every 20 ms over ~250 ms
+        task = await _start_synced(step_ms=40, debounce_ms=100)
+        for i in range(4):  # one write every 20 ms: longer than a quiet window
             _atomic_write("settings.json", orjson.dumps({"n": i}))
             await asyncio.sleep(0.02)
         await _wait_for(lambda: len(_versions("settings.json")) >= 1)
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.15)
         [version] = _versions("settings.json")
-        assert orjson.loads(version.read_bytes()) == {"n": 12}
+        assert orjson.loads(version.read_bytes()) == {"n": 3}
         await _stop(task)
 
     asyncio.run(scenario())

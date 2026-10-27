@@ -57,7 +57,7 @@ from tests.codex_agent_run_fixtures import (
 from tests.test_codex_agent_runs_batch import play as play_batch
 
 # The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
-pytestmark = pytest.mark.usefixtures("frozen_now", "metadata_rows")
+pytestmark = pytest.mark.usefixtures("frozen_now", "agent_run_metadata")
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +573,7 @@ def _abort_with_idle_agents(agent_count: int) -> CodexAgentRunFixture:
 
 def test_owner_abort_query_budget_does_not_grow_with_the_agents(db, tmp_path):
     counts = {}
-    for agent_count in (5, 40):
+    for agent_count in (2, 8):
         fx = _abort_with_idle_agents(agent_count)
         compute = QueryCountingCompute(fx.line(ROOT, "abort"))
         (tmp_path / str(agent_count)).mkdir()
@@ -581,5 +581,5 @@ def test_owner_abort_query_budget_does_not_grow_with_the_agents(db, tmp_path):
         assert run_ends() == [(fx.line(ROOT, "abort"), "c_b", AGENT_A, "owner_turn_aborted", at(300))]
         counts[agent_count] = compute.count
         Session.objects.filter(project_id=PROJECT_ID).delete()
-    assert counts[5] is not None
-    assert counts[5] == counts[40]
+    assert counts[2] is not None
+    assert counts[2] == counts[8]

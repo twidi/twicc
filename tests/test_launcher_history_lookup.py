@@ -16,7 +16,7 @@ from twicc.providers.claude_code.compute import get_compute
 from twicc.providers.history_facts import HistoryFactContext, append_history_facts
 
 
-pytestmark = pytest.mark.usefixtures("metadata_publication")
+pytestmark = pytest.mark.usefixtures("metadata_rows")
 
 
 def current(session, records):

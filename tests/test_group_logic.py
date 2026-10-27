@@ -25,7 +25,7 @@ from twicc.providers.claude_code.compute import get_compute
 from twicc.core.models import Project, Session, SessionItem
 
 
-pytestmark = pytest.mark.usefixtures("metadata_publication")
+pytestmark = pytest.mark.usefixtures("metadata_rows")
 
 
 # =============================================================================

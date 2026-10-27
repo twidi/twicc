@@ -199,11 +199,17 @@ def metadata_rows(monkeypatch, metadata_publication):
     storage, golden replay, and WebSocket integration tests.
     """
     from contextlib import nullcontext
+    from importlib import import_module
 
     from twicc.core.content_storage import ingestion, lifecycle
     from twicc.core.content_storage.readers import effective_current
     from twicc.core.content_storage.state import ensure_storage_incarnation
     from twicc.core.models import SessionItem
+
+    # Its lazy from-import must bind the real function before this fixture
+    # replaces the source attribute. Otherwise later storage tests retain
+    # the fixture's no-op after monkeypatch restores that source attribute.
+    import_module('twicc.providers.compute_lifecycle')
 
     def initialize(session, **kwargs):
         session.storage_incarnation = ensure_storage_incarnation(session.id)
@@ -224,6 +230,20 @@ def metadata_rows(monkeypatch, metadata_publication):
     monkeypatch.setattr(ingestion, "ingestion_plaintext_change", lambda *args, **kwargs: nullcontext())
     monkeypatch.setattr(ingestion, "insert_ingested_items", insert)
     monkeypatch.setattr(ingestion, "promote_ingested_items", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
+def agent_run_metadata(monkeypatch, metadata_rows):
+    """Keep agent-run scenarios independent of the statistics projection.
+
+    Provider hooks, facts, links, run ends and lifecycle fields stay real.
+    Statistics, message counts and cost publication have their own integration
+    tests; these scenarios assert only agent-run evidence and run states.
+    """
+    from twicc.providers import compute_base
+
+    monkeypatch.setattr(compute_base, "item_contributions", lambda queryset: [])
+    monkeypatch.setattr(compute_base, "apply_contribution_changes", lambda *args, **kwargs: None)
 
 
 @pytest.fixture(autouse=True)
@@ -309,6 +329,7 @@ def short_compute_retry_defaults():
 
     real_wait = background_compute_task._wait_for_retry_delay
     real_deadline = compute_selection.compute_retry_deadline
+    real_read = background_compute_task.read_compute_state
 
     async def short_wait(stop_event, delay):
         return await real_wait(stop_event, min(delay, 0.01))
@@ -316,10 +337,17 @@ def short_compute_retry_defaults():
     def short_deadline(delay):
         return real_deadline(min(delay, 0.01))
 
+    async def short_read(read, session_ids, stop_event, wait_for_delay=None, stopped=None):
+        # The function's default captured the original wait at import time.
+        # Explicit test waiters still observe the actual backoff sequence.
+        return await real_read(read, session_ids, stop_event,
+                               short_wait if wait_for_delay is None else wait_for_delay, stopped)
+
     originals = []
     with ExitStack() as stack:
         for module in (background_compute_task, background_compute):
-            for name, value in (("_wait_for_retry_delay", short_wait), ("compute_retry_deadline", short_deadline)):
+            for name, value in (("_wait_for_retry_delay", short_wait), ("compute_retry_deadline", short_deadline),
+                                ("read_compute_state", short_read)):
                 originals.append((module, name, getattr(module, name)))
                 stack.enter_context(patch.object(module, name, value))
         yield originals
@@ -331,7 +359,7 @@ def short_compute_retries(request, monkeypatch, short_compute_retry_defaults):
 
     Keep the real stop-aware wait, retry selection, and backoff values.
     Only marked tests need per-test patches; ordinary tests share the
-    stateless wrappers instead of installing four patches each time.
+    stateless wrappers instead of installing retry patches each time.
     """
     if request.node.get_closest_marker("real_retry_delays"):
         for module, name, original in short_compute_retry_defaults:

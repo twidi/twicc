@@ -12,7 +12,7 @@ from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionT
 from twicc.providers.claude_code.compute import get_compute
 
 
-pytestmark = pytest.mark.usefixtures("metadata_publication")
+pytestmark = pytest.mark.usefixtures("metadata_rows")
 
 NOW = datetime(2026, 8, 8, 12, tzinfo=UTC)
 

@@ -225,8 +225,9 @@ def test_reconcile_resumes_between_distinct_oversized_fk_payloads(content_row_fa
     from twicc.core.content_storage import extraction
 
     owner = make_session()
-    current = content_row_factory('current' * 1500000, True, session_ids=[owner.id])
-    original = content_row_factory('original' * 1500000, True, session_ids=[owner.id])
+    byte_budget = 1024
+    current = content_row_factory('current' * 512, True, session_ids=[owner.id])
+    original = content_row_factory('original' * 512, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=current, original_content=original)
     msg = message(owner)
     decoded = []
@@ -237,14 +238,14 @@ def test_reconcile_resumes_between_distinct_oversized_fk_payloads(content_row_fa
         return decode(row, *args, **kwargs)
 
     monkeypatch.setattr(extraction, 'transcode_content', record)
-    cursor = extraction.reconcile_storage_slice(msg, -1)
+    cursor = extraction.reconcile_storage_slice(msg, -1, byte_budget=byte_budget)
     assert decoded == [current.id]
     assert cursor.line_num == -1 and not cursor.done
-    assert cursor.bytes > extraction.BYTE_BUDGET
+    assert cursor.bytes > byte_budget
     current.refresh_from_db()
     original.refresh_from_db()
     assert current.codec == 'plain' and original.codec == 'zstd'
-    cursor = extraction.reconcile_storage_slice(msg, cursor.line_num)
+    cursor = extraction.reconcile_storage_slice(msg, cursor.line_num, byte_budget=byte_budget)
     assert decoded == [current.id, original.id]
     assert cursor.line_num == 1 and cursor.done
     original.refresh_from_db()
@@ -255,12 +256,14 @@ def test_reconcile_shared_fk_slots_advance_without_duplicate_payload_decode(cont
     from twicc.core.content_storage import extraction
 
     owner = make_session()
-    shared = content_row_factory('shared' * 1500000, True, session_ids=[owner.id])
+    byte_budget = 1024
+    shared = content_row_factory('shared' * 512, True, session_ids=[owner.id])
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=shared, original_content=shared)
     from unittest.mock import patch
     with patch.object(extraction, 'transcode_content', wraps=extraction.transcode_content) as decode:
-        cursor = extraction.reconcile_storage_slice(message(owner), -1)
+        cursor = extraction.reconcile_storage_slice(message(owner), -1, byte_budget=byte_budget)
     assert cursor.done and cursor.line_num == 1
+    assert cursor.bytes > byte_budget
     assert decode.call_count == 1
 
 

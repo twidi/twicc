@@ -18,7 +18,7 @@ from tests.live_sync_helpers import drain_live_sync
 from tests.test_codex_code_mode import _NOW, _create_items, _exec_call_line, _run_batch_compute
 
 
-pytestmark = pytest.mark.usefixtures("metadata_publication")
+pytestmark = pytest.mark.usefixtures("metadata_rows")
 
 
 @pytest.fixture

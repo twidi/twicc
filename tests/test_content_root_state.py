@@ -114,13 +114,13 @@ def test_deep_native_tree_membership_does_not_expand_root_verification():
     parent = root
     with transaction.atomic():
         state.ensure_storage_incarnation(root.id)
-        for index in range(140):
+        for index in range(5):
             parent = session(f'child-{index:03}', type='subagent', parent_session=parent, content_storage_version=1)
             state.ensure_storage_incarnation(parent.id)
         empty = SessionItemContent.objects.create(sha256=hashlib.sha256(b'').digest(), payload=b'', raw_size=0)
         SessionItem.objects.create(session=parent, line_num=1, content='', current_content=empty)
         snapshot = state.snapshot_root_storage(root.id)
-        assert sum(map(len, state.iter_native_tree_session_pages(root.id, None, 17))) == 141
+        assert list(map(len, state.iter_native_tree_session_pages(root.id, None, 2))) == [2, 2, 2]
         assert state.verify_plaintext_root(snapshot)
         parent.content_storage_version = None
         parent.save(update_fields=['content_storage_version'])

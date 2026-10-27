@@ -83,8 +83,8 @@ def run_loop(scenario, debug=False):
 
 @pytest.fixture
 def short_throttle(monkeypatch):
-    monkeypatch.setattr(timeline_signal, "THROTTLE_SECONDS", 0.1)
-    return 0.1
+    monkeypatch.setattr(timeline_signal, "THROTTLE_SECONDS", 0.05)
+    return 0.05
 
 
 # -- Writers request the signal after the commit ---------------------------------------------------------------
@@ -281,11 +281,11 @@ def test_a_sustained_stream_sends_at_the_throttle_rate(sent, short_throttle):
     async def scenario():
         for _ in range(40):
             timeline_signal.poke()
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.3)
+            await asyncio.sleep(0.005)
+        await asyncio.sleep(0.15)
 
     run_loop(scenario)
-    # 0.4 s of pokes with a 0.1 s window: well below one signal per poke (40), well above a single one.
+    # 0.2 s of pokes with a 0.05 s window: well below one signal per poke (40), well above a single one.
     assert 2 <= len(sent) <= 8
 
 
@@ -294,7 +294,7 @@ def test_the_signal_waits_for_the_window_then_a_later_poke_opens_a_new_one(sent,
 
     async def scenario():
         timeline_signal.poke()
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)
         early = len(sent)
         await sent.wait()
         first = len(sent)
@@ -308,7 +308,7 @@ def test_the_signal_waits_for_the_window_then_a_later_poke_opens_a_new_one(sent,
 def test_an_empty_table_sends_nothing(sent, short_throttle):
     async def scenario():
         timeline_signal.poke()
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.15)
 
     run_loop(scenario)
     assert sent == []
@@ -316,7 +316,7 @@ def test_an_empty_table_sends_nothing(sent, short_throttle):
 
 def test_a_failed_send_is_logged_and_the_next_poke_still_works(monkeypatch, short_throttle):
     make_event()
-    attempts = []
+    attempts = SentMessages()
     logged = []
 
     async def group_send(group, message):
@@ -330,9 +330,9 @@ def test_a_failed_send_is_logged_and_the_next_poke_still_works(monkeypatch, shor
 
     async def scenario():
         timeline_signal.poke()
-        await asyncio.sleep(0.3)
+        await attempts.wait()
         timeline_signal.poke()
-        await asyncio.sleep(0.3)
+        await attempts.wait(2)
 
     run_loop(scenario)
     assert len(attempts) == 2
@@ -373,9 +373,9 @@ def test_stopping_the_signal_drops_a_pending_window(sent, short_throttle):
 
     async def scenario():
         timeline_signal.poke()
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)
         timeline_signal.stop_timeline_signal()
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.15)
 
     run_loop(scenario)
     assert sent == []
@@ -388,10 +388,10 @@ def test_a_restart_on_a_live_loop_does_not_fire_the_window_of_the_previous_run(s
 
     async def scenario():
         timeline_signal.poke()
-        await asyncio.sleep(0.01)  # the window is armed
+        await asyncio.sleep(0.005)  # the window is armed
         timeline_signal.stop_timeline_signal()
         timeline_signal.start_timeline_signal(asyncio.get_running_loop())
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.15)
 
     run_loop(scenario)
     assert sent == []

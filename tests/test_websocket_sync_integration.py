@@ -97,12 +97,14 @@ def test_authenticated_initialization_and_pong_survive_heavy_writer(monkeypatch,
 # ``records_for`` dates its lines 2026-09-29: tests replaying them freeze the clock one day later so the
 # content storage sees hot sessions.
 FROZEN_AFTER_RECORDS = datetime(2026, 9, 30, 10, tzinfo=UTC)
+FILLER_COUNT = 3
+REUSED_CALL_LINE = FILLER_COUNT + 3
 
 
 def records_for(provider):
     if provider == 'codex':
         return [call('reuse'), output('reuse', 'Process running with session ID 42'),
-                *[{} for _ in range(499)], call('reuse'),
+                *[{} for _ in range(FILLER_COUNT)], call('reuse'),
                 output('reuse', 'Process running with session ID 42'),
                 call('poll', 'write_stdin', arguments='{"session_id":42}'), output('poll', 'done')]
     def assistant(id, blocks):
@@ -112,12 +114,12 @@ def records_for(provider):
     tool = {'type': 'tool_use', 'id': 'reuse', 'name': 'Bash', 'input': {'command': 'true'}}
     result = {'type': 'user', 'message': {'role': 'user', 'content': [
         {'type': 'tool_result', 'tool_use_id': 'reuse', 'content': 'done'}]}}
-    # The filler only pushes the reuse past the 500-line slice. A SYSTEM line
+    # The filler only pushes the reuse past the four-line fixture slice. A SYSTEM line
     # (DEBUG_ONLY) keeps that: a bare ``{}`` is COLLAPSIBLE and joins the open
     # tool group, so every line rewrites the whole group (quadratic, ~2 s),
     # and group fields are not part of the compared snapshot.
     filler = {'type': 'queue-operation'}
-    return [assistant('message-1', [tool]), result, *[filler for _ in range(499)],
+    return [assistant('message-1', [tool]), result, *[filler for _ in range(FILLER_COUNT)],
             assistant('message-2', [tool]), result,
             assistant('message-2', [{'type': 'text', 'text': 'stream duplicate'}])]
 
@@ -166,6 +168,9 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
     from twicc.providers.codex.compute import CodexSessionCompute
     from twicc.providers import sessions_watcher
 
+    # Exercise fairness and cross-slice history with a small real slice.
+    # Default budgets and adaptive tuning keep separate watcher tests.
+    monkeypatch.setattr(sessions_watcher, 'LiveSyncLimits', lambda limit: LiveSyncLimits(min(limit, 4)))
     compute = ClaudeCodeSessionCompute() if provider == 'claude_code' else CodexSessionCompute()
     project = Project.objects.create(id='integration', directory=str(tmp_path))
     paths = {}
@@ -228,7 +233,7 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
     assert snapshot('large')[1] == paths['large'].stat().st_size
     assert Session.objects.get(id='small').last_line == 1
     assert list(Session.objects.get(id='large').tool_result_links.order_by('tool_result_line_num')
-                .values_list('tool_use_line_num', flat=True))[:2] == [1, 502]
+                .values_list('tool_use_line_num', flat=True))[:2] == [1, REUSED_CALL_LINE]
     if not current:
         from tests.tree_aggregate_helpers import drain_aggregates
         from twicc.providers.compute_base import BaseSessionCompute
@@ -253,10 +258,10 @@ def test_fair_queues_preserve_history_links_costs_and_checkpoints(tmp_path, monk
         assert snapshot('large')[2] > 0
     if provider == 'codex':
         assert Session.objects.get(id='large').history_facts.filter(
-            kind='process_start', line_num=503).get().data['call_line'] == 502
-        assert compute._lookup_exec_command_call_id('large', 506, 42, 'missing') == 'reuse'
-        assert compute._lookup_tool_call('large', 502, 'reuse')[1] == 1
-        assert compute._lookup_tool_call('large', 506, 'absent') is None
+            kind='process_start', line_num=REUSED_CALL_LINE + 1).get().data['call_line'] == REUSED_CALL_LINE
+        assert compute._lookup_exec_command_call_id('large', REUSED_CALL_LINE + 4, 42, 'missing') == 'reuse'
+        assert compute._lookup_tool_call('large', REUSED_CALL_LINE, 'reuse')[1] == 1
+        assert compute._lookup_tool_call('large', REUSED_CALL_LINE + 4, 'absent') is None
 
 
 @pytest.mark.django_db(transaction=True)

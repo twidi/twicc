@@ -37,7 +37,7 @@ from twicc.providers.codex.compute import get_compute
 from twicc.providers.plan_docs import DocEditEvent
 
 
-pytestmark = pytest.mark.usefixtures("metadata_publication")
+pytestmark = pytest.mark.usefixtures("metadata_rows")
 
 
 # ---------------------------------------------------------------------------

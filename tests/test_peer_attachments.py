@@ -275,7 +275,7 @@ def test_the_write_timeout_follows_the_body(monkeypatch):
     assert (seen["timeout"].connect, seen["timeout"].read) == (outbound.OUTBOUND_TIMEOUT_SECONDS,) * 2
 
 
-_STALL_SECONDS = 1.0
+_STALL_SECONDS = 0.4
 _SLOW_BODY = b"x" * (12 * 1024 * 1024)  # far above the loopback socket buffers: the write must wait
 
 
@@ -326,11 +326,11 @@ def _stalling_server():
 
 @pytest.fixture
 def short_peer_timeouts(monkeypatch):
-    """Scale the timeouts down: 0.3 s for connect / read / the old write; 1 MiB/s for a transfer."""
+    """Scale the timeouts down: 0.1 s for connect / read / the old write; 1 MiB/s for a transfer."""
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(outbound, "OUTBOUND_TIMEOUT_SECONDS", 0.3)
-    monkeypatch.setattr(inline, "TRANSFER_BASE_SECONDS", 0.3)
+    monkeypatch.setattr(outbound, "OUTBOUND_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(inline, "TRANSFER_BASE_SECONDS", 0.1)
     monkeypatch.setattr(inline, "INLINE_MIN_THROUGHPUT", 1024 * 1024)
 
 
@@ -344,7 +344,7 @@ def test_a_slow_write_longer_than_the_old_timeout_succeeds(short_peer_timeouts):
 
 
 def test_the_same_slow_write_fails_with_the_old_single_timeout(short_peer_timeouts, monkeypatch):
-    """Control: the server really stalls longer than the old write timeout (30 s, scaled to 0.3 s)."""
+    """Control: the server really stalls longer than the old write timeout (30 s, scaled to 0.1 s)."""
     monkeypatch.setattr(outbound, "transfer_timeout", lambda size: outbound.OUTBOUND_TIMEOUT_SECONDS)
     port, thread, received = _stalling_server()
     with pytest.raises(outbound.PeerOutboundError, match="WriteTimeout"):

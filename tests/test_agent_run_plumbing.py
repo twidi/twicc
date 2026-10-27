@@ -34,7 +34,7 @@ from twicc.providers.codex.compute import CodexSessionCompute
 from twicc.providers.compute_base import BatchAgentSignals, LiveAgentSignals
 
 # The lines are dated 2026-09-27: ``frozen_now`` (2026-09-28 10:00) keeps the content storage on hot sessions.
-pytestmark = pytest.mark.usefixtures("frozen_now", "metadata_publication")
+pytestmark = pytest.mark.usefixtures("frozen_now", "metadata_rows")
 
 NOW = datetime(2026, 9, 27, 12, tzinfo=UTC)
 LATER = datetime(2026, 9, 27, 12, 5, tzinfo=UTC)

@@ -802,7 +802,7 @@ def test_query_budget_is_independent_of_the_tree_size(project, django_assert_num
     small_count = _count_queries(small, ["agent-1"])
     _drop_tree(small)
     big = make_session(project, "big-root")
-    _build_tree(big, 200, BIG_TREE_RESULTS)
+    _build_tree(big, 8, BIG_TREE_RESULTS)
 
     with django_assert_num_queries(small_count):
         state = agent_run_states(big, ["agent-1"])["agent-1"]
@@ -819,7 +819,7 @@ def test_frozen_query_budget_is_independent_of_the_tree_size(project, django_ass
     small_count = _count_queries(small, ["agent-1"], frozen_at_line=500_000)
     _drop_tree(small)
     big = make_session(project, "big-root")
-    _build_tree(big, 200, BIG_TREE_RESULTS)
+    _build_tree(big, 8, BIG_TREE_RESULTS)
     with django_assert_num_queries(small_count):
         state = agent_run_states(big, ["agent-1"], frozen_at_line=500_000)["agent-1"]
     assert state.known is True

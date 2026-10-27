@@ -44,8 +44,12 @@ def test_root_query_selects_one_native_outdated_old_root(source, django_assert_n
 def test_parameterized_orm_query_uses_partial_index_without_sort(source, old_count):
     from twicc.providers.compute_tree import select_outdated_root
 
-    for index in range(500):
-        source(f'root-{index}', mtime=index, version=None if index < old_count else 7)
+    first = source('root-0', mtime=0, version=None if old_count else 7)
+    Session.objects.bulk_create([
+        Session(id=f'root-{index}', project_id=first.project_id, file_path=f'/test/root-{index}',
+                provider='claude_code', mtime=index, compute_version=None if index < old_count else 7)
+        for index in range(1, 500)
+    ])
     with connection.cursor() as cursor:
         cursor.execute('ANALYZE core_session')
     statements = []

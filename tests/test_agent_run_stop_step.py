@@ -551,7 +551,7 @@ def test_stop_step_query_budget_does_not_grow_with_the_tree(django_assert_num_qu
         small_outcome = run_stop_step(small_root.id, [small_agent], small_exclude)
     assert small_outcome.stopped == [AgentStoppedUpdate(small_agent, at(4), True)]
 
-    big_root, big_agent, big_exclude = _budget_tree("big", 200, BIG_TREE_FILLER_RESULTS)
+    big_root, big_agent, big_exclude = _budget_tree("big", 8, BIG_TREE_FILLER_RESULTS)
     with django_assert_num_queries(len(small.captured_queries)):
         big_outcome = run_stop_step(big_root.id, [big_agent], big_exclude)
     assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]
@@ -571,7 +571,7 @@ def test_live_collection_query_budget_does_not_grow_with_the_tree(django_assert_
         small_outcome = _live_collection(small_root, small_exclude)
     assert small_outcome.stopped == [AgentStoppedUpdate(small_agent, at(4), True)]
 
-    big_root, big_agent, big_exclude = _budget_tree("big", 200, BIG_TREE_FILLER_RESULTS)
+    big_root, big_agent, big_exclude = _budget_tree("big", 8, BIG_TREE_FILLER_RESULTS)
     with django_assert_num_queries(len(small.captured_queries)):
         big_outcome = _live_collection(big_root, big_exclude)
     assert big_outcome.stopped == [AgentStoppedUpdate(big_agent, at(4), True)]

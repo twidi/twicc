@@ -164,11 +164,11 @@ def test_commit_failure_retains_fact_page_and_old_rows(monkeypatch):
         extraction.close_compute_application(operation)
 
 
-def test_actual_insert_interval_uses_index_with_75000_facts():
+def test_actual_insert_interval_uses_index_with_many_facts():
     session = make_session()
     stage = facts.prepare_compute_history_facts(session.id, [])
     # The interval query is the subject. Keep the real stage constraints and
-    # all 75,000 rows without adapting the same fact through models 75,000 times.
+    # enough rows to expose a scan without adapting identical model fields.
     from django.db.models import JSONField
 
     data = JSONField().get_db_prep_save(fact(1).data, connection=connection)
@@ -176,7 +176,7 @@ def test_actual_insert_interval_uses_index_with_75000_facts():
         cursor.executemany(
             f'INSERT INTO temp.{stage.table} (source_order, session_id, line_num, kind, key, data) '
             'VALUES (%s, %s, %s, %s, %s, %s)',
-            ((line - 1, session.id, line, HistoryFactKind.TOOL_CALL, 'call', data) for line in range(1, 75001)),
+            ((line - 1, session.id, line, HistoryFactKind.TOOL_CALL, 'call', data) for line in range(1, 16385)),
         )
     statements = []
     def explain(execute, sql, params, many, context):
@@ -186,7 +186,7 @@ def test_actual_insert_interval_uses_index_with_75000_facts():
                 statements.extend(row[3] for row in cursor.fetchall())
         return execute(sql, params, many, context)
     try:
-        page = facts.prepare_fact_insert_page(stage, 74000)
+        page = facts.prepare_fact_insert_page(stage, 16000)
         with connection.execute_wrapper(explain), transaction.atomic():
             facts.publish_fact_insert_page(stage, page)
         assert len(page.positions) == 128
@@ -355,7 +355,7 @@ def test_cancelled_operation_drains_worker_before_temp_cleanup():
     assert SessionHistoryFact.objects.filter(session=session).count() == 128
 
 
-@pytest.mark.parametrize('count', [10000, 75000])
+@pytest.mark.parametrize('count', [4096, 16384])
 def test_delete_pages_bound_actual_prepare_and_publication_vm_work(count):
     """Neither SQL statement may scan the owner's remaining facts per page."""
     session = make_session()

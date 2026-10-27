@@ -7,7 +7,7 @@ session, native root and final lifecycle decision inside its own transaction.
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from time import perf_counter
 from datetime import datetime
 
@@ -26,7 +26,9 @@ from twicc.core.content_storage.policy import (
 from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepare_intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
-from twicc.core.content_storage.state import load_native_metadata, native_root_ids, resolve_root_decision
+from twicc.core.content_storage.state import (
+    load_native_metadata, native_metadata_row, native_root_ids, resolve_root_decision, resolve_root_decisions,
+)
 from twicc.core.content_storage.session_policy import content_decision_from_fields, resolve_content_decisions
 from twicc.core.content_storage.types import (
     ContentBinding, StorageCursor, ItemStorageObservation,
@@ -71,8 +73,9 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
             raise SupersededStorageResult('superseded')
 
 
-def pending_root_fields(session_id, pending, _active_session_ids):
-    metadata = load_native_metadata([session_id])
+def pending_root_fields(session_id, pending, _active_session_ids, *, metadata=None):
+    if metadata is None:
+        metadata = load_native_metadata([session_id])
     root_id = native_root_ids([session_id], metadata=metadata)[session_id]
     if root_id is None:
         return None, None
@@ -557,23 +560,25 @@ def validate_compute_application(operation):
     if operation.closed:
         raise SupersededStorageResult('superseded')
     operation.references.validate_connection()
-    if operation.progressive_facts:
-        from twicc.providers.history_facts import history_facts_are_current
-
-        session = Session.objects.only('provider', 'compute_version').filter(
-            pk=operation.observation.session_id).first()
-        if session is None or history_facts_are_current(session):
-            raise SupersededStorageResult('superseded')
-    return _validate_observation(operation.observation, operation.placement['root_epoch'])
+    return _validate_observation(operation.observation, operation.placement['root_epoch'],
+                                 reject_current=operation.progressive_facts)
 
 
-def _validate_observation(observation, expected_epoch):
+def _validate_observation(observation, expected_epoch, *, reject_current=False):
     # Reuse one fresh native-tree read for the target, ancestry, root, and
     # lifecycle fences. No row survives this validation call.
-    metadata = load_native_metadata(
-        [observation.session_id], extra_fields=('history_epoch', 'last_offset', 'last_line'),
-    )
+    extra = ('history_epoch', 'last_offset', 'last_line')
+    if reject_current:
+        extra += ('provider', 'compute_version')
+    metadata = load_native_metadata([observation.session_id], extra_fields=extra)
     fields = metadata[observation.session_id]
+    if reject_current:
+        from twicc.providers.history_facts import history_facts_are_current
+
+        if fields is None or history_facts_are_current(SimpleNamespace(
+            provider=fields['provider'], compute_version=fields['compute_version'],
+        )):
+            raise SupersededStorageResult('superseded')
     target = tuple(fields[name] for name in _TARGET_FIELDS) if fields is not None else None
     if target != observation.target or _native_ancestry(
         observation.session_id, metadata=metadata,
@@ -611,9 +616,12 @@ def begin_compute_application(msg, *, progressive_facts=False):
                              SessionItem.objects.filter(session_id=session.id).aggregate(last=Max('line_num'))['last'] or 0)
         msg = {**msg, 'observed_incarnation': msg.get('observed_incarnation') or session.storage_incarnation,
                'observed_epoch': msg.get('observed_epoch', session.history_epoch), 'observed_upper_line': upper_line}
-        root_id, final = pending_root_fields(session.id, msg.get('session_fields', {}), frozenset())
+        # No writes intervene: the fresh target row and ancestor pages cover
+        # all three observations inside this writer-owned transaction.
+        metadata = load_native_metadata([session.id], known={session.id: native_metadata_row(session)})
+        root_id, final = pending_root_fields(session.id, msg.get('session_fields', {}), frozenset(), metadata=metadata)
         final = final or {}
-        initial = Session.objects.filter(pk=root_id).values(*COLD_FIELDS).first()
+        initial = ({name: metadata[root_id][name] for name in COLD_FIELDS} if root_id is not None else None)
         session_final = {name: getattr(session, name) for name in COLD_FIELDS}
         for name in COLD_FIELDS:
             if name in msg.get('session_fields', {}):
@@ -626,7 +634,7 @@ def begin_compute_application(msg, *, progressive_facts=False):
                      'active_session_ids': frozenset(), 'now': timezone.now(),
                      'pending_session_id': session.id, 'observed_offset': msg.get('observed_last_offset')}
         observation = ComputeStorageObservation(session.id, tuple(getattr(session, name) for name in _TARGET_FIELDS),
-                                               _native_ancestry(session.id), root_id,
+                                               _native_ancestry(session.id, metadata=metadata), root_id,
                                                placement['root_incarnation'],
                                                tuple(initial[name] for name in COLD_FIELDS) if initial else ())
     estimate = max(1, (len(msg.get('content_overrides') or ()) + ROW_BUDGET - 1) // ROW_BUDGET
@@ -929,17 +937,18 @@ def finish_storage_result(msg):
 
     session_id = msg['session_id']
     pending = msg.get('_storage_final_root')
+    metadata = load_native_metadata([session_id])
     if pending:
-        root_id, actual = pending_root_fields(session_id, {}, pending['active_session_ids'])
+        root_id, actual = pending_root_fields(session_id, {}, pending['active_session_ids'], metadata=metadata)
         if root_id != pending['root_id'] or (actual and (
             actual['storage_incarnation'] != pending['root_incarnation']
             or actual['content_state_epoch'] != pending['root_epoch']
             or any(actual[name] != value for name, value in pending['final_fields'].items())
         )):
             raise SupersededStorageResult('superseded')
-    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
+    decision = resolve_root_decisions([session_id], timezone.now(), frozenset(), metadata=metadata)[session_id]
     content = resolve_content_decisions(
-        [session_id], timezone.now(), pending['active_session_ids'] if pending else frozenset(),
+        [session_id], timezone.now(), pending['active_session_ids'] if pending else frozenset(), metadata=metadata,
     )[session_id]
     if decision.resolved and decision.root_id == session_id and not content.is_cold:
         _finish_plaintext_root_storage(session_id, active_root_ids=pending['active_session_ids'] if pending else frozenset())

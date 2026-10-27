@@ -24,10 +24,9 @@ from twicc.core.services.attachments.types import PlanTarget
 
 BUDGET = 16 * 1024**2
 HEAD = 64 * 1024
-# 2:1, just above both long edges (Claude 2000, Codex 2576): resizes to the same
-# (2000, 1000) / (2576, 1288) as a larger image, with fewer pixels to encode,
-# decode and resample. The 3:1 cases use (2700, 900) for the same reason.
-ABOVE_TARGET = (2600, 1300)
+# Resize tests scale only the long-edge limits. The policy test below keeps
+# asserting the production limits, while real Pillow codecs and resampling run.
+ABOVE_TARGET = (260, 130)
 
 claude = PlanTarget("claude_code", False, False, "opus", False, "first_party")
 claude_third_party = PlanTarget("claude_code", False, False, "opus", False, "third_party")
@@ -93,6 +92,12 @@ def orientation_exif(orientation: int) -> bytes:
 
 def ihdr(width: int, height: int) -> bytes:
     return struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+
+
+@pytest.fixture
+def resize_limits(monkeypatch):
+    monkeypatch.setattr(images, "CLAUDE_LONG_EDGE", 200)
+    monkeypatch.setattr(images, "CODEX_LONG_EDGE", 256)
 
 
 @pytest.fixture
@@ -373,12 +378,12 @@ def test_mpo_within_target_is_a_plain_jpeg(tmp_path):
     assert part.data == path.read_bytes()
 
 
-def test_mpo_above_target_sends_the_resized_primary_frame(tmp_path):
+def test_mpo_above_target_sends_the_resized_primary_frame(tmp_path, resize_limits):
     path = write(tmp_path, "photo.jpg", mpo_bytes(ABOVE_TARGET))
     part = normalize_image(path, target=claude, remaining_budget=BUDGET)
     image = decoded(part)
-    assert (part.media_type, image.format, image.size) == ("image/jpeg", "JPEG", (2000, 1000))
-    assert image.getpixel((1000, 500))[2] < 250  # the primary frame, not the blue second one
+    assert (part.media_type, image.format, image.size) == ("image/jpeg", "JPEG", (200, 100))
+    assert image.getpixel((100, 50))[2] < 250  # the primary frame, not the blue second one
 
 
 def test_cmyk_jpeg_depends_on_the_provider(tmp_path):
@@ -388,10 +393,10 @@ def test_cmyk_jpeg_depends_on_the_provider(tmp_path):
     assert normalize_image(path, target=codex, remaining_budget=BUDGET).data == path.read_bytes()
 
 
-def test_cmyk_jpeg_above_target_stays_cmyk_for_codex(tmp_path):
-    path = write(tmp_path, "cmyk.jpg", encode(Image.new("CMYK", (3000, 100), (0, 50, 100, 0)), "JPEG"))
+def test_cmyk_jpeg_above_target_stays_cmyk_for_codex(tmp_path, resize_limits):
+    path = write(tmp_path, "cmyk.jpg", encode(Image.new("CMYK", (300, 10), (0, 50, 100, 0)), "JPEG"))
     image = decoded(normalize_image(path, target=codex, remaining_budget=BUDGET))
-    assert (image.mode, image.size) == ("CMYK", (2576, 86))
+    assert (image.mode, image.size) == ("CMYK", (256, 9))
 
 
 def patch_jpeg_size(data: bytes, width: int, height: int) -> bytes:
@@ -436,15 +441,11 @@ def test_gif_over_100_megapixels_is_a_file_without_pillow(tmp_path, monkeypatch)
     assert spy.calls == []
 
 
-def test_95_megapixel_image_decodes_without_a_decompression_bomb_warning(tmp_path):
-    """Pillow warns from 89.5 MP; our own limit is 100 MP, so an accepted image must not warn."""
-    width, height = 10000, 9500
-    # The same flat 8-bit grayscale PNG Pillow would write, built with zlib
-    # directly: Pillow's own encoder takes ~1 s for 95 MP, zlib ~0.3 s.
-    rows = (b"\x00" + bytes([128]) * width) * height  # filter byte "None" + one row
-    gray = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
-    png = build_png([(b"IHDR", gray), (b"IDAT", zlib.compress(rows, 1)), (b"IEND", b"")])
-    path = write(tmp_path, "big.png", png)
+def test_accepted_image_above_pillow_warning_threshold_decodes(tmp_path, monkeypatch):
+    """An image below our limit can exceed Pillow's independent warning threshold."""
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 10_000)
+    monkeypatch.setattr(images, "CODEX_LONG_EDGE", 64)
+    path = write(tmp_path, "big.png", encode(Image.new("L", (110, 100), 128), "PNG"))
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         part = normalize_image(path, target=codex, remaining_budget=BUDGET)
@@ -529,8 +530,8 @@ def test_within_dimension_over_the_per_image_limit_is_not_decoded(small_png, mon
 # ── Above the target: resize once, same family ───────────────────────────────
 
 
-@pytest.mark.parametrize(("target", "expected"), [(claude, (2000, 1000)), (codex, (2576, 1288))])
-def test_png_resize_keeps_aspect_and_family(tmp_path, monkeypatch, target, expected):
+@pytest.mark.parametrize(("target", "expected"), [(claude, (200, 100)), (codex, (256, 128))])
+def test_png_resize_keeps_aspect_and_family(tmp_path, monkeypatch, target, expected, resize_limits):
     path = write(tmp_path, "big.png", encode(gradient(ABOVE_TARGET), "PNG"))
     saves = SaveSpy(monkeypatch)
     part = normalize_image(path, target=target, remaining_budget=BUDGET)
@@ -539,45 +540,45 @@ def test_png_resize_keeps_aspect_and_family(tmp_path, monkeypatch, target, expec
     assert [fmt for fmt, _ in saves.calls] == ["PNG"]
 
 
-def test_portrait_resize(tmp_path):
-    path = write(tmp_path, "tall.png", encode(gradient((900, 2700)), "PNG"))
-    assert decoded(normalize_image(path, target=claude, remaining_budget=BUDGET)).size == (667, 2000)
+def test_portrait_resize(tmp_path, resize_limits):
+    path = write(tmp_path, "tall.png", encode(gradient((90, 270)), "PNG"))
+    assert decoded(normalize_image(path, target=claude, remaining_budget=BUDGET)).size == (67, 200)
 
 
-def test_webp_resizes_to_lossless_webp(tmp_path, monkeypatch):
+def test_webp_resizes_to_lossless_webp(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.webp", encode(gradient(ABOVE_TARGET), "WEBP", quality=80))
     saves = SaveSpy(monkeypatch)
     part = normalize_image(path, target=claude, remaining_budget=BUDGET)
     assert part.media_type == "image/webp"
     assert part.data[12:16] == b"VP8L"
-    assert decoded(part).size == (2000, 1000)
+    assert decoded(part).size == (200, 100)
     assert saves.calls == [("WEBP", {"lossless": True})]
 
 
-def test_jpeg_resizes_to_jpeg_quality_92_once(tmp_path, monkeypatch):
+def test_jpeg_resizes_to_jpeg_quality_92_once(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.jpg", encode(gradient(ABOVE_TARGET), "JPEG", quality=70))
     saves = SaveSpy(monkeypatch)
     part = normalize_image(path, target=claude, remaining_budget=BUDGET)
     assert part.media_type == "image/jpeg"
-    assert decoded(part).size == (2000, 1000)
+    assert decoded(part).size == (200, 100)
     assert saves.calls == [("JPEG", {"quality": 92})]
 
 
-def test_still_gif_resizes_to_png(tmp_path):
-    path = write(tmp_path, "big.gif", encode(gradient((3000, 300)).convert("P"), "GIF"))
+def test_still_gif_resizes_to_png(tmp_path, resize_limits):
+    path = write(tmp_path, "big.gif", encode(gradient((300, 30)).convert("P"), "GIF"))
     part = normalize_image(path, target=claude, remaining_budget=BUDGET)
     image = decoded(part)
-    assert (part.media_type, image.format, image.size) == ("image/png", "PNG", (2000, 200))
+    assert (part.media_type, image.format, image.size) == ("image/png", "PNG", (200, 20))
 
 
-def test_16_bit_grayscale_png_keeps_its_depth_when_resized(tmp_path):
-    data = encode(Image.new("I;16", (3000, 100), 30000), "PNG")
+def test_16_bit_grayscale_png_keeps_its_depth_when_resized(tmp_path, resize_limits):
+    data = encode(Image.new("I;16", (300, 10), 30000), "PNG")
     path = write(tmp_path, "deep.png", data)
     assert Image.open(path).mode == "I;16"
     part = normalize_image(path, target=claude, remaining_budget=BUDGET)
     image = decoded(part)
-    assert (part.media_type, image.mode, image.size) == ("image/png", "I;16", (2000, 67))
-    assert abs(image.getpixel((1000, 33)) - 30000) <= 1  # mid-gray, not clipped to white
+    assert (part.media_type, image.mode, image.size) == ("image/png", "I;16", (200, 7))
+    assert abs(image.getpixel((100, 3)) - 30000) <= 1  # mid-gray, not clipped to white
 
 
 @pytest.mark.parametrize(
@@ -605,18 +606,18 @@ def test_resample_refuses_modes_it_would_corrupt(mode, image_format):
         images._resample_ready(Image.new(mode, (4, 4)), image_format)
 
 
-def test_unsupported_mode_above_target_is_a_file(tmp_path, monkeypatch):
+def test_unsupported_mode_above_target_is_a_file(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.png", encode(gradient(ABOVE_TARGET), "PNG"))
     original = images._resample_ready
     monkeypatch.setattr(images, "_resample_ready", lambda image, fmt: original(image.convert("F"), fmt))
     assert normalize_image(path, target=claude, remaining_budget=BUDGET) is None
 
 
-def test_exif_transpose_happens_before_resize(tmp_path):
+def test_exif_transpose_happens_before_resize(tmp_path, resize_limits):
     # Orientation 6: rotate 90° clockwise to display.
-    path = write(tmp_path, "rotated.jpg", encode(gradient((2700, 900)), "JPEG", exif=orientation_exif(6)))
+    path = write(tmp_path, "rotated.jpg", encode(gradient((270, 90)), "JPEG", exif=orientation_exif(6)))
     image = decoded(normalize_image(path, target=claude, remaining_budget=BUDGET))
-    assert image.size == (667, 2000)
+    assert image.size == (67, 200)
 
 
 def test_within_target_jpeg_keeps_its_exif_orientation_bytes(tmp_path):
@@ -624,14 +625,14 @@ def test_within_target_jpeg_keeps_its_exif_orientation_bytes(tmp_path):
     assert normalize_image(path, target=claude, remaining_budget=BUDGET).data == path.read_bytes()
 
 
-def test_no_byte_saving_loop_when_resized_bytes_exceed_the_budget(tmp_path, monkeypatch):
+def test_no_byte_saving_loop_when_resized_bytes_exceed_the_budget(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.jpg", encode(gradient(ABOVE_TARGET), "JPEG"))
     saves = SaveSpy(monkeypatch)
     assert normalize_image(path, target=claude, remaining_budget=100) is None
     assert len(saves.calls) == 1
 
 
-def test_post_resize_per_image_limit_is_enforced(tmp_path, monkeypatch):
+def test_post_resize_per_image_limit_is_enforced(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.png", encode(gradient(ABOVE_TARGET), "PNG"))
     monkeypatch.setitem(images.CLAUDE_PER_IMAGE_LIMITS, "first_party", 100)
     assert normalize_image(path, target=claude, remaining_budget=BUDGET) is None
@@ -661,7 +662,7 @@ def test_decode_error_is_a_file(tmp_path):
     assert normalize_image(path, target=claude, remaining_budget=BUDGET) is None
 
 
-def test_encode_error_is_a_file(tmp_path, monkeypatch):
+def test_encode_error_is_a_file(tmp_path, monkeypatch, resize_limits):
     path = write(tmp_path, "big.png", encode(gradient(ABOVE_TARGET), "PNG"))
     SaveSpy(monkeypatch, fail=True)
     assert normalize_image(path, target=claude, remaining_budget=BUDGET) is None

@@ -75,7 +75,8 @@ def test_owner_snapshot_does_not_expose_subscription_secrets(subscription):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migration_preserves_title_state_and_sets_existing_session_epoch_zero(private_current_migration_database):
+@pytest.mark.parametrize("historical_migration_database", [("core", "0150_session_automatic_titles")], indirect=True)
+def test_migration_preserves_title_state_and_sets_existing_session_epoch_zero(historical_migration_database):
     executor = MigrationExecutor(connection)
     target = [("core", "0151_mcp_event_subscriptions")]
     previous = executor.loader.graph.node_map[target[0]].parents

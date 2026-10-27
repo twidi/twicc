@@ -2,6 +2,7 @@
 
 import base64
 import queue
+import select
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from twicc.providers.live_sync import LiveSyncLimits
 
 
 # The lines are dated 2026-10-08: freeze the clock one day later so the content storage sees hot sessions.
-pytestmark = [pytest.mark.usefixtures("metadata_publication"), pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 9, 10, tzinfo=UTC))]
+pytestmark = [pytest.mark.usefixtures("metadata_rows"), pytest.mark.usefixtures("frozen_now"), pytest.mark.frozen_now_at(datetime(2026, 10, 9, 10, tzinfo=UTC))]
 
 TAG = '<twicc:inline-artifact id="preferences" src="inline-artifacts/preferences/index.html" />'
 TEXT = '😀\r\n\r\n  ' + TAG + '\r\n'
@@ -72,6 +73,55 @@ def case(request, db, tmp_path):
     session = Session.objects.create(id='s', file_path='s.jsonl', project=Project.objects.create(id='p'), provider=provider)
     compute = ClaudeCodeSessionCompute() if provider == Provider.CLAUDE_CODE else CodexSessionCompute()
     return provider, session, compute, tmp_path / 'rollout.jsonl'
+
+
+@pytest.fixture(scope='module')
+def node_assertions():
+    """Import the renderer once per script, with a fresh assertion scope per request.
+
+    The owning test creates and disposes its Vue effect scope and runtime for
+    each payload. Only the Node process and imported JavaScript modules recur.
+    """
+    workers = {}
+
+    def check(javascript, payload, cwd):
+        key = (javascript, cwd)
+        if key not in workers:
+            lines = javascript.splitlines()
+            imports = '\n'.join(line for line in lines if line.startswith('import '))
+            body = '\n'.join(line for line in lines if not line.startswith('import '))
+            reader = "JSON.parse(fs.readFileSync(0, 'utf8'))"
+            assert body.count(reader) == 1
+            source = imports + "\nimport { createInterface } from 'node:readline';\n"
+            source += 'function check(input) {\n' + body.replace(reader, 'input') + '\n}\n'
+            source += '''
+for await (const line of createInterface({ input: process.stdin })) {
+    try { check(JSON.parse(line)); console.log(JSON.stringify({ ok: true })); }
+    catch (error) { console.log(JSON.stringify({ error: error.stack })); }
+}
+'''
+            workers[key] = subprocess.Popen(
+                ['node', '--input-type=module', '--eval', source], cwd=cwd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+        process = workers[key]
+        process.stdin.write(orjson.dumps(payload) + b'\n')
+        process.stdin.flush()
+        assert select.select([process.stdout], [], [], 30)[0], 'Node assertion timeout'
+        response = process.stdout.readline()
+        assert response, process.stderr.read().decode()
+        assert orjson.loads(response) == {'ok': True}, response.decode()
+
+    yield check
+    for process in workers.values():
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close()
 
 
 def test_live_and_full_publish_identical_catalog(case):
@@ -172,7 +222,7 @@ def test_public_metadata_has_only_safe_support_flag(case):
 
 @pytest.mark.parametrize('session_type', [SessionType.SESSION, SessionType.SUBAGENT])
 @pytest.mark.parametrize('public', [False, True])
-def test_serialized_identity_reaches_actual_inline_context_and_adapter(case, session_type, public):
+def test_serialized_identity_reaches_actual_inline_context_and_adapter(case, session_type, public, node_assertions):
     """Feed real wire payloads into the owning Vue context and JavaScript adapter."""
     provider, session, compute, path = case
     session.type = session_type
@@ -259,14 +309,11 @@ if (isPublic) {
     scope.stop();
 }
 '''
-    result = subprocess.run(
-        ['node', '--input-type=module', '--eval', javascript], cwd=Path(__file__).resolve().parents[1] / 'frontend',
-        input=orjson.dumps({'wire': wire, 'record': record, 'provider': provider.value,
-                           'expectedType': session_type, 'public': public}),
-        capture_output=True, timeout=30,
+    node_assertions(
+        javascript, {'wire': wire, 'record': record, 'provider': provider.value,
+                     'expectedType': session_type, 'public': public},
+        Path(__file__).resolve().parents[1] / 'frontend',
     )
-    assert result.returncode == 0, result.stderr.decode()
-    assert result.stdout == b''
 
 
 def test_migration_defaults_are_empty_and_independent(db):
@@ -294,7 +341,9 @@ def test_screenshot_normalization_offsets_use_persisted_text(case):
 
 
 @pytest.mark.parametrize('slice_bytes', [256, 4096])
-def test_persisted_screenshot_publication_matches_actual_frontend_source(case, monkeypatch, tmp_path, slice_bytes):
+def test_persisted_screenshot_publication_matches_actual_frontend_source(
+    case, monkeypatch, tmp_path, slice_bytes, node_assertions,
+):
     """Cross the provider rewrite, DB, catalog, and actual JS renderer boundary."""
     from twicc import paths
 
@@ -352,14 +401,10 @@ assert.equal(span.descriptor.artifact_id, publication.artifact_id);
 const actual = {line_num: 2, text_block_index: span.textBlockIndex, tag_offset: span.tag_offset};
 assert.equal(publicationKey('s', actual), publicationKey('s', publication));
 '''
-    result = subprocess.run(
-        ['node', '--input-type=module', '--eval', javascript],
-        cwd=Path(__file__).resolve().parents[1],
-        input=orjson.dumps({'record': persisted, 'provider': provider.value, 'publication': publication}),
-        capture_output=True, timeout=30,
+    node_assertions(
+        javascript, {'record': persisted, 'provider': provider.value, 'publication': publication},
+        Path(__file__).resolve().parents[1],
     )
-    assert result.returncode == 0, result.stderr.decode()
-    assert result.stdout == b''
     compute.apply_session_complete(capture(compute, session))
     session.refresh_from_db()
     assert session.inline_artifacts['publications'] == [publication]

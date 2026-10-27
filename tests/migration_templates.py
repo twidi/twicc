@@ -1,30 +1,49 @@
 """Migrated database files shared by every migration test of the run."""
 
 import shutil
-import sqlite3
-from contextlib import ExitStack, closing, contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import lru_cache
 from unittest.mock import patch
 
 import pytest
 
 
-@pytest.fixture
-def private_current_migration_database(tmp_path, transactional_db, django_db_blocker):
-    """Migrate a current-schema copy without replaying unrelated teardown DDL.
+@pytest.fixture(scope="session")
+def historical_migration_templates(tmp_path_factory, django_db_blocker, migrated_145):
+    """Build each business migration's empty predecessor once.
 
-    Tests keep their real rollback, historical rows, and forward migration.
-    Their private file can be discarded after the assertions; the shared
-    database never changes schema and needs no migration back to the leaf.
+    The full custom-backend install/rollback test covers latest -> 0146.
+    Business migration tests need historical rows and their real upgrade,
+    rather than another rollback of every unrelated later migration.
     """
-    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+    from django.db.migrations.recorder import MigrationRecorder
+
     from tests.test_sqlite_migration_integration import default_alias_database
 
-    assert not connection.in_atomic_block
+    templates = {}
+
+    def predecessor(target):
+        if target not in templates:
+            path = tmp_path_factory.mktemp(target[1]) / "template.sqlite3"
+            shutil.copyfile(migrated_145, path)
+            with default_alias_database(path, django_db_blocker, standard=True) as database:
+                MigrationExecutor(database).migrate([target])
+                assert target in MigrationRecorder(database).applied_migrations()
+            templates[target] = path
+        return templates[target]
+
+    return predecessor
+
+
+@pytest.fixture
+def historical_migration_database(request, tmp_path, transactional_db, django_db_blocker,
+                                  historical_migration_templates):
+    """Give each test a private closed-file copy of its explicit predecessor."""
+    from tests.test_sqlite_migration_integration import default_alias_database
+
     path = tmp_path / "migration.sqlite3"
-    connection.ensure_connection()
-    with closing(sqlite3.connect(path)) as destination:
-        connection.connection.backup(destination)
+    shutil.copyfile(historical_migration_templates(request.param), path)
     with default_alias_database(path, django_db_blocker, standard=True) as database:
         yield database
 
@@ -39,7 +58,7 @@ def memoized_migration_parsing():
     Each fixture connection owns these bounded caches. Non-exact strings
     retain their original protocol behavior.
     """
-    from twicc.db.backends.sqlite3 import metadata
+    from twicc.db.backends.sqlite3 import effects, metadata, schema
 
     def cached(function):
         memo = lru_cache(maxsize=2048)(function)
@@ -51,7 +70,11 @@ def memoized_migration_parsing():
 
     with ExitStack() as stack:
         for name in ("canonical_identifier", "sql_tokens", "declarations"):
-            stack.enter_context(patch.object(metadata, name, cached(getattr(metadata, name))))
+            original = getattr(metadata, name)
+            replacement = cached(original)
+            for module in (metadata, effects, schema):
+                if getattr(module, name, None) is original:
+                    stack.enter_context(patch.object(module, name, replacement))
         yield
 
 
@@ -110,7 +133,9 @@ def migrated_145(tmp_path_factory, django_db_blocker):
     from tests.test_sqlite_migration_integration import M145, M146, default_alias_database
 
     path = tmp_path_factory.mktemp("migrated_145") / "template.sqlite3"
-    with default_alias_database(path, django_db_blocker) as db:
+    # Only the upgrade from this fixture is under test. The independent
+    # fresh-install test still applies the whole chain with the custom backend.
+    with default_alias_database(path, django_db_blocker, standard=True) as db:
         MigrationExecutor(db).migrate([M145])
         records = MigrationRecorder(db).applied_migrations()
         assert M145 in records and M146 not in records

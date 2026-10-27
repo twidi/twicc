@@ -259,13 +259,23 @@ def test_real_workers_deliver_status_and_restart_without_receiver_leaks():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_writer_shutdown_cleans_executors_when_a_live_receiver_cannot_join():
+def test_writer_shutdown_cleans_executors_when_a_live_receiver_cannot_join(monkeypatch):
+    import threading
+
     from twicc.providers import compute_executor
 
     async def scenario():
         db_writer.start_db_writer()
         run_id, completion = db_writer.arm_compute_completion(Provider.CODEX, set(), 0)
         stream = db_writer.create_compute_result_stream(Provider.CODEX, run_id)
+        receiving = threading.Event()
+        receive = stream.reader.recv_bytes
+
+        def blocked_receive():
+            receiving.set()
+            return receive()
+
+        monkeypatch.setattr(stream.reader, 'recv_bytes', blocked_receive)
         spawn = multiprocessing.get_context('spawn')
         reader, writer = spawn.Pipe(duplex=False)
         process = spawn.Process(target=_partial_result, args=(stream.sender, writer))
@@ -275,9 +285,21 @@ def test_writer_shutdown_cleans_executors_when_a_live_receiver_cannot_join():
             writer.close()
             assert await asyncio.to_thread(reader.poll, 5)
             reader.recv_bytes()
-            await asyncio.sleep(.1)
-            with pytest.raises(ExceptionGroup, match='compute transport shutdown'):
-                await asyncio.wait_for(db_writer.stop_db_writer(), 3)
+            assert await asyncio.to_thread(receiving.wait, 5)
+            join = stream.thread.join
+            waits = []
+
+            def bounded_join(timeout):
+                waits.append(timeout)
+                join(.01)
+
+            # The receiver is blocked in a real partial frame. Check the
+            # production grace period without spending that second here.
+            with monkeypatch.context() as patch:
+                patch.setattr(stream.thread, 'join', bounded_join)
+                with pytest.raises(ExceptionGroup, match='compute transport shutdown'):
+                    await asyncio.wait_for(db_writer.stop_db_writer(), 3)
+            assert waits == [1]
             assert db_writer._db_writer_task is None
             assert compute_executor._executor is None
             assert compute_executor._application_executor is None

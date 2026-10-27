@@ -31,7 +31,8 @@ def _make(Peer, PeerMessage, message_id, payload, meta=(), **extra):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_old_rows_are_converted(private_current_migration_database):
+@pytest.mark.parametrize("historical_migration_database", [MIGRATE_FROM[0]], indirect=True)
+def test_old_rows_are_converted(historical_migration_database):
     _apps, Peer, PeerMessage = _models(MIGRATE_FROM)
     files = _make(Peer, PeerMessage, "files", {"text": "files", "images": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PNG}},
@@ -73,7 +74,8 @@ def test_old_rows_are_converted(private_current_migration_database):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_rows_are_loaded_one_at_a_time(private_current_migration_database):
+@pytest.mark.parametrize("historical_migration_database", [MIGRATE_FROM[0]], indirect=True)
+def test_rows_are_loaded_one_at_a_time(historical_migration_database):
     apps, Peer, PeerMessage = _models(MIGRATE_TO)
     for index in range(3):
         _make(Peer, PeerMessage, f"m{index}", {"text": "x", "images": [], "documents": []})
@@ -87,7 +89,8 @@ def test_rows_are_loaded_one_at_a_time(private_current_migration_database):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_the_reverse_is_a_noop(private_current_migration_database):
+@pytest.mark.parametrize("historical_migration_database", [MIGRATE_FROM[0]], indirect=True)
+def test_the_reverse_is_a_noop(historical_migration_database):
     _apps, Peer, PeerMessage = _models(MIGRATE_TO)
     pk = _make(Peer, PeerMessage, "new", {"text": "x"})
     _apps, _Peer, PeerMessage = _models(MIGRATE_FROM)
