@@ -204,18 +204,26 @@ export const TREE_MAX_INDENT_LEVEL = 3
  * Flatten the tree into display rows, pre-order. Children are listed only
  * under expanded nodes.
  *
+ * `isLast`: the node is the last child of its parent (roots: true).
+ * `through`: length `max(depth - 1, 0)`; entry `i` is true when the ancestor
+ * at depth `i + 1` is not the last child of its parent, i.e. its vertical
+ * guide continues through this row.
+ *
  * @param {{ nodes: Map<string, Object>, rootIds: string[] }} tree
  * @param {(id: string) => boolean} isExpanded
- * @returns {Array<{ id: string, depth: number }>}
+ * @returns {Array<{ id: string, depth: number, isLast: boolean, through: boolean[] }>}
  */
 export function flattenTree(tree, isExpanded) {
     const rows = []
-    const visit = (id, depth) => {
-        rows.push({ id, depth })
+    // `ancestorsNotLast`: for each ancestor at depth >= 1, whether it is not last.
+    const visit = (id, depth, isLast, ancestorsNotLast) => {
+        rows.push({ id, depth, isLast, through: depth > 1 ? ancestorsNotLast.slice(0, depth - 1) : [] })
         if (!isExpanded(id)) return
-        for (const childId of tree.nodes.get(id).childIds) visit(childId, depth + 1)
+        const childIds = tree.nodes.get(id).childIds
+        const next = depth >= 1 ? [...ancestorsNotLast, !isLast] : ancestorsNotLast
+        childIds.forEach((childId, i) => visit(childId, depth + 1, i === childIds.length - 1, next))
     }
-    for (const id of tree.rootIds) visit(id, 0)
+    for (const id of tree.rootIds) visit(id, 0, true, [])
     return rows
 }
 

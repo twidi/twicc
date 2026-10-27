@@ -272,17 +272,20 @@ const flatForest = () => build([
 
 test('collapsed nodes hide their children', () => {
     const rows = flattenTree(flatForest(), () => false)
-    assert.deepEqual(rows, [{ id: 'a', depth: 0 }, { id: 'e', depth: 0 }])
+    assert.deepEqual(rows, [
+        { id: 'a', depth: 0, isLast: true, through: [] },
+        { id: 'e', depth: 0, isLast: true, through: [] },
+    ])
 })
 
 test('expanded nodes list children right after the parent with depth + 1', () => {
     const rows = flattenTree(flatForest(), id => id === 'a' || id === 'b')
     assert.deepEqual(rows, [
-        { id: 'a', depth: 0 },
-        { id: 'b', depth: 1 },
-        { id: 'd', depth: 2 },
-        { id: 'c', depth: 1 },
-        { id: 'e', depth: 0 },
+        { id: 'a', depth: 0, isLast: true, through: [] },
+        { id: 'b', depth: 1, isLast: false, through: [] },
+        { id: 'd', depth: 2, isLast: true, through: [true] },
+        { id: 'c', depth: 1, isLast: true, through: [] },
+        { id: 'e', depth: 0, isLast: true, through: [] },
     ])
 })
 
@@ -290,6 +293,40 @@ test('isExpanded = () => true lists the whole forest in display order', () => {
     const rows = flattenTree(flatForest(), () => true)
     assert.deepEqual(rows.map(r => r.id), ['a', 'b', 'd', 'c', 'e', 'f'])
     assert.deepEqual(rows.map(r => r.depth), [0, 1, 2, 1, 0, 1])
+})
+
+test('through is false under a last-child ancestor', () => {
+    // Chain r(k(m(n))): k is the last child of r, so its guide stops.
+    const tree = build([
+        s('r', { mtime: 500 }),
+        s('k', { spawned_by: 'r', mtime: 400 }),
+        s('m', { spawned_by: 'k', mtime: 300 }),
+        s('n', { spawned_by: 'm', mtime: 200 }),
+    ])
+    const rows = flattenTree(tree, () => true)
+    assert.deepEqual(rows.find(r => r.id === 'm').through, [false])
+})
+
+test('a depth-4 row has through of length 3', () => {
+    const tree = build([
+        s('r1', { mtime: 500 }),
+        s('r2', { spawned_by: 'r1', mtime: 400 }),
+        s('r3', { spawned_by: 'r2', mtime: 300 }),
+        s('r4', { spawned_by: 'r3', mtime: 200 }),
+        s('r5', { spawned_by: 'r4', mtime: 100 }),
+    ])
+    const rows = flattenTree(tree, () => true)
+    const row = rows.find(r => r.id === 'r5')
+    assert.equal(row.depth, 4)
+    assert.equal(row.through.length, 3)
+    assert.deepEqual(row.through, [false, false, false])
+})
+
+test('isLast is correct for visible rows when siblings are collapsed', () => {
+    const rows = flattenTree(flatForest(), id => id === 'a')
+    assert.deepEqual(rows.map(r => [r.id, r.isLast]), [
+        ['a', true], ['b', false], ['c', true], ['e', true],
+    ])
 })
 
 test('TREE_MAX_INDENT_LEVEL is 3', () => {
