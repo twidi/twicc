@@ -106,6 +106,7 @@ MCP_TOOL_GROUPS: dict[str, str] = {
     "workspaces": "read",
     "topology": "read",
     "search": "read",
+    "timeline": "read",
     "status": "read",
     "info": "read",
     "usage": "read",
