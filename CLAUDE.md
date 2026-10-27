@@ -1,239 +1,164 @@
-# CLAUDE.md
+# TwiCC agent instructions
 
-**TwiCC** (The Web Interface for Claude and Codex) — self-contained web UI for browsing and interacting with Claude Code and Codex sessions. Single process, zero external services, one command to launch.
+**TwiCC** (The Web Interface for Claude and Codex) is a self-contained web UI. It browses and drives Claude Code and Codex sessions. One process, no external service.
 
-## Working Rules
+This file is shared by Claude (`CLAUDE.md`) and Codex (`AGENTS.md`). Lines marked **Claude:** or **Codex:** apply to that provider only.
 
-- **Quality:** best standards everywhere. Only allowed shortcuts: no mandatory tests or linting.
-- **Never implement without explicit invitation.** When the user explains requirements or shares thoughts, wait for confirmation before writing code. Ask clarifying questions, but an explanation is not an invitation.
-- **Preserve existing user changes.** The current checkout may already contain uncommitted changes. Treat any change you did not make as user-owned: do not revert, overwrite, move, or clean it up unless the user explicitly asks.
-- **Git rebase:** never on remote branches (`origin/main`, …) unless explicitly asked. Always rebase on the local branch; if it exists, use it.
-- **Language:** all written artifacts — code, UI strings, comments, names, docs (incl. `docs/plans/`) — in English. French is reserved for live chat (and the dev's `CLAUDE.local.md`). Even when the user speaks French, write UI/code/docs in English.
+## Working rules
 
-## Commit Conventions
+- **Quality:** use the best standards. The only allowed shortcut: tests and linting are not mandatory.
+- **Never implement without an explicit invitation.** An explanation of requirements is not an invitation. Ask questions, then wait.
+- **Preserve user changes.** The checkout can contain uncommitted changes you did not make. Do not revert, overwrite, move or clean them.
+- **Rebase:** never on a remote branch (`origin/main`, …) unless asked. Rebase on the local branch.
+- **Language:** write all artifacts in English: code, UI strings, comments, names, docs (incl. `docs/plans/`). French is for live chat only.
+- **Local instructions:** **Claude:** `CLAUDE.local.md` loads automatically. **Codex:** if `AGENTS.local.md` exists at the repo root, read it after this file. It extends this file and wins on conflict. Direct system, developer and user instructions win over both.
 
-- Format the subject line as a Conventional Commit — `type(scope): summary` (scope optional), with `type` one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore` (etc.) and a lowercase summary.
-- When creating commits, include a descriptive commit body that explains the change, not only a subject line.
-- Add a `Co-Authored-By: Claude MODEL <noreply@anthropic.com>` trailer for the model that performed the work. `MODEL` is the exact name of the Claude model you are currently running as, taken from your own environment at commit time — e.g. `Opus 4.8 (1M context)`, `Fable 5`, `Sonnet 4.6`. Do not hardcode a model name; use whichever one is actually running.
-- **CHANGELOG:** Never write or update the changelog without an explicit user request. Only ever write to the `## [Unreleased]` section — create it at the top (above the newest dated release) if it is absent. NEVER modify a numbered, dated release section (`## [X.Y.Z] - DATE`): it is frozen history. Before touching the file, re-read its top and confirm which section a line actually falls under — `[Unreleased]` entries get promoted into a dated release between turns, so a line that was correct earlier may now sit under a released version. If so, add a new `[Unreleased]` entry rather than editing the promoted line (even to "extend" it, e.g. bumping `...to vB` → `...to vC`).
+## Commits and CHANGELOG
 
-## Operations Reserved to User
+- Subject: Conventional Commit, `type(scope): summary`, lowercase summary (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, …).
+- Always add a body that explains the change.
+- Trailer, with the exact name of the model you run as now (never hardcode it):
+  - **Claude:** `Co-Authored-By: Claude MODEL <noreply@anthropic.com>`.
+  - **Codex:** `Co-Authored-By: Codex MODEL <codex@openai.com>`.
+- **CHANGELOG:** write it only on explicit request. Write only in `## [Unreleased]` (create it at the top if absent). Never edit a dated release section (`## [X.Y.Z] - DATE`). Re-read the top of the file first: an `[Unreleased]` line can be promoted into a release between turns. If so, add a new `[Unreleased]` entry.
+- Releases: follow `docs/release-process.md`.
 
-Never run these on your own initiative. If the user explicitly asks, do it without confirmation. Otherwise notify at task end (or pause and ask if truly necessary mid-task):
+## Operations reserved to the user
 
-- **Django migrations:** after you modify models and create the migration, remind the user to `migrate` their own running instance. (Starting/restarting via `devctl.py` auto-applies migrations at backend startup — never `migrate` by hand to bring servers up.)
-- **Dev server restart:** after backend changes, remind the user to restart via `devctl.py` (no need to do it on every message)
-- **Package installation:** after adding deps, remind the user to run `npm install` or `uv add`. (`devctl.py start` already runs `npm ci` via the editable rebuild — never pre-run it yourself.)
+Do not run these on your own initiative. On explicit request, run them without confirmation. Otherwise, remind the user at the end of the task.
+
+- **Django `migrate`** after you create a migration. (`devctl.py start` applies migrations itself.)
+- **Dev server restart** after backend changes (via `devctl.py`).
+- **Package installation** (`npm install`, `uv add`). On request: `cd <target> && uv add <pkg>`. Never `uv pip install`.
 
 ## Stack
 
-uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels + InMemoryChannelLayer · SQLite (WAL) · watchfiles · claude-agent-sdk + openai_codex · Vue 3 (Composition API, `<script setup>`) + Vite 7 · Pinia + VueUse · Web Awesome 3+ (`wa-*`) · CodeMirror 6 · xterm.js (PTY) · markdown-it + shiki + mermaid.
+uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels (in-memory layer) · SQLite (WAL) · watchfiles · claude-agent-sdk + openai_codex · Vue 3 (`<script setup>`) + Vite 7 · Pinia + VueUse · Web Awesome 3 (`wa-*`) · CodeMirror 6 · xterm.js · markdown-it + shiki + mermaid.
 
-**Python lint: ruff (line-length=120), NOT an installed dependency** — always `uvx ruff check .`; `uv run ruff` fails with `Failed to spawn: ruff`. (It gets declared and pinned the day the project-wide lint pass happens, not before.) Same rule for **any** Python tool absent from the env: run it with `uvx <tool> …` instead of reporting it as missing, and never `uv add` it just to make a command work.
+## Commands and tools
 
-**Tests: pytest + pytest-django** (declared in the default `dev` dependency group, so `uv run` installs them in each checkout's own `.venv`, worktrees included). Run `cd <checkout> && uv run pytest` (main repo or worktree): `twicc.settings_test` isolates everything on its own — a throwaway data dir, provider homes and DB, no `TWICC_*` variable or `.env` inherited — and forbids the real data dirs (`~/.twicc` and any inherited `TWICC_DATA_DIR`), so a test that escapes the isolation fails instead of writing into a live instance. Never add `TWICC_DATA_DIR=` to a pytest command: it is ignored.
+- **Lint:** `uvx ruff check .` (ruff is not installed; `uv run ruff` fails). Run any absent Python tool with `uvx <tool>`. Never `uv add` a tool to make a command work.
+- **Python tests:** `cd <checkout> && uv run pytest`. `twicc.settings_test` isolates data dir, provider homes and DB, and forbids the real data dirs. Never add `TWICC_DATA_DIR=` to a pytest command.
+- **Frontend tests:** `cd frontend && npm test`.
+- **Codex real-binary tests** (`tests/test_codex_migration_integration.py`): skipped unless `TWICC_CODEX_INTEGRATION=1`.
+- **Hermetic LLM diagnostic:** run `uv run python scripts/diagnose_hermetic_llm.py --provider all --live --yes` after one of these changes:
+  - the small Codex model (`TITLE_MODEL`, `_REFRESH_MODEL`);
+  - a Codex or vendored Codex SDK update (`docs/codex-vendoring.md`);
+  - a Claude Agent SDK update.
 
-**Hermetic LLM diagnostic:** after changing the small Codex model (`TITLE_MODEL`, `_REFRESH_MODEL`), updating Codex or its vendored SDK (`docs/codex-vendoring.md`), or updating the Claude Agent SDK, run `uv run python scripts/diagnose_hermetic_llm.py --provider all --live --yes` and do not ship on a `FAIL` or `INCONCLUSIVE`.
+  Do not ship on `FAIL` or `INCONCLUSIVE`.
 
-**Codex real-binary integration tests** (`tests/test_codex_migration_integration.py`, rollout migration against the bundled `codex` in a throwaway `CODEX_HOME`) are skipped unless `TWICC_CODEX_INTEGRATION=1`; they need the runtime already downloaded. They never touch `~/.codex`.
-
-**uv — never target the ACTIVE environment.**
+### uv: never target the ACTIVE environment
 
 | Command | Targets | |
 |---|---|---|
-| `uv run` · `uv sync` · `uv add` | the cwd's project | ✅ |
-| `uvx <tool>` | nothing, ephemeral | ✅ |
-| `uv pip …` | the ACTIVE environment | ❌ |
-| anything `--active` | the ACTIVE environment | ❌ |
+| `uv run` · `uv sync` · `uv add` | the project of the cwd | ✅ |
+| `uvx <tool>` | nothing (ephemeral) | ✅ |
+| `uv pip …` · anything with `--active` | the ACTIVE environment | ❌ |
 
-`VIRTUAL_ENV` says nothing about your project: an agent session inherits it from the TwiCC backend, which runs under `uv` in the MAIN repo. The ❌ forms do not merely READ that environment — uv treats it as the current project's environment and SYNCS the project into it. Run from a worktree, they install the worktree's editable package into the MAIN repo's venv, which then imports the worktree's sources until someone rebuilds it. Silent corruption of another checkout; it happened on 2026-08-14.
+An agent session inherits `VIRTUAL_ENV` from the TwiCC backend, which runs in the MAIN repo. The ❌ forms sync the project into that venv: from a worktree, they make the main repo import the worktree's sources. The `does not match the project environment path` warning is normal: never "fix" it with `--active`.
 
-The ✅ forms resolve the project from the cwd and ignore a mismatched `VIRTUAL_ENV`. The `does not match the project environment path` warning they print is that mechanism working — never "fix" it with `--active`.
+To check which sources you run: `uv run python -c "import twicc; print(twicc.__file__)"`. The path must be inside your checkout.
 
-**Adding a dependency** is the user's call (see Operations Reserved to User) — but when they ask you to do it: `cd <target> && uv add <pkg>`. Never `uv pip install`.
+## Data directory
 
-**In doubt, check what you IMPORT, not which venv you are in:** `uv run python -c "import twicc; print(twicc.__file__)"` — the path must be inside the directory you are working in. `sys.prefix` does not answer this: the editable install's `.pth` can point at another checkout's `src`.
+- Resolution in `src/twicc/paths.py`: `$TWICC_DATA_DIR` if set, else `~/.twicc/` (the **prod** data dir).
+- `paths.py` does **not** detect worktrees. Only `devctl.py` sets `TWICC_DATA_DIR=<worktree root>`.
+- The `.env` in the data dir wins over the inherited environment. `TWICC_DATA_DIR` comes only from the environment.
+- Provider homes (`CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME`) come **only** from the `.env`. Read every provider path through `src/twicc/provider_homes.py` at call time, never as an import-time constant. Give every launched process `provider_env_overlay()`. Design: `docs/plans/2026-09-02-provider-home-dirs-design.md`.
+- Contents and backups: see `src/twicc/paths.py` and `src/twicc/data_backups.py`.
 
-Frontend tests: `cd frontend && npm test` (node:test, auto-discovers `src/**/*.test.js`).
-
-## Architecture
-
-Entry: `run.py → cli.main()`.
-
-- **Startup:** *Log trim* drops the `backend.log` entries older than 30 days, always keeping the log's last 7 days of activity (`twicc/log_retention.py`: bisection on the entry timestamps + atomic tail copy, under the instance lock before the `delay`ed file handler opens the file; opt-out `TWICC_NO_LOG_TRIM=1` in the `.env`, set by devctl in worktrees). *Initial sync* scans each provider data root (`~/.claude/projects/`, `~/.codex/sessions/`, …) and bulk-inserts raw `SessionItem`s (fast, no metadata). Then a separate *background compute* process fills metadata (display_level, kind, groups, costs, git) for sessions whose `compute_version` is below the provider's `CURRENT_COMPUTE_VERSION`, then exits.
-- **Django ASGI:** HTTP (REST + SPA catch-all) and WebSocket — `/ws/` `UpdatesConsumer` (data sync, process control, title suggestions) and `/ws/terminal/<session_id>/` (raw ASGI PTY, optional tmux).
-- **watchfiles task:** JSONL change → incremental read from `last_offset` → save to DB (full metadata, inline for real-time accuracy) → WS broadcast → Pinia → Vue.
-- **Periodic:** price sync from OpenRouter (24h); usage quota fetch from provider APIs (5min where supported) — idle-gated: the fetch loops pause after 30min with no human presence (monotonic) and no active agent, resuming eagerly on a presence ping or an agent entering ASSISTANT_TURN (`twicc/usage_task.py` `should_run_usage_cycle`/`note_activity`).
-- **Agent managers:** provider SDKs drive interactive sessions → providers write JSONL → watcher picks up.
-- **MCP server:** the skill-covered CLI surface is auto-exposed as MCP tools at `/mcp` (raw-ASGI in front of Django, token-auth; `src/twicc/mcp/`), wired per-session into both providers (Claude `mcp_servers`, Codex `thread_start` config). Tools run in-process: reads via `rpc/invoker`, writes through the dual-mode drop-request transport (`cli/_drop_request/transport.py`) straight into `core/services/*` — no drop files. A control plane orthogonal to project permissions: every tool available in every mode and auto-approved (Claude allow-lists `mcp__twicc` **and** auto-allows it in `can_use_tool` — the allow-list is required because `dontAsk`/read-only denies a permissioned tool before the callback fires; Codex `default_tools_approval_mode="approve"`). Adding a CLI command auto-adds the RPC route AND the MCP tool. Kill switch `TWICC_NO_MCP=1`; Codex schema deferral behind the `TWICC_MCP_CODEX_DEFER` constant. The external MCP exposes MCP Events (`session.concluded`, webhook only).
-
-**Sync strategy:** JSONL files are append-only — on change, compare `mtime`, `seek(last_offset)`, read new lines, insert, update offset.
-
-## Data Directory
-
-All persistent data (db, logs, config) lives in one data dir, resolved (centralized in `src/twicc/paths.py`; `devctl.py` has equivalent standalone logic):
-
-1. git worktree → worktree root (forced); 2. `$TWICC_DATA_DIR` if set; 3. default `~/.twicc/`.
-
-**The `.env` wins over the environment** — loaded once per process by `paths.ensure_env_loaded()` (on any `import twicc`), a key defined there replaces an inherited value. The provider home keys `CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CODEX_HOME` (official names, absolute paths, plain `KEY=VALUE` lines) are read **only** from the `.env` (an inherited value is dropped with a warning); `TWICC_DATA_DIR` is read **only** from the environment (it locates the `.env`). Every read of a provider path goes through `twicc/provider_homes.py` at call time (never an import-time constant), and every launched process gets `provider_env_overlay()` explicitly (purges re-apply it). Design: `docs/plans/2026-09-02-provider-home-dirs-design.md`.
-
-Contents: `.env` (infra config: ports, password hash, provider homes, `TWICC_NO_LOG_TRIM`), synced user config (`settings.json`, `workspaces.json`, `layouts.json` (named-layouts catalog), `terminal-config.json`, `message-snippets.json`, `seen-tips.json`, `seen-help.json`, `providers-status.json` (per-provider upstream status: current value, last incident, user acknowledgment), `{provider}-settings-presets.json`), `backups/` (dated versions of the root user-data files — settings, workspaces, layouts, presets, snippets, terminal config, seen tips/help, api tokens, `.env`, `secret-key` — taken on change by `twicc/data_backups.py`: startup scan + root watcher; keeps the 30 newest + the newest of the 30 last days with a change; restore = stop TwiCC, copy a version back), `db/data.sqlite(+shm/+wal)`, `search-index/` (Tantivy), `cache/` (generated hermetic Codex catalogues, safe to delete), `drop-requests/` (CLI drop-files picked up by a watcher), `composer-attachments/` (staging of attached files: the composer's, and one-shot entries of the CLI/API, `<bucket>/<id>/`), `logs/` (`backend.log`, `frontend.log`, and in dev mode, `sdk/{provider}/{session_id}.jsonl`).
-
-## devctl.py — Dev Servers
-
-Use when the user asks to start/stop/restart dev servers.
+## devctl.py: dev servers
 
 ```bash
 uv run ./devctl.py start|stop|restart [front|back|all]
 uv run ./devctl.py status
 uv run ./devctl.py logs [front|back] [--lines=N]
-uv run ./devctl.py kill-tmux   # worktrees only: kill the instance's two tmux servers (terminals + hybrid CLIs)
+uv run ./devctl.py kill-tmux   # worktrees only
 ```
 
-Default ports: frontend 5173, backend 3500 (verified after start). `start --empty-db` for a fresh DB in worktrees on user request, `start --fresh-providers` for that plus the worktree's own empty provider homes. Debug via `<data_dir>/logs/{backend,frontend}.log`. PIDs in `.devctl/pids/` (always local to project/worktree root).
-
-**To start/restart, run the single `start` command and read the logs — devctl does everything:** it rebuilds the editable install (runs `npm ci`), auto-applies pending migrations at startup, on first setup copies db + search index + user config from `~/.twicc/` (never `.env`, `logs/`, `drop-requests/`) and symlinks `artifacts/` + `scratch/` to `~/.twicc/` (shared with the main instance; `--empty-db` drops the symlinks for isolation), finds free ports (default+1: 3501/5174), writes them to `.env` along with `TWICC_NO_LOG_TRIM=1` (no startup log trim in a worktree).
-
-**Never run `npm install`/`npm ci`, `migrate`, or touch `node_modules` yourself when starting servers** — wasted and harmful: a parallel `npm install` corrupts devctl's `npm ci` (`ENOTEMPTY`). The post-start port check can time out during initial sync — not a failure; confirm via `backend.log`.
-
-When starting in a worktree, give the user the localhost URLs from devctl's output. When asked to exit/kill/delete a worktree, you MUST run `stop all` and then `kill-tmux` even if you didn't start the processes (the worktree's tmux servers would otherwise outlive the checkout; `kill-tmux` is not part of `stop` because hybrid CLIs must survive a backend restart).
+- Default ports: frontend 5173, backend 3500. Debug with `<data_dir>/logs/{backend,frontend}.log`.
+- To start, run **one** `start` command and read the logs. devctl runs `npm ci`, applies migrations, and in a worktree copies the DB and user config, picks free ports and writes the `.env`.
+- **Never** run `npm install`/`npm ci`, `migrate`, or touch `node_modules` to start servers. A parallel `npm install` corrupts devctl's `npm ci` (`ENOTEMPTY`).
+- A post-start port-check timeout during initial sync is not a failure. Confirm in `backend.log`.
 
 ### Worktrees
 
-devctl auto-detects worktrees and sets `TWICC_DATA_DIR=<worktree root>`, so each worktree has its own backend/frontend, `.env` (ports), `.devctl/`, `db/`, `logs/`, and json data files. Always check your cwd before starting so you know whether you're in a worktree. A worktree `.env` may also define its own provider homes (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, see Data Directory) so a risky change never touches the real `~/.claude` / `~/.codex`; devctl prints the resolved homes at `start`/`status`. `start --fresh-providers` writes those keys for you (`provider-homes/{claude,codex}` in the worktree, Codex login copied, Claude credentials kept via the empty securestorage value) so the initial sync has no session history to re-scan; it implies `--empty-db` and never overwrites a home already in the `.env`. A worktree backend also lets a **direct loopback** request past the instance password (`TWICC_DEV_LOCAL_BYPASS`, set by devctl): a worktree's DB dies with the checkout, so its login session never survives a re-creation and an agent that starts one would face a login screen for a password it has no reason to know. Refused unless the data dir really IS a git worktree, and refused for any request carrying a forwarding header — so the same instance reached through its tunnel keeps asking. `twicc/auth/access.py` is the single gate every password check goes through (`request_allowed`/`scope_allowed`); never re-implement one inline. tmux sockets are per data dir (`twicc-<sha8>` / `twicc-hybrid-<sha8>`, `paths.tmux_socket_suffix`), so a worktree's terminals, hybrid CLIs, boot adoption and reaper never see the main instance's.
+- Each worktree has its own data dir: `.env` (ports), `.devctl/`, `db/`, `logs/`, JSON data files.
+- **Prefix every Bash command with `cd <worktree> && `.** A wrong cwd on `devctl stop/restart` or `migrate` hits the main servers and data.
+- Give the user the localhost URLs that devctl prints.
+- `start --empty-db`: fresh DB. `start --fresh-providers`: fresh DB plus the worktree's own empty provider homes. Otherwise the worktree shares the provider homes of its `.env` (by default the real `~/.claude` / `~/.codex`).
+- To exit or delete a worktree, **always** run `stop all` then `kill-tmux`, even if you did not start the processes.
+- A worktree backend lets direct loopback requests skip the password. All password checks go through `src/twicc/auth/access.py`. Never write one inline.
 
-**Prefix every Bash command with `cd <worktree> && `** — never trust the persistent cwd. A wrong cwd on a destructive command (`devctl restart/stop`, manual `migrate`) hits the main project's servers/data dir and kills real work.
+### Python or Django outside devctl
 
-**Running Python/Django without devctl:** `paths.py` does NOT detect worktrees (only devctl injects `TWICC_DATA_DIR`). Any other invocation (one-liners, `manage.py`, shell, ad-hoc migrations) silently falls back to `~/.twicc/` — the **prod** data dir — even after `cd`. So always do both: (1) `cd` into the worktree (editable install resolves to its source + migrations); (2) set `TWICC_DATA_DIR=$PWD` in the command's env.
+Without `TWICC_DATA_DIR`, Python or Django outside devctl (`manage.py`, shell, one-liners) uses `~/.twicc/`, even after `cd`. A `migrate` there applies branch migrations to the prod DB. Do both steps, then check the DB path:
 
 ```bash
 cd <worktree>
 TWICC_DATA_DIR=$PWD uv run python -m django <command> --settings=twicc.settings
+# check: settings.DATABASES['default']['NAME'] must be inside the worktree
 ```
 
-Before any data-dir-dependent read/write (esp. migrations), sanity-check the resolved path:
-```python
-from django.conf import settings; print(settings.DATABASES['default']['NAME'])  # must be inside the worktree
-```
-Forgetting this is destructive: a `migrate` from the wrong cwd applies branch-only migrations to the prod DB, leaving it unwritable by `main`.
+## Architecture map
 
-## Database Models
+- Entry: `run.py → cli.main()` (`src/twicc/cli/`). Startup: initial sync of provider roots into `SessionItem` rows, then a background compute process fills metadata (`compute_version`).
+- Django ASGI (`src/twicc/asgi.py`): REST + SPA, WebSocket `/ws/` (`UpdatesConsumer`) and `/ws/terminal/<session_id>/` (PTY).
+- Watcher (`src/twicc/providers/sessions_watcher.py`): JSONL files are append-only. On change, read from `last_offset`, save, broadcast over WS to Pinia.
+- Agent managers drive provider SDKs (`src/twicc/providers/`). Providers write JSONL. The watcher picks it up.
+- Periodic tasks (price sync, usage quotas): `src/twicc/pricing_task.py`, `src/twicc/usage_task.py`.
+- MCP server: `src/twicc/mcp/`. A new CLI command auto-adds its RPC route and MCP tool. Kill switch: `TWICC_NO_MCP=1`.
+- Models: `src/twicc/core/models.py`. Frontend: `frontend/src/`. Designs: `docs/plans/`.
 
-Key models in `src/twicc/core/models.py` (read the source for full field lists; non-obvious points only here):
+## Backend invariants
 
-- **`Project`** — cross-provider working dir, ID from path via `path_to_project_id`. `worktree_of` is an auto-detected self-FK to the main repo (never set manually; a worktree's sessions/cost/activity aggregate into it). Per-project agent defaults `default_provider` + `default_agent_settings` seed NEW sessions, inherited up the chain (worktree main repo, then path ancestors), resolved **at creation only** by `projectAgentDefaults.js` (UI) and its mirror `project_agent_defaults.py` (CLI) — never re-resolved for a running session. `default_layout_id` (nullable CharField) seeds the new session's `Session.layout` the same way — inherited up the same chain when null, with the global `settings.defaultLayoutId` as ultimate fallback. `default_browser_url` (nullable CharField) is the session Browser tab's default URL, inherited up the same chain with a workspace-level `browserUrl` (workspaces.json) fallback — resolved live by the pane, never materialized.
-- **`Session`** — one JSONL file; `last_offset`/`last_line` drive incremental sync. Carries costs, `type` (session/subagent), `parent_session` (self-FK), lifecycle timestamps, the closed `AgentSettings` bundle (see below), `mute_on_user_turn` (mutable per-session UI state outside that bundle; suppresses the finished-working notification family **and** the session's unread state — a display gate in `frontend/src/utils/sessions.js` + the sticky `unread_only` filter in `views._get_sessions_page`, never a write path, so unmuting restores the accumulated unread; independent of `hidden`), `layout` (JSONField, the per-session dockable-layout intention blob — full intention minus the transient `maximized`; unlike the agent bundle it stays **mutable** after creation, persisted + synced like `annotations`), `browser_url` (nullable CharField, the Browser tab's last URL, restored at first activation after a reload — wins over the project/workspace default; mutable + synced like `layout`; the pane upgrades from toolbar-tracked to real in-page history when the embedded page includes the opt-in companion script (`/_twicc/browser-companion.js`, source `frontend/src/browser-companion/`, postMessage bridge)), and `tasks` (JSONField, latest cross-provider task/todo/plan snapshot — Claude `TodoWrite`/`Task*`, Codex `update_plan` — normalised to `{provider, source, line, updated_at, explanation, items:[{status, content?, activeForm?}]}`, refreshed by both compute paths; `{}` = none; mutable + synced like `layout`; drives the Tasks tab), and `plan_paths` (JSONField, plan-like documents the session touched — the native Claude plan plus pattern-detected docs (plans/specs/handoffs..., `providers/plan_docs.py`) written via file tools or shell commands, both providers; entries `{path, exists, created_at, updated_at, source}` with `path` relative to the project dir when inside it (worktree-portable), absolute otherwise; rebuilt authoritatively by full recompute, merged additively by live sync, native plan latched by the plans watcher; `[]` = none; drives the Plan tab), and `has_workflows` (bool, monotonic one-way — true once a `wf_*.json` file exists at the root of the session's `<id>/workflows/` folder; set by a filesystem probe in compute and latched live by the watcher, never reset to false; Claude-Code-only).
-- **`SessionItem`** — one JSONL line; `display_level` (ALWAYS/COLLAPSIBLE/DEBUG_ONLY), `kind`, `group_head`/`group_tail` for collapsible groups.
-- **`PeerMessage`** — one cross-instance message. The local session link is `origin_session` for an outbound row and `delivered_to_session` for an inbound row. `reply_to_message` resolves the answered row once within the peer relationship. `(peer_id, thread_id)` is the local thread key; `thread_id` never crosses the wire. Design: `docs/plans/2026-08-11-peer-threading-design.md`.
-- **`TimelineEvent`** — append-only history of what happened to a session (and to the backend instance: `session_id`/`project` NULL). `session_id` is a plain CharField (like `ProcessRun`), `project` a raw FK. Kinds are a closed `subject.verb` enum (`<subject>.started`/`.ended` intervals, past-participle points); payloads are validated per kind (`core/timeline.py`). Written **only** through `core/services/session_timeline.record_event[_sync]` — never inserted directly, never raising, always under the DB write lock, with an explicit hook at every writer of the fact (never Django signals: the code base uses `queryset.update()`). `turn.ended` carries the background-work snapshot (non-null = waiting for the user while work still runs) and is re-emitted when it changes while idle; an `ended` row repeats the data of its open `started` row (`STARTED_OF`, applied by the recording service). Boot reconciliation (`timeline_boot.py`) writes `process.ended(reason="lost")` for processes a crash left behind; the creation rows of the sessions TwiCC did not see being created (`session.created` only; `timeline_backfill.py`) are written by the background compute in each root's final transaction, after its title step, from the `created_at` it has just computed, and by the Codex "mark unavailable" apply for the root of the marked session; the watcher hook writes the creation row of a session born while TwiCC runs. An `auto`/`agent` `title.changed` is written only for a session that has a `session.created` row. Every request-caused row also records its **origin**: `actor` (`user`/`agent`/`external`), `via` (`ui`/`cli`/`rpc`/`mcp_internal`/`mcp_external`), `actor_ref` (session id, API token id or MCP connection id) and `actor_name` (connection-name snapshot). The origin lives in the `request_origin` ContextVar (`twicc/request_origin.py`), set by every entry point (WS frame, REST middleware, RPC view, MCP call and batch child, drop-file watcher; the CLI writes it under `_origin` in the drop payload from `transport.submit`) and read by the services; a writer passes an explicit `actor=` only when it is NOT request-caused (then the origin fields are NULL). Deferred writers never read the carrier: pending title and pending creation attributes carry the origin captured with them, the process DEAD hook reads the origin paired with `kill_reason` (`StopOriginMixin`), and automatic steps (state-change funnel, cron restart, boot adoption, the restart of an `apply-settings` kill) run under the `system` marker. NULL `via` means "unknown" (old rows) or "automatic". The `provider` column (nullable; indexes `(occurred_at, id)` and `(provider, occurred_at, id)`) is filled by every writer through `resolve_provider` (explicit value, then the payload, then a bounded cache, then one primary-key query). Display: `GET /api/timeline/` (`core/services/timeline_feed.py`, owner-only, read-only) returns events newest first by a row-value keyset `before=<occurred_at>,<id>` (never the expanded `OR` form), `after_id` for the live fetch (capped at 500, `truncated`), a `latest_id` read first and a side table of the sessions the events cite. A trailing-throttled `timeline_changed` WebSocket message carrying `latest_id` (`core/services/timeline_signal.py`, requested after commit by every writer, the compute's creation step included) tells the **Timeline** tab to fetch `after_id`. `GET /api/timeline/` filters (`view`, the comma lists `families`, `authors` and `provider`, and `session`) narrow the first page, `before` and `after_id` alike: parsed and applied in `timeline_feed.py`, the view/families/authors predicate in `core/services/timeline_filters.py` (an unknown view, family, author or provider is a 400; a provider filter keeps the rows without a provider; partial index `idx_timeline_external` for the external author). The tab keeps them per timeline page, in memory only (`frontend/src/stores/timelineFilters.js`, lost on reload). Every read of `GET /api/timeline/` leaves out the events of a session hidden at read time (instance rows and rows that only cite it stay); the `after_id` response lists `hidden_sessions` / `shown_sessions` so an open list drops or merges them in place. Timeline is the first tab and the bare route of every scope page (global, workspace, project, worktree); Stats moved to `/stats`. Its logic is pure modules under `frontend/src/utils/timeline/` (feed queue, rows, wording), the components under `frontend/src/components/timeline/`. Designs: `docs/plans/2026-10-13-session-timeline-design.md`, `docs/plans/2026-10-14-timeline-actor-origin-design.md`, `docs/plans/2026-10-15-timeline-display-design.md`, `docs/plans/2026-10-18-timeline-compute-integration-design.md`, `docs/plans/2026-10-26-timeline-filters-design.md`.
-- **`ArtifactBookmark`** — user bookmark of one rendered artifact (`session` FK, denormalised raw `project` FK, `relative_path`, `name`, `scope` reusing `PinMode`; unique `(session, relative_path)`). Scope mirrors session pinning (project/workspace/all, worktree-aware at resolution); "not bookmarked" = no row. Browsed via the sidebar's Artifacts mode (`/…/artifacts/:bookmarkId?`). `allowed_hosts` (JSON dict) is the network-broker allowlist — see **Artifact Network Broker** below. `denied_hosts` (same shape) = explicit owner deny decisions, auto-refused without prompt in the owner preview (broker reads both dicts live). **`ArtifactNetworkDenial`** — refused-fetch provenance rows (share/ip/user_agent + counter, NULL share = owner preview), coalesced+flushed by `artifacts/denial_tracking.py`, purged on allow; powers the bookmark dialog's Network access section (design `2026-07-10-artifact-network-access-design.md`).
-- **`ToolResultLink`** / **`AgentLink`** — link tool_use ↔ tool_result / spawn-agent tool_use ↔ subagent session (both provider-agnostic).
-- **`AgentInteraction`** — one agent-control tool call (Claude `SendMessage` / `TaskStop` / `TaskOutput`, Codex `followup_task` / `send_message` / `interrupt_agent`) targeting an agent; `opens_run` makes it a run; counted only through the tree rule (target link **and** owner in the root tree).
-- **`AgentRunEnd`** — end evidence that is not a tool result (Claude notifications, the child interrupt marker, the Stop button's `ui_stopped` row; Codex `completed`, child turn end, owner turn abort). Whether an agent runs is decided only by `agent_run_states` (design `docs/plans/2026-09-26-subagent-runs-and-control-tools-design.md`).
-- **`Workflow`** — one Claude Code workflow run (`Workflow` tool / `wf_*.json`); `session` FK + unique `run_id`. `raw_json` = source of truth, a **3-state** enriched envelope (minimalist → synthesized running view → real `wf_*.json`), durable past Claude deleting the files; helper columns `script_hash`, `synthesis`, `cost`, `phases_cost`. Subagents are `Session`s keyed `<run_id>:<agent_id>`. Claude-Code-only; design in the workflows handoff under `docs/plans/`.
-- **`Share`** — one read-only public capability URL (`token`, 256-bit plaintext) to a `session` or `artifact_bookmark` (CheckConstraint: exactly one, matching `kind`); per-link `label`/`password_hash`/`expires_at`/`revoked_at`/`options` (kind-validated by `core/services/share_mutation.py`), denormalised `view_count`/`last_viewed_at`. Served under `/share/<token>/` ONLY on the dedicated share host (`shareBaseUrl`; host gate `origin_gate.py` (the common `PublicOriginGate`, design `docs/plans/2026-08-13-peer-origin-routing-design.md`), never the working origin); viewer bundle at `/_twicc/share/`. Agent-usable behind two default-off synced settings (`allowAgentSessionShares`/`allowAgentArtifactShares`): spawn-subtree scope + provenance (`Share.created_by_session`), shape-contract gate in the `*_from_payload` wrappers (`core/services/share_agent_gate.py`); the owner REST UI bypasses the gate. Agent extension: `docs/plans/2026-08-10-agent-sharing-design.md`. **`ShareAccess`** — one page-view row (pruned to 500/share). Design: `docs/plans/2026-07-05-sharing-design.md`.
-- **`ModelPrice`** (OpenRouter pricing) · **`UsageSnapshot`** (per-provider quotas) · **`WeeklyActivity`/`DailyActivity`** (stats by `(project, date, provider)`, `project=NULL` = global) · **`ProcessRun`** (live process, cron lifecycle + crash recovery) · **`SessionCron`** (CLI-created crons) · **`Command`** (synced slash-commands) — all per provider where relevant.
+- **Python style:** `orjson`, never stdlib `json`. `NamedTuple` for immutable data. Import aliases (`as`) only for a real name collision or a needed intent clarification.
+- **Timeline:** write `TimelineEvent` only through `record_event` / `record_event_sync` (`src/twicc/core/services/session_timeline.py`). Never insert directly. Never use Django signals (the code uses `queryset.update()`). Designs: `docs/plans/*timeline*-design.md`.
+- **Agent settings:** the seven per-session fields are a closed bundle with one shape for all providers. A new provider flag is a new `Session` column, classified in the provider's `getAgentSettingsCategories()` (`frontend/src/providers/`). Never a side table.
+- **Project defaults** resolve at session creation only, in two mirrors: `frontend/src/utils/projectAgentDefaults.js` and `src/twicc/project_agent_defaults.py`. Keep them in sync.
+- **Trust is human-only.** Never expose it as an agent flag or skill. `permission_mode_if_untrusted` is never a `Session` field. See `src/twicc/core/services/trust.py` and `docs/plans/2026-06-09-project-trust-design.md`.
 
-### Agent Settings — Closed Bundle
+## Artifact network broker
 
-The seven per-session fields (`selected_model`, `effort`, `thinking_enabled`, `permission_mode`, `context_max`, `claude_in_chrome`, `fast_mode`) are a **closed bundle** with one shape across all providers (on `Session`, the WS payload, synced localStorage). Each provider declares which fields it uses via `getAgentSettingsCategories()` (`frontend/src/providers/baseHelpers.js` + overrides); unlisted ones are ignored. New provider-specific flags follow the same pattern — add a `Session` column, classify it in the provider's categories, never a side table (rationale in the `Session.claude_in_chrome` comment).
+HTML artifacts use plain `fetch()`. TwiCC proxies it after a per-host user consent. These are the design, **not gaps. Do not "harden" them:**
 
-**`permission_mode_if_untrusted` is NOT in the bundle** — a per-provider *default-shaping* field in global settings / presets / `default_agent_settings`, never on `Session`. At creation, project trust picks which one materializes into the stored `permission_mode` (trusted → `permission_mode`, else → `permission_mode_if_untrusted`, restricted to `UNTRUSTED_PERMISSION_MODES`, no `bypassPermissions`/`yolo`). A backend floor re-clamps at agent build and live at runtime (re-resolving trust fresh, not the launch snapshot) (`core/services/trust.py`), mirrored by the CLI (`cli/_drop_request/aliases.py`). **Trust is human-only** — never an agent-facing flag/skill. See `docs/plans/2026-06-09-project-trust-design.md` §13.
+- Hard-block only the cloud metadata address (`169.254.169.254` / `fd00:ec2::254`). Never range-block loopback, LAN or public addresses.
+- Forward headers verbatim, `Authorization` included (only hop-by-hop and similar mechanical drops).
+- Consent is client-side (`frontend/src/artifact-broker/host.js`). Do not add a consent check to `src/twicc/artifacts/proxy.py`.
+- The iframe CSP `connect-src 'none'` is the egress boundary. The shim is DX, not security.
 
-## Artifact Network Broker
+The in-SPA preview and the `/artifacts/<id>/` page share `frontend/src/composables/useArtifactBroker.js`. Never re-implement one side. Design: `docs/plans/2026-06-18-artifact-network-broker-design.md`.
 
-Interactive HTML artifacts make outbound network calls with a **plain `fetch()`** — TwiCC brokers them server-side (CORS bypass) behind a **per-host user consent prompt**. Design: `docs/plans/2026-06-18-artifact-network-broker-design.md` (+ `-handoff.md`).
+## Frontend traps
 
-**Invariants — do NOT "harden" past these; they are the design, not gaps:**
-- **Only the cloud metadata address (`169.254.169.254` / `fd00:ec2::254`) is ever hard-blocked.** Never range-block loopback/LAN/public — every other target is reachable with the user's informed consent on an IP-pinned, honest prompt (the self-host operator clicking *is* the authority). No flag, no deployment detection.
-- **Headers pass through verbatim** (only mechanical drops: hop-by-hop, `host`, `content-length`, …); the artifact's `Authorization` is forwarded.
-- **Consent is client-authoritative.** `frontend/src/artifact-broker/host.js` gates via the per-bookmark allow/deny lists (`ArtifactBookmark.allowed_hosts`/`denied_hosts`, read client-side) + in-memory "This session" / persisted "Forever" grants, coalescing concurrent requests to one host into one prompt; a denied host is auto-refused without prompting. The server proxy (`twicc/artifacts/proxy.py`) does **NOT** re-check consent — by decision (design §6.4 "Decision update"); don't add a server-side allowlist gate.
-- **The CSP `connect-src 'none'`** on the artifact iframe is the real egress boundary; the injected shim (`artifact-broker/shim.js`, built bundle) is DX, not security.
-
-**One shell, both run contexts.** The in-SPA preview (`FilePane.vue`) and the dedicated page (`/artifacts/<id>/`, a standalone Vite bundle under `frontend/src/artifact-shell/`) mount the **same** broker host + `ArtifactBrokerPrompt.vue` via `composables/useArtifactBroker.js` — never re-implement one side. Backend: `twicc/artifacts/broker_html.py` (shim+CSP wrap, the trusted shell page) + `views.artifact_serve`/`artifact_shell_asset`. The shim + shell + artifact-theme + browser-companion + share-session bundles are **not HMR'd** — `cd frontend && npm run build` after editing `artifact-broker/*`, `artifact-shell/*`, `artifact-theme/*` (the `--twicc-*` tokens injected into every HTML artifact + the opt-in kit; also the app stylesheets it imports), `browser-companion/*`, `share-session/*`/`share-recent/*` (the standalone read-only share viewer, design §8) or `element-select/*` (the shared element picker, bundled into the companion and lazy-imported by the SPA for the artifact HTML preview's select mode).
-
-**Artifact data persistence.** An HTML artifact may write under its own `data/` subfolder — plain `fetch` PUT/DELETE (+ dir-GET listing) through the broker's own-asset path, gated server-side by the host-set `X-Twicc-Artifact-Doc` header; `window.twicc.data` sugar in the shim. Silent under an artifacts root, tab-lifetime prompt elsewhere; shares stay read-only; a page's own `data/` writes never reload its preview. Design: `docs/plans/2026-08-05-artifact-data-persistence-design.md`.
-
-## Python Patterns
-
-- **`NamedTuple`** for simple immutable data (return values, decisions, configs) — works with all field types incl. lists; prefer over `@dataclass` when mutability isn't needed.
-- **`orjson`**, not stdlib `json`, for all backend JSON (~6× faster, handles high-volume JSONL).
-- **Aliased imports (`as`)** only when strictly necessary: (1) name collision (e.g. multiple `main` → `as foo_main`); (2) disambiguating intent for a less generic verb (e.g. `patch_client as patch_client_for_logging`). Avoid cosmetic `as _foo`/`as django_settings` when there's no real conflict — it's noise and harms grep.
-
-## Frontend Patterns
-
-### Circular imports (HMR) — CRITICAL
-
-Cycles make Vite HMR fall back to full reloads (recurring issue).
-- Never import `router.js` from utils/composables/stores → use lazy `await import('../router')`.
-- Never mutual static imports store↔store or store↔composable → lazy `await import()` in the less-frequent direction.
-- Never statically import components from composables when those components close a cycle → `defineAsyncComponent(() => import(...))`.
-- Common shapes: `main.js → … → main.js` (extract shared code), `router → views → components → util → router` (lazy router), `store ↔ store`, `store ↔ composable`, `composable → component → store → composable`.
-
-### Public assets (icons, images) — base-prefix trap
-
-`frontend/public/` files are served at `/` in dev but under `/static/` in the built bundle (Vite `base: '/static/'`). A hardcoded absolute string like `/icons/foo.svg` is NOT rewritten by Vite (only HTML/CSS refs and imports are), so it 404s (→ SPA index HTML) in the built app served by the backend — works on Vite (5173), silently broken on the backend (3500). ALWAYS resolve public-asset paths through `resolvePublicAssetUrl()` (`utils/publicAsset.js`), never a raw `/icons/...`/`/foo.png` literal in JS.
-
-### Drafts
-
-Draft sessions/messages/media persisted to IndexedDB (`frontend/src/utils/draftStorage.js`), hydrated on startup before app mount.
-
-### Virtual scrolling
-
-Large item lists use a custom scroller (`useVirtualScroll.js`, `VirtualScroller.vue`): raw items → `computeVisualItems()` (display mode, group expansion) → rendered. Visual items are stabilized across recomputes — each new item is compared by `lineNum` to the cached one; identical → old reference reused, so Vue skips re-render even though `computeVisualItems` makes new objects.
-
-### Persistent frames (iframes)
-
-An `<iframe>` reloads whenever its DOM node is detached or re-parented — which is what KeepAlive (session switch) and Teleport (dock moves) do to panes. Embedded pages that must survive (Browser pane, artifact HTML preview) therefore render through `PersistentFrame` (`frontend/src/components/frames/`): the pane keeps a placeholder; the real iframe lives in `FrameHost` (mounted once in ProjectView), absolutely positioned over the placeholder's rect (`stores/framePool.js`). Never `<Teleport>` an iframe and never reorder `FrameHost`'s registry — both move the node and reload it. Over-iframe chrome goes through the frame's overlay layer (`overlayEl` + `<Teleport :disabled>`), not pane-local z-index (capped by `DockRegion`'s `isolation: isolate`). When a pane-local overlay must fully cover the preview instead (e.g. the Files tab's mobile file-tree overlay), the owner passes `PersistentFrame`'s `suppressed` prop to force the frame hidden (iframe keeps running) rather than fighting z-index.
-
-### Session item content access — IMPORTANT
-
-Never access `item.content` (raw JSON string) directly. Use `frontend/src/utils/parsedContent.js`:
-- `getParsedContent(item)` — parsed object, lazy + `markRaw()` cached; works on session and visual items.
-- `setParsedContent(item, parsed)` — set explicitly (synthetic items, or forwarding a cached result).
-- `clearParsedContent(item)` — invalidate (e.g. when `item.content` changes).
-- `hasContent(item)` — true if content available (raw or set); use instead of `!!item.content` for placeholders (synthetic items have parsed content but no string).
-
-`JSON.parse(item.content)` and touching `_parsedContent` directly are forbidden.
-
-### Dialog forms
-
-When creating a form inside a `wa-dialog`, use `frontend/src/components/project/ProjectEditDialog.vue` as the reference implementation. Key patterns:
-
-- **Form element:** wrap content in a `<form>` with `@submit.prevent="handleSave"` and a unique `id`.
-- **Submit button outside form:** use `type="submit"` and set the `form` attribute via `setAttribute()` in a sync function (wa-button doesn't expose `form` as a property).
-- **Focus management:** use the `@wa-after-show` event (not the `autofocus` attribute) to focus the first input after the dialog animation completes, and `setSelectionRange(len, len)` to put the cursor at the end.
-- **Input validation:** apply `trim()` on text inputs before validation and submission.
-- **Uniqueness checks:** validate client-side first (from store data); the backend enforces with a unique constraint.
-- **Error display:** use `wa-callout variant="danger"` for validation and API errors.
-- **Dialog width:** use `--width: min(Xpx, calc(100vw - 2rem))` to stay responsive.
-- **Event propagation:** dialog `@wa-show`/`@wa-hide`/`@wa-after-*` handlers must guard against bubbling from nested `wa-*` children — see *Bubbling custom events* below. Failing to guard makes a nested `wa-select` opening/closing steal focus or close the whole dialog.
+- **Not HMR'd bundles:** after you edit `frontend/src/` `artifact-broker/`, `artifact-shell/`, `artifact-theme/`, `browser-companion/`, `share-session/`, `share-recent/` or `element-select/`, run `cd frontend && npm run build`.
+- **Circular imports break HMR.** Never import `router.js` statically from utils, composables or stores: use `await import('../router')`. Break store↔store and store↔composable cycles with a lazy `import()`. Use `defineAsyncComponent` when a composable imports a component that closes a cycle.
+- **Public assets:** `frontend/public/` is served at `/` in dev but at `/static/` in the build. A raw `/icons/foo.svg` string breaks only on the backend. Always use `resolvePublicAssetUrl()` (`frontend/src/utils/publicAsset.js`).
+- **Item content:** never read `item.content` directly, never `JSON.parse` it, never touch `_parsedContent`. Use `getParsedContent` / `setParsedContent` / `clearParsedContent` from `frontend/src/utils/parsedContent.js`. Use `hasContent(item)`, not `!!item.content`: synthetic items have parsed content but no raw string.
+- **Iframes:** an iframe reloads when its node moves. Embedded pages render through `PersistentFrame` (`frontend/src/components/frames/`). Never `<Teleport>` an iframe. Never reorder `FrameHost`'s registry.
+- **Dialog forms:** copy `frontend/src/components/project/ProjectEditDialog.vue` (agents often get these wrong):
+  - Wrap the content in a `<form id="…" @submit.prevent="handleSave">`.
+  - Put the submit button outside the form: `type="submit"`, and set its `form` attribute with `setAttribute()` (`wa-button` does not expose `form` as a property).
+  - Focus the first input in `@wa-after-show`, never with `autofocus`. Put the cursor at the end with `setSelectionRange(len, len)`.
+  - `trim()` text inputs before validation and submit. Check uniqueness client-side first.
+  - Show errors in `wa-callout variant="danger"`.
+  - Width: `--width: min(Xpx, calc(100vw - 2rem))`.
+  - Guard `@wa-show`/`@wa-hide`/`@wa-after-*` handlers against bubbling from nested `wa-*` children (see Web Awesome).
 
 ## Web Awesome (3.3+)
 
-- Native events are **un**prefixed since v3 (`@click`, `@input`); custom WA events keep `wa-` (`@wa-show`, `@wa-after-show`).
-- **Every component must be explicitly imported in `frontend/src/main.js`** (loads JS + shadow-DOM styles). Unstyled in prod but fine in dev → missing import.
-- Icon slots: `start`/`end` inside buttons (not `prefix`/`suffix`), `icon` for `wa-dropdown-item`:
+- Import **every** component explicitly in `frontend/src/main.js`. A missing import works in dev and is unstyled in prod.
+- Native events are unprefixed (`@click`). Custom events keep `wa-` (`@wa-show`).
+- **Icon slots** (agents often get these wrong): in a button, use `slot="start"` / `slot="end"`, never `prefix` / `suffix`. In a `wa-dropdown-item`, use `slot="icon"`.
   ```html
   <wa-button><wa-icon slot="start" name="check"></wa-icon> Save</wa-button>
   <wa-dropdown-item><wa-icon slot="icon" name="plus"></wa-icon> New</wa-dropdown-item>
   ```
-- Docs: one-file `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`; full set in same `dist` dir under `skills/webawesome/`.
+- **Custom events bubble.** A nested `wa-select` in a `wa-dialog` fires `wa-show`/`wa-hide` on the dialog. Scope every handler to its own element: `event.target !== event.currentTarget` guard, `.self`, or `.stop`.
+- Docs: `frontend/node_modules/@awesome.me/webawesome/dist/llms.txt`.
 
-### Bubbling custom events — recurring trap
+## TwiCC plugin (agent skills)
 
-WA custom events **bubble through the composed DOM**: a nested `wa-*` child fires the *same* event name the outer component listens for. Classic case — a `wa-select`/`wa-dropdown` inside a `wa-dialog` emits `wa-show`/`wa-hide`/`wa-after-show`/`wa-after-hide` on panel open/close; unguarded, the dialog handler re-runs focus logic (stealing focus from the dropdown) or treats it as the dialog closing (dismissing everything). Same family with `wa-switch`, nested `wa-details`, nested `wa-tab-group` (`wa-tab-show`/`wa-tab-hide`), per-row `wa-dropdown` `wa-select` reaching a parent selector, nested `wa-split-panel` `wa-reposition`.
-
-**Always scope the handler to its own element** — equivalent idioms: a top guard `if (event.target !== ownRef/event.currentTarget) return`; the Vue `.self` modifier; or `.stop` when a nested control's event must never reach a same-named outer handler. When a parent must *veto* its own close while a child panel is open, combine the target guard with `event.preventDefault()` for the parent's own event only (see `ProjectView.vue` `onSelectorHide`).
-
-## TwiCC Plugin (Agent Skills)
-
-Skills live under `src/twicc/agent/plugin/twicc/skills/`, packaged as a versioned plugin (`.../twicc/.claude-plugin/plugin.json`).
-
-**Any bundle change — add/edit/rename/remove a `SKILL.md` — REQUIRES bumping `version` in `plugin.json`**, or providers serve a stale cached copy. Bump: user-visible change → patch; new skill or new flags/options → minor; rename/removal → minor at least.
-
-**Before creating/updating a skill, read `src/twicc/agent/plugin/README.md`** (structure, wording, anti-patterns) and a few existing skills to calibrate tone.
-
-## Release Process
-
-When the user asks to make a release, follow `docs/release-process.md`.
+- Skills live in `src/twicc/agent/plugin/twicc/skills/`. Read `src/twicc/agent/plugin/README.md` before you create or edit one.
+- **Every `SKILL.md` change requires a `version` bump** in `src/twicc/agent/plugin/twicc/.claude-plugin/plugin.json`. Otherwise providers serve a stale cached copy. Patch for a user-visible change; minor for a new skill, new flags, a rename or a removal.
