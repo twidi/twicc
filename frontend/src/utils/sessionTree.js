@@ -3,6 +3,8 @@
  * No Vue or Pinia import: this module must load under plain `node --test`.
  */
 
+import { sessionSortComparator } from './sessionSort.js'
+
 const isParticipant = (session) => !session.ephemeral && !session.draft
 
 /** A session that can never be a tree ancestor nor give a hint. */
@@ -13,10 +15,20 @@ const isBlocking = (session) =>
  * Build the tree structure (parents, roots, hints) for a candidate list.
  *
  * @param {Object[]} candidates
- * @param {{ lookup: (id: string) => ?Object }} opts
+ * @param {{
+ *   lookup: (id: string) => ?Object,
+ *   processStates?: Object,
+ *   viewedId?: ?string,
+ *   isUnread?: (session: Object, processState: ?Object) => boolean,
+ * }} opts
  * @returns {{ nodes: Map<string, Object>, rootIds: string[] }}
  */
-export function buildSessionTree(candidates, { lookup }) {
+export function buildSessionTree(candidates, {
+    lookup,
+    processStates = {},
+    viewedId = null,
+    isUnread = () => false,
+}) {
     const byId = new Map(candidates.map((session) => [session.id, session]))
     const isParticipantCandidate = (id) => {
         const session = byId.get(id)
@@ -82,5 +94,78 @@ export function buildSessionTree(candidates, { lookup }) {
             node.hintParent = direct
         }
     }
+
+    // Post-order pass: effective state, triggers, summary, then ordering.
+    // Ordering reuses sessionSortComparator through proxy sessions that carry
+    // the effective values, so the flat and tree orders can never diverge.
+    const proxyStates = {}
+    const proxies = new Map()
+    const compare = sessionSortComparator(proxyStates)
+    const byEffective = (aId, bId) => compare(proxies.get(aId), proxies.get(bId))
+
+    const compute = (id) => {
+        const node = nodes.get(id)
+        const { session } = node
+        const own = processStates[id]
+        const isActive = own != null
+        let pinned = session.pinned || null
+        let active = isActive
+        let activeKey = isActive ? (own.started_at || 0) : 0
+        let dateKey = session.mtime
+
+        for (const childId of node.childIds) {
+            const child = compute(childId)
+            active = active || child.effective.active
+            activeKey = Math.max(activeKey, child.effective.activeKey)
+            dateKey = Math.max(dateKey, child.effective.dateKey)
+        }
+        node.childIds.sort(byEffective)
+        if (!pinned) {
+            for (const childId of node.childIds) {
+                const childPinned = nodes.get(childId).effective.pinned
+                if (childPinned) { pinned = childPinned; break }
+            }
+        }
+        // Descendants in final (sorted) depth-first order.
+        const ordered = []
+        const walk = (ids) => {
+            for (const childId of ids) {
+                ordered.push(childId)
+                walk(nodes.get(childId).childIds)
+            }
+        }
+        walk(node.childIds)
+
+        node.effective = { pinned, active, activeKey, dateKey }
+        const summary = { descendants: ordered.length, active: 0, unread: 0, pinned: 0, latestDate: null }
+        const triggerIds = []
+        for (const dId of ordered) {
+            const d = nodes.get(dId).session
+            const dActive = processStates[dId] != null
+            const dUnread = dId !== viewedId && !!isUnread(d, processStates[dId])
+            const dPinned = !!d.pinned
+            if (dActive) summary.active++
+            if (dUnread) summary.unread++
+            if (dPinned) summary.pinned++
+            if (dActive || dUnread || dPinned) triggerIds.push(dId)
+        }
+        summary.latestDate = dateKey > session.mtime ? dateKey : null
+        node.summary = summary
+        node.triggerIds = triggerIds
+
+        proxies.set(id, {
+            id,
+            pinned,
+            mtime: dateKey,
+            ephemeral: session.ephemeral,
+            draft: session.draft,
+            ephemeralStartedAt: session.ephemeralStartedAt,
+        })
+        if (active) proxyStates[id] = { started_at: activeKey }
+        return node
+    }
+    for (const id of rootIds) compute(id)
+    rootIds.sort(byEffective)
+
     return { nodes, rootIds }
 }

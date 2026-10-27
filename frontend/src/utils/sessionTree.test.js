@@ -98,3 +98,101 @@ test('ephemeral and draft candidates are roots with no children even when a sess
         assert.equal(hint(t, 'c'), null)
     }
 })
+
+// --- Task 3: effective state, ordering, triggers, summary ---
+
+const run = (id, started_at) => ({ [id]: { started_at } })
+const buildWith = (candidates, opts = {}) =>
+    buildSessionTree(candidates, { lookup: lookupOf(candidates), ...opts })
+
+test('idle root with an active child sorts before a newer idle root', () => {
+    const t = buildWith(
+        [s('old', { mtime: 10 }), s('kid', { mtime: 5, spawned_by: 'old' }), s('new', { mtime: 500 })],
+        { processStates: run('kid', 50) },
+    )
+    assert.deepEqual(t.rootIds, ['old', 'new'])
+    assert.equal(t.nodes.get('old').effective.active, true)
+    assert.equal(t.nodes.get('new').effective.active, false)
+})
+
+test('a pinned descendant makes the root pinned and sorts it first', () => {
+    const t = buildWith([
+        s('a', { mtime: 10 }), s('k', { mtime: 5, spawned_by: 'a', pinned: 'all' }), s('b', { mtime: 500 }),
+    ])
+    assert.deepEqual(t.rootIds, ['a', 'b'])
+    assert.equal(t.nodes.get('a').effective.pinned, 'all')
+    assert.equal(t.nodes.get('b').effective.pinned, null)
+})
+
+test('activeKey is the highest started_at of the subtree; two active subtrees order by it', () => {
+    const t = buildWith(
+        [
+            s('a'), s('a1', { spawned_by: 'a' }), s('a2', { spawned_by: 'a' }),
+            s('b'), s('b1', { spawned_by: 'b' }),
+        ],
+        { processStates: { a1: { started_at: 10 }, a2: { started_at: 90 }, b1: { started_at: 50 } } },
+    )
+    assert.equal(t.nodes.get('a').effective.activeKey, 90)
+    assert.equal(t.nodes.get('b').effective.activeKey, 50)
+    assert.deepEqual(t.rootIds, ['a', 'b'])
+    assert.deepEqual(kids(t, 'a'), ['a2', 'a1'])
+    assert.equal(buildWith([s('x')]).nodes.get('x').effective.activeKey, 0)
+})
+
+test('a write to an active node (its mtime grows) does not reorder the siblings', () => {
+    const make = mtime => [
+        s('a'), s('a1', { spawned_by: 'a', mtime }), s('b'), s('b1', { spawned_by: 'b' }),
+    ]
+    const ps = { a1: { started_at: 20 }, b1: { started_at: 10 } }
+    const before = buildWith(make(100), { processStates: ps })
+    const after = buildWith(make(9999), { processStates: ps })
+    assert.deepEqual(before.rootIds, ['a', 'b'])
+    assert.deepEqual(after.rootIds, before.rootIds)
+})
+
+test('idle subtrees order by the highest mtime of the subtree', () => {
+    const t = buildWith([
+        s('a', { mtime: 10 }), s('a1', { spawned_by: 'a', mtime: 900 }), s('b', { mtime: 500 }),
+    ])
+    assert.equal(t.nodes.get('a').effective.dateKey, 900)
+    assert.deepEqual(t.rootIds, ['a', 'b'])
+})
+
+test('children under one parent use the same effective ordering', () => {
+    const t = buildWith(
+        [
+            s('p'), s('idleNew', { spawned_by: 'p', mtime: 300 }), s('idleOld', { spawned_by: 'p', mtime: 100 }),
+            s('act', { spawned_by: 'p', mtime: 1 }), s('pin', { spawned_by: 'p', mtime: 2, pinned: 'project' }),
+        ],
+        { processStates: run('act', 5) },
+    )
+    assert.deepEqual(kids(t, 'p'), ['pin', 'act', 'idleNew', 'idleOld'])
+})
+
+test('triggerIds exclude the node itself and the viewed session counts as not unread', () => {
+    const t = buildWith(
+        [
+            s('p', { pinned: 'all' }), s('u', { spawned_by: 'p' }), s('v', { spawned_by: 'p' }),
+            s('act', { spawned_by: 'p' }), s('quiet', { spawned_by: 'p' }),
+        ],
+        {
+            processStates: run('act', 5),
+            viewedId: 'v',
+            isUnread: session => session.id === 'u' || session.id === 'v',
+        },
+    )
+    const node = t.nodes.get('p')
+    assert.deepEqual([...node.triggerIds].sort(), ['act', 'u'])
+    assert.equal(node.summary.descendants, 4)
+    assert.equal(node.summary.active, 1)
+    assert.equal(node.summary.unread, 1)
+    assert.equal(node.summary.pinned, 0)
+    assert.deepEqual(t.nodes.get('quiet').triggerIds, [])
+})
+
+test('summary.latestDate is null when the subtree date equals the node\'s own mtime', () => {
+    const same = buildWith([s('a', { mtime: 100 }), s('k', { spawned_by: 'a', mtime: 50 })])
+    assert.equal(same.nodes.get('a').summary.latestDate, null)
+    const newer = buildWith([s('a', { mtime: 100 }), s('k', { spawned_by: 'a', mtime: 700 })])
+    assert.equal(newer.nodes.get('a').summary.latestDate, 700)
+})
