@@ -113,7 +113,7 @@ These are JavaScript JSDoc contracts. They do not require TypeScript.
 - Controller methods: `start()`, `notifyLatest(id)`, `refresh()`, `retry()`, `idle(): Promise<void>`, `dispose()`.
 - `onSnapshot(snapshot)` runs only when a complete usable snapshot changes. State changes remain reactive without republishing messages.
 
-- [ ] **Step 1: Add deferred-response tests for complete publication and cursor races.**
+- [x] **Step 1: Add deferred-response tests for complete publication and cursor races.**
 
 Use fixtures with source session `s`, another target `other`, and 201 selected events.
 Pin the following assertions in executable tests:
@@ -135,12 +135,12 @@ Recovery failure retains `strictEqual(state.snapshot, previousCompleteSnapshot)`
 A changed session never receives another controller's result.
 A pagination response that claims more rows without advancing its cursor must fail visibly instead of looping.
 
-- [ ] **Step 2: Run the controller tests and confirm failure.**
+- [x] **Step 2: Run the controller tests and confirm failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/history.test.js`.
 Expected: FAIL because the new controller does not exist.
 
-- [ ] **Step 3: Implement the controller and its serial request queue.**
+- [x] **Step 3: Implement the controller and its serial request queue.**
 
 Use one queue per controller. Coalesce live invalidations by the highest signaled ID.
 For a full load, stage the first page, retain its `latest_id` as watermark H, then drain every `before` page.
@@ -163,12 +163,12 @@ Guard every completion by generation and disposal. Abort the active request on d
 Preserve equal event objects and snapshot references when no event or cited session information changes.
 `idle()` waits for all currently queued work, including work queued by pagination or catch-up.
 
-- [ ] **Step 4: Run controller and existing Timeline tests.**
+- [x] **Step 4: Run controller and existing Timeline tests.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/history.test.js src/utils/timeline/feed.test.js src/utils/timeline/liveEvents.test.js`.
 Expected: all PASS. Existing Timeline behavior remains unchanged.
 
-- [ ] **Step 5: Commit the tested controller.**
+- [x] **Step 5: Commit the tested controller.**
 
 Subject: `feat(chat): collect complete session event snapshots`.
 Body: explain staging, the first-page watermark, safe recovery, and the passing tests.
