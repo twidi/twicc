@@ -63,34 +63,30 @@ def test_serializer_reports_no_pending_title(db):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("original_history", [False, True], ids=["squash", "original-0148-0149"])
-def test_migration_preserves_legacy_titles_with_frozen_origin(original_history):
+def test_migration_preserves_legacy_titles_with_frozen_origin(original_history, private_current_migration_database):
     executor = MigrationExecutor(connection)
     assert TITLE_MIGRATION in executor.loader.graph.nodes
     migration = executor.loader.get_migration(*TITLE_MIGRATION)
     assert len(migration.operations) == 3
     assert all(isinstance(operation, migrations.AddField) for operation in migration.operations)
-    latest = executor.loader.graph.leaf_nodes("core")
-    try:
-        executor.migrate([PREDECESSOR])
-        old_apps = executor.loader.project_state([PREDECESSOR]).apps
-        old_project = old_apps.get_model("core", "Project").objects.create(id="title-legacy-project")
-        old_apps.get_model("core", "Session").objects.create(
-            id="title-legacy", project=old_project, provider="codex",
-            file_path="title-legacy.jsonl", title="Legacy title",
-        )
-        if original_history:
-            # An installation from before the squash has both original records only.
-            recorder = MigrationRecorder(connection)
-            recorder.record_unapplied(*PREDECESSOR)
-            records = recorder.applied_migrations()
-            assert ("core", "0148_live_contribution_indexes") in records
-            assert ("core", "0149_remove_redundant_message_index") in records
-            assert PREDECESSOR not in records
-        executor = MigrationExecutor(connection)
-        executor.migrate([TITLE_MIGRATION])
-        new_apps = executor.loader.project_state([TITLE_MIGRATION]).apps
-        session = new_apps.get_model("core", "Session").objects.get(pk="title-legacy")
-        assert session.title == "Legacy title"
-        assert (session.title_origin, session.title_check_count, session.title_checked_at) == ("", None, None)
-    finally:
-        MigrationExecutor(connection).migrate(latest)
+    executor.migrate([PREDECESSOR])
+    old_apps = executor.loader.project_state([PREDECESSOR]).apps
+    old_project = old_apps.get_model("core", "Project").objects.create(id="title-legacy-project")
+    old_apps.get_model("core", "Session").objects.create(
+        id="title-legacy", project=old_project, provider="codex",
+        file_path="title-legacy.jsonl", title="Legacy title",
+    )
+    if original_history:
+        # An installation from before the squash has both original records only.
+        recorder = MigrationRecorder(connection)
+        recorder.record_unapplied(*PREDECESSOR)
+        records = recorder.applied_migrations()
+        assert ("core", "0148_live_contribution_indexes") in records
+        assert ("core", "0149_remove_redundant_message_index") in records
+        assert PREDECESSOR not in records
+    executor = MigrationExecutor(connection)
+    executor.migrate([TITLE_MIGRATION])
+    new_apps = executor.loader.project_state([TITLE_MIGRATION]).apps
+    session = new_apps.get_model("core", "Session").objects.get(pk="title-legacy")
+    assert session.title == "Legacy title"
+    assert (session.title_origin, session.title_check_count, session.title_checked_at) == ("", None, None)

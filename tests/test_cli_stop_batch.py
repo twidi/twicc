@@ -91,8 +91,9 @@ def test_a_known_session_is_flagged_known_even_when_skipped(project, db):
     be stopped — the whole reason the field exists."""
     make_session(project, "stale", stale=True)
 
+    # Only the session-known flag matters here; no transport response is needed.
     result = _stop_batch.stop_session_ids(
-        ["stale", "ghost"], timeout=1, force=False, twicc_pid=TWICC_PID,
+        ["stale", "ghost"], timeout=0, force=False, twicc_pid=TWICC_PID,
     )
 
     assert [e["session_known"] for e in result] == [True, False]

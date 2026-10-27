@@ -288,9 +288,16 @@ COUNT_CASES = [
 
 
 @pytest.mark.parametrize(("target", "limit", "name", "content"), COUNT_CASES)
-def test_count_quota_at_and_one_above(root, target, limit, name, content):  # noqa: F811
-    refs = stage_many(root, [(name, content)] * (limit + 1))
-    modes = [e.mode for e in plan_attachments(refs, target, text="").entries]
+def test_count_quota_at_and_one_above(root, target, limit, name, content, monkeypatch):  # noqa: F811
+    # The quota needs distinct entries, rather than 1 501 copies of identical
+    # files and sidecars. Keep real kind detection and native normalization.
+    source = planner.load_entry(stage(root, name, content))
+    refs = tuple(AttachmentRef(source.ref.bucket, f"{index:032x}") for index in range(limit + 1))
+    entries = {ref: source._replace(ref=ref) for ref in refs}
+    monkeypatch.setattr(planner, "load_entry", entries.__getitem__)
+    plan = plan_attachments(refs, target, text="")
+    assert tuple(entry.ref for entry in plan.entries) == refs
+    modes = [e.mode for e in plan.entries]
     assert modes == ["inline"] * limit + ["file"]
 
 

@@ -65,12 +65,39 @@ def test_load_native_metadata_skips_known_rows(tree, django_assert_num_queries):
     assert both == snapshot
 
 
-def test_native_metadata_row_matches_loaded_values(tree):
-    root, child = tree
-    assert load_native_metadata([child.id]) == {
+@pytest.mark.parametrize('use_tz', [True, False])
+def test_native_metadata_row_matches_loaded_values(settings, use_tz, monkeypatch):
+    settings.USE_TZ = use_tz
+    now = timezone.now()
+    if not use_tz:
+        now = timezone.make_naive(now)
+        monkeypatch.setattr(timezone, 'now', lambda: now)
+    root = make_session('root', archived=True, created_at=now, last_updated_at=now)
+    child = make_session('child', type='subagent', parent_session=root, hidden=True, last_stopped_at=now)
+    metadata = load_native_metadata([child.id])
+    assert metadata == {
         child.id: native_metadata_row(Session.objects.get(pk=child.id)),
         root.id: native_metadata_row(Session.objects.get(pk=root.id)),
     }
+    for row in metadata.values():
+        assert type(row['archived']) is bool
+        assert type(row['hidden']) is bool
+    assert timezone.is_aware(metadata[root.id]['created_at']) is use_tz
+    assert timezone.is_aware(metadata[child.id]['last_stopped_at']) is use_tz
+
+
+@pytest.mark.parametrize(('target', 'budget'), [('root', 1), ('child', 2)])
+def test_compute_validation_reads_each_native_level_once(certified, target, budget, django_assert_num_queries):
+    from tests.test_content_extraction import message
+    from twicc.core.content_storage import extraction
+
+    root, child = certified
+    operation = extraction.begin_compute_application(message(root if target == 'root' else child))
+    try:
+        with django_assert_num_queries(budget):
+            assert extraction.validate_compute_application(operation)
+    finally:
+        extraction.close_compute_application(operation)
 
 
 def test_load_native_metadata_terminates_on_cycles_and_marks_missing_rows():

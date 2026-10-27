@@ -34,6 +34,9 @@ from twicc.core.models import Project, Session, SessionItem
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 
 
+pytestmark = pytest.mark.usefixtures("metadata_publication")
+
+
 # ---------------------------------------------------------------------------
 # JSONL helpers
 # ---------------------------------------------------------------------------

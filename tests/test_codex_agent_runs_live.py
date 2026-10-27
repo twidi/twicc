@@ -57,7 +57,7 @@ from tests.codex_agent_run_fixtures import (
 from tests.test_codex_agent_runs_batch import play as play_batch
 
 # The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
-pytestmark = pytest.mark.usefixtures("frozen_now")
+pytestmark = pytest.mark.usefixtures("frozen_now", "metadata_rows")
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +225,7 @@ EXPECTED_ROW_COUNTS: dict[str, tuple[int, int]] = {
 
 def test_expected_row_counts_cover_every_fixture():
     assert set(EXPECTED_ROW_COUNTS) == set(ALL_FIXTURES)
+    assert set().union(*_PARITY_FIXTURES.values()) == set(ALL_FIXTURES)
 
 
 # The whole file appended in one chunk, read one line per slice or all at
@@ -236,31 +237,64 @@ REPLAY_MODES = {
 
 
 # The batch rows of a fixture, played once: the batch reads only the fixture's
-# lines, so the three replays of a fixture compare with the same rows.
+# lines, so the selected replays of a fixture compare with the same rows.
 _BATCH_ROWS: dict[str, dict[str, list]] = {}
 
 
-# The (history, mode) pairs that add coverage, every fixture replayed in each:
-# - stale history, one line per slice: only a stale history reaches the raw
-#   resolver, and only a sliced read reaches the "more lines" branch of
-#   ``read_live_slice``;
-# - indexed history, one chunk: only an indexed history reaches the indexed
-#   history-fact path, and only a one-chunk read reaches the stop call of
-#   ``_run_live_stop_step`` for ``stop_result_before_event``;
-# - stale history, one chunk: no extra line covered today, but the only shape
-#   where the stale raw resolver runs with later lines of its slice already
-#   stored (it matters as soon as a fixture reuses an id).
-# A per-line replay covers a strict subset of the one-line slices, and a
-# two-line slice covers nothing more: both are dropped.
-_PARITY_REPLAYS = [
-    pytest.param(False, "one_chunk_slice_1", id="stale_history-one_chunk_slice_1"),
-    pytest.param(True, "one_chunk", id="indexed_history-one_chunk"),
-    pytest.param(False, "one_chunk", id="stale_history-one_chunk"),
-]
+# Each fixture keeps a replay. These 35 cases retain all 4 136 production
+# arcs of the full matrix and the witnesses for all 17 detected mutants.
+# Reused turn ids and stop-result ordering keep all three replay shapes.
+_PARITY_FIXTURES = {
+    (False, "one_chunk_slice_1"): {
+        "child_turn_ends",
+        "completed_between_call_and_interacted",
+        "followup_after_interrupt",
+        "forked_child",
+        "owner_abort_after_signal",
+        "owner_abort_other_error",
+        "owner_abort_repeated_turn_id",
+        "owner_abort_turn_aborted",
+        "owner_abort_unknown_turn",
+        "stop_result_before_event",
+        "subagent_owner_usage_limit",
+    },
+    (True, "one_chunk"): {
+        "child_turn_ends",
+        "control_calls",
+        "duplicate_interacted",
+        "flat_timestamp_child",
+        "idle_followup_opens_run",
+        "interrupt_race",
+        "long_gap_with_followup",
+        "merged_followup",
+        "merged_then_real_followups",
+        "non_fork_child_with_history_field",
+        "owner_abort_other_reason",
+        "owner_abort_repeated_turn_id",
+        "owner_abort_usage_limit",
+        "same_time_ack_and_final_answer",
+        "stop_in_completed_final_gap",
+        "stop_result_before_event",
+        "t20_sequence",
+        "v1_notification",
+    },
+    (False, "one_chunk"): {
+        "control_calls",
+        "owner_abort_repeated_turn_id",
+        "pre_completed_rollout",
+        "reaudit_limitation",
+        "started_without_spawn_call",
+        "stop_result_before_event",
+    },
+}
 
 
-@pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
-@pytest.mark.parametrize(("current", "mode"), _PARITY_REPLAYS)
+@pytest.mark.parametrize(("current", "mode", "name"), [
+    pytest.param(current, mode, name,
+                 id=f"{'indexed_history' if current else 'stale_history'}-{mode}-{name}")
+    for (current, mode), names in _PARITY_FIXTURES.items()
+    for name in sorted(names)
+])
 def test_batch_live_parity(db, tmp_path, name, mode, current, monkeypatch):
     per_line, slice_lines = REPLAY_MODES[mode]
     from tests import live_sync_helpers

@@ -26,7 +26,7 @@ from twicc.core.content_storage.policy import (
 from twicc.core.content_storage.references import (
     bind_persisted_items, intern_contents, prepare_intern_contents, prepared_content_guard, reconcile_session_memberships,
 )
-from twicc.core.content_storage.state import resolve_root_decision
+from twicc.core.content_storage.state import load_native_metadata, native_root_ids, resolve_root_decision
 from twicc.core.content_storage.session_policy import content_decision_from_fields, resolve_content_decisions
 from twicc.core.content_storage.types import (
     ContentBinding, StorageCursor, ItemStorageObservation,
@@ -58,8 +58,10 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
         raise SupersededStorageResult(outcome)
     placement = _placement.get()
     if placement is not None and placement.get('operation') is not None:
+        # The operation validates the same native-root identity, epoch, and
+        # initial lifecycle fields. It owns this scope's placement snapshot.
         validate_compute_application(placement['operation'])
-    if placement is not None:
+    elif placement is not None:
         root_id, actual = pending_root_fields(session_id, {}, placement['active_session_ids'])
         if root_id != placement['root_id'] or actual and (
             actual['storage_incarnation'] != placement['root_incarnation']
@@ -70,19 +72,19 @@ def guard_storage(session_id, incarnation, epoch, upper_line, offset=None):
 
 
 def pending_root_fields(session_id, pending, _active_session_ids):
-    decision = resolve_root_decision(session_id, timezone.now(), frozenset())
-    if not decision.resolved:
+    metadata = load_native_metadata([session_id])
+    root_id = native_root_ids([session_id], metadata=metadata)[session_id]
+    if root_id is None:
         return None, None
-    fields = Session.objects.filter(pk=decision.root_id).values(
+    effective = {name: metadata[root_id][name] for name in (
         'storage_incarnation', 'content_state_epoch', *COLD_FIELDS,
-    ).get()
-    effective = dict(fields)
-    if session_id == decision.root_id:
+    )}
+    if session_id == root_id:
         for name in COLD_FIELDS:
             if name in pending:
                 value = pending[name]
                 effective[name] = datetime.fromisoformat(value) if isinstance(value, str) else value
-    return decision.root_id, effective
+    return root_id, effective
 
 
 @contextmanager
@@ -476,14 +478,16 @@ _TARGET_FIELDS = ('storage_incarnation', 'history_epoch', 'last_offset', 'last_l
                   *COLD_FIELDS)
 
 
-def _native_ancestry(session_id):
+def _native_ancestry(session_id, *, metadata=None):
+    if metadata is None:
+        metadata = load_native_metadata([session_id])
     ancestry = []
     seen = set()
     while session_id is not None and session_id not in seen:
         seen.add(session_id)
-        row = Session.objects.filter(pk=session_id).values_list(
-            'id', 'storage_incarnation', 'type', 'parent_session_id',
-        ).first()
+        fields = metadata.get(session_id)
+        row = (tuple(fields[name] for name in ('id', 'storage_incarnation', 'type', 'parent_session_id'))
+               if fields is not None else None)
         ancestry.append(row or (session_id, None, None, None))
         if row is None or row[2] != 'subagent':
             break
@@ -564,16 +568,22 @@ def validate_compute_application(operation):
 
 
 def _validate_observation(observation, expected_epoch):
-    target = Session.objects.filter(pk=observation.session_id).values_list(*_TARGET_FIELDS).first()
-    if target != observation.target or _native_ancestry(observation.session_id) != observation.ancestry:
+    # Reuse one fresh native-tree read for the target, ancestry, root, and
+    # lifecycle fences. No row survives this validation call.
+    metadata = load_native_metadata(
+        [observation.session_id], extra_fields=('history_epoch', 'last_offset', 'last_line'),
+    )
+    fields = metadata[observation.session_id]
+    target = tuple(fields[name] for name in _TARGET_FIELDS) if fields is not None else None
+    if target != observation.target or _native_ancestry(
+        observation.session_id, metadata=metadata,
+    ) != observation.ancestry:
         raise SupersededStorageResult('superseded')
-    decision = resolve_root_decision(observation.session_id, timezone.now(), frozenset())
-    if decision.root_id != observation.root_id:
+    root_id = native_root_ids([observation.session_id], metadata=metadata)[observation.session_id]
+    if root_id != observation.root_id:
         raise SupersededStorageResult('superseded')
     if observation.root_id is not None:
-        root = Session.objects.filter(pk=observation.root_id).values(
-            'storage_incarnation', 'content_state_epoch', *COLD_FIELDS,
-        ).first()
+        root = metadata[observation.root_id]
         if root is None or root['storage_incarnation'] != observation.root_incarnation or (
             root['content_state_epoch'] != expected_epoch
             or tuple(root[name] for name in COLD_FIELDS) != observation.initial_fields

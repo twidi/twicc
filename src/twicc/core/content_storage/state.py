@@ -33,8 +33,40 @@ def native_metadata_row(session: Session) -> dict:
     return {name: getattr(session, name) for name in NATIVE_METADATA_FIELDS}
 
 
+def _native_metadata_page(session_ids: list[str], names: tuple[str, ...]) -> Iterator[dict]:
+    """Read the fixed projection without compiling a new QuerySet per tree page.
+
+    Apply the same backend and field converters as Django's SQL compiler.
+    In particular, SQLite dates must become aware and booleans stay booleans.
+    No database values are cached: every page reads the caller's transaction.
+    """
+    fields = [Session._meta.get_field(name) for name in names]
+    quote = connection.ops.quote_name
+    table = Session._meta.db_table
+    columns = ', '.join(quote(field.column) for field in fields)
+    converters = []
+    for index, field in enumerate(fields):
+        expression = field.get_col(table)
+        functions = connection.ops.get_db_converters(expression) + expression.get_db_converters(connection)
+        if functions:
+            converters.append((index, functions, expression))
+    with connection.cursor() as cursor:
+        placeholders = ', '.join(['%s'] * len(session_ids))
+        cursor.execute(
+            f'SELECT {columns} FROM {quote(table)} WHERE {quote(Session._meta.pk.column)} IN ({placeholders})',
+            session_ids,
+        )
+        rows = cursor.fetchall()
+    for row in map(list, rows):
+        for index, functions, expression in converters:
+            for function in functions:
+                row[index] = function(row[index], expression, connection)
+        yield dict(zip(names, row, strict=True))
+
+
 def load_native_metadata[Row: Mapping](
     session_ids: Iterable[str], *, known: Mapping[str, Row | None] | None = None, ancestors: bool = True,
+    extra_fields: tuple[str, ...] = (),
 ) -> Mapping[str, Row | dict | None]:
     """Load native metadata rows, reusing ``known`` rows and querying only the absent ids.
 
@@ -42,21 +74,21 @@ def load_native_metadata[Row: Mapping](
     ``ancestors``, subagent parents are loaded one level at a time, including the
     parents of ``known`` rows; cycles stop the walk. ``known`` is never mutated:
     the result is a view of the loaded rows over ``known`` (no copy, so a caller
-    resolving many roots from one ``known`` mapping stays linear).
+    resolving many roots from one ``known`` mapping stays linear). ``extra_fields``
+    extends fresh rows for callers that also validate a history revision.
     """
     loaded = {}
     metadata = ChainMap(loaded, known) if known else loaded
     walked = set()
     frontier = set(session_ids)
+    names = tuple(dict.fromkeys((*NATIVE_METADATA_FIELDS, *extra_fields)))
     while frontier:
         # Bound SQL parameters and loaded metadata per query.
         missing = sorted(identity for identity in frontier if identity not in metadata)
         for offset in range(0, len(missing), TREE_PAGE_SIZE):
             page = missing[offset:offset + TREE_PAGE_SIZE]
             loaded.update(dict.fromkeys(page))
-            loaded.update({row['id']: row for row in Session.objects.filter(
-                pk__in=page,
-            ).values(*NATIVE_METADATA_FIELDS)})
+            loaded.update({row['id']: row for row in _native_metadata_page(page, names)})
         if not ancestors:
             break
         walked |= frontier

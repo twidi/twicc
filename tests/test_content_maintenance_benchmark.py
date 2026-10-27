@@ -16,7 +16,7 @@ SCRIPT = ROOT / 'scripts/benchmark_content_maintenance.py'
 def invoke(*args):
     environment = dict(os.environ)
     environment.pop('DJANGO_SETTINGS_MODULE', None)
-    return subprocess.run([sys.executable, str(SCRIPT), '--scenario', 'selection', *map(str, args)],
+    return subprocess.run([sys.executable, str(SCRIPT), '--scenario', 'selection', '--smoke', *map(str, args)],
                           cwd=ROOT, env=environment, capture_output=True, text=True, timeout=180)
 
 
@@ -53,7 +53,7 @@ def test_selection_source_schema_and_bytes_unchanged(tmp_path):
 spec = importlib.util.spec_from_file_location('bench', {!r})
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 m.configure(pathlib.Path({!r}), pathlib.Path({!r}))
-m.seed('selection')
+m.seed('selection', smoke=True)
 from django.db import connections
 connections.close_all()
 '''.format(str(SCRIPT), str(tmp_path / 'source-home'), str(source))
@@ -73,8 +73,8 @@ connections.close_all()
                              'index_write_overhead', 'complete_pass'}
     assert measured['content_selection']['filtered_with_index']['scanned'] > 0
     assert measured['complete_pass']['compressible']['changed'] > 0
-    assert measured['synthetic_fixture']['preconformant_contents'] == 10000
-    assert measured['synthetic_fixture']['shared_cold_references'] == 20000
+    assert measured['synthetic_fixture']['preconformant_contents'] == 257
+    assert measured['synthetic_fixture']['shared_cold_references'] == 514
     assert measured['complete_pass']['conformant']['payload_bytes_loaded'] == 0
     failure = measured['complete_pass']['restoration_failures']
     assert failure['transient_attempts'] >= 2
@@ -90,11 +90,11 @@ connections.close_all()
     assert any('idx_content_plain_id' in line for line in
                variants['filtered_with_index']['plans']['candidate_lookup'])
     writes = measured['index_write_overhead']
-    assert writes['repeats'] == 3
+    assert writes['repeats'] == 1
     assert set(writes['samples']) == {'without_index', 'with_index'}
     for samples in writes['samples'].values():
-        assert len(samples) == 12
-        assert sorted(sample['raw_bytes'] for sample in samples) == sorted([128, 65536, 1048576, 16777216] * 3)
+        assert len(samples) == 3
+        assert sorted(sample['raw_bytes'] for sample in samples) == sorted([128, 65536, 131072])
         for sample in samples:
             assert [transition['mode'] for transition in sample['transitions']] == ['restore', 'compress']
             assert all(transition['changed'] is True for transition in sample['transitions'])

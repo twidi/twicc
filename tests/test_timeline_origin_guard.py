@@ -2,6 +2,7 @@
 
 import ast
 from pathlib import Path
+from unicodedata import normalize
 
 import twicc
 
@@ -70,7 +71,10 @@ class _Collector(ast.NodeVisitor):
 def test_only_the_known_request_caused_writers_omit_the_actor_and_the_origin():
     found = set()
     for path in SRC.rglob("*.py"):
+        source = path.read_text()
+        if 'record_event' not in normalize('NFKC', source):
+            continue
         collector = _Collector()
-        collector.visit(ast.parse(path.read_text()))
+        collector.visit(ast.parse(source))
         found |= {(path.relative_to(SRC).as_posix(), function) for function in collector.found}
     assert found == REQUEST_CAUSED_WRITERS

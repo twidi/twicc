@@ -32,10 +32,11 @@ TWICC_PID = 4242
 
 
 @pytest.fixture(autouse=True)
-def fast_loop(monkeypatch):
+def fast_loop(monkeypatch, monotonic_clock):
     from twicc.cli import _wait_reply
 
-    monkeypatch.setattr(_wait_reply, "POLL_INTERVAL_SECONDS", 0.001)
+    monkeypatch.setattr(_wait_reply, "time", monotonic_clock)
+    monkeypatch.setattr(_wait_reply, "POLL_INTERVAL_SECONDS", 0.01)
     monkeypatch.setattr(_wait_reply, "AGENT_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(_wait_reply, "SESSION_ROW_GRACE_SECONDS", 0.02)
 
@@ -177,13 +178,13 @@ def test_a_timeout_exits_five(session, capsysbinary):
     the same gap the batch wait closed one commit earlier and this file
     reopened.
     """
-    import time as _time
+    from twicc.cli import _wait_reply
 
     running(session)
 
-    started = _time.monotonic()
+    started = _wait_reply.time.monotonic()
     payload, code = run(capsysbinary, timeout=1.0)
-    elapsed = _time.monotonic() - started
+    elapsed = _wait_reply.time.monotonic() - started
 
     assert payload["reply"]["outcome"] == "timeout"
     assert code == 5

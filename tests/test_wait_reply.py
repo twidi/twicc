@@ -14,8 +14,7 @@ earlier turn and must never be mistaken for the answer to what was just sent.
 from __future__ import annotations
 
 from datetime import timedelta
-
-import time
+from types import SimpleNamespace
 
 import orjson
 import pytest
@@ -48,16 +47,25 @@ TICK_SECONDS = 0.02
 @pytest.fixture(autouse=True)
 def fast_loop(monkeypatch):
     """Strip the wall-clock out of the loop: these tests are about logic."""
+    now = [0.0]
+
+    def sleep(seconds):
+        # Advance both deadlines and settle windows without repeating idle
+        # database reads between the scenario's meaningful ticks.
+        now[0] += max(seconds, TICK_SECONDS)
+
+    clock = SimpleNamespace(monotonic=lambda: now[0], sleep=sleep)
+    monkeypatch.setattr(_wait_reply, "time", clock)
     monkeypatch.setattr(_wait_reply, "POLL_INTERVAL_SECONDS", 0.001)
     monkeypatch.setattr(_wait_reply, "SESSION_ROW_GRACE_SECONDS", 0.05)
     # Five ticks: long enough for a test to place an event on either side of
     # the window and see the difference.
     monkeypatch.setattr(_wait_reply, "AGENT_FLUSH_SECONDS", 5 * TICK_SECONDS)
-    
+    return clock
 
 
 @pytest.fixture
-def on_tick(monkeypatch):
+def on_tick(monkeypatch, fast_loop):
     """Run callbacks from inside the loop, one per poll, without threads.
 
     The loop's own ``time.sleep`` is the hook: replacing it lets a test change
@@ -67,23 +75,19 @@ def on_tick(monkeypatch):
     def install(schedule):
         """``schedule`` maps a tick number to what the world does at that tick.
 
-        Ticks advance real (tiny) wall time, because the behaviour under test
-        is a race between two clocks: a loop spinning at zero cost would let
-        the answer land before any deadline could bite, and every mutant would
-        survive.
+        Each tick advances the same simulated monotonic clock that drives
+        deadlines and settle windows. Events on either side retain their
+        timing, without depending on machine load or sleeping in real time.
         """
         ticks = {"n": 0}
-        # Captured before patching: ``_wait_reply.time`` *is* the ``time``
-        # module, so calling ``time.sleep`` from the replacement would call
-        # the replacement.
-        real_sleep = time.sleep
+        advance = fast_loop.sleep
 
         def fake_sleep(_seconds):
             ticks["n"] += 1
             action = schedule.get(ticks["n"])
             if action is not None:
                 action()
-            real_sleep(TICK_SECONDS)
+            advance(TICK_SECONDS)
 
         monkeypatch.setattr(_wait_reply.time, "sleep", fake_sleep)
 
@@ -1441,13 +1445,13 @@ def test_an_answer_returns_at_once_not_at_the_deadline(project):
     process(session, AgentState.ASSISTANT_TURN.value)
     assistant(session, 5, "immediate", "end_turn")
 
-    # Wall clock, not ``waited_seconds``: that field is stamped when the block
+    # Read the clock itself, not ``waited_seconds``: that field is stamped when the block
     # is *built*, so a mutant that builds it at once and then loops to the
     # deadline leaves it at 0.0. The first version of this test asserted the
     # field and let its own mutant through.
-    started = time.monotonic()
+    started = _wait_reply.time.monotonic()
     reply = wait(session, timeout=30.0)
-    elapsed = time.monotonic() - started
+    elapsed = _wait_reply.time.monotonic() - started
 
     assert reply["outcome"] == REPLIED
     assert elapsed < 1.0
@@ -1463,9 +1467,9 @@ def test_a_batch_returns_when_the_last_one_answers(project):
     assistant(one, 5, "a", "end_turn")
     assistant(two, 5, "b", "end_turn")
 
-    started = time.monotonic()
+    started = _wait_reply.time.monotonic()
     replies = wait_many({one.id: 0, two.id: 0}, timeout=30.0)
-    elapsed = time.monotonic() - started
+    elapsed = _wait_reply.time.monotonic() - started
 
     assert {r["outcome"] for r in replies.values()} == {REPLIED}
     assert elapsed < 1.0
@@ -1674,9 +1678,9 @@ def test_the_budget_is_one_for_the_batch_not_one_each(project):
         process(session, AgentState.ASSISTANT_TURN.value)
         ids[session.id] = 0
 
-    started = time.monotonic()
+    started = _wait_reply.time.monotonic()
     replies = wait_many(ids, timeout=0.4)
-    elapsed = time.monotonic() - started
+    elapsed = _wait_reply.time.monotonic() - started
 
     assert {r["outcome"] for r in replies.values()} == {TIMEOUT}
     # 2.5x the budget: three budgets in sequence (1.2 s) still fail it.

@@ -391,6 +391,7 @@ def test_every_timeline_event_constructor_in_src_passes_the_provider():
     """
     import ast
     from pathlib import Path
+    from unicodedata import normalize
 
     import twicc
 
@@ -399,7 +400,10 @@ def test_every_timeline_event_constructor_in_src_passes_the_provider():
     for path in src.rglob("*.py"):
         if path == src / "core" / "models.py" or "migrations" in path.parts:
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        source = path.read_text()
+        if 'TimelineEvent' not in normalize('NFKC', source):
+            continue
+        for node in ast.walk(ast.parse(source)):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

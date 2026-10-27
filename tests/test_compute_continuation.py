@@ -20,12 +20,12 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def wal_runtime(tmp_path, monkeypatch):
+def wal_runtime(tmp_path, monkeypatch, small_compute_pages):
     project = Project.objects.create(id='continuation-project')
-    session = Session.objects.create(id='continuation', project=project, provider='codex', last_line=600,
+    session = Session.objects.create(id='continuation', project=project, provider='codex', last_line=small_compute_pages.items,
                                      storage_incarnation=str(uuid4()))
     SessionItem.objects.bulk_create([SessionItem(session=session, line_num=n, content=f'legacy {n}')
-                                    for n in range(1, 601)])
+                                    for n in range(1, session.last_line + 1)])
     path = tmp_path / 'continuation.sqlite3'
     destination = sqlite3.connect(path)
     connection.connection.backup(destination)
@@ -64,7 +64,7 @@ def result_message(session, run_id):
     return {'type': 'session_complete', 'provider': 'codex', 'run_id': run_id,
             'session_id': session.id, 'observed_last_offset': 0,
             'observed_incarnation': session.storage_incarnation, 'observed_epoch': 0,
-            'observed_upper_line': 600, 'history_facts': [], 'session_fields': {'compute_version': 123}}
+            'observed_upper_line': session.last_line, 'history_facts': [], 'session_fields': {'compute_version': 123}}
 
 
 async def wait_until(predicate):
@@ -322,7 +322,7 @@ def test_partial_storage_survives_terminal_without_final_version(wal_runtime, mo
         with sqlite3.connect(path) as db:
             assert db.execute('SELECT compute_version FROM core_session WHERE id=?', (session.id,)).fetchone()[0] != 123
             count = db.execute('SELECT COUNT(*) FROM core_sessionitem WHERE session_id=? AND current_content_id IS NOT NULL', (session.id,)).fetchone()[0]
-            assert 0 < count <= 600
+            assert 0 < count <= session.last_line
             assert db.execute("SELECT COUNT(*) FROM core_sessionitem WHERE current_content_id IS NOT NULL AND content <> ''").fetchone()[0] == 0
     asyncio.run(scenario())
 
@@ -337,7 +337,9 @@ def test_writer_start_failure_closes_owned_executors(monkeypatch):
         try:
             with pytest.raises(RuntimeError, match='application startup failed'):
                 db_writer.start_db_writer()
-            await wait_until(lambda: compute_executor._executor is None)
+            # Executor shutdown precedes the lifetime's final state reset.
+            await wait_until(lambda: db_writer._db_writer_task is None)
+            assert compute_executor._executor is None
             assert db_writer._db_writer_task is None
             assert compute_executor._application_executor is None
             monkeypatch.setattr(db_writer, 'start_compute_application_executor', original)
@@ -502,7 +504,7 @@ def test_child_compute_defers_existing_root_recovery_and_binding_targets(
 
     def fixture():
         child = Session.objects.create(id='continuation-child', project_id=root.project_id, provider='codex',
-                                       type='subagent', parent_session_id=root.id, last_line=600, file_path=str(uuid4()),
+                                       type='subagent', parent_session_id=root.id, last_line=root.last_line, file_path=str(uuid4()),
                                        storage_incarnation=str(uuid4()))
         SessionItem.objects.filter(session_id=root.id).update(session_id=child.id)
         row = content_row_factory('compressed root ' * 1000, True, session_ids=[root.id])

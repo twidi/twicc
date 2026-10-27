@@ -45,7 +45,7 @@ def no_scheduler_errors(caplog, monkeypatch):
 
 
 @pytest.fixture
-def publication_tree(wal_runtime, content_row_factory, request):
+def publication_tree(wal_runtime, content_row_factory, request, small_compute_pages):
     root, path = wal_runtime
     provider = request.param
     target = get_provider_helpers(provider).current_compute_version
@@ -53,11 +53,11 @@ def publication_tree(wal_runtime, content_row_factory, request):
     Session.objects.filter(pk=root.pk).update(provider=provider, items_cost_computed_through_at=now)
     root.refresh_from_db()
     children = []
-    # Cross the real lifecycle budget and include a second ancestry depth.
-    for index in range(65):
+    # Cross the configured lifecycle budget and include a second ancestry depth.
+    for index in range(small_compute_pages.agents):
         children.append(Session.objects.create(
             id=f'child-{index:02}', project=root.project, provider=provider, type='subagent',
-            parent_session=root if index < 64 else children[0], file_path=str(uuid4()),
+            parent_session=root if index < small_compute_pages.agents - 1 else children[0], file_path=str(uuid4()),
             storage_incarnation=str(uuid4()), compute_version=target, content_storage_version=1,
             items_cost_computed_through_at=now,
         ))
@@ -73,14 +73,14 @@ def publication_tree(wal_runtime, content_row_factory, request):
     SessionItem.objects.create(session=owner, line_num=1, content='', current_content=candidate)
     history_facts.append_history_facts(root.id, [
         history_facts.HistoryFact(line, HistoryFactKind.TOOL_CALL, 'old', {'old': line})
-        for line in range(1, 258)
+        for line in range(1, small_compute_pages.facts + 1)
     ])
     facts = [history_facts.HistoryFact(line, HistoryFactKind.TOOL_CALL, 'new', {'value': line})._asdict()
-             for line in range(1, 258)]
+             for line in range(1, small_compute_pages.facts + 1)]
     msg = {
         'type': 'session_complete', 'provider': provider, 'session_id': root.id,
         'observed_last_offset': 0, 'observed_incarnation': root.storage_incarnation,
-        'observed_epoch': 0, 'observed_upper_line': 600, 'history_facts': facts,
+        'observed_epoch': 0, 'observed_upper_line': root.last_line, 'history_facts': facts,
         'session_fields': {'compute_version': target},
         'force_cost_session_ids': sorted([root.id, *[child.id for child in children]]),
         'agent_stopped': [{'agent_session_id': child.id, 'stopped_at': now.isoformat()} for child in children],
@@ -109,12 +109,12 @@ def assert_complete(tree):
     rows = stored(path, 'SELECT line_num,kind,key,data FROM core_sessionhistoryfact WHERE session_id=? ORDER BY line_num',
                   [root.id])
     assert [(line, kind, key, orjson.loads(data)) for line, kind, key, data in rows] == [
-        (line, 'tool_call', 'new', {'value': line}) for line in range(1, 258)]
+        (line, 'tool_call', 'new', {'value': line}) for line in range(1, len(msg['history_facts']) + 1)]
     assert stored(path, 'SELECT compute_version,content_storage_version,plaintext_verified_epoch=content_state_epoch '
                   'FROM core_session WHERE id=?', [root.id]) == [(msg['session_fields']['compute_version'], 1, 1)]
     assert stored(path, 'SELECT DISTINCT compute_version,content_storage_version,plaintext_verified_epoch '
                   'FROM core_session WHERE type=\'subagent\'') == [(msg['session_fields']['compute_version'], 1, None)]
-    assert stored(path, 'SELECT count(*) FROM core_session WHERE type=\'subagent\' AND last_stopped_at IS NOT NULL') == [(65,)]
+    assert stored(path, 'SELECT count(*) FROM core_session WHERE type=\'subagent\' AND last_stopped_at IS NOT NULL') == [(len(msg['agent_stopped']),)]
     owners = stored(path, 'SELECT session_ids,codec FROM core_sessionitemcontent WHERE id=?', [shared.id])[0]
     assert orjson.loads(owners[0]) == sorted([root.id, owner.id])
     assert owners[1] == 'plain'
@@ -126,7 +126,9 @@ def assert_complete(tree):
 
 @pytest.mark.parametrize('publication_tree', ['codex', 'claude_code'], indirect=True)
 @pytest.mark.parametrize('outcome', ['applied', 'superseded', 'cancelled'])
-def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, monkeypatch, settings, outcome):
+def test_periodic_candidate_waits_for_real_compute_cleanup(
+    publication_tree, monkeypatch, settings, outcome, small_compute_pages,
+):
     tree = publication_tree
     root, _, _, _, candidate, path, msg = tree
     settings.SESSION_DIRS_CLEANUP_ENABLED = False
@@ -168,7 +170,7 @@ def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, mon
         source = Session.objects.get(pk=root.id)
         assert not history_facts.history_facts_are_current(source)
         # Even partially replaced durable facts never become resolver history.
-        assert next(history_facts.iter_resolver_items(root.id, HistoryFactKind.TOOL_CALL)).line_num == 600
+        assert next(history_facts.iter_resolver_items(root.id, HistoryFactKind.TOOL_CALL)).line_num == root.last_line
         return result
 
     def close(operation):
@@ -231,7 +233,7 @@ def test_periodic_candidate_waits_for_real_compute_cleanup(publication_tree, mon
             loop.call_soon(heartbeat.set)
             await asyncio.wait_for(heartbeat.wait(), .5)
             assert not published
-            assert stored(path, 'SELECT count(*) FROM core_sessionhistoryfact WHERE session_id=?', [root.id]) == [(128,)]
+            assert stored(path, 'SELECT count(*) FROM core_sessionhistoryfact WHERE session_id=?', [root.id]) == [(small_compute_pages.page_size,)]
             committed_phases = phases.copy()
             future = loop.create_future()
             db_writer.enqueue_async_job(db_writer._RetireSessionsJob(None, {root.id: {'title': 'foreground'}}, future))
@@ -374,4 +376,4 @@ def test_final_metadata_failure_leaves_partial_source_outdated(publication_tree,
     assert stored(path, 'SELECT compute_version,content_storage_version,plaintext_verified_epoch '
                   'FROM core_session WHERE id=?', [root.id]) == [(None, None, None)]
     assert not stored(path, 'SELECT root_session_id FROM core_statisticsqueueentry')
-    assert stored(path, 'SELECT count(*) FROM core_sessionhistoryfact WHERE session_id=?', [root.id]) == [(257,)]
+    assert stored(path, 'SELECT count(*) FROM core_sessionhistoryfact WHERE session_id=?', [root.id]) == [(len(msg['history_facts']),)]

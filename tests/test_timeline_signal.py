@@ -38,10 +38,22 @@ def pokes(monkeypatch):
     return calls
 
 
+class SentMessages(list):
+    """Record messages and let a test wait for actual delivery."""
+
+    async def wait(self, count=1):
+        async with asyncio.timeout(3):
+            while len(self) < count:
+                await asyncio.sleep(0.001)
+        # A burst can start several flush tasks in a broken implementation.
+        # Drain them before checking the exact message count.
+        await asyncio.gather(*timeline_signal._flushes)
+
+
 @pytest.fixture
 def sent(monkeypatch):
     """The messages the signal sends to the ``updates`` group."""
-    messages = []
+    messages = SentMessages()
 
     async def group_send(group, message):
         messages.append((group, message))
@@ -242,7 +254,7 @@ def test_a_burst_sends_one_message_with_the_latest_id(sent, short_throttle):
     async def scenario():
         for _ in range(20):
             await asyncio.to_thread(timeline_signal.poke)
-        await asyncio.sleep(0.5)
+        await sent.wait()
 
     run_loop(scenario)
     assert sent == [("updates", {
@@ -257,7 +269,7 @@ def test_pokes_from_worker_threads_reach_the_loop_safely(sent, short_throttle):
 
     async def scenario():
         await asyncio.gather(*(asyncio.to_thread(timeline_signal.poke) for _ in range(5)))
-        await asyncio.sleep(0.5)
+        await sent.wait()
 
     run_loop(scenario, debug=True)
     assert len(sent) == 1
@@ -284,10 +296,10 @@ def test_the_signal_waits_for_the_window_then_a_later_poke_opens_a_new_one(sent,
         timeline_signal.poke()
         await asyncio.sleep(0.01)
         early = len(sent)
-        await asyncio.sleep(0.3)
+        await sent.wait()
         first = len(sent)
         timeline_signal.poke()
-        await asyncio.sleep(0.3)
+        await sent.wait(2)
         return early, first, len(sent)
 
     assert run_loop(scenario) == (0, 1, 2)
@@ -333,18 +345,20 @@ def test_the_emission_does_not_need_the_db_write_lock(sent, short_throttle):
     async def scenario():
         db_writer.start_db_writer()
         release = asyncio.Event()
+        acquired = asyncio.Event()
 
         async def hold_the_lock():
             async def inside():
+                acquired.set()
                 await release.wait()
 
             await db_writer.run_under_db_write_lock(inside)
 
         holder = asyncio.create_task(hold_the_lock())
         try:
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(acquired.wait(), 3)
             timeline_signal.poke()
-            await asyncio.sleep(0.4)
+            await sent.wait()
             return len(sent)
         finally:
             release.set()

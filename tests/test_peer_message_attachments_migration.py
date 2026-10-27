@@ -13,14 +13,6 @@ MIGRATE_TO = [("core", "0153_peer_message_attachments")]
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
 
 
-@pytest.fixture
-def restore_latest_migration():
-    """Bring the schema back to the current leaf, whatever it is."""
-    yield
-    executor = MigrationExecutor(connection)
-    executor.migrate(executor.loader.graph.leaf_nodes("core"))
-
-
 def _models(target):
     executor = MigrationExecutor(connection)
     executor.migrate(target)
@@ -39,7 +31,7 @@ def _make(Peer, PeerMessage, message_id, payload, meta=(), **extra):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_old_rows_are_converted(restore_latest_migration):
+def test_old_rows_are_converted(private_current_migration_database):
     _apps, Peer, PeerMessage = _models(MIGRATE_FROM)
     files = _make(Peer, PeerMessage, "files", {"text": "files", "images": [
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": PNG}},
@@ -81,7 +73,7 @@ def test_old_rows_are_converted(restore_latest_migration):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_rows_are_loaded_one_at_a_time(restore_latest_migration):
+def test_rows_are_loaded_one_at_a_time(private_current_migration_database):
     apps, Peer, PeerMessage = _models(MIGRATE_TO)
     for index in range(3):
         _make(Peer, PeerMessage, f"m{index}", {"text": "x", "images": [], "documents": []})
@@ -95,7 +87,7 @@ def test_rows_are_loaded_one_at_a_time(restore_latest_migration):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_the_reverse_is_a_noop(restore_latest_migration):
+def test_the_reverse_is_a_noop(private_current_migration_database):
     _apps, Peer, PeerMessage = _models(MIGRATE_TO)
     pk = _make(Peer, PeerMessage, "new", {"text": "x"})
     _apps, _Peer, PeerMessage = _models(MIGRATE_FROM)

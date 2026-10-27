@@ -24,10 +24,11 @@ FIRST_POLL_TIMEOUT = 0.05
 
 
 @pytest.fixture(autouse=True)
-def fast(monkeypatch):
+def fast(monkeypatch, monotonic_clock):
     from twicc.cli import _twicc_info, _wait_reply
 
-    monkeypatch.setattr(_wait_reply, "POLL_INTERVAL_SECONDS", 0.001)
+    monkeypatch.setattr(_wait_reply, "time", monotonic_clock)
+    monkeypatch.setattr(_wait_reply, "POLL_INTERVAL_SECONDS", 0.01)
     monkeypatch.setattr(_wait_reply, "AGENT_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(_wait_reply, "SESSION_ROW_GRACE_SECONDS", 0.02)
     monkeypatch.setattr(_twicc_info, "resolve_live_twicc", lambda: type("I", (), {"pid": TWICC_PID})())

@@ -1,8 +1,58 @@
 """Migrated database files shared by every migration test of the run."""
 
 import shutil
+import sqlite3
+from contextlib import ExitStack, closing, contextmanager
+from functools import lru_cache
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture
+def private_current_migration_database(tmp_path, transactional_db, django_db_blocker):
+    """Migrate a current-schema copy without replaying unrelated teardown DDL.
+
+    Tests keep their real rollback, historical rows, and forward migration.
+    Their private file can be discarded after the assertions; the shared
+    database never changes schema and needs no migration back to the leaf.
+    """
+    from django.db import connection
+    from tests.test_sqlite_migration_integration import default_alias_database
+
+    assert not connection.in_atomic_block
+    path = tmp_path / "migration.sqlite3"
+    connection.ensure_connection()
+    with closing(sqlite3.connect(path)) as destination:
+        connection.connection.backup(destination)
+    with default_alias_database(path, django_db_blocker, standard=True) as database:
+        yield database
+
+
+@contextmanager
+def memoized_migration_parsing():
+    """Reuse immutable lexical results while migrating a private fixture DB.
+
+    The custom backend reads the real schema after every DDL operation.
+    Most unchanged CREATE TABLE declarations recur at each step. Only pure
+    string parsing is cached; database metadata and decisions stay fresh.
+    Each fixture connection owns these bounded caches. Non-exact strings
+    retain their original protocol behavior.
+    """
+    from twicc.db.backends.sqlite3 import metadata
+
+    def cached(function):
+        memo = lru_cache(maxsize=2048)(function)
+
+        def call(value):
+            return memo(value) if type(value) is str else function(value)
+
+        return call
+
+    with ExitStack() as stack:
+        for name in ("canonical_identifier", "sql_tokens", "declarations"):
+            stack.enter_context(patch.object(metadata, name, cached(getattr(metadata, name))))
+        yield
 
 
 @pytest.fixture(scope="session")

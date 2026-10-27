@@ -166,7 +166,18 @@ def test_commit_failure_retains_fact_page_and_old_rows(monkeypatch):
 
 def test_actual_insert_interval_uses_index_with_75000_facts():
     session = make_session()
-    stage = facts.prepare_compute_history_facts(session.id, (fact(line) for line in range(1, 75001)))
+    stage = facts.prepare_compute_history_facts(session.id, [])
+    # The interval query is the subject. Keep the real stage constraints and
+    # all 75,000 rows without adapting the same fact through models 75,000 times.
+    from django.db.models import JSONField
+
+    data = JSONField().get_db_prep_save(fact(1).data, connection=connection)
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.executemany(
+            f'INSERT INTO temp.{stage.table} (source_order, session_id, line_num, kind, key, data) '
+            'VALUES (%s, %s, %s, %s, %s, %s)',
+            ((line - 1, session.id, line, HistoryFactKind.TOOL_CALL, 'call', data) for line in range(1, 75001)),
+        )
     statements = []
     def explain(execute, sql, params, many, context):
         if sql.startswith('INSERT OR IGNORE INTO') and 'SELECT' in sql:

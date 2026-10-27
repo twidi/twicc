@@ -11,6 +11,9 @@ from twicc.core.enums import Provider
 from twicc.core.models import AgentLink, Project, Session, SessionItem, SessionType, SessionHistoryFact
 from twicc.providers.claude_code.compute import get_compute
 
+
+pytestmark = pytest.mark.usefixtures("metadata_publication")
+
 NOW = datetime(2026, 8, 8, 12, tzinfo=UTC)
 
 

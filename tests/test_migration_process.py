@@ -48,13 +48,21 @@ def test_real_child_migrates_disposable_database_and_logs_once(tmp_path):
     result = probe(tmp_path, """
 import django, sys
 django.setup()
-from twicc.db.migration_process import run_migrations
-run_migrations()
+from twicc.db import migration_process
+popen = migration_process.subprocess.Popen
+def first_migration(command, **kwargs):
+    assert command == [sys.executable, '-m', 'django', 'migrate',
+                       '--settings=twicc.settings_migration', '--verbosity=0']
+    # This test covers the real child, custom driver, and log routing. The
+    # full graph runs in fresh-install and installed-wheel integration tests.
+    return popen([*command, 'core', '0001'], **kwargs)
+migration_process.subprocess.Popen = first_migration
+migration_process.run_migrations()
 assert not any(name.startswith('twicc.db.backends.sqlite3') for name in sys.modules)
 """, DJANGO_SETTINGS_MODULE="twicc.settings")
     assert result.returncode == 0, result.stderr
     with sqlite3.connect(tmp_path / "db/data.sqlite") as db:
-        assert db.execute("SELECT count(*) FROM django_migrations").fetchone()[0] > 0
+        assert db.execute("SELECT app, name FROM django_migrations").fetchall() == [("core", "0001_initial")]
     log = (tmp_path / "logs/backend.log").read_text()
     assert log.count("Migration start migration=core.0001_initial ") == 1
     assert "Migration FK check" in log

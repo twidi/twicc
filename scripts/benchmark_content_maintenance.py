@@ -26,7 +26,12 @@ def arguments():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--source-db', type=Path)
-    return parser.parse_args()
+    parser.add_argument('--smoke', action='store_true',
+                        help='Run short selection scenarios; keep the full workload for performance measurements')
+    args = parser.parse_args()
+    if args.smoke and args.scenario != 'selection':
+        parser.error('--smoke requires --scenario selection')
+    return args
 
 
 def protected_directories():
@@ -150,7 +155,7 @@ def queries(counts, plans=None):
         yield
 
 
-def seed(scenario):
+def seed(scenario, *, smoke=False):
     import orjson
     from django.db import transaction
     from django.utils import timezone
@@ -179,14 +184,15 @@ def seed(scenario):
     owners.append(hot)
     owners.extend(Session(id=f'hot-child-{i}', project=project, provider='codex', type='subagent', parent_session=hot,
                           storage_incarnation=f'hot-child-incarnation-{i}', content_storage_version=1,
-                          compute_version=999999, created_at=now) for i in range(100))
+                          compute_version=999999, created_at=now) for i in range(3 if smoke else 100))
     for owner in owners:
         owner.file_path = '/public-benchmark/' + owner.id
     Session.objects.bulk_create(owners)
     total = 100000 if scenario == 'conformant' else (4 if scenario == 'acquisition' else 24)
     rows = []
+    sizes = (128, 1024, 65536, 131072) if smoke else (1024, 65536, 1024**2, 16 * 1024**2)
     for index in range(total):
-        size = 128 if scenario in {'conformant', 'acquisition'} else (1024, 65536, 1024**2, 16 * 1024**2)[index % 4]
+        size = 128 if scenario in {'conformant', 'acquisition'} else sizes[index % 4]
         text = (f'public synthetic content {index} ' * (size // 20 + 1))[:size]
         if scenario == 'conformant' or (scenario == 'selection' and index % 3):
             text = text if index % 2 else f'x{index}'
@@ -219,7 +225,7 @@ def seed(scenario):
                                                         original_content=plain) for i in range(offset, min(offset + 1000, hot_items))])
         SessionItem.objects.bulk_create([SessionItem(session=owner, line_num=1, content='', current_content=plain,
                                                     original_content=plain) for owner in owners[9:]])
-    return {'contents': total + 1, 'hot_session_items': hot_items, 'hot_descendants': 100,
+    return {'contents': total + 1, 'hot_session_items': hot_items, 'hot_descendants': len(owners) - 9,
             'public_dictionary_sha256': bytes(dictionary.sha256).hex(), 'orjson_version': orjson.__version__}
 
 
@@ -488,7 +494,7 @@ def measure_selection(function):
                 cache_condition='fresh application/SQLite caches; OS page cache uncontrolled')
 
 
-def run_selection_benchmark() -> dict:
+def run_selection_benchmark(*, smoke=False) -> dict:
     from django.db import connection
     from django.db.models import BinaryField
     from django.db.models.functions import Cast, Length
@@ -570,7 +576,7 @@ def run_selection_benchmark() -> dict:
             f"s=importlib.util.spec_from_file_location('bench',{str(Path(__file__).resolve())!r}); "
             "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
             f"w=pathlib.Path({str(work)!r}); w.mkdir(); m.configure(w,w/'benchmark.sqlite'); "
-            "print(orjson.dumps(m.synthetic_selection_trials()).decode())")
+            f"print(orjson.dumps(m.synthetic_selection_trials(smoke={smoke!r})).decode())")
     completed = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
     if completed.returncode:
         raise RuntimeError(completed.stderr)
@@ -718,7 +724,7 @@ async def dispatcher_trial(*, failures=False):
     return result
 
 
-def synthetic_selection_trials():
+def synthetic_selection_trials(*, smoke=False):
     from django.db import connection, transaction
     from django.utils import timezone
     from twicc import content_maintenance_task as maintenance
@@ -727,14 +733,15 @@ def synthetic_selection_trials():
     from twicc.core.models import ContentDictionary, Session, SessionItem, SessionItemContent
 
     started = time.perf_counter()
-    fixture = seed('compress')
+    fixture = seed('compress', smoke=smoke)
     # Mostly post-compute contents have real shared references and current policy metadata.
     from twicc.core.content_storage.codec import encode_cold
     dictionary = ContentDictionary.objects.get(provider='codex', version=1)
     policy = compression_policy_version('codex', dictionary.id)
-    for offset in range(0, 10000, 500):
+    conformant_count = 257 if smoke else 10000
+    for offset in range(0, conformant_count, 500):
         rows = []
-        for index in range(offset, offset + 500):
+        for index in range(offset, min(offset + 500, conformant_count)):
             text = (f'public conformant benchmark {index} ' * 50)[:1024]
             encoded, no_gain = encode_cold(text, dictionary.id, policy)
             assert encoded.codec == 'zstd' and not no_gain
@@ -746,14 +753,20 @@ def synthetic_selection_trials():
             ))
         with transaction.atomic():
             SessionItemContent.objects.bulk_create(rows, batch_size=500)
-            SessionItem.objects.bulk_create([
-                SessionItem(session_id=owner, line_num=30000 + offset + index, content='',
-                            current_content=row, original_content=row)
-                for index, row in enumerate(rows) for owner in ('owner-0', 'owner-1')
-            ], batch_size=500)
-    fixture['contents'] += 10000
-    fixture['preconformant_contents'] = 10000
-    fixture['shared_cold_references'] = 20000
+            # These references only seed the selection workload. Keep
+            # their count, order, and shared content without model adaptation.
+            table = connection.ops.quote_name(SessionItem._meta.db_table)
+            columns = ', '.join(connection.ops.quote_name(SessionItem._meta.get_field(name).column)
+                                for name in ('session', 'line_num', 'content', 'current_content', 'original_content'))
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    f'INSERT INTO {table} ({columns}) VALUES (%s, %s, %s, %s, %s)',
+                    ((owner, 30000 + offset + index, '', row.pk, row.pk)
+                     for index, row in enumerate(rows) for owner in ('owner-0', 'owner-1')),
+                )
+    fixture['contents'] += conformant_count
+    fixture['preconformant_contents'] = conformant_count
+    fixture['shared_cold_references'] = 2 * conformant_count
     setup_ms = (time.perf_counter() - started) * 1000
     complete = {'compressible': asyncio.run(dispatcher_trial()), 'conformant': asyncio.run(dispatcher_trial())}
     # Make one shared compressed row reference two hot roots. Recovery sees real compressed references.
@@ -773,11 +786,12 @@ def synthetic_selection_trials():
     writes = {}
     dictionary = ContentDictionary.objects.get(provider='codex', version=1)
     policy = compression_policy_version('codex', dictionary.id)
-    sizes = [128, 65536, 1024**2, 16 * 1024**2]
+    sizes = [128, 65536, 131072] if smoke else [128, 65536, 1024**2, 16 * 1024**2]
+    repeats = 1 if smoke else 3
     for indexed in (False, True):
         selection_index(indexed)
         samples = []
-        for repeat in range(3):
+        for repeat in range(repeats):
             for size in sizes:
                 owner = Session.objects.get(pk='owner-0')
                 text = (f'index-{repeat}-{size} ' * (size // 8 + 1))[:size]
@@ -786,7 +800,7 @@ def synthetic_selection_trials():
                 codec_ms = (time.perf_counter() - start) * 1000
                 start = time.perf_counter()
                 with transaction.atomic():
-                    insert_ingested_items(owner, [(SessionItem(session=owner, line_num=20000 + repeat * 4 + sizes.index(size),
+                    insert_ingested_items(owner, [(SessionItem(session=owner, line_num=20000 + repeat * len(sizes) + sizes.index(size),
                                                               content=text), text)], prepared=prepared)
                 insert_ms = (time.perf_counter() - start) * 1000
                 row = SessionItemContent.objects.get(sha256=hashlib.sha256(text.encode()).digest())
@@ -808,13 +822,13 @@ def synthetic_selection_trials():
                                     'transitions': transitions})
                 # Matched variants reuse line numbers and remove only this trial's rows outside timing.
                 SessionItem.objects.filter(
-                    session=owner, line_num=20000 + repeat * 4 + sizes.index(size),
+                    session=owner, line_num=20000 + repeat * len(sizes) + sizes.index(size),
                 ).delete()
                 SessionItemContent.objects.filter(pk=row.pk).delete()
         writes['with_index' if indexed else 'without_index'] = samples
     selection_index(True)
     connection.close()
-    return {'index_write_overhead': {'samples': writes, 'repeats': 3,
+    return {'index_write_overhead': {'samples': writes, 'repeats': repeats,
                                          'note': 'writer transaction plus commit; no coordinator queue; preparation separate'},
                 'complete_pass': complete, 'synthetic_fixture': dict(fixture, setup_ms=setup_ms)}
 
@@ -824,8 +838,8 @@ def main():
     output = validate_output(args)
     work, target = destination(args)
     configure(work, target, source=bool(args.source_db))
-    fixture = {'source_backup': True} if args.source_db else seed(args.scenario)
-    result = (run_selection_benchmark() if args.scenario == 'selection'
+    fixture = {'source_backup': True} if args.source_db else seed(args.scenario, smoke=args.smoke)
+    result = (run_selection_benchmark(smoke=args.smoke) if args.scenario == 'selection'
               else asyncio.run(run_pass(args.scenario, bool(args.source_db))))
     if args.scenario == 'acquisition':
         result = acquisition(result)

@@ -16,6 +16,9 @@ from twicc.providers.claude_code.compute import get_compute
 from twicc.providers.history_facts import HistoryFactContext, append_history_facts
 
 
+pytestmark = pytest.mark.usefixtures("metadata_publication")
+
+
 def current(session, records):
     history = HistoryFactContext(session.provider, session_id=session.id)
     for line, parsed in enumerate(records, 1):

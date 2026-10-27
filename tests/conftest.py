@@ -103,22 +103,161 @@ def no_post_migrate_after_flush():
         yield
 
 
-@pytest.fixture(autouse=True)
-def clear_timeline_provider_cache():
-    """The timeline's session-to-provider cache is process-wide: a test must not see another test's sessions.
+@pytest.fixture(autouse=True, scope="session")
+def compact_flushed_test_database():
+    """Keep large fixtures' free pages out of later workers' SQLite copies.
 
-    Session ids are reused by the tests ("s1") with different providers, which the cache (ids are never reused
-    in production) would otherwise answer from a previous test.
+    A flush deletes rows but retains the database's allocated pages. Scale
+    tests leave tens of megabytes of empty pages, copied by every subsequent
+    WAL fixture. Compact only the shared memory test database, after the real
+    flush completes, and only when at least half its pages are free.
     """
+    from unittest.mock import patch
+
+    from django.core.management.commands.flush import Command
+    from django.db import connections
+
+    original = Command.handle
+
+    def flush_and_compact(command, *args, **options):
+        result = original(command, *args, **options)
+        database = connections[options["database"]]
+        if database.vendor == "sqlite" and database.creation.is_in_memory_db(database.settings_dict["NAME"]):
+            with database.cursor() as cursor:
+                cursor.execute("PRAGMA freelist_count")
+                free = cursor.fetchone()[0]
+                if free >= 256:
+                    cursor.execute("PRAGMA page_count")
+                    if free * 2 >= cursor.fetchone()[0]:
+                        cursor.execute("VACUUM")
+        return result
+
+    with patch.object(Command, "handle", flush_and_compact):
+        yield
+
+
+@pytest.fixture
+def monotonic_clock():
+    """Advance deterministic CLI polling without waiting on wall time."""
+    from types import SimpleNamespace
+
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    return SimpleNamespace(monotonic=lambda: now[0], sleep=sleep)
+
+
+@pytest.fixture
+def small_compute_pages(monkeypatch):
+    """Cross the real publication phase boundaries with small page budgets.
+
+    Continuation tests need several pages and a nested tree, rather than
+    hundreds of interchangeable rows. The dedicated lifecycle, validation,
+    and history-fact tests retain the production budgets and scale fixtures.
+    """
+    from functools import partial
+    from types import SimpleNamespace
+
+    from twicc.core.content_storage import extraction, validation
+    from twicc.providers import compute_lifecycle, history_facts
+
+    monkeypatch.setattr(extraction, "ROW_BUDGET", 2)
+    monkeypatch.setattr(compute_lifecycle, "STOP_AGENT_BUDGET", 2)
+    monkeypatch.setattr(history_facts, "_FACT_PAGE_SIZE", 2)
+    monkeypatch.setattr(validation, "prepare_validation_page", partial(validation.prepare_validation_page, row_budget=2))
+    for name in ("prepare_fact_delete_page", "prepare_fact_insert_page"):
+        monkeypatch.setattr(history_facts, name, partial(getattr(history_facts, name), row_budget=2))
+    return SimpleNamespace(items=5, agents=3, facts=5, page_size=2)
+
+
+@pytest.fixture
+def metadata_publication(monkeypatch):
+    """Publish producer metadata without running the content-storage protocol.
+
+    Agent links, run ends, plans, groups, and catalogs need the real compute
+    producer, revision guard, and final publisher. Their legacy seed rows do
+    not need a complete content extraction and certification on each replay.
+    Live ingestion stays real. Storage/publication integration tests do not
+    request this fixture and retain the complete protocol.
+    """
+    from twicc.core.content_storage import extraction
+
+    monkeypatch.setattr(extraction, "prepare_compute_result", lambda message: message)
+    monkeypatch.setattr(extraction, "finish_storage_result", lambda message: None)
+
+
+@pytest.fixture
+def metadata_rows(monkeypatch, metadata_publication):
+    """Seed normalized legacy rows for agent-run business scenarios.
+
+    Batch scenarios already seed legacy rows. Live scenarios use the same
+    representation here, while retaining real slicing, provider hooks,
+    history facts, links, run ends, lifecycle fields, and revision guards.
+    Content extraction, ownership, and certificates run in the dedicated
+    storage, golden replay, and WebSocket integration tests.
+    """
+    from contextlib import nullcontext
+
+    from twicc.core.content_storage import ingestion, lifecycle
+    from twicc.core.content_storage.readers import effective_current
+    from twicc.core.content_storage.state import ensure_storage_incarnation
+    from twicc.core.models import SessionItem
+
+    def initialize(session, **kwargs):
+        session.storage_incarnation = ensure_storage_incarnation(session.id)
+        if metadata := kwargs.get("metadata"):
+            metadata[session.id]["storage_incarnation"] = session.storage_incarnation
+
+    def insert(session, items, **kwargs):
+        lines = [item.line_num for item, _ in items]
+        rows = SessionItem.objects.filter(session_id=session.id, line_num__in=lines)
+        existing = set(rows.values_list("line_num", flat=True))
+        for item, _ in items:
+            item.content = effective_current(item)
+        SessionItem.objects.bulk_create([item for item, _ in items], ignore_conflicts=True)
+        return set(rows.values_list("line_num", flat=True)) - existing
+
+    monkeypatch.setattr(lifecycle, "lifecycle_change", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(ingestion, "initialize_ingestion_session", initialize)
+    monkeypatch.setattr(ingestion, "ingestion_plaintext_change", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(ingestion, "insert_ingested_items", insert)
+    monkeypatch.setattr(ingestion, "promote_ingested_items", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_process_state(monkeypatch):
+    """Isolate caches, title queues, and project directories between tests.
+
+    Session ids recur with different providers. Settings, dictionaries, and
+    content rows also change after rollbacks and database flushes. Reset
+    these process caches together, while each title queue and directory map
+    gets its own container. Keep the same reset at teardown.
+    """
+    from twicc import projects, synced_settings, title_auto_task
+    from twicc.core.content_storage.cold_cache import reset_cold_cache
+    from twicc.core.content_storage.dictionaries import reset_dictionary_cache
     from twicc.core.services.session_timeline import clear_provider_cache
 
-    clear_provider_cache()
+    def clear_caches():
+        synced_settings._cache.clear()
+        clear_provider_cache()
+        reset_dictionary_cache()
+        reset_cold_cache()
+
+    clear_caches()
+    monkeypatch.setattr(title_auto_task, "_queued", deque())
+    monkeypatch.setattr(title_auto_task, "_pending", {})
+    monkeypatch.setattr(title_auto_task, "_running", set())
+    monkeypatch.setattr(title_auto_task, "_wake", None)
+    monkeypatch.setattr(projects, "_project_directories", {})
     yield
-    clear_provider_cache()
+    clear_caches()
 
 
-@pytest.fixture(autouse=True)
-def cheap_password_hashes(monkeypatch):
+@pytest.fixture(autouse=True, scope="session")
+def cheap_password_hashes():
     """Hash new passwords with 1 000 PBKDF2 rounds instead of 600 000.
 
     The real count costs ~0.3 s per hash and per check, and no test is about
@@ -126,8 +265,10 @@ def cheap_password_hashes(monkeypatch):
     ``verify_password`` still runs the real check on what was stored.
     """
     from twicc.auth import hashers
+    from unittest.mock import patch
 
-    monkeypatch.setattr(hashers, "_PBKDF2_ITERATIONS", 1000)
+    with patch.object(hashers, "_PBKDF2_ITERATIONS", 1000):
+        yield
 
 
 class _ShortSleepAsyncio:
@@ -141,8 +282,8 @@ class _ShortSleepAsyncio:
         return await asyncio.sleep(min(delay, 0.001), result)
 
 
-@pytest.fixture(autouse=True)
-def short_db_writer_polls(monkeypatch):
+@pytest.fixture(autouse=True, scope="session")
+def short_db_writer_polls():
     """Cut the DB writer's 50 ms sleeps to 1 ms.
 
     The writer sleeps 50 ms whenever its queues are empty (so each job waits up
@@ -151,26 +292,18 @@ def short_db_writer_polls(monkeypatch):
     and loop, in the same order.
     """
     from twicc.providers import db_writer
+    from unittest.mock import patch
 
-    monkeypatch.setattr(db_writer, "asyncio", _ShortSleepAsyncio())
+    with patch.object(db_writer, "asyncio", _ShortSleepAsyncio()):
+        yield
 
 
-@pytest.fixture(autouse=True)
-def short_compute_retries(request, monkeypatch):
-    """Cut the background compute's retry delays to 10 ms.
+@pytest.fixture(scope="session")
+def short_compute_retry_defaults():
+    """Install stateless retry wrappers once, retaining the original callables."""
+    from contextlib import ExitStack
+    from unittest.mock import patch
 
-    After a failure, both compute coordinators wait before trying again (from
-    1 s, doubled up to 60 s): through ``_wait_for_retry_delay`` after a failed
-    run, retirement or Codex initialization, and until the deadline of
-    ``compute_retry_deadline`` before selecting a failed session again. A
-    recovery test pays those delays once or twice for nothing: the retry
-    still happens, through the same stop-aware wait or deadline, in the same
-    order. The backoff values stay real (tests assert them on the
-    coordinators). A test about the delays themselves carries the
-    ``real_retry_delays`` marker.
-    """
-    if request.node.get_closest_marker("real_retry_delays"):
-        return
     from twicc.providers import background_compute_task, compute_selection
     from twicc.providers.codex import background_compute
 
@@ -183,13 +316,30 @@ def short_compute_retries(request, monkeypatch):
     def short_deadline(delay):
         return real_deadline(min(delay, 0.01))
 
-    for module in (background_compute_task, background_compute):
-        monkeypatch.setattr(module, "_wait_for_retry_delay", short_wait)
-        monkeypatch.setattr(module, "compute_retry_deadline", short_deadline)
+    originals = []
+    with ExitStack() as stack:
+        for module in (background_compute_task, background_compute):
+            for name, value in (("_wait_for_retry_delay", short_wait), ("compute_retry_deadline", short_deadline)):
+                originals.append((module, name, getattr(module, name)))
+                stack.enter_context(patch.object(module, name, value))
+        yield originals
 
 
 @pytest.fixture(autouse=True)
-def no_fsync(monkeypatch):
+def short_compute_retries(request, monkeypatch, short_compute_retry_defaults):
+    """Cap retry waits at 10 ms except in explicit retry-delay tests.
+
+    Keep the real stop-aware wait, retry selection, and backoff values.
+    Only marked tests need per-test patches; ordinary tests share the
+    stateless wrappers instead of installing four patches each time.
+    """
+    if request.node.get_closest_marker("real_retry_delays"):
+        for module, name, original in short_compute_retry_defaults:
+            monkeypatch.setattr(module, name, original)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def no_fsync():
     """Skip the disk flush of ``os.fsync``: tests never survive a power cut anyway.
 
     The attachment and upload stores fsync every file and directory they
@@ -202,11 +352,14 @@ def no_fsync(monkeypatch):
     def checked_fsync(fd):
         os.fstat(fd)
 
-    monkeypatch.setattr(os, "fsync", checked_fsync)
+    from unittest.mock import patch
+
+    with patch.object(os, "fsync", checked_fsync):
+        yield
 
 
-@pytest.fixture(autouse=True)
-def no_real_notification_delivery(monkeypatch):
+@pytest.fixture(autouse=True, scope="session")
+def no_real_notification_delivery():
     """Cut the wire at Apprise: no test may reach a real notification service.
 
     ``settings_test`` now isolates the data dir too, so no test reads the
@@ -224,11 +377,13 @@ def no_real_notification_delivery(monkeypatch):
     dropped, which is exactly what a real success returns (``True``).
     """
     import apprise
+    from unittest.mock import patch
 
     async def _swallow(self, *args, **kwargs):
         return True
 
-    monkeypatch.setattr(apprise.Apprise, "async_notify", _swallow)
+    with patch.object(apprise.Apprise, "async_notify", _swallow):
+        yield
 
 
 @pytest.fixture
@@ -251,40 +406,6 @@ def fresh_data_dir(tmp_path, monkeypatch) -> Path:
     yield path
     monkeypatch.undo()
     time.tzset()
-
-
-@pytest.fixture(autouse=True)
-def fresh_synced_settings_cache():
-    """Start and end every test with an empty synced-settings cache.
-
-    The cache is module-level: without this, the settings one test read or
-    wrote would leak into the next one.
-    """
-    from twicc import synced_settings
-
-    synced_settings._cache.clear()
-    yield
-    synced_settings._cache.clear()
-
-
-@pytest.fixture(autouse=True)
-def fresh_title_auto_task_state(monkeypatch):
-    """Keep live-sync title requests from entering another test's workers."""
-    from twicc import title_auto_task
-
-    monkeypatch.setattr(title_auto_task, "_queued", deque())
-    monkeypatch.setattr(title_auto_task, "_pending", {})
-    monkeypatch.setattr(title_auto_task, "_running", set())
-    monkeypatch.setattr(title_auto_task, "_wake", None)
-
-
-@pytest.fixture(autouse=True)
-def fresh_project_directory_cache(monkeypatch):
-    """The CLI session payload reads project directories through a module-level
-    cache (twicc.projects._project_directories); give each test its own."""
-    from twicc import projects
-
-    monkeypatch.setattr(projects, "_project_directories", {})
 
 
 @pytest.fixture

@@ -68,7 +68,9 @@ def default_alias_database(path, django_db_blocker, standard=False):
     db = (StandardWrapper if standard else DatabaseWrapper)(config, alias)
     connections.databases[alias] = config
     setattr(connections._connections, alias, db)
-    with django_db_blocker.unblock():
+    from tests.migration_templates import memoized_migration_parsing
+
+    with django_db_blocker.unblock(), memoized_migration_parsing():
         db.ensure_connection()
         try:
             yield db

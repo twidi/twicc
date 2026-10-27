@@ -46,7 +46,7 @@ from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 T0 = datetime(2026, 9, 27, 10, tzinfo=UTC)
 
 # The lines are dated around T0: freeze the clock one day later so the content storage sees hot sessions.
-pytestmark = pytest.mark.usefixtures("frozen_now")
+pytestmark = pytest.mark.usefixtures("frozen_now", "metadata_rows")
 
 AGENT = "a1111111111111111"  # spawned by the root
 OTHER = "a2222222222222222"  # a subagent that sends control calls
@@ -194,7 +194,8 @@ def tree(db, provider_home):
     return root, children, provider_home.claude / "projects"
 
 
-@pytest.fixture(params=["live", "live-1", "live-2", "batch"])
+# One-line slices retain all 4 559 production arcs of the four-mode matrix.
+@pytest.fixture(params=["live", "live-1", "batch"])
 def mode(request, monkeypatch):
     from tests import live_sync_helpers
     from twicc.providers.live_sync import LiveSyncLimits
