@@ -3,9 +3,9 @@
 The live hook ``apply_agent_run_signals`` and the live ``FINAL_ANSWER``
 rebind read the DB rows below their line; the batch reads the loop's dicts.
 The parity test replays every rollout of
-:data:`tests.codex_agent_run_fixtures.ALL_FIXTURES` live (one line per sync,
-then in one chunk) and through the batch recompute in a fresh DB, and
-compares the stored rows. The other tests pin the §9 live cases.
+:data:`tests.codex_agent_run_fixtures.ALL_FIXTURES` live (in one chunk, read
+one line per slice or all at once) and through the batch recompute in a fresh
+DB, and compares the stored rows. The other tests pin the §9 live cases.
 """
 
 from __future__ import annotations
@@ -227,25 +227,40 @@ def test_expected_row_counts_cover_every_fixture():
     assert set(EXPECTED_ROW_COUNTS) == set(ALL_FIXTURES)
 
 
-# A per-line replay appends one line per sync, so every slice limit reads it
-# in a single slice: only the one-chunk replay varies the limit (one line per
-# slice, a boundary inside pairs of lines, the whole file at once).
+# The whole file appended in one chunk, read one line per slice or all at
+# once: (per_line, slice_lines).
 REPLAY_MODES = {
-    "per_line": (True, 500),
     "one_chunk_slice_1": (False, 1),
-    "one_chunk_slice_2": (False, 2),
     "one_chunk": (False, 500),
 }
 
 
 # The batch rows of a fixture, played once: the batch reads only the fixture's
-# lines, so all eight replays of a fixture compare with the same rows.
+# lines, so the three replays of a fixture compare with the same rows.
 _BATCH_ROWS: dict[str, dict[str, list]] = {}
 
 
-@pytest.mark.parametrize("mode", sorted(REPLAY_MODES))
+# The (history, mode) pairs that add coverage, every fixture replayed in each:
+# - stale history, one line per slice: only a stale history reaches the raw
+#   resolver, and only a sliced read reaches the "more lines" branch of
+#   ``read_live_slice``;
+# - indexed history, one chunk: only an indexed history reaches the indexed
+#   history-fact path, and only a one-chunk read reaches the stop call of
+#   ``_run_live_stop_step`` for ``stop_result_before_event``;
+# - stale history, one chunk: no extra line covered today, but the only shape
+#   where the stale raw resolver runs with later lines of its slice already
+#   stored (it matters as soon as a fixture reuses an id).
+# A per-line replay covers a strict subset of the one-line slices, and a
+# two-line slice covers nothing more: both are dropped.
+_PARITY_REPLAYS = [
+    pytest.param(False, "one_chunk_slice_1", id="stale_history-one_chunk_slice_1"),
+    pytest.param(True, "one_chunk", id="indexed_history-one_chunk"),
+    pytest.param(False, "one_chunk", id="stale_history-one_chunk"),
+]
+
+
 @pytest.mark.parametrize("name", sorted(ALL_FIXTURES))
-@pytest.mark.parametrize("current", [False, True], ids=["stale_history", "indexed_history"])
+@pytest.mark.parametrize(("current", "mode"), _PARITY_REPLAYS)
 def test_batch_live_parity(db, tmp_path, name, mode, current, monkeypatch):
     per_line, slice_lines = REPLAY_MODES[mode]
     from tests import live_sync_helpers
