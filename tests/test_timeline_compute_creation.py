@@ -146,6 +146,7 @@ def test_the_first_compute_records_no_title_and_a_later_change_is_recorded(proje
     assert kinds("s1") == ["session.created"]
     assert publish("s1", version=100, provider_titles={"s1": "Renamed"}).outcome == "applied"
     assert kinds("s1") == ["session.created", "title.changed"]
+    # The placeholder was never recorded: the provider title is the first title, not a rename from it.
     assert TimelineEvent.objects.get(kind="title.changed").data == {
-        "source": "agent", "new": "Renamed", "old": "First words",
+        "source": "agent", "new": "Renamed", "old": None,
     }

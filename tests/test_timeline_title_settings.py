@@ -50,24 +50,49 @@ def test_rest_title_patch_records_source_user(project):
     assert TimelineEvent.objects.get(session_id="s1").data == {"source": "user", "new": "New", "old": "Old"}
 
 
-def test_placeholder_title_records_source_auto(project):
+def test_the_placeholder_title_records_nothing(project):
     from twicc.providers.compute_base import BaseSessionCompute
 
     make(project)
     mark_known("s1", project.id)
     assert BaseSessionCompute.apply_placeholder_title("s1", "First words")
+    assert Session.objects.get(id="s1").title == "First words"
+    assert kinds("s1") == ["session.created"]
+
+
+def test_a_provider_title_on_a_null_title_records_source_auto(project):
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    make(project)
+    mark_known("s1", project.id)
+    assert BaseSessionCompute._write_provider_title("s1", "From provider")
     assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
-        "source": "auto", "new": "First words", "old": None,
+        "source": "auto", "new": "From provider", "old": None,
+    }
+
+
+def test_the_title_replacing_the_placeholder_is_the_first_title(project):
+    """One event, the replacing title, without the placeholder it replaces."""
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    make(project)
+    mark_known("s1", project.id)
+    assert BaseSessionCompute.apply_placeholder_title("s1", "First words")
+    assert BaseSessionCompute._write_provider_title("s1", "From provider")
+    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+        "source": "agent", "new": "From provider", "old": None,
     }
 
 
 def test_provider_title_overwrite_records_source_agent(project):
+    from twicc.core.services.session_timeline import record_title_change
     from twicc.providers.compute_base import BaseSessionCompute
 
     make(project, title="Before", title_origin="user")
     mark_known("s1", project.id)
+    record_title_change("s1", "Before", source="user", old=None)
     assert BaseSessionCompute._write_provider_title("s1", "From provider")
-    assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
+    assert TimelineEvent.objects.filter(session_id="s1", kind="title.changed").order_by("-id").first().data == {
         "source": "agent", "new": "From provider", "old": "Before",
     }
 
@@ -139,7 +164,23 @@ def test_automatic_title_check_records_source_auto(env, session):  # noqa: F811
     async_to_sync(env.module._apply_check)(
         session, TitleCheckState(7, NOW), title="New title", now=NOW, closing=False, succeeded=True)
     row = TimelineEvent.objects.get(session_id=session.id, kind="title.changed")
-    assert row.data == {"source": "auto", "new": "New title", "old": session.title} and row.actor == "agent"
+    # The first recorded title: the title it replaces (the placeholder) was never recorded.
+    assert row.data == {"source": "auto", "new": "New title", "old": None} and row.actor == "agent"
+
+
+def test_a_later_automatic_title_keeps_the_recorded_title_it_replaces(env, session):  # noqa: F811
+    from asgiref.sync import async_to_sync
+
+    from tests.test_title_automation import NOW
+    from twicc.core.services.session_timeline import record_title_change
+    from twicc.title_cadence import TitleCheckState
+
+    mark_known(session.id, session.project_id)
+    record_title_change(session.id, session.title, source="auto")
+    async_to_sync(env.module._apply_check)(
+        session, TitleCheckState(7, NOW), title="New title", now=NOW, closing=False, succeeded=True)
+    row = TimelineEvent.objects.filter(session_id=session.id, kind="title.changed").order_by("-id").first()
+    assert row.data == {"source": "auto", "new": "New title", "old": session.title}
 
 
 def test_codex_title_import_records_auto_for_a_null_title_and_agent_otherwise(project):
@@ -153,8 +194,9 @@ def test_codex_title_import_records_auto_for_a_null_title_and_agent_otherwise(pr
     assert TimelineEvent.objects.get(session_id="s1", kind="title.changed").data == {
         "source": "auto", "new": "Imported", "old": None,
     }
+    # "Old" was never recorded: the imported title is the first one.
     assert TimelineEvent.objects.get(session_id="s2", kind="title.changed").data == {
-        "source": "agent", "new": "Renamed", "old": "Old",
+        "source": "agent", "new": "Renamed", "old": None,
     }
 
 

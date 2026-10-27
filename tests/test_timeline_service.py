@@ -227,9 +227,12 @@ def test_record_title_change_skips_subagents_and_unknown_sessions(project):
     record_title_change("p", "Parent title", source="agent", old="Before")
     assert kinds("c") == ["session.created"] and kinds("nope") == []
     assert kinds("p") == ["session.created", "title.changed"]
+    # The first recorded title: "Before" was never recorded, so it is not shown as replaced.
     assert TimelineEvent.objects.get(session_id="p", kind="title.changed").data == {
-        "source": "agent", "new": "Parent title", "old": "Before",
+        "source": "agent", "new": "Parent title", "old": None,
     }
+    record_title_change("p", "Again", source="agent", old="Parent title")
+    assert TimelineEvent.objects.filter(session_id="p").order_by("-id").first().data["old"] == "Parent title"
     record_title_change("p", "Next", source="user")
     assert TimelineEvent.objects.filter(session_id="p").order_by("-id").first().data["old"] is None
 

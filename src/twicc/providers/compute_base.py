@@ -1978,14 +1978,19 @@ class BaseSessionCompute:
         return None
 
     @staticmethod
-    def apply_placeholder_title(target_session_id: str, title: str) -> bool:
-        """Stamp an initial title only if the database title is still NULL."""
+    def apply_placeholder_title(target_session_id: str, title: str, *, record: bool = False) -> bool:
+        """Stamp an initial title only if the database title is still NULL.
+
+        The placeholder made from the first prompt is not a timeline event: the generated title that
+        replaces it is the session's first recorded title. ``record`` writes the event, for a provider
+        title stamped through this method.
+        """
         from twicc.core.services.session_timeline import record_title_change
 
         changed = bool(Session.objects.filter(id=target_session_id, title__isnull=True).update(
             title=title, title_origin='auto',
         ))
-        if changed:
+        if changed and record:
             record_title_change(target_session_id, title, source="auto", old=None)
         return changed
 
@@ -2001,7 +2006,7 @@ class BaseSessionCompute:
         """Stamp NULL transitions; leave the origin of existing titles intact."""
         from twicc.core.services.session_timeline import record_title_change
 
-        if BaseSessionCompute.apply_placeholder_title(target_session_id, title):
+        if BaseSessionCompute.apply_placeholder_title(target_session_id, title, record=True):
             return True
         old_title = Session.objects.filter(id=target_session_id).values_list('title', flat=True).first()
         changed = bool(Session.objects.filter(id=target_session_id).exclude(title=title).update(title=title))

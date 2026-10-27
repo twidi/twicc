@@ -444,15 +444,20 @@ def record_title_change(
     An ``auto`` / ``agent`` title of a session not yet known to the timeline (no ``session.created``
     row) is its initial title, not a change: no event (spec 2026-10-18, C7). A ``user`` title is
     always written.
+
+    The first ``auto`` / ``agent`` title of a session is written as its first title (``old`` is
+    ``None``): the title it replaces was never recorded (the placeholder made from the first prompt,
+    or an initial title of C7), so a rename from it would show a title the timeline never had.
     """
     try:
         row = Session.objects.filter(id=session_id).values_list("project_id", "type", "provider").first()
         if row is None or row[1] == SessionType.SUBAGENT:
             return
-        if source != "user" and not TimelineEvent.objects.filter(
-            session_id=session_id, kind=TimelineKind.SESSION_CREATED,
-        ).exists():
-            return
+        if source != "user":
+            if not TimelineEvent.objects.filter(session_id=session_id, kind=TimelineKind.SESSION_CREATED).exists():
+                return
+            if not TimelineEvent.objects.filter(session_id=session_id, kind=TimelineKind.TITLE_CHANGED).exists():
+                old = None
         who = {"origin": origin} if source == "user" else {"actor": TimelineActor.AGENT}
         record_event_sync(
             TimelineKind.TITLE_CHANGED, session_id=session_id, project_id=row[0], provider=row[2],
