@@ -217,15 +217,17 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
     }
 
     const found = new Map()
-    const visited = new Set()
+    // Separate sets: an up walk must never hide a subtree from a down walk.
+    const upVisited = new Set()
+    const downVisited = new Set()
     const consider = (session) => {
         if (naturalIds.has(session.id) || found.has(session.id)) return
         if (isInScope(session) && passesFilter(session)) found.set(session.id, session)
     }
     const walkUp = (session) => {
         let currentId = session.spawned_by
-        while (currentId && !visited.has(currentId)) {
-            visited.add(currentId)
+        while (currentId && !upVisited.has(currentId)) {
+            upVisited.add(currentId)
             const current = sessionsById[currentId]
             if (!current || isBlocking(current)) return
             consider(current)
@@ -234,8 +236,8 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
     }
     const walkDown = (session) => {
         for (const child of childrenOf.get(session.id) || []) {
-            if (visited.has(child.id) || isBlocking(child)) continue
-            visited.add(child.id)
+            if (downVisited.has(child.id) || isBlocking(child)) continue
+            downVisited.add(child.id)
             consider(child)
             walkDown(child)
         }
@@ -243,9 +245,12 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
 
     for (const member of natural) {
         if (!isParticipant(member)) continue
-        visited.add(member.id)
+        upVisited.add(member.id)
         walkUp(member)
-        if (!isBlocking(member)) walkDown(member)
+        if (!isBlocking(member)) {
+            downVisited.add(member.id)
+            walkDown(member)
+        }
     }
     return [...found.values()]
 }

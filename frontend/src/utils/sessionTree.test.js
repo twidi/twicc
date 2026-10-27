@@ -289,3 +289,41 @@ test('extension does not cross a draft or ephemeral middle session', () => {
         assert.deepEqual(extend([root], [root, mid, leaf]), [], JSON.stringify(flag))
     }
 })
+
+test('extension result does not depend on the order of the natural members', () => {
+    const m = s('M'), c = s('C', { spawned_by: 'M' })
+    const n = s('N', { spawned_by: 'C' }), d = s('D', { spawned_by: 'C' })
+    const all = [m, c, n, d]
+    assert.deepEqual(extend([m, n], all), ['C', 'D'])
+    assert.deepEqual(extend([n, m], all), ['C', 'D'])
+})
+
+test('extension has no duplicate when two members share an ancestor', () => {
+    const root = s('root'), a = s('a', { spawned_by: 'root' }), b = s('b', { spawned_by: 'root' })
+    const out = extendTreeCandidates([a, b], {
+        sessionsById: { root, a, b }, isInScope: () => true, passesFilter: () => true,
+    })
+    assert.deepEqual(out.map(x => x.id), ['root'])
+})
+
+test('extension terminates on a spawned_by cycle among loaded sessions', () => {
+    const x = s('x', { spawned_by: 'z' }), y = s('y', { spawned_by: 'x' }), z = s('z', { spawned_by: 'y' })
+    const w = s('w', { spawned_by: 'x' })
+    assert.deepEqual(extend([w], [x, y, z, w]), ['x', 'y', 'z'])
+    assert.deepEqual(extend([x], [x, y, z, w]), ['w', 'y', 'z'])
+})
+
+test('extension does not cross a sub-agent middle session', () => {
+    const root = s('root'), mid = s('mid', { spawned_by: 'root', parent_session_id: 'p' })
+    const leaf = s('leaf', { spawned_by: 'mid' })
+    assert.deepEqual(extend([leaf], [root, mid, leaf]), [])
+    assert.deepEqual(extend([root], [root, mid, leaf]), [])
+})
+
+test('a draft or ephemeral member does not start a walk', () => {
+    for (const flag of [{ draft: true }, { ephemeral: true }]) {
+        const root = s('root'), member = s('m', { spawned_by: 'root', ...flag })
+        const kid = s('kid', { spawned_by: 'm' })
+        assert.deepEqual(extend([member], [root, member, kid]), [], JSON.stringify(flag))
+    }
+})
