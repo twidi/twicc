@@ -95,6 +95,10 @@ export function computeVisualItems(items, mode, expandedGroups = [], isAssistant
             groupTail: item.group_tail ?? null,
             externallyGrouped: item.display_level === DISPLAY_LEVEL.COLLAPSIBLE,
             timestamp: item.timestamp ?? null,
+            ...(item.segmentRange ? { segmentRange: item.segmentRange } : {}),
+            ...(item.prefixSegmentRange ? { prefixSegmentRange: item.prefixSegmentRange } : {}),
+            ...(item.suffixSegmentRange ? { suffixSegmentRange: item.suffixSegmentRange } : {}),
+            ...(item.eventInternalControls ? { eventInternalControls: item.eventInternalControls } : {}),
             ...extras
         }
         const parsed = getParsedContent(item)

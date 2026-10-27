@@ -1,3 +1,4 @@
+import { setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
@@ -609,6 +610,8 @@ export const useDataStore = defineStore('data', {
             // { sessionId: [groupHeadLineNum, ...] }
             // Using array instead of Set for Vue reactivity
             sessionExpandedGroups: {},
+            sessionEventSegments: {},
+            sessionEventRetired: {},
 
             // Expanded internal groups - per session, per item (content-level groups within ALWAYS items)
             // { sessionId: { lineNum: [startIndex, ...] } }
@@ -2382,6 +2385,9 @@ export const useDataStore = defineStore('data', {
                     this.localState.sessionExpandedGroups[sessionId].push(lineNum)
                 }
 
+                const segments = this.localState.sessionEventSegments?.[sessionId]
+                if (segments) this.localState.sessionEventSegments[sessionId] = setEventSegmentExpanded(segments, lineNum, true)
+
                 // Remove from internal groups
                 const idx = itemInternalGroups.indexOf(suffixStartIndex)
                 if (idx >= 0) {
@@ -3265,6 +3271,8 @@ export const useDataStore = defineStore('data', {
                 this.localState.sessions[sessionId].itemsLoading = false
             }
             delete this.sessionItems[sessionId]
+            delete this.localState.sessionEventSegments?.[sessionId]
+            delete this.localState.sessionEventRetired?.[sessionId]
             delete this.localState.sessionExpandedGroups[sessionId]
             delete this.localState.sessionDebugOverride[sessionId]
             delete this.localState.sessionInternalExpandedGroups[sessionId]
@@ -4203,7 +4211,21 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {number} groupHeadLineNum - line_num of the group head item
          */
+        toggleEventSegment(sessionId, segmentKey) {
+            const segments = this.localState.sessionEventSegments[sessionId] || []
+            this.localState.sessionEventSegments[sessionId] = segments.map(segment => segment.key === segmentKey
+                ? { ...segment, expanded: !segment.expanded } : segment)
+            this.recomputeVisualItems(sessionId)
+        },
+
         toggleExpandedGroup(sessionId, groupHeadLineNum) {
+            const segments = this.localState.sessionEventSegments?.[sessionId]
+            const segment = segments?.find(segment => segment.head === groupHeadLineNum && !segment.internal)
+            if (segment) {
+                this.localState.sessionEventSegments[sessionId] = setEventSegmentExpanded(segments, groupHeadLineNum, !segment.expanded)
+                this.recomputeVisualItems(sessionId)
+                return
+            }
             // Ensure array exists for this session
             if (!this.localState.sessionExpandedGroups[sessionId]) {
                 this.localState.sessionExpandedGroups[sessionId] = []
@@ -4229,6 +4251,11 @@ export const useDataStore = defineStore('data', {
          * @param {number} groupHeadLineNum - line_num of the group head item
          */
         expandGroup(sessionId, groupHeadLineNum) {
+            const segments = this.localState.sessionEventSegments?.[sessionId]
+            if (segments?.some(segment => segment.head === groupHeadLineNum && !segment.internal)) {
+                this.localState.sessionEventSegments[sessionId] = setEventSegmentExpanded(segments, groupHeadLineNum, true)
+                return
+            }
             if (!this.localState.sessionExpandedGroups[sessionId]) {
                 this.localState.sessionExpandedGroups[sessionId] = []
             }
@@ -4244,6 +4271,11 @@ export const useDataStore = defineStore('data', {
          * @param {number} groupHeadLineNum - line_num of the group head item
          */
         collapseGroup(sessionId, groupHeadLineNum) {
+            const segments = this.localState.sessionEventSegments?.[sessionId]
+            if (segments?.some(segment => segment.head === groupHeadLineNum && !segment.internal)) {
+                this.localState.sessionEventSegments[sessionId] = setEventSegmentExpanded(segments, groupHeadLineNum, false)
+                return
+            }
             const groups = this.localState.sessionExpandedGroups[sessionId]
             if (groups) {
                 const index = groups.indexOf(groupHeadLineNum)
@@ -4258,6 +4290,9 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         collapseAllGroups(sessionId) {
+            if (this.localState.sessionEventSegments?.[sessionId]) {
+                this.localState.sessionEventSegments[sessionId] = this.localState.sessionEventSegments[sessionId].map(segment => ({ ...segment, expanded: false }))
+            }
             this.localState.sessionExpandedGroups[sessionId] = []
         },
 
@@ -5702,6 +5737,18 @@ export const useDataStore = defineStore('data', {
                             }
                             this.setDetailOpen(sessionId, streamingDetailKey, false)
                         }
+                        const eventSegment = this.localState.sessionEventSegments?.[sessionId]?.find(segment => segment.members.includes(
+                            SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum - block.blockIndex))
+                        if (eventSegment) {
+                            const content = parsed?.message?.content
+                            const contentIndex = item.kind === 'reasoning' ? null
+                                : Array.isArray(content) ? content.findIndex(part => part.type === 'thinking') : null
+                            this.localState.sessionEventRetired[sessionId] ||= []
+                            this.localState.sessionEventRetired[sessionId].push({
+                                streamingLineNum: SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum - block.blockIndex,
+                                realLineNum: item.line_num, contentIndex, expanded: eventSegment.expanded,
+                            })
+                        }
                         // Transfer expandedGroups state for fake-group case.
                         // If this thinking block was its own group_head (fake group)
                         // and the user expanded it, migrate that entry to the real
@@ -5771,6 +5818,10 @@ export const useDataStore = defineStore('data', {
                     if (block.blockType === 'thinking') {
                         const streamingLineNum = baseLineNum - block.blockIndex
                         this.setDetailOpen(sessionId, `line:${streamingLineNum}:0`, false)
+                        if (this.localState.sessionEventSegments?.[sessionId]) {
+                            this.localState.sessionEventSegments[sessionId] = this.localState.sessionEventSegments[sessionId].filter(segment => !segment.members.includes(streamingLineNum))
+                            this.localState.sessionEventRetired[sessionId] = (this.localState.sessionEventRetired[sessionId] || []).filter(transfer => transfer.streamingLineNum !== streamingLineNum)
+                        }
                         if (expanded && expanded.length > 0) {
                             const idx = expanded.indexOf(streamingLineNum)
                             if (idx !== -1) expanded.splice(idx, 1)

@@ -254,7 +254,7 @@ Body: document microsecond ties, transcript-order fallback, and compact-order co
 - The projected `head` is the original source line of the first participating item in that segment.
 - Segment `key` uses `tools:<originalHead>:<first-member-line>`; it is state identity, never a source line key.
 
-- [ ] **Step 1: Test independent segments with real display projection.**
+- [x] **Step 1: Test independent segments with real display projection.**
 
 Use user line 1, twenty COLLAPSIBLE tools at lines 2–21, and assistant line 22.
 Place an event before line 12.
@@ -277,12 +277,12 @@ Drop an orphan synthetic block and reuse its negative line number; the new block
 Freeze original source metadata and expansion inputs. Assert no mutation.
 Test A25's second event splits the closed segment while its neighbor remains open.
 
-- [ ] **Step 2: Run segment tests and confirm failure.**
+- [x] **Step 2: Run segment tests and confirm failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/segments.test.js`.
 Expected: FAIL because segment exports do not exist.
 
-- [ ] **Step 3: Project segment-local grouping and reconcile state.**
+- [x] **Step 3: Project segment-local grouping and reconcile state.**
 
 Cut original source groups at event boundaries. Clone only affected item metadata and forward the parsed-content cache.
 Reassign projected `group_head`/`group_tail` within each segment. Do not change source `line_num` or stored grouping.
@@ -325,12 +325,12 @@ Projected visual items carry a numeric `segmentRange` for their connected contro
 For separate prefix and suffix controls on one ALWAYS item, carry `prefixSegmentRange` and `suffixSegmentRange` separately.
 Forward those optional fields and `eventInternalControls` explicitly in `computeVisualItems`'s `makeVisualItem`; its current constructor does not copy arbitrary source fields.
 
-- [ ] **Step 4: Run segment and existing grouping tests.**
+- [x] **Step 4: Run segment and existing grouping tests.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/segments.test.js src/utils/visualItems.test.js src/stores/visualItemsStability.test.js`.
 Expected: all PASS, including event-free group actions and internal suffix migration.
 
-- [ ] **Step 5: Commit projected tool segmentation.**
+- [x] **Step 5: Commit projected tool segmentation.**
 
 Subject: `feat(chat): split displayed tool groups at event boundaries`.
 Body: explain independent state, inheritance, prefix/suffix treatment, and source identity preservation.
