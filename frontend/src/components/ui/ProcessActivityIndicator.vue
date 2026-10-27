@@ -38,15 +38,7 @@ const props = defineProps({
         type: String,
         default: 'small',
         validator: (value) => ['small', 'medium', 'large'].includes(value)
-    },
-    /**
-     * Render the indicator's own tooltip. Pass false when a parent (e.g. a pill) carries one
-     * tooltip for the whole group.
-     */
-    tooltip: {
-        type: Boolean,
-        default: true,
-    },
+    }
 })
 
 const displayMode = computed(() => processActivityDisplayMode(props.summary))
@@ -73,14 +65,14 @@ const animateStates = ['assistant_turn']
             <span :id="indicatorId" class="pending-indicator" :class="`pending-indicator--${size}`">
                 <wa-icon name="hand"></wa-icon>
             </span>
-            <AppTooltip v-if="tooltip" :for="indicatorId">{{ tooltipText }}</AppTooltip>
+            <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
         <!-- Unread sessions: eye icon -->
         <template v-else-if="displayMode === 'unread'">
             <span :id="indicatorId" class="unread-indicator" :class="`unread-indicator--${size}`">
                 <wa-icon name="eye"></wa-icon>
             </span>
-            <AppTooltip v-if="tooltip" :for="indicatorId">{{ tooltipText }}</AppTooltip>
+            <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
         <!-- Process states: assistant_turn / background_shells / crons / active_process -->
         <template v-else>
@@ -92,7 +84,7 @@ const animateStates = ['assistant_turn']
                 :has-active-crons="displayMode === 'crons'"
                 :background-shells="displayMode === 'background_shells' ? summary.backgroundShellCount : 0"
             />
-            <AppTooltip v-if="tooltip" :for="indicatorId">{{ tooltipText }}</AppTooltip>
+            <AppTooltip :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
     </span>
 </template>

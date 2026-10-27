@@ -62,16 +62,3 @@ test('the parent hint falls back to the shared display name', () => {
     assert.ok(sfc.includes('getSessionDisplayName(node.hintParent)'))
     assert.ok(!sfc.includes('node.hintParent?.title'))
 })
-
-test('treeRowMeta builds the pill shape and retains unchanged rows', () => {
-    assert.match(sfc, /import \{[^}]*descendantActivity[^}]*\} from '..\/..\/..\/utils\/sessionTree\.js'/)
-    for (const field of ['isLast', 'through', 'count: node.summary.descendants', 'pinned: node.summary.pinned',
-        'latestDate: node.summary.latestDate', 'activity: hasChildren && !expanded']) {
-        assert.ok(sfc.includes(field), field)
-    }
-    assert.ok(sfc.includes('descendantActivity(node.descendantIds'))
-    assert.ok(sfc.includes('viewedId: props.sessionId'))
-    assert.ok(sfc.includes('isUnread: isSessionUnread'))
-    assert.ok(sfc.includes('sameList(old.through, next.through)'))
-    assert.ok(sfc.includes('sameActivity(old.activity, next.activity)'))
-})

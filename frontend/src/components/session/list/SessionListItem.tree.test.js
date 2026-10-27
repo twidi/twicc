@@ -27,90 +27,26 @@ test('wrapper keeps its class keys and carries the indent variable only for tree
     assert.equal(bind(button, 'style'), undefined)
 })
 
-test('pill is a sibling of the row button, stops propagation and exposes aria state', () => {
-    const pill = root.children.flatMap(node => node.type === 1 && node.tag === 'template' ? node.children : [node])
-        .find(node => node.type === 1 && node.tag === 'button')
-    assert.ok(pill, 'native pill button is a direct child of the wrapper')
-    assert.ok(pill.props.some(prop => prop.name === 'class' && prop.value.content === 'tree-pill'))
-    assert.ok(bind(pill, 'aria-expanded') && bind(pill, 'aria-label'))
-    assert.match(bind(pill, 'aria-label').exp.content, /Collapse[\s\S]*Expand[\s\S]*treeRow\.count/)
+test('toggle is a sibling of the row button, stops propagation and exposes aria state', () => {
+    const toggle = root.children.find(node => node.type === 1 && node.tag === 'button')
+    assert.ok(toggle, 'native toggle button is a direct child of the wrapper')
+    assert.ok(toggle.props.some(prop => prop.name === 'class' && prop.value.content === 'tree-toggle'))
+    assert.ok(bind(toggle, 'aria-expanded') && bind(toggle, 'aria-label'))
     const rowButton = root.children.find(node => node.type === 1 && node.tag === 'wa-button')
     assert.ok(!JSON.stringify(rowButton.children).includes('"tag":"button"'))
-    assert.ok(!JSON.stringify(rowButton.children).includes('tree-pill'))
     assert.match(source, /function handleToggleTree\(event\) \{\s*event\.stopPropagation\(\)\s*emit\('toggle-tree', props\.session\)/)
-    assert.match(source, /\.tree-pill \{[^}]*height: auto;[^}]*\}/)
-    assert.match(source, /\.tree-pill \{[^}]*display: inline-flex;/)
+    assert.match(source, /\.tree-toggle \{[^}]*height: auto;[^}]*\}/)
+    assert.match(source, /\.tree-toggle \{[^}]*display: inline-flex;/)
 })
 
-test('the pill carries one tooltip: the indicator renders none of its own', () => {
-    assert.match(source, /<ProcessActivityIndicator[\s\S]*?:tooltip="false"[\s\S]*?\/>/)
-    assert.equal(source.match(/:for="rowId\('tree-pill'\)"/g).length, 1)
-    assert.match(source, /processActivityTooltip\(treeRow\.activity, treeActivityMode\)/)
-    assert.match(source, /treeRow\.pinned > 0/)
-    assert.match(source, /treeRow\.latestDate != null/)
-    assert.match(source, /<template v-if="useRelativeTime"><wa-relative-time :date\.prop="timestampToDate\(treeRow\.latestDate\)"/)
-    assert.match(source, /formatDate\(treeRow\.latestDate, \{ smart: true \}\)/)
-})
-
-test('the collapsed-only indicator and the parent hint render from treeRow', () => {
+test('collapsed summary and parent hint render from treeRow', () => {
     assert.match(source, /↰ from \{\{ treeRow\.hint \}\}/)
-    assert.match(source, /props\.treeRow\?\.hasChildren && !props\.treeRow\.expanded && props\.treeRow\.activity/)
-    assert.match(source, /processActivityDisplayMode\(props\.treeRow\.activity\)/)
+    assert.match(source, /props\.treeRow\?\.hasChildren && !props\.treeRow\.expanded/)
+    assert.match(source, /treeSummary\.latestDate != null[\s\S]*?formatDate\(treeSummary\.latestDate/)
 })
 
-test('guides are drawn for child rows only, from the last TREE_MAX_INDENT_LEVEL - 1 entries', () => {
-    assert.match(source, /row\.depth < 1\) return \[\]/)
-    assert.match(source, /row\.through\.slice\(-\(TREE_MAX_INDENT_LEVEL - 1\)\)/)
-    assert.match(source, /<span v-if="treeGuides\.length" class="tree-guides" aria-hidden="true">/)
-    assert.match(source, /'tree-guide--last': guide\.own && treeRow\.isLast/)
-    assert.match(source, /\.tree-guide--last \{\s*bottom: 50%;/)
-})
-
-test('the old toggle column, leaf spacer and collapsed summary are gone', () => {
-    for (const name of ['tree-toggle', 'tree-toggle-spacer', 'tree-summary', 'treeSummary']) {
-        assert.ok(!source.includes(name), name)
-    }
-    assert.ok(!/\.session-item-wrapper--tree \{[^}]*display: flex/.test(source))
-})
-
-test('the pill is a flex sibling right after the row button, with no fixed reserve', () => {
-    const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
-    assert.match(source, /'session-item-wrapper--pill': treeRow\?\.hasChildren/)
-    assert.match(source, /\.session-item-wrapper--pill \{[^}]*display: flex;/)
-    assert.match(source, /\.session-item-wrapper--pill > \.session-item \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/)
-    assert.match(source, /\.session-item-wrapper--pill:not\(\.session-item-wrapper--no-menu\) \{[^}]*var\(--sidebar-row-menu-column/)
-    assert.match(source, /\.session-item-wrapper--pill \.session-name \{\s*margin-right: 0;/)
-    assert.match(source, /\.tree-pill \{[^}]*flex: none;/)
-    assert.ok(!/\.tree-pill \{[^}]*position: absolute/.test(source))
-    assert.ok(!/\.tree-pill \{[^}]*(right|bottom):/.test(source))
-    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*align-self: center;/)
-    assert.match(css, /--sidebar-row-menu-column: 2rem;/)
-    assert.ok(!css.includes('pill-reserve') && !source.includes('pill-reserve') && !css.includes('3.5rem'))
-})
-
-test('pill rows drop every compact-indicator offset that dodges the menu', () => {
-    const rule = source.match(/((?:\.session-item-wrapper--pill \.compact-[a-z-]+-indicator,?\s*)+)\{([^}]*)\}/)
-    assert.ok(rule, 'grouped pill-row reset')
-    for (const name of ['comments', 'pending-request', 'unread', 'process']) {
-        assert.ok(rule[1].includes(`.session-item-wrapper--pill .compact-${name}-indicator`), name)
-    }
-    assert.match(rule[2], /margin-left: 0;/)
-    assert.match(rule[2], /left: 0;/)
-    // the global rules keep their shift for every other row
-    assert.equal(source.match(/^\s*left: -1\.5rem;/gm).length, 4)
-})
-
-test('inside the pill: no chevron margin from native.css, a gap before the indicator', () => {
-    assert.match(source, /\.tree-pill > wa-icon \{\s*margin: 0;/)
-    assert.match(source, /\.tree-pill \{[^}]*gap: var\(--wa-space-3xs\);/)
-    assert.match(source, /\.tree-pill-indicator \{\s*margin-inline-start: 3px;/)
-    assert.match(source, /class="tree-pill-indicator"/)
-})
-
-test('the row reserves end padding only when it carries a pill', () => {
-    assert.match(source, /'session-item--has-pill': treeRow\?\.hasChildren/)
-    const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
-    assert.match(css, /\.sidebar-row\.session-item--has-pill::part\(base\) \{[^}]*padding-inline-end: var\(--wa-space-3xs\)/)
+test('collapsed summary date honours the relative time setting like the row date', () => {
+    assert.match(source, /v-if="useRelativeTime" :date\.prop="timestampToDate\(treeSummary\.latestDate\)"/)
 })
 
 test('template compiles', () => {

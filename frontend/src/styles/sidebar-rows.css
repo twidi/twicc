@@ -38,11 +38,6 @@
     width: 100%;
 }
 
-/* Width of the menu column at the row's end (the menu is absolutely placed over it). */
-:where(.sidebar-row-wrapper) {
-    --sidebar-row-menu-column: 2rem;
-}
-
 .sidebar-row {
     width: 100%;
 }
@@ -53,13 +48,6 @@
     /* Reserve the outlined-appearance shadow offset so the open row does not shift the
        others. */
     margin-bottom: var(--wa-shadow-offset-y-s);
-}
-
-.sidebar-row.session-item--has-pill::part(base) {
-    /* A tree row with a pill ends before the pill (a sibling of the row button, in the
-       wrapper's flex line), so it needs no room for the menu: a small end padding only.
-       Rows without a pill are unchanged. */
-    padding-inline-end: var(--wa-space-3xs);
 }
 
 .sidebar-row::part(label) {
