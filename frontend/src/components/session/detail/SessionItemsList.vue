@@ -9,6 +9,7 @@ import { DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
+import { isSessionEvent, isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
 import { getParsedContent, hasContent } from '../../../utils/parsedContent'
 import { pendingSessionSearch } from '../../../utils/pendingSearch'
 import { createComputePendingHint } from '../../../utils/computePendingHint.js'
@@ -520,11 +521,11 @@ const entrance = useChatEntrance({ items: visualItems, getKey: item => item.line
 // Opening or closing a group of hidden elements (visual refresh retouches): the rows it adds enter, the
 // rows it removes fold out (kept in the scroller's list for the length of the exit), and the head's own
 // item enters or folds out. `displayItems` is the visual items plus those exiting rows.
-const groupReveal = useGroupReveal({ items: visualItems, getKey: item => item.lineNum })
+const groupReveal = useGroupReveal({ items: visualItems, getKey: item => item.lineNum, isMember: item => !isSessionEvent(item) })
 const exits = useListExit({
     items: visualItems,
     getKey: item => item.lineNum,
-    isEligible: () => groupReveal.isCollapsing(),
+    isEligible: item => !isSessionEvent(item) && groupReveal.isCollapsing(),
     scopeKey: () => props.sessionId,
     getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
     getHeight: lineNum => scrollerRef.value?.getItemHeight(lineNum) ?? 0,
@@ -542,7 +543,7 @@ const rowStyle = item => exits.exitStyle(item) ?? groupReveal.itemStyle(item) ??
 // arrival. `setActiveProcesses` also counts when this session's turn started or ended
 // during the disconnect: its working/starting row appears or goes at the next recompute.
 const VIEW_CHANGE_ACTIONS = new Set([
-    'toggleExpandedGroup', 'toggleBlockDetailedMode', 'ensureBlockDetailed', 'toggleSessionDebug',
+    'toggleExpandedGroup', 'toggleEventSegment', 'toggleBlockDetailedMode', 'ensureBlockDetailed', 'toggleSessionDebug',
 ])
 const GLOBAL_VIEW_CHANGE_ACTIONS = new Set(['recomputeAllVisualItems', 'setActiveProcesses'])
 
@@ -1973,6 +1974,15 @@ async function scrollToLineNum(lineNum, options = {}) {
         }
     }
 
+    if (!found && typeof lineNum === 'number') {
+        const segment = store.localState.sessionEventSegments[props.sessionId]?.find(segment => segment.members.includes(lineNum))
+        if (segment && !segment.internal) {
+            store.expandGroup(props.sessionId, segment.head)
+            store.recomputeVisualItems(props.sessionId)
+            await nextTick()
+            found = visualItems.value.some(item => item.lineNum === lineNum)
+        }
+    }
     if (!found) return false
     if (generation !== scrollToLineNumGeneration) return false  // Stale
 
@@ -1982,13 +1992,13 @@ async function scrollToLineNum(lineNum, options = {}) {
     if (targetIndex === -1) return false
 
     // Collect lineNums that need loading in a buffer around the target
-    const bufferSize = LOAD_BUFFER
+    const bufferSize = typeof lineNum === 'number' ? LOAD_BUFFER : 0
     const startIdx = Math.max(0, targetIndex - bufferSize)
     const endIdx = Math.min(visItems2.length - 1, targetIndex + bufferSize)
     const lineNumsToLoad = []
 
     for (let i = startIdx; i <= endIdx; i++) {
-        if (!visItems2[i].isDaySeparator && !hasContent(visItems2[i])) {
+        if (typeof lineNum === 'number' && isTranscriptLoadCandidate(visItems2[i])) {
             lineNumsToLoad.push(visItems2[i].lineNum)
         }
     }
@@ -2079,6 +2089,7 @@ const {
 } = useChatNavigation({
     scrollerRef,
     visualItems,
+    displayItems,
     // `align: 'start'` pins the block to the top of the viewport, so the reader
     // gets the whole screen to read it. scrollToIndex clamps to the maximum
     // scroll, so the last block simply lands as high as it can go.
@@ -2370,6 +2381,9 @@ defineExpose({
                             :externally-grouped="item.externallyGrouped || false"
                             :group-head="item.groupHead"
                             :group-tail="item.groupTail"
+                            :prefix-segment-range="item.prefixSegmentRange"
+                            :suffix-segment-range="item.suffixSegmentRange"
+                            :event-internal-controls="item.eventInternalControls"
                             :prefix-expanded="item.prefixExpanded || false"
                             :suffix-expanded="item.suffixExpanded || false"
                             :detail-toggle-for="item.detailToggleFor ?? null"

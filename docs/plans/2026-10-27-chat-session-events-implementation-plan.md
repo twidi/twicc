@@ -10,7 +10,7 @@
 
 **Spec:** [Session events specification](2026-10-27-chat-session-events-spec.md). Read the entire specification before executing this plan.
 
-**Status:** Implementation authorized. Tasks 1–5 complete; remaining tasks run inline with a final independent review.
+**Status:** Implementation authorized. Tasks 1–6 complete; remaining tasks run inline with a final independent review.
 
 ## Global Constraints
 
@@ -512,7 +512,7 @@ Body: explain independent loading, accessible detail text, and events-only displ
 - Adds optional `eventInternalControls` prop through the same chain, defaulting to an empty mapping.
 - Extends `useChatNavigation` with optional `displayItems=visualItems`, preserving existing share-viewer callers.
 
-- [ ] **Step 1: Add behavior tests for non-message rows and concurrent updates.**
+- [x] **Step 1: Add behavior tests for non-message rows and concurrent updates.**
 
 ```js
 assert.deepEqual(collectMissingScrollerLines([unloaded(12), eventRow(7), dayRow(), unloaded(13)], range, 0), [12, 13])
@@ -526,12 +526,12 @@ source-line search expanding only the containing segment; day separator/event st
 leading/trailing event edge navigation; and block navigation while exit rows remain mounted.
 Test a shared navigation caller without events or the optional argument.
 
-- [ ] **Step 2: Run the targeted tests and confirm new failures.**
+- [x] **Step 2: Run the targeted tests and confirm new failures.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/scrollerLoadWindow.test.js src/utils/groupReveal.test.js src/utils/listExit.test.js src/utils/chatBlocks.test.js src/components/session/detail/SessionItemsList.events.test.js`.
 Expected: new event-specific cases FAIL; existing cases remain diagnostic baselines.
 
-- [ ] **Step 3: Exclude events from loading and animations.**
+- [x] **Step 3: Exclude events from loading and animations.**
 
 Use `isTranscriptLoadCandidate` in `collectMissingScrollerLines` and the preload loop inside `scrollToLineNum`.
 It accepts only real positive numeric source lines lacking content. Date/event/status rows are not candidates.
@@ -543,7 +543,7 @@ An event added during a pending toggle never gets a group animation class or con
 Pass the per-item exclusion into useListExit. Event removal on hiding never retains an exiting notice.
 Keep the predicate default unchanged for sidebar and other existing callers.
 
-- [ ] **Step 4: Forward comment scopes and resolve navigation by rendered keys.**
+- [x] **Step 4: Forward comment scopes and resolve navigation by rendered keys.**
 
 Use each segment's head/tail for the GroupToggle comment count.
 For ALWAYS controls, forward independent prefix/suffix ranges through SessionItem and Claude Message to ContentList.
@@ -558,12 +558,12 @@ Never use a visualItems index directly against a list containing extra exit rows
 Top/bottom use the complete displayed list, including event-only content.
 Search/source targets keep numeric lines and expand the projected segment containing the target when needed.
 
-- [ ] **Step 5: Run targeted tests and the existing chat loading tests.**
+- [x] **Step 5: Run targeted tests and the existing chat loading tests.**
 
 Run the Step 2 command plus `cd /home/twidi/dev/twicc-poc/frontend && node --test src/components/session/detail/SessionItemsList.loading.test.js`.
 Expected: all PASS. Existing no-event navigation behavior remains unchanged.
 
-- [ ] **Step 6: Commit integration boundaries.**
+- [x] **Step 6: Commit integration boundaries.**
 
 Subject: `fix(chat): keep event rows outside transcript controls`.
 Body: explain loading exclusions, tool animation membership, segment comments, and keyed navigation.

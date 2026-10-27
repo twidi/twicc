@@ -15,12 +15,13 @@ import { blockTargets, nextBlockTarget, prevBlockTarget } from '../utils/chatBlo
  * @param {Object} options
  * @param {import('vue').Ref} options.scrollerRef - Ref on the VirtualScroller component.
  * @param {import('vue').Ref<Array>} options.visualItems - The rendered items.
+ * @param {import('vue').Ref<Array>} [options.displayItems] - Rows including retained exits.
  * @param {(lineNum: any, offset: number) => Promise<any>} options.scrollToItem - Bring one
  *   item to the top of the viewport, stopping `offset` pixels short of it, and
  *   loading whatever it needs first.
  * @param {(edge: 'top' | 'bottom') => Promise<any>} options.scrollToEdge - Reach an extreme.
  */
-export function useChatNavigation({ scrollerRef, visualItems, scrollToItem, scrollToEdge }) {
+export function useChatNavigation({ scrollerRef, visualItems, displayItems = visualItems, scrollToItem, scrollToEdge }) {
     const targets = computed(() => blockTargets(visualItems.value))
 
     // ── Leading gap ──────────────────────────────────────────────────────────
@@ -69,11 +70,17 @@ export function useChatNavigation({ scrollerRef, visualItems, scrollToItem, scro
      * against, so a block is never re-targeted just because we stopped short of
      * it on purpose.
      */
+    const positionByKey = computed(() => {
+        const positions = scrollerRef.value?.positions ?? []
+        return new Map(displayItems.value.map((item, index) => [item.lineNum, positions[index]]))
+    })
+
     function makeTopOf(gap) {
-        const positions = scrollerRef.value?.positions
+        const positions = positionByKey.value
         const items = visualItems.value
         return (index) => {
-            const top = positions?.[index]?.top
+            const key = items?.[index]?.lineNum
+            const top = positions.get(key)?.top
             if (top == null) return null
             return Math.max(0, top - (carriesOwnGap(items?.[index]) ? 0 : gap))
         }
@@ -81,9 +88,8 @@ export function useChatNavigation({ scrollerRef, visualItems, scrollToItem, scro
 
     /** Every target whose position is known, so `topOf` never returns null downstream. */
     const placedTargets = computed(() => {
-        const positions = scrollerRef.value?.positions
-        if (!positions) return []
-        return targets.value.filter((target) => positions[target] !== undefined)
+        const positions = positionByKey.value
+        return targets.value.filter(target => positions.get(visualItems.value[target].lineNum) !== undefined)
     })
 
     // Reactive, updated on every scroll frame. Good enough to drive the buttons'

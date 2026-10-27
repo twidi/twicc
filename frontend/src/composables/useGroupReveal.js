@@ -16,7 +16,7 @@ import { isReducedMotion } from '../utils/reducedMotion.js'
 const LEAVE_DURATION_MS = 260
 const END_MARGIN_MS = 60
 
-export function useGroupReveal({ items, getKey, env = globalThis }) {
+export function useGroupReveal({ items, getKey, isMember = () => true, env = globalThis }) {
     const entering = reactive(new Map())      // key → index of the rows that enter (the head item is 0)
     const groupCount = ref(1)                 // rows + the head item, of the group being opened
     const headRevealing = reactive(new Set()) // head keys whose own item enters
@@ -66,7 +66,7 @@ export function useGroupReveal({ items, getKey, env = globalThis }) {
         const { previousKeys, expanding } = pending
         pending = null
         if (!expanding) return
-        const { rows, count } = planGroupReveal({ previousKeys, items: next ?? [], getKey })
+        const { rows, count } = planGroupReveal({ previousKeys, items: next ?? [], getKey, isMember })
         groupCount.value = count
         for (const { key, index } of rows) {
             entering.set(key, index)

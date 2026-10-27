@@ -31,3 +31,7 @@ test('4. the end is the last row\'s start plus its slide', () => {
 test('5. the window in which a removal counts as a collapse outlasts the exit animation', () => {
     assert.ok(GROUP_REVEAL_WINDOW_MS > 260)
 })
+test('event insertion in the toggle flush does not enter or increase the group count', () => {
+    assert.deepEqual(planGroupReveal({ previousKeys: new Set([1]), items: rows(1, 2, 'event:7', 3), getKey: key,
+        isMember: item => typeof item.lineNum === 'number' }), { rows: [{ key: 2, index: 1 }, { key: 3, index: 2 }], count: 3 })
+})

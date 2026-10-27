@@ -20,3 +20,9 @@ test('candidate equality and pagination cursor/canonical membership progress', (
     assert.equal(api.hasScrollerPaginationProgress(before, { cursor: 100, ids: new Set(['a', 'b']) }), true)
     assert.equal(api.hasScrollerPaginationProgress(before, { cursor: 100, ids: new Set(['a']) }), false)
 })
+test('event, status and negative synthetic keys never load JSONL lines', () => {
+    assert.deepEqual(api.collectMissingScrollerLines([
+        { lineNum: 12 }, { lineNum: 'event:7', isSessionEvent: true },
+        { lineNum: 'daysep-13', isDaySeparator: true }, { lineNum: -1 }, { lineNum: 'status' }, { lineNum: 13 },
+    ], { start: 0, end: 5 }, 0), [12, 13])
+})

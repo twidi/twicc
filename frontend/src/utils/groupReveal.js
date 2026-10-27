@@ -14,8 +14,8 @@ const CURTAIN_MAX_MS = 400
  * The rows of `items` that are new since `previousKeys`, in list order, indexed from 1 (the head's own
  * item is index 0). `count` = rows + the head item.
  */
-export function planGroupReveal({ previousKeys, items, getKey }) {
-    const rows = items.map(getKey).filter((key) => !previousKeys.has(key)).map((key, i) => ({ key, index: i + 1 }))
+export function planGroupReveal({ previousKeys, items, getKey, isMember = () => true }) {
+    const rows = items.filter(isMember).map(getKey).filter((key) => !previousKeys.has(key)).map((key, i) => ({ key, index: i + 1 }))
     return { rows, count: rows.length + 1 }
 }
 

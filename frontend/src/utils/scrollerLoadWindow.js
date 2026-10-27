@@ -1,11 +1,11 @@
-import { hasContent } from './parsedContent.js'
+import { isTranscriptLoadCandidate } from './chatEvents/rows.js'
 
 /** Keep the conservative inclusive endpoint used by conversation gap loading. */
 export function collectMissingScrollerLines(visualItems, { start, end }, buffer) {
     const lines = []
     for (let i = Math.max(0, start - buffer); i <= Math.min(visualItems.length - 1, end + buffer); i++) {
         const item = visualItems[i]
-        if (item && !item.isDaySeparator && !hasContent(item)) lines.push(item.lineNum)
+        if (isTranscriptLoadCandidate(item)) lines.push(item.lineNum)
     }
     return lines
 }

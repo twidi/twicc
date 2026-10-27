@@ -68,6 +68,9 @@ const props = defineProps({
         type: Number,
         default: null
     },
+    prefixSegmentRange: { type: Object, default: null },
+    suffixSegmentRange: { type: Object, default: null },
+    eventInternalControls: { type: Object, default: () => ({}) },
     prefixExpanded: {
         type: Boolean,
         default: false
@@ -121,6 +124,10 @@ const expandedInternalGroups = computed(() => {
     const groups = store.getInternalExpandedGroups(props.sessionId, props.lineNum)
     return new Set(groups)
 })
+
+function internalExpanded(startIndex) {
+    return props.eventInternalControls?.[startIndex]?.expanded ?? expandedInternalGroups.value.has(startIndex)
+}
 
 // Compute connected prefix/suffix boundaries
 const prefixSuffixBoundaries = computed(() => {
@@ -193,7 +200,7 @@ const visibleItems = computed(() => {
 
             // Check if we're in the current group
             if (currentGroup && itemIndex >= currentGroup.startIndex && itemIndex <= currentGroup.endIndex) {
-                const isExpanded = expandedInternalGroups.value.has(currentGroup.startIndex)
+                const isExpanded = internalExpanded(currentGroup.startIndex)
                 show = isExpanded
                 groupStartIndex = currentGroup.startIndex
                 // Show toggle BEFORE the first element of the group (collapsed or expanded)
@@ -210,7 +217,7 @@ const visibleItems = computed(() => {
         if (toggleType === 'suffix') {
             toggleExpanded = props.suffixExpanded
         } else if (toggleType === 'internal' && groupStartIndex != null) {
-            toggleExpanded = expandedInternalGroups.value.has(groupStartIndex)
+            toggleExpanded = internalExpanded(groupStartIndex)
         }
 
         result.push({
@@ -254,21 +261,25 @@ const firstMediaIndex = computed(() => {
 })
 
 function toggleInternalGroup(startIndex) {
-    store.toggleInternalExpandedGroup(props.sessionId, props.lineNum, startIndex)
+    const control = props.eventInternalControls?.[startIndex]
+    if (control) store.toggleEventSegment(props.sessionId, control.segmentKey)
+    else store.toggleInternalExpandedGroup(props.sessionId, props.lineNum, startIndex)
 }
 
-/** Whether the parent message's line number range contains any tool comments. */
-const parentRangeCommentsCount = computed(() => {
+/** Count only comments owned by the displayed control. */
+function controlCommentsCount(entry) {
     const rootSessionId = props.parentSessionId || props.sessionId
     if (codeCommentsStore.countBySession(props.projectId, rootSessionId) === 0) return 0
     if (codeCommentsStore.countBySource(props.projectId, rootSessionId, 'tool') === 0) return 0
     const subagentId = props.parentSessionId ? props.sessionId : ''
     const comments = codeCommentsStore.getCommentsBySession(props.projectId, rootSessionId)
         .filter(c => c.source === 'tool' && c.toolLineNum != null && c.subagentSessionId === subagentId)
-    const head = props.groupHead ?? props.lineNum
-    const tail = props.groupTail ?? props.lineNum
+    const range = entry.toggleType === 'suffix' ? props.suffixSegmentRange
+        : props.eventInternalControls?.[entry.groupStartIndex]?.range
+    const head = range?.head ?? props.lineNum
+    const tail = range?.tail ?? (entry.toggleType === 'suffix' ? props.groupTail ?? props.lineNum : props.lineNum)
     return comments.filter(c => c.toolLineNum >= head && c.toolLineNum <= tail).length
-})
+}
 </script>
 
 <template>
@@ -278,7 +289,7 @@ const parentRangeCommentsCount = computed(() => {
             v-if="entry.showToggleBefore && entry.toggleType === 'internal'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
-            :comments-count="parentRangeCommentsCount"
+            :comments-count="controlCommentsCount(entry)"
             @toggle="toggleInternalGroup(entry.groupStartIndex)"
         />
         <!-- Toggle for suffix (emits to parent for session-level handling) -->
@@ -286,7 +297,7 @@ const parentRangeCommentsCount = computed(() => {
             v-else-if="entry.showToggleBefore && entry.toggleType === 'suffix'"
             :expanded="entry.toggleExpanded"
             :item-count="entry.groupSize"
-            :comments-count="parentRangeCommentsCount"
+            :comments-count="controlCommentsCount(entry)"
             @toggle="emit('toggle-suffix')"
         />
 

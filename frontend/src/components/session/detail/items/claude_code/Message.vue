@@ -50,6 +50,9 @@ const props = defineProps({
         type: Number,
         default: null
     },
+    prefixSegmentRange: { type: Object, default: null },
+    suffixSegmentRange: { type: Object, default: null },
+    eventInternalControls: { type: Object, default: () => ({}) },
     prefixExpanded: {
         type: Boolean,
         default: false
@@ -171,6 +174,9 @@ const displayItems = computed(() => {
             :externally-grouped="externallyGrouped"
             :group-head="groupHead"
             :group-tail="groupTail"
+            :prefix-segment-range="prefixSegmentRange"
+            :suffix-segment-range="suffixSegmentRange"
+            :event-internal-controls="eventInternalControls"
             :prefix-expanded="prefixExpanded"
             :suffix-expanded="suffixExpanded"
             :hidden-indices="attachmentLayout.hiddenIndices"

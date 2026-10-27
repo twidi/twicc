@@ -32,8 +32,8 @@ test('1. the block opens like a curtain: each row grows in its own segment and s
 
 test('2. the chat list: displayed items in the scroller, exits only for a collapse, the group noted before the store action', () => {
     const sfc = read('components/session/detail/SessionItemsList.vue')
-    assert.ok(sfc.includes('const groupReveal = useGroupReveal({ items: visualItems, getKey: item => item.lineNum })'))
-    assert.ok(sfc.includes('isEligible: () => groupReveal.isCollapsing(),'))
+    assert.ok(sfc.includes('const groupReveal = useGroupReveal({ items: visualItems, getKey: item => item.lineNum, isMember: item => !isSessionEvent(item) })'))
+    assert.ok(sfc.includes('isEligible: item => !isSessionEvent(item) && groupReveal.isCollapsing(),'))
     assert.ok(sfc.includes('const rowClass = item => exits.exitClass(item) ?? groupReveal.itemClass(item) ?? entrance.itemClass(item)'))
     assert.ok(sfc.includes('const rowStyle = item => exits.exitStyle(item) ?? groupReveal.itemStyle(item) ?? entrance.itemStyle(item)'))
     assert.ok(sfc.includes(':items="displayItems"') && sfc.includes(':item-class="rowClass"') && sfc.includes(':item-style="rowStyle"'))
