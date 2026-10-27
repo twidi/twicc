@@ -10,7 +10,7 @@
 
 **Spec:** [Session events specification](2026-10-27-chat-session-events-spec.md). Read the entire specification before executing this plan.
 
-**Status:** Adversarial implementation-plan review complete. Product implementation is not authorized by this document.
+**Status:** Implementation authorized. Tasks 1–5 complete; remaining tasks run inline with a final independent review.
 
 ## Global Constraints
 
@@ -441,7 +441,7 @@ Body: explain loaded-session ownership, complete publication, logical-block isol
 - Reactivation first ensures a missing controller, including after reconciliation unloads a cached chat. Refresh an existing controller; do not duplicate a new controller's initial traversal.
 - Component destruction does not discard a loaded-session cache. `unloadSession` owns final disposal.
 
-- [ ] **Step 1: Add notice, loading, and activation tests.**
+- [x] **Step 1: Add notice, loading, and activation tests.**
 
 Cover every selected current family, another actor, unknown kind, missing optional data, estimated timestamp, and long values.
 Assert the short time remains visible when message timestamps are disabled.
@@ -452,12 +452,12 @@ Assert opening the same chat twice does not restart traversal, a draft sends no 
 Mount the notice through the real memoized VirtualScroller harness. Keep event and EventRow references unchanged, then replace the cited-session table.
 Assert actor title/provider/link eligibility update and the mounted notice and open Details element retain their identity and state.
 
-- [ ] **Step 2: Run notice and loading tests and confirm failure.**
+- [x] **Step 2: Run notice and loading tests and confirm failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/components/session/detail/SessionEventNotice.test.js src/composables/useSessionEventHistory.test.js src/components/session/detail/SessionItemsList.loading.test.js`.
 Expected: new tests FAIL because the notice and lifecycle composable do not exist.
 
-- [ ] **Step 3: Implement the dedicated notice.**
+- [x] **Step 3: Implement the dedicated notice.**
 
 Use `describeEvent` for semantic wording and time. Reuse small wording parts, not the full Timeline row.
 Pass the stable reactive context from this task's interface. Update `context.sessions` even when no EventRow changes.
@@ -470,7 +470,7 @@ Keep source/actor information when supplied. An unknown kind exposes its literal
 Use normal text interpolation, selectable content, `min-width: 0`, wrapping, and `overflow-wrap: anywhere`.
 No fixed notice height. ResizeObserver measures expanded details through the existing row wrapper.
 
-- [ ] **Step 4: Integrate loading state and the event rendering branch.**
+- [x] **Step 4: Integrate loading state and the event rendering branch.**
 
 Insert the event branch after DaySeparator and before the `!hasContent(item)` placeholder branch.
 Do not send EventRows to SessionItem or provider-specific rendering.
@@ -481,11 +481,11 @@ For events-only sessions, show the scroller when event rows exist. Suppress `Not
 An event-history failure never sets message `itemsLoadingError` or blocks message navigation.
 Preserve existing compute/unavailable behavior; event state must not turn an inaccessible session into a visible chat.
 
-- [ ] **Step 5: Run notice/lifecycle/loading tests.**
+- [x] **Step 5: Run notice/lifecycle/loading tests.**
 
 Run the Step 2 command. Expected: all PASS.
 
-- [ ] **Step 6: Commit the dedicated notice and event status UI.**
+- [x] **Step 6: Commit the dedicated notice and event status UI.**
 
 Subject: `feat(chat): render centered session event notices`.
 Body: explain independent loading, accessible detail text, and events-only display.

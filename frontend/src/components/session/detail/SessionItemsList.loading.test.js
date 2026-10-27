@@ -193,3 +193,26 @@ test("history loading preserves a reader inside the observer's near-bottom zone"
     v.requests[0].resolve(true); await flush()
     assert.equal(v.corrections.length, 0)
 })
+
+// Execute the actual independent status template without mounting unrelated composer panes.
+test('event status distinguishes initial load, recovery, failure and retry', async t => {
+    const { compileTemplate } = await import('@vue/compiler-sfc')
+    const start = source.indexOf('        <div v-if="(eventHistoryPending')
+    const end = source.indexOf('        <!-- The chat\'s stage:', start)
+    assert.ok(start >= 0 && end > start)
+    const { code } = compileTemplate({ source: source.slice(start, end), filename: 'event-status.vue', id: 'event-status', compilerOptions: { mode: 'function' } })
+    const render = new Function('Vue', code)(Vue)
+    const state = Vue.ref({ status: 'loading', snapshot: null }), retries = []
+    const { renderer, root } = makeRenderer()
+    const app = renderer.createApp({ render, setup: () => ({ eventHistory: { state, retry: () => retries.push(true) },
+        eventHistoryPending: Vue.computed(() => ['loading', 'recovering'].includes(state.value.status)), unavailableReason: false, isComputePending: false }) })
+    app.mount(root); t.after(() => app.unmount())
+    const flatten = node => `${node.text || ''}${node.children.map(flatten).join('')}`
+    assert.match(flatten(root), /Loading session events/)
+    state.value = { status: 'recovering', snapshot: { events: [{ id: 1 }] } }; await flush()
+    assert.match(flatten(root), /Updating session events/)
+    state.value.status = 'error'; await flush(); assert.match(flatten(root), /Failed to load session events/)
+    const findButton = node => node.type === 'button' ? node : node.children.map(findButton).find(Boolean)
+    findButton(root).props.onClick(); assert.equal(retries.length, 1)
+    state.value.status = 'ready'; await flush(); assert.equal(findButton(root), undefined)
+})

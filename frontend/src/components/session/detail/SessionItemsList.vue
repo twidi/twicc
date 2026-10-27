@@ -1,7 +1,7 @@
 <script setup>
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
-import { computed, watch, ref, reactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
+import { computed, watch, ref, reactive, shallowReactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRouter } from 'vue-router'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
 import { useDataStore } from '../../../stores/data'
@@ -18,6 +18,9 @@ import { fileRootsFromStore } from '../../../utils/projectRoots'
 import VirtualScroller from '../../virtual-scroller/VirtualScroller.vue'
 import SessionItem from './SessionItem.vue'
 import DaySeparator from './items/DaySeparator.vue'
+import SessionEventNotice from './SessionEventNotice.vue'
+import { useSessionEventHistory } from '../../../composables/useSessionEventHistory.js'
+import { createLabelsFor } from '../../../utils/timeline/providerLabels.js'
 import SessionSearchBar from '../list/SessionSearchBar.vue'
 import FetchErrorPanel from '../../ui/FetchErrorPanel.vue'
 import GroupToggle from './GroupToggle.vue'
@@ -40,7 +43,7 @@ import { useListExit } from '../../../composables/useListExit.js'
 import { useChatReveal } from '../../../composables/useChatReveal.js'
 import { createSwitchGate, provideFooterMotion } from '../../../composables/useFooterMotion.js'
 import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
-import { getProviderLabel } from '../../../providers'
+import { getProviderLabel, getProviderHelpers } from '../../../providers'
 
 // All states should animate for the bottom process indicator
 const BOTTOM_INDICATOR_ANIMATE_STATES = ['assistant_turn', 'user_turn', 'dead']
@@ -247,6 +250,17 @@ const isComputePending = computed(() => {
     const sess = store.getSession(props.sessionId)
     return sess && sess.compute_version_up_to_date === false && !unavailableReason.value
 })
+const eventHistory = useSessionEventHistory({ store,
+    sessionId: computed(() => props.sessionId),
+    eligible: computed(() => !!session.value && !session.value.draft && !session.value.hidden
+        && !unavailableReason.value && !isLaunchedEphemeral(session.value)),
+    active: computed(() => props.viewActive && sessionActive.value),
+})
+const eventHistoryPending = computed(() => ['loading', 'recovering'].includes(eventHistory.state.value?.status))
+const eventContext = shallowReactive({ sessions: {}, labelsFor: createLabelsFor(getProviderHelpers),
+    isSubagent: id => store.getSession(id)?.type === 'subagent' })
+watch(() => eventHistory.state.value?.snapshot?.sessions, sessions => { eventContext.sessions = sessions || {} }, { immediate: true })
+
 const computePendingHintPhase = ref(null)
 const computePendingHint = createComputePendingHint({
     setPhase: phase => { computePendingHintPhase.value = phase },
@@ -479,7 +493,7 @@ function toggleHybrid() {
  * - There are items to display
  */
 const showVirtualScroller = computed(() => {
-    return !isComputePending.value && !hasError.value && !isLoading.value && (visualItems.value?.length > 0)
+    return !unavailableReason.value && !isComputePending.value && !hasError.value && !isLoading.value && (visualItems.value?.length > 0)
 })
 
 // The skeleton covers the load and the initial positioning (one instance per reveal
@@ -2198,6 +2212,13 @@ defineExpose({
             />
         </Transition>
 
+        <div v-if="(eventHistoryPending || eventHistory.state.value?.status === 'error') && !unavailableReason && !isComputePending" class="session-event-history-status" role="status">
+            <span v-if="eventHistoryPending">{{ eventHistory.state.value.snapshot ? 'Updating session events…' : 'Loading session events…' }}</span>
+            <template v-else-if="eventHistory.state.value.status === 'error'">
+                <span>Failed to load session events</span>{{ ' ' }}<button type="button" @click="eventHistory.retry">Retry</button>
+            </template>
+        </div>
+
         <!-- The chat's stage: the states below and the scroll area, with the skeleton
              laid over them while the chat loads and positions itself. The notice and
              the search bar above, and the footer below, stay outside. -->
@@ -2253,7 +2274,7 @@ defineExpose({
             </div>
 
             <!-- Empty state (no items and not a special state above) -->
-            <div v-else-if="!visualItems.length" class="empty-state">
+            <div v-else-if="!visualItems.length && !eventHistoryPending && eventHistory.state.value?.status !== 'error'" class="empty-state">
                 Nothing to show yet
             </div>
 
@@ -2298,6 +2319,8 @@ defineExpose({
                             :label="item.dayLabel"
                             :day-key="item.dayKey"
                         />
+
+                        <SessionEventNotice v-else-if="item.isSessionEvent" :event="item.event" :context="eventContext" />
 
                         <!-- Placeholder (no content loaded yet) -->
                         <div
@@ -2549,6 +2572,13 @@ defineExpose({
 </template>
 
 <style scoped>
+.session-event-history-status {
+    padding: var(--wa-space-xs) var(--wa-space-m);
+    text-align: center;
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
+}
+
 .ephemeral-notice { margin: 0.75rem; flex-shrink: 0; }
 .session-items-list {
     display: flex;
