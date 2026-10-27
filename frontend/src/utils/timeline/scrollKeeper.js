@@ -4,7 +4,7 @@
 //   * at the top, new rows simply appear at the top;
 //   * scrolled down, the content on screen must not move;
 //   * rows removed in place (a session hidden while the list is open) take the row being read with them: the next
-//     event row that stayed takes its place on screen.
+//     event row that stayed keeps its place on screen.
 // The simple virtual scroller has no insertion anchoring of its own, so the page captures the first visible
 // row before the list changes and puts it back afterwards. Pure: the scroller is handed in.
 
