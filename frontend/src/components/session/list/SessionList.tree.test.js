@@ -8,7 +8,7 @@ const dataStore = read('../../../stores/data.js')
 
 test('declares the showAsTree prop and passes the active flag to the blocks helper', () => {
     assert.match(sfc, /showAsTree:\s*\{\s*type: Boolean,\s*default: false\s*\}/)
-    assert.match(sfc, /showAsTree: treeActive\.value,/)
+    assert.match(sfc, /showAsTree: props.showAsTree,/)
     assert.ok(sfc.includes('const treeActive = computed(() => props.showAsTree && !props.searchQuery.trim())'))
 })
 

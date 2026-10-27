@@ -131,7 +131,7 @@ const sessionBlocks = computed(previous => computeSidebarSessionBlocks({
     showArchived: props.showArchived,
     showArchivedProjects: props.showArchivedProjects,
     showActiveAcrossFilters: props.showActiveAcrossFilters,
-    showAsTree: treeActive.value,
+    showAsTree: props.showAsTree,
 }, previous))
 
 const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
