@@ -76,9 +76,13 @@ test('guide lines render from treeGuides in the separators color and only for ch
     assert.match(source, /\.tree-guide--ends \{\s*inset-block-end: calc\(100% - var\(--tree-anchor\)\);/)
     // the arrow, the elbow and the stub anchor to the title line, not to 50% of the row
     assert.match(source, /\.tree-elbow \{\s*inset-block-start: var\(--tree-anchor\);/)
-    assert.match(source, /\.tree-guide--stub \{\s*inset-block-start: calc\(var\(--tree-anchor\) \+ 0\.5rem\);/)
+    assert.match(source, /\.tree-guide--stub \{\s*inset-block-start: calc\(var\(--tree-anchor\) \+ var\(--tree-stub-gap\)\);/)
     assert.match(source, /> \.tree-toggle \{\s*align-self: flex-start;\s*height: calc\(2 \* var\(--tree-anchor\)\);/)
     assert.match(source, /--tree-anchor: 50%;/)
+    // hinted rows: the hint line sits above the title in compact rows too (2xs padding there)
+    assert.match(source, /\.session-item-wrapper--tree-hinted\.session-item-wrapper--compact \{\s*--tree-anchor: calc\(\s*var\(--wa-space-2xs\) \+ var\(--wa-border-width-s\)\s*\+ var\(--wa-font-size-2xs\) \* var\(--wa-line-height-normal\) \+ var\(--wa-space-3xs\)/)
+    assert.match(source, /\.session-item-wrapper--tree-hinted:not\(\.session-item-wrapper--compact\) \{\s*--tree-anchor: calc\(\s*var\(--wa-space-xs\)/)
+    assert.match(source, /inline-size: calc\(var\(--tree-step\) \/ 2 - var\(--tree-elbow-gap\)\)/)
 })
 
 test('template compiles', () => {

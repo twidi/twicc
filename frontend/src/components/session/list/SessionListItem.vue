@@ -830,11 +830,22 @@ function handleMenuSelect(event) {
        stub anchor to it. Compact rows have a single line: their middle. Other rows: the
        button's padding and border, then half the name row (font-size-s * line-height). */
     --tree-anchor: 50%;
+    --tree-elbow-gap: 2px;   /* the elbow stops this far short of the child's box */
+    --tree-stub-gap: 0.5rem; /* the stub starts this far under the title line's centre (below the arrow) */
 }
 
 .session-item-wrapper--tree:not(.session-item-wrapper--compact) {
     --tree-anchor: calc(
         var(--wa-space-xs) + var(--wa-border-width-s)
+        + var(--wa-font-size-s) * var(--wa-line-height-normal) / 2
+    );
+}
+
+/* A "from" hint line sits above the title line (compact rows too: their padding is 2xs). */
+.session-item-wrapper--tree-hinted.session-item-wrapper--compact {
+    --tree-anchor: calc(
+        var(--wa-space-2xs) + var(--wa-border-width-s)
+        + var(--wa-font-size-2xs) * var(--wa-line-height-normal) + var(--wa-space-3xs)
         + var(--wa-font-size-s) * var(--wa-line-height-normal) / 2
     );
 }
@@ -911,12 +922,12 @@ function handleMenuSelect(event) {
 }
 
 .tree-guide--stub {
-    inset-block-start: calc(var(--tree-anchor) + 0.5rem);
+    inset-block-start: calc(var(--tree-anchor) + var(--tree-stub-gap));
 }
 
 .tree-elbow {
     inset-block-start: var(--tree-anchor);
-    inline-size: calc(var(--tree-step) / 2 - 2px);
+    inline-size: calc(var(--tree-step) / 2 - var(--tree-elbow-gap));
     border-block-start: var(--tree-line);
 }
 
