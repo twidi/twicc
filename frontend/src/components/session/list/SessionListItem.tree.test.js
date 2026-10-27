@@ -88,6 +88,18 @@ test('the pill is a flex sibling right after the row button, with no fixed reser
     assert.ok(!css.includes('pill-reserve') && !source.includes('pill-reserve') && !css.includes('3.5rem'))
 })
 
+test('pill rows drop every compact-indicator offset that dodges the menu', () => {
+    const rule = source.match(/((?:\.session-item-wrapper--pill \.compact-[a-z-]+-indicator,?\s*)+)\{([^}]*)\}/)
+    assert.ok(rule, 'grouped pill-row reset')
+    for (const name of ['comments', 'pending-request', 'unread', 'process']) {
+        assert.ok(rule[1].includes(`.session-item-wrapper--pill .compact-${name}-indicator`), name)
+    }
+    assert.match(rule[2], /margin-left: 0;/)
+    assert.match(rule[2], /left: 0;/)
+    // the global rules keep their shift for every other row
+    assert.equal(source.match(/^\s*left: -1\.5rem;/gm).length, 4)
+})
+
 test('inside the pill: no chevron margin from native.css, a gap before the indicator', () => {
     assert.match(source, /\.tree-pill > wa-icon \{\s*margin: 0;/)
     assert.match(source, /\.tree-pill \{[^}]*gap: var\(--wa-space-3xs\);/)

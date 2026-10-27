@@ -851,6 +851,17 @@ function handleMenuSelect(event) {
     margin-right: 0;
 }
 
+/* Compact indicators are pushed to the end and shifted left by 1.5rem to dodge the menu
+   trigger. In a pill row the menu no longer overlaps the button: the indicator follows the
+   title (the name row's own gap) and nothing shifts it over the title. */
+.session-item-wrapper--pill .compact-comments-indicator,
+.session-item-wrapper--pill .compact-pending-request-indicator,
+.session-item-wrapper--pill .compact-unread-indicator,
+.session-item-wrapper--pill .compact-process-indicator {
+    margin-left: 0;
+    left: 0;
+}
+
 /* Guide lines: one vertical segment per continuing ancestor level, plus the row's own elbow.
    The wrapper is the positioning context (position: relative in sidebar-rows.css). */
 .tree-guides {
