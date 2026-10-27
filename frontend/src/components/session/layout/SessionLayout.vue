@@ -702,6 +702,7 @@ onBeforeUnmount(() => {
             @tab-activate="(id) => emit('tab-activate', id)"
             @pane-focus="(id) => emit('focus-pane', id)"
             @restore="emit('restore-maximized')"
+            :is-dock-occupied="layout.isDockOccupied"
             @place="(id, dest) => layout.place(id, dest)"
             @crossfade-start="emit('crossfade-start')"
         />
@@ -728,6 +729,7 @@ onBeforeUnmount(() => {
                 @pane-focus="(id) => emit('focus-pane', id)"
                 @minimize="(dockIds) => emit('minimize', dockIds)"
                 @maximize="(dockIds, tab) => emit('maximize', dockIds, tab)"
+                :is-dock-occupied="layout.isDockOccupied"
                 @place="(id, dest) => layout.place(id, dest)"
                 @crossfade-start="emit('crossfade-start')"
             />
@@ -770,6 +772,7 @@ onBeforeUnmount(() => {
                 :tab-orchestration-activity="tabOrchestrationActivity"
                 :tab-task-progress="tabTaskProgress"
                 :dock-of="layout.dockOf"
+                :is-dock-occupied="layout.isDockOccupied"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
                 @select="onOverlaySelect"

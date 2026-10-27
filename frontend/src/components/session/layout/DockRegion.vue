@@ -31,6 +31,7 @@ const props = defineProps({
     // restore button instead of minimize/maximize, and the per-tab placement arrows are hidden (the
     // only exit is restore).
     maximized: { type: Boolean, default: false },
+    isDockOccupied: { type: Function, required: true }, // dockId -> whether it holds a tab
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
     // Inner edges of this region's rect (SessionLayout, panelInsets.innerEdges): the card is
@@ -135,6 +136,7 @@ function onEmptyBarDblClick(event) {
                     v-if="!maximized"
                     :tab-id="t.id"
                     :current="dockOfTab(t.id)"
+                    :is-dock-occupied="isDockOccupied"
                     @place="(dest) => emit('place', t.id, dest)"
                 />
             </wa-tab>

@@ -141,6 +141,13 @@ export function useSessionLayout({ sessionId, containerRef, tabs, routeActiveTab
         return intention.value.assignment[tabId] || 'center'
     }
 
+    // Whether a dock holds at least one present tab (minimized or not). Absent optional tabs
+    // (no content) are not rendered anywhere, so they do not count.
+    function isDockOccupied(dockId) {
+        const a = intention.value.assignment
+        return tabs.value.some((t) => !t.fixedCenter && (!t.optional || t.hasContent) && a[t.id] === dockId)
+    }
+
     function tabById(tabId) {
         return tabs.value.find((tab) => tab.id === tabId) || null
     }
@@ -330,7 +337,7 @@ export function useSessionLayout({ sessionId, containerRef, tabs, routeActiveTab
     return {
         width, height, measured,
         render, orderedTabs, isDockingActive, dockingRendered,
-        regionActiveTabId, dockActiveTabId, dockOf, tabById, groupKeyOf,
+        regionActiveTabId, dockActiveTabId, dockOf, isDockOccupied, tabById, groupKeyOf,
         targetKeyForTab, isToolPanelVisible, overlayEdgeForTab,
         openOverlayEdge, routeActiveTabId,
         place, moveTab, minimize, restore, swapSide, rememberActive,

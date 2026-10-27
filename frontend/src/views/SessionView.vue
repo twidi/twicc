@@ -2487,7 +2487,7 @@ onBeforeUnmount(() => {
                         class="tab-comments-indicator"
                     />
                 </SessionTabLink>
-                <TabPlacementMenu v-if="showCenterPlacementArrows" :tab-id="tab.id" current="center" @place="(dest) => layout.place(tab.id, dest)" />
+                <TabPlacementMenu v-if="showCenterPlacementArrows" :tab-id="tab.id" current="center" :is-dock-occupied="layout.isDockOccupied" @place="(dest) => layout.place(tab.id, dest)" />
             </wa-tab>
 
             <!-- Main session panel -->

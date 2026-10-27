@@ -27,6 +27,7 @@ const props = defineProps({
     tabOrchestrationActivity: { type: Function, default: null },
     tabTaskProgress: { type: Function, default: null },
     dockOf: { type: Function, required: true }, // tabId -> its current dockId | 'center'
+    isDockOccupied: { type: Function, required: true }, // dockId -> whether it holds a tab
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
@@ -66,6 +67,7 @@ function onShow(event) { emit('select', event.detail.name) }
                         <TabPlacementMenu
                             :tab-id="t.id"
                             :current="dockOf(t.id)"
+                            :is-dock-occupied="isDockOccupied"
                             @place="(dest) => emit('place', t.id, dest)"
                         />
                     </wa-tab>

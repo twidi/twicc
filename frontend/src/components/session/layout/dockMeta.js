@@ -29,6 +29,14 @@ export const DOCK_ICONS = {
     'bottom-right': resolvePublicAssetUrl('icons/docks/bottom-right.svg'),
 }
 
+// Merged single-entry placements, shown instead of the two docks of an edge while that edge is
+// empty. Each one places into the first dock of its edge ('left-top', 'right-top', 'bottom-left').
+export const MERGED_PLACEMENTS = {
+    left: { dockId: 'left-top', label: 'Left', icon: resolvePublicAssetUrl('icons/docks/left.svg') },
+    right: { dockId: 'right-top', label: 'Right', icon: resolvePublicAssetUrl('icons/docks/right.svg') },
+    bottom: { dockId: 'bottom-left', label: 'Bottom', icon: resolvePublicAssetUrl('icons/docks/bottom.svg') },
+}
+
 // Order shown in the per-tab placement menu: Center first, then the six docks.
 export const PLACEMENT_OPTIONS = [CENTER, ...DOCKS]
 
