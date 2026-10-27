@@ -18,6 +18,7 @@ defineProps({
     searchQuery: { type: String, default: '' },
     showArchivedSessions: { type: Boolean, default: false },
     compactView: { type: Boolean, default: false },
+    showAsTree: { type: Boolean, default: false },
     multiSelectActive: { type: Boolean, default: false },
     showActiveAcrossFilters: { type: Boolean, default: false },
     trimmedSearchQuery: { type: String, default: '' },
@@ -90,6 +91,13 @@ defineExpose({ focus })
                 :checked="compactView"
             >
                 Compact view
+            </wa-dropdown-item>
+            <wa-dropdown-item
+                type="checkbox"
+                value="show-as-tree"
+                :checked="showAsTree"
+            >
+                Show as tree
             </wa-dropdown-item>
             <!-- Multi-select needs Shift/Ctrl modifier clicks, which
                  have no touch equivalent yet — hide it on touch devices. -->
