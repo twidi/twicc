@@ -73,6 +73,15 @@ test('the old toggle column, leaf spacer and collapsed summary are gone', () => 
     assert.ok(!/\.session-item-wrapper--tree \{[^}]*display: flex/.test(source))
 })
 
+test('the pill sits left of the menu column, which the reserve also covers (no magic constant)', () => {
+    const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
+    assert.match(source, /\.tree-pill \{[^}]*right: calc\([^;]*var\(--sidebar-row-menu-column[^;]*\);/)
+    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*top: 50%;[^}]*bottom: auto;/)
+    assert.match(css, /--sidebar-row-menu-column: 2rem;/)
+    assert.match(css, /session-item--has-pill::part\(base\) \{[^}]*var\(--sidebar-row-menu-column\)[^}]*var\(--sidebar-row-pill-reserve\)/)
+    assert.ok(!css.includes('3.5rem'))
+})
+
 test('the row reserves end padding only when it carries a pill', () => {
     assert.match(source, /'session-item--has-pill': treeRow\?\.hasChildren/)
     const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
