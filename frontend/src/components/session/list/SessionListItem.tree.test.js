@@ -76,7 +76,9 @@ test('the old toggle column, leaf spacer and collapsed summary are gone', () => 
 test('the pill sits left of the menu column, which the reserve also covers (no magic constant)', () => {
     const css = readFileSync(new URL('../../../styles/sidebar-rows.css', import.meta.url), 'utf8')
     assert.match(source, /\.tree-pill \{[^}]*right: calc\([^;]*var\(--sidebar-row-menu-column[^;]*\);/)
-    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*top: 50%;[^}]*bottom: auto;/)
+    assert.match(source, /\.tree-pill \{[^}]*top: var\(--wa-space-xs\);/)
+    assert.ok(!/\.tree-pill \{[^}]*bottom:/.test(source), 'never anchored to the meta line')
+    assert.match(source, /\.session-item-wrapper--compact \.tree-pill \{[^}]*top: 50%;/)
     assert.match(css, /--sidebar-row-menu-column: 2rem;/)
     assert.match(css, /session-item--has-pill::part\(base\) \{[^}]*var\(--sidebar-row-menu-column\)[^}]*var\(--sidebar-row-pill-reserve\)/)
     assert.ok(!css.includes('3.5rem'))

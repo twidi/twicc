@@ -874,7 +874,8 @@ function handleMenuSelect(event) {
     position: absolute;
     /* Just left of the row menu column: never over the menu trigger. */
     right: calc(var(--wa-space-xs) + var(--sidebar-row-menu-column, 2rem) + var(--wa-space-3xs));
-    bottom: calc(var(--wa-space-xs) + var(--wa-shadow-offset-y-s, 0px));
+    /* On the title line (first line of the row), never on the meta line. */
+    top: var(--wa-space-xs);
     z-index: 1;
     height: auto;
     margin: 0;
@@ -892,7 +893,6 @@ function handleMenuSelect(event) {
 /* Compact rows are one line: centre the pill on it. */
 .session-item-wrapper--compact .tree-pill {
     top: 50%;
-    bottom: auto;
     transform: translateY(-50%);
 }
 
