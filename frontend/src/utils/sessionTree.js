@@ -254,3 +254,34 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
     }
     return [...found.values()]
 }
+
+/**
+ * Ids of ancestors the client must fetch: walking `spawned_by` upward from
+ * every participant candidate, collect the ids `lookup` does not know.
+ * The walk stops at a loaded blocking session (hidden, sub-agent, ephemeral,
+ * draft), at ids in `skipIds` and on a cycle.
+ *
+ * @param {Object[]} candidates
+ * @param {(id: string) => ?Object} lookup
+ * @param {Set<string>} skipIds
+ * @returns {string[]}
+ */
+export function findMissingAncestorIds(candidates, lookup, skipIds) {
+    const missing = new Set()
+    for (const candidate of candidates) {
+        if (!isParticipant(candidate)) continue
+        const visited = new Set([candidate.id])
+        let currentId = candidate.spawned_by
+        while (currentId && !visited.has(currentId) && !skipIds.has(currentId)) {
+            visited.add(currentId)
+            const current = lookup(currentId)
+            if (!current) {
+                missing.add(currentId)
+                break
+            }
+            if (isBlocking(current)) break
+            currentId = current.spawned_by
+        }
+    }
+    return [...missing]
+}

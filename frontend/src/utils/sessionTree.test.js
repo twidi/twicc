@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree, flattenTree, extendTreeCandidates, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
+import { buildSessionTree, flattenTree, extendTreeCandidates, findMissingAncestorIds, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -326,4 +326,43 @@ test('a draft or ephemeral member does not start a walk', () => {
         const kid = s('kid', { spawned_by: 'm' })
         assert.deepEqual(extend([member], [root, member, kid]), [], JSON.stringify(flag))
     }
+})
+
+const missing = (candidates, loaded = [], skip = []) =>
+    findMissingAncestorIds(candidates, lookupOf([...candidates, ...loaded]), new Set(skip))
+
+test('returns the unloaded parent id', () => {
+    assert.deepEqual(missing([s('c', { spawned_by: 'gone' })]), ['gone'])
+    assert.deepEqual(missing([s('c')]), [])
+})
+
+test('follows loaded out-of-scope ancestors upward until an unloaded one', () => {
+    const mid = s('mid', { spawned_by: 'top' })
+    assert.deepEqual(missing([s('c', { spawned_by: 'mid' })], [mid]), ['top'])
+})
+
+test('skips ids in skipIds', () => {
+    assert.deepEqual(missing([s('c', { spawned_by: 'gone' })], [], ['gone']), [])
+})
+
+test('stops at a hidden, ephemeral or draft loaded ancestor', () => {
+    for (const flag of [{ hidden: true }, { ephemeral: true }, { draft: true }, { parent_session_id: 'p' }]) {
+        const mid = s('mid', { spawned_by: 'top', ...flag })
+        assert.deepEqual(missing([s('c', { spawned_by: 'mid' })], [mid]), [], JSON.stringify(flag))
+    }
+})
+
+test('an ephemeral or draft candidate does not start a walk', () => {
+    for (const flag of [{ draft: true }, { ephemeral: true }]) {
+        assert.deepEqual(missing([s('c', { spawned_by: 'gone', ...flag })]), [], JSON.stringify(flag))
+    }
+})
+
+test('terminates on a cycle', () => {
+    const x = s('x', { spawned_by: 'z' }), y = s('y', { spawned_by: 'x' }), z = s('z', { spawned_by: 'y' })
+    assert.deepEqual(missing([x], [y, z]), [])
+})
+
+test('deduplicates ids shared by several candidates', () => {
+    assert.deepEqual(missing([s('a', { spawned_by: 'g' }), s('b', { spawned_by: 'g' })]), ['g'])
 })
