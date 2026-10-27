@@ -18,7 +18,7 @@ test('1. the exit animation folds the height from the measured one, fades and sl
 test('2. the session list gives the scroller the displayed items and composes the exit with the cascade', () => {
     const sfc = read('components/session/list/SessionList.vue')
     assert.ok(sfc.includes("import { useListExit } from '../../../composables/useListExit'"))
-    assert.ok(sfc.includes('isEligible: (s) => !!store.sessions[s.id]?.archived,'))
+    assert.ok(sfc.includes('isEligible: (s) => !!store.sessions[s.id]?.archived && (!tree.value || !tree.value.nodes.has(s.id)),'))
     assert.ok(sfc.includes('const rowClass = (session) => exits.exitClass(session) ?? cascade.itemClass(session)'))
     assert.ok(sfc.includes('const rowStyle = (session) => exits.exitStyle(session) ?? cascade.itemStyle(session)'))
     assert.ok(sfc.includes(':items="displayItems"'))

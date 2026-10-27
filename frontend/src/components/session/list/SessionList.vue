@@ -6,16 +6,20 @@
  * search filtering, keyboard navigation. Each session item is rendered
  * by SessionListItem, which owns its own store lookups (computed).
  */
-import { ref, computed, watch, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, unref } from 'vue'
+import { ref, shallowRef, computed, watch, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, unref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDataStore, ALL_PROJECTS_ID } from '../../../stores/data'
 import { useWorkspacesStore } from '../../../stores/workspaces'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
+import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansion'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
+import { buildSessionTree, flattenTree } from '../../../utils/sessionTree.js'
+import { isSessionUnread } from '../../../utils/sessions'
 import { retainSessionArray } from '../../../utils/sessionLists.js'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
+import { useSessionTreeAncestors } from '../../../composables/useSessionTreeAncestors'
 import { useListCascade } from '../../../composables/useListCascade'
 import { useListExit } from '../../../composables/useListExit'
 import { useGlideInk } from '../../../composables/useGlideInk'
@@ -61,12 +65,19 @@ const props = defineProps({
     showActiveAcrossFilters: {
         type: Boolean,
         default: false
+    },
+    // "Show as tree" mode: sessions are nested under the session that spawned them.
+    // Ignored (flat list) while a search query is active.
+    showAsTree: {
+        type: Boolean,
+        default: false
     }
 })
 
 const store = useDataStore()
 const workspacesStore = useWorkspacesStore()
 const selectionStore = useSessionSelectionStore()
+const expansion = useSessionTreeExpansionStore()
 const route = useRoute()
 
 // Natural scope project IDs for the current sidebar filter, passed down so
@@ -104,6 +115,10 @@ const activeWorkspaceId = computed(() => {
     return route.query.workspace || null
 })
 
+// Tree mode is off while a query is active: the results are the flat blocks, each session
+// classified and sorted by its own state.
+const treeActive = computed(() => props.showAsTree && !props.searchQuery.trim())
+
 // All four sidebar blocks, computed in one shot by the shared helper so the
 // command palette's "Go to Session…" sub-picker can use the exact same
 // ordering / filtering / grouping logic.
@@ -116,6 +131,7 @@ const sessionBlocks = computed(previous => computeSidebarSessionBlocks({
     showArchived: props.showArchived,
     showArchivedProjects: props.showArchivedProjects,
     showActiveAcrossFilters: props.showActiveAcrossFilters,
+    showAsTree: treeActive.value,
 }, previous))
 
 const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
@@ -123,13 +139,69 @@ const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
 // Flat list consumed by the virtual scroller:
 //   [extra?, ...crossFilterPinned, ...crossFilterActive, ...natural]
 // Section separators live in the template, keyed off `separatorBeforeIds`.
+const natural = computed(() => sessionBlocks.value.natural)
+
+// The session tree (null in flat mode). It reads every candidate's `mtime`, so it is
+// recomputed on each write of an active session; the order does not change and
+// `treeRowMeta` retains the unchanged row metadata.
+const tree = computed(() => treeActive.value
+    ? buildSessionTree(natural.value, {
+        lookup: id => store.sessions[id] ?? null,
+        processStates: store.processStates,
+        viewedId: props.sessionId,
+        isUnread: isSessionUnread,
+    })
+    : null)
+
+// Fetch the tree ancestors that are not loaded yet.
+useSessionTreeAncestors(natural, treeActive)
+
+// Expansion is reconciled only once the data it depends on is complete.
+const settled = computed(() => treeActive.value
+    && store.areProjectSessionsFetched(props.projectId)
+    && store.activeProcessesReceived)
+const seedTriggerIds = () => Object.values(store.sessions)
+    .filter(s => store.processStates[s.id] != null || s.pinned || isSessionUnread(s, store.processStates[s.id]))
+    .map(s => s.id)
+watch([tree, settled], ([t, ok]) => {
+    if (t) expansion.reconcile(t, ok, props.projectId, seedTriggerIds)
+}, { immediate: true })
+
+const treeRows = computed(() => tree.value ? flattenTree(tree.value, expansion.isExpanded) : null)
+
+const NO_TREE_ROWS = new Map()
+const sameSummary = (a, b) => a.descendants === b.descendants && a.active === b.active
+    && a.unread === b.unread && a.pinned === b.pinned && a.latestDate === b.latestDate
+// Per-row tree metadata. An unchanged entry keeps its previous object, so an mtime tick
+// of an active session does not re-render every row.
+const treeRowMeta = computed(previous => {
+    if (!tree.value) return NO_TREE_ROWS
+    const meta = new Map()
+    for (const { id, depth } of treeRows.value) {
+        const node = tree.value.nodes.get(id)
+        const next = {
+            depth,
+            hasChildren: node.childIds.length > 0,
+            expanded: expansion.isExpanded(id),
+            summary: node.summary,
+            hint: depth === 0 ? (node.hintParent?.title || null) : null,
+        }
+        const old = previous?.get(id)
+        meta.set(id, old && old.depth === next.depth && old.hasChildren === next.hasChildren
+            && old.expanded === next.expanded && old.hint === next.hint
+            && sameSummary(old.summary, next.summary) ? old : next)
+    }
+    return meta
+})
+
 const allSessions = computed(previous => {
-    const { extra, crossFilterPinned, crossFilterActive, natural } = sessionBlocks.value
+    const { extra, crossFilterPinned, crossFilterActive } = sessionBlocks.value
     const result = []
     if (extra) result.push(extra)
     result.push(...crossFilterPinned)
     result.push(...crossFilterActive)
-    result.push(...natural)
+    if (treeRows.value) result.push(...treeRows.value.map(row => store.sessions[row.id]))
+    else result.push(...natural.value)
     return retainSessionArray(previous, result)
 })
 
@@ -162,6 +234,7 @@ const sessions = computed(previous => {
 // deduplicated for now.
 const separatorBeforeIds = computed(() => {
     const { extra, crossFilterPinned, crossFilterActive, natural } = sessionBlocks.value
+    const rootIds = tree.value ? new Set(tree.value.rootIds) : null
     const processStates = store.processStates
     const nowMs = Date.now()
 
@@ -176,18 +249,21 @@ const separatorBeforeIds = computed(() => {
         classified.set(s.id, { sectionKey: 'xactive', entry: { label: 'Active elsewhere' } })
     }
     for (const s of natural) {
+        // Tree mode: only the roots are classified, from their effective state.
+        if (rootIds && !rootIds.has(s.id)) continue
+        const effective = rootIds ? tree.value.nodes.get(s.id).effective : null
         let sectionKey, entry
         if (s.ephemeral && !s.draft) {
             sectionKey = 'n-ephemeral'
             entry = { label: 'Ephemeral' }
-        } else if (s.pinned) {
+        } else if (effective ? effective.pinned : s.pinned) {
             sectionKey = 'n-pinned'
             entry = { label: 'Pinned' }
-        } else if (processStates[s.id] != null) {
+        } else if (effective ? effective.active : processStates[s.id] != null) {
             sectionKey = 'n-active'
             entry = { label: 'Active' }
         } else {
-            const bucket = dateBucketSeparator(s.mtime, nowMs)
+            const bucket = dateBucketSeparator(effective ? effective.dateKey : s.mtime, nowMs)
             sectionKey = `n-${bucket.key}`
             entry = bucket.entry
         }
@@ -248,9 +324,10 @@ const cascade = useListCascade({
 const exits = useListExit({
     items: sessions,
     getKey: (s) => s.id,
-    isEligible: (s) => !!store.sessions[s.id]?.archived,
+    // A row that only leaves the list because its parent collapsed is still a tree node: no exit.
+    isEligible: (s) => !!store.sessions[s.id]?.archived && (!tree.value || !tree.value.nodes.has(s.id)),
     scopeKey: () => [props.projectId, props.searchQuery, props.showArchived, props.showArchivedProjects,
-        props.showActiveAcrossFilters, activeWorkspaceId.value].join('|'),
+        props.showActiveAcrossFilters, activeWorkspaceId.value, props.showAsTree].join('|'),
     getVisibleRange: () => scrollerRef.value?.getVisibleRange() ?? null,
     getHeight: (key) => scrollerRef.value?.getItemHeight(key) ?? 0,
 })
@@ -469,10 +546,56 @@ watch(sessions, (list) => {
 // Publish the rendered list (in order, search filter included) so the
 // Ctrl+Shift+` switcher can offer exactly what's on screen. Cleared on unmount
 // so a stale list never lingers when the sidebar is gone.
-watch(sessions, (list) => {
-    store.setDisplayedSessionIds(list.map(s => s.id))
+// With a tree, the sessions under collapsed nodes are offered too (navigation aid).
+const switcherIds = computed(() => {
+    if (!tree.value) return sessions.value.map(s => s.id)
+    const { extra, crossFilterPinned, crossFilterActive } = sessionBlocks.value
+    return [
+        ...(extra ? [extra.id] : []),
+        ...crossFilterPinned.map(s => s.id),
+        ...crossFilterActive.map(s => s.id),
+        ...flattenTree(tree.value, () => true).map(row => row.id),
+    ]
+})
+watch(switcherIds, (ids) => {
+    store.setDisplayedSessionIds(ids)
 }, { immediate: true })
 onBeforeUnmount(() => store.setDisplayedSessionIds([]))
+
+// Reveal the selected session in the tree: expand its collapsed ancestors. The mark is the
+// last revealed (session, ancestor path). A deep-linked child first renders as a root, then
+// its ancestors arrive one fetch at a time: each arrival changes the path and reveals again.
+// Pre-flush, so the row exists when `scrollToSession` needs it.
+function ancestorPath(t, id) {
+    const path = []
+    const visited = new Set([id])
+    let parentId = t.nodes.get(id)?.parentId ?? null
+    while (parentId && !visited.has(parentId)) {
+        visited.add(parentId)
+        path.unshift(parentId)
+        parentId = t.nodes.get(parentId)?.parentId ?? null
+    }
+    return path
+}
+let lastRevealed = null
+const revealRescroll = shallowRef(null)
+watch([() => props.sessionId, tree], ([id, t]) => {
+    if (!t || !id || !t.nodes.has(id)) return
+    const path = ancestorPath(t, id)
+    const key = path.join('>')
+    if (lastRevealed && lastRevealed.id === id && lastRevealed.key === key) return
+    const sameSession = lastRevealed?.id === id
+    const previousPath = sameSession ? lastRevealed.path : []
+    lastRevealed = { id, key, path }
+    expansion.reveal(t, id, previousPath)
+    if (sameSession) revealRescroll.value = { id }
+}, { immediate: true })
+// `scrollToSession` gives up after a few retries and the row has moved: run it again once the
+// rows are rendered (the scroller searches its `items`, updated after the render).
+watch(revealRescroll, (mark) => {
+    const id = mark?.id
+    if (id && id === props.sessionId) cascade.holdTarget(id, scrollToSession(id))
+}, { flush: 'post' })
 
 /**
  * Scroll the session list to reveal a session, only as far as needed: no scroll when its
@@ -538,6 +661,10 @@ function handleSelect(session) {
         selectionStore.setAnchor(session.id)
     }
     emit('select', session)
+}
+
+function onToggleTree(session) {
+    if (tree.value) expansion.toggle(session.id, tree.value)
 }
 
 function handleDropData(data) {
@@ -835,6 +962,8 @@ defineExpose({
                     :show-project-name="showProjectName"
                     :scope-project-ids="scopeProjectIds"
                     :filter-project-id="filterProjectId"
+                    :tree-row="treeRowMeta.get(session.id) ?? null"
+                    @toggle-tree="onToggleTree"
                     @select="handleSelect"
                     @drop-data="handleDropData"
                     @selection-click="handleSelectionClick"

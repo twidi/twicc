@@ -549,6 +549,10 @@ export const useDataStore = defineStore('data', {
         // { sessionId: { state: 'starting'|'assistant_turn'|'user_turn'|'dead', error?: string } }
         processStates: {},
 
+        // True once the first active_processes snapshot has been applied (read by the
+        // sidebar session tree to know that process states are authoritative).
+        activeProcessesReceived: false,
+
         // Bumped once each reconnect refresh (``refreshAllLoadedToolStates``) has
         // settled: a card whose last fetch failed during the outage retries on it.
         connectionEpoch: 0,
@@ -5500,6 +5504,7 @@ export const useDataStore = defineStore('data', {
             sweepPendingRequestDrafts(liveKeys, snapshotAt).catch(err =>
                 console.warn('Failed to sweep pending request drafts from IndexedDB:', err)
             )
+            this.activeProcessesReceived = true
         },
 
         // ── Streaming blocks ─────────────────────────────────────────────
