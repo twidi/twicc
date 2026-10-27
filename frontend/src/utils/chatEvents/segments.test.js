@@ -85,3 +85,30 @@ test('a severed connected prefix keeps tool/result source identities and its par
     assert.equal(result.items[0].group_tail, 1); assert.equal(result.items[1].group_head, null)
     assert.equal(JSON.stringify(items), before)
 })
+
+test('repeated projection finds previous groups with linear work and preserves their state', () => {
+    const items = Array.from({ length: 200 }, (_, i) => item(i + 1, 2, i + 1, i + 1))
+    const first = project(items, [cut(null)], [], [1, 101])
+    let keyReads = 0
+    const previous = first.segments.map(segment => ({ ...segment, get key() { keyReads++; return segment.key } }))
+    const next = project(items, [cut(null)], previous)
+    assert.deepEqual(next.expandedHeads, [1, 101])
+    assert.ok(keyReads <= items.length * 4, `previous group lookups must stay linear; read ${keyReads} keys`)
+})
+
+test('unchanged projection preserves segment references instead of replacing reactive state', () => {
+    const items = tools(), first = project(items, [cut(12)], [], [2])
+    const next = project(items, [cut(12)], first.segments)
+    assert.strictEqual(next.segments, first.segments)
+    assert.strictEqual(next.segments[0], first.segments[0])
+})
+
+test('a merged segment inherits the first overlapping previous segment in source order', () => {
+    const items = tools()
+    const first = project(items, [cut(12)], [], [2])
+    const previous = setEventSegmentExpanded(first.segments, 12, false)
+    // Replace the original head so no exact segment key survives the merge.
+    items.splice(1, 1)
+    const merged = project(items, [cut(null)], previous)
+    assert.deepEqual(merged.segments.map(segment => [segment.head, segment.tail, segment.expanded]), [[3, 21, true]])
+})

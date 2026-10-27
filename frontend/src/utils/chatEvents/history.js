@@ -11,17 +11,18 @@ export function createSessionEventHistoryState() {
 }
 
 export function createSessionEventHistory({ sessionId, fetchPage, state = createSessionEventHistoryState(), onSnapshot = () => {} }) {
-    let started = false, disposed = false, hidden = false
+    let started = false, disposed = false, hidden = false, active = true, generation = 0
     let full = true, force = false, latest = 0, cursor = 0
     let running = null, activeRequest = null
-    const stopped = () => disposed || hidden
+    const stopped = () => disposed || hidden || !active
     const selected = event => event.session_id === sessionId && !HIDDEN_KINDS.has(event.kind) && !isCreationStart(event)
 
     async function request(before, afterId) {
+        const requestedGeneration = generation
         activeRequest = new AbortController()
         try {
             const response = await fetchPage({ sessionId, before, afterId, signal: activeRequest.signal })
-            if (stopped()) return null
+            if (stopped() || generation !== requestedGeneration) return null
             if (response.hidden_sessions?.includes(sessionId)) {
                 hidden = true
                 state.snapshot = null
@@ -31,6 +32,9 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
                 return null
             }
             return response
+        } catch (error) {
+            if (stopped() || generation !== requestedGeneration) return null
+            throw error
         } finally { activeRequest = null }
     }
 
@@ -132,6 +136,12 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
         notifyLatest(id) { latest = Math.max(latest, id); pump() },
         refresh,
         retry: refresh,
+        setActive(value) {
+            if (active === value || disposed || hidden) return
+            active = value
+            if (active) refresh()
+            else { generation++; activeRequest?.abort() }
+        },
         async idle() { while (running) await running },
         dispose() { disposed = true; activeRequest?.abort() },
     }

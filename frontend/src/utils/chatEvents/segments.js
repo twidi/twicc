@@ -1,3 +1,4 @@
+import { toRaw } from 'vue'
 import { DISPLAY_LEVEL } from '../../constants.js'
 import { getParsedContent, setParsedContent } from '../parsedContent.js'
 import { getPrefixSuffixBoundaries, getInternalCollapsibleGroups } from '../contentVisibility.js'
@@ -12,24 +13,67 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
     if (!boundaries.length && !previous.length && !retired.length) {
         return { items, segments: [], expandedHeads: expandedGroups, internalTransfers: [], retiredRemaining: [] }
     }
+    // The store invokes this projection explicitly. Read raw metadata for the bulk calculation;
+    // do not pay proxy access/spread costs for every historical item on each tool update.
+    const previousInput = previous
+    items = toRaw(items).map(toRaw)
+    previous = toRaw(previous).map(toRaw)
+    expandedGroups = toRaw(expandedGroups)
+    internalExpandedGroups = toRaw(internalExpandedGroups)
     const indices = new Map(items.map((item, i) => [item.line_num, i]))
     const cuts = [...new Set(boundaries.map(b => indices.get(b.beforeLine)).filter(i => i !== undefined))].sort((a, b) => a - b)
+    const previousByKey = new Map(), previousByHead = new Map(), overlapsByHead = new Map()
+    for (const segment of previous) {
+        previousByKey.set(segment.key, segment)
+        if (!previousByHead.has(segment.originalHead)) previousByHead.set(segment.originalHead, [])
+        previousByHead.get(segment.originalHead).push(segment)
+    }
+    function previousSegment(key, originalHead, lines) {
+        const exact = previousByKey.get(key)
+        if (exact) return exact
+        // Build the overlap index only for a group whose boundaries actually changed.
+        if (!overlapsByHead.has(originalHead)) {
+            const byLine = new Map()
+            for (const [order, segment] of (previousByHead.get(originalHead) ?? []).entries()) {
+                for (const line of segment.members) if (!byLine.has(line)) byLine.set(line, { segment, order })
+            }
+            overlapsByHead.set(originalHead, byLine)
+        }
+        let first = null
+        for (const line of lines) {
+            const candidate = overlapsByHead.get(originalHead).get(line)
+            if (candidate && (!first || candidate.order < first.order)) first = candidate
+        }
+        return first?.segment
+    }
     const groups = new Map()
     function member(head, item) {
         if (head == null) return
         if (!groups.has(head)) groups.set(head, [])
         const group = groups.get(head)
-        if (!group.includes(item)) group.push(item)
+        // Each source item contributes at most its prefix and suffix, consecutively.
+        if (group.at(-1) !== item) group.push(item)
     }
-    for (const item of items) {
+    const partitionAt = new Int32Array(items.length)
+    let part = 0
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        while (part < cuts.length && cuts[part] <= i) part++
+        partitionAt[i] = part
         member(item.group_head, item)
         if (item.display_level === DISPLAY_LEVEL.ALWAYS && item.group_tail != null) member(item.line_num, item)
     }
     const segments = []
+    const expandedSet = new Set(expandedGroups)
     for (const [originalHead, members] of groups) {
+        const owner = members.find(item => item.line_num === originalHead && item.display_level === DISPLAY_LEVEL.ALWAYS)
+        const content = owner ? getParsedContent(owner)?.message?.content : null
+        const suffixStart = getPrefixSuffixBoundaries(content, null, owner?.group_tail).suffixStartIndex
+        const initiallyExpanded = expandedSet.has(originalHead)
+            || (suffixStart != null && (internalExpandedGroups[originalHead] ?? []).includes(suffixStart))
         const partitions = new Map()
         for (const item of members) {
-            const part = cuts.filter(cut => cut <= indices.get(item.line_num)).length
+            const part = partitionAt[indices.get(item.line_num)]
             if (!partitions.has(part)) partitions.set(part, [])
             partitions.get(part).push(item)
         }
@@ -37,18 +81,15 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
             const head = partition[0].line_num, tail = partition.at(-1).line_num
             const key = `tools:${originalHead}:${head}`
             const lines = partition.map(item => item.line_num)
-            const old = previous.find(s => s.key === key)
-                ?? previous.find(s => s.originalHead === originalHead && s.members.some(line => lines.includes(line)))
-            const owner = members.find(item => item.line_num === originalHead && item.display_level === DISPLAY_LEVEL.ALWAYS)
-            const content = owner ? getParsedContent(owner)?.message?.content : null
-            const suffixStart = getPrefixSuffixBoundaries(content, null, owner?.group_tail).suffixStartIndex
-            const expanded = old?.expanded ?? (expandedGroups.includes(originalHead)
-                || (suffixStart != null && (internalExpandedGroups[originalHead] ?? []).includes(suffixStart)))
+            const old = previousSegment(key, originalHead, lines)
+            const expanded = old?.expanded ?? initiallyExpanded
             const internal = partition.length === 1 && partition[0].display_level === DISPLAY_LEVEL.ALWAYS
             // Synthetic streaming lines participate in display groups, but have no source comments.
-            const sourceLines = lines.filter(line => line > 0)
-            const rangeHead = sourceLines.length ? Math.min(...sourceLines) : null
-            const rangeTail = sourceLines.length ? Math.max(...sourceLines) : null
+            let rangeHead = null, rangeTail = null
+            for (const line of lines) if (line > 0) {
+                rangeHead = rangeHead === null ? line : Math.min(rangeHead, line)
+                rangeTail = rangeTail === null ? line : Math.max(rangeTail, line)
+            }
             const range = rangeHead === null ? null : old?.range?.head === rangeHead && old.range.tail === rangeTail
                 ? old.range : { head: rangeHead, tail: rangeTail }
             segments.push({ key, originalHead, head, tail, members: lines, expanded, internal, range })
@@ -57,7 +98,7 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
 
     const internalTransfers = [], retiredRemaining = []
     for (const transfer of retired) {
-        const item = items.find(item => item.line_num === transfer.realLineNum)
+        const item = items[indices.get(transfer.realLineNum)]
         if (!item) { retiredRemaining.push(transfer); continue }
         if (!transfer.expanded) continue
         let originalHead = item.group_head
@@ -74,6 +115,15 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
         }
         const destination = segments.find(s => s.originalHead === originalHead && s.members.includes(item.line_num))
         if (destination) destination.expanded = true
+    }
+
+    // Stable controls avoid invalidating subscribers on unrelated tool/status updates.
+    for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i], old = previousByKey.get(segment.key)
+        if (old && old.tail === segment.tail && old.internal === segment.internal
+            && old.expanded === segment.expanded && old.range === segment.range
+            && old.members.length === segment.members.length
+            && segment.members.every((line, index) => line === old.members[index])) segments[i] = old
     }
 
     const projected = new Map()
@@ -111,7 +161,8 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
             }
         }
     }
-    return { items: items.map(item => projected.get(item.line_num) ?? item), segments,
+    const stableSegments = segments.length === previous.length && segments.every((segment, i) => segment === previous[i]) ? previousInput : segments
+    return { items: items.map(item => projected.get(item.line_num) ?? item), segments: stableSegments,
         expandedHeads: [...new Set([...expandedGroups.filter(head => head < 0 && !groups.has(head)),
             ...segments.filter(s => s.expanded && !s.internal).map(s => s.head)])], internalTransfers, retiredRemaining }
 }

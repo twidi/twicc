@@ -1,18 +1,24 @@
-import { computed, watch, onActivated } from 'vue'
+import { computed, ref, watch, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
 
-/** The chat opens a cache; the loaded session owns and disposes it. */
+/** Mounted chats share a history; only active consumers keep its requests running. */
 export function useSessionEventHistory({ store, sessionId, eligible, active }) {
     const state = computed(() => store.localState.sessionEventHistory[sessionId.value] ?? null)
-    watch([sessionId, eligible, active], ([id, canLoad, isActive], previous) => {
-        if (!canLoad) return
-        const cached = !!store.localState.sessionEventHistory[id]
-        store.ensureSessionEventHistory(id)
-        if (cached && isActive && previous && (!previous[2] || previous[0] !== id)) store.refreshSessionEventHistory(id)
-    }, { immediate: true })
-    let activated = false
-    onActivated(() => {
-        if (activated && eligible.value) store.refreshSessionEventHistory(sessionId.value)
-        activated = true
+    const owner = Symbol('chat event history'), activated = ref(true)
+    let retainedId = null
+    watch([sessionId, eligible, active, activated], ([id, canLoad, isActive, isActivated]) => {
+        if (retainedId !== null && (retainedId !== id || !canLoad)) {
+            store.releaseSessionEventHistory(retainedId, owner)
+            retainedId = null
+        }
+        if (canLoad) {
+            store.retainSessionEventHistory(id, owner, isActive && isActivated)
+            retainedId = id
+        }
+    }, { immediate: true, flush: 'sync' })
+    onActivated(() => { activated.value = true })
+    onDeactivated(() => { activated.value = false })
+    onBeforeUnmount(() => {
+        if (retainedId !== null) store.releaseSessionEventHistory(retainedId, owner)
     })
     return { state, retry: () => store.retrySessionEventHistory(sessionId.value) }
 }

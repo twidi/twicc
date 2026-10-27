@@ -1,3 +1,4 @@
+import { toRaw } from 'vue'
 import { hasContent } from '../parsedContent.js'
 import { formatDayKey, formatDaySeparatorLabel } from '../date.js'
 
@@ -6,7 +7,7 @@ export const isTranscriptLoadCandidate = item => typeof item?.lineNum === 'numbe
 
 export function mergeSessionEventRows({ sourceItems, messageRows, boundaries }) {
     if (!boundaries.length) return messageRows
-    const indices = new Map(sourceItems.map((item, i) => [item.line_num, i]))
+    const indices = new Map(toRaw(sourceItems).map((item, i) => [toRaw(item).line_num, i]))
     const result = []
     let boundaryIndex = 0
     function appendBoundary(boundary) {

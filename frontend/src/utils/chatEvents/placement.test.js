@@ -40,3 +40,24 @@ test('compact correction copies only reordered arrays and preserves source ident
     assert.deepEqual(items.map(i => i.line_num), [1, 2, 3]); assert.strictEqual(orderCompactItems(items, false), items)
     assert.strictEqual(orderCompactItems(ordered, true), ordered)
 })
+
+test('placement parses timestamps once and invalidates changed source timestamps', () => {
+    const items = [source(1, 10), source(2, 20), source(3, 30)]
+    const events = [event(1, 25)]
+    const originalParse = Date.parse
+    let parses = 0
+    Date.parse = (...args) => { parses++; return originalParse(...args) }
+    try {
+        assert.deepEqual(boundaries(items, events), [[3, [1]]])
+        assert.ok(parses <= 4, `each source/event timestamp is parsed once; parsed ${parses}`)
+        parses = 0
+        assert.deepEqual(boundaries(items, events), [[3, [1]]])
+        assert.equal(parses, 0, 'unchanged timestamps reuse their normalized values')
+        items[1].timestamp = time(26)
+        assert.deepEqual(boundaries(items, events), [[2, [1]]])
+        assert.equal(parses, 1)
+        events[0].occurred_at = time(28)
+        assert.deepEqual(boundaries(items, events), [[3, [1]]])
+        assert.equal(parses, 2)
+    } finally { Date.parse = originalParse }
+})

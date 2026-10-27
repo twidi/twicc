@@ -840,10 +840,31 @@ test('coming back to the Timeline tab catches up once', async (t) => {
     const f = fixture({ fakeScroller: true })
     const root = await mount(t, f, '__all__', { active: false })
     assert.equal(f.calls.length, 1, 'a hidden page loads like a visible one')
+    const snapshot = f.state.events
+    signal(9)
+    window.dispatchEvent(new Event('twicc:ws-reconnected'))
+    window.dispatchEvent(new Event('twicc:ws-first-open'))
+    await settle()
+    assert.equal(f.calls.length, 1, 'hidden timelines do not fetch global events or socket recovery')
+    assert.strictEqual(f.state.events, snapshot)
     await root.setActive(true)
     assert.deepEqual(f.calls.map((c) => c.afterId), [null, 3])
     await root.setActive(false)
     assert.equal(f.calls.length, 2, 'leaving the tab fetches nothing')
+    signal(10); await settle()
+    assert.equal(f.calls.length, 2, 'leaving the tab removes its live subscriptions')
+})
+
+test('an inactive timeline never paginates from an old visible range', async (t) => {
+    const f = fixture({ fakeScroller: true, hasMore: true })
+    const root = await mount(t, f, '__all__', { active: false })
+    f.scroller.log.emit({ visibleStartIndex: 0, visibleEndIndex: 4 })
+    await settle()
+    assert.equal(f.calls.length, 1)
+    await root.setActive(true)
+    f.scroller.log.emit({ visibleStartIndex: 0, visibleEndIndex: 4 })
+    await settle()
+    assert.ok(f.calls.some(call => call.before !== null))
 })
 
 test('an unmounted page stops listening: its window listeners are removed and nothing is fetched', async (t) => {
@@ -908,7 +929,6 @@ test('source pins: the live events and the active prop are wired, useWebSocket d
     assert.match(panel, /bindTimelineEvents\(window, feed\)/)
     // The order that keeps the view still: capture BEFORE the DOM moves (pre-flush watcher), restore after it.
     assert.match(panel, /watch\(items, async \(next\) => \{\s*const snapshot = scrollKeeper\.capture\(\)\s*if \(!snapshot\) return\s*await nextTick\(\)\s*scrollKeeper\.restore\(snapshot, [^\n]*\)\s*\}, \{ flush: 'pre' \}\)/)
-    assert.match(panel, /watch\(\(\) => props\.active, \(active\) => \{\s*if \(active\) feed\.refresh\(\)/)
     const socket = readFileSync(new URL('../../composables/useWebSocket.js', import.meta.url), 'utf8')
     const changed = socket.slice(socket.indexOf("case 'timeline_changed':"))
     assert.ok(changed.slice(0, 600).includes("window.dispatchEvent(new CustomEvent('twicc:timeline-changed', { detail: { latestId: msg.latest_id } }))"))

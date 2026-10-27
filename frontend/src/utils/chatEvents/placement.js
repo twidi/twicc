@@ -1,5 +1,17 @@
+import { toRaw } from 'vue'
 import { getParsedContent } from '../parsedContent.js'
 import { compareNewestFirst } from '../timeline/eventTime.js'
+
+// Source identities survive tool updates and hydration. Weak keys follow their lifetime.
+const normalizedTimes = new WeakMap()
+function timestampOf(source, field) {
+    source = toRaw(source)
+    const value = source[field], cached = normalizedTimes.get(source)
+    if (cached && cached.value === value) return cached.time
+    const time = normalizeChatTimestamp(value)
+    normalizedTimes.set(source, { value, time })
+    return time
+}
 
 /** Normalize wire/provider ISO timestamps without losing their fractional precision. */
 export function normalizeChatTimestamp(value) {
@@ -14,7 +26,8 @@ export function normalizeChatTimestamp(value) {
 export function placeSessionEvents(items, events) {
     const sorted = [...events].sort((a, b) => compareNewestFirst(b, a))
     if (!sorted.length) return []
-    const times = items.map(item => normalizeChatTimestamp(item.timestamp))
+    const times = toRaw(items).map(item => timestampOf(item, 'timestamp'))
+    const eventTimes = sorted.map(event => timestampOf(event, 'occurred_at'))
     let previous = times.find(time => time !== null) ?? null
     if (previous === null) return [{ beforeLine: items[0]?.line_num ?? null, events: sorted }]
     const boundaries = []
@@ -24,7 +37,7 @@ export function placeSessionEvents(items, events) {
         if (time !== null && time > previous) previous = time
         const atBoundary = []
         while (eventIndex < sorted.length) {
-            const eventTime = normalizeChatTimestamp(sorted[eventIndex].occurred_at)
+            const eventTime = eventTimes[eventIndex]
             if (eventTime !== null && eventTime > previous) break
             atBoundary.push(sorted[eventIndex++])
         }

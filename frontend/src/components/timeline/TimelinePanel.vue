@@ -94,10 +94,14 @@ watch([() => scope.value.projectIds, filterQueryKey], ([ids, key], previous) => 
 }, { immediate: true })
 
 // ── Staying current (design section 9.2) ───────────────────────────────────────────────────────────────────
-// The page is kept alive per scope: it keeps fetching while hidden and renders nothing. The signal and the
-// socket events reach it through window events dispatched by useWebSocket.js.
+// Kept-alive scopes retain their rows. Only the visible Timeline listens for live invalidations;
+// returning to it catches up from its existing cursor.
 let unbindEvents = null
-onMounted(() => { unbindEvents = bindTimelineEvents(window, feed) })
+function updateLiveEvents(active) {
+    unbindEvents?.()
+    unbindEvents = active ? bindTimelineEvents(window, feed) : null
+}
+onMounted(() => { feed.setActive(props.active); updateLiveEvents(props.active) })
 onBeforeUnmount(() => {
     unbindEvents?.()
     feed.dispose()
@@ -105,8 +109,10 @@ onBeforeUnmount(() => {
 
 // Back on the tab (or the kept-alive page shown again): catch up once; the fetches coalesce in the queue.
 watch(() => props.active, (active) => {
+    feed.setActive(active)
+    updateLiveEvents(active)
     if (active) feed.refresh()
-})
+}, { flush: 'sync' })
 
 // ── What the page shows ───────────────────────────────────────────────────────────────────────────────────
 
@@ -269,7 +275,7 @@ watch([items, scrollerRef], seedHeights, { flush: 'post' })
 let visibleEnd = 0
 
 function maybeLoadMore() {
-    if (view.value === 'list' && isNearEnd(items.value.length, visibleEnd)) feed.loadMore()
+    if (props.active && view.value === 'list' && isNearEnd(items.value.length, visibleEnd)) feed.loadMore()
 }
 
 function onScrollerUpdate(range) {

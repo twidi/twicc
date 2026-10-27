@@ -125,6 +125,8 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
     let generation = 0
     let chain = Promise.resolve()
     let disposed = false
+    let active = true
+    let pausedTasks = []
     let scope = null // string[] (empty = global) or null (nothing to load)
     let query = {} // the filter parameters of the current generation
     let scopeKey
@@ -137,10 +139,24 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
 
     const stale = (gen) => disposed || gen !== generation
 
-    function enqueue(task) {
+    function enqueue(task, allowInactive = false) {
         const gen = generation
         chain = chain
-            .then(() => (stale(gen) ? undefined : task(gen)))
+            .then(async () => {
+                if (stale(gen)) return
+                // Drain older deferred work before this task, including on a rapid resume
+                // while other callbacks are still queued on the promise chain.
+                while (active && pausedTasks.length && !stale(gen)) {
+                    const pending = pausedTasks.shift()
+                    if (!stale(pending.gen)) await pending.task(pending.gen)
+                }
+                if (stale(gen)) return
+                if (!active && !allowInactive) {
+                    pausedTasks.push({ gen, task })
+                    return
+                }
+                return task(gen)
+            })
             .catch((error) => {
                 // A task handles its own failures; this is only a guard so one bug cannot freeze the queue.
                 console.error('Timeline feed task failed', error)
@@ -153,6 +169,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         liveQueued = false
         liveInfo = { latest: null, force: false }
         failedBackfills = new Set()
+        pausedTasks = []
     }
 
     function mergeSessions(sessions) {
@@ -335,7 +352,15 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         if (scope === null) return
         state.status = 'loading'
         loadPending = true
-        enqueue(runFirst)
+        // A hidden scope may load its initial page, but never its follow-up work.
+        enqueue(runFirst, true)
+    }
+
+    function setActive(value) {
+        if (disposed || active === value) return
+        active = value
+        // The queued callback drains paused work without discarding rows or cursors.
+        if (active) enqueue(() => {})
     }
 
     function loadMore() {
@@ -381,6 +406,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
     function dispose() {
         disposed = true
         generation += 1
+        pausedTasks = []
     }
 
     return {
@@ -396,6 +422,8 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
          *   null or omitted means no filter.
          */
         setScope,
+        /** Pause queued work while hidden. An in-flight response may finish; its follow-ups wait for resume. */
+        setActive,
         /** Ask for the next page. A no-op while a load is pending, after a failure (use `retry`) or at the end. */
         loadMore,
         /** Replay the failed load (the Retry action). */

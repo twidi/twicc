@@ -4,6 +4,17 @@ import { bindTimelineEvents } from '../timeline/liveEvents.js'
 /** Pinia action factory: controllers and subscriptions stay outside reactive state. */
 export function createSessionEventHistoryActions({ fetchPage, eventTarget = () => globalThis.window }) {
     const owners = new WeakMap()
+    function syncActive(entry) {
+        const active = [...entry.consumers.values()].some(Boolean)
+        if (active && !entry.unbind) {
+            const target = eventTarget()
+            entry.unbind = target ? bindTimelineEvents(target, entry.controller) : () => {}
+        } else if (!active && entry.unbind) {
+            entry.unbind()
+            entry.unbind = null
+        }
+        entry.controller.setActive(active)
+    }
     return {
         ensureSessionEventHistory(sessionId) {
             const session = this.sessions[sessionId]
@@ -26,9 +37,23 @@ export function createSessionEventHistoryActions({ fetchPage, eventTarget = () =
             })
             const target = eventTarget()
             const unbind = target ? bindTimelineEvents(target, controller) : () => {}
-            entries.set(sessionId, { controller, unbind })
+            entries.set(sessionId, { controller, unbind, consumers: new Map() })
             controller.start()
             return controller
+        },
+        retainSessionEventHistory(sessionId, owner, active) {
+            const controller = this.ensureSessionEventHistory(sessionId)
+            if (!controller) return
+            const entry = owners.get(this).get(sessionId)
+            entry.consumers.set(owner, active)
+            syncActive(entry)
+        },
+        releaseSessionEventHistory(sessionId, owner) {
+            const entry = owners.get(this)?.get(sessionId)
+            if (!entry) return
+            entry.consumers.delete(owner)
+            if (!entry.consumers.size) this.clearSessionEventHistory(sessionId)
+            else syncActive(entry)
         },
         refreshSessionEventHistory(sessionId) {
             const existing = owners.get(this)?.get(sessionId)?.controller
@@ -43,7 +68,7 @@ export function createSessionEventHistoryActions({ fetchPage, eventTarget = () =
         clearSessionEventHistory(sessionId) {
             const entries = owners.get(this), entry = entries?.get(sessionId)
             entry?.controller.dispose()
-            entry?.unbind()
+            entry?.unbind?.()
             entries?.delete(sessionId)
             const hadState = !!this.localState.sessionEventHistory[sessionId]
             delete this.localState.sessionEventHistory[sessionId]

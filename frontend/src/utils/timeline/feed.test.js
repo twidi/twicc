@@ -109,6 +109,45 @@ const kinds = (server) => server.calls.map((c) => (c.afterId !== null ? `after:$
 // Ids 1..5, increasing in time: the newest is 5.
 const five = () => [1, 2, 3, 4, 5].map((id) => event(id, at(id)))
 
+test('pausing defers queued pagination and live work in their original order', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([]); await feed.idle()
+    server.commit(event(6, at(6))); server.hold()
+    feed.notifyLatest(6); await started()
+    feed.loadMore()
+    server.commit(event(7, at(7))); feed.notifyLatest(7)
+    feed.setActive(false); server.release(); await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    assert.deepEqual(ids(state), [6, 5, 4])
+    feed.setActive(true); await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5', 'before', 'after:6'])
+    assert.deepEqual(ids(state), [7, 6, 5, 4, 3, 2])
+    assert.equal(state.pageCursor, `${at(2)},2`)
+})
+
+test('a pending live response cannot start backfill pages while the feed is inactive', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([]); await feed.idle()
+    server.setHidden('s2', false, 6, at(6))
+    server.commit(event(7, at(1), { session_id: 's2' }))
+    server.hold(); feed.notifyLatest(7); await started()
+    feed.setActive(false); server.release(); await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    feed.setActive(true); await feed.idle()
+    assert.ok(server.calls.some(call => call.query.session === 's2'))
+    assert.deepEqual(ids(state), [6, 5, 4])
+})
+
+test('changing scope discards paused tasks instead of replaying them in the new scope', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([]); await feed.idle()
+    feed.setActive(false); feed.loadMore(); await feed.idle()
+    feed.setScope(['p2']); await feed.idle()
+    feed.setActive(true); await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'first'])
+    assert.deepEqual(ids(state), [])
+})
+
 test('the first page fills the list newest first with the cursors and the side table', async () => {
     const { server, feed, state } = setup(five())
     feed.setScope([])
