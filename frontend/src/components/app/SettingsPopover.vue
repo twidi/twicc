@@ -1323,7 +1323,6 @@ function onChangelogClose() {
     <AppTooltip for="settings-trigger" :placement="props.tooltipPlacement">{{ props.triggerLabel ?? 'Toggle settings' }}</AppTooltip>
     <Teleport to="body">
         <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" :placement="props.placement" class="settings-popover" @wa-show.self="onPopoverShow" @wa-after-hide.self="onPopoverAfterHide">
-            <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
             <div class="settings-layout">
                 <div class="settings-layout-inner" :class="{ 'showing-content': mobileShowContent }">
                     <!-- Nav: section list -->
@@ -2378,6 +2377,7 @@ function onChangelogClose() {
                 >
                     <wa-icon name="right-from-bracket"></wa-icon>
                 </wa-button>
+                <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
             </footer>
         </wa-popover>
         <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />

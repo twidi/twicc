@@ -159,7 +159,7 @@ defineExpose({ open, close })
             >
                 <wa-icon name="chevron-left"></wa-icon>
             </button>
-            <AppTooltip :for="prevButtonId">Previous (Left arrow)</AppTooltip>
+            <AppTooltip v-if="hasNavigation" :for="prevButtonId">Previous (Left arrow)</AppTooltip>
 
             <!-- Image preview -->
             <!--
@@ -194,7 +194,7 @@ defineExpose({ open, close })
             >
                 <wa-icon name="chevron-right"></wa-icon>
             </button>
-            <AppTooltip :for="nextButtonId">Next (Right arrow)</AppTooltip>
+            <AppTooltip v-if="hasNavigation" :for="nextButtonId">Next (Right arrow)</AppTooltip>
         </div>
 
         <!-- Open-link button in footer (when the current item carries a link) -->
