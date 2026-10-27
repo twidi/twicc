@@ -6,6 +6,8 @@ inside its range (``hidden_sessions`` / ``shown_sessions``), so an open list dro
 """
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from tests.test_timeline_api import call, ids, make_event, make_instance_event, make_session, plan_of
 from twicc.core.models import Project, Session
@@ -309,8 +311,57 @@ def test_every_page_query_carries_the_exclusion_as_one_uncorrelated_subquery(bus
     for before in ({}, {"before": "2026-10-14T10:00:15.000000Z,12"}):
         for queryset in timeline_feed._page_querysets(parse_request({**params, **before})):
             sql, plan = plan_of(queryset)
-            # An AND under a NOT: no OR of its own (the page queries refuse one), and never an index driver.
-            assert EXCLUSION in sql, sql
+            # An AND under a NOT: no OR of its own (the page queries refuse one), and never an index driver. The LAST
+            # term of the WHERE: the other terms reject a row before its subquery probe.
+            where = sql.split(" WHERE ", 1)[1].rsplit(" ORDER BY ", 1)[0]
+            assert where.endswith((EXCLUSION, EXCLUSION + ")")), sql
             # The partial index of the hidden sessions serves the subquery, read once (not per row).
             assert "LIST SUBQUERY" in plan and "CORRELATED" not in plan, plan
             assert "SEARCH U0 USING INDEX idx_session_hidden (hidden=?)" in plan, plan
+
+
+# -- Filters that can never match ------------------------------------------------------------------------------
+
+
+IMPOSSIBLE = [{"view": "without_turns", "families": "turns"}, {"view": "waits_problems", "families": "sessions,settings"},
+              {"view": "waits_problems", "families": "turns", "authors": "you", "provider": "codex"}]
+
+
+def event_reads(captured):
+    """The statements that read events, ``latest_id`` (the highest id, ``ORDER BY 1 DESC LIMIT 1``) aside."""
+    latest = 'SELECT "core_timelineevent"."id" AS "id" FROM "core_timelineevent" ORDER BY 1 DESC LIMIT 1'
+    return [q["sql"] for q in captured.captured_queries if 'FROM "core_timelineevent"' in q["sql"] and q["sql"] != latest]
+
+
+@pytest.mark.parametrize("params", IMPOSSIBLE)
+def test_a_filter_that_can_never_match_answers_the_empty_page_without_reading_events(projects, params):
+    a = projects[0]
+    make_event(project=a, at=1)
+    make_event("process.ended", project=a, at=2, reason="error")
+    last = make_instance_event(at=3)
+    for before in ({}, {"before": "2026-10-14T10:00:09.000000Z,99"}):
+        with CaptureQueriesContext(connection) as captured:
+            body = timeline_feed.fetch_feed(parse_request({**params, **before}))
+        assert body == {"events": [], "has_more": False, "truncated": False, "latest_id": last.id, "sessions": {}}
+        assert event_reads(captured) == []
+    assert call(**params).json()["events"] == []
+
+
+@pytest.mark.parametrize("params", IMPOSSIBLE)
+def test_a_filter_that_can_never_match_still_reads_the_after_id_range(projects, params, monkeypatch):
+    a = projects[0]
+    make_session(a, "secret", hidden=True)
+    make_session(a, "back")
+    cursor = make_instance_event(at=0)
+    make_event("hidden.started", project=a, session_id="secret", at=1, actor="user", via="ui")
+    make_event("hidden.ended", project=a, session_id="back", at=2, actor="user", via="ui")
+    last = make_event("process.ended", project=a, session_id="back", at=3, reason="error")
+    with CaptureQueriesContext(connection) as captured:
+        body = timeline_feed.fetch_feed(parse_request({"after_id": str(cursor.id), **params}))
+    # One read of the events: the range. The filter query on its ids is not sent.
+    assert len(event_reads(captured)) == 1, event_reads(captured)
+    assert body["events"] == [] and body["truncated"] is False and body["latest_id"] == last.id
+    assert body["hidden_sessions"] == ["secret"] and body["shown_sessions"] == ["back"]
+    # The range still decides ``truncated``: the client must reload when it overflows.
+    monkeypatch.setattr(timeline_feed, "AFTER_ID_CAP", 2)
+    assert call(after_id=cursor.id, **params).json()["truncated"] is True

@@ -37,10 +37,15 @@ the page fills (measured by ``tests/test_timeline_filters_bench.py`` on a millio
 
 Hidden sessions: every read leaves out the rows of a session hidden NOW (``Session.hidden`` at read time, not at
 the time of the event). The page queries carry :func:`visible_sessions_q`, an uncorrelated subquery on the partial
-index ``idx_session_hidden`` under a ``NOT``, so it never drives the index choice. The ``after_id`` fetch drops those
+index ``idx_session_hidden`` under a ``NOT`` and as the last ``WHERE`` term, so it never drives the index choice
+and is only probed for the rows every other term kept. The ``after_id`` fetch drops those
 rows from its range in Python and names the sessions hidden or shown again inside the range (``hidden_sessions``,
 ``shown_sessions``), so an open list drops or merges them in place. Instance rows always stay; a visible row that
 only cites a hidden session (``actor_ref``, ``data.spawned_by``) stays too.
+
+A filter that can never match (``timeline_filters.can_match``: the view and the checked families leave no kind) reads
+no page: its queries would walk the whole scope for nothing. Its ``after_id`` fetch still reads the range, for
+``truncated`` and the two session lists.
 """
 
 from __future__ import annotations
@@ -64,6 +69,7 @@ from twicc.core.services.timeline_filters import (
     INSTANCE_FAMILIES,
     VIEWS,
     TimelineFilter,
+    can_match,
     match_q,
     unindexed,
 )
@@ -201,7 +207,17 @@ def visible_sessions_q() -> Q:
 
 
 def _page_querysets(request: FeedRequest) -> list:
-    """The queries of one page, merged by :func:`_fetch_page` (see the module doc).
+    """The queries of one page, merged by :func:`_fetch_page`, each without the rows of the hidden sessions.
+
+    The exclusion is the LAST term of each ``WHERE``: SQLite tests the terms in their order, so the scope, the cursor
+    and the filters reject a row before its subquery probe. As the first term, it added about half to the long scan
+    of a filter that matches few rows; as the last one, nothing measurable.
+    """
+    return [queryset.filter(visible_sessions_q()) for queryset in _scoped_querysets(request)]
+
+
+def _scoped_querysets(request: FeedRequest) -> list:
+    """The queries of one page before the hidden-session exclusion (see the module doc).
 
     With a session filter: one query on the session index. With a family filter on instance families alone:
     the instance query alone. Otherwise the main query, the instance-events query when the scope or a
@@ -210,9 +226,7 @@ def _page_querysets(request: FeedRequest) -> list:
     """
     flt = request.filter
     ordered = TimelineEvent.objects.order_by("-occurred_at", "-id")
-    common = [visible_sessions_q()]
-    if request.before:
-        common.append(before_condition(request.before))
+    common = [before_condition(request.before)] if request.before else []
     if (match := match_q(flt)) is not None:
         common.append(match)
     unindexed_projects = [Q(In(unindexed("project_id"), request.project_ids))] if request.project_ids else []
@@ -246,7 +260,12 @@ def _page_querysets(request: FeedRequest) -> list:
 
 
 def _fetch_page(request: FeedRequest) -> tuple[list[TimelineEvent], bool]:
-    """Newest-first events of one page and ``has_more`` (one extra row is read, as the sessions page does)."""
+    """Newest-first events of one page and ``has_more`` (one extra row is read, as the sessions page does).
+
+    A filter that can never match (:func:`can_match`) reads nothing: its queries would walk the whole scope.
+    """
+    if not can_match(request.filter):
+        return [], False
     wanted = request.limit + 1
     merged: dict[int, TimelineEvent] = {}
     for queryset in _page_querysets(request):
@@ -336,7 +355,10 @@ def _fetch_after(request: FeedRequest) -> AfterResult:
         if row.kind == TimelineKind.HIDDEN_ENDED and row.session_id and row.session_id not in hidden
     })
     rows = [row for row in rows if row.session_id not in hidden]
-    if match is not None:
+    if not can_match(request.filter):
+        # The range is still read: ``truncated`` and the two session lists speak of it, whatever the filters.
+        rows = []
+    elif match is not None:
         rows = list(TimelineEvent.objects.filter(match, id__in=[row.id for row in rows]).order_by("id"))
     return AfterResult(rows, truncated, hidden_sessions, shown_sessions)
 

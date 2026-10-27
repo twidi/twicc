@@ -193,11 +193,19 @@ def families_q(families: tuple[str, ...]) -> Q | None:
     return kind_in(*(kind for family, kinds in FAMILIES.items() if family in checked for kind in kinds))
 
 
+#: The kind of each problem condition (section 4.4): ``problem_q`` and ``view_kinds`` both read it.
+_PROBLEM_KINDS: tuple[str, ...] = (TimelineKind.PROCESS_ENDED, TimelineKind.BACKEND_ENDED)
+#: The kinds the ``without_turns`` view leaves out, and the kinds the ``waits_problems`` view shows besides problems.
+_WITHOUT_TURNS_EXCLUDED: tuple[str, ...] = FAMILIES["turns"]
+_WAITS_VIEW_KINDS: tuple[str, ...] = (TimelineKind.AWAITING_INPUT_STARTED,)
+
+
 def problem_q() -> Q:
     """The rows that say something went wrong (section 4.4)."""
+    process_ended, backend_ended = _PROBLEM_KINDS
     return (
-        (kind_in(TimelineKind.PROCESS_ENDED) & Q(reason__in=PROBLEM_REASONS))
-        | (kind_in(TimelineKind.BACKEND_ENDED) & Q(data__clean=False))
+        (kind_in(process_ended) & Q(reason__in=PROBLEM_REASONS))
+        | (kind_in(backend_ended) & Q(data__clean=False))
     )
 
 
@@ -206,10 +214,40 @@ def view_q(view: str) -> Q | None:
     if view == "all":
         return None
     if view == "without_turns":
-        return ~kind_in(TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED)
+        return ~kind_in(*_WITHOUT_TURNS_EXCLUDED)
     if view == "waits_problems":
-        return kind_in(TimelineKind.AWAITING_INPUT_STARTED) | problem_q()
+        return kind_in(*_WAITS_VIEW_KINDS) | problem_q()
     raise ValueError(f"unknown view: {view!r}")
+
+
+def view_kinds(view: str) -> frozenset[str]:
+    """The kinds a view can show (built from the same definitions as :func:`view_q`)."""
+    every = frozenset(TimelineKind.values)
+    if view == "all":
+        return every
+    if view == "without_turns":
+        return every - set(_WITHOUT_TURNS_EXCLUDED)
+    if view == "waits_problems":
+        return frozenset(_WAITS_VIEW_KINDS) | frozenset(_PROBLEM_KINDS)
+    raise ValueError(f"unknown view: {view!r}")
+
+
+def possible_kinds(flt: TimelineFilter) -> frozenset[str]:
+    """The kinds a row can have and still match the view and the checked families (section 4.5).
+
+    The authors, the providers and the session filter do not narrow it: only the view and the families speak of
+    kinds. A test pins that a matching row of every one of these kinds exists and no row of another kind matches.
+    """
+    kinds = view_kinds(flt.view)
+    if flt.families:
+        kinds &= {kind for family in flt.families for kind in FAMILIES[family]}
+    return kinds
+
+
+def can_match(flt: TimelineFilter) -> bool:
+    """False when the view and the checked families leave no kind possible (``without_turns`` with Turns alone,
+    ``waits_problems`` with none of Waiting for you, Processes and TwiCC): no row can ever match."""
+    return bool(possible_kinds(flt))
 
 
 def match_q(flt: TimelineFilter) -> Q | None:

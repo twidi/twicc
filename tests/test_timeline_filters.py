@@ -16,9 +16,11 @@ from twicc.core.services.timeline_filters import (
     author_of,
     author_q,
     authors_q,
+    can_match,
     families_q,
     kind_in,
     match_q,
+    possible_kinds,
     problem_q,
     view_q,
 )
@@ -260,3 +262,32 @@ def test_a_families_filtered_page_query_walks_the_time_index_in_order():
     # Control: without the unary plus the planner takes the kind index and sorts (what ``kind_in`` avoids).
     control = plan_of(page.filter(kind__in=FAMILIES["turns"] + FAMILIES["waits"])[:51])
     assert "idx_timeline_kind" in control and "USE TEMP B-TREE" in control
+
+
+@pytest.mark.django_db
+def test_possible_kinds_are_exactly_the_kinds_the_view_and_families_can_match():
+    # One row of every kind, plus the rows that make the problem kinds pass the problem conditions: every kind the
+    # helper calls possible has a matching row, every other kind none.
+    save(*[build(kind, actor="agent") for kind in TimelineKind.values])
+    save(build("process.ended", reason="error"), build("backend.ended", data={"clean": False}))
+    for view in VIEWS:
+        for size in range(len(FAMILIES) + 1):
+            for families in itertools.combinations(FAMILIES, size):
+                flt = TimelineFilter(view=view, families=families)
+                q = match_q(flt)
+                matched = TimelineEvent.objects.filter(q) if q is not None else TimelineEvent.objects.all()
+                kinds = set(matched.values_list("kind", flat=True))
+                assert kinds == possible_kinds(flt), (view, families)
+                assert can_match(flt) is bool(kinds), (view, families)
+
+
+def test_the_combinations_that_can_never_match():
+    assert not can_match(TimelineFilter(view="without_turns", families=("turns",)))
+    assert can_match(TimelineFilter(view="without_turns", families=("turns", "waits")))
+    for families in (("sessions",), ("turns",), ("settings",), ("organization",), ("sessions", "settings")):
+        assert not can_match(TimelineFilter(view="waits_problems", families=families)), families
+    for family in ("waits", "processes", "twicc"):
+        assert can_match(TimelineFilter(view="waits_problems", families=(family, "sessions")))
+    # The other groups never make a filter impossible here: only the view and the families decide.
+    assert can_match(TimelineFilter(authors=("you",), providers=("codex",), session_id="s1"))
+    assert possible_kinds(TimelineFilter()) == frozenset(TimelineKind.values)
