@@ -8,6 +8,11 @@ of every active Codex project so repo-scoped skills come back too),
 maps each skill onto a ``Command`` row, and hands the desired state
 to the shared diff/apply helper.
 
+Each cycle waits for ``plugin/reconcile`` before reading skills. Codex
+loads remote plugins asynchronously at startup, so an immediate skills
+read can return an incomplete catalogue. A failed reconciliation leaves
+the saved commands unchanged until the next cycle.
+
 The mapping is centralized in :func:`_skill_to_desired_entry`; in
 particular:
 
@@ -166,7 +171,7 @@ async def _sync_to_database() -> dict[str, int]:
     from asgiref.sync import sync_to_async
 
     from openai_codex.async_client import AsyncCodexClient
-    from openai_codex.generated.v2_all import SkillsListResponse
+    from openai_codex.generated.v2_all import PluginReconcileResponse, SkillsListResponse
 
     from twicc.core.enums import Provider
     from twicc.core.models import Project
@@ -198,6 +203,19 @@ async def _sync_to_database() -> dict[str, int]:
 
     async with AsyncCodexClient(config=config) as client:
         await client.initialize()
+        # initialize() does not wait for remote plugins. Reconcile their
+        # bundles and installed inventory before replacing the saved catalogue.
+        reconciliation = await client.request(
+            "plugin/reconcile",
+            {"reason": "twicc-command-discovery"},
+            response_model=PluginReconcileResponse,
+        )
+        if reconciliation.failed_remote_plugin_ids or reconciliation.failed_materialization_remote_plugin_ids:
+            raise RuntimeError(
+                "Remote plugin reconciliation failed; keeping the saved command catalogue. "
+                f"Failed plugins: {reconciliation.failed_remote_plugin_ids}; "
+                f"failed bundles: {reconciliation.failed_materialization_remote_plugin_ids}"
+            )
         resp = await client.request(
             "skills/list",
             {"cwds": cwds, "forceReload": True},
