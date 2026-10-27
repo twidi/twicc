@@ -4,6 +4,7 @@
  */
 
 import { sessionSortComparator } from './sessionSort.js'
+import { summarizeProcessActivity } from './processActivity.js'
 
 const isParticipant = (session) => !session.ephemeral && !session.draft
 
@@ -95,7 +96,7 @@ export function buildSessionTree(candidates, {
         }
     }
 
-    // Post-order pass: effective state, triggers, summary, then ordering.
+    // Post-order pass: effective state, triggers, descendants, then ordering.
     // Ordering reuses sessionSortComparator through proxy sessions that carry
     // the effective values, so the flat and tree orders can never diverge.
     const proxyStates = {}
@@ -137,20 +138,15 @@ export function buildSessionTree(candidates, {
         walk(node.childIds)
 
         node.effective = { pinned, active, activeKey, dateKey }
-        const summary = { descendants: ordered.length, active: 0, unread: 0, pinned: 0, latestDate: null }
         const triggerIds = []
         for (const dId of ordered) {
             const d = nodes.get(dId).session
             const dActive = processStates[dId] != null
             const dUnread = dId !== viewedId && !!isUnread(d, processStates[dId])
             const dPinned = !!d.pinned
-            if (dActive) summary.active++
-            if (dUnread) summary.unread++
-            if (dPinned) summary.pinned++
             if (dActive || dUnread || dPinned) triggerIds.push(dId)
         }
-        summary.latestDate = dateKey > session.mtime ? dateKey : null
-        node.summary = summary
+        node.descendantIds = ordered
         node.triggerIds = triggerIds
 
         proxies.set(id, {
@@ -170,6 +166,35 @@ export function buildSessionTree(candidates, {
     return { nodes, rootIds }
 }
 
+/**
+ * Aggregated activity of a set of tree sessions: what a collapsed node shows
+ * (the node itself plus its descendants). Same cascade input as the project
+ * badges; skips synthetic, ephemeral and hidden sessions. The viewed session
+ * never counts as unread, like on its own row.
+ *
+ * @param {string[]} ids
+ * @param {{
+ *   processStates: Object,
+ *   sessions: (id: string) => ?Object,
+ *   viewedId: ?string,
+ *   isUnread: (session: Object, processState: ?Object) => boolean,
+ * }} opts
+ * @returns {ReturnType<typeof summarizeProcessActivity>}
+ */
+export function treeActivity(ids, { processStates, sessions, viewedId, isUnread }) {
+    const states = []
+    let unreadCount = 0
+    for (const id of ids) {
+        const ps = processStates[id]
+        if (ps?.synthetic || ps?.extra?.ephemeral) continue
+        const session = sessions(id)
+        if (session?.hidden) continue
+        if (ps) states.push(ps)
+        if (session && id !== viewedId && isUnread(session, ps)) unreadCount++
+    }
+    return summarizeProcessActivity(states, unreadCount)
+}
+
 /** Deepest indentation level the row visuals render. */
 export const TREE_MAX_INDENT_LEVEL = 3
 
@@ -177,19 +202,50 @@ export const TREE_MAX_INDENT_LEVEL = 3
  * Flatten the tree into display rows, pre-order. Children are listed only
  * under expanded nodes.
  *
+ * `isLast`: the node is the last child of its parent (roots: true).
+ * `through`: length `max(depth - 1, 0)`; entry `i` is true when the ancestor
+ * at depth `i + 1` is not the last child of its parent, i.e. the vertical
+ * guide of column `i` continues through this row.
+ *
  * @param {{ nodes: Map<string, Object>, rootIds: string[] }} tree
  * @param {(id: string) => boolean} isExpanded
- * @returns {Array<{ id: string, depth: number }>}
+ * @returns {Array<{ id: string, depth: number, isLast: boolean, through: boolean[] }>}
  */
 export function flattenTree(tree, isExpanded) {
     const rows = []
-    const visit = (id, depth) => {
-        rows.push({ id, depth })
+    // `notLast`: for each ancestor at depth >= 1, whether it is not the last child.
+    const visit = (id, depth, isLast, notLast) => {
+        rows.push({ id, depth, isLast, through: notLast })
         if (!isExpanded(id)) return
-        for (const childId of tree.nodes.get(id).childIds) visit(childId, depth + 1)
+        const childIds = tree.nodes.get(id).childIds
+        const next = depth >= 1 ? [...notLast, !isLast] : notLast
+        childIds.forEach((childId, i) => visit(childId, depth + 1, i === childIds.length - 1, next))
     }
-    for (const id of tree.rootIds) visit(id, 0)
+    for (const id of tree.rootIds) visit(id, 0, true, [])
     return rows
+}
+
+/**
+ * Guide lines of a child row, in columns (column `c` is the vertical line of
+ * the ancestor at depth `c`, one indentation step wide).
+ *
+ * - `columns`: ancestor columns whose line continues through the row.
+ * - `ownColumn`: the column of the row's own line and elbow.
+ * - `ownEnds`: the own line stops at the elbow (no later row needs it).
+ *
+ * Past `TREE_MAX_INDENT_LEVEL` the rows keep the last column: the whole band
+ * of deeper rows shares it, so it ends only when no row of the band follows.
+ *
+ * @param {{ depth: number, isLast: boolean, through: boolean[] }} row
+ * @returns {?{ columns: number[], ownColumn: number, ownEnds: boolean }} null for roots
+ */
+export function treeGuides({ depth, isLast, through }) {
+    if (depth < 1) return null
+    const visible = TREE_MAX_INDENT_LEVEL - 1
+    const columns = []
+    through.slice(0, visible).forEach((continues, column) => { if (continues) columns.push(column) })
+    const bandContinues = through.slice(visible).some(Boolean)
+    return { columns, ownColumn: Math.min(depth, TREE_MAX_INDENT_LEVEL) - 1, ownEnds: isLast && !bandContinues }
 }
 
 /**

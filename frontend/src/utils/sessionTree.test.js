@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree, flattenTree, extendTreeCandidates, findMissingAncestorIds, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
+import { buildSessionTree, treeActivity, treeGuides, flattenTree, extendTreeCandidates, findMissingAncestorIds, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -183,18 +183,90 @@ test('triggerIds exclude the node itself and the viewed session counts as not un
     )
     const node = t.nodes.get('p')
     assert.deepEqual([...node.triggerIds].sort(), ['act', 'u'])
-    assert.equal(node.summary.descendants, 4)
-    assert.equal(node.summary.active, 1)
-    assert.equal(node.summary.unread, 1)
-    assert.equal(node.summary.pinned, 0)
     assert.deepEqual(t.nodes.get('quiet').triggerIds, [])
 })
 
-test('summary.latestDate is null when the subtree date equals the node\'s own mtime', () => {
-    const same = buildWith([s('a', { mtime: 100 }), s('k', { spawned_by: 'a', mtime: 50 })])
-    assert.equal(same.nodes.get('a').summary.latestDate, null)
-    const newer = buildWith([s('a', { mtime: 100 }), s('k', { spawned_by: 'a', mtime: 700 })])
-    assert.equal(newer.nodes.get('a').summary.latestDate, 700)
+test('descendantIds lists descendants in display order, depth-first', () => {
+    const t = build([
+        s('a', { mtime: 500 }), s('b', { spawned_by: 'a', mtime: 400 }),
+        s('c', { spawned_by: 'a', mtime: 300 }), s('d', { spawned_by: 'b', mtime: 200 }),
+    ])
+    assert.deepEqual(t.nodes.get('a').descendantIds, ['b', 'd', 'c'])
+    assert.deepEqual(t.nodes.get('b').descendantIds, ['d'])
+    assert.deepEqual(t.nodes.get('d').descendantIds, [])
+})
+
+test('tree nodes no longer carry a summary', () => {
+    const t = build([s('a'), s('k', { spawned_by: 'a' })])
+    assert.equal('summary' in t.nodes.get('a'), false)
+})
+
+const sessionsMap = list => id => list.find(x => x.id === id) ?? null
+const act = (ids, o = {}) => treeActivity(ids, {
+    processStates: {},
+    sessions: sessionsMap([]),
+    viewedId: null,
+    isUnread: () => false,
+    ...o,
+})
+
+test('treeActivity counts the live processes of every id given, the node itself included', () => {
+    const processStates = { p: { state: 'assistant_turn' }, k1: { state: 'user_turn' }, k2: { state: 'user_turn' } }
+    const sessions = sessionsMap([s('p'), s('k1'), s('k2')])
+    const r = act(['p', 'k1', 'k2'], { processStates, sessions })
+    assert.equal(r.processCount, 3)
+    assert.equal(r.hasAssistantTurn, true)
+    assert.equal(act(['k1', 'k2'], { processStates, sessions }).hasAssistantTurn, false)
+})
+
+test('treeActivity skips synthetic, ephemeral and hidden sessions', () => {
+    const processStates = {
+        syn: { state: 'user_turn', synthetic: true },
+        eph: { state: 'user_turn', extra: { ephemeral: true } },
+        hid: { state: 'user_turn' },
+        ok: { state: 'user_turn' },
+    }
+    const sessions = sessionsMap([s('syn'), s('eph'), s('hid', { hidden: true }), s('ok')])
+    const r = act(['syn', 'eph', 'hid', 'ok'], { processStates, sessions, isUnread: () => true })
+    assert.equal(r.processCount, 1)
+    assert.equal(r.unreadCount, 1)
+})
+
+test('treeActivity does not count the viewed session as unread', () => {
+    const sessions = sessionsMap([s('u'), s('v')])
+    const r = act(['u', 'v'], { sessions, viewedId: 'v', isUnread: () => true })
+    assert.equal(r.unreadCount, 1)
+})
+
+test('treeActivity counts unread through isUnread and gives the process state to it', () => {
+    const seen = []
+    const sessions = sessionsMap([s('u'), s('q')])
+    const processStates = { u: { state: 'user_turn' } }
+    const r = act(['u', 'q'], {
+        sessions, processStates,
+        isUnread: (session, ps) => { seen.push([session.id, ps]); return session.id === 'u' },
+    })
+    assert.equal(r.unreadCount, 1)
+    assert.equal(r.processCount, 1)
+    assert.deepEqual(seen[0], ['u', processStates.u])
+})
+
+test('treeActivity with no live process and no unread yields two zero counts', () => {
+    const r = act(['a', 'b'], { sessions: sessionsMap([s('a'), s('b')]) })
+    assert.equal(r.processCount, 0)
+    assert.equal(r.unreadCount, 0)
+})
+
+test('treeActivity over a built node folds the node and its descendants', () => {
+    const list = [s('a', { mtime: 500 }), s('b', { spawned_by: 'a', mtime: 400 }), s('d', { spawned_by: 'b', mtime: 300 })]
+    const t = build(list)
+    const node = t.nodes.get('a')
+    const r = act([node.id, ...node.descendantIds], {
+        sessions: sessionsMap(list),
+        processStates: { d: { state: 'assistant_turn', pending_requests: [{}] } },
+    })
+    assert.equal(r.processCount, 1)
+    assert.equal(r.pendingRequestCount, 1)
 })
 
 // A(B(D), C) and a second root E(F).
@@ -209,17 +281,20 @@ const flatForest = () => build([
 
 test('collapsed nodes hide their children', () => {
     const rows = flattenTree(flatForest(), () => false)
-    assert.deepEqual(rows, [{ id: 'a', depth: 0 }, { id: 'e', depth: 0 }])
+    assert.deepEqual(rows, [
+        { id: 'a', depth: 0, isLast: true, through: [] },
+        { id: 'e', depth: 0, isLast: true, through: [] },
+    ])
 })
 
 test('expanded nodes list children right after the parent with depth + 1', () => {
     const rows = flattenTree(flatForest(), id => id === 'a' || id === 'b')
     assert.deepEqual(rows, [
-        { id: 'a', depth: 0 },
-        { id: 'b', depth: 1 },
-        { id: 'd', depth: 2 },
-        { id: 'c', depth: 1 },
-        { id: 'e', depth: 0 },
+        { id: 'a', depth: 0, isLast: true, through: [] },
+        { id: 'b', depth: 1, isLast: false, through: [] },
+        { id: 'd', depth: 2, isLast: true, through: [true] },
+        { id: 'c', depth: 1, isLast: true, through: [] },
+        { id: 'e', depth: 0, isLast: true, through: [] },
     ])
 })
 
@@ -227,6 +302,71 @@ test('isExpanded = () => true lists the whole forest in display order', () => {
     const rows = flattenTree(flatForest(), () => true)
     assert.deepEqual(rows.map(r => r.id), ['a', 'b', 'd', 'c', 'e', 'f'])
     assert.deepEqual(rows.map(r => r.depth), [0, 1, 2, 1, 0, 1])
+})
+
+// Chain r > k (last) > m, and r > j (first sibling): deeper rows of a last branch stop their line.
+test('through is false under a last-child ancestor and true under a non-last one', () => {
+    const tree = build([
+        s('r', { mtime: 500 }),
+        s('k', { spawned_by: 'r', mtime: 400 }),
+        s('j', { spawned_by: 'r', mtime: 300 }),
+        s('m', { spawned_by: 'k', mtime: 200 }),
+        s('n', { spawned_by: 'j', mtime: 100 }),
+    ])
+    const rows = flattenTree(tree, () => true)
+    assert.deepEqual(rows.map(r => r.id), ['r', 'k', 'm', 'j', 'n'])
+    assert.deepEqual(rows.find(r => r.id === 'm').through, [true])
+    assert.deepEqual(rows.find(r => r.id === 'n').through, [false])
+})
+
+// r > a (not last) > b (not last) > c (last) > d, plus siblings below a and b.
+test('through mixes true and false at depth 3 and 4', () => {
+    const list = [
+        s('r', { mtime: 900 }),
+        s('a', { spawned_by: 'r', mtime: 800 }),
+        s('a2', { spawned_by: 'r', mtime: 700 }),
+        s('b', { spawned_by: 'a', mtime: 600 }),
+        s('b2', { spawned_by: 'a', mtime: 500 }),
+        s('c', { spawned_by: 'b', mtime: 400 }),
+        s('c2', { spawned_by: 'b', mtime: 300 }),
+        s('d', { spawned_by: 'c2', mtime: 200 }),
+    ]
+    const rows = flattenTree(build(list), () => true)
+    assert.deepEqual(rows.map(r => r.id), ['r', 'a', 'b', 'c', 'c2', 'd', 'b2', 'a2'])
+    const by = id => rows.find(r => r.id === id)
+    assert.deepEqual(by('c').through, [true, true])
+    assert.equal(by('c').isLast, false)
+    assert.deepEqual(by('c2').through, [true, true])
+    assert.equal(by('c2').isLast, true)
+    assert.deepEqual(by('d').through, [true, true, false])
+    assert.equal(by('d').depth, 4)
+    assert.deepEqual(by('b2').through, [true])
+    assert.deepEqual(by('a2').through, [])
+})
+
+test('isLast is about visible siblings of the parent, collapsed siblings included', () => {
+    const rows = flattenTree(flatForest(), id => id === 'a')
+    assert.deepEqual(rows.map(r => [r.id, r.isLast]), [['a', true], ['b', false], ['c', true], ['e', true]])
+})
+
+test('treeGuides: none for roots, one own column for depth 1', () => {
+    assert.equal(treeGuides({ depth: 0, isLast: true, through: [] }), null)
+    assert.deepEqual(treeGuides({ depth: 1, isLast: false, through: [] }), { columns: [], ownColumn: 0, ownEnds: false })
+    assert.deepEqual(treeGuides({ depth: 1, isLast: true, through: [] }), { columns: [], ownColumn: 0, ownEnds: true })
+})
+
+test('treeGuides: continuing ancestor columns are the indexes of the true through entries', () => {
+    assert.deepEqual(treeGuides({ depth: 3, isLast: true, through: [true, false] }), { columns: [0], ownColumn: 2, ownEnds: true })
+    assert.deepEqual(treeGuides({ depth: 3, isLast: false, through: [false, true] }), { columns: [1], ownColumn: 2, ownEnds: false })
+})
+
+test('treeGuides: levels past the cap keep the third level width and its lines', () => {
+    // depth 4: columns 0 and 1 come from through[0..1]; the own line (column 2) is shared by
+    // the whole depth >= 3 band, so it continues while any band ancestor has later siblings.
+    assert.deepEqual(treeGuides({ depth: 4, isLast: true, through: [true, false, false] }), { columns: [0], ownColumn: 2, ownEnds: true })
+    assert.deepEqual(treeGuides({ depth: 4, isLast: true, through: [false, true, true] }), { columns: [1], ownColumn: 2, ownEnds: false })
+    assert.deepEqual(treeGuides({ depth: 5, isLast: true, through: [false, false, false, true] }), { columns: [], ownColumn: 2, ownEnds: false })
+    assert.deepEqual(treeGuides({ depth: 5, isLast: false, through: [false, false, false, false] }), { columns: [], ownColumn: 2, ownEnds: false })
 })
 
 test('TREE_MAX_INDENT_LEVEL is 3', () => {
