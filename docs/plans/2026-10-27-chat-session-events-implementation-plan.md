@@ -353,7 +353,7 @@ Body: explain independent state, inheritance, prefix/suffix treatment, and sourc
 - Store actions: `ensureSessionEventHistory(sessionId)`, `refreshSessionEventHistory(sessionId)`, `retrySessionEventHistory(sessionId)`, `clearSessionEventHistory(sessionId)`.
 - A module-level WeakMap keyed by store instance holds each session's controller and window-event cleanup. Controllers never enter reactive state.
 
-- [ ] **Step 1: Add projection and ownership tests.**
+- [x] **Step 1: Add projection and ownership tests.**
 
 Compare message-only projections with and without event insertion across four modes.
 
@@ -370,12 +370,12 @@ Test retained conversation response, empty-assistant policy, background status, 
 Test midnight within one response and local calendar dates using a fixed test timezone.
 Test per-store controller isolation, repeated ensure calls, unload/dispose, hidden removal, and drafts producing no request.
 
-- [ ] **Step 2: Run the new tests and confirm failure.**
+- [x] **Step 2: Run the new tests and confirm failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/rows.test.js src/stores/sessionEventHistory.test.js`.
 Expected: FAIL because the new rows and store actions do not exist.
 
-- [ ] **Step 3: Add store-owned history lifecycle and bounded network requests.**
+- [x] **Step 3: Add store-owned history lifecycle and bounded network requests.**
 
 `ensureSessionEventHistory` starts once for an existing, persisted, non-hidden session, including `last_line=0`.
 It must not depend on `loadSessionHistory` succeeding or on its early return for empty transcripts.
@@ -386,7 +386,7 @@ Bind `bindTimelineEvents(window, controller)` once per loaded session. Dispose i
 Guard snapshot publication against the current state object and generation. Recompute only this session when its snapshot changes.
 React to the existing hidden-session state path by clearing its event state. Do not create a new hiding policy.
 
-- [ ] **Step 4: Integrate the projection passes in `recomputeVisualItems`.**
+- [x] **Step 4: Integrate the projection passes in `recomputeVisualItems`.**
 
 Keep existing synthetic assembly. Use a compact-corrected copy only to choose placement boundaries.
 Reconcile segments against those boundaries while retaining original transcript order as the filtering input.
@@ -411,12 +411,12 @@ Date keys use `daysep-<following-row-key>`, including event keys.
 This avoids using the response's final next-day timestamp for tools displayed before an earlier event.
 When the timestamp setting is off, insert no day separators; retain every EventRow.
 
-- [ ] **Step 5: Run store and row tests.**
+- [x] **Step 5: Run store and row tests.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/*.test.js src/stores/sessionEventHistory.test.js src/stores/visualItemsStability.test.js src/utils/visualItems.test.js`.
 Expected: all PASS. Event-free row references and arrays remain stable.
 
-- [ ] **Step 6: Commit store and projection integration.**
+- [x] **Step 6: Commit store and projection integration.**
 
 Subject: `feat(chat): merge session events into stable visual rows`.
 Body: explain loaded-session ownership, complete publication, logical-block isolation, and calendar behavior.

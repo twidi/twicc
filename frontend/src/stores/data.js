@@ -1,3 +1,8 @@
+import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
+import { buildTimelineUrl } from '../utils/timeline/feed.js'
+import { placeSessionEvents } from '../utils/chatEvents/placement.js'
+import { projectEventSegments } from '../utils/chatEvents/segments.js'
+import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
 import { setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
@@ -610,6 +615,7 @@ export const useDataStore = defineStore('data', {
             // { sessionId: [groupHeadLineNum, ...] }
             // Using array instead of Set for Vue reactivity
             sessionExpandedGroups: {},
+            sessionEventHistory: {},
             sessionEventSegments: {},
             sessionEventRetired: {},
 
@@ -1508,6 +1514,12 @@ export const useDataStore = defineStore('data', {
     },
 
     actions: {
+        ...createSessionEventHistoryActions({ fetchPage: async ({ sessionId, before, afterId, signal }) => {
+            const response = await apiFetch(buildTimelineUrl({ query: { session: sessionId, view: 'without_turns' }, limit: 100, before, afterId }), { signal })
+            if (!response.ok) throw new Error(`Session event request failed (${response.status})`)
+            return response.json()
+        } }),
+
         ...createSendFailureActions(inflightSends, { deleteInflight: deleteInflightSend }),
         ...createAsyncQuestionActions({
             saveMessage: saveDraftMessage,
@@ -1754,6 +1766,7 @@ export const useDataStore = defineStore('data', {
                     if (!jsonValuesEqual(current[key], value)) current[key] = value
                 }
             })
+            if (session.hidden && this.localState.sessionEventHistory?.[session.id]) this.clearSessionEventHistory(session.id)
             // A root cutoff change re-applies its agents' run states. After the
             // patch: ``applyAgentRunState`` reads the cutoff from ``sessions[root]``.
             if (rootCutoffChanged) {
@@ -3264,6 +3277,7 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         unloadSession(sessionId) {
+            this.clearSessionEventHistory?.(sessionId)
             // Read before the cleanup: an agent's own run state outlives its unload.
             const ownRun = this.localState.agentRunStates[sessionId]
             if (this.localState.sessions[sessionId]) {
@@ -3354,7 +3368,8 @@ export const useDataStore = defineStore('data', {
             const items = this.sessionItems[sessionId] || []
             const failedSends = this.localState.failedSends[sessionId]
             const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
-            if (!items.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
+            const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
+            if (!items.length && !events.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
                 if (!this.localState.sessionVisualItems[sessionId] || this.localState.sessionVisualItems[sessionId].length) {
                     this.localState.sessionVisualItems[sessionId] = []
                 }
@@ -3564,7 +3579,21 @@ export const useDataStore = defineStore('data', {
                 })
                 allItems = [...allItems, resultItem]
             }
-            let visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
+            const placementItems = orderCompactItems(allItems, this.sessions[sessionId]?.compacted)
+            const eventBoundaries = placeSessionEvents(placementItems, events)
+            const projection = projectEventSegments({ items: allItems, boundaries: eventBoundaries,
+                previous: this.localState.sessionEventSegments?.[sessionId] || [], expandedGroups,
+                internalExpandedGroups: this.localState.sessionInternalExpandedGroups?.[sessionId] || {},
+                retired: this.localState.sessionEventRetired?.[sessionId] || [] })
+            if (projection.segments.length || this.localState.sessionEventSegments?.[sessionId]) {
+                this.localState.sessionEventSegments[sessionId] = projection.segments
+            }
+            if (this.localState.sessionEventRetired?.[sessionId]) this.localState.sessionEventRetired[sessionId] = projection.retiredRemaining
+            for (const { lineNum, startIndex } of projection.internalTransfers) {
+                const groups = (this.localState.sessionInternalExpandedGroups[sessionId] ||= {})[lineNum] ||= []
+                if (!groups.includes(startIndex)) groups.push(startIndex)
+            }
+            let visualItems = computeVisualItems(projection.items, mode, projection.expandedHeads, isAssistantTurn, detailedBlocks)
 
             visualItems = orderCompactItems(visualItems, this.sessions[sessionId]?.compacted)
 
@@ -3619,9 +3648,10 @@ export const useDataStore = defineStore('data', {
             // inter-block boundaries) when the message-timestamps setting is on.
             // Runs after the block flags are set (it relies on isBlockEnd) and
             // before stabilization so separators get stable references too.
-            let renderItems = settingsStore.areMessageTimestampsShown
-                ? insertDaySeparators(visualItems)
-                : visualItems
+            let renderItems = mergeSessionEventRows({ sourceItems: placementItems, messageRows: visualItems, boundaries: eventBoundaries })
+            if (settingsStore.areMessageTimestampsShown) {
+                renderItems = events.length ? insertEventDaySeparators(renderItems) : insertDaySeparators(renderItems)
+            }
 
             // Static status line at the very bottom of a USER_TURN session: a
             // background shell the agent left running and/or
@@ -3645,6 +3675,10 @@ export const useDataStore = defineStore('data', {
 
             const stableItems = renderItems.map(vi => {
                 const cached = cache.get(vi.lineNum)
+                // Reuse equal projected control maps; source hydration can recreate their envelopes.
+                for (const key of ['segmentRange', 'prefixSegmentRange', 'suffixSegmentRange', 'eventInternalControls']) {
+                    if (cached?.[key] && vi[key] && jsonValuesEqual(cached[key], vi[key])) vi[key] = cached[key]
+                }
                 if (visualItemEqual(cached, vi)) {
                     // Properties identical — reuse old reference.
                     // Forward the parsed content from the new computation to the
@@ -3680,7 +3714,7 @@ export const useDataStore = defineStore('data', {
          * Called when display mode changes (affects all sessions).
          */
         recomputeAllVisualItems() {
-            for (const sessionId of Object.keys(this.sessionItems)) {
+            for (const sessionId of new Set([...Object.keys(this.sessionItems), ...Object.keys(this.localState.sessionEventHistory || {})])) {
                 this.recomputeVisualItems(sessionId)
             }
         },

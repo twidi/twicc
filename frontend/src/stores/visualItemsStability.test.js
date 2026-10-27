@@ -1,3 +1,7 @@
+import { placeSessionEvents } from '../utils/chatEvents/placement.js'
+import { projectEventSegments } from '../utils/chatEvents/segments.js'
+import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
+import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -23,7 +27,7 @@ const toggleSource = section('        toggleSessionDebug(sessionId)', '\n       
 let id = 0
 function fixture({ working = false, items = [message(1)], sessions = {}, extraItems = {} } = {}) {
     const settings = { getDisplayMode: DISPLAY_MODE.NORMAL, areMessageTimestampsShown: false }
-    const deps = { useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
+    const deps = { placeSessionEvents, projectEventSegments, mergeSessionEventRows, insertEventDaySeparators, jsonValuesEqual, useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
         computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor, orderCompactItems,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive,
         isLaunchedEphemeral: () => false }
@@ -31,7 +35,7 @@ function fixture({ working = false, items = [message(1)], sessions = {}, extraIt
     const store = defineStore(`visual-stability-${++id}`, {
         state: () => ({ sessions: { main: { id: 'main', provider: 'claude_code' }, ...sessions }, sessionItems: { main: items, ...extraItems },
             processStates: working ? { main: { state: PROCESS_STATE.ASSISTANT_TURN, label: 'working', tools: [] } } : {},
-            localState: { failedSends: {}, optimisticMessages: {}, sessionDebugOverride: {}, sessionExpandedGroups: {},
+            localState: { sessionEventSegments: {}, sessionEventRetired: {}, sessionInternalExpandedGroups: {}, sessionEventHistory: {}, failedSends: {}, optimisticMessages: {}, sessionDebugOverride: {}, sessionExpandedGroups: {},
                 sessionDetailedBlocks: {}, streamingBlocks: {}, sessionVisualItems: {}, visualItemCache: {} } }), actions,
     })(createPinia())
     store.recomputeVisualItems('main')
@@ -131,4 +135,24 @@ test('the debug override of a session applies to its subagents at any level', ()
     assert.equal(f.store.localState.sessionDebugOverride.sub, undefined)
     f.store.toggleSessionDebug('main')
     assert.deepEqual(['sub', 'deep'].map(id => lines(id).length), [1, 1])
+})
+
+test('events-only sessions retain stable event rows without source messages', () => {
+    const f = fixture({ items: [] })
+    f.store.localState.sessionEventHistory = { main: { snapshot: { events: [{ id: 7, occurred_at: '2026-10-27T00:00:00.000000Z' }], sessions: {} } } }
+    f.store.recomputeVisualItems('main'); assert.deepEqual(f.rows().map(r => r.lineNum), ['event:7'])
+    const first = f.rows(); f.store.recomputeVisualItems('main'); assert.strictEqual(f.rows(), first)
+})
+test('events preserve logical flags and the retained conversation response across display modes', () => {
+    const f = fixture({ items: [{ ...message(1), kind: 'user_message', timestamp: '2026-10-27T00:00:00Z' },
+        message(2, { timestamp: '2026-10-27T00:00:02Z' }), message(3, { timestamp: '2026-10-27T00:00:04Z' })] })
+    f.store.localState.sessionEventHistory = { main: { snapshot: { events: [{ id: 7, occurred_at: '2026-10-27T00:00:03.000000Z' }], sessions: {} } } }
+    for (const mode of ['normal', 'debug', 'simplified', 'conversation']) {
+        f.settings.getDisplayMode = mode; f.store.recomputeVisualItems('main')
+        assert.equal(f.rows().filter(r => r.isSessionEvent).length, 1)
+        const event = f.rows().find(r => r.isSessionEvent)
+        assert.equal(event.isBlockStart, undefined); assert.equal(event.detailToggleFor, undefined)
+        if (mode === 'conversation') assert.deepEqual(f.rows().filter(r => !r.isSessionEvent).map(r => r.lineNum), [1, 3])
+        const old = f.rows(); f.store.recomputeVisualItems('main'); assert.strictEqual(f.rows(), old)
+    }
 })
