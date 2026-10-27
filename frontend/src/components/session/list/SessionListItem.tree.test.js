@@ -73,7 +73,12 @@ test('guide lines render from treeGuides in the separators color and only for ch
     assert.match(source, /var\(--sidebar-divider-color, var\(--wa-color-surface-border\)\)/)
     assert.match(source, /--tree-line: var\(--wa-border-width-s\) solid/)
     assert.match(source, /props\.treeRow\.depth < TREE_MAX_INDENT_LEVEL/)
-    assert.match(source, /\.tree-guide--ends \{\s*inset-block-end: 50%;/)
+    assert.match(source, /\.tree-guide--ends \{\s*inset-block-end: calc\(100% - var\(--tree-anchor\)\);/)
+    // the arrow, the elbow and the stub anchor to the title line, not to 50% of the row
+    assert.match(source, /\.tree-elbow \{\s*inset-block-start: var\(--tree-anchor\);/)
+    assert.match(source, /\.tree-guide--stub \{\s*inset-block-start: calc\(var\(--tree-anchor\) \+ 0\.5rem\);/)
+    assert.match(source, /> \.tree-toggle \{\s*align-self: flex-start;\s*height: calc\(2 \* var\(--tree-anchor\)\);/)
+    assert.match(source, /--tree-anchor: 50%;/)
 })
 
 test('template compiles', () => {

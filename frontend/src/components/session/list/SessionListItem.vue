@@ -496,6 +496,7 @@ function handleMenuSelect(event) {
             'session-item-wrapper--selected': selected,
             'session-item-wrapper--tree': !!treeRow,
             'session-item-wrapper--tree-parent': !!treeRow?.hasChildren,
+            'session-item-wrapper--tree-hinted': !!treeRow?.hint,
             'sidebar-row-wrapper--active': showActiveStyle,
             'sidebar-row-wrapper--compact': compactView,
             'sidebar-row-wrapper--selected': selected,
@@ -825,6 +826,26 @@ function handleMenuSelect(event) {
     padding-inline-start: calc(
         var(--sidebar-row-inset, var(--wa-space-2xs)) + var(--tree-indent-level, 0) * var(--tree-step)
     );
+    /* Vertical centre of the title line, from the wrapper's top: the arrow, the elbows and the
+       stub anchor to it. Compact rows have a single line: their middle. Other rows: the
+       button's padding and border, then half the name row (font-size-s * line-height). */
+    --tree-anchor: 50%;
+}
+
+.session-item-wrapper--tree:not(.session-item-wrapper--compact) {
+    --tree-anchor: calc(
+        var(--wa-space-xs) + var(--wa-border-width-s)
+        + var(--wa-font-size-s) * var(--wa-line-height-normal) / 2
+    );
+}
+
+/* A "from" hint line sits above the title line. */
+.session-item-wrapper--tree-hinted:not(.session-item-wrapper--compact) {
+    --tree-anchor: calc(
+        var(--wa-space-xs) + var(--wa-border-width-s)
+        + var(--wa-font-size-2xs) * var(--wa-line-height-normal) + var(--wa-space-3xs)
+        + var(--wa-font-size-s) * var(--wa-line-height-normal) / 2
+    );
 }
 
 /* Parent rows: the arrow comes before the row button. */
@@ -857,14 +878,20 @@ function handleMenuSelect(event) {
     cursor: pointer;
 }
 
+/* Taller rows: the arrow is centred on the title line, not on the whole row. */
+.session-item-wrapper--tree:not(.session-item-wrapper--compact) > .tree-toggle {
+    align-self: flex-start;
+    height: calc(2 * var(--tree-anchor));
+}
+
 .tree-toggle:hover,
 .tree-toggle:focus-visible {
     color: var(--wa-color-text-normal);
 }
 
 /* Guide lines (the wrapper is the positioning context). Column c is centred on the arrow of
-   the ancestor at depth c. The vertical line spans the whole row; it stops at the elbow for the
-   last child. The stub continues an expanded parent's line from under its arrow. */
+   the ancestor at depth c. The vertical line spans the whole row; it stops at the elbow (the
+   title line's centre) for the last child. The stub continues an expanded parent's line from under its arrow. */
 .tree-guide,
 .tree-elbow {
     position: absolute;
@@ -880,15 +907,15 @@ function handleMenuSelect(event) {
 }
 
 .tree-guide--ends {
-    inset-block-end: 50%;
+    inset-block-end: calc(100% - var(--tree-anchor));
 }
 
 .tree-guide--stub {
-    inset-block-start: calc(50% + 0.5rem);
+    inset-block-start: calc(var(--tree-anchor) + 0.5rem);
 }
 
 .tree-elbow {
-    inset-block-start: 50%;
+    inset-block-start: var(--tree-anchor);
     inline-size: calc(var(--tree-step) / 2 - 2px);
     border-block-start: var(--tree-line);
 }
