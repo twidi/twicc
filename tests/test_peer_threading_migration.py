@@ -9,18 +9,8 @@ MIGRATE_FROM = [("core", "0133_share_created_by_session")]
 MIGRATE_TO = [("core", "0134_peermessage_threading")]
 
 
-@pytest.fixture
-def restore_latest_migration():
-    """Bring the schema back to the CURRENT leaf, whatever it is: a hardcoded
-    target goes stale with the next migration and leaves every later test on
-    an old schema."""
-    yield
-    executor = MigrationExecutor(connection)
-    executor.migrate(executor.loader.graph.leaf_nodes("core"))
-
-
 @pytest.mark.django_db(transaction=True)
-def test_peer_threading_backfill_makes_every_historical_row_a_root(restore_latest_migration):
+def test_peer_threading_backfill_makes_every_historical_row_a_root(peer_migration_database):
     executor = MigrationExecutor(connection)
     executor.migrate(MIGRATE_FROM)
     old_apps = executor.loader.project_state(MIGRATE_FROM).apps

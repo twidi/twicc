@@ -349,18 +349,25 @@ def test_delete_pages_bound_actual_prepare_and_publication_vm_work(count):
     """Neither SQL statement may scan the owner's remaining facts per page."""
     session = make_session()
     others = [make_session(id='aaa-unrelated-delete'), make_session(id='zzz-unrelated-delete')]
-    rows = [SessionHistoryFact(
-        id=400000 - 2 * line, session=session, line_num=line,
-        kind=HistoryFactKind.TOOL_CALL if line % 2 else HistoryFactKind.CODE_CELL,
-        key=f'key-{line % 19:02}', data={'value': line},
+    rows = [(
+        400000 - 2 * line, session.id, line,
+        HistoryFactKind.TOOL_CALL if line % 2 else HistoryFactKind.CODE_CELL,
+        f'key-{line % 19:02}', f'{{"value": {line}}}',
     ) for line in range(1, count + 1)]
     # Reverse PK order differs from the business-index order. Unrelated rows
     # surround the owner in the same existing index and use interleaved PKs.
-    rows += [SessionHistoryFact(id=400001 - 2 * line, session=others[line % 2], line_num=line,
-                               kind=HistoryFactKind.TOOL_CALL, key='unrelated', data={})
+    rows += [(400001 - 2 * line, others[line % 2].id, line,
+              HistoryFactKind.TOOL_CALL, 'unrelated', '{}')
              for line in range(1, 1025)]
-    SessionHistoryFact.objects.bulk_create(rows, batch_size=1000)
-    expected_ids = [row.id for row in sorted(rows[:count], key=lambda row: (row.kind, row.key, row.line_num))]
+    # This fixture measures SQLite page work, not Django's model construction.
+    # Keep the same rows and JSON bytes, including the default encoder's space.
+    table = connection.ops.quote_name(SessionHistoryFact._meta.db_table)
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.executemany(
+            f'INSERT INTO {table} (id, session_id, line_num, kind, key, data) VALUES (%s, %s, %s, %s, %s, %s)',
+            rows,
+        )
+    expected_ids = [row[0] for row in sorted(rows[:count], key=lambda row: (row[3], row[4], row[2]))]
     stage = facts.prepare_compute_history_facts(session.id, [])
     observations = []
     deleted = 0

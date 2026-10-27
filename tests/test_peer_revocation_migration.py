@@ -9,18 +9,8 @@ MIGRATE_FROM = [("core", "0134_peermessage_threading")]
 MIGRATE_TO = [("core", "0135_peer_revocation_reconnection")]
 
 
-@pytest.fixture
-def restore_latest_migration():
-    """Bring the schema back to the CURRENT leaf, whatever it is: a hardcoded
-    target goes stale with the next migration and leaves every later test on
-    an old schema."""
-    yield
-    executor = MigrationExecutor(connection)
-    executor.migrate(executor.loader.graph.leaf_nodes("core"))
-
-
 @pytest.mark.django_db(transaction=True)
-def test_existing_active_peer_becomes_broken_without_losing_history(restore_latest_migration):
+def test_existing_active_peer_becomes_broken_without_losing_history(peer_migration_database):
     executor = MigrationExecutor(connection)
     executor.migrate(MIGRATE_FROM)
     old_apps = executor.loader.project_state(MIGRATE_FROM).apps

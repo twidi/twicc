@@ -1,6 +1,7 @@
 """Public substring search requires one complete, verified hot-root snapshot."""
 
 from datetime import timedelta
+import shutil
 
 import orjson
 import pytest
@@ -153,12 +154,13 @@ def _file_database(path):
 
 
 @pytest.fixture(scope='module')
-def migrated_snapshot_template(tmp_path_factory, django_db_blocker):
+def migrated_snapshot_template(tmp_path_factory, django_db_blocker, migrated_145):
     """A new synthetic database file with every migration applied, built once for the module."""
     from django.core.management import call_command
     from django.db import connections
 
     path = tmp_path_factory.mktemp('snapshot_template') / 'snapshot.sqlite'
+    shutil.copyfile(migrated_145, path)
     with django_db_blocker.unblock():
         isolated, original_connection = _file_database(path)
         try:

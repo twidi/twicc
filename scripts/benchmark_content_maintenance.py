@@ -602,6 +602,9 @@ async def dispatcher_trial(*, failures=False):
     db_writer._storage_admission_lock = coordinator.foreground_lock(WriteResources.ADMISSION)
     stop, clock, emissions, latencies, attempts = asyncio.Event(), [0.0], [], [], Counter()
     pass_count = 0
+    # The clock is synthetic. Keep enough time for several real backoff steps,
+    # without replaying a permanent failure ~1,400 times before the next pass.
+    periodic_interval = 32
     current_stage = ['startup_recovery']
     foreground_stages, stage_sql = {}, {}
     original_snapshot = maintenance._snapshot
@@ -671,7 +674,8 @@ async def dispatcher_trial(*, failures=False):
     connection_created.connect(attach, weak=False)
     foreground_task = asyncio.create_task(foreground())
     try:
-        with (patch.object(maintenance, 'INITIAL_DELAY', 0), patch.object(maintenance, '_maintenance_time', lambda: clock[0]),
+        with (patch.object(maintenance, 'INITIAL_DELAY', 0), patch.object(maintenance, 'INTERVAL', periodic_interval),
+              patch.object(maintenance, '_maintenance_time', lambda: clock[0]),
               patch.object(maintenance, '_wait', wait), patch.object(maintenance, '_snapshot', snapshot),
               patch.object(maintenance, 'MaintenanceMetrics', ObservedMetrics),
               patch.object(maintenance.logger, 'disabled', True)):
@@ -692,6 +696,7 @@ async def dispatcher_trial(*, failures=False):
         counts.update(event['counts'])
     latencies.sort()
     result = dict(counts, elapsed_ms=(time.perf_counter() - started) * 1000, sql=dict(sql), events=emissions,
+                  synthetic_periodic_interval_seconds=periodic_interval,
                   foreground={'count': len(latencies), 'p50_ms': percentile(latencies, .5),
                                   'p95_ms': percentile(latencies, .95), 'max_ms': max(latencies, default=0)})
     result['sql_by_stage'] = {stage: dict(value) for stage, value in stage_sql.items()}

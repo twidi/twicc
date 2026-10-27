@@ -79,6 +79,8 @@ connections.close_all()
     failure = measured['complete_pass']['restoration_failures']
     assert failure['transient_attempts'] >= 2
     assert failure['permanent_attempts'] >= 2
+    # A synthetic day must not replay the same permanent failure thousands of times.
+    assert failure['permanent_attempts'] < 20
     assert failure['unaffected_compressed']
     assert failure['transient_restored']
     assert failure['changed'] > 0

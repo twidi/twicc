@@ -11,6 +11,8 @@ def drain_live_sync(compute, session, path, *, limits=None):
     while True:
         result = compute.sync_session_slice(session.id, path, limits=limits)
         updates = merge_live_updates(updates, result.updates)
-        session.refresh_from_db()
         if not result.has_more:
+            # Each slice loads its own session by id. Only the caller needs
+            # this fixture instance refreshed, after the complete replay.
+            session.refresh_from_db()
             return updates
