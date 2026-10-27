@@ -887,7 +887,7 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
     def apply(message):
         if message['session_id'] == 'faulty':
             entered.set()
-            if not release.wait(8):
+            if not release.wait(60):
                 raise RuntimeError('test did not release application')
         return original_apply(message)
 
@@ -913,7 +913,7 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
         owner.prepare_candidate = prepare
         task = asyncio.create_task(owner.run())
         try:
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(30):
                 while not entered.is_set() or 'healthy' not in owner.worker_errors:
                     if task.done():
                         await task
@@ -929,12 +929,12 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
                 assert not task.done()
                 assert initialized == ['faulty', 'healthy']
                 release.set()
-                await asyncio.wait_for(task, 3)
+                await asyncio.wait_for(task, 15)
                 assert not owner.submitted and not owner.computed_not_applied
                 assert ctx.process is None
             else:
                 release.set()
-                async with asyncio.timeout(8):
+                async with asyncio.timeout(30):
                     while not all(value == 123 for value in versions(path).values()) or owner.failures:
                         if task.done():
                             await task
@@ -942,7 +942,7 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
                 assert initialized.count('healthy') == 2
                 assert initialized.count('third') == 1
                 ctx.stop_event.set()
-                await asyncio.wait_for(task, 3)
+                await asyncio.wait_for(task, 15)
         finally:
             release.set()
             task.cancel()

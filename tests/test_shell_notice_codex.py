@@ -218,6 +218,9 @@ def test_turn_openings_restart_the_delay():
     ):
         agent = make_agent()
         agent._shell_notice_idle_since = 1.0
+        # The bare agent fails to open its turn; its death path would build a
+        # ``_notify_state_change`` coroutine that no running loop can await.
+        agent._transition_to_dead = AsyncMock()
         first_step(opener(agent))
         assert agent._shell_notice_idle_since is None
 

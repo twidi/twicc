@@ -32,6 +32,8 @@ def _mock_codex() -> TwiccAsyncCodex:
     codex = TwiccAsyncCodex()
     codex._ensure_initialized = AsyncMock()
     codex._client = AsyncMock()
+    # Synchronous on the real client; ``AsyncMock`` would return a coroutine nobody awaits.
+    codex._client._subscribe_turn_notifications = Mock()
     return codex
 
 
