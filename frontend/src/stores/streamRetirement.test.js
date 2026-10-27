@@ -9,6 +9,7 @@ import { matchesStreamingBlock as codexMatch } from '../providers/codex/streamMa
 import { matchesStreamingBlock as claudeMatch } from '../providers/claude_code/streamMatching.js'
 import { SYNTHETIC_ITEM } from '../constants.js'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState.js'
+import { projectEventSegments } from '../utils/chatEvents/segments.js'
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 function action(name) {
     const starts = [`        ${name}(`, `        async ${name}(`].map(prefix => source.indexOf(prefix)).filter(index => index >= 0)
@@ -61,6 +62,23 @@ function item(type = 'text', id = 'A', line_num = 1) {
 const start = (f, type = 'text', id = 'A') => f.store.streamBlockStart(f.sessionId, id, 0, type)
 const current = f => f.store.localState.streamingBlocks[f.sessionId]
 test.afterEach(() => destroyAllBuffers())
+test('orphan thinking removal preserves expansion of surviving event-segment tools', () => {
+    const f = makeRetirementFixture()
+    start(f, 'thinking')
+    const streamLine = SYNTHETIC_ITEM.STREAMING_BLOCK.baseLineNum
+    const tools = [2, 3].map(line_num => ({ line_num, display_level: 2, group_head: 2, group_tail: 3 }))
+    f.store.localState.sessionEventSegments = { [f.sessionId]: [
+        { key: 'tools:2:2', originalHead: 2, head: 2, tail: streamLine, members: [2, 3, streamLine], expanded: true },
+        { key: `tools:${streamLine}:${streamLine}`, originalHead: streamLine, head: streamLine,
+            tail: streamLine, members: [streamLine], expanded: true },
+    ] }
+    f.store.localState.sessionEventRetired = { [f.sessionId]: [] }
+    f.store._dropOrphanedStreamingBlocks(f.sessionId)
+    const previous = f.store.localState.sessionEventSegments[f.sessionId]
+    const next = projectEventSegments({ items: tools, boundaries: [{ beforeLine: 2 }], previous })
+    assert.deepEqual(next.expandedHeads, [2])
+    assert.deepEqual(previous.map(segment => segment.members), [[2, 3]], 'synthetic-only expansion must not survive')
+})
 for (const type of ['text', 'thinking']) {
     test(`${type}: persisted item retires before end`, () => {
         const f = makeRetirementFixture()

@@ -7,6 +7,8 @@ import * as visibility from '../../../utils/contentVisibility.js'
 import * as media from '../../../utils/attachmentStrip.js'
 import { DISPLAY_MODE } from '../../../constants.js'
 import { isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
+import { projectEventSegments, setEventSegmentExpanded } from '../../../utils/chatEvents/segments.js'
+import { computeVisualItems } from '../../../utils/visualItems.js'
 import { compileComponent, makeRenderer, descendants, flush } from '../../../../tests/helpers/scrollerComponentHarness.js'
 function loadFunction(path, name, dependencies) {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/export function /g, 'function ')
@@ -54,6 +56,41 @@ test('mapped internal controls use their segment expansion and comment scope', a
 })
 const listSource = readFileSync(new URL('./SessionItemsList.vue', import.meta.url), 'utf8')
 const scrollSource = listSource.slice(listSource.indexOf('async function scrollToLineNum('), listSource.indexOf('\n}', listSource.indexOf('async function scrollToLineNum(')) + 2)
+test('source search reveals an already-visible collapsed segment head without opening its sibling', async () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({ line_num: i + 2, display_level: 2, group_head: 2, group_tail: 21,
+        kind: 'content_items', content: '{"message":{"role":"assistant","content":[{"type":"thinking","thinking":"work"}]}}' }))
+    let projection = projectEventSegments({ items, boundaries: [{ beforeLine: 12 }] })
+    const rows = Vue.ref(computeVisualItems(projection.items, DISPLAY_MODE.SIMPLIFIED, projection.expandedHeads))
+    const store = { localState: { sessionEventSegments: { s: projection.segments } },
+        getEffectiveDisplayMode: () => DISPLAY_MODE.SIMPLIFIED,
+        expandGroup: (_, head) => { store.localState.sessionEventSegments.s = setEventSegmentExpanded(store.localState.sessionEventSegments.s, head, true) },
+        recomputeVisualItems: () => {
+            projection = projectEventSegments({ items, boundaries: [{ beforeLine: 12 }], previous: store.localState.sessionEventSegments.s })
+            store.localState.sessionEventSegments.s = projection.segments
+            rows.value = computeVisualItems(projection.items, DISPLAY_MODE.SIMPLIFIED, projection.expandedHeads)
+        }, loadSessionItemsRanges: () => assert.fail('all content is loaded') }
+    const dependencies = { visualItems: rows, items: Vue.ref(items), scrollerRef: Vue.ref({ scrollToKey: async () => true }),
+        props: { sessionId: 's' }, store, noteScrollIntent: () => {}, DISPLAY_MODE, nextTick: Vue.nextTick, LOAD_BUFFER: 1,
+        isTranscriptLoadCandidate, lineNumsToRanges: lines => lines, scrollToFirstHighlight: () => {} }
+    const scroll = new Function(...Object.keys(dependencies), `let scrollToLineNumGeneration=0; ${scrollSource}; return scrollToLineNum`)(...Object.values(dependencies))
+    assert.equal(await scroll(12, { highlight: false, revealTarget: false }), true)
+    assert.deepEqual(store.localState.sessionEventSegments.s.map(segment => segment.expanded), [false, false], 'toolbar navigation keeps controls closed')
+    assert.equal(await scroll(12, { highlight: false }), true)
+    assert.deepEqual(store.localState.sessionEventSegments.s.map(segment => segment.expanded), [false, true])
+    assert.equal(rows.value.find(row => row.lineNum === 12).isExpanded, true)
+})
+test('external event-segment comment scope excludes the synthetic streaming tail', () => {
+    const items = [2, 3, -1000].map(line_num => ({ line_num, display_level: 2, group_head: 2, group_tail: -1000 }))
+    const projection = projectEventSegments({ items, boundaries: [{ beforeLine: 2 }] })
+    const row = computeVisualItems(projection.items, DISPLAY_MODE.SIMPLIFIED, projection.expandedHeads)[0]
+    const countSource = listSource.slice(listSource.indexOf('function groupCommentsCount('), listSource.indexOf('\n}', listSource.indexOf('function groupCommentsCount(')) + 2)
+    const memoSource = listSource.slice(listSource.indexOf('function rowMemo('), listSource.indexOf('\n}', listSource.indexOf('function rowMemo(')) + 2)
+    const deps = { commentedToolLineNums: Vue.ref(new Set([3, 8])), props: {}, blockCommentsCount: () => 0,
+        groupReveal: { isHeadLeaving: () => false, headLeaveClass: () => null, headLeaveStyle: () => null } }
+    const memo = new Function(...Object.keys(deps), `${countSource}; ${memoSource}; return rowMemo`)(...Object.values(deps))
+    assert.deepEqual(row.segmentRange, { head: 2, tail: 3 })
+    assert.equal(memo(row)[3], 1)
+})
 test('source search opens only its projected segment; string keys bypass transcript preload', async () => {
     const rows = Vue.ref([{ lineNum: 'event:7', isSessionEvent: true }, { lineNum: 5, content: null }]), expanded = [], loaded = [], jumps = []
     const dependencies = { visualItems: rows, items: Vue.ref([]), scrollerRef: Vue.ref({ scrollToKey: async key => { jumps.push(key); return true } }),

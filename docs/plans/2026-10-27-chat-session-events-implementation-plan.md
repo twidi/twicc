@@ -10,7 +10,7 @@
 
 **Spec:** [Session events specification](2026-10-27-chat-session-events-spec.md). Read the entire specification before executing this plan.
 
-**Status:** Tasks 1–8 complete. Final independent code review pending.
+**Status:** Tasks 1–8 and final review corrections complete. One pre-existing frontend test failure remains.
 
 ## Global Constraints
 
@@ -767,9 +767,12 @@ Open the current recorded Codex session in a separate Chrome tab.
 Observe independent event loading while the composer remains present.
 Verify centered individual process/creation/title notices in the real chat, among transcript rows.
 Use the first-message control and open native Details with Return. Verify the full provenance text and measured expansion.
+Open and close the recorded eight-tool group while event notices remain visible.
+Switch from Chat to Files and back. Verify the same visible notices and reading position.
+Observe new streaming tools below the reading position without a forced return to the bottom.
 
 The following browser scenarios remain unverified: a manufactured 20-tool/event split in all four modes; network failure/Retry;
-events-only history; midnight and timestamp toggling; narrow-pane resizing; backdated live insertion; KeepAlive/pane switching;
+events-only history; midnight and timestamp toggling; narrow-pane resizing; backdated live insertion; KeepAlive across sessions;
 streaming reconciliation and follow-bottom cancellation. Automated tests cover their state and projection contracts.
 No test session, TimelineEvent, or external message is created for browser validation.
 
@@ -788,3 +791,26 @@ Final verification counts and the independent review result follow below.
 - The integration run exposes one status regression: an expanded event segment still reports its last tool as hidden.
   A failing visual stability test reproduces it. The corrected status reads projected group metadata and expanded heads.
 - Production build: all six Vite bundles exit 0 after the interrupted run is repeated. Existing dynamic-import warnings remain.
+
+### Final independent review
+
+A fresh internal reviewer checks the complete feature after Task 8. The correction pass addresses four functional findings.
+Each regression test fails before its correction and passes afterward.
+
+| Finding | Correction and regression evidence |
+|---|---|
+| Interrupted thinking discards surviving real-tool expansion | Remove only orphan membership; preserve surviving segment state; streamRetirement.test.js |
+| Search reaches a collapsed segment head without revealing its content | Reveal the destination segment; preserve sibling state and toolbar navigation; SessionItemsList.events.test.js |
+| Native scroll before RAF restores stale geometry | Capture the live DOM position; reject stale bottom-follow after upward scroll; mounted VirtualScroller transaction tests |
+| A synthetic streaming tail hides real-tool comments | Keep positive source comment ranges separate from display group tails; projection and row-memo regression |
+
+The reviewer labels the comment finding Minor. The correction pass grades it Important because active thinking hides an existing comment indicator.
+The reviewer also identifies repeated scans in segment projection. This performance improvement remains deferred.
+No second review is dispatched: regression tests and the complete suite verify the correction pass.
+
+- Correction regression set: 62/62 pass.
+- Final full frontend suite: 3541 pass, 1 existing snippet-hover failure, 3542 total.
+- Final production build: all six Vite bundles exit 0. Existing dynamic-import warnings remain.
+- The existing failure remains `frontend/src/styles/motion.test.js:451`; this feature does not change its styles or test.
+- Public shares and reconstruction of unrecorded historical facts remain outside scope.
+- Concurrent commits `a14ee196b` and `064791875` remain outside the feature review.

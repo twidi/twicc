@@ -72,6 +72,51 @@ test('opposite-edge navigation takes ownership from a pending bottom operation',
 // Execute the parent pre-flush transaction with the scroller's old/new geometry.
 import * as eventScroll from '../../../utils/chatEvents/scroll.js'
 import { watch, nextTick, shallowRef, unref, effectScope } from 'vue'
+import { h } from 'vue'
+import { virtualScroller, makeRenderer, flush } from '../../../../tests/helpers/scrollerComponentHarness.js'
+
+for (const staleBottom of [false, true]) test(`native scroll before RAF retains the live position (stale bottom: ${staleBottom})`, async t => {
+    const originalRaf = globalThis.requestAnimationFrame, originalCancel = globalThis.cancelAnimationFrame
+    const originalObserver = globalThis.IntersectionObserver, observers = [], frames = new Map()
+    let frameId = 0, app
+    globalThis.requestAnimationFrame = callback => { frames.set(++frameId, callback); return frameId }
+    globalThis.cancelAnimationFrame = id => frames.delete(id)
+    globalThis.IntersectionObserver = class {
+        constructor(callback, options) { this.callback = callback; this.options = options; observers.push(this) }
+        observe() {} unobserve() {} disconnect() {}
+    }
+    t.after(() => {
+        app?.unmount()
+        globalThis.requestAnimationFrame = originalRaf; globalThis.cancelAnimationFrame = originalCancel; globalThis.IntersectionObserver = originalObserver
+    })
+    const { renderer, root } = makeRenderer(140, element => {
+        element.listeners = {}
+        element.addEventListener = (type, listener) => { element.listeners[type] = listener }
+    })
+    const displayItems = shallowRef(Array.from({ length: 60 }, (_, i) => ({ lineNum: i + 1 })))
+    const scrollerRef = ref(null), component = virtualScroller(), bottomJumps = []
+    const begin = source.indexOf('// Event structural scroll transaction.'), end = source.indexOf('// End event structural scroll transaction.', begin)
+    const dependencies = { ...eventScroll, watch, nextTick, unref, displayItems, scrollerRef,
+        sessionActive: ref(true), props: { sessionId: 's', viewActive: true }, scrollToBottomUntilStable: () => bottomJumps.push('bottom') }
+    app = renderer.createApp({ setup() {
+        new Function(...Object.keys(dependencies), `let scrollIntent=0; ${source.slice(begin, end)}`)(...Object.values(dependencies))
+        return () => h(component, { ref: scrollerRef, items: displayItems.value, itemKey: row => row.lineNum, minItemHeight: 50 })
+    } })
+    app.mount(root); await flush()
+    const scroller = scrollerRef.value, element = scroller.$el
+    element.scrollHeight = 3000
+    scroller.scrollToAnchor({ key: staleBottom ? 55 : 21, index: staleBottom ? 54 : 20, offset: 10 })
+    const sentinel = observers.find(observer => observer.options?.rootMargin === '0px 0px 150px 0px')
+    sentinel.callback([{ isIntersecting: staleBottom }])
+    element.listeners.wheel({ type: 'wheel', target: element })
+    element.scrollTop = 1210
+    element.props.onScrollPassive({ target: element })
+    assert.notEqual(scroller.getScrollAnchor().key, 25, 'the native scroll RAF has not run')
+    displayItems.value = [{ lineNum: 'event:7', isSessionEvent: true }, ...displayItems.value]
+    await flush()
+    assert.deepEqual(bottomJumps, [])
+    assert.equal(element.scrollTop, 1260, 'the source row at 1210 keeps its offset after a 50px insertion')
+})
 function structuralView(t, { bottom = false, suspended = false } = {}) {
     const start = source.indexOf('// Event structural scroll transaction.')
     const end = source.indexOf('// End event structural scroll transaction.', start)

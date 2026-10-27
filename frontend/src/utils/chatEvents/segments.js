@@ -45,7 +45,12 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
             const expanded = old?.expanded ?? (expandedGroups.includes(originalHead)
                 || (suffixStart != null && (internalExpandedGroups[originalHead] ?? []).includes(suffixStart)))
             const internal = partition.length === 1 && partition[0].display_level === DISPLAY_LEVEL.ALWAYS
-            const range = old?.head === head && old?.tail === tail ? old.range : { head, tail }
+            // Synthetic streaming lines participate in display groups, but have no source comments.
+            const sourceLines = lines.filter(line => line > 0)
+            const rangeHead = sourceLines.length ? Math.min(...sourceLines) : null
+            const rangeTail = sourceLines.length ? Math.max(...sourceLines) : null
+            const range = rangeHead === null ? null : old?.range?.head === rangeHead && old.range.tail === rangeTail
+                ? old.range : { head: rangeHead, tail: rangeTail }
             segments.push({ key, originalHead, head, tail, members: lines, expanded, internal, range })
         }
     }

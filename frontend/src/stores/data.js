@@ -5834,7 +5834,11 @@ export const useDataStore = defineStore('data', {
                         const streamingLineNum = baseLineNum - block.blockIndex
                         this.setDetailOpen(sessionId, `line:${streamingLineNum}:0`, false)
                         if (this.localState.sessionEventSegments?.[sessionId]) {
-                            this.localState.sessionEventSegments[sessionId] = this.localState.sessionEventSegments[sessionId].filter(segment => !segment.members.includes(streamingLineNum))
+                            this.localState.sessionEventSegments[sessionId] = this.localState.sessionEventSegments[sessionId]
+                                .map(segment => segment.members.includes(streamingLineNum)
+                                    ? { ...segment, members: segment.members.filter(line => line !== streamingLineNum) }
+                                    : segment)
+                                .filter(segment => segment.members.length > 0)
                             this.localState.sessionEventRetired[sessionId] = (this.localState.sessionEventRetired[sessionId] || []).filter(transfer => transfer.streamingLineNum !== streamingLineNum)
                         }
                         if (expanded && expanded.length > 0) {

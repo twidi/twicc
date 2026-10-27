@@ -1627,7 +1627,7 @@ function groupCommentsCount(groupHeadLineNum, groupTailLineNum) {
 // each row, so streaming does not subscribe the entire scroller to every delta.
 function rowMemo(item) {
     return [props.projectId, props.sessionId, props.parentSessionId,
-        item.isGroupHead ? groupCommentsCount(item.lineNum, item.groupTail) : 0,
+        item.isGroupHead ? groupCommentsCount(item.segmentRange?.head ?? item.lineNum, item.segmentRange?.tail ?? item.groupTail) : 0,
         item.detailToggleFor != null ? blockCommentsCount(item.detailToggleFor) : 0,
         item.isGroupHead ? groupReveal.isHeadLeaving(item.lineNum) : false,
         item.isGroupHead ? groupReveal.headLeaveClass(item.lineNum) : null,
@@ -1973,11 +1973,12 @@ let scrollToLineNumGeneration = 0
  * @param {number} [options.offset=0] - Pixels of room to leave before the item
  * @param {boolean} [options.highlight=true] - Refine the position onto the item's first
  *   search highlight. Only wanted when the search bar drives the scroll.
+ * @param {boolean} [options.revealTarget=true] - Open the target's projected tool segment.
  * @returns {Promise<boolean>} true if the item was successfully scrolled into view
  */
 async function scrollToLineNum(lineNum, options = {}) {
     noteScrollIntent()
-    const { align = 'center', offset = 0, highlight = true } = options
+    const { align = 'center', offset = 0, highlight = true, revealTarget = true } = options
     const generation = ++scrollToLineNumGeneration
     const scroller = scrollerRef.value
     if (!scroller) return false
@@ -2011,7 +2012,8 @@ async function scrollToLineNum(lineNum, options = {}) {
         }
     }
 
-    if (!found && typeof lineNum === 'number') {
+    const targetRow = visualItems.value.find(item => item.lineNum === lineNum)
+    if (revealTarget && typeof lineNum === 'number' && (!found || (targetRow?.isGroupHead && !targetRow.isExpanded))) {
         const segment = store.localState.sessionEventSegments[props.sessionId]?.find(segment => segment.members.includes(lineNum))
         if (segment && !segment.internal) {
             store.expandGroup(props.sessionId, segment.head)
@@ -2132,7 +2134,7 @@ const {
     // gets the whole screen to read it. scrollToIndex clamps to the maximum
     // scroll, so the last block simply lands as high as it can go.
     scrollToItem: (lineNum, offset) =>
-        scrollToLineNum(lineNum, { align: 'start', highlight: false, offset }),
+        scrollToLineNum(lineNum, { align: 'start', highlight: false, revealTarget: false, offset }),
     scrollToEdge: (edge) => scrollToEdgeUntilStable(edge),
 })
 
@@ -2384,7 +2386,7 @@ defineExpose({
                                 :class="{ 'is-block-start': item.isBlockStart, 'is-block-end': item.isBlockEnd && !item.isExpanded }"
                                 :expanded="item.isExpanded"
                                 :item-count="item.groupSize"
-                                :comments-count="groupCommentsCount(item.lineNum, item.groupTail)"
+                                :comments-count="groupCommentsCount(item.segmentRange?.head ?? item.lineNum, item.segmentRange?.tail ?? item.groupTail)"
                                 @toggle="toggleGroup(item.lineNum)"
                             />
                             <SessionItem
