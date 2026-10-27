@@ -1,3 +1,4 @@
+import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
 import { getStableSessionList } from '../utils/sessionLists.js'
@@ -3555,27 +3556,9 @@ export const useDataStore = defineStore('data', {
                 })
                 allItems = [...allItems, resultItem]
             }
-            const visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
+            let visualItems = computeVisualItems(allItems, mode, expandedGroups, isAssistantTurn, detailedBlocks)
 
-            // Reorder /compact command before its compact_summary.
-            // In the JSONL file, the compact_summary line appears before the /compact command
-            // (despite the user typing it first), so we fix the visual order here.
-            if (this.sessions[sessionId]?.compacted) {
-                for (let i = 0; i < visualItems.length; i++) {
-                    if (visualItems[i].kind !== 'compact_summary') continue
-                    for (let j = i + 1; j < Math.min(i + 10, visualItems.length); j++) {
-                        if (visualItems[j].kind !== 'user_message') continue
-                        const parsed = getParsedContent(visualItems[j])
-                        const text = parsed?.message?.content
-                        if (typeof text === 'string' && text.includes('<command-name>/compact</command-name>')) {
-                            const [moved] = visualItems.splice(j, 1)
-                            visualItems.splice(i, 0, moved)
-                            break
-                        }
-                        break  // Only check the first user_message after compact_summary
-                    }
-                }
-            }
+            visualItems = orderCompactItems(visualItems, this.sessions[sessionId]?.compacted)
 
             // Propagate syntheticKind to visual items for synthetic messages.
             // computeVisualItems doesn't know about syntheticKind, so we add it here.

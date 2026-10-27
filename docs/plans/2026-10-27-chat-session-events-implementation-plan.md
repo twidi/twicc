@@ -188,7 +188,7 @@ Body: explain staging, the first-page watermark, safe recovery, and the passing 
 - Produces: `orderCompactItems(items: Object[], compacted: boolean): Object[]` if extraction is necessary.
 - Source `line_num` identities and parsed-content caches remain intact.
 
-- [ ] **Step 1: Add ordering tests with exact identities and boundaries.**
+- [x] **Step 1: Add ordering tests with exact identities and boundaries.**
 
 ```js
 assert.equal(normalizeChatTimestamp('2026-10-27T00:00:00.000001Z') + 1n,
@@ -202,12 +202,12 @@ hidden tools; unloaded content later hydrating; no timestamps; missing middle ti
 compact command/summary correction; synthetic-to-real replacement; and a source item with several internal blocks.
 Assert source order and input objects remain unchanged.
 
-- [ ] **Step 2: Run the placement tests and confirm failure.**
+- [x] **Step 2: Run the placement tests and confirm failure.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/placement.test.js`.
 Expected: FAIL because placement exports do not exist.
 
-- [ ] **Step 3: Implement deterministic placement without sorting transcript rows.**
+- [x] **Step 3: Implement deterministic placement without sorting transcript rows.**
 
 Normalize valid ISO timestamps to integer microseconds. Parse the whole-second instant with its timezone separately from the fraction.
 Pad the fractional part to six digits. Do not order with `Date.parse()` milliseconds alone.
@@ -225,12 +225,12 @@ No content hydration is needed to place ordinary timestamped rows. Compact corre
 Do not feed the reordered copy into conversation-block identification. Preserve the current filtering-then-compact-correction order for message rows.
 Keep source items indivisible. Placement does not inspect inner Markdown or invent tool-block timestamps.
 
-- [ ] **Step 4: Run placement and event-time tests.**
+- [x] **Step 4: Run placement and event-time tests.**
 
 Run: `cd /home/twidi/dev/twicc-poc/frontend && node --test src/utils/chatEvents/placement.test.js src/utils/timeline/eventTime.test.js src/stores/visualItemsStability.test.js`.
 Expected: all PASS. Event-free compact ordering remains unchanged.
 
-- [ ] **Step 5: Commit precise source-boundary placement.**
+- [x] **Step 5: Commit precise source-boundary placement.**
 
 Subject: `feat(chat): place events against source item metadata`.
 Body: document microsecond ties, transcript-order fallback, and compact-order compatibility.

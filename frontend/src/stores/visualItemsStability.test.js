@@ -1,3 +1,4 @@
+import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -23,7 +24,7 @@ let id = 0
 function fixture({ working = false, items = [message(1)], sessions = {}, extraItems = {} } = {}) {
     const settings = { getDisplayMode: DISPLAY_MODE.NORMAL, areMessageTimestampsShown: false }
     const deps = { useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
-        computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor,
+        computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor, orderCompactItems,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive,
         isLaunchedEphemeral: () => false }
     const actions = new Function(...Object.keys(deps), `${helperSource}\nreturn { ${actionSource}\n${toggleSource} }`)(...Object.values(deps))
