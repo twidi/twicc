@@ -66,22 +66,53 @@ def test_load_native_metadata_skips_known_rows(tree, django_assert_num_queries):
 
 
 @pytest.mark.parametrize('use_tz', [True, False])
-def test_native_metadata_row_matches_loaded_values(settings, use_tz, monkeypatch):
+def test_native_metadata_reader_matches_queryset(settings, use_tz, monkeypatch, django_assert_num_queries):
+    """The production raw reader must preserve QuerySet filtering, fields and Python types."""
     settings.USE_TZ = use_tz
     now = timezone.now()
     if not use_tz:
         now = timezone.make_naive(now)
         monkeypatch.setattr(timezone, 'now', lambda: now)
-    root = make_session('root', archived=True, created_at=now, last_updated_at=now)
-    child = make_session('child', type='subagent', parent_session=root, hidden=True, last_stopped_at=now)
-    metadata = load_native_metadata([child.id])
-    assert metadata == {
-        child.id: native_metadata_row(Session.objects.get(pk=child.id)),
-        root.id: native_metadata_row(Session.objects.get(pk=root.id)),
-    }
-    for row in metadata.values():
-        assert type(row['archived']) is bool
-        assert type(row['hidden']) is bool
+    root = make_session(
+        'root', archived=True, created_at=now - timedelta(days=4),
+        last_started_at=now - timedelta(days=3), last_updated_at=now - timedelta(days=2),
+        last_stopped_at=now - timedelta(days=1), storage_incarnation='root-incarnation',
+        content_storage_version=1, history_epoch=7, last_offset=2**40, last_line=29, compute_version=5,
+    )
+    child = make_session("child'quoted", type='subagent', parent_session=root, hidden=True,
+                         created_at=now, last_stopped_at=now + timedelta(seconds=1), last_line=3)
+    nullable = make_session('nullable')
+    Session.objects.filter(pk=root.id).update(provider='claude_code', content_state_epoch=11,
+                                               plaintext_verified_epoch=3)
+    Session.objects.filter(pk=nullable.id).update(content_state_epoch=None, plaintext_verified_epoch=None)
+
+    # Compile an independent ORM reference. Compare results, not SQL text:
+    # Django's column aliases do not change the contract of this projection.
+    def compare(ids, extra_fields):
+        names = (*NATIVE_METADATA_FIELDS, *extra_fields)
+        expected = dict.fromkeys(ids)
+        expected.update({row['id']: row for row in Session.objects.filter(pk__in=ids).order_by().values(*names)})
+        with django_assert_num_queries(1):
+            actual = load_native_metadata(ids, ancestors=False, extra_fields=extra_fields)
+        assert actual == expected
+        for identity, row in actual.items():
+            if row is not None:
+                # bool and int compare equal; require Django's actual types too.
+                for name, value in row.items():
+                    assert type(value) is type(expected[identity][name]), (identity, name)
+        return actual
+
+    for extra_fields in ((), ('history_epoch', 'last_offset', 'last_line'),
+                         ('history_epoch', 'last_offset', 'last_line', 'provider', 'compute_version')):
+        for ids in ([root.id], [child.id, nullable.id, 'missing'], [child.id, root.id, child.id, 'missing']):
+            compare(ids, extra_fields)
+
+    # The reader must see later writes instead of returning an old result.
+    Session.objects.filter(pk=root.id).update(archived=False, history_epoch=8, last_line=31)
+    metadata = compare([root.id, child.id], ('history_epoch', 'last_offset', 'last_line'))
+    assert metadata[root.id]['archived'] is False
+    assert metadata[root.id]['history_epoch'] == 8
+    assert metadata[root.id]['last_line'] == 31
     assert timezone.is_aware(metadata[root.id]['created_at']) is use_tz
     assert timezone.is_aware(metadata[child.id]['last_stopped_at']) is use_tz
 
