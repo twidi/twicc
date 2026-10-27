@@ -169,3 +169,25 @@ export function buildSessionTree(candidates, {
 
     return { nodes, rootIds }
 }
+
+/** Deepest indentation level the row visuals render. */
+export const TREE_MAX_INDENT_LEVEL = 3
+
+/**
+ * Flatten the tree into display rows, pre-order. Children are listed only
+ * under expanded nodes.
+ *
+ * @param {{ nodes: Map<string, Object>, rootIds: string[] }} tree
+ * @param {(id: string) => boolean} isExpanded
+ * @returns {Array<{ id: string, depth: number }>}
+ */
+export function flattenTree(tree, isExpanded) {
+    const rows = []
+    const visit = (id, depth) => {
+        rows.push({ id, depth })
+        if (!isExpanded(id)) return
+        for (const childId of tree.nodes.get(id).childIds) visit(childId, depth + 1)
+    }
+    for (const id of tree.rootIds) visit(id, 0)
+    return rows
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree } from './sessionTree.js'
+import { buildSessionTree, flattenTree, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -195,4 +195,40 @@ test('summary.latestDate is null when the subtree date equals the node\'s own mt
     assert.equal(same.nodes.get('a').summary.latestDate, null)
     const newer = buildWith([s('a', { mtime: 100 }), s('k', { spawned_by: 'a', mtime: 700 })])
     assert.equal(newer.nodes.get('a').summary.latestDate, 700)
+})
+
+// A(B(D), C) and a second root E(F).
+const flatForest = () => build([
+    s('a', { mtime: 500 }),
+    s('b', { spawned_by: 'a', mtime: 400 }),
+    s('c', { spawned_by: 'a', mtime: 300 }),
+    s('d', { spawned_by: 'b', mtime: 200 }),
+    s('e', { mtime: 100 }),
+    s('f', { spawned_by: 'e', mtime: 50 }),
+])
+
+test('collapsed nodes hide their children', () => {
+    const rows = flattenTree(flatForest(), () => false)
+    assert.deepEqual(rows, [{ id: 'a', depth: 0 }, { id: 'e', depth: 0 }])
+})
+
+test('expanded nodes list children right after the parent with depth + 1', () => {
+    const rows = flattenTree(flatForest(), id => id === 'a' || id === 'b')
+    assert.deepEqual(rows, [
+        { id: 'a', depth: 0 },
+        { id: 'b', depth: 1 },
+        { id: 'd', depth: 2 },
+        { id: 'c', depth: 1 },
+        { id: 'e', depth: 0 },
+    ])
+})
+
+test('isExpanded = () => true lists the whole forest in display order', () => {
+    const rows = flattenTree(flatForest(), () => true)
+    assert.deepEqual(rows.map(r => r.id), ['a', 'b', 'd', 'c', 'e', 'f'])
+    assert.deepEqual(rows.map(r => r.depth), [0, 1, 2, 1, 0, 1])
+})
+
+test('TREE_MAX_INDENT_LEVEL is 3', () => {
+    assert.equal(TREE_MAX_INDENT_LEVEL, 3)
 })
