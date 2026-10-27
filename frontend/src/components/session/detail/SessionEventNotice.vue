@@ -34,9 +34,10 @@ const vm = computed(() => describeEvent(props.event, props.context))
     font-size: var(--wa-font-size-s);
 }
 
-/* Room around a run: above its first row (the top edge of the chat, the end of the block before), below its last. */
+/* The same room above and below a run: the top edge of the chat, the text of the agent before and after. A
+   neighbor that keeps its own margin is compensated below (unscoped block). */
 .session-event-notice--first { padding-block-start: var(--card-spacing, var(--wa-space-l)); }
-.session-event-notice--last { padding-block-end: calc(var(--card-spacing, var(--wa-space-l)) / 2); }
+.session-event-notice--last { padding-block-end: var(--card-spacing, var(--wa-space-l)); }
 
 /* The band: the block-card look of the Timeline, drawn in parts across the rows of a run. */
 .session-event-band {
@@ -59,6 +60,19 @@ const vm = computed(() => describeEvent(props.event, props.context))
 </style>
 
 <style>
+/* A group toggle ("2 tools") keeps its own margin (GroupToggle.vue): it counts in the room of the run, on both sides. */
+.session-items .virtual-scroller-item:has(> .group-toggle:last-child) + .virtual-scroller-item .session-event-notice--first {
+    padding-block-start: calc(var(--card-spacing) - var(--wa-space-s));
+}
+.session-items .virtual-scroller-item:has(+ .virtual-scroller-item > .group-toggle:first-child) .session-event-notice--last {
+    padding-block-end: calc(var(--card-spacing) - var(--wa-space-s));
+}
+
+/* Before a user message, half the room: the message's own top margin adds the rest. */
+.session-items .virtual-scroller-item:has(+ .virtual-scroller-item .session-item[data-kind="user_message"]) .session-event-notice--last {
+    padding-block-end: calc(var(--card-spacing) / 2);
+}
+
 /* A user message after a notice sits at the distance of a first message, not the larger one it keeps after the
    agent's blocks (SessionItem.vue). */
 .session-items .virtual-scroller-item:has(.session-event-notice) + .virtual-scroller-item .session-item[data-kind="user_message"] {
