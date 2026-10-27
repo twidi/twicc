@@ -880,8 +880,10 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
         database.commit()
     monkeypatch.setenv('RECOVERY_TEST_FAIL_ONCE', str(path.parent / 'failed-once'))
     entered, release = threading.Event(), threading.Event()
+    healthy_initialized = asyncio.Event()
     initialized, prepared = [], []
     original_apply = BaseSessionCompute._apply_session_complete_final
+    original_turn = db_writer._background_turn
     original_submit = background_compute.submit_async_job
 
     def apply(message):
@@ -891,12 +893,28 @@ def test_codex_failed_result_keeps_admission_bounded(codex_recovery_runtime, mon
                 raise RuntimeError('test did not release application')
         return original_apply(message)
 
+    async def turn(factory, *, diagnostics=None, phase=None, **kwargs):
+        # The DB writer is serial: once ``apply`` holds ``faulty`` under its
+        # write grant, no other job runs. The coordinator admits ``healthy``
+        # as soon as the worker reports ``faulty`` computed, so a fast worker
+        # can bring the final application ahead of the ``healthy``
+        # initialization job, which then waits for a release that waits for it.
+        # Keep the application out of the grant until that job has run.
+        if phase == 'final' and diagnostics.message.get('session_id') == 'faulty' and not healthy_initialized.is_set():
+            return False
+        return await original_turn(factory, diagnostics=diagnostics, phase=phase, **kwargs)
+
     async def submit(job):
         if isinstance(job, db_writer.InitializeComputeStorageJob):
             initialized.append(job.session_id)
-        return await original_submit(job)
+        result = await original_submit(job)
+        if isinstance(job, db_writer.InitializeComputeStorageJob) and job.session_id == 'healthy':
+            healthy_initialized.set()
+            db_writer._writer_signals.notify_dispatch()
+        return result
 
     monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(apply))
+    monkeypatch.setattr(db_writer, '_background_turn', turn)
     monkeypatch.setattr(background_compute, 'submit_async_job', submit)
     monkeypatch.setattr(background_compute, 'sync_to_async', background.sync_to_async)
     monkeypatch.setattr(background_compute, 'load_project_directories', lambda: None)

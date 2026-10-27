@@ -260,13 +260,19 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
         with closing(sqlite3.connect(path)) as database:
             database.execute('UPDATE core_session SET provider=?', (provider.value,))
             database.commit()
+    healthy_initialized = asyncio.Event()
     original_apply = BaseSessionCompute._apply_session_complete_final
+    original_turn = db_writer._background_turn
     original_job = db_writer.submit_async_job
 
     async def submit(job):
         if isinstance(job, db_writer.InitializeComputeStorageJob):
             dispatched.append(job.session_id)
-        return await original_job(job)
+        result = await original_job(job)
+        if isinstance(job, db_writer.InitializeComputeStorageJob) and job.session_id == 'healthy':
+            healthy_initialized.set()
+            db_writer._writer_signals.notify_dispatch()
+        return result
 
     def apply(message):
         if message['session_id'] == 'faulty':
@@ -274,6 +280,17 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
             if not release.wait(5):
                 raise RuntimeError('test did not release application')
         return original_apply(message)
+
+    async def turn(factory, *, diagnostics=None, phase=None, **kwargs):
+        # The DB writer is serial: once ``apply`` holds ``faulty`` under its
+        # write grant, no other job runs. A coordinator can submit the
+        # ``healthy`` initialization job after the worker reports ``faulty``
+        # computed, so a fast worker can bring the final application ahead of
+        # that job, which then waits for a release that waits for it. Keep the
+        # application out of the grant until that job has run.
+        if phase == 'final' and diagnostics.message.get('session_id') == 'faulty' and not healthy_initialized.is_set():
+            return False
+        return await original_turn(factory, diagnostics=diagnostics, phase=phase, **kwargs)
 
     def start(ctx):
         original_submit(ctx)
@@ -286,6 +303,7 @@ def test_bounds_unapplied_results_and_reselects_modified_sources(recovery_runtim
 
     monkeypatch.setattr(db_writer, 'submit_async_job', submit)
     monkeypatch.setattr(BaseSessionCompute, '_apply_session_complete_final', staticmethod(apply))
+    monkeypatch.setattr(db_writer, '_background_turn', turn)
     monkeypatch.setattr(background, 'start_compute_process', start)
     monkeypatch.setattr(codex, 'start_compute_process', start)
     monkeypatch.setattr(codex, 'submit_async_job', submit)
