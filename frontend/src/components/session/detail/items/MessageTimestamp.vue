@@ -7,14 +7,17 @@
  * deliberately NOT tied to the "Time display" setting and never relative, so it
  * needs no periodic refresh (a relative label would mean a live ticker on every
  * message). Day-boundary disambiguation is left for later; the exact moment is
- * always available via the native title tooltip, which shows the full classic
- * local date-time down to the second ("YYYY-MM-DD HH:MM:SS").
+ * always available in a tooltip, which shows the full classic local date-time
+ * down to the second ("YYYY-MM-DD HH:MM:SS"). It opens on hover/focus with a
+ * pointer, and on tap on a touch device (no hover there).
  *
  * Renders nothing when no real timestamp is available (e.g. synthetic /
  * optimistic / streaming placeholders).
  */
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { formatClockTime, formatFullDateTime } from '../../../../utils/date'
+import { useSettingsStore } from '../../../../stores/settings'
+import AppTooltip from '../../../ui/AppTooltip.vue'
 
 const props = defineProps({
     // ISO 8601 timestamp string from the parsed JSONL line (both providers emit
@@ -31,10 +34,19 @@ const hasTimestamp = computed(() => Number.isFinite(timestampMs.value))
 
 const clockLabel = computed(() => formatClockTime(timestampMs.value))
 const fullLabel = computed(() => formatFullDateTime(timestampMs.value))
+
+const settingsStore = useSettingsStore()
+const timestampId = `message-timestamp-${useId()}`
+// No hover on a touch device: a tap opens the tooltip (AppTooltip closes it on the next outside tap).
+const tooltipTrigger = computed(() => (settingsStore.isTouchDevice ? 'click' : 'hover focus'))
 </script>
 
 <template>
-    <div v-if="hasTimestamp" class="message-timestamp" :title="fullLabel">{{ clockLabel }}</div>
+    <!-- The tooltip lives inside the div: SessionItem's CSS relies on .message-timestamp being the last child. -->
+    <div v-if="hasTimestamp" :id="timestampId" class="message-timestamp">
+        {{ clockLabel }}
+        <AppTooltip :for="timestampId" :trigger="tooltipTrigger" force>{{ fullLabel }}</AppTooltip>
+    </div>
 </template>
 
 <style scoped>
