@@ -129,7 +129,7 @@ test('global active entries reuse the full isolated row and canonical navigation
     assert.match(source, /force interactive hoist placement="right"/)
     assert.match(source, /id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"/)
     assert.match(source, /:compact-view="false" :show-project-name="true" :show-title-tooltip="false"/)
-    assert.match(source, /<ProjectMark[\s\S]*v-if="row.hasUnread"[\s\S]*v-else-if="row.pendingRequest"[\s\S]*<ProcessIndicator/)
+    assert.match(source, /<ProjectMark[\s\S]*v-if="row.pendingRequest && !row.hasUnread"[\s\S]*<ProcessIndicator[\s\S]*:unread="row.hasUnread"/)
     assert.match(source, /--max-width: min\(24rem, calc\(100vw - var\(--rail-width\) - 1.5rem\)\)/)
     assert.match(source, /container-name: session-list/)
     assert.doesNotMatch(source, /loadProjectSessions|selectedSessionId/)
@@ -152,7 +152,7 @@ test('tree mode: collapsed state is the read-only explicit false and a node row 
     assert.match(source, /isCollapsed: id => treeExpansion.state.explicit\[id\] === false/)
     assert.match(source, /useSessionTreeAncestors\(treeCandidates, isTreeMode\)/)
     assert.doesNotMatch(source, /treeExpansion\.(toggle|reveal|reconcile)|setExpanded/)
-    assert.match(source, /<ProcessActivityIndicator\s+v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"\s*\/>\s*<template v-else>[\s\S]*v-if="row.hasUnread"[\s\S]*row.processState.state[\s\S]*<\/template>/)
+    assert.match(source, /<ProcessActivityIndicator\s+v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"\s*\/>\s*<template v-else>[\s\S]*v-if="row.pendingRequest && !row.hasUnread"[\s\S]*row.processState.state[\s\S]*:unread="row.hasUnread"[\s\S]*<\/template>/)
     assert.match(source, /:aria-pressed="row.session.id === currentSessionId"/)
 })
 
@@ -196,4 +196,15 @@ test('tree mode: a collapsed node tooltip lists its active descendants inside th
     assert.match(preview, /type="button" class="rail-preview-child" @click="openSession\(child.session\)"/)
     assert.match(preview, /\+\{\{ row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS \}\} more/)
     assert.doesNotMatch(preview, /expand|toggle/)
+})
+
+test('rail rows and preview children render the unread eye through ProcessIndicator', () => {
+    const source = read()
+    assert.doesNotMatch(source, /<wa-icon v-if="row.hasUnread"/)
+    assert.match(source, /:unread="row.hasUnread"\s*:style="row.hasUnread \? \{ fontSize: '0.75rem' \} : undefined"/)
+    assert.match(source, /v-if="child.pendingRequest && !child.hasUnread" name="hand"/)
+    assert.match(source, /v-else-if="child.processState"[\s\S]*:unread="child.hasUnread"/)
+    // The bare eye remains only for a child without processState.
+    assert.match(source, /<wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" \/>/)
+    assert.equal((source.match(/name="eye"/g) ?? []).length, 1)
 })

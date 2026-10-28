@@ -209,12 +209,13 @@ function activate(item) {
                             v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"
                         />
                         <template v-else>
-                            <wa-icon v-if="row.hasUnread" name="eye" class="rail-unread" />
-                            <wa-icon v-else-if="row.pendingRequest" name="hand" class="rail-pending" />
+                            <wa-icon v-if="row.pendingRequest && !row.hasUnread" name="hand" class="rail-pending" />
                             <ProcessIndicator
                                 v-else :state="row.processState.state" size="small"
                                 :has-active-crons="row.hasActiveCrons"
                                 :background-shells="row.userTurnBackgroundShells"
+                                :unread="row.hasUnread"
+                                :style="row.hasUnread ? { fontSize: '0.75rem' } : undefined"
                                 :animate-states="['assistant_turn']"
                             />
                         </template>
@@ -246,14 +247,15 @@ function activate(item) {
                                     type="button" class="rail-preview-child" @click="openSession(child.session)"
                                 >
                                     <span class="rail-preview-child-title">{{ child.session.title || child.session.id }}</span>
-                                    <wa-icon v-if="child.hasUnread" name="eye" class="rail-unread" />
-                                    <wa-icon v-else-if="child.pendingRequest" name="hand" class="rail-pending" />
+                                    <wa-icon v-if="child.pendingRequest && !child.hasUnread" name="hand" class="rail-pending" />
                                     <ProcessIndicator
                                         v-else-if="child.processState" :state="child.processState.state" size="small"
                                         :has-active-crons="child.hasActiveCrons"
                                         :background-shells="child.userTurnBackgroundShells"
+                                        :unread="child.hasUnread"
                                         :animate-states="['assistant_turn']"
                                     />
+                                    <wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" />
                                 </button>
                                 <div v-if="row.activeDescendants.length > RAIL_PREVIEW_MAX_DESCENDANTS" class="rail-preview-more">
                                     +{{ row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS }} more
