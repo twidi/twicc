@@ -5,6 +5,7 @@
 
 import { sessionSortComparator } from './sessionSort.js'
 import { summarizeProcessActivity } from './processActivity.js'
+import { unreadBackgroundKind } from './backgroundWork.js'
 
 export const isParticipant = (session) => !session.ephemeral && !session.draft
 
@@ -193,15 +194,21 @@ export function buildSessionTree(candidates, {
 export function treeActivity(ids, { processStates, sessions, viewedId, isUnread }) {
     const states = []
     let unreadCount = 0
+    const unreadBackground = { sessions: 0, shells: 0 }
     for (const id of ids) {
         const ps = processStates[id]
         if (ps?.synthetic || ps?.extra?.ephemeral) continue
         const session = sessions(id)
         if (session?.hidden) continue
         if (ps) states.push(ps)
-        if (session && id !== viewedId && isUnread(session, ps)) unreadCount++
+        if (session && id !== viewedId && isUnread(session, ps)) {
+            unreadCount++
+            const kind = unreadBackgroundKind(ps)
+            if (kind) unreadBackground.sessions++
+            if (kind === 'shell') unreadBackground.shells++
+        }
     }
-    return summarizeProcessActivity(states, unreadCount)
+    return summarizeProcessActivity(states, unreadCount, unreadBackground)
 }
 
 /** Deepest indentation level the row visuals render. */

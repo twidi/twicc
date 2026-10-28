@@ -224,3 +224,10 @@ test('a detached rail row shows its project mark even with its spawner project',
     assert.equal(rows.find(r => r.session.id === 'b').showMarkDot, false)
     assert.notEqual(rows.find(r => r.session.id === 'b').groupId, 'a')
 })
+
+test('a collapsed node exposes the unread children with a shell as unread background work', () => {
+    const sessions = { p: s('p', 1), c: s('c', 1, { spawned_by: 'p', ...unreadSession }) }
+    const shell = { background_work_in_progress: { subagents: 0, shells: 1, monitors: 0, scheduled_wakeup_at: null, goal: false } }
+    const processStates = { p: proc(1), c: proc(2, shell) }
+    assert.equal(select({ sessions, processStates, collapsed: ['p'] })[0].cumulative.unreadBackgroundCount, 1)
+})

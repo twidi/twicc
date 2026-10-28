@@ -251,6 +251,44 @@ test('treeActivity counts unread through isUnread and gives the process state to
     assert.deepEqual(seen[0], ['u', processStates.u])
 })
 
+const withShell = { state: 'user_turn', background_work_in_progress: { subagents: 0, shells: 1, monitors: 0, scheduled_wakeup_at: null, goal: false } }
+const withCron = { state: 'user_turn', active_crons: [{ id: 'c0' }] }
+
+test('treeActivity counts an unread session with a shell as unread background work', () => {
+    const r = act(['a'], { sessions: sessionsMap([s('a')]), processStates: { a: withShell }, isUnread: () => true })
+    assert.equal(r.unreadBackgroundCount, 1)
+    assert.equal(r.unreadShellCount, 1)
+})
+
+test('treeActivity counts an unread cron-only session without a shell', () => {
+    const r = act(['a'], { sessions: sessionsMap([s('a')]), processStates: { a: withCron }, isUnread: () => true })
+    assert.equal(r.unreadBackgroundCount, 1)
+    assert.equal(r.unreadShellCount, 0)
+})
+
+test('treeActivity does not count an unread session without process as background work', () => {
+    const r = act(['a'], { sessions: sessionsMap([s('a')]), isUnread: () => true })
+    assert.equal(r.unreadCount, 1)
+    assert.equal(r.unreadBackgroundCount, 0)
+})
+
+test('treeActivity keeps the unread background figures apart from a read session with a shell', () => {
+    const r = act(['u', 'r'], {
+        sessions: sessionsMap([s('u'), s('r')]),
+        processStates: { u: withCron, r: withShell },
+        isUnread: session => session.id === 'u',
+    })
+    assert.equal(r.unreadBackgroundCount, 1)
+    assert.equal(r.unreadShellCount, 0)
+    assert.equal(r.backgroundShellCount, 1)
+})
+
+test('treeActivity excludes the viewed session from the unread background figures', () => {
+    const r = act(['v'], { sessions: sessionsMap([s('v')]), processStates: { v: withShell }, viewedId: 'v', isUnread: () => true })
+    assert.equal(r.unreadBackgroundCount, 0)
+    assert.equal(r.unreadShellCount, 0)
+})
+
 test('treeActivity with no live process and no unread yields two zero counts', () => {
     const r = act(['a', 'b'], { sessions: sessionsMap([s('a'), s('b')]) })
     assert.equal(r.processCount, 0)

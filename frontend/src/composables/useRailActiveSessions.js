@@ -12,7 +12,7 @@ function sameArray(previous, next) {
 }
 
 const ACTIVITY_KEYS = ['processCount', 'pendingRequestCount', 'hasAssistantTurn', 'activeCronCount',
-    'backgroundShellCount', 'unreadCount']
+    'backgroundShellCount', 'unreadCount', 'unreadBackgroundCount', 'unreadShellCount']
 const sameActivity = (a, b) => !!a && !!b && ACTIVITY_KEYS.every(key => a[key] === b[key])
 const NO_CANDIDATES = []
 

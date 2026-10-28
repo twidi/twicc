@@ -171,7 +171,7 @@ const treeRows = computed(() => tree.value ? flattenTree(tree.value, expansion.i
 
 const NO_TREE_ROWS = new Map()
 const ACTIVITY_KEYS = ['processCount', 'pendingRequestCount', 'hasAssistantTurn', 'activeCronCount',
-    'backgroundShellCount', 'unreadCount']
+    'backgroundShellCount', 'unreadCount', 'unreadBackgroundCount', 'unreadShellCount']
 const sameActivity = (a, b) => a === b || (!!a && !!b && ACTIVITY_KEYS.every(key => a[key] === b[key]))
 const sameThrough = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])
 const sameRowMeta = (a, b) => a.depth === b.depth && a.isLast === b.isLast && sameThrough(a.through, b.through)
