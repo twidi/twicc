@@ -1,18 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { reactive } from 'vue'
-import { getStableSessionList, retainSessionArray } from './sessionLists.js'
-import { sessionSortComparator } from './sessionSort.js'
-import { hasUnreadContent } from './sessions.js'
-import { extendTreeCandidates } from './sessionTree.js'
-
-const source = readFileSync(new URL('./sidebarSessions.js', import.meta.url), 'utf8')
-    .replace(/^import .*$/gm, '').replace(/export function /g, 'function ')
-const computeSidebarSessionBlocks = new Function('sessionSortComparator', 'ALL_PROJECTS_ID',
-    'isWorkspaceProjectId', 'extractWorkspaceId', 'hasUnreadContent', 'retainSessionArray', 'extendTreeCandidates',
-    `${source}; return computeSidebarSessionBlocks`)(sessionSortComparator, '__all__',
-    id => id.startsWith('workspace:'), id => id.slice(10), hasUnreadContent, retainSessionArray, extendTreeCandidates)
+import { getStableSessionList } from './sessionLists.js'
+import { computeSidebarSessionBlocks } from './sidebarSessions.js'
 
 function fixture(scope) {
     const data = reactive({ sessions: {
@@ -31,7 +21,7 @@ function fixture(scope) {
 }
 
 test('equivalent sidebar blocks retain arrays for global project worktree and workspace scopes', () => {
-    for (const scope of ['__all__', 'p', 'q', 'workspace:w']) {
+    for (const scope of ['__all__', 'p', 'q', 'ws:w']) {
         const { options } = fixture(scope)
         const before = computeSidebarSessionBlocks(options)
         const next = computeSidebarSessionBlocks(options, before)

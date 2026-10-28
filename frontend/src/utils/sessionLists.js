@@ -1,12 +1,11 @@
 import { computed, toRaw } from 'vue'
 import { sessionSortComparator } from './sessionSort.js'
+import { retainSessionArray } from './retain.js'
+
+// Kept for the existing importers of this module.
+export { retainSessionArray }
 
 const listsByState = new WeakMap()
-
-/** Retain list identity when the same records remain in the same order. */
-export function retainSessionArray(previous, next) {
-    return previous?.length === next.length && next.every((entry, i) => entry === previous[i]) ? previous : next
-}
 
 /** Cache membership separately from ordering so active mtime updates do not sort again. */
 export function getStableSessionList(state, scopeId, allProjectsId, hasActiveStartupPhase) {

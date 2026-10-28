@@ -22,6 +22,9 @@ export const BROWSER_TAB_HELP_PUBLIC_URL = 'https://github.com/twidi/twicc/blob/
  */
 export const INITIAL_ITEMS_COUNT = 100
 
+/** Special project ID for "All Projects" mode. */
+export const ALL_PROJECTS_ID = '__all__'
+
 /**
  * Display mode values for session items.
  * - conversation: Show only user messages + last assistant message before each user message

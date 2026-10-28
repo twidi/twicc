@@ -20,10 +20,11 @@
 // dynamic `items()` closure (CommandPalette), Pinia reactivity still tracks
 // every reactive access made inside.
 
-import { sessionSortComparator, ALL_PROJECTS_ID } from '../stores/data'
-import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds'
-import { hasUnreadContent } from './sessions'
-import { retainSessionArray } from './sessionLists.js'
+import { sessionSortComparator } from './sessionSort.js'
+import { ALL_PROJECTS_ID } from '../constants.js'
+import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds.js'
+import { hasUnreadContent } from './sessions.js'
+import { retainSessionArray } from './retain.js'
 import { extendTreeCandidates } from './sessionTree.js'
 
 /**

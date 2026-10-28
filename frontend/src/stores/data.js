@@ -20,7 +20,8 @@ import { getProjectActivityIndex } from '../utils/projectProcessActivity.js'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems'
 import { backgroundWorkStatusKey, buildBackgroundWorkStatusLines } from '../utils/backgroundWork'
-import { DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
+import { ALL_PROJECTS_ID, DISPLAY_LEVEL, DISPLAY_MODE, INITIAL_ITEMS_COUNT, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants'
+import { hasActiveStartupPhase } from '../utils/startupPhase.js'
 import { getProviderHelpers, getProviderStore } from '../providers'
 import { getSessionCutoffMs, isSessionUnread } from '../utils/sessions'
 import { descendantActiveProcessStates } from '../utils/orchestrationActivity'
@@ -403,9 +404,6 @@ function userMessageMatchesOptimistic(providerHelpers, optimistic, item) {
     return userMessageMatchKey(providerHelpers, parsed) === optimisticKey
 }
 
-// Special project ID for "All Projects" mode
-export const ALL_PROJECTS_ID = '__all__'
-
 // Aggregate per-provider startup-progress entries for a single phase into the
 // flat ``{ current, total, completed }`` shape consumed by the UI. Returns
 // null when no provider has reported yet so callers can stay falsy-aware.
@@ -428,19 +426,8 @@ function aggregatePhase(byProvider) {
     return { current, total, completed, details }
 }
 
-// Cheap "still booting" probe used by hot getters (unread counts, sessions
-// list) to skip expensive work while any provider is still mid-phase.
-function hasActiveStartupPhase(startupProgress) {
-    for (const byProvider of Object.values(startupProgress)) {
-        if (!byProvider) continue
-        for (const entry of Object.values(byProvider)) {
-            if (entry && !entry.completed) return true
-        }
-    }
-    return false
-}
-
-// Keep the existing export for consumers of the data store module.
+// Keep the existing exports for consumers of the data store module.
+export { ALL_PROJECTS_ID }
 export { sessionSortComparator } from '../utils/sessionSort.js'
 
 /**
