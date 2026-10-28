@@ -111,7 +111,8 @@ function assertStagesCanRun(state, probe, label) {
  * out-of-scope roots and their subagents, `parent_session_id` and `hidden` of
  * the subagents of in-scope roots. Multi-project: `parent_session_id` of
  * every subagent and out-of-scope root, and `mtime` of out-of-scope roots
- * (the baseline reads them through the all-projects list).
+ * (the baseline reads them through the all-projects list). `categories` maps
+ * each probe category to its counters.
  */
 function installTickProbes(state, scopeId) {
     const inScope = scopeProjectSet(state, scopeId)
@@ -120,23 +121,32 @@ function installTickProbes(state, scopeId) {
     const isInScope = (s) => inScope.has(s.project_id)
     const subagents = Object.values(raw).filter(s => s.parent_session_id)
     const probes = []
+    const categories = new Map()
+    const probe = (category, record, field) => {
+        const counter = countReads(record, field)
+        if (!categories.has(category)) categories.set(category, [])
+        categories.get(category).push(counter)
+        probes.push(counter)
+    }
     if (scopeId.startsWith('ws:')) {
-        for (const s of subagents) probes.push(countReads(s, 'parent_session_id'))
+        for (const s of subagents) probe('parent_session_id of subagents', s, 'parent_session_id')
         for (const s of roots.filter(s => !isInScope(s))) {
-            probes.push(countReads(s, 'parent_session_id'), countReads(s, 'mtime'))
+            probe('parent_session_id of out-of-scope roots', s, 'parent_session_id')
+            probe('mtime of out-of-scope roots', s, 'mtime')
         }
     } else {
-        for (const s of roots.filter(s => !isInScope(s))) probes.push(countReads(s, 'project_id'))
+        for (const s of roots.filter(s => !isInScope(s))) probe('project_id of out-of-scope roots', s, 'project_id')
         for (const s of subagents) {
             if (isInScope(raw[s.parent_session_id])) {
-                probes.push(countReads(s, 'parent_session_id'), countReads(s, 'hidden'))
+                probe('parent_session_id of subagents of in-scope roots', s, 'parent_session_id')
+                probe('hidden of subagents of in-scope roots', s, 'hidden')
             } else {
-                probes.push(countReads(s, 'project_id'))
+                probe('project_id of subagents of out-of-scope roots', s, 'project_id')
             }
         }
     }
     const candidateMtimes = roots.filter(s => isInScope(s) && !s.hidden).map(s => countReads(s, 'mtime'))
-    return { probes, candidateMtimes }
+    return { probes, categories, candidateMtimes }
 }
 
 test('an active in-scope tick reads only in-scope candidate mtimes and reruns nothing after members', () => {
@@ -162,21 +172,37 @@ test('an active in-scope tick reads only in-scope candidate mtimes and reruns no
         assert.strictEqual(list.members, before.members, scopeId)
         assert.strictEqual(list.ordered, before.ordered, scopeId)
         assertStagesCanRun(state, probe, scopeId)
+        // Positive control of the zero 'rootSessions' runs above: a root add reruns the index.
+        probe.reset()
+        state.sessions['added-root'] = { ...toRaw(state.sessions[ID.p3Recent]), id: 'added-root' }
+        probe.flush()
+        assert.ok(probe.runs('rootSessions') >= 1, `${scopeId}: rootSessions positive control`)
         probe.stop()
     }
 })
 
+// The baseline never reads `hidden` of a subagent: its filter stops at the
+// truthy `parent_session_id`. That probe only proves the shipped list does
+// not read it either, so this test does not require the baseline to reach it.
+const PROBES_THE_BASELINE_NEVER_REACHES = new Set(['hidden of subagents of in-scope roots'])
+
 test('the probes of the active in-scope tick catch the baseline list', () => {
-    // The probes above can fail: the baseline path of each scope reads them on the same tick.
+    // The probes above can fail: the baseline path of each scope reads every
+    // reachable probe category on the same tick.
     for (const [scopeId, baselineId] of [['p0', 'p0'], ['ws:w', ALL]]) {
         const state = buildSidebarState({ roots: 60, cutoffRoots: 40 })
         makeUnread(state, ID.processAssistant)
-        const { probes } = installTickProbes(state, scopeId)
+        const { probes, categories } = installTickProbes(state, scopeId)
         const probe = subscribe(() => baselineGetStableSessionList(state, baselineId, ALL, () => false))
         tick(state, ID.processAssistant)
         for (const counter of probes) counter.reads = 0
         probe.flush()
         assert.ok(total(probes) > 0, scopeId)
+        assert.ok(categories.size >= 3, scopeId)
+        for (const [category, counters] of categories) {
+            if (PROBES_THE_BASELINE_NEVER_REACHES.has(category)) continue
+            assert.ok(total(counters) > 0, `${scopeId}: ${category}`)
+        }
         probe.stop()
     }
 })
@@ -312,6 +338,11 @@ test('a session crossing the cutoff joins and leaves the members', () => {
         probe.flush()
         assert.ok(ids(list.members).includes(sessionId), scopeId)
         assert.deepEqual(ids(list.ordered), expectedIds(state, scopeId), scopeId)
+        // Positive control of the zero 'scope:candidates' runs above: a hide reruns the candidates.
+        state.sessions[sessionId].hidden = true
+        probe.flush()
+        assert.ok(probe.runs('scope:candidates') >= 1, `${scopeId}: candidates positive control`)
+        assert.ok(!ids(list.members).includes(sessionId), scopeId)
         probe.stop()
     }
 })

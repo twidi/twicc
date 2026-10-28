@@ -61,6 +61,37 @@ function countReads(record, field) {
 const total = (counters) => counters.reduce((sum, counter) => sum + counter.reads, 0)
 
 /** Mount SessionList on `state` in the scope `projectId`. */
+// The animation-frame stubs of a test: the originals are saved at its first
+// mount and restored after its last unmount, so the globals end exactly as they
+// started even with several mounts per test (`t.after` runs its hooks in FIFO order).
+const ANIMATION_FRAME_GLOBALS = ['requestAnimationFrame', 'cancelAnimationFrame']
+const animationFrameStubs = new WeakMap()
+const animationFrameSnapshot = () => ANIMATION_FRAME_GLOBALS.map(name => [name in globalThis, globalThis[name]])
+const INITIAL_ANIMATION_FRAMES = animationFrameSnapshot()
+
+function stubAnimationFrames(t) {
+    const stub = animationFrameStubs.get(t)
+    if (stub) {
+        stub.mounts += 1
+        return
+    }
+    animationFrameStubs.set(t, { mounts: 1, saved: animationFrameSnapshot() })
+    globalThis.requestAnimationFrame = () => 0
+    globalThis.cancelAnimationFrame = () => {}
+}
+
+function releaseAnimationFrames(t) {
+    const stub = animationFrameStubs.get(t)
+    stub.mounts -= 1
+    if (stub.mounts > 0) return
+    animationFrameStubs.delete(t)
+    for (const [index, name] of ANIMATION_FRAME_GLOBALS.entries()) {
+        const [present, value] = stub.saved[index]
+        if (present) globalThis[name] = value
+        else delete globalThis[name]
+    }
+}
+
 function mountList(t, state, projectId) {
     const { data, workspaces } = createShippedData(state)
     // The data facade plus the list's own store needs. A load never settles: these tests do not paginate.
@@ -86,9 +117,7 @@ function mountList(t, state, projectId) {
         },
     }
 
-    const savedRAF = [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame]
-    globalThis.requestAnimationFrame = () => 0
-    globalThis.cancelAnimationFrame = () => {}
+    stubAnimationFrames(t)
 
     const noMotion = { itemClass() {}, itemStyle() {}, noteLive() {}, dropLive() {}, holdTarget() {}, isArriving: () => false }
     const component = compileComponent(new URL('./SessionList.vue', import.meta.url), {
@@ -125,10 +154,7 @@ function mountList(t, state, projectId) {
     app.mount(root)
     t.after(() => {
         app.unmount()
-        for (const [index, name] of ['requestAnimationFrame', 'cancelAnimationFrame'].entries()) {
-            if (savedRAF[index] === undefined) delete globalThis[name]
-            else globalThis[name] = savedRAF[index]
-        }
+        releaseAnimationFrames(t)
     })
     return {
         data, renders, rowProps,
@@ -222,4 +248,9 @@ test('a project activity change re-renders no row in project, workspace and all-
         view.rowProps.forEach((props, i) => assert.equal(props.scopeProjectIds, before[i], `${projectId}: scope project ids keep their identity`))
         assert.equal(view.renderCount(), 0, `${projectId}: no row re-renders`)
     }
+})
+
+// Runs last: most tests above mount the list several times.
+test('the animation-frame globals end as they started after tests with several mounts', () => {
+    assert.deepEqual(animationFrameSnapshot(), INITIAL_ANIMATION_FRAMES)
 })

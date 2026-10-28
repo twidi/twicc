@@ -220,6 +220,10 @@ test('a project mtime change reruns no membership evaluation', () => {
     assert.equal(probe.runs('workspace:all'), 0)
     assert.deepEqual(probe.value()[0], ['p0', 'p0-wt1'])
     assert.strictEqual(probe.value()[1], all)
+    // Positive control of the zero 'workspace:all' runs above: a new worktree of a member reruns it.
+    state.projects['p0-wt2'] = project('p0-wt2', 1, 'p0')
+    assert.deepEqual(probe.value()[1], ['p0', 'p0-wt1', 'p0-wt2', 'p1'])
+    assert.ok(probe.runs('workspace:all') >= 1)
     probe.stop()
 })
 

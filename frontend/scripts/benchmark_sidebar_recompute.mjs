@@ -22,7 +22,10 @@
 //     and 9 000 (1 000 and 3 000 roots, 2 subagents each).
 //
 // The benchmark is evidence, not a gate: the exit code is 0 whatever the ratios.
-// The deterministic tests of design 7.1 are the gate.
+// The deterministic tests of design 7.1 are the gate. A `checkPremises` failure is
+// different: the fixture does not give a scenario its premises, so it is a harness
+// bug; the script throws and exits non-zero. A threshold-group line is marked
+// `(blocks differ)` when one of its rows printed `same blocks: NO`.
 
 import { computed, effect, version as vueVersion } from 'vue'
 import { ALL_PROJECTS_ID } from '../src/constants.js'
@@ -32,7 +35,7 @@ import { buildSessionTree, flattenTree } from '../src/utils/sessionTree.js'
 import { isSessionUnread } from '../src/utils/sessions.js'
 import { extractWorkspaceId, isWorkspaceProjectId } from '../src/utils/workspaceIds.js'
 import { computeSidebarSessionBlocks as baselineSessionBlocks } from '../tests/helpers/sidebarBaseline/sidebarSessions.js'
-import { createBaselineActivityIndex } from '../tests/helpers/sidebarBaseline/projectProcessActivity.js'
+import { createBaselineActivityIndex } from '../tests/helpers/sidebarBaseline/projectInputs.js'
 import { buildSessionTree as baselineBuildSessionTree, flattenTree as baselineFlattenTree }
     from '../tests/helpers/sidebarBaseline/sessionTree.js'
 import { FIXTURE_IDS as ID, buildSidebarState, createBaselineData, createShippedData, tick }
@@ -40,7 +43,9 @@ import { FIXTURE_IDS as ID, buildSidebarState, createBaselineData, createShipped
 
 const SUBAGENTS_PER_ROOT = 2
 const ROOT_COUNTS = [1000, 3000]          // store sizes 3 000 and 9 000
-const ROOTS_BELOW_CUTOFF = 50             // pagination: the oldest roots are not loaded in any scope
+// Pagination: the oldest roots are below the `__all__` cutoff. Some of them (cut-p0,
+// cut-p2) are still in the scope lists of their single project.
+const ROOTS_BELOW_CUTOFF = 50
 const WARM_UP_BATCHES = 10
 const RUNS = 5
 const BATCHES_PER_RUN = 20
@@ -216,7 +221,7 @@ for (const roots of ROOT_COUNTS) {
         checkPremises(after.state, after.view, scenario, size)
         const ratio = before.ms / after.ms
         const same = before.snapshot === after.snapshot
-        results.push({ scenario, size, ratio })
+        results.push({ scenario, size, ratio, same })
         console.log(scenario.label.padEnd(LABEL_WIDTH) + pad(size, 6) + pad(before.ms.toFixed(2), 11)
             + pad(after.ms.toFixed(2), 10) + pad(`${ratio.toFixed(1)}x`, 9) + `  ${same ? 'yes' : 'NO'}`)
     }
@@ -228,6 +233,7 @@ for (const { group, label, min } of THRESHOLD_GROUPS) {
     const ratios = results.filter(r => r.scenario.group === group)
     const lowest = ratios.reduce((low, r) => (r.ratio < low.ratio ? r : low))
     const verdict = ratios.every(r => r.ratio >= min) ? 'ok' : 'below'
+    const blocksDiffer = ratios.some(r => !r.same) ? '   (blocks differ)' : ''
     console.log(`${label.padEnd(36)} expected >= ${pad(min, 2)}x   lowest ${pad(lowest.ratio.toFixed(1), 6)}x `
-        + `(${lowest.scenario.label}, store ${lowest.size})   ${verdict}`)
+        + `(${lowest.scenario.label}, store ${lowest.size})   ${verdict}${blocksDiffer}`)
 }

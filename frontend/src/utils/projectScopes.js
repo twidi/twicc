@@ -138,7 +138,9 @@ export function createWorkspaceMembership({ getWorkspaceById, getProject, getWor
             if (!entry) {
                 entry = computed(previous => {
                     noteStageRun(stage)
-                    return retainIds(previous ?? null, evaluate(workspaceId))
+                    // Shared by every caller: frozen, so an in-place mutation
+                    // throws instead of reordering every scope silently.
+                    return retainIds(previous ?? null, Object.freeze(evaluate(workspaceId)))
                 })
                 byWorkspace.set(workspaceId, entry)
             }

@@ -4,7 +4,7 @@ import { effect, isReactive, toRaw } from 'vue'
 import { getUnreadMemos } from './unreadMemos.js'
 import { getProjectActivityIndex } from './projectProcessActivity.js'
 import { observeStageRuns } from './stageRuns.js'
-import { createBaselineActivityIndex } from '../../tests/helpers/sidebarBaseline/projectProcessActivity.js'
+import { createBaselineActivityIndex } from '../../tests/helpers/sidebarBaseline/projectInputs.js'
 import { FIXTURE_IDS as ID, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState, createBaselineData,
     createShippedData, startupPhase, tick } from '../../tests/helpers/sidebarFixture.js'
 

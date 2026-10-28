@@ -25,10 +25,9 @@
 // has `subagentsPerRoot` subagents (`<root>-sa<k>`), inserted right after it.
 
 import { computed, reactive, toRaw } from 'vue'
-import { ALL_PROJECTS_ID, baselineProjectInputs,
+import { ALL_PROJECTS_ID, baselineProjectInputs, createBaselineActivityIndex,
     hasActiveStartupPhase as baselineHasActiveStartupPhase } from './sidebarBaseline/projectInputs.js'
 import { getStableSessionList as baselineGetStableSessionList } from './sidebarBaseline/sessionLists.js'
-import { createBaselineActivityIndex } from './sidebarBaseline/projectProcessActivity.js'
 import { getScopeSessionList, getStableSessionList } from '../../src/utils/sessionLists.js'
 import { getRootSessions } from '../../src/utils/rootSessions.js'
 import { getUnreadMemos } from '../../src/utils/unreadMemos.js'

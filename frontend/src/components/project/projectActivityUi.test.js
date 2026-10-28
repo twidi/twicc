@@ -10,13 +10,15 @@ import { buildProjectActivityIndex, createProjectActivityComparator } from '../.
 import { buildProjectTree, flattenProjectTree } from '../../utils/projectTree.js'
 import { splitProjectsByPriority } from '../../utils/projectSort.js'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../utils/workspaceIds.js'
+import { getArchivedProjectIds, getWorktreeIdsByParent } from '../../utils/projectScopes.js'
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 // Execute production getters with real Pinia reactivity. The full store imports browser dependencies.
 const dataSource = read('../../stores/data.js')
 const getters = new Function('buildProjectActivityIndex', 'createProjectActivityComparator',
+    'getArchivedProjectIds', 'getWorktreeIdsByParent',
     `return { ${dataSource.slice(dataSource.indexOf('        // Data getters'), dataSource.indexOf('        // Session scope of a project:'))} }`,
-)(buildProjectActivityIndex, createProjectActivityComparator)
+)(buildProjectActivityIndex, createProjectActivityComparator, getArchivedProjectIds, getWorktreeIdsByParent)
 const useProjects = defineStore('activity-ui-test', { state: () => ({ projects: {}, weeklyActivity: {} }), getters })
 const project = (id, fields = {}) => ({ id, name: id, directory: `/dev/${id}`, mtime: 10, archived: false, stale: false, ...fields })
 function fixture() {

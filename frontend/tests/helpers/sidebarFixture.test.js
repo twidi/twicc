@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { isReactive, toRaw } from 'vue'
 import { computeSidebarSessionBlocks } from './sidebarBaseline/sidebarSessions.js'
 import { computeSidebarSessionBlocks as computeShippedBlocks } from '../../src/utils/sidebarSessions.js'
-import { createBaselineActivityIndex } from './sidebarBaseline/projectProcessActivity.js'
+import { createBaselineActivityIndex } from './sidebarBaseline/projectInputs.js'
 import { hasUnreadContent, isSessionUnread } from '../../src/utils/sessions.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
 import { FIXTURE_IDS as ID, FIXTURE_SCOPES, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState,

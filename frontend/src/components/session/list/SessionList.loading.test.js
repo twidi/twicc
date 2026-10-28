@@ -8,6 +8,7 @@ import { retainSessionArray, resolveSessionScope } from '../../../utils/sessionL
 import { retainIds } from '../../../utils/retain.js'
 import { getSessionCutoffMs } from '../../../utils/sessions.js'
 import { jsonValuesEqual } from '../../../utils/jsonValuesEqual.js'
+import * as workspaceIds from '../../../utils/workspaceIds.js'
 // Execute the production request registration, merge, loading flag, and finally ordering.
 const storeSource = readFileSync(new URL('../../../stores/data.js', import.meta.url), 'utf8')
 const storeStart = storeSource.indexOf('        async loadSessions(')
@@ -54,7 +55,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
             const request = deferred(); requests.push(request)
             return request.promise
         },
-        ...createStoreActions(new Map(), { sessionMtime: (_, local) => local }, id => id.startsWith('workspace:'), 30),
+        ...createStoreActions(new Map(), { sessionMtime: (_, local) => local }, workspaceIds.isWorkspaceProjectId, 30),
 
     }
     const noMotion = { itemClass() {}, itemStyle() {}, noteLive() {}, dropLive() {}, hold() {}, release() {}, clear() {} }
@@ -63,7 +64,8 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../stores/data': { useDataStore: () => store, ALL_PROJECTS_ID: '__all__' },
         '../../../stores/workspaces': { useWorkspacesStore: () => ({ getVisibleProjectIds: () => ['p'] }) },
         '../../../stores/sessionSelection': { useSessionSelectionStore: () => ({}) },
-        '../../../utils/workspaceIds': { isWorkspaceProjectId: id => id.startsWith('workspace:'), extractWorkspaceId: id => id.slice(10) },
+        // The real module, like the real `resolveSessionScope` the harness maps below.
+        '../../../utils/workspaceIds': workspaceIds,
         '../../../stores/sessionTreeExpansion': { useSessionTreeExpansionStore: () => ({ isExpanded: () => true, reconcile() {}, toggle() {}, reveal: () => [] }) },
         '../../../utils/sessionTree.js': { buildSessionTree: () => ({ nodes: new Map(), rootIds: [] }), flattenTree: () => [] },
         '../../../utils/sessions': { isSessionUnread: () => false },

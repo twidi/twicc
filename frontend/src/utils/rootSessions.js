@@ -4,7 +4,11 @@ import { retainSessionArray } from './retain.js'
 import { noteStageRun } from './stageRuns.js'
 
 // Root-session index (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, 5.1).
-// One lazily created computed per raw `sessions` object.
+// One lazily created computed per raw `sessions` object. The computed keeps the
+// first owner seen with that object and reads its `startupProgress`. This is
+// correct because the store and its state share one raw `sessions` and one
+// `startupProgress`; a second owner with its own `startupProgress` and the same
+// `sessions` would read the first owner's.
 const indexes = new WeakMap()
 
 /**

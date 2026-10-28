@@ -111,6 +111,9 @@ export function computeSidebarNaturalMembership(options, previous) {
         const sessions = startup ? toRaw(data.sessions) : data.sessions
         const roots = startup ? data.rootSessions.map(toRaw) : data.rootSessions
         noteStageRun('blocks:extension')
+        // The extension never holds a member of `list`: it skips the natural
+        // members, and a member it could reach that is not natural fails the
+        // same archive filter. `orderSidebarNatural` still dedupes on it.
         extension = extendTreeCandidates(startup ? natural.map(toRaw) : natural, {
             roots,
             lookup: id => sessions[id],
@@ -215,7 +218,12 @@ export function orderSidebarNatural(options, list, naturalIds, extension, previo
     const startup = data.inStartupPhase()
     const read = startup ? toRaw : same
     const compare = sessionSortComparator(startup ? toRaw(data.processStates) : data.processStates)
-    const merged = [...restricted, ...extension].sort((a, b) => compare(read(a), read(b)))
+    // `naturalIds` also holds the extension ids. The extension never holds a
+    // member of `list` (see `computeSidebarNaturalMembership`), but the merge
+    // restricts on the natural members only, so it can never hold a duplicate.
+    const extensionIds = new Set(extension.map(session => read(session).id))
+    const merged = [...restricted.filter(session => !extensionIds.has(session.id)), ...extension]
+        .sort((a, b) => compare(read(a), read(b)))
     return retainSessionArray(previous, merged)
 }
 
@@ -317,7 +325,9 @@ export function computeSidebarSessionBlocks(options, previous) {
  *
  * @param {() => Object} getOptions - returns the options of
  *   `computeSidebarSessionBlocks`; called inside a computed, so it may read
- *   props and refs
+ *   props and refs. Every value it returns must be a primitive or a stable
+ *   reference: the fields are compared with `Object.is`, so an inline object
+ *   or array would rerun every stage.
  * @returns {{
  *   blocks: import('vue').ComputedRef<{ extra: ?Object, crossFilterPinned: Object[],
  *     crossFilterActive: Object[], natural: Object[] }>,

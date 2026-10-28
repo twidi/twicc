@@ -48,7 +48,7 @@ test('a subagent add or removal keeps the same array instance', () => {
         delete owner.sessions['a-sa0']
         assert.strictEqual(getRootSessions(owner), before, `removal, startup ${active}`)
         // Positive control: both writes reran the stage, so the identity comes from retention.
-        assert.ok(probe.runs() >= 2, `runs, startup ${active}`)
+        assert.equal(probe.runs(), 2, `runs, startup ${active}`)
         probe.stop()
     }
 })
@@ -64,6 +64,22 @@ test('a root add returns a new array with the root at the end', () => {
         assert.notStrictEqual(after, before, `startup ${active}`)
         assert.deepEqual(ids(after), ['a', 'b', 'c', 'd'], `startup ${active}`)
         assert.strictEqual(probe.current(), after, `startup ${active}`)
+        probe.stop()
+    }
+})
+
+test('a root removal returns a new array without the root', () => {
+    for (const active of [false, true]) {
+        const owner = buildOwner()
+        startupPhase(owner, active)
+        const probe = subscribe(owner)
+        const before = probe.current()
+        delete owner.sessions.b
+        const after = getRootSessions(owner)
+        assert.notStrictEqual(after, before, `startup ${active}`)
+        assert.deepEqual(ids(after), ['a', 'c'], `startup ${active}`)
+        assert.strictEqual(probe.current(), after, `startup ${active}`)
+        assert.equal(probe.runs(), 1, `runs, startup ${active}`)
         probe.stop()
     }
 })

@@ -88,6 +88,3 @@ export function getProjectActivityIndex(store) {
     indexes.set(store, index)
     return index
 }
-
-// Test-side name of the frozen index (the only line added to the baseline copy).
-export { getProjectActivityIndex as createBaselineActivityIndex }

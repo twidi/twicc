@@ -10,7 +10,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { computed, effect, isReactive, reactive, toRaw } from 'vue'
-import { computeSidebarNaturalMembership, computeSidebarSessionBlocks, useSidebarSessionBlocks } from './sidebarSessions.js'
+import { computeSidebarNaturalMembership, computeSidebarSessionBlocks, orderSidebarNatural, useSidebarSessionBlocks }
+    from './sidebarSessions.js'
 import { resolveSessionScope } from './sessionLists.js'
 import { observeStageRuns } from './stageRuns.js'
 import { sessionSortComparator } from './sessionSort.js'
@@ -308,7 +309,7 @@ test('a non-flipping timestamp change reruns no membership stage; a flip updates
         assert.ok(probe.runs('blocks:crossFilter') >= 1, label)
         assert.ok(ids(view.blocks.value.crossFilterActive).includes(ID.p3Recent), `${label}: Active elsewhere updated`)
         assertNoRuns(probe, NATURAL_STAGES, label)
-        assertStagesCanRun(context, probe, blockStages(false), label)
+        assertStagesCanRun(context, probe, [...blockStages(false), 'unread:counts'], label)
         probe.stop()
     }
 })
@@ -356,9 +357,12 @@ test('during startup a progress message reruns the natural stages but not the cr
             const probe = watch(context, [view])
             const label = view.label
             if (tree) assert.ok(view.stages.natural.value.extension.length > 0, `${label}: an extension exists`)
+            const naturalBefore = view.stages.natural.value
             progressMessage(state)
             probe.flush()
             assert.ok(probe.runs('blocks:natural') >= 1, label)
+            // Nothing changed: the rerun keeps its previous output.
+            assert.strictEqual(view.stages.natural.value, naturalBefore, label)
             if (tree) {
                 assert.ok(probe.runs('blocks:extension') >= 1, label)
                 assert.ok(probe.runs('blocks:naturalOrder') >= 1, label)
@@ -509,10 +513,9 @@ test('during startup, writes between two progress messages rerun no natural stag
             progressMessage(state)
             probe.flush()
             assert.ok(probe.runs('blocks:natural') >= 1, `${label}: progress message positive control`)
-            if (tree) {
-                assert.ok(probe.runs('blocks:extension') >= 1, `${label}: extension positive control`)
-                assert.ok(probe.runs('blocks:naturalOrder') >= 1, `${label}: naturalOrder positive control`)
-            }
+            // The writes changed the natural members, so the order stage reruns in both modes.
+            assert.ok(probe.runs('blocks:naturalOrder') >= 1, `${label}: naturalOrder positive control`)
+            if (tree) assert.ok(probe.runs('blocks:extension') >= 1, `${label}: extension positive control`)
             const expected = baselineOutsideStartup(state, view.options)
             assertSameBlocks(view.blocks.value, expected.blocks,
                 { processStates: expected.processStates, extension: extensionIds(view.options) }, label)
@@ -584,7 +587,7 @@ test('a subagent add or removal reruns no block stage; an unreadContent flip rea
             assert.ok(probe.runs('blocks:crossFilter') >= 1, label)
             assert.ok(ids(view.blocks.value.crossFilterActive).includes(ID.p3Recent), label)
             assert.equal(reads, 0, `${label}: no subagent field read`)
-            assertStagesCanRun(context, probe, blockStages(tree), label)
+            assertStagesCanRun(context, probe, [...blockStages(tree), 'unread:counts'], label)
             probe.stop()
         }
     }
@@ -606,12 +609,43 @@ test('every fixed stage name runs at least once along the shared update sequence
     probe.stop()
 })
 
+test('the natural order never holds a list member twice, even if the extension held one', () => {
+    for (const scope of SCOPES) {
+        const context = setup()
+        const options = blockOptions(context, scope, { showAsTree: true })
+        const { list, natural, naturalIds, extension } = computeSidebarNaturalMembership(options)
+        assert.ok(extension.length > 0, scope)
+        const expected = new Set([...ids(natural), ...ids(extension)])
+        // The invariant holds today: the extension holds no member of the list.
+        assert.ok(!ids(extension).some(id => ids(list.ordered).includes(id)), scope)
+        assert.deepEqual(new Set(ids(orderSidebarNatural(options, list, naturalIds, extension))), expected, scope)
+        // An extension that broke it (a natural member added to it) still gives each session once.
+        const order = ids(orderSidebarNatural(options, list, naturalIds, [...extension, natural[0]]))
+        assert.equal(order.length, expected.size, scope)
+        assert.deepEqual(new Set(order), expected, scope)
+    }
+})
+
 // ---------------------------------------------------------------------------
 // Parity with the frozen baseline (7.1 #9)
 
+/**
+ * Own setup of the workspace-pin variant: two read roots pinned `workspace`,
+ * one in p1 (a member of w) and one in p8 (outside w). They are added here, not
+ * in the shared fixture, so the counts of the other tests do not change.
+ */
+const WORKSPACE_PINNED = { member: 'ws-pinned-p1', outside: 'ws-pinned-p8' }
+function addWorkspacePinnedRoots(state) {
+    addRoot(state, WORKSPACE_PINNED.member, 'p1', { pinned: 'workspace' })
+    addRoot(state, WORKSPACE_PINNED.outside, 'p8', { pinned: 'workspace' })
+}
+
 const PARITY_VARIANTS = [
-    { sessionId: null, showArchivedProjects: false, showArchived: false },
-    { sessionId: ID.p3Recent, showArchivedProjects: true, showArchived: true },
+    { name: 'default', options: { sessionId: null, showArchivedProjects: false, showArchived: false } },
+    { name: 'selected, archived shown', options: { sessionId: ID.p3Recent, showArchivedProjects: true, showArchived: true } },
+    // The active workspace w in every scope, and no "Active elsewhere" block.
+    { name: 'workspace pins', prepare: addWorkspacePinnedRoots, options: { sessionId: null, showArchivedProjects: false,
+        showArchived: false, activeWorkspaceId: 'w', showActiveAcrossFilters: false } },
 ]
 
 test('the blocks equal the frozen baseline in every fixture scope, flat and tree, along an update sequence', () => {
@@ -619,13 +653,14 @@ test('the blocks equal the frozen baseline in every fixture scope, flat and tree
         for (const tree of [false, true]) {
             for (const variant of PARITY_VARIANTS) {
                 const context = setup({ prepare: (state) => {
-                    state.settings.isShowArchivedProjects = variant.showArchivedProjects
+                    state.settings.isShowArchivedProjects = variant.options.showArchivedProjects
+                    variant.prepare?.(state)
                 } })
                 const { state } = context
-                const view = mountView(context, scope, { showAsTree: tree, ...variant })
+                const view = mountView(context, scope, { showAsTree: tree, ...variant.options })
                 const probe = watch(context, [view])
                 const compare = (step) => {
-                    const label = `${view.label} ${variant.sessionId ?? '-'} ${variant.showArchivedProjects}: ${step}`
+                    const label = `${view.label} ${variant.name}: ${step.name}`
                     const extension = extensionIds(view.options)
                     const expected = step.startup === 'progress'
                         ? baselineOutsideStartup(state, view.options)
@@ -635,6 +670,13 @@ test('the blocks equal the frozen baseline in every fixture scope, flat and tree
                     // The one-shot wrapper gives the same blocks.
                     assertSameBlocks(computeSidebarSessionBlocks(view.options), view.blocks.value,
                         { processStates: state.processStates }, `${label} (one-shot)`)
+                }
+                if (variant.prepare && ['p0', 'p2', 'ws:w1'].includes(scope)) {
+                    // The variant reaches the workspace-pin path: only the member's pin is "Pinned elsewhere".
+                    const pinned = ids(view.blocks.value.crossFilterPinned)
+                    assert.ok(pinned.includes(WORKSPACE_PINNED.member), `${view.label} ${variant.name}: member pin`)
+                    assert.ok(!pinned.includes(WORKSPACE_PINNED.outside), `${view.label} ${variant.name}: outside pin`)
+                    assert.deepEqual(view.blocks.value.crossFilterActive, [], `${view.label} ${variant.name}: no active block`)
                 }
                 compare({ name: 'initial', startup: null })
                 for (const step of FIXTURE_UPDATE_SEQUENCE) {

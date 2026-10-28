@@ -89,6 +89,10 @@ test('workspace membership getters follow a new worktree and ignore project acti
     assert.equal(evaluations, 3)
     assert.equal(runs['workspace:visible'], 1)
     assert.equal(runs['workspace:all'] || 0, 0)
+    // Positive control of the zero 'workspace:all' runs above: a new worktree of a member reruns it.
+    store.projects.wt2 = { id: 'wt2', worktree_of: 'q' }
+    assert.deepEqual(membership.value[1], ['p', 'wt', 'q', 'wt2'])
+    assert.ok(runs['workspace:all'] >= 1)
     // One membership resolver per store: none of these changes rebuilt it.
     assert.strictEqual(workspacesStore.workspaceMembership, resolver)
 })

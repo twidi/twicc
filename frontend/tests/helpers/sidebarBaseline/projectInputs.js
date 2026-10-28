@@ -8,6 +8,10 @@
 import { computed } from 'vue'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../../../src/utils/projectActivity.js'
 
+// Test-side name of the frozen activity index, so that the copy in
+// `projectProcessActivity.js` keeps only its imports rewritten.
+export { getProjectActivityIndex as createBaselineActivityIndex } from './projectProcessActivity.js'
+
 // Special project ID for "All Projects" mode
 export const ALL_PROJECTS_ID = '__all__'
 

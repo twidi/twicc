@@ -1,4 +1,4 @@
-import { computed, toRaw } from 'vue'
+import { computed, reactive, toRaw } from 'vue'
 import { ALL_PROJECTS_ID } from '../constants.js'
 import { sessionSortComparator } from './sessionSort.js'
 import { retainSessionArray } from './retain.js'
@@ -108,7 +108,9 @@ export function getScopeSessionList(state, scope) {
     let lists = listsByState.get(owner)
     if (!lists) listsByState.set(owner, lists = new Map())
     let list = lists.get(scope.key)
-    if (!list) lists.set(scope.key, list = createScopeList(state, scope))
+    // The list reads the reactive state whatever reference the first caller
+    // passes, so a raw first caller still gets a list that tracks.
+    if (!list) lists.set(scope.key, list = createScopeList(reactive(owner), scope))
     return list
 }
 
