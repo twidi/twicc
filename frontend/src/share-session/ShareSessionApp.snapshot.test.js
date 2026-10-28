@@ -57,7 +57,7 @@ function realStore(settings) {
     const source = readFileSync(new URL('./shims/dataStoreShim.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .+ from .+\n/gm, '').replace('export const useDataStore', 'const useDataStore')
     const deps = { ...agentLinks, ...visualItems, ...parsed, ...constants, defineStore,
-        markRaw: Vue.markRaw, getSessionCutoffMs, shareApi: shareApi.shareApi, useSettingsStore: () => settings }
+        markRaw: Vue.markRaw, toRaw: Vue.toRaw, getSessionCutoffMs, shareApi: shareApi.shareApi, useSettingsStore: () => settings }
     return new Function(...Object.keys(deps), `${body}; return useDataStore`)(...Object.values(deps))
 }
 

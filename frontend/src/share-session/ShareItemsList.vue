@@ -45,18 +45,16 @@ async function loadInitial() {
         for (const [lo, hi] of ranges) qs.append('range', `${lo}:${hi}`)
         const [metadata] = await Promise.all([
             store.loadSessionMetadata(props.projectId, props.sessionId, props.parentSessionId),
-            store.loadSessionItemsRanges(props.projectId, props.sessionId, ranges, props.parentSessionId),
+            store.loadSessionItemsRanges(props.projectId, props.sessionId, ranges, props.parentSessionId, { recompute: false }),
             // Completion state of every visible tool call — without it every tool
             // renders as running (resultCount 0). Live updates then flow via WS.
             store.fetchToolStates(props.projectId, props.sessionId, props.parentSessionId),
         ])
-        if (metadata) {
-            // Metadata first initializes the array; the ranges call above already
-            // added content for the initial window — re-apply metadata then let the
-            // content fill (order-independent because both recompute).
-            store.initSessionItemsFromMetadata(props.sessionId, metadata)
-            await store.loadSessionItemsRanges(props.projectId, props.sessionId, ranges, props.parentSessionId)
-        }
+        // The metadata merge keeps the rows that already carry content (the initial
+        // window above, live WS items), so one recompute settles both. A failed
+        // window load is filled by the gap loading once the rows are visible.
+        if (metadata) store.initSessionItemsFromMetadata(props.sessionId, metadata, { recompute: false })
+        store.recomputeVisualItems(props.sessionId)
     } catch (error) {
         if (isSessionNotReadyError(error)) {
             preparationPending.value = true

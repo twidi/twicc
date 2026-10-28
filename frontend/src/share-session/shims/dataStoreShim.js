@@ -5,7 +5,7 @@ import { getSessionCutoffMs } from '../../utils/sessions'
 // throws in dev so drift is caught, and no-ops the write surface (failed sends,
 // api-error recovery) that read-only mode never exercises.
 import { defineStore } from 'pinia'
-import { markRaw } from 'vue'
+import { markRaw, toRaw } from 'vue'
 import { DISPLAY_LEVEL, SYNTHETIC_ITEM } from '../../constants'
 import { computeVisualItems, insertDaySeparators, markLiveTimestampAnchor, visualItemEqual } from '../../utils/visualItems'
 import { getParsedContent, setParsedContent, clearParsedContent } from '../../utils/parsedContent'
@@ -99,7 +99,8 @@ export const useDataStore = defineStore('shareData', {
             try { return await shareApi().fetchItemsMetadata(parentSessionId ? sessionId : null) }
             catch { return null }
         },
-        initSessionItemsFromMetadata(sessionId, metadata) {
+        // `recompute: false` (here and in the item loaders below): the caller recomputes once itself.
+        initSessionItemsFromMetadata(sessionId, metadata, { recompute = true } = {}) {
             // A server-filtered share delivers a SPARSE set of line_nums (the display
             // ceiling drops debug/over-ceiling lines), so place each item at line_num-1
             // to stay aligned with content-fill / getSessionItem (both line_num-1 keyed);
@@ -120,7 +121,7 @@ export const useDataStore = defineStore('shareData', {
                     kind: m.kind, timestamp: m.timestamp ?? null, content: null,
                 }
             }
-            this.recomputeVisualItems(sessionId)
+            if (recompute) this.recomputeVisualItems(sessionId)
         },
         updateSessionItemsContent(sessionId, items) {
             const arr = this.sessionItems[sessionId]
@@ -138,22 +139,22 @@ export const useDataStore = defineStore('shareData', {
             }
             this.recomputeVisualItems(sessionId)
         },
-        addSessionItems(sessionId, items) {
+        addSessionItems(sessionId, items, { recompute = true } = {}) {
             const arr = this.sessionItems[sessionId] || (this.sessionItems[sessionId] = [])
             for (const it of items) {
                 const i = it.line_num - 1
                 arr[i] = { ...it, content: it.content ?? null }
                 clearParsedContent(arr[i])
             }
-            this.recomputeVisualItems(sessionId)
+            if (recompute) this.recomputeVisualItems(sessionId)
         },
-        async loadSessionItemsRanges(_projectId, sessionId, ranges, parentSessionId = null) {
+        async loadSessionItemsRanges(_projectId, sessionId, ranges, parentSessionId = null, { recompute = true } = {}) {
             if (!ranges?.length) return true
             const qs = rangesToQS(ranges)
             if (!qs) return false
             try {
                 const items = await shareApi().fetchItems(qs, parentSessionId ? sessionId : null)
-                this.addSessionItems(sessionId, items)
+                this.addSessionItems(sessionId, items, { recompute })
                 return true
             } catch { return false }
         },
@@ -189,8 +190,10 @@ export const useDataStore = defineStore('shareData', {
         // ── Visual items (simplified: no streaming/optimistic/working/failed) ──
         recomputeVisualItems(sessionId) {
             // Compact the sparse (line_num-1 keyed) array before computeVisualItems,
-            // which iterates with for..of and would choke on holes.
-            const items = (this.sessionItems[sessionId] || []).filter(Boolean)
+            // which iterates with for..of and would choke on holes. Read the raw array,
+            // like the SPA store: this action tracks nothing, and each property read
+            // through the reactive proxy costs a Vue trap.
+            const items = (toRaw(this.sessionItems[sessionId]) || []).filter(Boolean)
             const isAssistantTurn = !!this.liveTurns[sessionId]
             if (!items.length && !isAssistantTurn) {
                 this.visualItems[sessionId] = []; this._cache[sessionId] = new Map(); return

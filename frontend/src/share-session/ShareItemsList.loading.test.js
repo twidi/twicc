@@ -99,3 +99,31 @@ for (const opportunity of ['measured update', 'scroll']) {
         assert.equal(v.calls.length, 1, 'no-progress settlement still cannot self-loop')
     })
 }
+
+const initialBlock = source.slice(source.indexOf('async function loadInitial('), source.indexOf('onMounted(loadInitial)'))
+for (const metadataFirst of [true, false]) {
+    test(`share opening loads the content window once and recomputes once (metadata ${metadataFirst ? 'first' : 'last'})`, async () => {
+        const metadata = deferred(), content = deferred(), calls = []
+        const store = {
+            loadSessionMetadata: () => metadata.promise,
+            loadSessionItemsRanges: (...args) => { calls.push(['ranges', ...args]); return content.promise },
+            fetchToolStates: async () => {},
+            initSessionItemsFromMetadata: (...args) => calls.push(['init', ...args]),
+            recomputeVisualItems: (...args) => calls.push(['recompute', ...args]),
+        }
+        const initialLoading = Vue.ref(true), preparationPending = Vue.ref(false)
+        const props = { projectId: 'share', sessionId: 's', parentSessionId: null, lastLine: 500 }
+        const loadInitial = new Function('props', 'store', 'initialLoading', 'preparationPending', 'isSessionNotReadyError', 'INITIAL',
+            `${initialBlock}; return loadInitial`)(props, store, initialLoading, preparationPending, () => false, 100)
+        const done = loadInitial()
+        if (metadataFirst) { metadata.resolve([{ line_num: 1 }]); await flush(); content.resolve(true) }
+        else { content.resolve(true); await flush(); metadata.resolve([{ line_num: 1 }]) }
+        await done
+        assert.deepEqual(calls, [
+            ['ranges', 'share', 's', [[401, 500]], null, { recompute: false }],
+            ['init', 's', [{ line_num: 1 }], { recompute: false }],
+            ['recompute', 's'],
+        ])
+        assert.equal(initialLoading.value, false)
+    })
+}
