@@ -29,6 +29,7 @@ import { ALL_PROJECTS_ID, baselineProjectInputs,
     hasActiveStartupPhase as baselineHasActiveStartupPhase } from './sidebarBaseline/projectInputs.js'
 import { getStableSessionList as baselineGetStableSessionList } from './sidebarBaseline/sessionLists.js'
 import { getStableSessionList } from '../../src/utils/sessionLists.js'
+import { getRootSessions } from '../../src/utils/rootSessions.js'
 import { isWorkspaceProjectId } from '../../src/utils/workspaceIds.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
 
@@ -389,5 +390,10 @@ export function createBaselineData(state) {
  * in the real store. Later tasks plug their shipped modules in here.
  */
 export function createShippedData(state) {
-    return createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase })
+    const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase })
+    const rootSessions = computed(() => getRootSessions(state))
+    Object.defineProperties(facades.data, {
+        rootSessions: { get: () => rootSessions.value, enumerable: true },
+    })
+    return facades
 }
