@@ -81,7 +81,7 @@ KIND_SHARES = {
     TimelineKind.SESSION_CREATED: 2.0, TimelineKind.TITLE_CHANGED: 18.0,
     TimelineKind.PROCESS_STARTED: 5.0, TimelineKind.PROCESS_ENDED: 5.0,
     TimelineKind.SETTINGS_CHANGED: 5.0,
-    **{kind: 4.95 / 8 for kind in FAMILIES["organization"]},
+    **{kind: 4.95 / len(FAMILIES["organization"]) for kind in FAMILIES["organization"]},
     TimelineKind.BACKEND_STARTED: 0.025, TimelineKind.BACKEND_ENDED: 0.025,
 }
 #: Author -> share of the rows (section 7). No external MCP row at all.

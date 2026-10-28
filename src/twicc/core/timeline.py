@@ -108,6 +108,8 @@ PAYLOAD_TYPES: dict[str, type | None] = {
     TimelineKind.HIDDEN_ENDED: None,
     TimelineKind.MUTED_STARTED: None,
     TimelineKind.MUTED_ENDED: None,
+    TimelineKind.TREE_DETACHED_STARTED: None,
+    TimelineKind.TREE_DETACHED_ENDED: None,
     TimelineKind.PINNED_STARTED: PinnedStartedData,
     TimelineKind.PINNED_ENDED: PinnedEndedData,
     TimelineKind.BACKEND_STARTED: BackendStartedData,

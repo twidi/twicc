@@ -52,6 +52,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
         TimelineKind.ARCHIVED_STARTED, TimelineKind.ARCHIVED_ENDED,
         TimelineKind.HIDDEN_STARTED, TimelineKind.HIDDEN_ENDED,
         TimelineKind.MUTED_STARTED, TimelineKind.MUTED_ENDED,
+        TimelineKind.TREE_DETACHED_STARTED, TimelineKind.TREE_DETACHED_ENDED,
         TimelineKind.PINNED_STARTED, TimelineKind.PINNED_ENDED,
     ),
     "twicc": (TimelineKind.BACKEND_STARTED, TimelineKind.BACKEND_ENDED),

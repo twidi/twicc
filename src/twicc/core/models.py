@@ -525,6 +525,10 @@ class Session(models.Model):
     # the sticky `unread_only` filter in `views._get_sessions_page`, never by
     # a write path. This is TwiCC UI behavior, not an AgentSettings field.
     mute_on_user_turn = models.BooleanField(default=False)
+    # The sidebar shows this session as a root even though it was spawned by
+    # another one: it leaves the tree of its spawner. TwiCC UI behavior,
+    # display only. Not an AgentSettings field.
+    tree_detached = models.BooleanField(default=False)
     # Trace of the session that invoked the CLI to create this one
     # (filiation). Set automatically by `twicc create-session` via PID
     # ancestry (cf. `twicc whoami`); not exposed as a CLI flag. Independent
@@ -2289,6 +2293,8 @@ class TimelineKind(models.TextChoices):
     HIDDEN_ENDED = "hidden.ended", "Hidden ended"
     MUTED_STARTED = "muted.started", "Muted started"
     MUTED_ENDED = "muted.ended", "Muted ended"
+    TREE_DETACHED_STARTED = "tree_detached.started", "Tree detached started"
+    TREE_DETACHED_ENDED = "tree_detached.ended", "Tree detached ended"
     PINNED_STARTED = "pinned.started", "Pinned started"
     PINNED_ENDED = "pinned.ended", "Pinned ended"
     BACKEND_STARTED = "backend.started", "Backend started"
