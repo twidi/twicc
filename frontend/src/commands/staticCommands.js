@@ -1187,6 +1187,22 @@ export function initStaticCommands(router) {
             action: () => settings.setCompactSessionList(!settings.compactSessionList),
         },
         {
+            id: 'display.toggle-sessions-as-tree',
+            label: 'Toggle Show Orchestrated Sessions As Tree',
+            icon: 'sitemap',
+            category: 'display',
+            toggled: () => settings.isShowSessionsAsTree,
+            action: () => settings.setShowSessionsAsTree(!settings.showSessionsAsTree),
+        },
+        {
+            id: 'display.toggle-provider-icons',
+            label: 'Toggle Show Provider Icons',
+            icon: 'icons',
+            category: 'display',
+            toggled: () => settings.isShowProviderIcons,
+            action: () => settings.setShowProviderIcons(!settings.showProviderIcons),
+        },
+        {
             id: 'display.toggle-show-archived-sessions',
             label: 'Toggle Show Archived Sessions',
             icon: 'box-archive',
