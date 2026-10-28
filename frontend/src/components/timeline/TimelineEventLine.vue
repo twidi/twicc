@@ -249,7 +249,11 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
 .timeline-error-rest {
     font-family: var(--wa-font-family-code);
     font-size: var(--wa-font-size-xs);
-    color: var(--wa-color-danger-60);
+    /* The theme-aware danger text color: danger-60 is unreadable on the light card. */
+    color: var(--wa-color-danger-on-quiet);
+    /* Drop the inline-code chip (Web Awesome's native.css): red on its tinted background reads badly in light. */
+    background: none;
+    padding: 0;
 }
 
 /* The old 8px gap under the first line (the error is a block, it has no flex gap). */
