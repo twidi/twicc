@@ -2297,7 +2297,10 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                         placement="top"
                         class="attachments-popover"
                     >
-                        <div class="attachments-popover-strip">
+                        <div
+                            class="attachments-popover-strip"
+                            :style="{ '--strip-count': attachmentStripItems.length }"
+                        >
                             <AttachmentStrip
                                 :items="attachmentStripItems"
                                 editable
@@ -2797,13 +2800,26 @@ body.sidebar-toggle-floating .message-input-toolbar {
 }
 
 /* The strip is one row that scrolls sideways: its box needs a definite width (an
-   inline-size container does not size to its content). Its tiles shrink when the
-   popover is narrow (mobile), through the `attachment-strip-host` container query
+   inline-size container does not size to its content). That width is the room the
+   tiles need (count x tile size, gaps and the strip padding), capped at the room of
+   the popover: a few tiles do not leave a wide empty popover. Its tiles shrink when
+   the popover is narrow (mobile), through the `attachment-strip-host` container query
    of AttachmentStrip.vue. */
 .attachments-popover-strip {
     container: attachment-strip-host / inline-size;
-    width: min(24rem, calc(90vw - 2 * var(--wa-space-l)));
+    width: min(
+        24rem,
+        calc(90vw - 2 * var(--wa-space-l)),
+        calc(var(--strip-count, 1) * 96px + (var(--strip-count, 1) - 1) * var(--wa-space-s) + 8px)
+    );
     max-width: 100%;
+    margin-inline: auto;
+}
+
+/* Tiles that all fit sit in the middle of the strip; when they overflow, `safe` keeps
+   the first one reachable and the row scrolls as usual. */
+.attachments-popover-strip :deep(.attachment-strip) {
+    justify-content: safe center;
 }
 
 .popover-actions {
