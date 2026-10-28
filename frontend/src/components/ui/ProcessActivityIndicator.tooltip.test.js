@@ -20,3 +20,10 @@ test('every AppTooltip of the template is guarded by the tooltip prop', () => {
     assert.equal(all.length, 3)
     assert.equal(guarded.length, 3)
 })
+
+test('the ProcessIndicator branch renders the unread background mode', () => {
+    const template = source.slice(source.indexOf('<template>'), source.indexOf('</template>\n\n<style'))
+    const tag = template.match(/<ProcessIndicator\b[^>]*>/s)?.[0] ?? ''
+    assert.match(tag, /:unread=/)
+    assert.match(tag, /summary\.unreadShellCount/)
+})

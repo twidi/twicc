@@ -5,7 +5,8 @@
  *
  * Collects the project set's live sessions and unread count, then hands them
  * to ProcessActivityIndicator, which owns the priority cascade (pending
- * request > unread > assistant turn > background shells > crons > active
+ * request > unread (eye, alternating with the terminal or clock when every
+ * unread session has background work) > assistant turn > background shells > crons > active
  * process > nothing) shared with the Orchestration tab's sessions indicator.
  *
  * Used in project cards, workspace cards, detail panels, and project selectors

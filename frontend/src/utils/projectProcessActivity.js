@@ -1,13 +1,19 @@
 import { computed } from 'vue'
 import { isSessionUnread } from './sessions.js'
-import { userTurnBackgroundShellCount } from './backgroundWork.js'
+import { unreadBackgroundKind, userTurnBackgroundShellCount } from './backgroundWork.js'
 
 const indexes = new WeakMap()
 const EMPTY = Object.freeze({ processCount: 0, pendingRequestCount: 0, hasAssistantTurn: false,
-    activeCronCount: 0, backgroundShellCount: 0, unreadCount: 0 })
+    activeCronCount: 0, backgroundShellCount: 0, unreadCount: 0,
+    unreadBackgroundCount: 0, unreadShellCount: 0 })
+const NO_UNREAD = Object.freeze({ count: 0, background: 0, shells: 0 })
 
 function sameSummary(a, b) {
     return a && Object.keys(EMPTY).every(key => a[key] === b[key])
+}
+
+function sameUnread(a, b) {
+    return a && a.count === b.count && a.background === b.background && a.shells === b.shells
 }
 
 function retainMap(previous, next, equal = (a, b) => a === b) {
@@ -39,12 +45,17 @@ export function getProjectActivityIndex(store) {
         const next = new Map()
         if (!store.isStartupInProgress) {
             for (const session of Object.values(store.sessions)) {
-                if (isSessionUnread(session, store.processStates[session.id])) {
-                    next.set(session.project_id, (next.get(session.project_id) || 0) + 1)
-                }
+                const ps = store.processStates[session.id]
+                if (!isSessionUnread(session, ps)) continue
+                let unread = next.get(session.project_id)
+                if (!unread) next.set(session.project_id, unread = { count: 0, background: 0, shells: 0 })
+                unread.count++
+                const kind = unreadBackgroundKind(ps)
+                if (kind) unread.background++
+                if (kind === 'shell') unread.shells++
             }
         }
-        return retainMap(previous, next)
+        return retainMap(previous, next, sameUnread)
     })
     const index = {
         summary(projectIds, previous) {
@@ -55,18 +66,21 @@ export function getProjectActivityIndex(store) {
                     if (key === 'hasAssistantTurn') result[key] ||= counts[key]
                     else result[key] += counts[key]
                 }
-                result.unreadCount += unreadCounts.value.get(id) || 0
+                const unread = unreadCounts.value.get(id) || NO_UNREAD
+                result.unreadCount += unread.count
+                result.unreadBackgroundCount += unread.background
+                result.unreadShellCount += unread.shells
             }
             return sameSummary(previous, result) ? previous : result
         },
         unread(projectIds) {
-            return [...new Set(projectIds)].reduce((total, id) => total + (unreadCounts.value.get(id) || 0), 0)
+            return [...new Set(projectIds)].reduce((total, id) => total + (unreadCounts.value.get(id)?.count || 0), 0)
         },
         /** Sum over all projects, or only those accepted by `includeProject(projectId)`. */
         totalUnread(includeProject) {
             let total = 0
-            for (const [id, count] of unreadCounts.value) {
-                if (!includeProject || includeProject(id)) total += count
+            for (const [id, unread] of unreadCounts.value) {
+                if (!includeProject || includeProject(id)) total += unread.count
             }
             return total
         },

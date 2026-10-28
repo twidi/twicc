@@ -30,3 +30,18 @@ test('equal request counts preserve project summaries and unrelated project subs
     assert.equal(p.value.hasAssistantTurn, false); assert.strictEqual(q.value, beforeQ)
     stop()
 })
+
+test('unread cron-only session counts as unread background without a shell next to a read shell session', () => {
+    const store = reactive({ isStartupInProgress: false,
+        sessions: { a: { id: 'a', project_id: 'p', last_new_content_at: '2026-10-07T12:00:00Z' },
+            b: { id: 'b', project_id: 'p', last_new_content_at: '2026-10-07T12:00:00Z', last_viewed_at: '2026-10-07T12:05:00Z' } },
+        processStates: {
+            a: { project_id: 'p', state: 'user_turn', pending_requests: [], active_crons: [{ id: 'x' }] },
+            b: { project_id: 'p', state: 'user_turn', pending_requests: [], active_crons: [], background_work_in_progress: { shells: 1 } },
+        },
+        getProjectIndicatorScopeIds: id => [id],
+    })
+    store.getProjectActivitySummary = (ids, previous) => getProjectActivityIndex(store).summary(ids, previous)
+    const p = create(computed, store, { projectIds: ['p'] }, isSessionUnread, summarizeProcessActivity)
+    assert.equal(p.value.unreadBackgroundCount, 1); assert.equal(p.value.unreadShellCount, 0)
+})

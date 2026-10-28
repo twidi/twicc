@@ -54,13 +54,15 @@ test('memory and labels do not recompute activity consumers', async () => {
 test('state requests crons shells and process removal update the canonical counts', () => {
     const { store, index } = fixture()
     assert.deepEqual(index.summary(['p', 'q', 'p']), { processCount: 1, pendingRequestCount: 0,
-        hasAssistantTurn: true, activeCronCount: 0, backgroundShellCount: 0, unreadCount: 1 })
+        hasAssistantTurn: true, activeCronCount: 0, backgroundShellCount: 0, unreadCount: 1,
+        unreadBackgroundCount: 0, unreadShellCount: 0 })
     store.processStates.a.pending_requests = [{ id: 'r' }]
     store.processStates.a.active_crons = [{ id: 'cron' }]
     store.processStates.a.background_work_in_progress = { shells: 2 }
     store.processStates.a.state = 'user_turn'
     assert.deepEqual(index.summary(['p']), { processCount: 1, pendingRequestCount: 1,
-        hasAssistantTurn: false, activeCronCount: 1, backgroundShellCount: 2, unreadCount: 1 })
+        hasAssistantTurn: false, activeCronCount: 1, backgroundShellCount: 2, unreadCount: 1,
+        unreadBackgroundCount: 1, unreadShellCount: 1 })
     delete store.processStates.a
     assert.equal(index.summary(['p']).processCount, 0); assert.equal(index.totalUnread(), 2)
 })
@@ -91,4 +93,44 @@ test('unrelated projects retain aggregate references when a different project ch
     assert.strictEqual(index.summary(['q'], before), before)
     store.sessions.b.last_viewed_at = store.sessions.b.last_new_content_at
     assert.notStrictEqual(index.summary(['q'], before), before)
+})
+
+test('unread background figures count unread sessions with a shell or a cron', () => {
+    const { store, index } = fixture()
+    store.processStates.b = { state: 'user_turn', project_id: 'q', pending_requests: [], active_crons: [],
+        background_work_in_progress: { shells: 1 } }
+    let s = index.summary(['q'])
+    assert.equal(s.unreadBackgroundCount, 1); assert.equal(s.unreadShellCount, 1)
+    // Cron-only unread session next to a read session with a shell.
+    store.sessions.c = { id: 'c', project_id: 'r', last_new_content_at: '2026-10-07T12:00:00Z' }
+    store.sessions.d = { id: 'd', project_id: 'r', last_new_content_at: '2026-10-07T12:00:00Z',
+        last_viewed_at: '2026-10-07T12:05:00Z' }
+    store.processStates.c = { state: 'user_turn', project_id: 'r', pending_requests: [], active_crons: [{ id: 'x' }] }
+    store.processStates.d = { state: 'user_turn', project_id: 'r', pending_requests: [], active_crons: [],
+        background_work_in_progress: { shells: 1 } }
+    s = index.summary(['r'])
+    assert.equal(s.unreadBackgroundCount, 1); assert.equal(s.unreadShellCount, 0); assert.equal(s.backgroundShellCount, 1)
+    s = index.summary(['q', 'r'])
+    assert.equal(s.unreadBackgroundCount, 2); assert.equal(s.unreadShellCount, 1)
+})
+
+test('unread background figures are zero during startup', () => {
+    const { store, index } = fixture()
+    store.processStates.b = { state: 'user_turn', project_id: 'q', pending_requests: [], active_crons: [],
+        background_work_in_progress: { shells: 1 } }
+    store.isStartupInProgress = true
+    const s = index.summary(['q'])
+    assert.equal(s.unreadBackgroundCount, 0); assert.equal(s.unreadShellCount, 0)
+})
+
+test('summary caching follows the unread background figures', () => {
+    const { store, index } = fixture()
+    store.processStates.b = { state: 'user_turn', project_id: 'q', pending_requests: [], active_crons: [{ id: 'x' }] }
+    const before = index.summary(['q'])
+    assert.equal(before.unreadShellCount, 0)
+    store.processStates.b.background_work_in_progress = { shells: 1 }
+    const after = index.summary(['q'], before)
+    assert.notStrictEqual(after, before); assert.equal(after.unreadShellCount, 1)
+    store.processStates.b.memory = 5
+    assert.strictEqual(index.summary(['q'], after), after)
 })

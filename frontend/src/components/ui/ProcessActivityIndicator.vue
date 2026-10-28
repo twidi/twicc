@@ -6,7 +6,8 @@
  *
  * Priority cascade (highest → lowest):
  * 1. Pending request: hand icon (waiting for user response)
- * 2. Unread sessions: eye icon
+ * 2. Unread sessions: eye icon; when every unread session has background work, the
+ *    eye alternates with the terminal (a shell is among them) or the clock
  * 3. Assistant turn: robot icon (the agent is actively working)
  * 4. Background shells in a user_turn session: terminal icon (turn over, but
  *    a shell the agent left running still runs)
@@ -51,10 +52,10 @@ const props = defineProps({
 
 const displayMode = computed(() => processActivityDisplayMode(props.summary))
 
-/** State to pass to ProcessIndicator for the three process-based display modes. */
+/** State to pass to ProcessIndicator for the process-based display modes. */
 const processIndicatorState = computed(() => {
     if (displayMode.value === 'assistant_turn') return 'assistant_turn'
-    return 'user_turn' // background_shells, crons and active_process render as user_turn variants
+    return 'user_turn' // unread_background, background_shells, crons and active_process render as user_turn variants
 })
 
 const tooltipText = computed(() => processActivityTooltip(props.summary, displayMode.value))
@@ -82,15 +83,17 @@ const animateStates = ['assistant_turn']
             </span>
             <AppTooltip v-if="tooltip" :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
-        <!-- Process states: assistant_turn / background_shells / crons / active_process -->
+        <!-- Process states: unread_background / assistant_turn / background_shells / crons / active_process -->
         <template v-else>
             <ProcessIndicator
                 :id="indicatorId"
                 :state="processIndicatorState"
                 :size="size"
                 :animate-states="animateStates"
-                :has-active-crons="displayMode === 'crons'"
-                :background-shells="displayMode === 'background_shells' ? summary.backgroundShellCount : 0"
+                :unread="displayMode === 'unread_background'"
+                :has-active-crons="displayMode === 'crons' || (displayMode === 'unread_background' && summary.unreadShellCount === 0)"
+                :background-shells="displayMode === 'background_shells' ? summary.backgroundShellCount
+                    : displayMode === 'unread_background' ? summary.unreadShellCount : 0"
             />
             <AppTooltip v-if="tooltip" :for="indicatorId">{{ tooltipText }}</AppTooltip>
         </template>
