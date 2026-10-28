@@ -1,6 +1,6 @@
 import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
 import { buildTimelineUrl } from '../utils/timeline/feed.js'
-import { placeSessionEvents } from '../utils/chatEvents/placement.js'
+import { normalizeChatTimestamp, placeSessionEvents } from '../utils/chatEvents/placement.js'
 import { projectEventSegments } from '../utils/chatEvents/segments.js'
 import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
 import { setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
@@ -203,6 +203,8 @@ function describeFetchFailure(error) {
     return error?.message || 'Unexpected error'
 }
 const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
+// Sessions whose last recompute allows a DEBUG_ONLY-only append to skip the next one.
+const debugAppendSafeSessions = new Set()
 
 /** A session item built from an items metadata row (no content yet). */
 function metadataItem(m) {
@@ -2365,6 +2367,7 @@ export const useDataStore = defineStore('data', {
                 return
             }
 
+            const previousLength = targetArray?.length ?? 0
             if (!targetArray) {
                 // Not initialized yet - create array from the items we have
                 // Find max line_num to know array size
@@ -2417,9 +2420,15 @@ export const useDataStore = defineStore('data', {
             }
 
             // Retire streaming blocks whose real items have arrived
-            this._retireStreamingBlocks(sessionId, newItems)
+            const retired = this._retireStreamingBlocks(sessionId, newItems)
 
-            if (recompute) this.recomputeVisualItems(sessionId)
+            // DEBUG_ONLY lines appended after the last one (a big share of a live turn:
+            // token counts, tool results) change no row outside the debug view; the last
+            // recompute recorded whether their times can move an event.
+            const debugOnlyAppend = previousLength > 0 && !extendedOverGap && !updatedMetadata?.length && !retired?.length
+                && debugAppendSafeSessions.has(sessionId)
+                && newItems.every(item => item.display_level === DISPLAY_LEVEL.DEBUG_ONLY && item.line_num > previousLength)
+            if (recompute && !debugOnlyAppend) this.recomputeVisualItems(sessionId)
         },
 
         /**
@@ -3414,6 +3423,7 @@ export const useDataStore = defineStore('data', {
                 this.localState.sessions[sessionId].itemsLoading = false
             }
             delete this.sessionItems[sessionId]
+            debugAppendSafeSessions.delete(sessionId)
             delete this.localState.sessionEventSegments?.[sessionId]
             delete this.localState.sessionEventRetired?.[sessionId]
             delete this.localState.sessionExpandedGroups[sessionId]
@@ -3494,25 +3504,6 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         recomputeVisualItems(sessionId) {
-            // Read the raw array: this action tracks nothing, and every property read
-            // through the reactive proxy costs a Vue trap (about 6x slower on a session
-            // with tens of thousands of items). The only write here is the lazy
-            // _parsedContent cache, filled without a trigger: the content change that
-            // made it stale already triggered (and cleared it) through the proxy.
-            const items = toRaw(this.sessionItems[sessionId]) || []
-            const failedSends = this.localState.failedSends[sessionId]
-            const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
-            const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
-            if (!items.length && !events.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
-                if (!this.localState.sessionVisualItems[sessionId] || this.localState.sessionVisualItems[sessionId].length) {
-                    this.localState.sessionVisualItems[sessionId] = []
-                }
-                if (!this.localState.visualItemCache[sessionId] || this.localState.visualItemCache[sessionId].size) {
-                    this.localState.visualItemCache[sessionId] = new Map()
-                }
-                return
-            }
-
             // Get effective display mode from settings store, unless this session
             // or one of its ancestors has the dev-mode debug override forced
             // (header toggle), which wins.
@@ -3520,6 +3511,44 @@ export const useDataStore = defineStore('data', {
             const mode = isDebugForced(this.localState, this.sessions, sessionId)
                 ? DISPLAY_MODE.DEBUG
                 : settingsStore.getDisplayMode
+            // Read the raw array: this action tracks nothing, and every property read
+            // through the reactive proxy costs a Vue trap (about 6x slower on a session
+            // with tens of thousands of items). The only write here is the lazy
+            // _parsedContent cache, filled without a trigger: the content change that
+            // made it stale already triggered (and cleared it) through the proxy.
+            const sourceItems = toRaw(this.sessionItems[sessionId]) || []
+            // Outside the debug view, leave out the untimed DEBUG_ONLY lines (the metadata
+            // stubs, most of a big session): such a line never becomes a row, never counts
+            // in a block or a group, and never bounds an event (see placeSessionEvents), so
+            // the result is the same for a fraction of the work. Timed ones stay: their
+            // time can still place an event. So do the 9 lines after a compact_summary,
+            // the window orderCompactItems counts in, one more per user message in it
+            // (each move of a /compact command shifts the summary, and its window, by one).
+            let items = sourceItems
+            if (mode !== DISPLAY_MODE.DEBUG) {
+                items = []
+                let compactWindowEnd = -1
+                for (let i = 0; i < sourceItems.length; i++) {
+                    const item = sourceItems[i]
+                    if (item.kind === 'compact_summary') compactWindowEnd = i + 9
+                    else if (item.kind === 'user_message' && i <= compactWindowEnd) compactWindowEnd++
+                    if (item.display_level !== DISPLAY_LEVEL.DEBUG_ONLY || item.timestamp != null || i <= compactWindowEnd) items.push(item)
+                }
+            }
+            const failedSends = this.localState.failedSends[sessionId]
+            const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
+            const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
+            if (!sourceItems.length && !events.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
+                if (!this.localState.sessionVisualItems[sessionId] || this.localState.sessionVisualItems[sessionId].length) {
+                    this.localState.sessionVisualItems[sessionId] = []
+                }
+                if (!this.localState.visualItemCache[sessionId] || this.localState.visualItemCache[sessionId].size) {
+                    this.localState.visualItemCache[sessionId] = new Map()
+                }
+                debugAppendSafeSessions.delete(sessionId)
+                return
+            }
+
             const expandedGroups = this.localState.sessionExpandedGroups[sessionId] || []
 
             // Detect assistant_turn (used by computeVisualItems for conversation mode
@@ -3688,6 +3717,19 @@ export const useDataStore = defineStore('data', {
             }
             const placementItems = orderCompactItems(allItems, this.sessions[sessionId]?.compacted)
             const eventBoundaries = placeSessionEvents(placementItems, events)
+            // Whether a later append of DEBUG_ONLY lines alone may skip its recompute (see
+            // addSessionItems). Outside the debug view such lines only add times, and a time
+            // appended after every real line moves no event when each one is already bound
+            // to a real line and a timed line anchors the placement. (No event binds to a
+            // synthetic line today, the only timed one being an ephemeral session's result;
+            // the line check keeps this exact if another timed synthetic row appears.)
+            const lastBoundaryLine = eventBoundaries.at(-1)?.beforeLine
+            if (mode !== DISPLAY_MODE.DEBUG && (!events.length || (typeof lastBoundaryLine === 'number' && lastBoundaryLine > 0
+                && placementItems.some(item => normalizeChatTimestamp(item.timestamp) !== null)))) {
+                debugAppendSafeSessions.add(sessionId)
+            } else {
+                debugAppendSafeSessions.delete(sessionId)
+            }
             const projection = projectEventSegments({ items: allItems, boundaries: eventBoundaries,
                 previous: this.localState.sessionEventSegments?.[sessionId] || [], expandedGroups,
                 internalExpandedGroups: this.localState.sessionInternalExpandedGroups?.[sessionId] || {},
@@ -3785,7 +3827,11 @@ export const useDataStore = defineStore('data', {
 
             // Stabilize visual item references: reuse cached objects when properties
             // haven't changed, so Vue sees the same reference and skips re-render.
-            const cache = this.localState.visualItemCache[sessionId] || new Map()
+            // Compare on the raw cache (a proxy read per key of every row is most of a
+            // recompute's cost), but write a cached row's parsed content through its
+            // reactive proxy: a rendered row (a streaming block) re-renders on it.
+            const cacheProxy = this.localState.visualItemCache[sessionId]
+            const cache = toRaw(cacheProxy) || new Map()
             const newCache = new Map()
 
             const stableItems = renderItems.map(vi => {
@@ -3803,7 +3849,9 @@ export const useDataStore = defineStore('data', {
                         && getParsedContent(cached) !== null
                     if (!unchangedWorking) {
                         const parsed = getParsedContent(vi)
-                        if (parsed !== null) setParsedContent(cached, parsed)
+                        if (parsed !== null && getParsedContent(cached) !== parsed) {
+                            setParsedContent(cacheProxy.get(vi.lineNum), parsed)
+                        }
                     }
                     newCache.set(vi.lineNum, cached)
                     return cached
@@ -3817,7 +3865,7 @@ export const useDataStore = defineStore('data', {
             })
 
             this.localState.visualItemCache[sessionId] = newCache
-            const previousItems = this.localState.sessionVisualItems[sessionId]
+            const previousItems = toRaw(this.localState.sessionVisualItems[sessionId])
             if (!previousItems || previousItems.length !== stableItems.length
                 || stableItems.some((item, index) => item !== previousItems[index])) {
                 this.localState.sessionVisualItems[sessionId] = stableItems
@@ -5393,6 +5441,12 @@ export const useDataStore = defineStore('data', {
             const previousBackgroundStatusKey = backgroundWorkStatusKey(this.processStates[sessionId], nowSeconds)
             const wasAssistantTurn = previousState === PROCESS_STATE.ASSISTANT_TURN
             const wasStarting = previousState === PROCESS_STATE.STARTING
+            // Signature of what the working row shows, before the update (see the end).
+            const workingSignature = () => {
+                const current = this.processStates[sessionId]
+                return JSON.stringify([current?.label ?? null, current?.tools ?? [], current?.lastStartedToolId ?? null])
+            }
+            const previousWorkingSignature = workingSignature()
             // Keep an in-flight "stopping" flag across non-dead transitions so
             // the spinner reflects the whole kill, not just the first state
             // change the interrupt produces (e.g. assistant_turn → user_turn).
@@ -5497,6 +5551,11 @@ export const useDataStore = defineStore('data', {
             const isStarting = state === PROCESS_STATE.STARTING
             const isAssistantTurn = state === PROCESS_STATE.ASSISTANT_TURN
             if (wasAssistantTurn !== isAssistantTurn || wasStarting !== isStarting) {
+                this.recomputeVisualItems(sessionId)
+            } else if (isAssistantTurn && this.localState.sessionVisualItems[sessionId]
+                && workingSignature() !== previousWorkingSignature) {
+                // A same-state refresh that changes the label or the tools must reach the
+                // working row: no later recompute is due (DEBUG_ONLY appends skip theirs).
                 this.recomputeVisualItems(sessionId)
             } else if (
                 // Same for the USER_TURN bottom status line: a cron added or

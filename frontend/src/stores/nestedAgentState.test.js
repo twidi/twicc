@@ -59,7 +59,7 @@ function makeStore({ fetches = [] } = {}) {
         applyAgentSnapshot, staleSyntheticAgentIds, markAgentIdle, getSessionCutoffMs, jsonValuesEqual, apiFetch, PROCESS_STATE,
         isLaunchedEphemeral: () => false, destroyAllBuffers: () => {}, backgroundWorkStatusKey: () => null,
         sweepPendingRequestDrafts: async () => {}, liveDraftKey: (a, b) => `${a}:${b}`, getToolHelpers: () => null,
-        withAutoDenyDeadlines, clearBlockInactivityTimer() {}, destroySessionBuffers() {},
+        withAutoDenyDeadlines, clearBlockInactivityTimer() {}, destroySessionBuffers() {}, debugAppendSafeSessions: new Set(),
     }
     const methods = new Function(...Object.keys(deps), `return { ${ACTIONS.map(action).join('')} }`)(...Object.values(deps))
     const store = Object.assign(methods, {
@@ -439,4 +439,18 @@ test('refreshAllLoadedToolStates bumps connectionEpoch once, after the refreshes
     pending.other.reject(new Error('boom'))
     await work
     assert.equal(store.connectionEpoch, 1)
+})
+
+test('a same-state process refresh that changes the working label or tools recomputes the visual rows', () => {
+    const store = makeStore()
+    store.localState.sessionVisualItems.root = []
+    let recomputes = 0
+    store.recomputeVisualItems = () => { recomputes++ }
+    const extra = { started_at: unix(T0), active_tools: [{ id: 't1', name: 'Bash' }], last_started_tool_id: 't1', label: 'Running' }
+    store.setProcessState('root', 'p', PROCESS_STATE.ASSISTANT_TURN, extra)
+    assert.equal(recomputes, 1)
+    store.setProcessState('root', 'p', PROCESS_STATE.ASSISTANT_TURN, extra)
+    assert.equal(recomputes, 1, 'an identical refresh does not recompute')
+    store.setProcessState('root', 'p', PROCESS_STATE.ASSISTANT_TURN, { ...extra, active_tools: [], last_started_tool_id: null })
+    assert.equal(recomputes, 2)
 })
