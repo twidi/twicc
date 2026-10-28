@@ -607,14 +607,14 @@ function handleMenuSelect(event) {
                     variant="regular"
                     class="compact-comments-indicator"
                 ></wa-icon>
-                <!-- Compact mode: unread indicator (highest priority) -->
+                <!-- Compact mode: unread eye of a session without process (no background work to alternate with) -->
                 <wa-icon
-                    v-if="compactView && !cumulativeMode && hasUnread"
+                    v-if="compactView && !cumulativeMode && hasUnread && !processState"
                     :id="rowId('compact-unread')"
                     name="eye"
                     class="compact-unread-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread" :for="rowId('compact-unread')">New content to read<template v-if="processState"> · {{ processTooltip }}</template></AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread && !processState" :for="rowId('compact-unread')">New content to read</AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
                     v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest"
@@ -623,18 +623,20 @@ function handleMenuSelect(event) {
                     class="compact-pending-request-indicator"
                 ></wa-icon>
                 <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
-                <!-- Compact mode: process indicator (hidden when unread or pending request is shown) -->
+                <!-- Compact mode: process indicator (shows the unread eye itself; hidden when the pending request hand is shown) -->
                 <ProcessIndicator
-                    v-if="compactView && !cumulativeMode && processState && !session.ephemeral && !hasUnread && !pendingRequest"
+                    v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)"
                     :id="rowId('compact-process-indicator')"
                     :state="processState.state"
                     :has-active-crons="hasActiveCrons"
                     :background-shells="userTurnBackgroundShells"
+                    :unread="hasUnread"
                     size="small"
                     :animate-states="animateStates"
+                    :style="hasUnread ? { fontSize: 'var(--wa-font-size-xs)' } : undefined"
                     class="compact-process-indicator"
                 />
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && !hasUnread && !pendingRequest" :for="rowId('compact-process-indicator')">{{ processTooltip }}</AppTooltip>
+                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)" :for="rowId('compact-process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
                 <!-- Collapsed tree row, compact: the cumulative indicator replaces the three above -->
                 <ProcessActivityIndicator
                     v-if="compactView && cumulativeMode"
@@ -697,24 +699,17 @@ function handleMenuSelect(event) {
                             class="pending-request-indicator"
                         ></wa-icon>
                         <AppTooltip :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
-                        <!-- Unread indicator replaces process indicator when unread -->
-                        <wa-icon
-                            v-if="hasUnread"
-                            :id="rowId('process-unread')"
-                            name="eye"
-                            class="unread-indicator"
-                        ></wa-icon>
-                        <AppTooltip :hoist="!!idPrefix" v-if="hasUnread" :for="rowId('process-unread')">New content to read · {{ processTooltip }}</AppTooltip>
+                        <!-- The indicator shows the unread eye itself (alone, or alternating with background work) -->
                         <ProcessIndicator
-                            v-else
                             :id="rowId('process-indicator')"
                             :state="processState.state"
                             :has-active-crons="hasActiveCrons"
                             :background-shells="userTurnBackgroundShells"
+                            :unread="hasUnread"
                             size="small"
                             :animate-states="animateStates"
                         />
-                        <AppTooltip :hoist="!!idPrefix" v-if="!hasUnread" :for="rowId('process-indicator')">{{ processTooltip }}</AppTooltip>
+                        <AppTooltip :hoist="!!idPrefix" :for="rowId('process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
                     </template>
                 </span>
             </div>
