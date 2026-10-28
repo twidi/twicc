@@ -34,7 +34,8 @@ export function sameChildrenIndex(a, b) {
  *
  * The tree covers the rail-active sessions (`flatRows`), their ancestor chains
  * and the descendants of every collapsed candidate. Ordinary rows are the flat
- * rows plus `groupId` (the root node id of their tree). A collapsed node with loaded children becomes one row
+ * rows plus `groupId` (the root node id of their tree) and `showMarkDot`
+ * (same project as the nearest ancestor with a button). A collapsed node with loaded children becomes one row
  * `{ session, groupId, cumulative }` carrying the cumulative summary of the node and its
  * descendants (no `processState`: the node may be idle).
  *
@@ -101,6 +102,13 @@ export function selectRailTreeRows(flatRows, {
         } else if (rowById.has(id)) {
             rows.push({ ...rowById.get(id), groupId: rootOf(id) })
         }
+    }
+    // Repeated project mark (§14): same project as the nearest ancestor that has a button.
+    const rowById2 = new Map(rows.map(row => [row.session.id, row]))
+    for (const row of rows) {
+        let ref = tree.nodes.get(row.session.id)?.parentId
+        while (ref && !rowById2.has(ref)) ref = tree.nodes.get(ref).parentId
+        row.showMarkDot = !!ref && rowById2.get(ref).session.project_id === row.session.project_id
     }
     return rows
 }

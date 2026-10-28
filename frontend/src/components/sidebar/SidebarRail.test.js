@@ -163,7 +163,7 @@ test('tree mode: a short segment chains the project marks of one tree, drawn by 
     assert.match(source, /'rail-session--grouped'/)
     assert.match(source, /'rail-session--group-middle' : 'rail-session--group-last'\) : 'rail-session--group-first'/)
     assert.doesNotMatch(source, /\.rail-spacer \{[^}]*margin-inline/)
-    assert.match(source, /\.rail-session--group-first::after,\s*\.rail-session--group-middle::after \{[^}]*z-index: 1;[^}]*width: 1px;[^}]*top: calc\(var\(--rail-button-size\) - var\(--rail-mark-free\) \+ var\(--rail-mark-clearance\)\);[^}]*height: calc\(2 \* var\(--rail-mark-free\) \+ var\(--rail-gap\) - 2 \* var\(--rail-mark-clearance\)\);[^}]*var\(--sidebar-divider-color, var\(--wa-color-surface-border\)\);[^}]*pointer-events: none;/)
+    assert.match(source, /\.rail-session--group-first::after,\s*\.rail-session--group-middle::after \{[^}]*z-index: 1;[^}]*width: 1px;[^}]*top: var\(--rail-segment-start\);[^}]*height: calc\(var\(--rail-segment-end\) - var\(--rail-segment-start\)\);[^}]*var\(--sidebar-divider-color, var\(--wa-color-surface-border\)\);[^}]*pointer-events: none;/)
     assert.doesNotMatch(source, /group-last::(before|after)/)
     assert.match(source, /--project-mark-icon-size: var\(--rail-mark-size\);/)
 })
@@ -173,4 +173,16 @@ test('tree mode: .rail-session creates no stacking context that could hide the s
     const rule = source.match(/\.rail-session--grouped \{([^}]*)\}/)[1]
     assert.doesNotMatch(rule, /z-index|isolation|overflow|transform|opacity|filter/)
     assert.doesNotMatch(source, /\.rail-session \{[^}]*(z-index|isolation|overflow|transform|opacity|filter)/)
+})
+
+test('tree mode: a repeated project shows a dot in the mark box and the segments reach its center', () => {
+    const source = read()
+    assert.match(source, /<span v-if="row.showMarkDot" class="rail-mark-dot" aria-hidden="true"><\/span>\s*<ProjectMark\s+v-else/)
+    assert.match(source, /'rail-session--dot': row.showMarkDot, 'rail-session--next-dot': linkedAfter && all\[index \+ 1\].showMarkDot/)
+    assert.match(source, /\.rail-session--dot \{\s*--rail-segment-start: calc\(var\(--rail-button-size\) \/ 2\);/)
+    assert.match(source, /\.rail-session--next-dot \{\s*--rail-segment-end: calc\(var\(--rail-button-size\) \+ var\(--rail-gap\) \+ var\(--rail-button-size\) \/ 2\);/)
+    assert.match(source, /--rail-segment-start: calc\(var\(--rail-button-size\) - var\(--rail-mark-free\) \+ var\(--rail-mark-clearance\)\);/)
+    assert.match(source, /--rail-segment-end: calc\(var\(--rail-button-size\) \+ var\(--rail-gap\) \+ var\(--rail-mark-free\) - var\(--rail-mark-clearance\)\);/)
+    assert.match(source, /\.rail-mark-dot \{[^}]*z-index: 2;[^}]*width: var\(--rail-mark-size\);[^}]*height: var\(--rail-mark-size\);/)
+    assert.match(source, /\.rail-mark-dot::before \{[^}]*border-radius: 50%;[^}]*var\(--sidebar-divider-color, var\(--wa-color-surface-border\)\)/)
 })

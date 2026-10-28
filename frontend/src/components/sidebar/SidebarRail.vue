@@ -56,6 +56,7 @@ const railRows = computed(() => rows.value.map((row, index, all) => {
         ...row,
         groupClass: linkedBefore || linkedAfter ? [
             'rail-session--grouped',
+            { 'rail-session--dot': row.showMarkDot, 'rail-session--next-dot': linkedAfter && all[index + 1].showMarkDot },
             linkedBefore ? (linkedAfter ? 'rail-session--group-middle' : 'rail-session--group-last') : 'rail-session--group-first',
         ] : null,
     }
@@ -197,7 +198,9 @@ function activate(item) {
                         @click="sessionClick(row.session, $event)"
                         @contextmenu.prevent
                     >
+                        <span v-if="row.showMarkDot" class="rail-mark-dot" aria-hidden="true"></span>
                         <ProjectMark
+                            v-else
                             :icon-url="store.resolvedProjectIcons[row.session.project_id] || null"
                             :color="projectColor(row.session.project_id)"
                         />
@@ -357,6 +360,39 @@ function activate(item) {
     --project-mark-icon-size: var(--rail-mark-size);
     --rail-mark-free: calc((var(--rail-button-size) - var(--rail-mark-size)) / 2);
     --rail-mark-clearance: 2px;
+    --rail-mark-dot-size: 4px;
+    /* Segment span, measured from the row top: it starts below its own mark (or at its dot's center)
+       and ends above the next row's mark (or at that row's dot center). */
+    --rail-segment-start: calc(var(--rail-button-size) - var(--rail-mark-free) + var(--rail-mark-clearance));
+    --rail-segment-end: calc(var(--rail-button-size) + var(--rail-gap) + var(--rail-mark-free) - var(--rail-mark-clearance));
+}
+
+.rail-session--dot {
+    --rail-segment-start: calc(var(--rail-button-size) / 2);
+}
+
+.rail-session--next-dot {
+    --rail-segment-end: calc(var(--rail-button-size) + var(--rail-gap) + var(--rail-button-size) / 2);
+}
+
+/* Repeated project mark: same box as the mark (nothing moves), a small dot in its center, above the segment. */
+.rail-mark-dot {
+    position: relative;
+    z-index: 2;
+    flex: none;
+    align-self: center;
+    display: grid;
+    place-items: center;
+    width: var(--rail-mark-size);
+    height: var(--rail-mark-size);
+}
+
+.rail-mark-dot::before {
+    content: '';
+    width: var(--rail-mark-dot-size);
+    height: var(--rail-mark-dot-size);
+    border-radius: 50%;
+    background: var(--sidebar-divider-color, var(--wa-color-surface-border));
 }
 
 .rail-session--grouped {
@@ -371,8 +407,8 @@ function activate(item) {
     z-index: 1;
     inset-inline-start: calc(var(--rail-mark-size) / 2 - 0.5px);
     width: 1px;
-    top: calc(var(--rail-button-size) - var(--rail-mark-free) + var(--rail-mark-clearance));
-    height: calc(2 * var(--rail-mark-free) + var(--rail-gap) - 2 * var(--rail-mark-clearance));
+    top: var(--rail-segment-start);
+    height: calc(var(--rail-segment-end) - var(--rail-segment-start));
     background: var(--sidebar-divider-color, var(--wa-color-surface-border));
     pointer-events: none;
 }

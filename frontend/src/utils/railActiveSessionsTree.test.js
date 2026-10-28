@@ -30,7 +30,7 @@ test('with no spawn links the rows equal the flat selection', () => {
     const flat = selectRailActiveSessions(processStates, sessions)
     const rows = select({ sessions, processStates })
     assert.deepEqual(ids(rows), ids(flat))
-    assert.deepEqual(rows, flat.map(row => ({ ...row, groupId: row.session.id })))
+    assert.deepEqual(rows, flat.map(row => ({ ...row, groupId: row.session.id, showMarkDot: false })))
 })
 
 test('rows carry the root node id of their tree as groupId, collapsed rows included', () => {
@@ -156,4 +156,25 @@ test('a cron-excluded active session gives no row of its own', () => {
     const sessions = { p: s('p', 1), c: s('c', 1, { spawned_by: 'p' }) }
     const processStates = { p: proc(1), c: proc(2, { active_crons: [{ id: 'x' }] }) }
     assert.deepEqual(ids(select({ sessions, processStates })), ['p'])
+})
+
+test('showMarkDot: same project as the nearest ancestor with a button', () => {
+    const q = (id, extra = {}) => ({ id, project_id: 'q', mtime: 1, ...extra })
+    const sessions = {
+        root: s('root', 1), same: s('same', 1, { spawned_by: 'root' }), other: q('other', { spawned_by: 'root' }),
+        deep: q('deep', { spawned_by: 'other' }), idle: s('idle', 1, { spawned_by: 'root' }),
+        viaIdle: q('viaIdle', { spawned_by: 'idle' }), solo: q('solo'),
+    }
+    const processStates = { root: proc(10), same: proc(11), other: proc(12), deep: proc(13), viaIdle: proc(14), solo: proc(1) }
+    const dots = rows => Object.fromEntries(rows.map(row => [row.session.id, row.showMarkDot]))
+    // group root and different project: mark; idle ancestor skipped (viaIdle compares with root, project p vs q).
+    assert.deepEqual(dots(select({ sessions, processStates })),
+        { root: false, same: true, other: false, deep: true, viaIdle: false, solo: false })
+    // Collapsed node is a button: 'other' collapsed, so it is its own row and 'deep' disappears.
+    const collapsed = select({ sessions, processStates, collapsed: ['other'] })
+    assert.equal(dots(collapsed).other, false)
+    assert.equal('deep' in dots(collapsed), false)
+    // Idle ancestor skipped: same project as root through the idle node.
+    const sessions2 = { ...sessions, viaIdle: s('viaIdle', 1, { spawned_by: 'idle' }) }
+    assert.equal(dots(select({ sessions: sessions2, processStates })).viaIdle, true)
 })
