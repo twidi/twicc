@@ -72,6 +72,38 @@ def test_live_share_accepts_and_filters_debug(session):
         assert msg["type"] == "share_items_added"
         # DEBUG_ONLY (level 3) filtered before it ever reaches the viewer's socket.
         assert [it["line_num"] for it in msg["items"]] == [2]
+        assert "updated_metadata" not in msg
+        await comm.disconnect()
+
+    _run(scenario())
+
+
+def test_live_share_relays_updated_metadata_under_the_ceiling(session):
+    share = _share(session, options={"mode": "live", "max_display_mode": "normal"})
+    sid = session.id
+    grown = {"line_num": 4, "display_level": 1, "group_head": None, "group_tail": 6, "kind": "assistant_message",
+             "timestamp": None}
+
+    async def scenario():
+        comm = _communicator(share.token)
+        connected, _ = await comm.connect()
+        assert connected
+        layer = get_channel_layer()
+        await layer.group_send("updates", {"type": "broadcast", "data": {
+            "type": "session_items_added", "session_id": sid,
+            "items": [{"line_num": 6, "display_level": 2, "content": "{}", "kind": "tool_use"}],
+            "updated_metadata": [grown, {**grown, "line_num": 5, "display_level": 3, "kind": "system"}],
+        }})
+        msg = await comm.receive_json_from(timeout=2)
+        assert [it["line_num"] for it in msg["items"]] == [6]
+        assert msg["updated_metadata"] == [grown]
+        # Only updates above the ceiling, nothing visible: not forwarded.
+        await layer.group_send("updates", {"type": "broadcast", "data": {
+            "type": "session_items_added", "session_id": sid,
+            "items": [{"line_num": 7, "display_level": 3, "content": "{}", "kind": "system"}],
+            "updated_metadata": [{**grown, "line_num": 5, "display_level": 3, "kind": "system"}],
+        }})
+        await _assert_nothing_forwarded(comm, sid)
         await comm.disconnect()
 
     _run(scenario())

@@ -260,7 +260,7 @@ function syncLiveTransport() {
             // own session_id, never assume the root.
             onInlineArtifacts: manifest => { if (!disposed && !revoked.value) inlineAdapter?.acceptManifest(manifest) },
             onReconnect,
-            onItems: (items, sid) => store.addSessionItems(sid || meta.session_id, items),
+            onItems: (items, sid, updatedMetadata) => store.addSessionItems(sid || meta.session_id, items, updatedMetadata),
             // Fresh meta can carry a TIGHTENED max_display_mode: re-clamp the
             // viewer's current mode so the select never sits on a now-invalid value.
             onMeta: (m) => {

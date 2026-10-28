@@ -10,7 +10,7 @@ export function connectShareLive({ tokenPath, sessionId, onItems, onMeta, onTool
         ws.onmessage = (ev) => {
             if (closed) return
             const msg = JSON.parse(ev.data)
-            if (msg.type === 'share_items_added') onItems(msg.items, msg.session_id)
+            if (msg.type === 'share_items_added') onItems(msg.items, msg.session_id, msg.updated_metadata ?? null)
             else if (msg.type === 'share_meta') onMeta(msg.meta)
             else if (msg.type === 'share_inline_artifacts') onInlineArtifacts?.(msg.manifest)
             else if (msg.type === 'share_tool_state') onToolState?.(msg)

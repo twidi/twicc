@@ -8,7 +8,8 @@ import { defineStore } from 'pinia'
 import { markRaw, toRaw } from 'vue'
 import { DISPLAY_LEVEL, SYNTHETIC_ITEM } from '../../constants'
 import { computeVisualItems, insertDaySeparators, markLiveTimestampAnchor, visualItemEqual } from '../../utils/visualItems'
-import { getParsedContent, setParsedContent, clearParsedContent } from '../../utils/parsedContent'
+import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../../utils/parsedContent'
+import { getPrefixSuffixBoundaries } from '../../utils/contentVisibility'
 import { shareApi } from './shareApi'
 import { useSettingsStore } from '../../stores/settings' // aliased to settingsStoreShim
 
@@ -139,8 +140,23 @@ export const useDataStore = defineStore('shareData', {
             }
             this.recomputeVisualItems(sessionId)
         },
-        addSessionItems(sessionId, items, { recompute = true } = {}) {
+        // Same signature as the SPA store. `updatedMetadata`: earlier rows whose group
+        // metadata the new items rewrote (live share_items_added).
+        addSessionItems(sessionId, items, updatedMetadata = null, { recompute = true } = {}) {
             const arr = this.sessionItems[sessionId] || (this.sessionItems[sessionId] = [])
+            for (const update of updatedMetadata || []) {
+                const row = arr[update.line_num - 1]
+                if (!row) continue  // not loaded yet: the metadata fetch brings it fresh
+                if ((row.kind === 'user_message' || row.kind === 'assistant_message')
+                    && row.group_tail == null && update.group_tail != null && hasContent(row)) {
+                    this._migrateInternalSuffixToExternal(sessionId, update.line_num, row)
+                }
+                row.display_level = update.display_level
+                row.group_head = update.group_head
+                row.group_tail = update.group_tail
+                row.kind = update.kind
+                if (update.timestamp !== undefined) row.timestamp = update.timestamp
+            }
             for (const it of items) {
                 const i = it.line_num - 1
                 arr[i] = { ...it, content: it.content ?? null }
@@ -148,13 +164,28 @@ export const useDataStore = defineStore('shareData', {
             }
             if (recompute) this.recomputeVisualItems(sessionId)
         },
+        // A message whose suffix becomes a session-level group (it gained a group_tail)
+        // keeps the viewer's expansion: an expanded internal suffix becomes an expanded
+        // group. Mirrors the SPA store.
+        _migrateInternalSuffixToExternal(sessionId, lineNum, row) {
+            const internal = this.internalExpandedGroups[sessionId]?.[lineNum]
+            if (!internal?.length) return
+            const content = getParsedContent(row)?.message?.content
+            if (!Array.isArray(content) || content.length === 0) return
+            const { suffixStartIndex } = getPrefixSuffixBoundaries(content, null, true)
+            const index = suffixStartIndex == null ? -1 : internal.indexOf(suffixStartIndex)
+            if (index < 0) return
+            internal.splice(index, 1)
+            const groups = this.expandedGroups[sessionId] || (this.expandedGroups[sessionId] = [])
+            if (!groups.includes(lineNum)) groups.push(lineNum)
+        },
         async loadSessionItemsRanges(_projectId, sessionId, ranges, parentSessionId = null, { recompute = true } = {}) {
             if (!ranges?.length) return true
             const qs = rangesToQS(ranges)
             if (!qs) return false
             try {
                 const items = await shareApi().fetchItems(qs, parentSessionId ? sessionId : null)
-                this.addSessionItems(sessionId, items, { recompute })
+                this.addSessionItems(sessionId, items, null, { recompute })
                 return true
             } catch { return false }
         },

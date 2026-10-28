@@ -172,13 +172,19 @@ class ShareConsumer(AsyncJsonWebsocketConsumer):
             if not await _session_is_ready(sid):
                 return
             items = [it for it in (data.get("items") or []) if self._visible(it)]
-            if not items:
+            # New items can rewrite the group metadata of earlier lines (a growing
+            # group's group_tail): relay those rows too, under the same ceiling.
+            updated_metadata = [it for it in (data.get("updated_metadata") or []) if self._visible(it)]
+            if not items and not updated_metadata:
                 return
-            await self.send_json({
+            message = {
                 "type": "share_items_added",
                 "session_id": sid,
                 "items": items,
-            })
+            }
+            if updated_metadata:
+                message["updated_metadata"] = updated_metadata
+            await self.send_json(message)
             return
 
         if mtype == "tool_state":

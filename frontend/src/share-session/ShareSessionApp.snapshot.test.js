@@ -6,6 +6,7 @@ import { createPinia, defineStore, setActivePinia } from 'pinia'
 import * as agentLinks from '../utils/agentLinkIndex.js'
 import * as visualItems from '../utils/visualItems.js'
 import * as parsed from '../utils/parsedContent.js'
+import * as contentVisibility from '../utils/contentVisibility.js'
 import * as constants from '../constants.js'
 import { getSessionCutoffMs } from '../utils/sessions.js'
 import { useFramePoolStore } from '../stores/framePool.js'
@@ -56,7 +57,7 @@ async function waitFor(predicate) {
 function realStore(settings) {
     const source = readFileSync(new URL('./shims/dataStoreShim.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .+ from .+\n/gm, '').replace('export const useDataStore', 'const useDataStore')
-    const deps = { ...agentLinks, ...visualItems, ...parsed, ...constants, defineStore,
+    const deps = { ...agentLinks, ...visualItems, ...parsed, ...contentVisibility, ...constants, defineStore,
         markRaw: Vue.markRaw, toRaw: Vue.toRaw, getSessionCutoffMs, shareApi: shareApi.shareApi, useSettingsStore: () => settings }
     return new Function(...Object.keys(deps), `${body}; return useDataStore`)(...Object.values(deps))
 }
