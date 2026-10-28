@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace. Filter it, see the same events in the chat, and query it from CLI, MCP and RPC API.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
 - **Scrollable titles** — On touch screens, swipe a truncated session title or artifact name to read the rest.
+- **Orchestration** — A new “Show inactive” switch in the Orchestration tab hides inactive sessions and subagents, to focus on what is running.
+- **Orchestration** — The session header now shows the annotations of the session, the same tags as in the Orchestration tab.
 
 ### Changed
 
