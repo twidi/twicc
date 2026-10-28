@@ -97,7 +97,7 @@ defineExpose({ focus })
                 value="show-as-tree"
                 :checked="showAsTree"
             >
-                Show as tree
+                Show orchestrated sessions as tree
             </wa-dropdown-item>
             <!-- Multi-select needs Shift/Ctrl modifier clicks, which
                  have no touch equivalent yet — hide it on touch devices. -->

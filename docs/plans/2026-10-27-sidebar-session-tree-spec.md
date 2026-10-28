@@ -4,7 +4,7 @@
 
 ## 1. Goal
 
-Add an option **"Show as tree"** to the sessions sidebar controls (next to "Show archived sessions", "Compact view", …). Off by default. When on, a session spawned by another visible session is shown nested under it instead of at the first level.
+Add an option **"Show orchestrated sessions as tree"** to the sessions sidebar controls (next to "Show archived sessions", "Compact view", …). Off by default. When on, a session spawned by another visible session is shown nested under it instead of at the first level.
 
 The hard part is not the nesting. It is the placement: a root can be idle while its descendants are active, pinned or recent, and the sidebar is split into sections (Pinned, Active, Last 24 hours, …) and filtered by project or workspace. This spec fixes those rules.
 
