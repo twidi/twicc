@@ -176,6 +176,7 @@ def test_rekey_moves_every_field_of_the_pending_attributes():
     set_pending_session_attributes(
         "draft-id", hidden=True, mute_on_user_turn=True, spawned_by_id="boss", spawn_root_id="root",
         annotations={"a": 1}, system_prompt_addendum="addendum", hybrid=True, layout={"k": 1}, ephemeral=True,
+        tree_detached=True,
         origin=AGENT,
     )
     before = get_pending_session_attributes("draft-id")
