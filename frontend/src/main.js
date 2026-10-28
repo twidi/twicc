@@ -64,6 +64,9 @@ installDetailsMotion()
 // (see utils/waMotionStyles.js). Every wa-* import above and below is evaluated first.
 import { installWaMotionStyles } from './utils/waMotionStyles'
 installWaMotionStyles()
+// wa-tooltip / wa-popover: no anchor lookup while detached (see utils/detachedAnchorGuard.js).
+import { installDetachedAnchorGuard } from './utils/detachedAnchorGuard'
+installDetachedAnchorGuard()
 import '@awesome.me/webawesome/dist/components/progress-bar/progress-bar.js'
 import '@awesome.me/webawesome/dist/components/progress-ring/progress-ring.js'
 import '@awesome.me/webawesome/dist/components/option/option.js'

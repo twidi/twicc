@@ -58,6 +58,9 @@ installDetailsMotion()
 // Overlay entrances and exits: TwiCC's keyframes inside Web Awesome's shadow roots (see utils/waMotionStyles.js).
 import { installWaMotionStyles } from '../utils/waMotionStyles'
 installWaMotionStyles()
+// wa-tooltip / wa-popover: no anchor lookup while detached (see utils/detachedAnchorGuard.js).
+import { installDetachedAnchorGuard } from '../utils/detachedAnchorGuard'
+installDetachedAnchorGuard()
 import { recordShareView } from '../share-recent/recordView'  // 3.19
 
 const el = document.getElementById('twicc-share-data')
