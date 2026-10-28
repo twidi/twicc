@@ -19,6 +19,7 @@ import { stopSubagent, interruptSession } from '../../../composables/useWebSocke
 import { stopSessionProcess, hardKillSessionProcess } from '../../../composables/useStopSessionProcess'
 import ScrollableText from '../../ui/ScrollableText.vue'
 import ProjectBadge from '../../project/ProjectBadge.vue'
+import OrchestrationAnnotations from '../../orchestration/OrchestrationAnnotations.vue'
 import ProcessIndicator from '../../ui/ProcessIndicator.vue'
 import CodeCommentsIndicator from '../../ui/CodeCommentsIndicator.vue'
 import ProcessDuration from '../../ui/ProcessDuration.vue'
@@ -64,6 +65,12 @@ const showCosts = computed(() => settingsStore.areCostsShown)
 
 // Session data from store
 const session = computed(() => store.getSession(props.sessionId))
+
+// Annotations block (main session only): same tags as the orchestration cards, shown only when there are some.
+const hasAnnotations = computed(() => {
+    const annotations = session.value?.annotations
+    return props.mode === 'session' && !!annotations && typeof annotations === 'object' && Object.keys(annotations).length > 0
+})
 
 // Debug display toggle (dev-mode only, main session): whether this session has
 // the debug view forced, and whether it effectively renders in debug mode.
@@ -926,6 +933,11 @@ defineExpose({
                 </template>
             </div>
 
+            <!-- Annotations: the orchestration cards' tags (common prefix split out, overflow behind the chevron). -->
+            <div v-if="hasAnnotations" class="session-annotations">
+                <OrchestrationAnnotations :annotations="session.annotations" />
+            </div>
+
             <!-- Process: status chip (indicator first, then turn duration and memory) + control buttons -->
             <div v-if="!session.draft && !session.ephemeral && (processState || codeCommentsCount > 0)" class="meta-process">
                 <span class="process-chip">
@@ -1248,6 +1260,11 @@ defineExpose({
     border-radius: var(--wa-border-radius-l);
     background: color-mix(in oklab, var(--wa-color-brand-60) 8%, transparent);
     font-size: var(--wa-font-size-s);
+}
+
+/* Zone 2b — annotations: aligned with the stats container above it. */
+.session-annotations {
+    margin-inline: var(--wa-space-xs);
 }
 
 /* Cells size to their content (never truncated) and share the leftover width. */
