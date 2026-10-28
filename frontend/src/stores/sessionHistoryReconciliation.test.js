@@ -31,14 +31,15 @@ const transcript = [
 ]
 const metadata = transcript.map(({ content, ...item }) => item)
 const copy = value => JSON.parse(JSON.stringify(value))
-function fixture({ fetched = false, lastLine = 2 } = {}) {
+function fixture({ fetched = false, lastLine = 2, stallMs = 30000 } = {}) {
     const requests = []
     let respond = async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) })
     const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT,
         isLaunchedEphemeral: s => !!s.ephemeral,
         itemsCoverageInFlight: new Function(`return ${source.match(/const itemsCoverageInFlight = (new \w+\(\))/)[1]}`)(),
+        readJsonWithProgress: new Function(`return ${source.match(/async function readJsonWithProgress[\s\S]*?\n}\n/)[0]}`)(),
         describeFetchFailure: new Function(`return ${source.match(/function describeFetchFailure[\s\S]*?\n}\n/)[0]}`)(),
-        sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_TIMEOUT_MS: 30000,
+        sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_STALL_TIMEOUT_MS: stallMs,
         lineNumsToRanges: lines => lines.map(line => [line, line]),
         apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: quiet,
         getProviderHelpers: () => ({ extractUserMessageText: userMessageText, extractUserMessageAttachmentCount: userMessageAttachmentCount }),
@@ -111,6 +112,69 @@ test('a failed first visit publishes the error and permits a retry', async () =>
     assert.equal(store.localState.sessions.s.itemsLoadingError, false)
     assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, null)
     assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
+})
+
+test('a failed metadata request publishes its real cause instead of a generic message', async () => {
+    const { store, respond } = fixture()
+    delete store.localState.sessions.s
+    const items = async () => ({ ok: true, json: async () => copy(transcript) })
+    respond(async url => url.includes('metadata') ? { ok: false, status: 502 } : items())
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'Server error (502)')
+    respond(async url => {
+        if (!url.includes('metadata')) return items()
+        throw new DOMException('The operation timed out.', 'TimeoutError')
+    })
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'No data received for 30 seconds')
+    respond(async url => {
+        if (!url.includes('metadata')) return items()
+        throw new DOMException('The operation was aborted.', 'AbortError')
+    })
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'No data received for 30 seconds')
+})
+
+// A response whose body arrives in chunks `delayMs` apart (a slow but live download).
+function slowBody(value, chunks, delayMs) {
+    const bytes = new TextEncoder().encode(JSON.stringify(value))
+    const size = Math.ceil(bytes.length / chunks)
+    let offset = 0
+    return { ok: true, body: new ReadableStream({
+        async pull(controller) {
+            await new Promise(resolve => setTimeout(resolve, delayMs))
+            if (offset >= bytes.length) return controller.close()
+            controller.enqueue(bytes.slice(offset, offset + size))
+            offset += size
+        },
+    }) }
+}
+
+test('a slow download that keeps receiving data outlives the stall timeout and reports its progress', async () => {
+    const { store, respond } = fixture({ stallMs: 60 })
+    delete store.localState.sessions.s
+    respond(async url => slowBody(url.includes('metadata') ? metadata : transcript, 6, 25))
+    const seen = []
+    const stop = setInterval(() => seen.push(store.localState.sessions.s?.itemsLoadedBytes ?? 0), 10)
+    const started = Date.now()
+    assert.equal(await store.loadSessionHistory('p', 's', 2), true)
+    clearInterval(stop)
+    assert.ok(Date.now() - started > 60, 'the load lasted longer than the stall timeout')
+    assert.ok(Math.max(...seen) > 0, 'bytes received are published while loading')
+    assert.equal(store.localState.sessions.s.itemsLoadedBytes, null)
+    assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
+})
+
+test('a connection that stops sending data ends in an error after the stall timeout', async () => {
+    const { store, respond } = fixture({ stallMs: 30 })
+    delete store.localState.sessions.s
+    respond((url, options) => url.includes('metadata')
+        ? Promise.resolve({ ok: true, json: async () => copy(metadata) })
+        : new Promise((resolve, reject) => options.signal.addEventListener('abort',
+            () => reject(options.signal.reason))))
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.localState.sessions.s.itemsLoadingError, true)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'No data received for 30 seconds')
 })
 
 test('unloading a first visit still prevents its pending snapshot from restoring history', async () => {

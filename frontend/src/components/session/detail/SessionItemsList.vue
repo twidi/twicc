@@ -9,6 +9,7 @@ import { DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
+import { formatAttachmentSize } from '../../../utils/composerAttachments.js'
 import { captureEventScroll, planEventScrollRestore, eventStructureChanged } from '../../../utils/chatEvents/scroll.js'
 import { isSessionEvent, isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
 import { authorRunKey, authorRunPosition } from '../../../utils/timeline/authorLabel.js'
@@ -507,6 +508,22 @@ const showVirtualScroller = computed(() => {
 const showSkeleton = computed(() => reveal.hidden.value && !unavailableReason.value && !isComputePending.value
     && !hasError.value && (isLoading.value || visualItems.value.length > 0))
 
+// A load still running after this long gets a notice over the skeleton: the network is slow or the
+// session is big, not stuck. The load itself only fails when the connection stalls (see the store).
+const SLOW_LOAD_NOTICE_DELAY_MS = 8000
+const isLoadSlow = ref(false)
+let slowLoadTimer = null
+watch(isLoading, (loading) => {
+    clearTimeout(slowLoadTimer)
+    isLoadSlow.value = false
+    if (loading) slowLoadTimer = setTimeout(() => { isLoadSlow.value = true }, SLOW_LOAD_NOTICE_DELAY_MS)
+}, { immediate: true })
+onBeforeUnmount(() => clearTimeout(slowLoadTimer))
+const loadedSizeLabel = computed(() => {
+    const bytes = store.getSessionItemsLoadedBytes(props.sessionId)
+    return bytes > 0 ? formatAttachmentSize(bytes) : null
+})
+
 // =============================================================================
 // Live chat entrances (visual refresh step 5a)
 // =============================================================================
@@ -952,7 +969,7 @@ async function handleRetry() {
     }
     // Clear existing items
     delete store.sessionItems[sId]
-    delete store.sessionVisualItems[sId]
+    delete store.localState.sessionVisualItems[sId]
 
     const release = beginRevealFlow()
     isRetrying.value = true
@@ -2494,6 +2511,17 @@ defineExpose({
                     :align="parentSessionId ? 'start' : 'end'"
                 />
             </Transition>
+
+            <!-- Slow load: over the skeleton (and the error panel while a retry runs). -->
+            <Transition name="chat-slow-notice">
+                <wa-callout v-if="isLoadSlow" class="chat-slow-notice" variant="warning">
+                    <wa-icon slot="icon" name="hourglass"></wa-icon>
+                    <div class="chat-slow-notice-copy">
+                        <span>Network is slow or this session is big: loading can take a while.</span>
+                        <span v-if="loadedSizeLabel" class="chat-slow-notice-size">{{ loadedSizeLabel }} received</span>
+                    </div>
+                </wa-callout>
+            </Transition>
         </div>
 
         <div class="session-footer">
@@ -2758,6 +2786,36 @@ defineExpose({
 .chat-skeleton-overlay {
     position: absolute;
     inset: 0;
+}
+
+.chat-slow-notice {
+    position: absolute;
+    top: var(--wa-space-l);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(440px, calc(100% - 2rem));
+    z-index: 2;
+}
+
+.chat-slow-notice-copy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-xs);
+}
+
+.chat-slow-notice-size {
+    font-size: var(--wa-font-size-s);
+    opacity: 0.8;
+}
+
+.chat-slow-notice-enter-active,
+.chat-slow-notice-leave-active {
+    transition: opacity var(--wa-transition-normal, 200ms) ease;
+}
+
+.chat-slow-notice-enter-from,
+.chat-slow-notice-leave-to {
+    opacity: 0;
 }
 
 .empty-state {
