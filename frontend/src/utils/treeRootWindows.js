@@ -135,6 +135,23 @@ export function nextRootWindows(previous, inputs) {
 // so every caller (sidebar instances, rail) reads the same windows.
 const trackers = new WeakMap()
 
+// Dev only (`import.meta.hot` is undefined in the build and under `node --test`).
+// A hot reload of this module stops the watchers of the old trackers and hands
+// their state to the new module: the new trackers start from it, so the windows
+// survive the reload. The callers get the new trackers when they reload too.
+const hot = import.meta.hot
+const carriedStates = hot ? (hot.data.treeRootStates ?? new WeakMap()) : null
+const liveScopes = hot ? new Map() : null // raw `processStates` -> { scope, current }
+if (hot) {
+    hot.dispose(data => {
+        for (const [rawStates, { scope, current }] of liveScopes) {
+            scope.stop()
+            carriedStates.set(rawStates, current())
+        }
+        data.treeRootStates = carriedStates
+    })
+}
+
 /**
  * The tracker of `owner` (the data store, or any `{ sessions, processStates }`
  * facade over the same state), created on the first call and kept up to date
@@ -154,15 +171,15 @@ export function getTreeRootWindows(owner) {
     const rawStates = toRaw(owner.processStates)
     let tracker = trackers.get(rawStates)
     if (!tracker) {
-        tracker = createTracker(owner)
+        tracker = createTracker(owner, rawStates)
         trackers.set(rawStates, tracker)
     }
     return tracker
 }
 
-function createTracker(owner) {
+function createTracker(owner, rawStates) {
     const keys = reactive(new Map())
-    let state = NO_ROOT_WINDOWS
+    let state = carriedStates?.get(rawStates) ?? NO_ROOT_WINDOWS
     const scope = effectScope(true)
     scope.run(() => {
         const inputs = computed(previous => {
@@ -181,8 +198,10 @@ function createTracker(owner) {
             }
         }, { immediate: true })
     })
+    const current = () => state
+    liveScopes?.set(rawStates, { scope, current })
     return {
         rootKey: id => keys.get(id),
-        current: () => state,
+        current,
     }
 }

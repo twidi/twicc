@@ -376,6 +376,9 @@ test('13. the tracker reruns no tree build without a window change of its active
     assert.equal(userTurnTick.builds, 0, 'user_turn tick')
     const activity = await measure(() => { w.state.projects.p.mtime += 100 })
     assert.equal(activity.builds, 0, 'project activity change')
+    // The build never reads `projects`: the tracker is what this step can rerun. Positive
+    // control: the start of Q below updates it once.
+    assert.equal(activity.updates, 0, 'project activity change: the tracker does not update')
     const outside = await measure(() => w.start('Q', T(300)))
     assert.equal(outside.builds, 0, 'a window opens outside the tree')
     assert.equal(outside.updates, 1, 'the tracker updated once for it')
