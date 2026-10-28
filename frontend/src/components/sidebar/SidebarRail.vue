@@ -253,6 +253,7 @@ function activate(item) {
                                         :has-active-crons="child.hasActiveCrons"
                                         :background-shells="child.userTurnBackgroundShells"
                                         :unread="child.hasUnread"
+                                        :style="child.hasUnread ? { fontSize: '0.75rem' } : undefined"
                                         :animate-states="['assistant_turn']"
                                     />
                                     <wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" />

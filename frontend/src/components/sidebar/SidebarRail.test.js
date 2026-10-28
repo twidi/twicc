@@ -203,7 +203,7 @@ test('rail rows and preview children render the unread eye through ProcessIndica
     assert.doesNotMatch(source, /<wa-icon v-if="row.hasUnread"/)
     assert.match(source, /:unread="row.hasUnread"\s*:style="row.hasUnread \? \{ fontSize: '0.75rem' \} : undefined"/)
     assert.match(source, /v-if="child.pendingRequest && !child.hasUnread" name="hand"/)
-    assert.match(source, /v-else-if="child.processState"[\s\S]*:unread="child.hasUnread"/)
+    assert.match(source, /v-else-if="child.processState"[\s\S]*:unread="child.hasUnread"\s*:style="child.hasUnread \? \{ fontSize: '0.75rem' \} : undefined"/)
     // The bare eye remains only for a child without processState.
     assert.match(source, /<wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" \/>/)
     assert.equal((source.match(/name="eye"/g) ?? []).length, 1)

@@ -96,7 +96,7 @@ test('the cascade: unread with no background work is plain unread', () => {
 })
 
 test('the cascade: nothing unread is never unread_background', () => {
-    assert.notEqual(modeOf([], 0, { sessions: 0, shells: 0 }), 'unread_background')
+    assert.equal(modeOf([], 0, { sessions: 0, shells: 0 }), null)
 })
 
 test('the cascade: pending request beats unread_background', () => {

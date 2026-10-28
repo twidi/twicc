@@ -26,4 +26,6 @@ test('the ProcessIndicator branch renders the unread background mode', () => {
     const tag = template.match(/<ProcessIndicator\b[^>]*>/s)?.[0] ?? ''
     assert.match(tag, /:unread=/)
     assert.match(tag, /summary\.unreadShellCount/)
+    // Unread cron-only sessions (no shells) must still show the clock.
+    assert.match(tag, /:has-active-crons="[^"]*displayMode === 'unread_background' && summary\.unreadShellCount === 0/)
 })

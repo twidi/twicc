@@ -1046,7 +1046,7 @@ function handleMenuSelect(event) {
     color: var(--wa-color-warning-60);
     font-size: var(--wa-font-size-s);
     flex-shrink: 0;
-    /* Both eyes (standalone and process line) breathe, as the compact one. */
+    /* The standalone eye breathes, as the compact one. */
     animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
 
