@@ -1256,6 +1256,19 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             await apply_session_mute_on_user_turn_change(session, mute_on_user_turn)
             needs_broadcast = True
 
+        if "tree_detached" in data:
+            tree_detached = data["tree_detached"]
+            if not isinstance(tree_detached, bool):
+                return JsonResponse(
+                    {"error": "tree_detached must be a boolean"},
+                    status=400,
+                )
+            from twicc.core.services.session_update import (
+                apply_session_tree_detached_change,
+            )
+            await apply_session_tree_detached_change(session, tree_detached)
+            needs_broadcast = True
+
         # Handle layout update: the per-session dockable-layout intention
         # (an object; {} = single pane). Persisted from the frontend via a
         # debounced PATCH as the user docks / resizes / loads layouts. Shares

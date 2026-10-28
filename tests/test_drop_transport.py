@@ -145,6 +145,26 @@ def test_execute_mute_accepts_hidden_session_without_broadcasting():
 
 
 @pytest.mark.django_db(transaction=True)
+def test_execute_tree_detached_roundtrip():
+    project = Project.objects.create(id="-td-drop", directory="/tmp/td-drop")
+    session = Session.objects.create(
+        id="td-drop-session", project=project, provider=Provider.CODEX.value, type=SessionType.SESSION,
+    )
+    layer = SimpleNamespace(group_send=AsyncMock())
+    with patch("twicc.core.services.session_update.get_channel_layer", return_value=layer), \
+            patch("twicc.core.services.session_update.ensure_provider_running"), \
+            patch("twicc.core.services.session_update.run_under_db_write_lock",
+                  side_effect=_passthrough_db_write):
+        status = asyncio.run(execute_drop_payload(
+            {"session_id": session.id, "tree_detached": True}, "session:update_tree_detached"))
+
+    assert status["status"] == "updated"
+    session.refresh_from_db()
+    assert session.tree_detached is True
+    assert layer.group_send.await_args.args[1]["data"]["session"]["tree_detached"] is True
+
+
+@pytest.mark.django_db(transaction=True)
 def test_execute_workspace_create_roundtrip(isolated_data_dir):
     payload = {"kind": "workspace:create", "name": "mcp-test-ws"}
     status = asyncio.run(execute_drop_payload(payload, "workspace:create"))

@@ -28,6 +28,10 @@ whose ``kind`` matches one of the supported update actions:
 - ``kind="session:update_mute_on_user_turn"`` →
   :func:`update_session_mute_on_user_turn_from_payload`. Persists the
   per-session finished-working notification gate and broadcasts the update.
+- ``kind="session:update_tree_detached"`` →
+  :func:`update_session_tree_detached_from_payload`. Persists the
+  ``tree_detached`` flag (a spawned session shown at the top level of the
+  sidebar), records its timeline rows and broadcasts the update.
 - ``kind="session:update_hidden"`` → :func:`update_session_hidden_from_payload`.
   Looks up the session via the standard guards then delegates to
   :func:`session_visibility.hide_session` / ``unhide_session``.
@@ -772,6 +776,23 @@ async def apply_session_mute_on_user_turn_change(session, mute_on_user_turn: boo
     await run_under_db_write_lock(_save_and_record)
 
 
+async def apply_session_tree_detached_change(session, tree_detached: bool) -> None:
+    """Persist the ``tree_detached`` flag and record a timeline row on change."""
+    was_detached = session.tree_detached
+    session.tree_detached = tree_detached
+
+    async def _save_and_record() -> None:
+        await session.asave(update_fields=["tree_detached"])
+        if tree_detached != was_detached:
+            await asyncio.to_thread(
+                record_event_sync,
+                TimelineKind.TREE_DETACHED_STARTED if tree_detached else TimelineKind.TREE_DETACHED_ENDED,
+                session_id=session.id, project_id=session.project_id, provider=session.provider,
+            )
+
+    await run_under_db_write_lock(_save_and_record)
+
+
 async def apply_session_layout_change(session, layout: dict) -> None:
     """Persist a ``layout`` change on a :class:`Session` row.
 
@@ -1005,6 +1026,65 @@ async def update_session_mute_on_user_turn_from_payload(payload: dict) -> Update
         "[update_session_mute_on_user_turn] session=%s mute_on_user_turn=%s",
         session_id,
         mute_on_user_turn,
+    )
+
+    return UpdateSessionResult(
+        success=True,
+        session_id=session_id,
+        provider=provider.value,
+        project_id=session.project_id,
+        errors=None,
+    )
+
+
+async def update_session_tree_detached_from_payload(payload: dict) -> UpdateSessionResult:
+    """Set the ``tree_detached`` flag of one session."""
+    session_id = payload.get("session_id")
+    tree_detached = payload.get("tree_detached", _MISSING)
+
+    errors: list[UpdateSessionError] = []
+    if not session_id:
+        errors.append(UpdateSessionError("session_id", "missing", "session_id is required"))
+    if tree_detached is _MISSING:
+        errors.append(UpdateSessionError(
+            "tree_detached",
+            "missing",
+            "tree_detached is required",
+        ))
+    elif not isinstance(tree_detached, bool):
+        errors.append(UpdateSessionError(
+            "tree_detached",
+            "invalid_tree_detached",
+            "tree_detached must be a boolean (true / false)",
+        ))
+    if errors:
+        return UpdateSessionResult(False, None, None, None, errors)
+
+    session, _project, provider, error = await _lookup_session_for_update(session_id)
+    if error is not None:
+        return error
+
+    await apply_session_tree_detached_change(session, tree_detached)
+
+    from twicc.core.serializers import serialize_session
+
+    channel_layer = get_channel_layer()
+    if channel_layer is not None and not session.hidden:
+        await channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {
+                    "type": "session_updated",
+                    "session": serialize_session(session),
+                },
+            },
+        )
+
+    logger.info(
+        "[update_session_tree_detached] session=%s tree_detached=%s",
+        session_id,
+        tree_detached,
     )
 
     return UpdateSessionResult(

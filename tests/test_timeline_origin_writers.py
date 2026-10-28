@@ -12,7 +12,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, Session, SessionType, TimelineEvent
 from twicc.core.services.session_update import (
     apply_session_archived_change, apply_session_mute_on_user_turn_change, apply_session_pinned_change,
-    archive_sessions_bulk, persist_session_settings,
+    apply_session_tree_detached_change, archive_sessions_bulk, persist_session_settings,
 )
 from twicc.drop_requests_watcher import execute_drop_payload
 from twicc.request_origin import (
@@ -88,6 +88,13 @@ def test_mute_takes_the_request_origin(project):
     session = make(project)
     under(AGENT, lambda: apply_session_mute_on_user_turn_change(session, True))
     assert columns(rows()[0]) == AGENT_COLUMNS
+
+
+def test_origin_of_the_flip_rows(project):
+    session = make(project)
+    under(AGENT, lambda: apply_session_tree_detached_change(session, True))
+    under(agent_cli_origin("sess-B"), lambda: apply_session_tree_detached_change(session, False))
+    assert [columns(r) for r in rows()] == [AGENT_COLUMNS, ("agent", "cli", "sess-B", None)]
 
 
 def test_with_no_origin_set_every_writer_gives_the_default(project):
