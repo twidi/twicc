@@ -95,6 +95,14 @@ test('the first visit loads history without a pre-existing local session record'
     assert.equal(store.localState.optimisticMessages.s, undefined)
 })
 
+test('a history load recomputes the visual items once, after metadata and content are both in place', async () => {
+    const { store } = fixture()
+    const seen = []
+    store.recomputeVisualItems = id => seen.push(store.sessionItems[id].map(item => [item.line_num, hasContent(item)]))
+    assert.equal(await store.loadSessionHistory('p', 's', 2), true)
+    assert.deepEqual(seen, [[[1, true], [2, true]]])
+})
+
 test('a failed first visit publishes the error and permits a retry', async () => {
     const { store, respond } = fixture()
     delete store.localState.sessions.s

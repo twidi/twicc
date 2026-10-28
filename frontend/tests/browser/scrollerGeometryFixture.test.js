@@ -141,7 +141,7 @@ test('missing-content substitution uses the public cache-invalidating action and
     const { computeVisualItems } = await import('../../src/utils/visualItems.js')
     const { DISPLAY_LEVEL, DISPLAY_MODE } = await import('../../src/constants.js')
     const source = readFileSync(new URL('../../src/stores/data.js', import.meta.url), 'utf8')
-    const start = source.indexOf('        updateSessionItemsContent(sessionId, items) {')
+    const start = source.indexOf('        updateSessionItemsContent(sessionId, items, ')
     const end = source.indexOf('        // Tab management actions', start)
     const actions = new Function('clearParsedContent', `return { ${source.slice(start, end)} }`)(clearParsedContent)
     const item = { line_num: 1, kind: 'assistant_message', display_level: DISPLAY_LEVEL.ALWAYS,

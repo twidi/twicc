@@ -7,7 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
-import { computed, watch, nextTick } from 'vue'
+import { computed, watch, nextTick, toRaw } from 'vue'
 import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants.js'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems.js'
 import { getParsedContent, setParsedContent } from '../utils/parsedContent.js'
@@ -30,7 +30,7 @@ function fixture({ working = false, items = [message(1)], sessions = {}, extraIt
     const deps = { placeSessionEvents, projectEventSegments, mergeSessionEventRows, insertEventDaySeparators, jsonValuesEqual, useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
         computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor, orderCompactItems,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive,
-        isLaunchedEphemeral: () => false }
+        isLaunchedEphemeral: () => false, toRaw }
     const actions = new Function(...Object.keys(deps), `${helperSource}\nreturn { ${actionSource}\n${toggleSource} }`)(...Object.values(deps))
     const store = defineStore(`visual-stability-${++id}`, {
         state: () => ({ sessions: { main: { id: 'main', provider: 'claude_code' }, ...sessions }, sessionItems: { main: items, ...extraItems },

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
+import { toRaw } from 'vue'
 import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
 import { placeSessionEvents, orderCompactItems } from '../utils/chatEvents/placement.js'
 import { projectEventSegments, setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
@@ -49,7 +50,7 @@ function fixture(t, provider = 'codex', items = tools(provider)) {
         computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive, isLaunchedEphemeral: () => false,
         getProviderHelpers: provider => ({ matchesStreamingBlock: provider === 'codex' ? codexMatch : claudeMatch }),
-        flushBuffer, destroySessionBuffers, clearBlockInactivityTimer: () => {} }
+        flushBuffer, destroySessionBuffers, clearBlockInactivityTimer: () => {}, toRaw }
     const helpers = section('function computeLastToolVisible(', '\n/**') + section('function getStreamingItemMetadata(', '\n/**')
     const actionNames = ['recomputeVisualItems', 'toggleExpandedGroup', 'expandGroup', '_retireStreamingBlocks']
     const actions = new Function(...Object.keys(dependencies), `${helpers}; return { ${actionNames.map(name => section(`        ${name}(`, '\n        /**')).join('\n')} }`)(...Object.values(dependencies))

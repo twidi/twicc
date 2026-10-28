@@ -2298,8 +2298,10 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          * @param {Array<{line_num: number, content: string}>} newItems
          * @param {Array<{line_num: number, display_level: number, group_head: number|null, group_tail: number|null, kind: string|null}>|null} updatedMetadata - Metadata of pre-existing items that were modified
+         * @param {Object} [options]
+         * @param {boolean} [options.recompute=true] - false when the caller recomputes the visual items itself
          */
-        addSessionItems(sessionId, newItems, updatedMetadata = null) {
+        addSessionItems(sessionId, newItems, updatedMetadata = null, { recompute = true } = {}) {
             let targetArray = this.sessionItems[sessionId]
 
             // First, apply metadata updates to pre-existing items
@@ -2333,7 +2335,7 @@ export const useDataStore = defineStore('data', {
             // Then add new items
             if (!newItems?.length) {
                 // Even with no new items, metadata updates may require recompute
-                if (updatedMetadata?.length) {
+                if (recompute && updatedMetadata?.length) {
                     this.recomputeVisualItems(sessionId)
                 }
                 return
@@ -2393,7 +2395,7 @@ export const useDataStore = defineStore('data', {
             // Retire streaming blocks whose real items have arrived
             this._retireStreamingBlocks(sessionId, newItems)
 
-            this.recomputeVisualItems(sessionId)
+            if (recompute) this.recomputeVisualItems(sessionId)
         },
 
         /**
@@ -2985,9 +2987,12 @@ export const useDataStore = defineStore('data', {
                     // Keep live lines delivered during a first load, including
                     // lines beyond the REST snapshots' bounds.
                     const liveItems = wasFetched ? [] : (this.sessionItems[sessionId] || []).filter(hasContent)
-                    this.initSessionItemsFromMetadata(sessionId, metadata)
-                    this.updateSessionItemsContent(sessionId, items)
-                    if (liveItems.length) this.addSessionItems(sessionId, liveItems)
+                    // One recompute for the three steps: they run in the same tick, so only
+                    // the last result is ever rendered, and each one costs a full pass.
+                    this.initSessionItemsFromMetadata(sessionId, metadata, { recompute: false })
+                    this.updateSessionItemsContent(sessionId, items, { recompute: false })
+                    if (liveItems.length) this.addSessionItems(sessionId, liveItems, null, { recompute: false })
+                    this.recomputeVisualItems(sessionId)
                     local.itemsLoadingError = false
                     local.itemsLoadingErrorReason = null
                     this.auditInflightSends(sessionId)
@@ -3463,7 +3468,12 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         recomputeVisualItems(sessionId) {
-            const items = this.sessionItems[sessionId] || []
+            // Read the raw array: this action tracks nothing, and every property read
+            // through the reactive proxy costs a Vue trap (about 6x slower on a session
+            // with tens of thousands of items). The only write here is the lazy
+            // _parsedContent cache, filled without a trigger: the content change that
+            // made it stale already triggered (and cleared it) through the proxy.
+            const items = toRaw(this.sessionItems[sessionId]) || []
             const failedSends = this.localState.failedSends[sessionId]
             const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
             const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
@@ -4551,8 +4561,10 @@ export const useDataStore = defineStore('data', {
          * Initialize sessionItems array from metadata (no content).
          * @param {string} sessionId
          * @param {Array} metadata - Array of { line_num, display_level, group_head, group_tail }
+         * @param {Object} [options]
+         * @param {boolean} [options.recompute=true] - false when the caller recomputes the visual items itself
          */
-        initSessionItemsFromMetadata(sessionId, metadata) {
+        initSessionItemsFromMetadata(sessionId, metadata, { recompute = true } = {}) {
             this.sessionItems[sessionId] = metadata.map(m => ({
                 line_num: m.line_num,
                 display_level: m.display_level,
@@ -4564,15 +4576,17 @@ export const useDataStore = defineStore('data', {
             }))
 
             // Compute visual items after initialization
-            this.recomputeVisualItems(sessionId)
+            if (recompute) this.recomputeVisualItems(sessionId)
         },
 
         /**
          * Update existing session items with fetched content.
          * @param {string} sessionId
          * @param {Array} items - Array of { line_num, content, display_level, group_head, group_tail, kind }
+         * @param {Object} [options]
+         * @param {boolean} [options.recompute=true] - false when the caller recomputes the visual items itself
          */
-        updateSessionItemsContent(sessionId, items) {
+        updateSessionItemsContent(sessionId, items, { recompute = true } = {}) {
             const sessionItemsArray = this.sessionItems[sessionId]
             if (!sessionItemsArray) return
 
@@ -4607,7 +4621,7 @@ export const useDataStore = defineStore('data', {
             this._retireStreamingBlocks(sessionId, updatedItems)
 
             // Recompute visual items in case metadata changed
-            this.recomputeVisualItems(sessionId)
+            if (recompute) this.recomputeVisualItems(sessionId)
         },
 
         // Tab management actions
