@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, shallowReactive, watch } from 'vue'
 import { isRailSessionProcess, selectRailActiveSessions } from '../utils/railActiveSessions.js'
 import { buildChildrenIndex, sameChildrenIndex, selectRailTreeRows } from '../utils/railActiveSessionsTree.js'
+import { getTreeRootWindows } from '../utils/treeRootWindows.js'
 
 // Share outstanding rail loads across consumers and remounts. The store owns
 // fetched records; this map only owns the request until it settles.
@@ -114,12 +115,16 @@ export function useRailActiveSessions(store, currentSessionId = () => null, { tr
         return sameArray(previous, next)
     })
 
+    // Window keys of the tree roots: the same tracker as the sidebar, so both agree on the root order.
+    const treeRootWindows = getTreeRootWindows(store)
+
     const rows = computed(previous => {
         const previousRows = new Map(previous?.map(row => [row.session.id, row]) || [])
         const selected = treeEnabled()
             ? selectRailTreeRows(flatSelection.value, {
                 processStates: store.processStates, sessions: store.sessions,
                 childrenIndex: childrenIndex.value, isCollapsed, viewedId: currentSessionId(),
+                rootKey: treeRootWindows.rootKey,
             })
             : flatSelection.value
         const next = selected

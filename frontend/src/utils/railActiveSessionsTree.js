@@ -51,10 +51,11 @@ export function sameChildrenIndex(a, b) {
  *   isCollapsed: (id: string) => boolean,
  *   viewedId?: ?string,
  *   isUnread?: (session: Object, processState: ?Object) => boolean,
- * }} opts
+ *   rootKey?: ?(id: string) => (number|undefined),
+ * }} opts - `rootKey`: the order key of the active roots (`buildSessionTree`)
  */
 export function selectRailTreeRows(flatRows, {
-    processStates, sessions, childrenIndex, isCollapsed, viewedId = null, isUnread = isSessionUnread,
+    processStates, sessions, childrenIndex, isCollapsed, viewedId = null, isUnread = isSessionUnread, rootKey = null,
 }) {
     if (!flatRows.length) return flatRows
     const rowById = new Map(flatRows.map(row => [row.session.id, row]))
@@ -86,7 +87,7 @@ export function selectRailTreeRows(flatRows, {
         if (isParticipant(session) && !isBlocking(session) && isCollapsed(id)) walkDown(id)
     }
 
-    const tree = buildSessionTree([...candidates.values()], { lookup, processStates, viewedId, isUnread })
+    const tree = buildSessionTree([...candidates.values()], { lookup, processStates, viewedId, isUnread, rootKey })
     const rootOf = id => {
         let node = tree.nodes.get(id)
         while (node.parentId) node = tree.nodes.get(node.parentId)

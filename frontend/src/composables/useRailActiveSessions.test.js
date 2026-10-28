@@ -272,3 +272,53 @@ test('option on: switching the option back off restores the flat rows', async ()
     assert.equal(f.api.rows.value.every(r => !r.cumulative), true)
     f.scope.stop()
 })
+
+// Design docs/plans/2026-10-28-tree-root-active-order-design.md, section 6 #14.
+test('option on: a single session that stops and restarts takes its new started_at, as in flat mode', async () => {
+    const f = treeFixture({ sessions: treeSessions(), processStates: { other: tp(9), root: tp(5) } })
+    await flush()
+    const flatOrder = async () => {
+        f.flags.tree = false
+        await flush()
+        const order = f.api.rows.value.map(r => r.session.id)
+        f.flags.tree = true
+        await flush()
+        return order
+    }
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'root'])
+    assert.deepEqual(await flatOrder(), ['other', 'root'])
+    delete f.store.processStates.root
+    await flush()
+    f.store.processStates.root = tp(20)
+    await flush()
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['root', 'other'], 'tree mode: the new start')
+    assert.deepEqual(await flatOrder(), ['root', 'other'], 'flat mode agrees')
+    f.store.processStates.root.started_at = 3
+    await flush()
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'root'], 'restart in place: the new start')
+    f.scope.stop()
+})
+
+test('option on: a worker start or restart below an idle root does not move its rail group', async () => {
+    const sessions = { ...treeSessions(), kid2: { id: 'kid2', project_id: 'p', mtime: 1, spawned_by: 'root' } }
+    const f = treeFixture({ sessions, processStates: { kid: tp(5), other: tp(9) } })
+    await flush()
+    const groups = () => [...new Set(f.api.rows.value.map(r => r.groupId))]
+    assert.deepEqual(groups(), ['other', 'root'])
+    f.store.processStates.kid2 = tp(20)
+    await flush()
+    assert.deepEqual(groups(), ['other', 'root'], 'a second worker starts later than other: no move')
+    delete f.store.processStates.kid
+    await flush()
+    f.store.processStates.kid = tp(30)
+    await flush()
+    assert.deepEqual(groups(), ['other', 'root'], 'the first worker restarts: no move')
+    // Every process below the root stops, then one starts: a new window, the group moves.
+    delete f.store.processStates.kid
+    delete f.store.processStates.kid2
+    await flush()
+    f.store.processStates.kid = tp(40)
+    await flush()
+    assert.deepEqual(groups(), ['root', 'other'], 'a new window after a gap')
+    f.scope.stop()
+})

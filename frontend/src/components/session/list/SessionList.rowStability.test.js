@@ -22,6 +22,7 @@ import * as projectScopes from '../../../utils/projectScopes.js'
 import * as workspaceIds from '../../../utils/workspaceIds.js'
 import * as sessionTree from '../../../utils/sessionTree.js'
 import * as unreadMemos from '../../../utils/unreadMemos.js'
+import * as treeRootWindows from '../../../utils/treeRootWindows.js'
 import { isSessionUnread } from '../../../utils/sessions.js'
 import * as textFilter from '../../../utils/textFilter.js'
 import * as sessionTitle from '../../../utils/sessionTitle.js'
@@ -134,6 +135,7 @@ function mountList(t, state, projectId, { showAsTree = false, sessionTreeModule 
         '../../../utils/sidebarSessions': sidebarSessions,
         '../../../utils/sessionTree.js': sessionTreeModule,
         '../../../utils/unreadMemos.js': unreadMemos,
+        '../../../utils/treeRootWindows.js': treeRootWindows,
         '../../../utils/sessionLists.js': sessionLists,
         '../../../utils/retain.js': retain,
         '../../../utils/projectScopes.js': projectScopes,

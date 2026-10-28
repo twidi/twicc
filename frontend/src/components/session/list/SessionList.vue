@@ -15,6 +15,7 @@ import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansi
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { useSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { buildSessionTree, flattenTree, treeActivity, sharesProjectWithParent } from '../../../utils/sessionTree.js'
+import { getTreeRootWindows } from '../../../utils/treeRootWindows.js'
 import { getUnreadMemos } from '../../../utils/unreadMemos.js'
 import { retainSessionArray, resolveSessionScope } from '../../../utils/sessionLists.js'
 import { retainIds } from '../../../utils/retain.js'
@@ -158,16 +159,21 @@ const natural = computed(() => sessionBlocks.value.natural)
 // state stops at the memo, so it rebuilds neither the tree nor the row metadata.
 const isTreeSessionUnread = session => getUnreadMemos(store).unread(session)
 
+// Window keys of the tree roots (one tracker per store, shared with the rail): an active
+// root keeps its place while its tree stays active.
+const treeRootWindows = getTreeRootWindows(store)
+
 // The session tree (null in flat mode). It reads the `mtime` of inactive subtrees only
 // and the unread state through the memo, so a write to an active session, or to a
-// `user_turn` session that stays unread, does not rebuild it. On a rebuild,
-// `treeRowMeta` retains the unchanged row metadata.
+// `user_turn` session that stays unread, does not rebuild it. It reads the window keys
+// of its own active roots only. On a rebuild, `treeRowMeta` retains the unchanged row metadata.
 const tree = computed(() => treeActive.value
     ? buildSessionTree(natural.value, {
         lookup: id => store.sessions[id] ?? null,
         processStates: store.processStates,
         viewedId: props.sessionId,
         isUnread: isTreeSessionUnread,
+        rootKey: treeRootWindows.rootKey,
     })
     : null)
 

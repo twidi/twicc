@@ -10,6 +10,7 @@ import { buildProjectActivityIndex, createProjectActivityComparator } from '../u
 import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
 import { getRootSessions } from '../utils/rootSessions.js'
 import { getUnreadMemos } from '../utils/unreadMemos.js'
+import { getTreeRootWindows } from '../utils/treeRootWindows.js'
 import { getArchivedProjectIds, getWorktreeIdsByParent } from '../utils/projectScopes.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
@@ -7243,6 +7244,18 @@ export const useDataStore = defineStore('data', {
         },
     }
 })
+
+/**
+ * Start the eager trackers the data store owns. Call once at app init, like
+ * `initSettings`: an options store has no setup hook, and a lazy getter would
+ * lose the history it did not see.
+ *
+ * - The tree root windows (`utils/treeRootWindows.js`): the order key of the
+ *   tree roots among active entries, shared by every sidebar list and the rail.
+ */
+export function initDataStore() {
+    getTreeRootWindows(useDataStore())
+}
 
 // Pinia HMR support: hot-replace actions/getters without full page reload.
 // We wrap acceptHMRUpdate with state save/restore because Pinia's patchObject

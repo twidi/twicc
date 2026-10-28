@@ -30,7 +30,10 @@ export const isBlocking = (session) =>
  *   processStates?: Object,
  *   viewedId?: ?string,
  *   isUnread?: (session: Object, processState: ?Object) => boolean,
- * }} opts
+ *   rootKey?: ?(id: string) => (number|undefined),
+ * }} opts - `rootKey(id)` is the order key of an active root (its window key,
+ *   `utils/treeRootWindows.js`); it is read for active roots only and replaces their
+ *   `activeKey` in the root order alone. Undefined (or no `rootKey`): `activeKey`.
  * @returns {{ nodes: Map<string, Object>, rootIds: string[] }}
  */
 export function buildSessionTree(candidates, {
@@ -38,6 +41,7 @@ export function buildSessionTree(candidates, {
     processStates = {},
     viewedId = null,
     isUnread = () => false,
+    rootKey = null,
 }) {
     const byId = new Map(candidates.map((session) => [session.id, session]))
     const isParticipantCandidate = (id) => {
@@ -178,6 +182,17 @@ export function buildSessionTree(candidates, {
         return node
     }
     for (const id of rootIds) compute(id)
+    // An active root keeps its place while its tree stays active: it sorts by its
+    // window key, not by the highest start below it (design:
+    // docs/plans/2026-10-28-tree-root-active-order-design.md). Only the keys of the
+    // active roots of this tree are read.
+    if (rootKey) {
+        for (const id of rootIds) {
+            if (!nodes.get(id).effective.active) continue
+            const key = rootKey(id)
+            if (key !== undefined && key !== null) proxyStates[id] = { started_at: key }
+        }
+    }
     rootIds.sort(byEffective)
 
     return { nodes, rootIds }

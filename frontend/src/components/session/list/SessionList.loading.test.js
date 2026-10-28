@@ -9,6 +9,7 @@ import { retainIds } from '../../../utils/retain.js'
 import { getSessionCutoffMs } from '../../../utils/sessions.js'
 import { jsonValuesEqual } from '../../../utils/jsonValuesEqual.js'
 import * as workspaceIds from '../../../utils/workspaceIds.js'
+import * as treeRootWindows from '../../../utils/treeRootWindows.js'
 // Execute the production request registration, merge, loading flag, and finally ordering.
 const storeSource = readFileSync(new URL('../../../stores/data.js', import.meta.url), 'utf8')
 const storeStart = storeSource.indexOf('        async loadSessions(')
@@ -90,6 +91,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../stores/sessionTreeExpansion': { useSessionTreeExpansionStore: () => ({ isExpanded: () => true, reconcile() {}, toggle() {}, reveal: () => [] }) },
         '../../../utils/sessionTree.js': { buildSessionTree: () => ({ nodes: new Map(), rootIds: [] }), flattenTree: () => [] },
         '../../../utils/unreadMemos.js': { getUnreadMemos: () => ({ unread: () => false }) },
+        '../../../utils/treeRootWindows.js': treeRootWindows,
         '../../../composables/useSessionTreeAncestors': { useSessionTreeAncestors() {} },
         '../../../utils/sidebarSessions': { useSidebarSessionBlocks: getOptions => ({ blocks: Vue.computed(() => {
             const { showArchived } = getOptions()

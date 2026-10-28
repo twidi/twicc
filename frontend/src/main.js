@@ -106,7 +106,7 @@ import { setUpdateInstructions } from './utils/updateInstructions.js'
 import { applyDefaultSettings, initSettings } from './stores/settings'
 import { setTwiccLaunchPrefix } from './utils/twiccLaunch'
 import { useAuthStore } from './stores/auth'
-import { useDataStore } from './stores/data'
+import { initDataStore, useDataStore } from './stores/data'
 import { useCodeCommentsStore } from './stores/codeComments'
 import { useWorkspacesStore } from './stores/workspaces'
 import { useTerminalConfigStore } from './stores/terminalConfig'
@@ -301,6 +301,8 @@ async function initializeApp() {
 
         // Initialize settings (localStorage persistence, theme, font size, display mode watchers)
         initSettings()
+        // Start the data store's eager trackers (tree root order) before any process state arrives.
+        initDataStore()
 
         // Apply bootstrap data to stores so the UI has workspaces, snippets, and terminal config
         // immediately available. The WebSocket will re-push these on (re)connect for live updates.
