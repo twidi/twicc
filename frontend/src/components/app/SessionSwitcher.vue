@@ -159,7 +159,15 @@ useGlideInk({
                             ></wa-icon>
                             <span class="switcher-name">{{ row.name }}</span>
                             <span class="switcher-state">
-                                <wa-icon v-if="row.state.kind === 'unread'" name="eye" class="switcher-unread"></wa-icon>
+                                <ProcessIndicator
+                                    v-if="row.state.kind === 'unread' && row.state.processState"
+                                    :state="row.state.processState.state"
+                                    :has-active-crons="row.state.processState.active_crons?.length > 0"
+                                    :background-shells="userTurnBackgroundShellCount(row.state.processState)"
+                                    unread
+                                    size="small"
+                                />
+                                <wa-icon v-else-if="row.state.kind === 'unread'" name="eye" class="switcher-unread"></wa-icon>
                                 <wa-icon v-else-if="row.state.kind === 'pending'" name="hand" class="switcher-pending"></wa-icon>
                                 <ProcessIndicator
                                     v-else-if="row.state.kind === 'process'"
@@ -343,6 +351,7 @@ useGlideInk({
     display: inline-flex;
     align-items: center;
     color: var(--wa-color-text-muted);
+    --process-unread-color: var(--wa-color-brand-60);
 }
 
 .switcher-unread {
