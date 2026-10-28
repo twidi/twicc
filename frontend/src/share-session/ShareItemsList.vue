@@ -337,6 +337,7 @@ const {
 /* Hidden under the skeleton while the first load fills the rows; when the class goes,
    visibility switches at once and the opacity fades in (as in SessionItemsList). */
 .session-items {
+    padding-bottom: var(--wa-space-2xl);
     transition: opacity var(--motion-dur-2) var(--motion-ease);
 }
 .session-items.initial-scrolling {

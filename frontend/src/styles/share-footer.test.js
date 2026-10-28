@@ -33,3 +33,11 @@ test('3. the three share pages use it: glass on the session page, solid on the d
     assert.ok(read('artifact-shell/ArtifactShellApp.vue').includes(`<ShareFooter v-if="mode === 'share'" solid />`))
     assert.ok(!read('artifact-shell/ArtifactShellApp.vue').includes('.share-footer {'), 'no restated footer style')
 })
+
+test('4. the share viewer registers the brand robot icon and its animation, and pads the list bottom', () => {
+    const main = read('share-session/main.js')
+    assert.ok(main.includes("import './brandRobotIcon'"))
+    assert.ok(main.includes("import '../styles/robot-working.css'"))
+    assert.ok(read('share-session/brandRobotIcon.js').includes('robot.svg?raw'))
+    assert.ok(norm(read('share-session/ShareItemsList.vue')).includes('.session-items { padding-bottom: var(--wa-space-2xl);'))
+})

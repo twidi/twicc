@@ -46,6 +46,9 @@ import '../styles/tags.css'
 import '../styles/quote-card.css'
 import '../styles/tool-cards.css'
 import '../styles/scrollbars.css'
+// The working agent's robot: the brand icon and its hop animation, like the SPA's.
+import './brandRobotIcon'
+import '../styles/robot-working.css'
 import ShareSessionApp from './ShareSessionApp.vue'
 import ShareDocApp from './ShareDocApp.vue'
 import ShareRecentApp from './ShareRecentApp.vue'   // 3.20
