@@ -65,6 +65,11 @@ const props = defineProps({
         type: Boolean,
         default: false
     },
+    // Show the provider icon glyph in the row (the rail and dialogs keep it).
+    showProviderIcon: {
+        type: Boolean,
+        default: true
+    },
     showProjectName: {
         type: Boolean,
         default: false
@@ -567,7 +572,7 @@ function handleMenuSelect(event) {
                 <AppTooltip :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">Draft</AppTooltip>
                 <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="link-slash" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
                 <AppTooltip :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">Session files were deleted from disk</AppTooltip>
-                <ProviderIcon v-if="providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
+                <ProviderIcon v-if="showProviderIcon && providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
                     v-if="showWorktreeIcon"
                     :id="rowId('session-worktree')"

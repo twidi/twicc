@@ -732,6 +732,7 @@ const showArchivedProjects = computed(() => settingsStore.isShowArchivedProjects
 // Compact view (persistent setting, browser-local via settings store)
 const compactView = computed(() => settingsStore.isCompactSessionList)
 const showAsTree = computed(() => settingsStore.isShowSessionsAsTree)
+const showProviderIcons = computed(() => settingsStore.isShowProviderIcons)
 
 // Artifacts: show every bookmark ignoring the current scope (persistent setting)
 const showAllArtifacts = computed(() => settingsStore.isShowAllArtifacts)
@@ -897,6 +898,8 @@ function handleSessionOptionsSelect(event) {
         settingsStore.setCompactSessionList(item.checked)
     } else if (value === 'show-as-tree') {
         settingsStore.setShowSessionsAsTree(item.checked)
+    } else if (value === 'show-provider-icons') {
+        settingsStore.setShowProviderIcons(item.checked)
     } else if (value === 'show-all-artifacts') {
         settingsStore.setShowAllArtifacts(item.checked)
     } else if (value === 'show-active') {
@@ -1978,6 +1981,7 @@ function openPeerInbox() {
                     :show-archived-sessions="showArchivedSessions"
                     :compact-view="compactView"
                     :show-as-tree="showAsTree"
+                    :show-provider-icons="showProviderIcons"
                     :multi-select-active="selectionStore.active"
                     :show-active-across-filters="showActiveAcrossFilters"
                     :trimmed-search-query="trimmedSearchQuery"
@@ -2036,6 +2040,7 @@ function openPeerInbox() {
                         :show-archived-projects="showArchivedProjects"
                         :compact-view="compactView"
                         :show-as-tree="showAsTree"
+                        :show-provider-icons="showProviderIcons"
                         :show-active-across-filters="showActiveAcrossFilters"
                         @select="handleSessionSelect"
                         @drop-data="handleDropOnSession"

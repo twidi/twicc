@@ -19,6 +19,7 @@ defineProps({
     showArchivedSessions: { type: Boolean, default: false },
     compactView: { type: Boolean, default: false },
     showAsTree: { type: Boolean, default: false },
+    showProviderIcons: { type: Boolean, default: false },
     multiSelectActive: { type: Boolean, default: false },
     showActiveAcrossFilters: { type: Boolean, default: false },
     trimmedSearchQuery: { type: String, default: '' },
@@ -98,6 +99,13 @@ defineExpose({ focus })
                 :checked="showAsTree"
             >
                 Show orchestrated sessions as tree
+            </wa-dropdown-item>
+            <wa-dropdown-item
+                type="checkbox"
+                value="show-provider-icons"
+                :checked="showProviderIcons"
+            >
+                Show provider icons
             </wa-dropdown-item>
             <!-- Multi-select needs Shift/Ctrl modifier clicks, which
                  have no touch equivalent yet — hide it on touch devices. -->

@@ -72,6 +72,11 @@ const props = defineProps({
     showAsTree: {
         type: Boolean,
         default: false
+    },
+    // Show the provider icon on each row.
+    showProviderIcons: {
+        type: Boolean,
+        default: true
     }
 })
 
@@ -976,6 +981,7 @@ defineExpose({
                     :active="session.id === sessionId"
                     :highlighted="index === highlightedIndex"
                     :compact-view="compactView"
+                    :show-provider-icon="showProviderIcons"
                     :show-project-name="showProjectName"
                     :scope-project-ids="scopeProjectIds"
                     :filter-project-id="filterProjectId"
