@@ -71,6 +71,25 @@ def test_pending_hidden_and_muted_flags_become_initial_intervals(project):
     assert kinds("flagged") == ["session.created", "hidden.started", "muted.started"]
 
 
+def test_created_detached_session_records_tree_detached_started(project):
+    Session.objects.create(id="boss2", file_path="boss2.jsonl", project=project, provider=Provider.CODEX)
+    session = Session.objects.create(id="det", file_path="det.jsonl", project=project, provider=Provider.CODEX,
+                                     spawned_by_id="boss2", tree_detached=True)
+    created = record_session_created(session, origin="twicc")
+    assert kinds("det") == ["session.created", "tree_detached.started"]
+    row = TimelineEvent.objects.get(session_id="det", kind="tree_detached.started")
+    assert row.caused_by_id == created.id
+
+
+def test_created_detached_session_without_spawner_records_event(project):
+    session = Session.objects.create(id="orphan", file_path="orphan.jsonl", project=project,
+                                     provider=Provider.CODEX, tree_detached=True)
+    created = record_session_created(session, origin="twicc")
+    assert created.data["spawned_by"] is None
+    row = TimelineEvent.objects.get(session_id="orphan", kind="tree_detached.started")
+    assert row.caused_by_id == created.id
+
+
 def test_subagent_sessions_get_no_event(project):
     parent = _Watcher().create_session_sync(parsed(project, "parent"), project)
     _Watcher().create_session_sync(

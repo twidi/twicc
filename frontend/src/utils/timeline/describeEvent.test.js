@@ -23,7 +23,7 @@ const words = (vm) => vm.parts.map((part) => {
     return `<${part.mention.title}>`
 }).join('')
 
-test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
+test('the 21 kinds: wording, icon and severity (section 6.1)', () => {
     const cases = [
         ['session.created', { data: { origin: 'twicc' } }, 'Session created', 'plus', 'neutral'],
         ['title.changed', { data: { source: 'user', new: 'B', old: 'A' } }, 'Renamed [A] → [B]', 'pencil', 'neutral'],
@@ -40,12 +40,14 @@ test('the 19 kinds: wording, icon and severity (section 6.1)', () => {
         ['hidden.ended', {}, 'Unhidden', 'eye', 'neutral'],
         ['muted.started', {}, 'Muted', 'bell-slash', 'neutral'],
         ['muted.ended', {}, 'Unmuted', 'bell', 'neutral'],
+        ['tree_detached.started', {}, 'Detached from parent', 'sitemap', 'neutral'],
+        ['tree_detached.ended', {}, 'Reattached to parent', 'sitemap', 'neutral'],
         ['pinned.started', { data: { scope: 'project' } }, 'Pinned', 'thumbtack', 'neutral'],
         ['pinned.ended', { data: { scope: 'project' } }, 'Unpinned', 'thumbtack-slash', 'neutral'],
         ['backend.started', { session_id: null, data: { version: '1.2.3' } }, 'TwiCC started', 'server', 'neutral'],
         ['backend.ended', { session_id: null, data: { clean: true } }, 'TwiCC stopped', 'power-off', 'neutral'],
     ]
-    assert.equal(cases.length, 19)
+    assert.equal(cases.length, 21)
     for (const [kind, fields, wording, icon, severity] of cases) {
         const vm = describe(kind, fields)
         assert.deepEqual([words(vm), vm.icon, vm.severity], [wording, icon, severity], kind)

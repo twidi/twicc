@@ -32,7 +32,7 @@ async function mount(t, data, context = Vue.shallowReactive({ sessions: {}, time
 }
 test('all selected families and unknown payloads render individual text notices with time', async t => {
     for (const kind of ['session.created', 'title.changed', 'settings.changed', 'process.started', 'process.ended', 'awaiting_input.started', 'awaiting_input.ended',
-        'archived.started', 'archived.ended', 'hidden.started', 'hidden.ended', 'muted.started', 'muted.ended', 'pinned.started', 'pinned.ended', 'future.changed']) {
+        'archived.started', 'archived.ended', 'hidden.started', 'hidden.ended', 'muted.started', 'muted.ended', 'tree_detached.started', 'tree_detached.ended', 'pinned.started', 'pinned.ended', 'future.changed']) {
         const root = await mount(t, event(kind, { data: null }))
         assert.equal(descendants(root, n => String(n.props.class).includes('timeline-time'))[0].text, '14:32')
         assert.equal(descendants(root, n => n.type === 'details' || n.type === 'summary').length, 0)

@@ -21,7 +21,7 @@ export const FAMILIES = [
     { value: 'turns', label: 'Turns', hint: 'started, ended' },
     { value: 'waits', label: 'Waiting for you', hint: 'approvals, questions' },
     { value: 'settings', label: 'Settings', hint: 'model, effort, permissions' },
-    { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned' },
+    { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned, detached' },
     { value: 'twicc', label: 'TwiCC', hint: 'started, stopped' },
 ]
 

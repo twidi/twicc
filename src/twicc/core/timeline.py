@@ -119,7 +119,7 @@ PAYLOAD_TYPES: dict[str, type | None] = {
 #: ``ended`` kind -> its ``started`` kind. An ``ended`` row repeats the data of its
 #: OPEN ``started`` row (no newer ``ended`` row) so that each line reads alone
 #: (design §3). The recording service applies it in one place (``record_event_sync``); ``turn.*``, ``archived.*``,
-#: ``hidden.*`` and ``muted.*`` have no started payload, so they are not listed.
+#: ``hidden.*``, ``muted.*`` and ``tree_detached.*`` have no started payload, so they are not listed.
 STARTED_OF: dict[str, str] = {
     TimelineKind.AWAITING_INPUT_ENDED: TimelineKind.AWAITING_INPUT_STARTED,
     TimelineKind.PROCESS_ENDED: TimelineKind.PROCESS_STARTED,

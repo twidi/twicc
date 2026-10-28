@@ -382,7 +382,7 @@ def record_session_created(
     final transaction, and by the Codex "mark unavailable" apply
     (``rollout_migration._apply_mark_session_unavailable_job``) for the root of the marked session.
 
-    A session created already hidden or muted gets the matching ``*.started``
+    A session created already hidden, muted or tree-detached gets the matching ``*.started``
     rows, same ``occurred_at``, ``caused_by`` the creation event (design §5).
     ``pinned`` is never set at creation. Sync: call from worker-thread code.
 
@@ -421,6 +421,8 @@ def record_session_created(
             record_event_sync(TimelineKind.HIDDEN_STARTED, caused_by=created, **who, **common)
         if session.mute_on_user_turn:
             record_event_sync(TimelineKind.MUTED_STARTED, caused_by=created, **who, **common)
+        if session.tree_detached:
+            record_event_sync(TimelineKind.TREE_DETACHED_STARTED, caused_by=created, **who, **common)
         return created
     except Exception:
         logger.exception("Timeline creation events could not be written for session %s", session.id)

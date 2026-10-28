@@ -51,6 +51,8 @@ const FLAG_KINDS = {
     'hidden.ended': ['Unhidden', 'eye'],
     'muted.started': ['Muted', 'bell-slash'],
     'muted.ended': ['Unmuted', 'bell'],
+    'tree_detached.started': ['Detached from parent', 'sitemap'],
+    'tree_detached.ended': ['Reattached to parent', 'sitemap'],
 }
 
 const SESSION_CREATED_BASE = {
