@@ -35,9 +35,8 @@ export const useSessionTreeExpansionStore = defineStore('sessionTreeExpansion', 
     }, { deep: true })
 
     const isExpanded = (id) => isExpandedRule(state.value, id)
-    const reconcile = (tree, settled, scopeKey, seedTriggerIds) =>
-        reconcileExpansion(state.value, tree, { settled, scopeKey, seedTriggerIds })
-    const toggle = (id, tree) => setExpanded(state.value, id, !isExpandedRule(state.value, id), tree)
+    const reconcile = (tree) => reconcileExpansion(state.value, tree)
+    const toggle = (id) => setExpanded(state.value, id, !isExpandedRule(state.value, id))
     const reveal = (tree, id, previousPath = []) => revealPath(state.value, tree, id, previousPath)
 
     return { state, isExpanded, reconcile, toggle, reveal }

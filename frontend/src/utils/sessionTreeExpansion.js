@@ -2,14 +2,10 @@
 // Pure expansion rules of the sidebar session tree (spec §9 and §10).
 // No Vue, no Pinia: the store in stores/sessionTreeExpansion.js wraps this.
 //
-// Only `explicit` (the user's own collapses and expands) is persisted. The
-// other parts are session-only:
-//   auto         ids expanded automatically (sticky until the user collapses)
-//   seen         global set of session ids that already met a trigger
-//                condition (active, unread or pinned): "seen" belongs to the
-//                descendant session, not to a node
-//   revealed     ids opened to show the selected session (wins over explicit)
-//   seededScopes scope keys whose initial pass already ran
+// A manual collapse or expand is final (spec §9). Only `explicit` (the user's
+// own choices) is persisted. The other parts are session-only:
+//   auto      ids expanded automatically (sticky until the user collapses)
+//   revealed  ids opened to show the selected session (wins over explicit)
 
 /**
  * @param {Object<string, boolean>} [explicit]
@@ -18,9 +14,7 @@ export function createExpansionState(explicit = {}) {
     return {
         explicit,
         auto: new Set(),
-        seen: new Set(),
         revealed: new Set(),
-        seededScopes: new Set(),
     }
 }
 
@@ -32,62 +26,29 @@ export function isExpanded(state, id) {
 }
 
 /**
- * Apply the automatic expansion rules to the current tree.
+ * Apply the automatic expansion rule to the current tree: a node the user
+ * never touched expands while its subtree has a trigger, and stays expanded.
+ * A node with an explicit choice is never changed.
  *
  * @param {Object} state
  * @param {{ nodes: Map<string, Object> }} tree
- * @param {{ settled: boolean, scopeKey: string, seedTriggerIds: () => string[] }} opts
  */
-export function reconcileExpansion(state, tree, { settled, scopeKey, seedTriggerIds }) {
-    // The initial load is not over: sessions or process states are still arriving.
-    if (!settled) return
-
-    const initial = !state.seededScopes.has(scopeKey)
-    if (initial) {
-        // Seed from every loaded session that meets a condition, so the seed
-        // does not depend on the tree shape.
-        for (const id of seedTriggerIds()) state.seen.add(id)
-    }
-
+export function reconcileExpansion(state, tree) {
     for (const [id, node] of tree.nodes) {
-        if (!node.childIds.length) continue
-        const triggerIds = node.triggerIds
-        if (!triggerIds.length) continue
-        const explicit = state.explicit[id]
-        if (initial) {
-            // Never un-collapse during the initial pass.
-            if (explicit === undefined) state.auto.add(id)
-            continue
-        }
-        if (explicit === undefined) {
-            state.auto.add(id)
-        } else if (explicit === false && triggerIds.some(t => !state.seen.has(t))) {
-            delete state.explicit[id]
-            state.auto.add(id)
-        }
+        if (!node.childIds.length || !node.triggerIds.length) continue
+        if (state.explicit[id] === undefined) state.auto.add(id)
     }
-
-    // After all nodes are evaluated, so a descendant shared by several
-    // ancestors counts for each of them in the same pass.
-    for (const node of tree.nodes.values()) {
-        for (const t of node.triggerIds) state.seen.add(t)
-    }
-    if (initial) state.seededScopes.add(scopeKey)
 }
 
 /**
  * User action: expand or collapse a node.
  */
-export function setExpanded(state, id, value, tree) {
-    if (value) {
-        state.explicit[id] = true
-        return
+export function setExpanded(state, id, value) {
+    state.explicit[id] = value
+    if (!value) {
+        state.auto.delete(id)
+        state.revealed.delete(id)
     }
-    state.explicit[id] = false
-    state.auto.delete(id)
-    state.revealed.delete(id)
-    const node = tree.nodes.get(id)
-    if (node) for (const t of node.triggerIds) state.seen.add(t)
 }
 
 /**

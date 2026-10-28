@@ -22,7 +22,7 @@ test('imports the tree building blocks', () => {
 test('binds the tree row to the list item and handles its toggle', () => {
     assert.ok(sfc.includes(':tree-row='))
     assert.ok(sfc.includes('@toggle-tree='))
-    assert.ok(sfc.includes('expansion.toggle(session.id, tree.value)'))
+    assert.ok(sfc.includes('expansion.toggle(session.id)'))
 })
 
 test('the switcher publish offers every tree node, collapsed or not', () => {
@@ -30,9 +30,11 @@ test('the switcher publish offers every tree node, collapsed or not', () => {
     assert.ok(sfc.includes('const switcherIds = computed('))
 })
 
-test('reconcile is gated on settled, which reads the fetched and processes-received flags', () => {
-    assert.ok(sfc.includes('activeProcessesReceived'))
-    assert.ok(sfc.includes('expansion.reconcile(t, ok, props.projectId, seedTriggerIds)'))
+test('reconcile runs on the tree alone, with no data gate and no seed', () => {
+    assert.ok(sfc.includes('expansion.reconcile(t)'))
+    assert.ok(!sfc.includes('seedTriggerIds'))
+    assert.ok(!sfc.includes('settled'))
+    assert.ok(!sfc.includes('activeProcessesReceived'))
 })
 
 test('the reveal mark is keyed on the ancestor path', () => {
@@ -49,9 +51,8 @@ test('exits ignore tree nodes and the scope includes the mode', () => {
     assert.ok(sfc.includes('props.showAsTree'))
 })
 
-test('data store declares and sets activeProcessesReceived', () => {
-    assert.ok(dataStore.includes('activeProcessesReceived: false,'))
-    assert.ok(dataStore.includes('this.activeProcessesReceived = true'))
+test('the data store no longer carries the processes-received gate flag', () => {
+    assert.ok(!dataStore.includes('activeProcessesReceived'))
 })
 
 test('the reveal mark resets when the tree is toggled or the scope changes', () => {

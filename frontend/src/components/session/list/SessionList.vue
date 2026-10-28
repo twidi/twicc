@@ -162,15 +162,9 @@ const tree = computed(() => treeActive.value
 // Fetch the tree ancestors that are not loaded yet.
 useSessionTreeAncestors(natural, treeActive)
 
-// Expansion is reconciled only once the data it depends on is complete.
-const settled = computed(() => treeActive.value
-    && store.areProjectSessionsFetched(props.projectId)
-    && store.activeProcessesReceived)
-const seedTriggerIds = () => Object.values(store.sessions)
-    .filter(s => store.processStates[s.id] != null || s.pinned || isSessionUnread(s, store.processStates[s.id]))
-    .map(s => s.id)
-watch([tree, settled], ([t, ok]) => {
-    if (t) expansion.reconcile(t, ok, props.projectId, seedTriggerIds)
+// An untouched node with an active, unread or pinned descendant expands (spec §9).
+watch(tree, (t) => {
+    if (t) expansion.reconcile(t)
 }, { immediate: true })
 
 const treeRows = computed(() => tree.value ? flattenTree(tree.value, expansion.isExpanded) : null)
@@ -686,7 +680,7 @@ function handleSelect(session) {
 }
 
 function onToggleTree(session) {
-    if (tree.value) expansion.toggle(session.id, tree.value)
+    if (tree.value) expansion.toggle(session.id)
 }
 
 function handleDropData(data) {
