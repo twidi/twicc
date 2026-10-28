@@ -17,10 +17,13 @@ import { aggregatedBackgroundSuffix, userTurnBackgroundShellCount } from './back
  *
  * @param {Iterable<Object>} processStates - Data store `processStates` entries.
  * @param {number} [unreadCount=0] - Unread sessions of the same set.
+ * @param {{sessions: number, shells: number}} [unreadBackground] - Among the unread
+ *   sessions, those with a shell or a cron (`sessions`) and those with a shell (`shells`).
  * @returns {{processCount: number, pendingRequestCount: number, hasAssistantTurn: boolean,
- *   activeCronCount: number, backgroundShellCount: number, unreadCount: number}}
+ *   activeCronCount: number, backgroundShellCount: number, unreadCount: number,
+ *   unreadBackgroundCount: number, unreadShellCount: number}}
  */
-export function summarizeProcessActivity(processStates, unreadCount = 0) {
+export function summarizeProcessActivity(processStates, unreadCount = 0, unreadBackground = { sessions: 0, shells: 0 }) {
     let processCount = 0
     let pendingRequestCount = 0
     let hasAssistantTurn = false
@@ -37,19 +40,31 @@ export function summarizeProcessActivity(processStates, unreadCount = 0) {
         backgroundShellCount += userTurnBackgroundShellCount(ps)
     }
 
-    return { processCount, pendingRequestCount, hasAssistantTurn, activeCronCount, backgroundShellCount, unreadCount }
+    return {
+        processCount,
+        pendingRequestCount,
+        hasAssistantTurn,
+        activeCronCount,
+        backgroundShellCount,
+        unreadCount,
+        unreadBackgroundCount: unreadBackground.sessions,
+        unreadShellCount: unreadBackground.shells,
+    }
 }
 
 /**
- * Priority cascade: pending_request > unread > assistant_turn > background_shells > crons > active_process > nothing.
- * Shells beat crons, as in ProcessIndicator.
+ * Priority cascade: pending_request > unread_background / unread > assistant_turn > background_shells > crons > active_process > nothing.
+ * Shells beat crons, as in ProcessIndicator. `unread_background` replaces `unread`
+ * when every unread session has a shell or a cron.
  *
  * @param {ReturnType<typeof summarizeProcessActivity>} summary
- * @returns {'pending_request'|'unread'|'assistant_turn'|'background_shells'|'crons'|'active_process'|null}
+ * @returns {'pending_request'|'unread_background'|'unread'|'assistant_turn'|'background_shells'|'crons'|'active_process'|null}
  */
 export function processActivityDisplayMode(summary) {
     if (summary.pendingRequestCount > 0) return 'pending_request'
-    if (summary.unreadCount > 0) return 'unread'
+    if (summary.unreadCount > 0) {
+        return summary.unreadBackgroundCount === summary.unreadCount ? 'unread_background' : 'unread'
+    }
     if (summary.hasAssistantTurn) return 'assistant_turn'
     if (summary.backgroundShellCount > 0) return 'background_shells'
     if (summary.activeCronCount > 0) return 'crons'
@@ -78,7 +93,7 @@ export function processActivityTooltip(summary, mode) {
         return `${pendingLabel} · ${sessionLabel}${backgroundSuffix}`
     }
 
-    if (mode === 'unread') {
+    if (mode === 'unread' || mode === 'unread_background') {
         const unreadLabel = `${summary.unreadCount} unread session${summary.unreadCount !== 1 ? 's' : ''}`
         return summary.processCount > 0
             ? `${unreadLabel} · ${sessionLabel}${backgroundSuffix}`

@@ -18,8 +18,8 @@ function ps(state, { pending = 0, crons = 0, shells = 0 } = {}) {
     }
 }
 
-function modeOf(states, unread = 0) {
-    return processActivityDisplayMode(summarizeProcessActivity(states, unread))
+function modeOf(states, unread = 0, unreadBackground) {
+    return processActivityDisplayMode(summarizeProcessActivity(states, unread, unreadBackground))
 }
 
 test('nothing live and nothing unread shows no indicator', () => {
@@ -72,7 +72,39 @@ test('counts add up across the set', () => {
         activeCronCount: 3,
         backgroundShellCount: 1,
         unreadCount: 4,
+        unreadBackgroundCount: 0,
+        unreadShellCount: 0,
     })
+})
+
+test('counts carry the unread sessions with background work', () => {
+    const summary = summarizeProcessActivity([], 1, { sessions: 1, shells: 0 })
+    assert.equal(summary.unreadBackgroundCount, 1)
+    assert.equal(summary.unreadShellCount, 0)
+})
+
+test('the cascade: unread_background when every unread session has background work', () => {
+    assert.equal(modeOf([], 2, { sessions: 2, shells: 1 }), 'unread_background')
+})
+
+test('the cascade: one unread session without background work keeps plain unread', () => {
+    assert.equal(modeOf([], 3, { sessions: 2, shells: 2 }), 'unread')
+})
+
+test('the cascade: unread with no background work is plain unread', () => {
+    assert.equal(modeOf([], 1, { sessions: 0, shells: 0 }), 'unread')
+})
+
+test('the cascade: nothing unread is never unread_background', () => {
+    assert.notEqual(modeOf([], 0, { sessions: 0, shells: 0 }), 'unread_background')
+})
+
+test('the cascade: pending request beats unread_background', () => {
+    assert.equal(modeOf([ps('assistant_turn', { pending: 1 })], 2, { sessions: 2, shells: 0 }), 'pending_request')
+})
+
+test('the cascade: unread_background beats a working session', () => {
+    assert.equal(modeOf([ps('assistant_turn')], 1, { sessions: 1, shells: 1 }), 'unread_background')
 })
 
 test('tooltip: pending request, single and plural', () => {
@@ -96,4 +128,9 @@ test('tooltip: unread, with and without live sessions', () => {
 test('tooltip: process modes list the active sessions', () => {
     const summary = summarizeProcessActivity([ps('assistant_turn'), ps('user_turn', { shells: 2 })])
     assert.equal(processActivityTooltip(summary, 'assistant_turn'), '2 active sessions (2 background shells)')
+})
+
+test('tooltip: unread_background reads like unread', () => {
+    const summary = summarizeProcessActivity([ps('user_turn', { crons: 2 })], 3, { sessions: 3, shells: 0 })
+    assert.equal(processActivityTooltip(summary, 'unread_background'), processActivityTooltip(summary, 'unread'))
 })
