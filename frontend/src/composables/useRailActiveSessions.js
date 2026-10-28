@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, shallowReactive, watch } from 'vue'
 import { isRailSessionProcess, selectRailActiveSessions } from '../utils/railActiveSessions.js'
+import { buildChildrenIndex, sameChildrenIndex, selectRailTreeRows } from '../utils/railActiveSessionsTree.js'
 
 // Share outstanding rail loads across consumers and remounts. The store owns
 // fetched records; this map only owns the request until it settles.
@@ -10,8 +11,15 @@ function sameArray(previous, next) {
         ? previous : next
 }
 
+const ACTIVITY_KEYS = ['processCount', 'pendingRequestCount', 'hasAssistantTurn', 'activeCronCount',
+    'backgroundShellCount', 'unreadCount']
+const sameActivity = (a, b) => !!a && !!b && ACTIVITY_KEYS.every(key => a[key] === b[key])
+const NO_CANDIDATES = []
+
 function sameRow(a, b) {
+    if (Object.keys(a).length !== Object.keys(b).length) return false
     return Object.keys(b).every(key => a[key] === b[key]
+        || (key === 'cumulative' && sameActivity(a.cumulative, b.cumulative))
         || (key === 'session' && a.metadataStatus !== 'loaded' && b.metadataStatus !== 'loaded'
             && Object.keys(a.session).length === Object.keys(b.session).length
             && Object.keys(b.session).every(field => a.session[field] === b.session[field])))
@@ -41,10 +49,16 @@ function loadMetadata(store, sessionId) {
  * Rows expose session, processState, unread (canonical), hasUnread (visible),
  * pendingRequest, indicatorKind, userTurnBackgroundShells, hasActiveCrons,
  * and metadataStatus: loading | loaded | missing | error.
+ *
+ * With `treeEnabled()` true the rows follow the session tree (spec §14): tree
+ * order, and a node for which `isCollapsed(id)` is true becomes one row
+ * `{ session, cumulative, metadataStatus }` (no processState, it may be idle).
+ * `treeCandidates` lists the rail-active stored sessions whose ancestors the
+ * caller must fetch; it is empty with the option off.
  * Missing/error records keep the process snapshot fallback. Retry only after
  * the process leaves and returns, or after this composable mounts again.
  */
-export function useRailActiveSessions(store, currentSessionId = () => null) {
+export function useRailActiveSessions(store, currentSessionId = () => null, { treeEnabled = () => false, isCollapsed = () => false } = {}) {
     const metadata = shallowReactive(new Map())
     let disposed = false
     const candidates = computed(previous => sameArray(previous, Object.keys(store.processStates)
@@ -79,9 +93,29 @@ export function useRailActiveSessions(store, currentSessionId = () => null) {
 
     onScopeDispose(() => { disposed = true })
 
+    const flatSelection = computed(() => selectRailActiveSessions(
+        store.processStates, store.sessions, currentSessionId(), sessionOrder.value))
+
+    // `spawned_by` children index, read only in tree mode and retained while unchanged.
+    const childrenIndex = computed(previous => {
+        const next = buildChildrenIndex(store.sessions)
+        return previous && sameChildrenIndex(previous, next) ? previous : next
+    })
+    const treeCandidates = computed(previous => {
+        if (!treeEnabled()) return NO_CANDIDATES
+        const next = flatSelection.value.map(row => store.sessions[row.session.id]).filter(Boolean)
+        return sameArray(previous, next)
+    })
+
     const rows = computed(previous => {
         const previousRows = new Map(previous?.map(row => [row.session.id, row]) || [])
-        const next = selectRailActiveSessions(store.processStates, store.sessions, currentSessionId(), sessionOrder.value)
+        const selected = treeEnabled()
+            ? selectRailTreeRows(flatSelection.value, {
+                processStates: store.processStates, sessions: store.sessions,
+                childrenIndex: childrenIndex.value, isCollapsed, viewedId: currentSessionId(),
+            })
+            : flatSelection.value
+        const next = selected
             .map(row => ({
                 ...row,
                 metadataStatus: store.sessions[row.session.id] ? 'loaded' : metadata.get(row.session.id)?.status || 'loading',
@@ -91,5 +125,5 @@ export function useRailActiveSessions(store, currentSessionId = () => null) {
             })
         return sameArray(previous, next)
     })
-    return { rows }
+    return { rows, treeCandidates }
 }

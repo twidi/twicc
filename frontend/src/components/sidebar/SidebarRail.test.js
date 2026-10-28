@@ -121,7 +121,7 @@ test('rail accepts all navigation modes and defaults an omitted sidebar state to
 
 test('global active entries reuse the full isolated row and canonical navigation', () => {
     const source = read()
-    assert.match(source, /useRailActiveSessions\(store, \(\) => currentSessionId.value\)/)
+    assert.match(source, /useRailActiveSessions\(store, \(\) => currentSessionId.value, \{/)
     assert.match(source, /props.mode === 'sessions' \? route.params.sessionId \|\| null : null/)
     assert.match(source, /router.push\(sessionRouteLocation\(session, route\)\)/)
     assert.match(source, /v-for="row in rows" :key="row.session.id"/)
@@ -144,4 +144,14 @@ test('preview width reserves the rail and popup space on narrow viewports', () =
     const previewWidth = Math.min(22 * 16, 360 - 54 - 3 * 16)
     assert.ok(56 + previewWidth + 16 <= 352)
     assert.equal(Math.min(22 * 16, 1280 - 54 - 3 * 16), 22 * 16)
+})
+
+test('tree mode: collapsed state is the read-only explicit false and a node row shows the cumulative indicator', () => {
+    const source = read()
+    assert.match(source, /treeEnabled: \(\) => isTreeMode.value/)
+    assert.match(source, /isCollapsed: id => treeExpansion.state.explicit\[id\] === false/)
+    assert.match(source, /useSessionTreeAncestors\(treeCandidates, isTreeMode\)/)
+    assert.doesNotMatch(source, /treeExpansion\.(toggle|reveal|reconcile)|setExpanded/)
+    assert.match(source, /<ProcessActivityIndicator\s+v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"\s*\/>\s*<template v-else>[\s\S]*v-if="row.hasUnread"[\s\S]*row.processState.state[\s\S]*<\/template>/)
+    assert.match(source, /:aria-pressed="row.session.id === currentSessionId"/)
 })

@@ -201,3 +201,74 @@ test('keeps All Projects ordering through snapshot rebuilds and reactive pin cha
     assert.equal(requests.length, 0)
     scope.stop()
 })
+
+function treeFixture(options = {}) {
+    const f = fixture()
+    const flags = reactive({ tree: true, collapsed: {} })
+    const api = f.scope.run(() => useRailActiveSessions(f.store, () => f.current.value, {
+        treeEnabled: () => flags.tree, isCollapsed: id => flags.collapsed[id] === true,
+    }))
+    Object.assign(f.store.sessions, options.sessions || {})
+    Object.assign(f.store.processStates, options.processStates || {})
+    return { ...f, flags, api }
+}
+const tp = (startedAt, extra = {}) => ({ ...idle, started_at: startedAt, ...extra })
+const treeSessions = () => ({
+    root: { id: 'root', project_id: 'p', mtime: 1 },
+    kid: { id: 'kid', project_id: 'p', mtime: 1, spawned_by: 'root' },
+    other: { id: 'other', project_id: 'p', mtime: 1 },
+})
+
+test('option off: rows keep the flat order and expose no tree candidates', async () => {
+    const f = treeFixture({ sessions: treeSessions(), processStates: { kid: tp(5), other: tp(9), root: tp(1) } })
+    f.flags.tree = false
+    await flush()
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'kid', 'root'])
+    assert.equal(f.api.treeCandidates.value.length, 0)
+    f.scope.stop()
+})
+
+test('option on: tree order, collapsed node folds its subtree and reacts to the collapse state', async () => {
+    const f = treeFixture({ sessions: treeSessions(), processStates: { kid: tp(5), other: tp(9), root: tp(1) } })
+    await flush()
+    // root's subtree is active since 5: other (9) first, then root and kid.
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'root', 'kid'])
+    assert.equal(f.api.treeCandidates.value.length, 3)
+    f.flags.collapsed.root = true
+    const rows = f.api.rows.value
+    assert.deepEqual(rows.map(r => r.session.id), ['other', 'root'])
+    assert.equal(rows[1].cumulative.processCount, 2)
+    assert.equal(rows[1].metadataStatus, 'loaded')
+    f.flags.collapsed.root = false
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'root', 'kid'])
+    f.scope.stop()
+})
+
+test('option on: a collapsed idle node is a row and unchanged rows are retained', async () => {
+    const f = treeFixture({ sessions: treeSessions(), processStates: { kid: tp(5), other: tp(9) } })
+    f.flags.collapsed.root = true
+    await flush()
+    const before = f.api.rows.value
+    assert.deepEqual(before.map(r => r.session.id), ['other', 'root'])
+    assert.equal(before[1].processState, undefined)
+    f.store.processStates.kid.memory = 5
+    f.store.processStates.other.label = 'x'
+    await flush()
+    assert.strictEqual(f.api.rows.value, before)
+    f.store.processStates.kid.pending_requests = [{ id: 'r' }]
+    await flush()
+    assert.notStrictEqual(f.api.rows.value, before)
+    assert.strictEqual(f.api.rows.value[0], before[0])
+    assert.equal(f.api.rows.value[1].cumulative.pendingRequestCount, 1)
+    f.scope.stop()
+})
+
+test('option on: switching the option back off restores the flat rows', async () => {
+    const f = treeFixture({ sessions: treeSessions(), processStates: { kid: tp(5), other: tp(9) } })
+    f.flags.collapsed.root = true
+    await flush()
+    f.flags.tree = false
+    assert.deepEqual(f.api.rows.value.map(r => r.session.id), ['other', 'kid'])
+    assert.equal(f.api.rows.value.every(r => !r.cumulative), true)
+    f.scope.stop()
+})

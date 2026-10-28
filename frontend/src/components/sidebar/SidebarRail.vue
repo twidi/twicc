@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useRailActiveSessions } from '../../composables/useRailActiveSessions'
+import { useSessionTreeAncestors } from '../../composables/useSessionTreeAncestors'
+import { useSessionTreeExpansionStore } from '../../stores/sessionTreeExpansion'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { useRailRecentProjects } from '../../composables/useRailRecentProjects.js'
@@ -11,6 +13,7 @@ import ProjectBadge from '../project/ProjectBadge.vue'
 import AggregatedProcessIndicator from '../ui/AggregatedProcessIndicator.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
+import ProcessActivityIndicator from '../ui/ProcessActivityIndicator.vue'
 import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
@@ -35,7 +38,14 @@ const { recentProjects, recentWorkspaces } = useRailRecentProjects(store, worksp
 const route = useRoute()
 const router = useRouter()
 const currentSessionId = computed(() => props.mode === 'sessions' ? route.params.sessionId || null : null)
-const { rows } = useRailActiveSessions(store, () => currentSessionId.value)
+const treeExpansion = useSessionTreeExpansionStore()
+const isTreeMode = computed(() => settingsStore.isShowSessionsAsTree)
+// Tree mode (spec §14): the user's explicit collapse is the only collapsed state; the rail never writes it.
+const { rows, treeCandidates } = useRailActiveSessions(store, () => currentSessionId.value, {
+    treeEnabled: () => isTreeMode.value,
+    isCollapsed: id => treeExpansion.state.explicit[id] === false,
+})
+useSessionTreeAncestors(treeCandidates, isTreeMode)
 
 const hasCentralContent = computed(() => rows.value.length || recentProjects.value.length || recentWorkspaces.value.length)
 const navigateScope = createRailScopeNavigation(router)
@@ -174,14 +184,19 @@ function activate(item) {
                             :icon-url="store.resolvedProjectIcons[row.session.project_id] || null"
                             :color="projectColor(row.session.project_id)"
                         />
-                        <wa-icon v-if="row.hasUnread" name="eye" class="rail-unread" />
-                        <wa-icon v-else-if="row.pendingRequest" name="hand" class="rail-pending" />
-                        <ProcessIndicator
-                            v-else :state="row.processState.state" size="small"
-                            :has-active-crons="row.hasActiveCrons"
-                            :background-shells="row.userTurnBackgroundShells"
-                            :animate-states="['assistant_turn']"
+                        <ProcessActivityIndicator
+                            v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"
                         />
+                        <template v-else>
+                            <wa-icon v-if="row.hasUnread" name="eye" class="rail-unread" />
+                            <wa-icon v-else-if="row.pendingRequest" name="hand" class="rail-pending" />
+                            <ProcessIndicator
+                                v-else :state="row.processState.state" size="small"
+                                :has-active-crons="row.hasActiveCrons"
+                                :background-shells="row.userTurnBackgroundShells"
+                                :animate-states="['assistant_turn']"
+                            />
+                        </template>
                     </button>
                     <AppTooltip
                         :for="`sidebar-rail-session-${row.session.id}`"
