@@ -17,6 +17,7 @@ import {
     processStateTooltip,
     startupSettingsDeferredText,
     stopConfirmationTitle,
+    unreadBackgroundKind,
     userTurnBackgroundShellCount,
 } from './backgroundWork.js'
 
@@ -192,4 +193,20 @@ test('deferred startup settings text', () => {
 test('orchestration idle-with-shells suffix', () => {
     assert.equal(idleWithShellsSuffix(0), '')
     assert.equal(idleWithShellsSuffix(1), ', 1 with background shells')
+})
+
+test('unreadBackgroundKind picks the background work shown behind an unread session', () => {
+    const crons = [cron(NOW + 60), cron(NOW + 120)]
+    const state = (name, shells, activeCrons = []) => ({
+        state: name,
+        background_work_in_progress: work(shells),
+        active_crons: activeCrons,
+    })
+    assert.equal(unreadBackgroundKind(state('user_turn', 1)), 'shell')
+    assert.equal(unreadBackgroundKind(state('user_turn', 1, crons)), 'shell')
+    assert.equal(unreadBackgroundKind(state('user_turn', 0, crons.slice(0, 1))), 'cron')
+    assert.equal(unreadBackgroundKind(state('user_turn', 0)), null)
+    assert.equal(unreadBackgroundKind(state('assistant_turn', 1, crons)), null)
+    assert.equal(unreadBackgroundKind(null), null)
+    assert.equal(unreadBackgroundKind(undefined), null)
 })

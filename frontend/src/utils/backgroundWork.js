@@ -49,6 +49,20 @@ export function userTurnBackgroundShellCount(processState) {
 }
 
 /**
+ * Kind of background work shown behind an unread session: a background shell,
+ * else an active cron, else nothing. Only USER_TURN qualifies. A shell wins
+ * over a cron.
+ *
+ * @param {Object|null} [processState]
+ * @returns {'shell'|'cron'|null}
+ */
+export function unreadBackgroundKind(processState) {
+    if (userTurnBackgroundShellCount(processState) > 0) return 'shell'
+    if (processState?.state === PROCESS_STATE.USER_TURN && activeCronCount(processState) > 0) return 'cron'
+    return null
+}
+
+/**
  * Number of active cron jobs (Claude Code only; other providers never carry any).
  *
  * @param {Object|null} processState
