@@ -9,10 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace. Filter it, see the same events in the chat, and query it from CLI, MCP and RPC API.
+- **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
 - **Scrollable titles** — On touch screens, swipe a truncated session title or artifact name to read the rest.
 
 ### Changed
 
+- **Provider icons** — Session lists no longer show the Claude or Codex icon by default. Turn “Show provider icons” back on in the sidebar menu to get them back.
 - **Codex runtime** — Update from v0.162.0 to v0.164.0.
 - **Claude Agent SDK** — Upgrade from 0.2.165 to 0.2.174 (bundled Claude Code CLI: 2.1.294 → 2.1.310)
 
