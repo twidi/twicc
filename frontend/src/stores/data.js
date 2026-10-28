@@ -7,7 +7,7 @@ import { setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
 import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
-import { getStableSessionList } from '../utils/sessionLists.js'
+import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
 import { getRootSessions } from '../utils/rootSessions.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
@@ -1031,9 +1031,12 @@ export const useDataStore = defineStore('data', {
         getMainRepoProjectId: (state) => (projectId) =>
             (projectId && state.projects[projectId]?.worktree_of) || projectId,
         getProjectSessions: (state) => (projectId) =>
-            getStableSessionList(state, projectId, ALL_PROJECTS_ID, hasActiveStartupPhase),
+            getStableSessionList(state, projectId, ALL_PROJECTS_ID),
         getAllSessions: (state) =>
-            getStableSessionList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID, hasActiveStartupPhase),
+            getStableSessionList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID),
+        // Stable session list of a scope from `resolveSessionScope` (`utils/sessionLists.js`):
+        // `{ members, ordered }`, one object per scope key.
+        getScopeSessionList: (state) => (scope) => getScopeSessionList(state, scope),
         // Root sessions (no `parent_session_id`), reactive records in store order.
         rootSessions: (state) => getRootSessions(state),
         getSession: (state) => (id) => state.sessions[id],

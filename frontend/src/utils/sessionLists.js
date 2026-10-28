@@ -1,40 +1,119 @@
 import { computed, toRaw } from 'vue'
+import { ALL_PROJECTS_ID } from '../constants.js'
 import { sessionSortComparator } from './sessionSort.js'
 import { retainSessionArray } from './retain.js'
+import { getRootSessions } from './rootSessions.js'
+import { hasActiveStartupPhase } from './startupPhase.js'
+import { noteStageRun } from './stageRuns.js'
+import { isWorkspaceProjectId, extractWorkspaceId } from './workspaceIds.js'
 
 // Kept for the existing importers of this module.
 export { retainSessionArray }
 
+// Per-scope stable session lists (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md,
+// 5.2 and 5.3). One entry per state and scope key, created lazily.
 const listsByState = new WeakMap()
 
-/** Cache membership separately from ordering so active mtime updates do not sort again. */
-export function getStableSessionList(state, scopeId, allProjectsId, hasActiveStartupPhase) {
-    let lists = listsByState.get(state)
-    if (!lists) listsByState.set(state, lists = new Map())
-    if (!lists.has(scopeId)) {
-        const members = computed(previous => {
-            const scope = state.localState.projects[scopeId]
-            const oldestMtime = scope?.hasMoreSessions ? scope.oldestSessionMtime : null
-            const startup = hasActiveStartupPhase(state.startupProgress)
-            // Keep startup's membership tracking without subscribing to thousands
-            // of individual metadata fields. Normal tracking resumes afterwards.
-            Object.keys(state.sessions)
-            const sessions = Object.values(startup ? toRaw(state.sessions) : state.sessions)
-            const next = sessions.filter(session =>
-                (scopeId === allProjectsId || session.project_id === scopeId)
-                && !session.parent_session_id && !session.hidden
-                && (oldestMtime == null || session.mtime >= oldestMtime))
-            return retainSessionArray(previous, next)
-        })
-        const ordered = computed(previous => {
-            // Track the mode here too: stable membership must not prevent the
-            // sort from acquiring normal field dependencies after startup.
-            const startup = hasActiveStartupPhase(state.startupProgress)
-            const processes = startup ? toRaw(state.processStates) : state.processStates
-            const next = [...members.value].sort(sessionSortComparator(processes))
-            return retainSessionArray(previous, next)
-        })
-        lists.set(scopeId, ordered)
+const scopeKey = (cursorId, projectIds) => `${cursorId}|${projectIds ? [...projectIds].sort().join(',') : '*'}`
+
+/**
+ * The scope of a sidebar filter: its project-id set (null for all projects)
+ * and the pagination cursor entry it uses. A single project uses its own
+ * cursor; any workspace, a main repository whose scope holds more than one id,
+ * all projects and a falsy id use the all-projects cursor.
+ *
+ * @param {Object} options
+ * @param {?string} options.effectiveProjectId - a project id, a `ws:` workspace id, `ALL_PROJECTS_ID` or falsy
+ * @param {(projectId: string) => string[]} options.getProjectScopeIds
+ * @param {(workspaceId: string) => string[]} options.getVisibleProjectIds
+ * @returns {{ key: string, projectIds: ?string[], cursorId: string }}
+ */
+export function resolveSessionScope({ effectiveProjectId, getProjectScopeIds, getVisibleProjectIds }) {
+    let projectIds = null
+    let cursorId = ALL_PROJECTS_ID
+    if (isWorkspaceProjectId(effectiveProjectId)) {
+        projectIds = getVisibleProjectIds(extractWorkspaceId(effectiveProjectId))
+    } else if (effectiveProjectId && effectiveProjectId !== ALL_PROJECTS_ID) {
+        const scopeIds = getProjectScopeIds(effectiveProjectId)
+        if (scopeIds.length > 1) {
+            projectIds = scopeIds
+        } else {
+            projectIds = [effectiveProjectId]
+            cursorId = effectiveProjectId
+        }
     }
-    return lists.get(scopeId).value
+    return { key: scopeKey(cursorId, projectIds), projectIds, cursorId }
+}
+
+/** During a startup phase a stage reads session fields through the raw record. */
+const reader = (startup) => startup ? toRaw : (session) => session
+
+function createScopeList(state, { projectIds, cursorId }) {
+    const inScope = projectIds ? new Set(projectIds) : null
+
+    // 1. Roots of the scope's projects, not hidden. Reads `project_id` and `hidden`.
+    const candidates = computed(previous => {
+        noteStageRun('scope:candidates')
+        // The phase is read from the `startupProgress` object on each run, so an
+        // untracked change shows up at the next progress message (5.3).
+        const read = reader(hasActiveStartupPhase(state.startupProgress))
+        const next = []
+        for (const root of getRootSessions(state)) {
+            const session = read(root)
+            if ((!inScope || inScope.has(session.project_id)) && !session.hidden) next.push(session)
+        }
+        return retainSessionArray(previous, next)
+    })
+
+    // 2. The candidates above the cursor's pagination cutoff. Reads `mtime` only.
+    const members = computed(previous => {
+        noteStageRun('scope:members')
+        const read = reader(hasActiveStartupPhase(state.startupProgress))
+        const cursor = state.localState.projects[cursorId]
+        const oldestMtime = cursor?.hasMoreSessions ? cursor.oldestSessionMtime : null
+        const list = candidates.value
+        const next = oldestMtime == null ? list : list.filter(session => read(session).mtime >= oldestMtime)
+        return retainSessionArray(previous, next)
+    })
+
+    // 3. The members in display order.
+    const ordered = computed(previous => {
+        noteStageRun('scope:ordered')
+        const startup = hasActiveStartupPhase(state.startupProgress)
+        const processes = startup ? toRaw(state.processStates) : state.processStates
+        // The members are raw records during startup, so the sort reads them without tracking.
+        const next = [...members.value].sort(sessionSortComparator(processes))
+        return retainSessionArray(previous, next)
+    })
+
+    return Object.freeze({
+        get members() { return members.value },
+        get ordered() { return ordered.value },
+    })
+}
+
+/**
+ * The stable session list of a scope (see `resolveSessionScope`): `members`
+ * in store order (the membership) and `ordered` (display order). Each stage
+ * keeps its previous array when its content is equal. During a startup phase
+ * the stages read session fields without tracking, rerun on each progress
+ * message and hold raw records; after it they hold the reactive records.
+ *
+ * @param {Object} state - the data store state (`sessions`, `processStates`, `localState`, `startupProgress`)
+ * @param {{ key: string, projectIds: ?string[], cursorId: string }} scope
+ * @returns {{ readonly members: Object[], readonly ordered: Object[] }} one stable object per scope key
+ */
+export function getScopeSessionList(state, scope) {
+    const owner = toRaw(state)
+    let lists = listsByState.get(owner)
+    if (!lists) listsByState.set(owner, lists = new Map())
+    let list = lists.get(scope.key)
+    if (!list) lists.set(scope.key, list = createScopeList(state, scope))
+    return list
+}
+
+/** Ordered list of a single-project scope (`scopeId`) or of all projects (`scopeId === allProjectsId`). */
+export function getStableSessionList(state, scopeId, allProjectsId) {
+    const projectIds = scopeId === allProjectsId ? null : [scopeId]
+    return getScopeSessionList(state, { key: scopeKey(scopeId, projectIds), projectIds, cursorId: scopeId }).ordered
 }

@@ -2,15 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
-import { computed, nextTick, watch, toRaw } from 'vue'
-import { sessionSortComparator } from '../utils/sessionSort.js'
-import { getStableSessionList } from '../utils/sessionLists.js'
+import { computed, nextTick, watch } from 'vue'
+import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
+import { getRootSessions } from '../utils/rootSessions.js'
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 const start = source.indexOf('        getProjectSessions:')
 const end = source.indexOf('        getSession: (state)', start)
-const getters = new Function('hasActiveStartupPhase', 'toRaw', 'sessionSortComparator', 'ALL_PROJECTS_ID', 'getStableSessionList',
-    `return { ${source.slice(start, end)} }`)(progress => !!progress.running, toRaw, sessionSortComparator, '__all__', getStableSessionList)
+const getters = new Function('ALL_PROJECTS_ID', 'getStableSessionList', 'getScopeSessionList', 'getRootSessions',
+    `return { ${source.slice(start, end)} }`)('__all__', getStableSessionList, getScopeSessionList, getRootSessions)
 const useFixture = defineStore('session-list-stability', {
     state: () => ({ startupProgress: {}, localState: { projects: {
         __all__: { hasMoreSessions: true, oldestSessionMtime: 50 },
@@ -95,11 +95,11 @@ test('inactive ordering pins process changes and hidden changes remain reactive'
 
 test('startup tracking resumes after metadata computation completes', () => {
     const store = fixture()
-    store.startupProgress.running = true
+    store.startupProgress.background_compute = { x: { completed: false } }
     const before = store.getAllSessions
     store.sessions.a.hidden = true
     assert.strictEqual(store.getAllSessions, before)
-    store.startupProgress.running = false
+    store.startupProgress.background_compute.x.completed = true
     assert.deepEqual(store.getAllSessions.map(s => s.id), ['b', 'c'])
     store.sessions.a.hidden = false
     assert.deepEqual(store.getAllSessions.map(s => s.id), ['b', 'a', 'c'])

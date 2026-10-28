@@ -28,7 +28,7 @@ import { computed, reactive, toRaw } from 'vue'
 import { ALL_PROJECTS_ID, baselineProjectInputs,
     hasActiveStartupPhase as baselineHasActiveStartupPhase } from './sidebarBaseline/projectInputs.js'
 import { getStableSessionList as baselineGetStableSessionList } from './sidebarBaseline/sessionLists.js'
-import { getStableSessionList } from '../../src/utils/sessionLists.js'
+import { getScopeSessionList, getStableSessionList } from '../../src/utils/sessionLists.js'
 import { getRootSessions } from '../../src/utils/rootSessions.js'
 import { isWorkspaceProjectId } from '../../src/utils/workspaceIds.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
@@ -337,9 +337,8 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         }
         return ids
     })
-    const getProjectSessions = computed(() => (projectId) =>
-        stableList(state, projectId, ALL_PROJECTS_ID, inStartup))
-    const getAllSessions = computed(() => stableList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID, inStartup))
+    const getProjectSessions = computed(() => (projectId) => stableList(state, projectId, ALL_PROJECTS_ID))
+    const getAllSessions = computed(() => stableList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID))
     const isStartupInProgress = computed(() => inStartup(state.startupProgress))
 
     const data = {
@@ -380,7 +379,9 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
 /** `{ data, workspaces }` store facades over the frozen baseline copies. */
 export function createBaselineData(state) {
     return createStoreFacades(state, {
-        getStableSessionList: baselineGetStableSessionList, hasActiveStartupPhase: baselineHasActiveStartupPhase,
+        getStableSessionList: (owner, scopeId, allProjectsId) =>
+            baselineGetStableSessionList(owner, scopeId, allProjectsId, baselineHasActiveStartupPhase),
+        hasActiveStartupPhase: baselineHasActiveStartupPhase,
     })
 }
 
@@ -392,8 +393,10 @@ export function createBaselineData(state) {
 export function createShippedData(state) {
     const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase })
     const rootSessions = computed(() => getRootSessions(state))
+    const scopeSessionList = computed(() => (scope) => getScopeSessionList(state, scope))
     Object.defineProperties(facades.data, {
         rootSessions: { get: () => rootSessions.value, enumerable: true },
+        getScopeSessionList: { get: () => scopeSessionList.value, enumerable: true },
     })
     return facades
 }
