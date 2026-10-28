@@ -372,30 +372,30 @@ def serialize_session_item(item):
     }
 
 
-def serialize_session_item_metadata(item):
+SESSION_ITEM_METADATA_FIELDS = ("line_num", "display_level", "group_head", "group_tail", "kind", "timestamp")
+
+
+def serialize_session_items_metadata(queryset):
     """
-    Serialize a SessionItem model to a dictionary WITHOUT content.
+    Serialize the SessionItems of a queryset to dictionaries WITHOUT content, ordered by line_num.
 
     Used by:
     - GET /api/.../items/metadata/ endpoint
+    - GET share/<token>/api/items/metadata/ endpoints
+    - WebSocket session_items_added messages (updated_metadata)
 
-    This is a lightweight serialization for loading all item metadata
-    without the potentially large content field.
+    Callers only filter the queryset: this function picks the fields. Reading
+    them with ``.values()`` skips building one model instance per row, the main
+    cost on sessions with tens of thousands of items.
     """
-    return {
-        "line_num": item.line_num,
-        "display_level": item.display_level,
-        "group_head": item.group_head,
-        "group_tail": item.group_tail,
-        "kind": item.kind,
-        "git_directory": item.git_directory,
-        "git_branch": item.git_branch,
+    rows = list(queryset.order_by("line_num").values(*SESSION_ITEM_METADATA_FIELDS))
+    for row in rows:
         # Item timestamp (ISO 8601, UTC) — surfaced at the metadata level so the
         # frontend has it for every item up front (content stays lazy-loaded),
         # which is what per-block day separators need.
-        "timestamp": item.timestamp.isoformat() if item.timestamp else None,
-        # NO content field - that's the whole point
-    }
+        timestamp = row["timestamp"]
+        row["timestamp"] = timestamp.isoformat() if timestamp else None
+    return rows
 
 
 _PRIVATE_SHARE_OPTION_KEYS = frozenset({"_codex_rollout_migration_anchor"})

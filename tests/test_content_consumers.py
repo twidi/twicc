@@ -1,5 +1,6 @@
 """Consumer contracts remain stable across legacy, plain, and compressed storage."""
 import base64
+from datetime import UTC, datetime
 
 import orjson
 import pytest
@@ -7,7 +8,7 @@ from django.db.models import Q
 
 from twicc.core.content_storage.readers import effective_current, iter_matching_items, load_current
 from twicc.core.models import Project, Session, SessionItem
-from twicc.core.serializers import serialize_session_item, serialize_session_item_metadata
+from twicc.core.serializers import serialize_session_item, serialize_session_items_metadata
 from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
 from twicc.providers.history_facts import (
     HistoryFactContext,
@@ -52,10 +53,24 @@ def test_raw_serializer_and_cli_shapes_stay_unchanged(owner, content_row_factory
 
 
 def test_metadata_serializer_never_loads_payload(owner, content_row_factory, django_assert_num_queries):
-    item = put(owner, 1, '{"type":"user"}', content_row_factory, 'zstd')
-    item = SessionItem.objects.defer('content').get(pk=item.pk)
-    with django_assert_num_queries(0):
-        assert 'content' not in serialize_session_item_metadata(item)
+    put(owner, 1, '{"type":"user"}', content_row_factory, 'zstd')
+    with django_assert_num_queries(1) as captured:
+        rows = serialize_session_items_metadata(owner.items.all())
+    assert 'content' not in rows[0]
+    assert 'content' not in captured.captured_queries[0]['sql']
+
+
+def test_metadata_serializer_shape_and_order(owner):
+    SessionItem.objects.create(session=owner, line_num=2, content='', display_level=2, group_head=2, group_tail=3,
+                               kind='tool_use', git_directory='/repo', git_branch='main',
+                               timestamp=datetime(2026, 8, 1, 0, 0, 3, 300000, tzinfo=UTC))
+    SessionItem.objects.create(session=owner, line_num=1, content='', display_level=1, kind='user_message')
+    assert serialize_session_items_metadata(owner.items.order_by('-line_num')) == [
+        {'line_num': 1, 'display_level': 1, 'group_head': None, 'group_tail': None, 'kind': 'user_message',
+         'timestamp': None},
+        {'line_num': 2, 'display_level': 2, 'group_head': 2, 'group_tail': 3, 'kind': 'tool_use',
+         'timestamp': '2026-08-01T00:00:03.300000+00:00'},
+    ]
 
 
 def test_late_image_after_nonmatching_rows_survives_prefilter_limit(owner, content_row_factory):

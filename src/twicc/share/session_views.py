@@ -11,7 +11,7 @@ from twicc.core.content_storage.readers import effective_current, aload_current
 from twicc.core.serializers import (
     session_compute_ready,
     serialize_session_item,
-    serialize_session_item_metadata,
+    serialize_session_items_metadata,
 )
 from twicc.core.session_queries import (
     aggregate_tool_states,
@@ -139,9 +139,8 @@ async def _items_metadata(request, token, subagent_id=None):
     session, not_ready = await _resolve_ready_content_session(ctx, subagent_id)
     if not_ready:
         return not_ready
-    qs = filtered_items_qs(session, **_ceiling_kwargs(ctx, session)).defer("content").order_by("line_num")
-    items = await sync_to_async(list)(qs)
-    return _json([serialize_session_item_metadata(i) for i in items], safe=False)
+    qs = filtered_items_qs(session, **_ceiling_kwargs(ctx, session))
+    return _json(await sync_to_async(serialize_session_items_metadata)(qs), safe=False)
 
 
 async def _items(request, token, subagent_id=None):

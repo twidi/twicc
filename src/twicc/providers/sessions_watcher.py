@@ -40,7 +40,7 @@ from twicc.core.serializers import (
     serialize_project,
     serialize_session,
     serialize_session_item,
-    serialize_session_item_metadata,
+    serialize_session_items_metadata,
     session_compute_ready,
 )
 from twicc.logging_context import current_provider
@@ -264,11 +264,10 @@ def get_items_metadata(session: Session, line_nums: list[int]) -> list[dict]:
     """Get metadata (without content) for specific items by line_nums."""
     if not line_nums:
         return []
-    items = SessionItem.objects.filter(
+    return serialize_session_items_metadata(SessionItem.objects.filter(
         session=session,
         line_num__in=line_nums,
-    ).defer('content').order_by("line_num")
-    return [serialize_session_item_metadata(item) for item in items]
+    ))
 
 
 @sync_to_async

@@ -32,7 +32,7 @@ from twicc.core.serializers import (
     serialize_project,
     serialize_session,
     serialize_session_item,
-    serialize_session_item_metadata,
+    serialize_session_items_metadata,
 )
 from twicc.core.session_queries import (
     aggregate_tool_states,
@@ -1682,10 +1682,7 @@ async def session_items_metadata(request, project_id, session_id, parent_session
     """
     session = await _resolve_session_or_404(session_id, project_id, parent_session_id)
 
-    items = await sync_to_async(list)(
-        session.items.all().defer('content')  # Already ordered by line_num (see Meta.ordering)
-    )
-    data = [serialize_session_item_metadata(item) for item in items]
+    data = await sync_to_async(serialize_session_items_metadata)(session.items.all())
     return JsonResponse(data, safe=False)
 
 
