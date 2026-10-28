@@ -18,7 +18,7 @@ The hard part is not the nesting. It is the placement: a root can be idle while 
 
 - Changing what `spawned_by` means or how it is set.
 - Showing hidden sessions, or sub-agents, in the sidebar.
-- A tree in the command palette's "Go to Session…" picker, in the Orchestration tab, or in any other list.
+- A tree in the command palette's "Go to Session…" picker, in the Orchestration tab, or in any other list. The one exception is the icon rail's active-session buttons (§14).
 - Drag and drop re-parenting. The edge is immutable.
 - Turning the option on by default.
 
@@ -112,6 +112,18 @@ The sidebar loads sessions page by page, newest first, so a child can be loaded 
 - **A hidden middle link cuts the chain.** Example: leader (visible) → manager (hidden) → worker (visible). The worker is a root, not nested under the leader. Skipping hidden links (for example through `spawn_root`) is a possible later refinement.
 - A pinned scope (`project`, `workspace`, `all`) applies per session as today. A pinned descendant lifts its root into the Pinned section but does not change any cross-filter rule.
 - No persistence across devices for expansion overrides.
+
+## 14. The icon rail
+
+The icon rail lists one button per session that has a live process, globally (no filter), ordered like "All Projects". With the option on, it follows the tree:
+
+- **Order.** Rail buttons follow the tree order of the "All Projects" list: roots by their effective state (§6, §8), each child right after its parent.
+- **Collapsed nodes.** A node is collapsed in the rail if and only if the user collapsed it (explicit choice, §9); an untouched node is expanded. The rail keeps no state of its own and has no control to collapse or expand.
+- **One button per collapsed node.** A collapsed node, and everything below it, shows as a single button: the node's own session, even when it has no live process itself. Its indicator is the **cumulative indicator** of §9: the node and every loaded descendant, same set and rules. Clicking the button opens the node's own session.
+- **Expanded nodes.** Each session with a live process keeps its own button and its own indicators, as today. An idle ancestor of such a session gets no button.
+- **Tooltip.** The button's tooltip is unchanged: the preview of the button's session. (Showing the subtree there is a possible later change.)
+- **No nesting cue.** Buttons are not indented or linked: only the order and the collapsed buttons change. The rail has too little room for more.
+- With the option off, the rail is unchanged.
 
 ## 13. Left to the builder
 
