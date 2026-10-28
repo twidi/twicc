@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree, treeActivity, treeGuides, flattenTree, extendTreeCandidates, findMissingAncestorIds, sharesProjectWithParent, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
+import { buildSessionTree, treeActivity, treeGuides, flattenTree, extendTreeCandidates, findMissingAncestorIds, sharesProjectWithParent, treeParentId, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -544,4 +544,58 @@ test('sharesProjectWithParent: back to the first project (A, B, A) shows again',
         s('c', { spawned_by: 'b' }),
     ])
     assert.equal(sharesProjectWithParent(t, 'c'), false)
+})
+
+test('treeParentId: attached, detached and no spawner', () => {
+    assert.equal(treeParentId(s('b', { spawned_by: 'a' })), 'a')
+    assert.equal(treeParentId(s('b', { spawned_by: 'a', tree_detached: true })), null)
+    assert.equal(treeParentId(s('b')), null)
+})
+
+test('detached child is a root with no hint and its spawner has no child', () => {
+    const t = build([s('a'), s('b', { spawned_by: 'a', tree_detached: true })])
+    assert.deepEqual([...t.rootIds].sort(), ['a', 'b'])
+    assert.equal(parent(t, 'b'), null)
+    assert.equal(hint(t, 'b'), null)
+    assert.deepEqual(kids(t, 'a'), [])
+    // Spawner loaded but not a candidate: still no hint.
+    const t2 = build([s('b', { spawned_by: 'a', tree_detached: true })], [s('a')])
+    assert.equal(hint(t2, 'b'), null)
+})
+
+test('chain A -> B(detached) -> C: C never resolves to A', () => {
+    const a = s('a')
+    const b = s('b', { spawned_by: 'a', tree_detached: true })
+    const c = s('c', { spawned_by: 'b' })
+    const t = build([a, b, c])
+    assert.equal(parent(t, 'b'), null)
+    assert.equal(parent(t, 'c'), 'b')
+    // B is not a candidate: C is a root and does not climb to A.
+    const t2 = build([a, c], [b])
+    assert.equal(parent(t2, 'c'), null)
+    assert.deepEqual(kids(t2, 'a'), [])
+    assert.equal(hint(t2, 'c'), 'b')
+})
+
+test('detached session keeps its attached children', () => {
+    const t = build([s('a'), s('b', { spawned_by: 'a', tree_detached: true }), s('c', { spawned_by: 'b' }), s('d', { spawned_by: 'b' })])
+    assert.deepEqual([...kids(t, 'b')].sort(), ['c', 'd'])
+    assert.deepEqual(kids(t, 'a'), [])
+})
+
+test('extendTreeCandidates and findMissingAncestorIds stop at a detached session', () => {
+    const a = s('a')
+    const b = s('b', { spawned_by: 'a', tree_detached: true })
+    const c = s('c', { spawned_by: 'b' })
+    const sessionsById = { a, b, c }
+    const opts = { sessionsById, isInScope: () => true, passesFilter: () => true }
+    // Up: from C, B is added, A is not.
+    assert.deepEqual(extendTreeCandidates([c], opts).map(x => x.id), ['b'])
+    // Down: from A, the detached B (and its subtree) is not collected.
+    assert.deepEqual(extendTreeCandidates([a], opts).map(x => x.id), [])
+    // Up from B itself: nothing above.
+    assert.deepEqual(extendTreeCandidates([b], opts).map(x => x.id).sort(), ['c'])
+    // Missing ancestors: the walk does not go above the detached B.
+    assert.deepEqual(findMissingAncestorIds([b], () => null, new Set()), [])
+    assert.deepEqual(findMissingAncestorIds([c], id => ({ b })[id] ?? null, new Set()), [])
 })

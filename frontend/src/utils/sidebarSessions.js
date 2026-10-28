@@ -61,7 +61,7 @@ function makeArchiveFilter({ data, showArchived, showArchivedProjects, sessionId
  * @param {boolean} opts.showActiveAcrossFilters
  * @param {boolean} [opts.showAsTree=false] - "Show as tree" mode: `natural`
  *     is extended with the loaded in-scope sessions linked to it by a
- *     `spawned_by` chain (see `extendTreeCandidates`). They count as natural
+ *     tree-parent chain (see `extendTreeCandidates`). They count as natural
  *     (never in a cross-filter block nor `extra`). Flat mode is unchanged.
  *
  * @returns {{

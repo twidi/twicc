@@ -103,7 +103,7 @@ export function useRailActiveSessions(store, currentSessionId = () => null, { tr
     const flatSelection = computed(() => selectRailActiveSessions(
         store.processStates, store.sessions, currentSessionId(), sessionOrder.value))
 
-    // `spawned_by` children index, read only in tree mode and retained while unchanged.
+    // Tree-parent children index, read only in tree mode and retained while unchanged.
     const childrenIndex = computed(previous => {
         const next = buildChildrenIndex(store.sessions)
         return previous && sameChildrenIndex(previous, next) ? previous : next

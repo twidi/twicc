@@ -6,13 +6,13 @@
 import { activeCronCount, userTurnBackgroundShellCount } from './backgroundWork.js'
 import { processActivityDisplayMode } from './processActivity.js'
 import { isSessionUnread } from './sessions.js'
-import { buildSessionTree, flattenTree, isBlocking, isParticipant, treeActivity } from './sessionTree.js'
+import { buildSessionTree, flattenTree, isBlocking, isParticipant, treeActivity, treeParentId } from './sessionTree.js'
 
-/** Map of `spawned_by` target id -> ids of the loaded sessions it spawned. */
+/** Map of tree parent id (`treeParentId`) -> ids of the loaded sessions below it. */
 export function buildChildrenIndex(sessions) {
     const index = new Map()
     for (const id of Object.keys(sessions)) {
-        const parentId = sessions[id]?.spawned_by
+        const parentId = sessions[id] ? treeParentId(sessions[id]) : null
         if (!parentId) continue
         const children = index.get(parentId)
         if (children) children.push(id)
@@ -64,12 +64,12 @@ export function selectRailTreeRows(flatRows, {
     // Ancestor chains: same walk as the list (stops at unknown or blocking sessions).
     for (const row of flatRows) {
         if (!isParticipant(row.session)) continue
-        let currentId = row.session.spawned_by
+        let currentId = treeParentId(row.session)
         while (currentId && !candidates.has(currentId)) {
             const current = lookup(currentId)
             if (!current || isBlocking(current)) break
             candidates.set(currentId, current)
-            currentId = current.spawned_by
+            currentId = treeParentId(current)
         }
     }
 

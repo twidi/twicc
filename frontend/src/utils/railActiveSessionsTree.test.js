@@ -201,3 +201,23 @@ test('collapsed row without active descendant has an empty list; expanded rows c
     assert.deepEqual(rows[0].activeDescendants, [])
     assert.equal('activeDescendants' in select({ sessions, processStates })[0], false)
 })
+
+test('children index omits detached children', () => {
+    const sessions = { a: s('a', 1), b: s('b', 2, { spawned_by: 'a', tree_detached: true }), c: s('c', 3, { spawned_by: 'a' }) }
+    assert.deepEqual([...buildChildrenIndex(sessions).get('a')], ['c'])
+})
+
+test('the ancestor walk stops at a detached session', () => {
+    const sessions = {
+        a: s('a', 1), b: s('b', 2, { spawned_by: 'a', tree_detached: true }), c: s('c', 3, { spawned_by: 'b' }),
+    }
+    const rows = select({ sessions, processStates: { b: proc(4), c: proc(5) } })
+    assert.deepEqual([...ids(rows)].sort(), ['b', 'c'])
+})
+
+test('a detached rail row shows its project mark even with its spawner project', () => {
+    const sessions = { a: s('a', 1), b: s('b', 2, { spawned_by: 'a', tree_detached: true }) }
+    const rows = select({ sessions, processStates: { a: proc(4), b: proc(5) } })
+    assert.equal(rows.find(r => r.session.id === 'b').showMarkDot, false)
+    assert.notEqual(rows.find(r => r.session.id === 'b').groupId, 'a')
+})

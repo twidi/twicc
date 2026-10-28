@@ -8,6 +8,14 @@ import { summarizeProcessActivity } from './processActivity.js'
 
 export const isParticipant = (session) => !session.ephemeral && !session.draft
 
+/**
+ * Id of the session's parent in the tree: its spawner, unless the session is
+ * detached (then it is a root of the tree and nothing above it is walked).
+ */
+export function treeParentId(session) {
+    return session.tree_detached ? null : session.spawned_by || null
+}
+
 /** A session that can never be a tree ancestor nor give a hint. */
 export const isBlocking = (session) =>
     !!session.hidden || !!session.parent_session_id || !isParticipant(session)
@@ -39,13 +47,13 @@ export function buildSessionTree(candidates, {
     // Nearest participant-candidate ancestor, walking through loaded sessions.
     const resolveParent = (session) => {
         const visited = new Set([session.id])
-        let currentId = session.spawned_by
+        let currentId = treeParentId(session)
         while (currentId && !visited.has(currentId)) {
             visited.add(currentId)
             const current = lookup(currentId)
             if (!current || isBlocking(current)) return null
             if (isParticipantCandidate(currentId)) return currentId
-            currentId = current.spawned_by
+            currentId = treeParentId(current)
         }
         return null
     }
@@ -89,8 +97,9 @@ export function buildSessionTree(candidates, {
             continue
         }
         rootIds.push(session.id)
-        if (!isParticipant(session) || !session.spawned_by) continue
-        const direct = lookup(session.spawned_by)
+        const treeParent = treeParentId(session)
+        if (!isParticipant(session) || !treeParent) continue
+        const direct = lookup(treeParent)
         if (direct && !isParticipantCandidate(direct.id) && !isBlocking(direct)) {
             node.hintParent = direct
         }
@@ -251,7 +260,7 @@ export function treeGuides({ depth, isLast, through }) {
 /**
  * Loaded sessions that must join the natural list so the tree is complete:
  * every in-scope session linked to a participant of `natural` by a
- * `spawned_by` chain (ancestor or descendant). Walks stop at hidden,
+ * tree-parent chain (ancestor or descendant; see `treeParentId`). Walks stop at hidden,
  * sub-agent, ephemeral and draft sessions, exactly like `buildSessionTree`.
  * The chain may pass through out-of-scope sessions, which are not added.
  *
@@ -267,9 +276,10 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
     const naturalIds = new Set(natural.map((session) => session.id))
     const childrenOf = new Map()
     for (const session of Object.values(sessionsById)) {
-        if (!session.spawned_by) continue
-        if (!childrenOf.has(session.spawned_by)) childrenOf.set(session.spawned_by, [])
-        childrenOf.get(session.spawned_by).push(session)
+        const parentId = treeParentId(session)
+        if (!parentId) continue
+        if (!childrenOf.has(parentId)) childrenOf.set(parentId, [])
+        childrenOf.get(parentId).push(session)
     }
 
     const found = new Map()
@@ -281,13 +291,13 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
         if (isInScope(session) && passesFilter(session)) found.set(session.id, session)
     }
     const walkUp = (session) => {
-        let currentId = session.spawned_by
+        let currentId = treeParentId(session)
         while (currentId && !upVisited.has(currentId)) {
             upVisited.add(currentId)
             const current = sessionsById[currentId]
             if (!current || isBlocking(current)) return
             consider(current)
-            currentId = current.spawned_by
+            currentId = treeParentId(current)
         }
     }
     const walkDown = (session) => {
@@ -312,7 +322,7 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
 }
 
 /**
- * Ids of ancestors the client must fetch: walking `spawned_by` upward from
+ * Ids of ancestors the client must fetch: walking the tree parent (`treeParentId`) upward from
  * every participant candidate, collect the ids `lookup` does not know.
  * The walk stops at a loaded blocking session (hidden, sub-agent, ephemeral,
  * draft), at ids in `skipIds` and on a cycle.
@@ -327,7 +337,7 @@ export function findMissingAncestorIds(candidates, lookup, skipIds) {
     for (const candidate of candidates) {
         if (!isParticipant(candidate)) continue
         const visited = new Set([candidate.id])
-        let currentId = candidate.spawned_by
+        let currentId = treeParentId(candidate)
         while (currentId && !visited.has(currentId) && !skipIds.has(currentId)) {
             visited.add(currentId)
             const current = lookup(currentId)
@@ -336,7 +346,7 @@ export function findMissingAncestorIds(candidates, lookup, skipIds) {
                 break
             }
             if (isBlocking(current)) break
-            currentId = current.spawned_by
+            currentId = treeParentId(current)
         }
     }
     return [...missing]
