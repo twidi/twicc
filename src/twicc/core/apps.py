@@ -15,3 +15,7 @@ class CoreConfig(AppConfig):
         if "TZ" in os.environ:
             del os.environ["TZ"]
             time.tzset()
+
+        from twicc.core import json_response
+
+        json_response.install()
