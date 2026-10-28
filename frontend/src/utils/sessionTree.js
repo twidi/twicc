@@ -6,10 +6,10 @@
 import { sessionSortComparator } from './sessionSort.js'
 import { summarizeProcessActivity } from './processActivity.js'
 
-const isParticipant = (session) => !session.ephemeral && !session.draft
+export const isParticipant = (session) => !session.ephemeral && !session.draft
 
 /** A session that can never be a tree ancestor nor give a hint. */
-const isBlocking = (session) =>
+export const isBlocking = (session) =>
     !!session.hidden || !!session.parent_session_id || !isParticipant(session)
 
 /**
