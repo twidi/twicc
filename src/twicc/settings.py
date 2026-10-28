@@ -165,6 +165,8 @@ if DEBUG:
         pass
 
 MIDDLEWARE = [
+    # First: it compresses the final body, after every other middleware.
+    "twicc.gzip_middleware.TwiccGZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "twicc.auth.middleware.PasswordAuthMiddleware",
     "twicc.auth.middleware.RpcTokenAuthMiddleware",
