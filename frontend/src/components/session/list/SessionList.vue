@@ -13,10 +13,11 @@ import { useWorkspacesStore } from '../../../stores/workspaces'
 import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansion'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
-import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
+import { useSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { buildSessionTree, flattenTree, treeActivity, sharesProjectWithParent } from '../../../utils/sessionTree.js'
 import { isSessionUnread } from '../../../utils/sessions'
-import { retainSessionArray } from '../../../utils/sessionLists.js'
+import { retainSessionArray, resolveSessionScope } from '../../../utils/sessionLists.js'
+import { retainIds } from '../../../utils/retain.js'
 import { matchQuery } from '../../../utils/textFilter'
 import { dateBucketSeparator } from '../../../utils/datePresets'
 import { useSessionTreeAncestors } from '../../../composables/useSessionTreeAncestors'
@@ -89,16 +90,21 @@ const route = useRoute()
 // Natural scope project IDs for the current sidebar filter, passed down so
 // SessionListItem can flag any session whose project falls outside it as
 // cross-filter (and show its project badge accordingly). null = all-projects
-// mode (no scope restriction).
-const scopeProjectIds = computed(() => {
+// mode (no scope restriction). It is a prop of every row, so it keeps its
+// previous array while the ids are the same: a new project or a project
+// activity change re-renders no row.
+const scopeProjectIds = computed(previous => {
+    let next
     if (isWorkspaceProjectId(props.projectId)) {
-        const wsId = extractWorkspaceId(props.projectId)
-        return workspacesStore.getVisibleProjectIds(wsId)
+        next = workspacesStore.getVisibleProjectIds(extractWorkspaceId(props.projectId))
+    } else if (props.projectId === ALL_PROJECTS_ID) {
+        next = null
+    } else {
+        // A main repo's scope also covers its worktrees, so their sessions aren't
+        // flagged as cross-filter and the project badge is shown to tell them apart.
+        next = store.getProjectScopeIds(props.projectId)
     }
-    if (props.projectId === ALL_PROJECTS_ID) return null
-    // A main repo's scope also covers its worktrees, so their sessions aren't
-    // flagged as cross-filter and the project badge is shown to tell them apart.
-    return store.getProjectScopeIds(props.projectId)
+    return retainIds(previous, next)
 })
 
 // The single real project the sidebar is filtering on, or null in workspace /
@@ -125,10 +131,10 @@ const activeWorkspaceId = computed(() => {
 // classified and sorted by its own state.
 const treeActive = computed(() => props.showAsTree && !props.searchQuery.trim())
 
-// All four sidebar blocks, computed in one shot by the shared helper so the
-// command palette's "Go to Session…" sub-picker can use the exact same
-// ordering / filtering / grouping logic.
-const sessionBlocks = computed(previous => computeSidebarSessionBlocks({
+// All four sidebar blocks, from the shared block stages (the command palette's
+// "Go to Session…" sub-picker runs the same stages once). Each stage is its own
+// retaining computed, so an update reruns only the stages that read what changed.
+const { blocks: sessionBlocks } = useSidebarSessionBlocks(() => ({
     data: store,
     workspaces: workspacesStore,
     effectiveProjectId: props.projectId,
@@ -138,7 +144,7 @@ const sessionBlocks = computed(previous => computeSidebarSessionBlocks({
     showArchivedProjects: props.showArchivedProjects,
     showActiveAcrossFilters: props.showActiveAcrossFilters,
     showAsTree: props.showAsTree,
-}, previous))
+}))
 
 const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
 
@@ -401,13 +407,13 @@ const paginationReady = computed(() => {
 })
 
 // Match the store's natural scope before archive/search/cross-filter display rules.
-const canonicalSessions = computed(previous => {
-    const ids = scopeProjectIds.value
-    if (!ids) return store.getAllSessions
-    if (!isWorkspaceProjectId(props.projectId) && ids.length === 1) return store.getProjectSessions(props.projectId)
-    const scope = new Set(ids)
-    return retainSessionArray(previous, store.getAllSessions.filter(session => scope.has(session.project_id)))
-})
+// The snapshot needs ids, not order: it reads the scope list's membership, so a
+// reorder (in or out of the scope) does not rerun it.
+const canonicalSessions = computed(() => store.getScopeSessionList(resolveSessionScope({
+    effectiveProjectId: props.projectId,
+    getProjectScopeIds: store.getProjectScopeIds,
+    getVisibleProjectIds: workspacesStore.getVisibleProjectIds,
+})).members)
 const paginationSnapshot = computed(() => ({
     cursor: store.localState.projects[props.projectId]?.oldestSessionMtime ?? null,
     ids: new Set(canonicalSessions.value.map(session => session.id)),

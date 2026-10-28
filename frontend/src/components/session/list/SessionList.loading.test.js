@@ -4,7 +4,8 @@ import * as Vue from 'vue'
 import { readFileSync } from 'node:fs'
 import { compileComponent, makeRenderer, virtualScroller, row, flush, deferred, descendants } from '../../../../tests/helpers/scrollerComponentHarness.js'
 import * as helpers from '../../../utils/scrollerLoadWindow.js'
-import { retainSessionArray } from '../../../utils/sessionLists.js'
+import { retainSessionArray, resolveSessionScope } from '../../../utils/sessionLists.js'
+import { retainIds } from '../../../utils/retain.js'
 import { getSessionCutoffMs } from '../../../utils/sessions.js'
 import { jsonValuesEqual } from '../../../utils/jsonValuesEqual.js'
 // Execute the production request registration, merge, loading flag, and finally ordering.
@@ -44,7 +45,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         $patch(apply) { apply({ sessions }) },
         _cleanStaleChildSynthetics() {}, _hydrateSessionLayoutFromPersisted() {},
         tryFinalizePendingBinding() {}, _tryLinkPeerDelivery() {},
-        get getAllSessions() { return Object.values(sessions) }, getProjectSessions: id => Object.values(sessions).filter(s => s.project_id === id), getProjectScopeIds: id => [id],
+        getScopeSessionList: scope => ({ get members() { return Object.values(sessions).filter(s => !scope.projectIds || scope.projectIds.includes(s.project_id)) } }), getProjectScopeIds: id => [id],
         hasMoreSessions: id => localState.projects[id]?.hasMoreSessions ?? true, areSessionsLoading: id => localState.projects[id]?.sessionsLoading ?? false,
         setDisplayedSessionIds() {}, $onAction() {},
         _ensureProjectLocalState: id => localState.projects[id],
@@ -67,8 +68,12 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../utils/sessionTree.js': { buildSessionTree: () => ({ nodes: new Map(), rootIds: [] }), flattenTree: () => [] },
         '../../../utils/sessions': { isSessionUnread: () => false },
         '../../../composables/useSessionTreeAncestors': { useSessionTreeAncestors() {} },
-        '../../../utils/sidebarSessions': { computeSidebarSessionBlocks: ({ showArchived }) => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: Object.values(sessions).filter(session => showArchived || !session.archived) }) },
-        '../../../utils/sessionLists.js': { retainSessionArray },
+        '../../../utils/sidebarSessions': { useSidebarSessionBlocks: getOptions => ({ blocks: Vue.computed(() => {
+            const { showArchived } = getOptions()
+            return { extra: null, crossFilterPinned: [], crossFilterActive: [], natural: Object.values(sessions).filter(session => showArchived || !session.archived) }
+        }) }) },
+        '../../../utils/sessionLists.js': { retainSessionArray, resolveSessionScope },
+        '../../../utils/retain.js': { retainIds },
         '../../../utils/textFilter': { matchQuery: (query, value) => value?.includes(query) },
         '../../../utils/datePresets': { dateBucketSeparator: () => ({ key: 'old', entry: { label: 'Older' } }) },
         '../../../composables/useListCascade': { useListCascade: () => noMotion },
