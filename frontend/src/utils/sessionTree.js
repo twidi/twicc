@@ -270,19 +270,23 @@ export function treeGuides({ depth, isLast, through }) {
  * tree-parent chain (ancestor or descendant; see `treeParentId`). Walks stop at hidden,
  * sub-agent, ephemeral and draft sessions, exactly like `buildSessionTree`.
  * The chain may pass through out-of-scope sessions, which are not added.
+ * Only root sessions can join: a sub-agent is always blocking, so the child
+ * index is built from `roots` alone.
  *
  * @param {Object[]} natural
  * @param {{
- *   sessionsById: Object<string, Object>,
+ *   roots: Iterable<Object>,
+ *   lookup: (id: string) => ?Object,
  *   isInScope: (session: Object) => boolean,
  *   passesFilter: (session: Object) => boolean,
- * }} opts
+ * }} opts - `roots` (the root sessions) is iterated to build the child index;
+ *   `lookup(id)` resolves ancestors
  * @returns {Object[]}
  */
-export function extendTreeCandidates(natural, { sessionsById, isInScope, passesFilter }) {
+export function extendTreeCandidates(natural, { roots, lookup, isInScope, passesFilter }) {
     const naturalIds = new Set(natural.map((session) => session.id))
     const childrenOf = new Map()
-    for (const session of Object.values(sessionsById)) {
+    for (const session of roots) {
         const parentId = treeParentId(session)
         if (!parentId) continue
         if (!childrenOf.has(parentId)) childrenOf.set(parentId, [])
@@ -301,7 +305,7 @@ export function extendTreeCandidates(natural, { sessionsById, isInScope, passesF
         let currentId = treeParentId(session)
         while (currentId && !upVisited.has(currentId)) {
             upVisited.add(currentId)
-            const current = sessionsById[currentId]
+            const current = lookup(currentId)
             if (!current || isBlocking(current)) return
             consider(current)
             currentId = treeParentId(current)

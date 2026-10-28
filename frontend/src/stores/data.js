@@ -1280,6 +1280,9 @@ export const useDataStore = defineStore('data', {
         backgroundComputeProgress: (state) => aggregatePhase(state.startupProgress.background_compute),
         searchIndexProgress: (state) => aggregatePhase(state.startupProgress.search_index),
         isStartupInProgress: (state) => hasActiveStartupPhase(state.startupProgress),
+        // The same probe as a function: each call reads `startupProgress`, so a
+        // calling computed reruns on each progress message (sidebar block stages).
+        inStartupPhase: (state) => () => hasActiveStartupPhase(state.startupProgress),
         isInitialSyncInProgress: (state) => {
             const byProvider = state.startupProgress.initial_sync
             if (!byProvider) return false

@@ -1,19 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { reactive } from 'vue'
-import { getStableSessionList } from './sessionLists.js'
 import { computeSidebarSessionBlocks } from './sidebarSessions.js'
+import { createShippedData } from '../../tests/helpers/sidebarFixture.js'
 
 function fixture(scope) {
-    const data = reactive({ sessions: {
+    const state = reactive({ sessions: {
         a: { id: 'a', project_id: 'p', mtime: 100 },
         b: { id: 'b', project_id: 'p-work', mtime: 90 },
         c: { id: 'c', project_id: 'q', mtime: 80 },
-    }, processStates: {}, localState: { projects: {} }, startupProgress: {}, getProjects: [],
+    }, projects: {}, processStates: {}, localState: { projects: {} }, startupProgress: {},
+        settings: { isShowArchivedProjects: true } })
+    // The shipped root index, scope lists, archived set, unread memo and startup probe.
+    const shipped = createShippedData(state).data
+    const data = {
+        get sessions() { return state.sessions },
+        get processStates() { return state.processStates },
+        get localState() { return state.localState },
         getProjectScopeIds: id => id === 'p' ? ['p', 'p-work'] : [id],
-        getProjectSessions(id) { return getStableSessionList(this, id, '__all__', () => false) },
-        get getAllSessions() { return getStableSessionList(this, '__all__', '__all__', () => false) },
-    })
+        get rootSessions() { return shipped.rootSessions },
+        get getScopeSessionList() { return shipped.getScopeSessionList },
+        get archivedProjectIds() { return shipped.archivedProjectIds },
+        get hasUnreadContentMemo() { return shipped.hasUnreadContentMemo },
+        get inStartupPhase() { return shipped.inStartupPhase },
+    }
     const options = { data, workspaces: { getVisibleProjectIds: () => ['p', 'p-work'], getWorkspaceById: () => null },
         effectiveProjectId: scope, activeWorkspaceId: null, sessionId: null,
         showArchived: false, showArchivedProjects: true, showActiveAcrossFilters: false }
@@ -50,10 +60,8 @@ function paginatedAncestorFixture() {
     const { data, options } = fixture('p')
     data.sessions.old = { id: 'old', project_id: 'p', mtime: 1, pinned: 'all', spawned_by: null }
     data.sessions.a.spawned_by = 'old'
-    // Simulate the pagination window: only `a` and `b` are naturally listed.
-    const all = data.getAllSessions
-    Object.defineProperty(data, 'getProjectSessions', { value: () => all.filter(s => s.id !== 'old') })
-    Object.defineProperty(data, 'getAllSessions', { value: all.filter(s => s.id !== 'old') })
+    // The pagination window: only the sessions at or above mtime 50 are naturally listed.
+    data.localState.projects.__all__ = { hasMoreSessions: true, oldestSessionMtime: 50 }
     options.effectiveProjectId = '__all__'
     return { data, options }
 }

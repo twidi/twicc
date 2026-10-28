@@ -411,12 +411,15 @@ export function createShippedData(state) {
     const hasUnreadContentMemo = computed(() => (session) => getUnreadMemos(state).unreadContent(session))
     const archivedProjectIds = computed(() => getArchivedProjectIds(state))
     const worktreeIdsByParent = computed(() => getWorktreeIdsByParent(state))
+    // Like the store getter: a function, so each call reads `startupProgress`.
+    const inStartupPhase = computed(() => () => hasActiveStartupPhase(state.startupProgress))
     Object.defineProperties(facades.data, {
         rootSessions: { get: () => rootSessions.value, enumerable: true },
         getScopeSessionList: { get: () => scopeSessionList.value, enumerable: true },
         hasUnreadContentMemo: { get: () => hasUnreadContentMemo.value, enumerable: true },
         archivedProjectIds: { get: () => archivedProjectIds.value, enumerable: true },
         worktreeIdsByParent: { get: () => worktreeIdsByParent.value, enumerable: true },
+        inStartupPhase: { get: () => inStartupPhase.value, enumerable: true },
     })
     // Like `stores/workspaces.js`: one membership per store, each parameter read on each evaluation.
     const membership = createWorkspaceMembership({

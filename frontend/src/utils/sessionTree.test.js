@@ -411,9 +411,11 @@ test('TREE_MAX_INDENT_LEVEL is 3', () => {
     assert.equal(TREE_MAX_INDENT_LEVEL, 3)
 })
 
+const rootsOf = list => list.filter(x => !x.parent_session_id)
 const extend = (natural, all, { inScope = () => true, passes = () => true } = {}) =>
     extendTreeCandidates(natural, {
-        sessionsById: Object.fromEntries(all.map(x => [x.id, x])),
+        roots: rootsOf(all),
+        lookup: lookupOf(all),
         isInScope: inScope,
         passesFilter: passes,
     }).map(x => x.id).sort()
@@ -479,7 +481,7 @@ test('extension result does not depend on the order of the natural members', () 
 test('extension has no duplicate when two members share an ancestor', () => {
     const root = s('root'), a = s('a', { spawned_by: 'root' }), b = s('b', { spawned_by: 'root' })
     const out = extendTreeCandidates([a, b], {
-        sessionsById: { root, a, b }, isInScope: () => true, passesFilter: () => true,
+        roots: [root, a, b], lookup: lookupOf([root, a, b]), isInScope: () => true, passesFilter: () => true,
     })
     assert.deepEqual(out.map(x => x.id), ['root'])
 })
@@ -625,8 +627,7 @@ test('extendTreeCandidates and findMissingAncestorIds stop at a detached session
     const a = s('a')
     const b = s('b', { spawned_by: 'a', tree_detached: true })
     const c = s('c', { spawned_by: 'b' })
-    const sessionsById = { a, b, c }
-    const opts = { sessionsById, isInScope: () => true, passesFilter: () => true }
+    const opts = { roots: [a, b, c], lookup: lookupOf([a, b, c]), isInScope: () => true, passesFilter: () => true }
     // Up: from C, B is added, A is not.
     assert.deepEqual(extendTreeCandidates([c], opts).map(x => x.id), ['b'])
     // Down: from A, the detached B (and its subtree) is not collected.
