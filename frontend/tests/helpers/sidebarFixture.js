@@ -33,6 +33,7 @@ import { getScopeSessionList, getStableSessionList } from '../../src/utils/sessi
 import { getRootSessions } from '../../src/utils/rootSessions.js'
 import { getUnreadMemos } from '../../src/utils/unreadMemos.js'
 import { getProjectActivityIndex } from '../../src/utils/projectProcessActivity.js'
+import { createWorkspaceMembership, getArchivedProjectIds, getWorktreeIdsByParent } from '../../src/utils/projectScopes.js'
 import { isWorkspaceProjectId } from '../../src/utils/workspaceIds.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
 
@@ -398,7 +399,9 @@ export function createBaselineData(state) {
 /**
  * `{ data, workspaces }` store facades over the shipped modules. The project
  * getters (`getProjects`, `getWorktreesOf`) stay the activity-sorted ones, as
- * in the real store. Later tasks plug their shipped modules in here.
+ * in the real store; the workspace membership reads the activity-free inputs
+ * (`archivedProjectIds`, `worktreeIdsByParent`) like the real stores do. Later
+ * tasks plug their shipped modules in here.
  */
 export function createShippedData(state) {
     const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase,
@@ -406,10 +409,27 @@ export function createShippedData(state) {
     const rootSessions = computed(() => getRootSessions(state))
     const scopeSessionList = computed(() => (scope) => getScopeSessionList(state, scope))
     const hasUnreadContentMemo = computed(() => (session) => getUnreadMemos(state).unreadContent(session))
+    const archivedProjectIds = computed(() => getArchivedProjectIds(state))
+    const worktreeIdsByParent = computed(() => getWorktreeIdsByParent(state))
     Object.defineProperties(facades.data, {
         rootSessions: { get: () => rootSessions.value, enumerable: true },
         getScopeSessionList: { get: () => scopeSessionList.value, enumerable: true },
         hasUnreadContentMemo: { get: () => hasUnreadContentMemo.value, enumerable: true },
+        archivedProjectIds: { get: () => archivedProjectIds.value, enumerable: true },
+        worktreeIdsByParent: { get: () => worktreeIdsByParent.value, enumerable: true },
+    })
+    // Like `stores/workspaces.js`: one membership per store, each parameter read on each evaluation.
+    const membership = createWorkspaceMembership({
+        getWorkspaceById: (id) => facades.workspaces.getWorkspaceById(id),
+        getProject: (id) => facades.data.getProject(id),
+        getWorktreeIdsByParent: () => facades.data.worktreeIdsByParent,
+        isShowArchived: () => state.settings.isShowArchivedProjects,
+    })
+    const getVisibleProjectIds = computed(() => (workspaceId) => membership.visible(workspaceId))
+    const getAllProjectIds = computed(() => (workspaceId) => membership.all(workspaceId))
+    Object.defineProperties(facades.workspaces, {
+        getVisibleProjectIds: { get: () => getVisibleProjectIds.value, enumerable: true },
+        getAllProjectIds: { get: () => getAllProjectIds.value, enumerable: true },
     })
     return facades
 }

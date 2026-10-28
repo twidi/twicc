@@ -428,9 +428,7 @@ watch(defaultDeliveryProjectId, () => {
 // `computeSidebarSessionBlocks` already applies these project exclusions to
 // normal rows. The same set lets a hydrated page-omitted row use the exact
 // non-pagination rule instead of an eligibility override.
-const archivedProjectIds = computed(() => new Set(
-    dataStore.getProjects.filter(project => project.archived).map(project => project.id),
-))
+const archivedProjectIds = computed(() => dataStore.archivedProjectIds)
 
 /** Whether a hydrated row belongs to the supplied picker scope before any
  *  pagination bound. This checks scope only; eligibility stays in the shared

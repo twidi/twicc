@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
-import { effectScope, reactive } from 'vue'
+import { computed, effectScope, reactive } from 'vue'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
+import { createWorkspaceMembership, getArchivedProjectIds, getWorktreeIdsByParent } from '../utils/projectScopes.js'
+import { observeStageRuns } from '../utils/stageRuns.js'
 import { useRailRecentProjects } from './useRailRecentProjects.js'
 
 // Execute production getters in Pinia without the full stores' browser imports.
@@ -12,14 +14,16 @@ const dataStart = dataSource.indexOf('        // Data getters')
 const dataEnd = dataSource.indexOf('        // Session scope of a project:', dataStart)
 const projectGetter = dataSource.match(/^        getProject:.*$/m)[0]
 const projectGetters = new Function('buildProjectActivityIndex', 'createProjectActivityComparator',
+    'getArchivedProjectIds', 'getWorktreeIdsByParent',
     `return { ${dataSource.slice(dataStart, dataEnd)} ${projectGetter} }`,
-)(buildProjectActivityIndex, createProjectActivityComparator)
+)(buildProjectActivityIndex, createProjectActivityComparator, getArchivedProjectIds, getWorktreeIdsByParent)
 const workspaceSource = readFileSync(new URL('../stores/workspaces.js', import.meta.url), 'utf8')
 const workspaceStart = workspaceSource.indexOf('    getters: {') + '    getters: '.length
 const workspaceEnd = workspaceSource.indexOf('\n    actions:', workspaceStart)
-const workspaceGetters = new Function('useDataStore', 'useSettingsStore',
+const workspaceGetters = (useDataStore, useSettingsStore) => new Function(
+    'useDataStore', 'useSettingsStore', 'createWorkspaceMembership',
     `return ${workspaceSource.slice(workspaceStart, workspaceEnd).trim().replace(/,$/, '')}`,
-)
+)(useDataStore, useSettingsStore, createWorkspaceMembership)
 const useProjects = defineStore('rail-recent-projects-test', { state: () => ({ projects: {} }), getters: projectGetters })
 const NOW = 2_000_000
 const WEEK = 604_800
@@ -47,6 +51,47 @@ function fixture(t, projects, workspaces = [], clock = () => NOW) {
     t.after(() => scope.stop())
     return { store, settings, workspacesStore, scope, api }
 }
+
+// The store glue of design 5.6 and 7.1 #3: the real getters of both stores,
+// over Pinia, resolve workspace membership without project activity.
+test('workspace membership getters follow a new worktree and ignore project activity', t => {
+    const { store, workspacesStore } = fixture(t,
+        [{ id: 'p', mtime: NOW - 10 }, { id: 'q', mtime: NOW - 20 }], [{ id: 'w', projectIds: ['p', 'q'] }])
+    let evaluations = 0
+    const membership = computed(() => {
+        evaluations++
+        return [workspacesStore.getVisibleProjectIds('w'), workspacesStore.getAllProjectIds('w')]
+    })
+    assert.deepEqual(membership.value, [['p', 'q'], ['p', 'q']])
+    const resolver = workspacesStore.workspaceMembership
+
+    store.projects.wt = { id: 'wt', worktree_of: 'p' }
+    const [visible, all] = membership.value
+    assert.deepEqual(visible, ['p', 'wt', 'q'])
+    assert.deepEqual(all, ['p', 'wt', 'q'])
+    assert.equal(evaluations, 2)
+
+    const runs = {}
+    const stop = observeStageRuns(name => { runs[name] = (runs[name] || 0) + 1 })
+    t.after(stop)
+    store.projects.p.mtime = NOW
+    store.projects.wt.mtime = NOW + 1
+    assert.strictEqual(membership.value[0], visible)
+    assert.strictEqual(membership.value[1], all)
+    assert.equal(evaluations, 2)
+    assert.equal(runs['workspace:visible'] || 0, 0)
+    assert.equal(runs['workspace:all'] || 0, 0)
+
+    // Positive control: archiving a member reruns the visible stage and the computed.
+    store.projects.q.archived = true
+    assert.deepEqual(membership.value[0], ['p', 'wt'])
+    assert.strictEqual(membership.value[1], all)
+    assert.equal(evaluations, 3)
+    assert.equal(runs['workspace:visible'], 1)
+    assert.equal(runs['workspace:all'] || 0, 0)
+    // One membership resolver per store: none of these changes rebuilt it.
+    assert.strictEqual(workspacesStore.workspaceMembership, resolver)
+})
 
 // A strict cutoff or zero-date inclusion breaks the rolling-window contract.
 test('includes seven-day boundary and excludes expired, zero, and missing activity', t => {

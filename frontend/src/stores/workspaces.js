@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { useSettingsStore } from './settings'
 import { useDataStore } from './data'
 import { moveVisibleItems } from '../utils/listReorder'
+import { createWorkspaceMembership } from '../utils/projectScopes.js'
 
 export const useWorkspacesStore = defineStore('workspaces', {
     state: () => ({
@@ -18,9 +19,28 @@ export const useWorkspacesStore = defineStore('workspaces', {
             state.workspaces.find(w => w.id === id) || null,
 
         /**
+         * The one membership resolver of this store, shared by
+         * `getVisibleProjectIds` and `getAllProjectIds`. It reads no project
+         * activity, and keeps each result array while its ids are unchanged
+         * (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, 5.6).
+         * Each parameter is read on each evaluation, so a new worktree or an
+         * archive change shows up at once. This getter reads no reactive state
+         * itself, so it is evaluated once.
+         */
+        workspaceMembership() {
+            return createWorkspaceMembership({
+                getWorkspaceById: (id) => this.getWorkspaceById(id),
+                getProject: (id) => useDataStore().getProject(id),
+                getWorktreeIdsByParent: () => useDataStore().worktreeIdsByParent,
+                isShowArchived: () => useSettingsStore().isShowArchivedProjects,
+            })
+        },
+
+        /**
          * Visible project IDs for a given workspace, respecting "show archived projects".
          * Returns the member projects in their custom order, each immediately
-         * followed by its own git worktrees.
+         * followed by its own git worktrees, in project-id order (not activity
+         * order: callers that display worktrees use `getWorktreesOf`).
          *
          * A worktree's content (sessions, cost, activity) belongs to its main
          * repository's whole, so a member project's worktrees are part of the
@@ -30,61 +50,26 @@ export const useWorkspacesStore = defineStore('workspaces', {
          * pulled in for members that are themselves visible.
          *
          * Callers that need member projects only (counts, pickers, the member
-         * list) filter worktrees out via `!project.worktree_of`.
+         * list) filter worktrees out via `!project.worktree_of`. The returned
+         * array is shared and kept while its ids are unchanged: never mutate it.
          */
         getVisibleProjectIds() {
-            return (workspaceId) => {
-                const ws = this.getWorkspaceById(workspaceId)
-                if (!ws) return []
-                const dataStore = useDataStore()
-                const settingsStore = useSettingsStore()
-                const showArchived = settingsStore.isShowArchivedProjects
-                const passes = (p) => p && (showArchived || !p.archived)
-                const result = []
-                const seen = new Set()
-                const add = (id) => {
-                    if (!seen.has(id)) {
-                        seen.add(id)
-                        result.push(id)
-                    }
-                }
-                for (const pid of ws.projectIds) {
-                    if (!passes(dataStore.getProject(pid))) continue
-                    add(pid)
-                    for (const wt of dataStore.getWorktreesOf(pid)) {
-                        if (passes(wt)) add(wt.id)
-                    }
-                }
-                return result
-            }
+            const membership = this.workspaceMembership
+            return (workspaceId) => membership.visible(workspaceId)
         },
 
         /**
          * All project IDs of a workspace — every member plus each member's git
-         * worktrees — regardless of archived state. Use for the workspace home
-         * page aggregations (counter, cost, heatmaps, sparklines): they reflect
-         * the workspace as a whole, including archived projects and worktrees
-         * (a worktree's activity belongs to its main repository's whole).
+         * worktrees (in project-id order) — regardless of archived state. Use
+         * for the workspace home page aggregations (counter, cost, heatmaps,
+         * sparklines): they reflect the workspace as a whole, including archived
+         * projects and worktrees (a worktree's activity belongs to its main
+         * repository's whole). The returned array is shared and kept while its
+         * ids are unchanged: never mutate it.
          */
         getAllProjectIds() {
-            return (workspaceId) => {
-                const ws = this.getWorkspaceById(workspaceId)
-                if (!ws) return []
-                const dataStore = useDataStore()
-                const result = []
-                const seen = new Set()
-                const add = (id) => {
-                    if (!seen.has(id)) {
-                        seen.add(id)
-                        result.push(id)
-                    }
-                }
-                for (const pid of ws.projectIds) {
-                    add(pid)
-                    for (const wt of dataStore.getWorktreesOf(pid)) add(wt.id)
-                }
-                return result
-            }
+            const membership = this.workspaceMembership
+            return (workspaceId) => membership.all(workspaceId)
         },
 
         /**

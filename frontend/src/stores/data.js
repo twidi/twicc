@@ -10,6 +10,7 @@ import { buildProjectActivityIndex, createProjectActivityComparator } from '../u
 import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
 import { getRootSessions } from '../utils/rootSessions.js'
 import { getUnreadMemos } from '../utils/unreadMemos.js'
+import { getArchivedProjectIds, getWorktreeIdsByParent } from '../utils/projectScopes.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
@@ -954,6 +955,11 @@ export const useDataStore = defineStore('data', {
                 .filter(project => project.worktree_of === projectId)
                 .sort(comparator)
         },
+        // Ids of the archived projects; reads `archived` only, never activity (retained `Set`).
+        archivedProjectIds: (state) => getArchivedProjectIds(state),
+        // Parent project id -> its worktree ids in project-id order; reads `worktree_of`
+        // only, never activity (retained `Map`). Use `getWorktreesOf` to display worktrees.
+        worktreeIdsByParent: (state) => getWorktreeIdsByParent(state),
         // Session scope of a project: the project itself plus its own git
         // worktrees. A worktree's sessions/cost/activity belong to its main
         // repository's whole, so viewing a main repo aggregates its worktrees'
