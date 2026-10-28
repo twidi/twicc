@@ -16,12 +16,13 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
     // The store invokes this projection explicitly. Read raw metadata for the bulk calculation;
     // do not pay proxy access/spread costs for every historical item on each tool update.
     const previousInput = previous
-    items = toRaw(items).map(toRaw)
+    items = toRaw(items)
     previous = toRaw(previous).map(toRaw)
     expandedGroups = toRaw(expandedGroups)
     internalExpandedGroups = toRaw(internalExpandedGroups)
-    const indices = new Map(items.map((item, i) => [item.line_num, i]))
-    const cuts = [...new Set(boundaries.map(b => indices.get(b.beforeLine)).filter(i => i !== undefined))].sort((a, b) => a - b)
+    // Lines that open a new partition (an event renders before them).
+    const cutLines = new Set()
+    for (const boundary of boundaries) if (boundary.beforeLine != null) cutLines.add(boundary.beforeLine)
     const previousByKey = new Map(), previousByHead = new Map(), overlapsByHead = new Map()
     for (const segment of previous) {
         previousByKey.set(segment.key, segment)
@@ -46,38 +47,50 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
         }
         return first?.segment
     }
+    // Each group: its member items, with their position in `items` and their partition.
     const groups = new Map()
-    function member(head, item) {
-        if (head == null) return
-        if (!groups.has(head)) groups.set(head, [])
-        const group = groups.get(head)
-        // Each source item contributes at most its prefix and suffix, consecutively.
-        if (group.at(-1) !== item) group.push(item)
-    }
-    const partitionAt = new Int32Array(items.length)
     let part = 0
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i]
-        while (part < cuts.length && cuts[part] <= i) part++
-        partitionAt[i] = part
-        member(item.group_head, item)
-        if (item.display_level === DISPLAY_LEVEL.ALWAYS && item.group_tail != null) member(item.line_num, item)
+    function member(head, item, index) {
+        if (head == null) return
+        let group = groups.get(head)
+        if (!group) groups.set(head, group = { items: [], indexes: [], parts: [] })
+        // Each source item contributes at most its prefix and suffix, consecutively.
+        if (group.items.at(-1) === item) return
+        group.items.push(item)
+        group.indexes.push(index)
+        group.parts.push(part)
     }
-    const segments = []
+    // One pass over the items (the per-recompute hot path: no per-item map or copy).
+    // An item that a boundary renders before opens a new partition, itself included.
+    let rawItems = items
+    for (let i = 0; i < items.length; i++) {
+        const item = toRaw(items[i])
+        if (item !== items[i]) {
+            if (rawItems === items) rawItems = items.slice()
+            rawItems[i] = item
+        }
+        if (cutLines.has(item.line_num)) part++
+        member(item.group_head, item, i)
+        if (item.display_level === DISPLAY_LEVEL.ALWAYS && item.group_tail != null) member(item.line_num, item, i)
+    }
+    items = rawItems
+    const segments = [], segmentIndexes = []
     const expandedSet = new Set(expandedGroups)
-    for (const [originalHead, members] of groups) {
+    for (const [originalHead, group] of groups) {
+        const members = group.items
         const owner = members.find(item => item.line_num === originalHead && item.display_level === DISPLAY_LEVEL.ALWAYS)
         const content = owner ? getParsedContent(owner)?.message?.content : null
         const suffixStart = getPrefixSuffixBoundaries(content, null, owner?.group_tail).suffixStartIndex
         const initiallyExpanded = expandedSet.has(originalHead)
             || (suffixStart != null && (internalExpandedGroups[originalHead] ?? []).includes(suffixStart))
         const partitions = new Map()
-        for (const item of members) {
-            const part = partitionAt[indices.get(item.line_num)]
-            if (!partitions.has(part)) partitions.set(part, [])
-            partitions.get(part).push(item)
+        for (let m = 0; m < members.length; m++) {
+            let partition = partitions.get(group.parts[m])
+            if (!partition) partitions.set(group.parts[m], partition = { items: [], indexes: [] })
+            partition.items.push(members[m])
+            partition.indexes.push(group.indexes[m])
         }
-        for (const partition of partitions.values()) {
+        for (const { items: partition, indexes } of partitions.values()) {
             const head = partition[0].line_num, tail = partition.at(-1).line_num
             const key = `tools:${originalHead}:${head}`
             const lines = partition.map(item => item.line_num)
@@ -93,12 +106,14 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
             const range = rangeHead === null ? null : old?.range?.head === rangeHead && old.range.tail === rangeTail
                 ? old.range : { head: rangeHead, tail: rangeTail }
             segments.push({ key, originalHead, head, tail, members: lines, expanded, internal, range })
+            segmentIndexes.push(indexes)
         }
     }
 
     const internalTransfers = [], retiredRemaining = []
+    const itemByLine = retired.length ? new Map(items.map(item => [item.line_num, item])) : null
     for (const transfer of retired) {
-        const item = items[indices.get(transfer.realLineNum)]
+        const item = itemByLine.get(transfer.realLineNum)
         if (!item) { retiredRemaining.push(transfer); continue }
         if (!transfer.expanded) continue
         let originalHead = item.group_head
@@ -126,19 +141,21 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
             && segment.members.every((line, index) => line === old.members[index])) segments[i] = old
     }
 
-    const projected = new Map()
-    function clone(item) {
-        if (!projected.has(item.line_num)) {
-            const copy = { ...item }
-            const parsed = getParsedContent(item)
+    // Projected copies, by position in `items` (an item with a prefix and a suffix is in two segments).
+    const projected = new Array(items.length)
+    function clone(index) {
+        if (!projected[index]) {
+            const original = items[index], copy = { ...original }
+            const parsed = getParsedContent(original)
             if (parsed !== null) setParsedContent(copy, parsed)
-            projected.set(item.line_num, copy)
+            projected[index] = copy
         }
-        return projected.get(item.line_num)
+        return projected[index]
     }
-    for (const segment of segments) {
-        for (const line of segment.members) {
-            const original = items[indices.get(line)], item = clone(original)
+    for (let s = 0; s < segments.length; s++) {
+        const segment = segments[s]
+        for (const index of segmentIndexes[s]) {
+            const original = items[index], item = clone(index)
             if (original.display_level === DISPLAY_LEVEL.COLLAPSIBLE) {
                 item.group_head = segment.head
                 item.group_tail = segment.tail
@@ -162,7 +179,7 @@ export function projectEventSegments({ items, boundaries, previous = [], expande
         }
     }
     const stableSegments = segments.length === previous.length && segments.every((segment, i) => segment === previous[i]) ? previousInput : segments
-    return { items: items.map(item => projected.get(item.line_num) ?? item), segments: stableSegments,
+    return { items: items.map((item, index) => projected[index] ?? item), segments: stableSegments,
         expandedHeads: [...new Set([...expandedGroups.filter(head => head < 0 && !groups.has(head)),
             ...segments.filter(s => s.expanded && !s.internal).map(s => s.head)])], internalTransfers, retiredRemaining }
 }
