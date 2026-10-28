@@ -601,6 +601,39 @@ test('18b. the breathing terminal icon of a background shell', () => {
     assert.equal(rule(dots, ['.background-work-status__dots i:nth-child(3)'], topLevel).decls['animation-delay'], '0.3s')
 })
 
+// The unread eye and the background work of a finished turn share one cell: the two icons
+// swap by opacity (ProcessIndicator's `unread` input). Opacity only, so it stays under reduced motion.
+test('18d. the unread eye alternates with the background work icon', () => {
+    const motion = parseCss(read('motion.css'))
+    const eye = motion.filter(inKeyframes('motion-alternate-eye'))
+    const work = motion.filter(inKeyframes('motion-alternate-work'))
+    assert.deepEqual(eye.map((r) => r.selectors), [['0%', '40%', '100%'], ['50%', '90%']], 'eye frames')
+    assert.deepEqual(work.map((r) => r.selectors), [['0%', '40%', '100%'], ['50%', '90%']], 'work frames')
+    for (const r of [...eye, ...work]) assert.deepEqual(Object.keys(r.decls), ['opacity'], `${r.selectors} only animates opacity`)
+    assert.deepEqual([eye[0].decls.opacity, eye[1].decls.opacity], ['1', '0'])
+    assert.deepEqual([work[0].decls.opacity, work[1].decls.opacity], ['0', '1'])
+
+    const indicator = read('../components/ui/ProcessIndicator.vue')
+    assert.ok(collapse(indicator).includes('unread: { type: Boolean, default: false,'), 'unread prop')
+    const styleText = styleOf(indicator)
+    const styles = parseCss(styleText)
+    assert.equal(rule(styles, ['.process-indicator__alt--eye'], topLevel).decls.animation, 'motion-alternate-eye 2.4s ease-in-out infinite')
+    assert.equal(rule(styles, ['.process-indicator__alt--work'], topLevel).decls.animation, 'motion-alternate-work 2.4s ease-in-out infinite')
+    assert.equal(rule(styles, ['.process-indicator__alt--work'], topLevel).decls.color, 'var(--process-color)')
+    for (const sel of ['.process-indicator__alt--eye', '.process-indicator__alt--work']) {
+        assert.ok(!/motion-status-pulse/.test(rule(styles, [sel], topLevel).decls.animation), `${sel} has no own pulse`)
+    }
+    const alone = rule(styles, ['.process-indicator__icon--unread'], topLevel)
+    assert.equal(alone.decls.animation, 'motion-status-pulse 2.4s ease-in-out infinite')
+    assert.equal(alone.decls.color, 'var(--process-unread-color, var(--wa-color-warning-60))')
+    assert.equal(rule(styles, ['.process-indicator__alt--eye'], topLevel).decls.color, 'var(--process-unread-color, var(--wa-color-warning-60))')
+    const at = (sel) => styleText.indexOf(`${sel} {`)
+    assert.ok(at('.process-indicator__icon') >= 0 && at('.process-indicator__icon') < at('.process-indicator__icon--unread'), 'unread colour after the base icon rule')
+    assert.ok(at('.process-indicator__icon') < at('.process-indicator__alt--eye'), 'eye colour after the base icon rule')
+    assert.ok(!/reduce-motion[^{]*process-indicator__alt/.test(styleText), 'alternation kept under reduced motion')
+    assert.ok(collapse(templateOf(indicator)).includes(`unread && state === 'user_turn'`), 'unread guarded by user_turn')
+})
+
 // The upload strip in the Signature spirit: a band that unfolds (height + fade
 // like the footer blocks), lines that rise in, a lit gradient bar with a glow, the percent in
 // the accent colour.

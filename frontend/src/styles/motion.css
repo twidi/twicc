@@ -90,6 +90,18 @@
     50% { opacity: 0.2; }
 }
 
+/* An unread session with background work shows the eye and the work icon in one cell, in turn
+   (ProcessIndicator). Opacity only: kept under reduced motion. */
+@keyframes motion-alternate-eye {
+    0%, 40%, 100% { opacity: 1; }
+    50%, 90% { opacity: 0; }
+}
+
+@keyframes motion-alternate-work {
+    0%, 40%, 100% { opacity: 0; }
+    50%, 90% { opacity: 1; }
+}
+
 /* Button press: sinks in 60ms, springs back on release. The property list repeats Web
    Awesome's own list on .button (a ::part() rule replaces it) and adds scale, and filter
    for the lit brand buttons of glow.css.

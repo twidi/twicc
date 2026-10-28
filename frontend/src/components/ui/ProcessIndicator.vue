@@ -14,6 +14,11 @@
  * true (scheduled cron work is pending). Neither is animated: the agent is
  * not working.
  *
+ * The `unread` prop adds the unread eye in user_turn (ignored in other states): the eye
+ * alone, breathing, when nothing runs behind the turn; else the eye and the background
+ * work icon (terminal or clock) share one cell and swap by opacity. The parent can tint
+ * the eye with `--process-unread-color`.
+ *
  * The `animateStates` prop controls which states are animated (the working
  * robot is animated, see styles/robot-working.css).
  */
@@ -64,6 +69,15 @@ const props = defineProps({
         type: Number,
         default: 0,
     },
+    /**
+     * Whether the session is unread (only meaningful in user_turn).
+     * - without background work: the eye replaces the check
+     * - with background work: the eye alternates with the terminal / clock icon
+     */
+    unread: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 /**
@@ -90,6 +104,16 @@ const effectiveIconName = computed(() => {
 })
 
 /**
+ * The background work icon (shells win over crons), or null when nothing runs behind
+ * the turn. Same rule as effectiveIconName.
+ */
+const workIconName = computed(() => {
+    if (props.backgroundShells > 0) return 'terminal'
+    if (props.hasActiveCrons) return 'clock'
+    return null
+})
+
+/**
  * Check if the current state should be animated.
  */
 function shouldAnimate(state) {
@@ -113,6 +137,22 @@ const stateColor = computed(() => PROCESS_STATE_COLORS[props.state] || PROCESS_S
             v-if="state === 'starting'"
             class="process-indicator__spinner"
         ></wa-spinner>
+
+        <!-- Unread with background work: the eye and the work icon alternate in one cell -->
+        <span
+            v-else-if="unread && state === 'user_turn' && workIconName"
+            class="process-indicator__alternate"
+        >
+            <wa-icon class="process-indicator__alt--eye" name="eye"></wa-icon>
+            <wa-icon class="process-indicator__alt--work" :name="workIconName"></wa-icon>
+        </span>
+
+        <!-- Unread alone: the breathing eye -->
+        <wa-icon
+            v-else-if="unread && state === 'user_turn'"
+            class="process-indicator__icon process-indicator__icon--unread"
+            name="eye"
+        ></wa-icon>
 
         <!-- Icon for other states -->
         <wa-icon
@@ -178,5 +218,30 @@ const stateColor = computed(() => PROCESS_STATE_COLORS[props.state] || PROCESS_S
     animation: motion-status-pulse-deep 2.4s ease-in-out infinite;
 }
 
+/* Unread eye alone (same look as the unread eye elsewhere). Declared after the base icon
+   rule: same specificity, the order decides. */
+.process-indicator__icon--unread {
+    color: var(--process-unread-color, var(--wa-color-warning-60));
+    animation: motion-status-pulse 2.4s ease-in-out infinite;
+}
 
+/* Eye and work icon stacked in one cell, swapping by opacity (opacity only: kept under
+   reduced motion). */
+.process-indicator__alternate {
+    display: inline-grid;
+}
+
+.process-indicator__alternate > * {
+    grid-area: 1 / 1;
+}
+
+.process-indicator__alt--eye {
+    color: var(--process-unread-color, var(--wa-color-warning-60));
+    animation: motion-alternate-eye 2.4s ease-in-out infinite;
+}
+
+.process-indicator__alt--work {
+    color: var(--process-color);
+    animation: motion-alternate-work 2.4s ease-in-out infinite;
+}
 </style>
