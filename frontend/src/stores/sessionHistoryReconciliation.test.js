@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { hasContent, getParsedContent, clearParsedContent, setParsedContent } from '../utils/parsedContent.js'
-import { INITIAL_ITEMS_COUNT } from '../constants.js'
+import { DISPLAY_LEVEL, INITIAL_ITEMS_COUNT } from '../constants.js'
 import { userMessageText, userMessageAttachmentCount } from '../providers/codex/canonical.js'
 import { attachmentMatchKey, attachmentCountForMessage, matchableUserMessage } from '../utils/attachmentStrip.js'
 import { sweepLoadedSessions } from '../composables/reconcileSweep.js'
@@ -15,6 +15,8 @@ function action(name) {
 }
 const matchStart = source.indexOf('function userMessageMatchKey(')
 const matchEnd = source.indexOf('// Same key,', matchStart)
+const itemHelpersStart = source.indexOf('/** A session item built from an items metadata row')
+const itemHelpersEnd = source.indexOf('/**\n * Coalesce ascending', itemHelpersStart)
 const optimisticStart = source.indexOf('function userMessageMatchesOptimistic(')
 const optimisticEnd = source.indexOf('\n}', optimisticStart) + 2
 const reconcileSource = readFileSync(new URL('../composables/useReconciliation.js', import.meta.url), 'utf8')
@@ -34,7 +36,7 @@ const copy = value => JSON.parse(JSON.stringify(value))
 function fixture({ fetched = false, lastLine = 2, stallMs = 30000 } = {}) {
     const requests = []
     let respond = async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) })
-    const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT,
+    const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT, DISPLAY_LEVEL,
         isLaunchedEphemeral: s => !!s.ephemeral,
         itemsCoverageInFlight: new Function(`return ${source.match(/const itemsCoverageInFlight = (new \w+\(\))/)[1]}`)(),
         readJsonWithProgress: new Function(`return ${source.match(/async function readJsonWithProgress[\s\S]*?\n}\n/)[0]}`)(),
@@ -46,8 +48,9 @@ function fixture({ fetched = false, lastLine = 2, stallMs = 30000 } = {}) {
         attachmentMatchKey, attachmentCountForMessage, matchableUserMessage,
     }
     const names = ['async loadSessionHistory', 'async ensureSessionItemsCoverage', 'async loadSessionItemsRanges',
-        'async loadSessionMetadata', 'initSessionItemsFromMetadata', 'updateSessionItemsContent', 'clearOptimisticMessageIfMatched']
-    const actions = new Function(...Object.keys(deps), `${source.slice(matchStart, matchEnd)}\n${source.slice(optimisticStart, optimisticEnd)}
+        'async loadSessionMetadata', 'initSessionItemsFromMetadata', 'updateSessionItemsContent', 'clearOptimisticMessageIfMatched',
+        'mergeSessionItemsMetadata']
+    const actions = new Function(...Object.keys(deps), `${source.slice(matchStart, matchEnd)}\n${source.slice(optimisticStart, optimisticEnd)}\n${source.slice(itemHelpersStart, itemHelpersEnd)}
         return { ${names.map(action).join('')} }`)(...Object.values(deps))
     const useFixture = defineStore('session-history-reconciliation', {
         state: () => ({ sessions: { s: { id: 's', project_id: 'p', provider: 'codex', draft: false,
@@ -101,6 +104,53 @@ test('a history load recomputes the visual items once, after metadata and conten
     store.recomputeVisualItems = id => seen.push(store.sessionItems[id].map(item => [item.line_num, hasContent(item)]))
     assert.equal(await store.loadSessionHistory('p', 's', 2), true)
     assert.deepEqual(seen, [[[1, true], [2, true]]])
+})
+
+test('a history load fills the lines the metadata leaves out with DEBUG_ONLY stubs, up to the last line', async () => {
+    const { store, respond } = fixture({ lastLine: 4 })
+    respond(async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? [metadata[0]] : transcript) }))
+    assert.equal(await store.loadSessionHistory('p', 's', 4), true)
+    const items = store.sessionItems.s
+    assert.deepEqual(items.map(item => item.line_num), [1, 2, 3, 4])
+    assert.equal(items[1].kind, 'assistant_message', 'the content window fills a stub with its real metadata')
+    assert.ok(hasContent(items[1]))
+    for (const stub of items.slice(2)) {
+        assert.equal(stub.display_level, DISPLAY_LEVEL.DEBUG_ONLY)
+        assert.equal(hasContent(stub), false)
+    }
+})
+
+test('a history load keeps each metadata row at its own line around a left-out DEBUG_ONLY line', async () => {
+    const { store, respond } = fixture({ lastLine: 4 })
+    const third = { line_num: 3, display_level: DISPLAY_LEVEL.ALWAYS, kind: 'assistant_message',
+        group_head: null, group_tail: null, timestamp: '2026-10-08T06:30:00Z' }
+    // No content window: only the metadata places the rows.
+    respond(async url => ({ ok: true, json: async () => url.includes('metadata') ? [copy(metadata[0]), third] : [] }))
+    assert.equal(await store.loadSessionHistory('p', 's', 4), true)
+    const items = store.sessionItems.s
+    assert.deepEqual(items.map(item => [item.line_num, item.display_level, item.kind]), [
+        [1, metadata[0].display_level, 'user_message'],
+        [2, DISPLAY_LEVEL.DEBUG_ONLY, null],
+        [3, DISPLAY_LEVEL.ALWAYS, 'assistant_message'],
+        [4, DISPLAY_LEVEL.DEBUG_ONLY, null],
+    ])
+    assert.equal(items[2].timestamp, third.timestamp)
+})
+
+test('coverage turns the bare lines the metadata leaves out into DEBUG_ONLY stubs, then stops fetching', async () => {
+    const { store, requests, respond } = fixture({ fetched: true, lastLine: 105 })
+    const row = line => ({ line_num: line, display_level: DISPLAY_LEVEL.ALWAYS, kind: 'assistant_message',
+        group_head: null, group_tail: null, timestamp: null })
+    // Lines 2-10 are bare (a live item extended the array over them).
+    store.sessionItems.s = Array.from({ length: 105 }, (_, i) =>
+        i >= 1 && i <= 9 ? { line_num: i + 1 } : { ...row(i + 1), content: '{}' })
+    respond(async url => ({ ok: true, json: async () => url.includes('metadata') ? [row(1), row(5)] : [] }))
+    assert.equal(await store.ensureSessionItemsCoverage('s'), true)
+    assert.deepEqual(store.sessionItems.s.slice(0, 10).map(item => item.display_level),
+        [1, 3, 3, 3, 1, 3, 3, 3, 3, 3])
+    requests.length = 0
+    assert.equal(await store.ensureSessionItemsCoverage('s'), true)
+    assert.deepEqual(requests, [], 'stubs are not bare: nothing left to heal')
 })
 
 test('a failed first visit publishes the error and permits a retry', async () => {

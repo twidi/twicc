@@ -84,9 +84,11 @@ test('insertion deletion and order changes replace the visual list', () => {
 test('display mode and group expansion still change visible rows', () => {
     const f = fixture({ items: [message(1), message(2, { display_level: DISPLAY_LEVEL.DEBUG_ONLY })] })
     assert.deepEqual(f.rows().map(r => r.lineNum), [1])
-    f.settings.getDisplayMode = DISPLAY_MODE.DEBUG
+    // The debug view is only the per-session override (no global debug mode).
+    f.store.localState.sessionDebugOverride.main = true
     f.store.recomputeVisualItems('main')
     assert.deepEqual(f.rows().map(r => r.lineNum), [1, 2])
+    delete f.store.localState.sessionDebugOverride.main
     f.settings.getDisplayMode = DISPLAY_MODE.SIMPLIFIED
     f.store.sessionItems.main = [message(1, { display_level: DISPLAY_LEVEL.COLLAPSIBLE, group_head: 1, group_tail: 2 }),
         message(2, { display_level: DISPLAY_LEVEL.COLLAPSIBLE, group_head: 1, group_tail: 2 })]

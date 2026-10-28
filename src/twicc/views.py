@@ -24,7 +24,7 @@ import orjson
 from twicc import search
 from twicc.core.content_storage.readers import effective_current, iter_matching_items, aload_current
 from twicc.agent.registry import get_agent_manager_registry
-from twicc.core.enums import ItemKind, Provider
+from twicc.core.enums import ItemDisplayLevel, ItemKind, Provider
 from twicc.core.models import ArtifactBookmark, ArtifactNetworkDenial, Command, DailyActivity, PinMode, Project, Session, SessionItem, SessionType, ToolResultLink, UsageSnapshot, WeeklyActivity, Workflow
 from twicc.core.serializers import (
     serialize_artifact_bookmark,
@@ -1677,12 +1677,16 @@ async def session_items_metadata(request, project_id, session_id, parent_session
 
     When parent_session_id is provided, validates that session.parent_session_id matches.
 
-    Returns all items with metadata fields but WITHOUT content.
+    Returns the items with metadata fields but WITHOUT content, minus the
+    DEBUG_ONLY ones (most of a session's lines). The frontend fills the missing
+    line numbers with DEBUG_ONLY stubs; the per-session debug view loads their
+    content, metadata included, through the items range endpoint.
     Used for initial session load to build the visual items list.
     """
     session = await _resolve_session_or_404(session_id, project_id, parent_session_id)
 
-    data = await sync_to_async(serialize_session_items_metadata)(session.items.all())
+    queryset = session.items.exclude(display_level=ItemDisplayLevel.DEBUG_ONLY)
+    data = await sync_to_async(serialize_session_items_metadata)(queryset)
     return JsonResponse(data, safe=False)
 
 

@@ -204,6 +204,30 @@ function describeFetchFailure(error) {
 }
 const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
 
+/** A session item built from an items metadata row (no content yet). */
+function metadataItem(m) {
+    return {
+        line_num: m.line_num,
+        display_level: m.display_level,
+        group_head: m.group_head,
+        group_tail: m.group_tail,
+        kind: m.kind,
+        timestamp: m.timestamp ?? null,  // ISO 8601; available before content loads
+        content: null,  // Will be filled by content fetch
+    }
+}
+
+/**
+ * A line the items metadata leaves out: the endpoint omits DEBUG_ONLY lines,
+ * most of a session. Same shape as a metadata row, so every display-level
+ * check treats it as the real line. Only the per-session debug view shows it;
+ * its content, kind and timestamp then arrive with the items range endpoint.
+ */
+function debugOnlyStub(lineNum) {
+    return { line_num: lineNum, display_level: DISPLAY_LEVEL.DEBUG_ONLY, group_head: null, group_tail: null,
+        kind: null, timestamp: null, content: null }
+}
+
 /**
  * Coalesce ascending 1-based line numbers into [min, max] ranges.
  * @param {number[]} lineNums - Sorted ascending line numbers
@@ -2989,7 +3013,7 @@ export const useDataStore = defineStore('data', {
                     const liveItems = wasFetched ? [] : (this.sessionItems[sessionId] || []).filter(hasContent)
                     // One recompute for the three steps: they run in the same tick, so only
                     // the last result is ever rendered, and each one costs a full pass.
-                    this.initSessionItemsFromMetadata(sessionId, metadata, { recompute: false })
+                    this.initSessionItemsFromMetadata(sessionId, metadata, { recompute: false, lastLine })
                     this.updateSessionItemsContent(sessionId, items, { recompute: false })
                     if (liveItems.length) this.addSessionItems(sessionId, liveItems, null, { recompute: false })
                     this.recomputeVisualItems(sessionId)
@@ -3239,7 +3263,7 @@ export const useDataStore = defineStore('data', {
                 if (hasBareBeforeWindow) {
                     const metadata = await this.loadSessionMetadata(projectId, sessionId, parentSessionId)
                     if (metadata) {
-                        this.mergeSessionItemsMetadata(sessionId, metadata)
+                        this.mergeSessionItemsMetadata(sessionId, metadata, { lastLine: serverLastLine })
                     } else {
                         ok = false
                     }
@@ -3339,33 +3363,35 @@ export const useDataStore = defineStore('data', {
          * loaded content. Fills bare placeholders (no display_level, no content)
          * so they become visible to the scroller's gap-fill; items that already
          * have metadata or content are left alone (live updates keep them fresher
-         * than this snapshot).
+         * than this snapshot). Like initSessionItemsFromMetadata, a line number the
+         * metadata leaves out is a DEBUG_ONLY line: its bare placeholder gets a stub,
+         * otherwise it would stay bare and every coverage check would refetch.
          * @param {string} sessionId
          * @param {Array} metadata - Same shape as initSessionItemsFromMetadata's input
+         * @param {Object} [options]
+         * @param {number} [options.lastLine=0] - The session's last line when the metadata was requested
          */
-        mergeSessionItemsMetadata(sessionId, metadata) {
+        mergeSessionItemsMetadata(sessionId, metadata, { lastLine = 0 } = {}) {
             const targetArray = this.sessionItems[sessionId]
             if (!targetArray) return
 
             let changed = false
-            for (const m of metadata) {
-                const index = m.line_num - 1
-                while (targetArray.length <= index) {
+            const fill = (lineNum, item) => {
+                while (targetArray.length < lineNum) {
                     targetArray.push({ line_num: targetArray.length + 1 })
                 }
-                const existing = targetArray[index]
-                if (existing.display_level != null || hasContent(existing)) continue
-                targetArray[index] = {
-                    line_num: m.line_num,
-                    display_level: m.display_level,
-                    group_head: m.group_head,
-                    group_tail: m.group_tail,
-                    kind: m.kind,
-                    timestamp: m.timestamp ?? null,
-                    content: null,
-                }
+                const existing = targetArray[lineNum - 1]
+                if (existing.display_level != null || hasContent(existing)) return
+                targetArray[lineNum - 1] = item
                 changed = true
             }
+            let next = 1
+            for (const m of metadata) {
+                for (; next < m.line_num; next++) fill(next, debugOnlyStub(next))
+                fill(m.line_num, metadataItem(m))
+                next = m.line_num + 1
+            }
+            for (; next <= lastLine; next++) fill(next, debugOnlyStub(next))
             if (changed) {
                 this.recomputeVisualItems(sessionId)
             }
@@ -4558,21 +4584,22 @@ export const useDataStore = defineStore('data', {
 
         /**
          * Initialize sessionItems array from metadata (no content).
+         * The metadata leaves out the DEBUG_ONLY lines: each missing line number gets
+         * a stub (see debugOnlyStub), so the array stays indexed by line_num - 1.
          * @param {string} sessionId
-         * @param {Array} metadata - Array of { line_num, display_level, group_head, group_tail }
+         * @param {Array} metadata - Array of { line_num, display_level, group_head, group_tail }, ordered by line_num
          * @param {Object} [options]
          * @param {boolean} [options.recompute=true] - false when the caller recomputes the visual items itself
+         * @param {number} [options.lastLine=0] - The session's last line: stubs also cover trailing DEBUG_ONLY lines
          */
-        initSessionItemsFromMetadata(sessionId, metadata, { recompute = true } = {}) {
-            this.sessionItems[sessionId] = metadata.map(m => ({
-                line_num: m.line_num,
-                display_level: m.display_level,
-                group_head: m.group_head,
-                group_tail: m.group_tail,
-                kind: m.kind,
-                timestamp: m.timestamp ?? null,  // ISO 8601; available before content loads
-                content: null  // Will be filled by content fetch
-            }))
+        initSessionItemsFromMetadata(sessionId, metadata, { recompute = true, lastLine = 0 } = {}) {
+            const items = []
+            for (const m of metadata) {
+                while (items.length < m.line_num - 1) items.push(debugOnlyStub(items.length + 1))
+                items.push(metadataItem(m))
+            }
+            while (items.length < lastLine) items.push(debugOnlyStub(items.length + 1))
+            this.sessionItems[sessionId] = items
 
             // Compute visual items after initialization
             if (recompute) this.recomputeVisualItems(sessionId)

@@ -521,7 +521,6 @@ export function initStaticCommands(router) {
         [DISPLAY_MODE.CONVERSATION]: 'Conversation',
         [DISPLAY_MODE.SIMPLIFIED]: 'Simplified',
         [DISPLAY_MODE.NORMAL]: 'Detailed',
-        [DISPLAY_MODE.DEBUG]: 'Debug',
     }
 
     // ── Color scheme labels ────────────────────────────────────────────────
@@ -1167,7 +1166,6 @@ export function initStaticCommands(router) {
                 { id: DISPLAY_MODE.CONVERSATION, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.CONVERSATION], action: () => settings.setDisplayMode(DISPLAY_MODE.CONVERSATION), active: settings.displayMode === DISPLAY_MODE.CONVERSATION },
                 { id: DISPLAY_MODE.SIMPLIFIED, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.SIMPLIFIED], action: () => settings.setDisplayMode(DISPLAY_MODE.SIMPLIFIED), active: settings.displayMode === DISPLAY_MODE.SIMPLIFIED },
                 { id: DISPLAY_MODE.NORMAL, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.NORMAL], action: () => settings.setDisplayMode(DISPLAY_MODE.NORMAL), active: settings.displayMode === DISPLAY_MODE.NORMAL },
-                { id: DISPLAY_MODE.DEBUG, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.DEBUG], action: () => settings.setDisplayMode(DISPLAY_MODE.DEBUG), active: settings.displayMode === DISPLAY_MODE.DEBUG },
             ],
         },
         {

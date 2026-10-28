@@ -61,3 +61,13 @@ test('placement parses timestamps once and invalidates changed source timestamps
         assert.equal(parses, 2)
     } finally { Date.parse = originalParse }
 })
+test('with monotonic times, loading a DEBUG_ONLY stub moves no event past a displayed row', () => {
+    const debugLine = n => ({ ...source(2, n), display_level: 3 })
+    const events = [event(1, 11), event(2, 15), event(3, 25)]
+    // Each event -> the first displayed line it renders before (line 2 is hidden outside the debug view).
+    const shown = items => Object.fromEntries(placeSessionEvents(items, events)
+        .flatMap(b => b.events.map(e => [e.id, b.beforeLine === 2 ? 3 : b.beforeLine])))
+    const stub = shown([source(1, 10), debugLine(null), source(3, 20), source(4, 30)])
+    assert.deepEqual(stub, { 1: 3, 2: 3, 3: 4 })
+    assert.deepEqual(shown([source(1, 10), debugLine(12), source(3, 20), source(4, 30)]), stub)
+})

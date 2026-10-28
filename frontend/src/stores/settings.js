@@ -146,7 +146,9 @@ const SETTINGS_VALIDATORS = {
         Array.isArray(v) && v.every(item => typeof item === 'string' && getRegisteredProviders().includes(item)),
     orchestrationDisabledProviders: (v) =>
         Array.isArray(v) && v.every(item => typeof item === 'string' && getRegisteredProviders().includes(item)),
-    displayMode: (v) => [DISPLAY_MODE.CONVERSATION, DISPLAY_MODE.SIMPLIFIED, DISPLAY_MODE.NORMAL, DISPLAY_MODE.DEBUG].includes(v),
+    // No global debug mode: the debug view is a per-session dev-mode toggle (session header).
+    // A stored 'debug' fails here and falls back to the default.
+    displayMode: (v) => [DISPLAY_MODE.CONVERSATION, DISPLAY_MODE.SIMPLIFIED, DISPLAY_MODE.NORMAL].includes(v),
     fontSize: (v) => typeof v === 'number' && v >= 12 && v <= 32,
     colorScheme: (v) => [COLOR_SCHEME.SYSTEM, COLOR_SCHEME.LIGHT, COLOR_SCHEME.DARK].includes(v),
     sessionTimeFormat: (v) => [SESSION_TIME_FORMAT.TIME, SESSION_TIME_FORMAT.RELATIVE_SHORT, SESSION_TIME_FORMAT.RELATIVE_NARROW].includes(v),
@@ -243,11 +245,10 @@ function loadSettings() {
         if (stored) {
             const parsed = JSON.parse(stored)
 
-            // Migrate legacy baseDisplayMode + debugEnabled → displayMode
+            // Migrate legacy baseDisplayMode + debugEnabled → displayMode (debug is no
+            // longer a global mode: the base mode wins)
             if ('baseDisplayMode' in parsed || 'debugEnabled' in parsed) {
-                const debugEnabled = parsed.debugEnabled === true
-                const baseMode = parsed.baseDisplayMode || DEFAULT_DISPLAY_MODE
-                parsed.displayMode = debugEnabled ? DISPLAY_MODE.DEBUG : baseMode
+                parsed.displayMode = parsed.baseDisplayMode || DEFAULT_DISPLAY_MODE
                 delete parsed.baseDisplayMode
                 delete parsed.debugEnabled
                 _localStorageNeedsRewrite = true
@@ -341,7 +342,7 @@ export const useSettingsStore = defineStore('settings', {
 
     getters: {
         /**
-         * Current display mode: 'simplified', 'normal', or 'debug'.
+         * Current display mode: 'conversation', 'simplified' or 'normal'.
          */
         getDefaultProvider: (state) => state.defaultProvider,
         // Global default layout id (a named-layout id or 'single-pane'); null until the backend
@@ -495,7 +496,7 @@ export const useSettingsStore = defineStore('settings', {
 
         /**
          * Set display mode.
-         * @param {string} mode - 'simplified' | 'normal' | 'debug'
+         * @param {string} mode - 'conversation' | 'simplified' | 'normal'
          */
         setDisplayMode(mode) {
             if (SETTINGS_VALIDATORS.displayMode(mode)) {

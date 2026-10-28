@@ -829,7 +829,6 @@ const displayModeOptions = [
     { value: DISPLAY_MODE.CONVERSATION, label: 'Conversation' },
     { value: DISPLAY_MODE.SIMPLIFIED, label: 'Simplified' },
     { value: DISPLAY_MODE.NORMAL, label: 'Detailed' },
-    { value: DISPLAY_MODE.DEBUG, label: 'Debug' },
 ]
 
 

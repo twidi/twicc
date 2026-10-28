@@ -22,7 +22,14 @@ export function normalizeChatTimestamp(value) {
     return Number.isFinite(seconds) ? BigInt(seconds) * 1000n + BigInt((match[2] ?? '').padEnd(6, '0')) : null
 }
 
-/** Source order is authoritative. Missing/regressing times use its monotonic envelope. */
+/**
+ * Source order is authoritative. Missing/regressing times use its monotonic envelope.
+ * DEBUG_ONLY stubs (left out of the items metadata) carry no time until their content
+ * loads. Nothing changes on screen when every displayed row is timed and times never
+ * decrease across the stub. Otherwise an event can move past one or more displayed rows
+ * once the stub loads: untimed rows on either side of it (such as the synthetic working,
+ * optimistic and streaming rows), or displayed rows after it with an earlier time.
+ */
 export function placeSessionEvents(items, events) {
     const sorted = [...events].sort((a, b) => compareNewestFirst(b, a))
     if (!sorted.length) return []

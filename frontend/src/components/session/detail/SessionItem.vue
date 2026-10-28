@@ -162,8 +162,8 @@ const inlineContext = computed(() => {
         finalized: true, publicationAllowed: true, recognizedSpans: [] }
 })
 
-// Whether this item's session renders in debug mode (global mode or the
-// per-session dev-mode override) — drives the "show JSON" toggle visibility.
+// Whether this item's session renders in debug mode (the per-session dev-mode
+// override, the only way in) — drives the "show JSON" toggle visibility.
 const isEffectiveDebug = computed(() => dataStore.getEffectiveDisplayMode(props.sessionId) === DISPLAY_MODE.DEBUG)
 
 // Failed-send bubble (messaging pattern): shows the failure banner under the
@@ -669,7 +669,7 @@ html:not(.wa-dark) .session-items .session-item[data-kind="user_message"] .markd
 }
 
 /* Hide the floating markdown toolbar (raw toggle + copy) when the session
-   renders in debug view — global debug mode or the per-session override.
+   renders in debug view (the per-session override).
    !important overrides the `display: flex` set by the positioning rules above. */
 .session-item.effective-debug .markdown-content-wrapper .markdown-toolbar {
     display: none !important;
