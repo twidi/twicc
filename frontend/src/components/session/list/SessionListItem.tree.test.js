@@ -110,7 +110,7 @@ test('the menu offers detach/reattach right before archive, for regular spawned 
 })
 
 test('handleMenuSelect branches call the store action after the ephemeral guard', () => {
-    assert.match(source, /if \(action === 'rename'\) \{\s*openRenameDialog\(session\)\s*\} else if \(action === 'detach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, true\)\s*\} else if \(action === 'attach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, false\)/)
+    assert.match(source, /if \(action === 'rename'\) \{\s*openRenameDialog\(session\)\s*\} else if \(action === 'detach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, true\)\s*\.catch\(error => console\.error\('Failed to update the tree detachment', error\)\)\s*\} else if \(action === 'attach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, false\)\s*\.catch\(error => console\.error\('Failed to update the tree detachment', error\)\)/)
 })
 
 test('store action setSessionTreeDetached is optimistic, patches and rolls back', () => {

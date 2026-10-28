@@ -2,8 +2,8 @@
 
 One sub-command per supported batch update — ``archive`` / ``unarchive``,
 ``pin`` / ``unpin``, ``hide`` / ``unhide``, ``mute`` / ``notify``,
-``detach-tree`` / ``attach-tree``, ``annotations``, ``settings`` — each applying the SAME change to every targeted
-session via the shared
+``detach-tree`` / ``attach-tree``, ``annotations``, ``settings`` — each
+applying the SAME change to every targeted session via the shared
 :func:`twicc.cli._batch_runner.run_batch`.
 
 Deliberately excluded from the batch surface:

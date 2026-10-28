@@ -4,9 +4,8 @@ The sub-app shape mirrors ``twicc session``: a parent ``SESSION_ID`` argument
 captured in ``ctx.obj`` and one sub-command per supported update. Currently
 ``settings``, ``title``, ``archive``, ``unarchive``, ``pin``, ``unpin``,
 ``hide``, ``unhide``, ``mute``, ``notify``, ``detach-tree``, ``attach-tree``
-and ``annotations`` are
-implemented. Future sub-commands (``stop``, ...) will register against this
-same app.
+and ``annotations`` are implemented. Future sub-commands (``stop``, ...) will
+register against this same app.
 """
 
 from __future__ import annotations

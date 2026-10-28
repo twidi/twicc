@@ -461,8 +461,10 @@ function handleMenuSelect(event) {
         openRenameDialog(session)
     } else if (action === 'detach-tree') {
         store.setSessionTreeDetached(session.project_id, session.id, true)
+            .catch(error => console.error('Failed to update the tree detachment', error))
     } else if (action === 'attach-tree') {
         store.setSessionTreeDetached(session.project_id, session.id, false)
+            .catch(error => console.error('Failed to update the tree detachment', error))
     } else if (action === 'share') {
         // Open the globally-mounted ShareDialog (ProjectView) for this session.
         window.dispatchEvent(new CustomEvent('twicc:open-share-dialog', {

@@ -88,7 +88,7 @@ def test_unknown_session_is_rejected():
     result = asyncio.run(update_session_tree_detached_from_payload(
         {"session_id": "nope", "tree_detached": True}))
     assert not result.success
-    assert result.errors
+    assert (result.errors[0].field, result.errors[0].code) == ("session_id", "session_not_found")
 
 
 def _run_payload(session):

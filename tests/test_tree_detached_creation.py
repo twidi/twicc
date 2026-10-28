@@ -42,10 +42,13 @@ def test_serializer_exposes_tree_detached(project):
     assert serialize_session(session)["tree_detached"] is True
 
 
-def test_slim_session_keeps_tree_detached(project):
+@pytest.mark.parametrize("value", [True, False])
+def test_slim_session_keeps_tree_detached(project, value):
     assert "tree_detached" in SESSION_LISTING_FIELDS
-    session = Session.objects.create(id="s2", file_path="s2.jsonl", project=project, provider=Provider.CODEX)
-    assert slim_session(serialize_session(session))["tree_detached"] is False
+    session = Session.objects.create(
+        id="s2", file_path="s2.jsonl", project=project, provider=Provider.CODEX, tree_detached=value,
+    )
+    assert slim_session(serialize_session(session))["tree_detached"] is value
 
 
 @pytest.mark.parametrize(

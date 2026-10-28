@@ -77,6 +77,7 @@ def test_created_detached_session_records_tree_detached_started(project):
                                      spawned_by_id="boss2", tree_detached=True)
     created = record_session_created(session, origin="twicc")
     assert kinds("det") == ["session.created", "tree_detached.started"]
+    assert created.data["spawned_by"] == "boss2"
     row = TimelineEvent.objects.get(session_id="det", kind="tree_detached.started")
     assert row.caused_by_id == created.id
 
