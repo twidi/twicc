@@ -33,6 +33,7 @@ import { useSidebarSessionBlocks } from '../src/utils/sidebarSessions.js'
 import { getProjectActivityIndex } from '../src/utils/projectProcessActivity.js'
 import { buildSessionTree, flattenTree } from '../src/utils/sessionTree.js'
 import { isSessionUnread } from '../src/utils/sessions.js'
+import { getUnreadMemos } from '../src/utils/unreadMemos.js'
 import { extractWorkspaceId, isWorkspaceProjectId } from '../src/utils/workspaceIds.js'
 import { computeSidebarSessionBlocks as baselineSessionBlocks } from '../tests/helpers/sidebarBaseline/sidebarSessions.js'
 import { createBaselineActivityIndex } from '../tests/helpers/sidebarBaseline/projectInputs.js'
@@ -57,6 +58,7 @@ const IMPLEMENTATIONS = {
         activityIndex: createBaselineActivityIndex,
         buildSessionTree: baselineBuildSessionTree,
         flattenTree: baselineFlattenTree,
+        treeUnread: () => isSessionUnread,
     },
     after: {
         createData: createShippedData,
@@ -64,6 +66,8 @@ const IMPLEMENTATIONS = {
         activityIndex: getProjectActivityIndex,
         buildSessionTree,
         flattenTree,
+        // Like SessionList.vue: the tree reads unread state through the data store memo.
+        treeUnread: (data) => (session) => getUnreadMemos(data).unread(session),
     },
 }
 
@@ -118,7 +122,7 @@ function mount(impl, state, { scope, tree = false }) {
             lookup: id => state.sessions[id] ?? null,
             processStates: state.processStates,
             viewedId: null,
-            isUnread: isSessionUnread,
+            isUnread: impl.treeUnread(data),
         }))
         : null
     const treeRows = tree ? computed(() => impl.flattenTree(sessionTree.value, () => true)) : null

@@ -15,7 +15,7 @@ import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansi
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { useSidebarSessionBlocks } from '../../../utils/sidebarSessions'
 import { buildSessionTree, flattenTree, treeActivity, sharesProjectWithParent } from '../../../utils/sessionTree.js'
-import { isSessionUnread } from '../../../utils/sessions'
+import { getUnreadMemos } from '../../../utils/unreadMemos.js'
 import { retainSessionArray, resolveSessionScope } from '../../../utils/sessionLists.js'
 import { retainIds } from '../../../utils/retain.js'
 import { matchQuery } from '../../../utils/textFilter'
@@ -153,15 +153,21 @@ const extraSessionId = computed(() => sessionBlocks.value.extra?.id ?? null)
 // Section separators live in the template, keyed off `separatorBeforeIds`.
 const natural = computed(() => sessionBlocks.value.natural)
 
-// The session tree (null in flat mode). It reads every candidate's `mtime`, so it is
-// recomputed on each write of an active session; the order does not change and
+// Unread state of a tree session, through the per-session memo of the data store (the
+// memo reads the process state itself). A timestamp write that does not flip the unread
+// state stops at the memo, so it rebuilds neither the tree nor the row metadata.
+const isTreeSessionUnread = session => getUnreadMemos(store).unread(session)
+
+// The session tree (null in flat mode). It reads the `mtime` of inactive subtrees only
+// and the unread state through the memo, so a write to an active session, or to a
+// `user_turn` session that stays unread, does not rebuild it. On a rebuild,
 // `treeRowMeta` retains the unchanged row metadata.
 const tree = computed(() => treeActive.value
     ? buildSessionTree(natural.value, {
         lookup: id => store.sessions[id] ?? null,
         processStates: store.processStates,
         viewedId: props.sessionId,
-        isUnread: isSessionUnread,
+        isUnread: isTreeSessionUnread,
     })
     : null)
 
@@ -206,7 +212,7 @@ const treeRowMeta = computed(previous => {
                     processStates: store.processStates,
                     sessions: sessionId => store.sessions[sessionId] ?? null,
                     viewedId: props.sessionId,
-                    isUnread: isSessionUnread,
+                    isUnread: isTreeSessionUnread,
                 })
                 : null,
             hint: depth === 0 && node.hintParent ? getSessionDisplayName(node.hintParent) : null,

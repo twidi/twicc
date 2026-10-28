@@ -21,7 +21,8 @@ import * as retain from '../../../utils/retain.js'
 import * as projectScopes from '../../../utils/projectScopes.js'
 import * as workspaceIds from '../../../utils/workspaceIds.js'
 import * as sessionTree from '../../../utils/sessionTree.js'
-import * as sessions from '../../../utils/sessions.js'
+import * as unreadMemos from '../../../utils/unreadMemos.js'
+import { isSessionUnread } from '../../../utils/sessions.js'
 import * as textFilter from '../../../utils/textFilter.js'
 import * as sessionTitle from '../../../utils/sessionTitle.js'
 import * as scrollerLoadWindow from '../../../utils/scrollerLoadWindow.js'
@@ -91,8 +92,11 @@ function releaseAnimationFrames(t) {
     }
 }
 
-/** Mount SessionList on `state` in the scope `projectId`. */
-function mountList(t, state, projectId) {
+/**
+ * Mount SessionList on `state` in the scope `projectId`. `showAsTree` turns the tree mode on;
+ * `sessionTreeModule` replaces the tree helpers (a counting wrapper).
+ */
+function mountList(t, state, projectId, { showAsTree = false, sessionTreeModule = sessionTree } = {}) {
     const { data, workspaces } = createShippedData(state)
     // The data facade plus the list's own store needs. A load never settles: these tests do not paginate.
     const store = Object.defineProperties({
@@ -128,8 +132,8 @@ function mountList(t, state, projectId) {
         '../../../stores/sessionTreeExpansion': { useSessionTreeExpansionStore: () => ({ isExpanded: () => true, reconcile() {}, toggle() {}, reveal: () => [] }) },
         '../../../utils/workspaceIds': workspaceIds,
         '../../../utils/sidebarSessions': sidebarSessions,
-        '../../../utils/sessionTree.js': sessionTree,
-        '../../../utils/sessions': sessions,
+        '../../../utils/sessionTree.js': sessionTreeModule,
+        '../../../utils/unreadMemos.js': unreadMemos,
         '../../../utils/sessionLists.js': sessionLists,
         '../../../utils/retain.js': retain,
         '../../../utils/projectScopes.js': projectScopes,
@@ -149,7 +153,7 @@ function mountList(t, state, projectId) {
     })
 
     const { renderer, root } = makeRenderer(140)
-    const props = Vue.reactive({ projectId, showArchivedProjects: false, showActiveAcrossFilters: true })
+    const props = Vue.reactive({ projectId, showArchivedProjects: false, showActiveAcrossFilters: true, showAsTree })
     const app = renderer.createApp({ setup: () => () => Vue.h(component, props) })
     app.mount(root)
     t.after(() => {
@@ -247,6 +251,49 @@ test('a project activity change re-renders no row in project, workspace and all-
         assert.notEqual(view.data.getProjects.map(p => p.id).join(','), order, `${projectId}: the activity order changed`)
         view.rowProps.forEach((props, i) => assert.equal(props.scopeProjectIds, before[i], `${projectId}: scope project ids keep their identity`))
         assert.equal(view.renderCount(), 0, `${projectId}: no row re-renders`)
+    }
+})
+
+/** An ISO time 5 seconds before the session's last content: the session reads as unread. */
+const unreadViewedAt = (session) => new Date(Date.parse(session.last_new_content_at) - 5000).toISOString()
+
+test('tree mode: an active child tick and a user_turn tick without flip rebuild no tree', async t => {
+    for (const projectId of ['p0', 'ws:w']) {
+        const state = fixture()
+        // Own setup, before mount: `proc-assistant` (assistant_turn) is a child of `p0-recent`, the most
+        // recent regular p0 root (no process) a child of `proc-assistant`, and `proc-shell` (user_turn)
+        // a child of `p0-second`; the leaf and `proc-shell` are unread, so their ticks do not flip them.
+        const leaf = Object.values(state.sessions)
+            .filter(s => !s.parent_session_id && s.project_id === 'p0' && /^r\d+$/.test(s.id))
+            .sort((a, b) => b.mtime - a.mtime)[0]
+        state.sessions[ID.processAssistant].spawned_by = ID.p0Recent
+        leaf.spawned_by = ID.processAssistant
+        leaf.last_viewed_at = unreadViewedAt(leaf)
+        state.sessions[ID.processShell].spawned_by = ID.p0Second
+        state.sessions[ID.processShell].last_viewed_at = unreadViewedAt(state.sessions[ID.processShell])
+        let builds = 0
+        const counting = { ...sessionTree, buildSessionTree: (...args) => { builds++; return sessionTree.buildSessionTree(...args) } }
+        mountList(t, state, projectId, { showAsTree: true, sessionTreeModule: counting })
+        await flush()
+        assert.ok(builds >= 1, `${projectId}: the tree is built at mount`)
+        const measure = async (apply) => {
+            const before = builds
+            apply()
+            await flush()
+            return builds - before
+        }
+
+        // assistant_turn child: never unread, so the tick flips nothing.
+        assert.equal(await measure(() => tick(state, ID.processAssistant)), 0, `${projectId}: active child tick`)
+        // user_turn child, already unread (own setup): the tick keeps it unread.
+        assert.equal(isSessionUnread(state.sessions[ID.processShell], state.processStates[ID.processShell]), true)
+        assert.equal(await measure(() => tick(state, ID.processShell)), 0, `${projectId}: user_turn tick without flip`)
+        // Positive control: the inactive leaf (already unread) is ticked; its mtime is a tree input.
+        assert.ok(await measure(() => tick(state, leaf.id)) >= 1, `${projectId}: inactive tick rebuilds`)
+        // Positive control: the user_turn child flips to read.
+        assert.ok(await measure(() => {
+            state.sessions[ID.processShell].last_viewed_at = state.sessions[ID.processShell].last_new_content_at
+        }) >= 1, `${projectId}: user_turn unread flip rebuilds`)
     }
 })
 

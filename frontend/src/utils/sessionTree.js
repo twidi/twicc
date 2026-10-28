@@ -122,13 +122,20 @@ export function buildSessionTree(candidates, {
         let pinned = session.pinned || null
         let active = isActive
         let activeKey = isActive ? (own.started_at || 0) : 0
-        let dateKey = session.mtime
 
         for (const childId of node.childIds) {
             const child = compute(childId)
             active = active || child.effective.active
             activeKey = Math.max(activeKey, child.effective.activeKey)
-            dateKey = Math.max(dateKey, child.effective.dateKey)
+        }
+        // Only an inactive subtree is ordered and bucketed by date: an active one sorts by
+        // activeKey and sits in the "Active" section. Its mtime is not read, so a write to an
+        // active session does not rebuild the tree; its dateKey is null. Every child of an
+        // inactive node is inactive, so its dateKey is a number.
+        let dateKey = null
+        if (!active) {
+            dateKey = session.mtime
+            for (const childId of node.childIds) dateKey = Math.max(dateKey, nodes.get(childId).effective.dateKey)
         }
         node.childIds.sort(byEffective)
         if (!pinned) {

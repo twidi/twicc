@@ -89,7 +89,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
         '../../../utils/workspaceIds': workspaceIds,
         '../../../stores/sessionTreeExpansion': { useSessionTreeExpansionStore: () => ({ isExpanded: () => true, reconcile() {}, toggle() {}, reveal: () => [] }) },
         '../../../utils/sessionTree.js': { buildSessionTree: () => ({ nodes: new Map(), rootIds: [] }), flattenTree: () => [] },
-        '../../../utils/sessions': { isSessionUnread: () => false },
+        '../../../utils/unreadMemos.js': { getUnreadMemos: () => ({ unread: () => false }) },
         '../../../composables/useSessionTreeAncestors': { useSessionTreeAncestors() {} },
         '../../../utils/sidebarSessions': { useSidebarSessionBlocks: getOptions => ({ blocks: Vue.computed(() => {
             const { showArchived } = getOptions()
