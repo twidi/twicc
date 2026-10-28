@@ -148,6 +148,22 @@ watch([entries, prefix], measure)
     color: var(--wa-color-text-quiet);
 }
 
+/* Light theme only: the neutral tokens are not symmetric, so key and value were hard to tell apart.
+   The key fades out, the value gets heavier, and the prefix pill gets a stronger brand tint. */
+:root:not(.wa-dark) .oann-key {
+    font-weight: 400;
+    color: var(--wa-color-neutral-50);
+}
+
+:root:not(.wa-dark) .oann-value {
+    font-weight: 600;
+}
+
+:root:not(.wa-dark) .oann-prefix {
+    background: var(--wa-color-brand-fill-normal);
+    border-color: var(--wa-color-brand-border-normal);
+}
+
 .oann-value {
     min-width: 0;
     max-width: 10rem;
