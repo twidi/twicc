@@ -196,6 +196,7 @@ async def _create_session_from_payload(
     documents = payload.get("documents") or []
     hidden = bool(payload.get("hidden", False))
     mute_on_user_turn = payload.get("mute_on_user_turn") is True
+    tree_detached = payload.get("tree_detached") is True
     hybrid = bool(payload.get("hybrid")) if allow_hybrid else False
     if ephemeral:
         conflict = None
@@ -493,6 +494,7 @@ async def _create_session_from_payload(
         session_id,
         hidden=hidden,
         mute_on_user_turn=mute_on_user_turn,
+        tree_detached=tree_detached,
         spawned_by_id=spawned_by_session_id,
         spawn_root_id=spawn_root_session_id,
         annotations=annotations,

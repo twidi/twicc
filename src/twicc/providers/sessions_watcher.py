@@ -712,6 +712,7 @@ class BaseSessionsWatcher:
         if pending is not None:
             kwargs["hidden"] = pending.hidden
             kwargs["mute_on_user_turn"] = pending.mute_on_user_turn
+            kwargs["tree_detached"] = pending.tree_detached
             if pending.spawned_by_id is not None:
                 kwargs["spawned_by_id"] = pending.spawned_by_id
             if pending.spawn_root_id is not None:

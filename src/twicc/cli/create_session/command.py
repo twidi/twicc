@@ -183,6 +183,19 @@ def create_session_cmd(
             "failures, and usage alerts remain enabled."
         ),
     ),
+    tree_detached: bool = typer.Option(
+        False,
+        "--tree-detached",
+        help=(
+            "Show the new session detached from you in the sidebar tree. Matters "
+            "only when the caller is itself a session. Use it when the new session "
+            "has no topical link with you (you are a coordinator spawning "
+            "independent work in other projects or on other subjects); leave it "
+            "off when the child serves your own work (a sub-task, a bug found "
+            "while working on this). Only the sidebar tree display changes; "
+            "filiation, orchestration and reporting are unchanged."
+        ),
+    ),
     context_max: str | None = typer.Option(
         None,
         "--context-max",
@@ -536,6 +549,7 @@ def create_session_cmd(
         "title": title,
         "hidden": hidden,
         "mute_on_user_turn": mute_on_user_turn,
+        "tree_detached": tree_detached,
         "spawned_by_session_id": spawned_by_session_id,
         "annotations": annotations,
         **settings._asdict(),

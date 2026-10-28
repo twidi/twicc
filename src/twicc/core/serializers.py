@@ -141,7 +141,7 @@ SESSION_LISTING_FIELDS = (
     "user_message_count", "model", "git_branch",
     # State a caller may have filtered on, and needs to read back
     "archived", "hidden", "pinned", "stale", "unavailable_reason",
-    "mute_on_user_turn",
+    "mute_on_user_turn", "tree_detached",
     # "there is more here" — each replaces a payload the caller can fetch
     "has_artifacts", "has_plan", "has_workflows", "has_tasks", "has_goals",
     # Detail a caller acts on: where the session runs and writes, and the
@@ -237,6 +237,7 @@ def serialize_session(session):
         "archived": session.archived,  # Whether the session is archived
         "pinned": session.pinned,  # Whether the session is pinned
         "mute_on_user_turn": session.mute_on_user_turn,
+        "tree_detached": session.tree_detached,  # Sidebar tree display only (spawn links unchanged)
         "layout": session.layout,  # Per-session dockable-layout intention (UI state; {} = single pane)
         "browser_url": session.browser_url,  # Browser-pane last URL (UI state; None = use the resolved default)
         "inline_artifacts": latest_publications(session.inline_artifacts) if session.type == SessionType.SESSION else {},

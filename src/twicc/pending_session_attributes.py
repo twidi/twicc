@@ -52,6 +52,9 @@ class PendingSessionAttributes(NamedTuple):
     # Origin of the creating request (design 2026-10-14, section 6.6): ``session.created`` and its
     # flag rows are written by the watcher long after the request, so they take it from here.
     origin: RequestOrigin | None = None
+    # Spawned session shown detached from its spawner in the sidebar tree
+    # (``Session.tree_detached``); display only.
+    tree_detached: bool = False
 
 
 # session_id -> PendingSessionAttributes
@@ -71,6 +74,7 @@ def set_pending_session_attributes(
     layout: dict | None = None,
     ephemeral: bool = False,
     origin: RequestOrigin | None = None,
+    tree_detached: bool = False,
 ) -> None:
     """Store pending structural attributes to be applied at row creation."""
     _pending[session_id] = PendingSessionAttributes(
@@ -84,14 +88,15 @@ def set_pending_session_attributes(
         layout=layout or {},
         ephemeral=ephemeral,
         origin=origin,
+        tree_detached=tree_detached,
     )
     logger.debug(
         "Set pending session attributes for %s: hidden=%s mute_on_user_turn=%s spawned_by_id=%s "
-        "spawn_root_id=%s annotations_keys=%s addendum_len=%s hybrid=%s",
+        "spawn_root_id=%s annotations_keys=%s addendum_len=%s hybrid=%s tree_detached=%s",
         session_id, hidden, mute_on_user_turn, spawned_by_id, spawn_root_id,
         [] if ephemeral else sorted((annotations or {}).keys()),
         len(system_prompt_addendum) if system_prompt_addendum else 0,
-        hybrid,
+        hybrid, tree_detached,
     )
 
 
