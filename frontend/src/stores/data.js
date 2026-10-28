@@ -168,6 +168,15 @@ const sessionsLoadInFlight = new Map() // projectId -> Promise<Set<sessionId>>
 const sessionHistoryInFlight = new Map() // sessionId -> Promise<boolean>
 const sessionHistoryControllers = new Map() // sessionId -> AbortController of the opening load in flight
 const SESSION_HISTORY_TIMEOUT_MS = 30000 // a stalled network request must end in an error, not hang forever
+/**
+ * Short human reason for a failed fetch, shown under the error panels.
+ * Aborts by timeout carry a `TimeoutError`; `fetch` rejects with a `TypeError` when the network is unreachable.
+ */
+function describeFetchFailure(error) {
+    if (error?.name === 'TimeoutError') return 'The request timed out'
+    if (error instanceof TypeError) return 'Network unreachable'
+    return error?.message || 'Unexpected error'
+}
 const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
 
 /**
@@ -609,7 +618,7 @@ export const useDataStore = defineStore('data', {
                 loadingError: false
             },
             projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError, hasMoreSessions, oldestSessionMtime } }
-            sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError } }
+            sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError, itemsLoadingErrorReason } }
 
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
@@ -1237,6 +1246,8 @@ export const useDataStore = defineStore('data', {
             state.localState.projects[projectId]?.sessionsLoadingError ?? false,
         didSessionItemsFailToLoad: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsLoadingError ?? false,
+        getSessionItemsLoadingErrorReason: (state) => (sessionId) =>
+            state.localState.sessions[sessionId]?.itemsLoadingErrorReason ?? null,
 
         // Local state getters - fetched
         areProjectSessionsFetched: (state) => (projectId) =>
@@ -2881,12 +2892,15 @@ export const useDataStore = defineStore('data', {
                     const [metadata, items] = await Promise.all([
                         this.loadSessionMetadata(projectId, sessionId, parentSessionId, signal),
                         apiFetch(`${baseUrl}/items/?range=${first}:${last}`, { signal })
-                            .then(res => res.ok ? res.json() : null),
+                            .then(res => {
+                                if (!res.ok) throw new Error(`Server error (${res.status})`)
+                                return res.json()
+                            }),
                     ])
                     // An unloaded session, or a load superseded by a retry, must not be populated by an old load.
                     if (controller.signal.aborted || this.localState.sessions[sessionId] !== local
                         || !local.itemsFetched) return false
-                    if (!metadata || !items) throw new Error('Failed to load session history')
+                    if (!metadata) throw new Error('Could not load the session structure')
 
                     // Keep live lines delivered during a first load, including
                     // lines beyond the REST snapshots' bounds.
@@ -2895,6 +2909,7 @@ export const useDataStore = defineStore('data', {
                     this.updateSessionItemsContent(sessionId, items)
                     if (liveItems.length) this.addSessionItems(sessionId, liveItems)
                     local.itemsLoadingError = false
+                    local.itemsLoadingErrorReason = null
                     this.auditInflightSends(sessionId)
                     return true
                 } catch (error) {
@@ -2903,6 +2918,7 @@ export const useDataStore = defineStore('data', {
                     if (this.localState.sessions[sessionId] === local && local.itemsFetched) {
                         local.itemsFetched = wasFetched
                         local.itemsLoadingError = true
+                        local.itemsLoadingErrorReason = describeFetchFailure(error)
                     }
                     return false
                 } finally {

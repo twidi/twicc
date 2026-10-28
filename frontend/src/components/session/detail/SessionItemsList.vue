@@ -934,8 +934,12 @@ watch([() => props.sessionId, session, () => session.value?.draft, () => session
 }, { immediate: true })
 
 // Retry loading session data after error
+// Minimum time the Retry button shows its spinner: a failure that comes back at once must stay visible.
+const RETRY_MIN_FEEDBACK_MS = 600
+const isRetrying = ref(false)
+
 async function handleRetry() {
-    if (!session.value) return
+    if (!session.value || isRetrying.value) return
 
     const lastLine = session.value.last_line
     if (!lastLine) return
@@ -951,9 +955,14 @@ async function handleRetry() {
     delete store.sessionVisualItems[sId]
 
     const release = beginRevealFlow()
+    isRetrying.value = true
     try {
         // Forced: a retry always starts a fresh load, even over a stalled one.
-        await loadSessionData(lastLine, { force: true })
+        await Promise.all([
+            loadSessionData(lastLine, { force: true }),
+            new Promise(resolve => setTimeout(resolve, RETRY_MIN_FEEDBACK_MS)),
+        ])
+        isRetrying.value = false
 
         // The error panel stayed on screen during the retry's load: the skeleton
         // starts counting only now.
@@ -967,6 +976,7 @@ async function handleRetry() {
         await nextTick()
         await scrollToBottomUntilStable({ isInitial: true })
     } finally {
+        isRetrying.value = false
         release()
     }
 }
@@ -2323,7 +2333,8 @@ defineExpose({
             <!-- Error state -->
             <FetchErrorPanel
                 v-else-if="hasError"
-                :loading="isLoading"
+                :loading="isLoading || isRetrying"
+                :detail="store.getSessionItemsLoadingErrorReason(sessionId)"
                 @retry="handleRetry"
             >
                 Failed to load session content

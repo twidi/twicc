@@ -37,6 +37,7 @@ function fixture({ fetched = false, lastLine = 2 } = {}) {
     const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT,
         isLaunchedEphemeral: s => !!s.ephemeral,
         itemsCoverageInFlight: new Function(`return ${source.match(/const itemsCoverageInFlight = (new \w+\(\))/)[1]}`)(),
+        describeFetchFailure: new Function(`return ${source.match(/function describeFetchFailure[\s\S]*?\n}\n/)[0]}`)(),
         sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_TIMEOUT_MS: 30000,
         lineNumsToRanges: lines => lines.map(line => [line, line]),
         apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: quiet,
@@ -101,9 +102,14 @@ test('a failed first visit publishes the error and permits a retry', async () =>
     assert.equal(store.localState.sessions.s.itemsLoading, false)
     assert.equal(store.localState.sessions.s.itemsFetched, false)
     assert.equal(store.localState.sessions.s.itemsLoadingError, true)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'Server error (503)')
+    respond(async () => { throw new TypeError('Failed to fetch') })
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'Network unreachable')
     respond(async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) }))
     assert.equal(await store.loadSessionHistory('p', 's', 2), true)
     assert.equal(store.localState.sessions.s.itemsLoadingError, false)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, null)
     assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
 })
 

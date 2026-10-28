@@ -3,6 +3,11 @@ defineProps({
     loading: {
         type: Boolean,
         default: false
+    },
+    // Short reason of the failure, shown under the message
+    detail: {
+        type: String,
+        default: null
     }
 })
 
@@ -21,6 +26,7 @@ function handleRetry() {
                 <div class="error-message">
                     <slot>An error occurred while loading data</slot>
                 </div>
+                <div v-if="detail" class="error-detail">{{ detail }}</div>
                 <wa-button
                     variant="danger"
                     appearance="outlined"
@@ -57,5 +63,10 @@ function handleRetry() {
 
 .error-message {
     color: inherit;
+}
+
+.error-detail {
+    font-size: var(--wa-font-size-s);
+    opacity: 0.8;
 }
 </style>

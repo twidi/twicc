@@ -4,6 +4,9 @@ import { useDataStore } from '../stores/data'
 import { sweepLoadedSessions } from './reconcileSweep'
 
 const MAX_RETRIES = 5
+// Pause before attempt N+1 is RETRY_BASE_DELAY_MS * 2^(N-1): a failed attempt is often a network
+// that is still down, so retrying at once would burn every attempt in a few milliseconds.
+const RETRY_BASE_DELAY_MS = 1000
 
 let isReconciling = false
 let needsReconcileAfter = false
@@ -104,6 +107,9 @@ export function useReconciliation() {
 
             // On next attempt, the mtime comparisons will only retry what failed
             // because successful updates changed the local mtime
+            if (attempt < MAX_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)))
+            }
         }
 
         // After all retries, unload what still failed (from the LAST attempt only)
