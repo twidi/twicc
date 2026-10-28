@@ -2,7 +2,7 @@
 
 One sub-command per supported batch update — ``archive`` / ``unarchive``,
 ``pin`` / ``unpin``, ``hide`` / ``unhide``, ``mute`` / ``notify``,
-``annotations``, ``settings`` — each applying the SAME change to every targeted
+``detach-tree`` / ``attach-tree``, ``annotations``, ``settings`` — each applying the SAME change to every targeted
 session via the shared
 :func:`twicc.cli._batch_runner.run_batch`.
 
@@ -84,8 +84,8 @@ update_sessions_app = typer.Typer(
     name="update-sessions",
     help=(
         "Apply the same update to several sessions at once (archive, "
-        "unarchive, pin, unpin, hide, unhide, mute, notify, annotations, "
-        "settings)."
+        "unarchive, pin, unpin, hide, unhide, mute, notify, detach-tree, "
+        "attach-tree, annotations, settings)."
     ),
     invoke_without_command=False,
 )
@@ -292,6 +292,67 @@ def _notify(
         prepare=lambda resolved: {
             "session_id": resolved.session_id,
             "mute_on_user_turn": False,
+        },
+        timeout=timeout,
+        spawned_by=spawned_by,
+        descendants=descendants,
+        annotation=annotation,
+    )
+
+
+@update_sessions_app.command(name="detach-tree")
+def _detach_tree(
+    session_ids: list[str] | None = typer.Argument(  # noqa: B008
+        None, metavar="SESSION_ID...", help=_SESSION_IDS_HELP,
+    ),
+    spawned_by: str = typer.Option(None, "--spawned-by", help=_SPAWNED_BY_HELP),
+    descendants: str = typer.Option(None, "--descendants", help=_DESCENDANTS_HELP),
+    annotation: list[str] = typer.Option([], "--annotation", help=_ANNOTATION_HELP),  # noqa: B008
+    timeout: int = typer.Option(30, "--timeout", help=_TIMEOUT_HELP),
+) -> None:
+    """Show every targeted session detached from its spawner in the sidebar tree.
+
+    Only the sidebar tree display changes; filiation, orchestration and
+    reporting are unchanged. Use detach-tree when the sessions have no topical
+    link with their spawner (a coordinator spawning independent work in other
+    projects or on other subjects). Use attach-tree to restore the nesting.
+    """
+    run_batch(
+        session_ids or [],
+        kind="session:update_tree_detached",
+        prepare=lambda resolved: {
+            "session_id": resolved.session_id,
+            "tree_detached": True,
+        },
+        timeout=timeout,
+        spawned_by=spawned_by,
+        descendants=descendants,
+        annotation=annotation,
+    )
+
+
+@update_sessions_app.command(name="attach-tree")
+def _attach_tree(
+    session_ids: list[str] | None = typer.Argument(  # noqa: B008
+        None, metavar="SESSION_ID...", help=_SESSION_IDS_HELP,
+    ),
+    spawned_by: str = typer.Option(None, "--spawned-by", help=_SPAWNED_BY_HELP),
+    descendants: str = typer.Option(None, "--descendants", help=_DESCENDANTS_HELP),
+    annotation: list[str] = typer.Option([], "--annotation", help=_ANNOTATION_HELP),  # noqa: B008
+    timeout: int = typer.Option(30, "--timeout", help=_TIMEOUT_HELP),
+) -> None:
+    """Restore every targeted session's nesting under its spawner in the sidebar tree.
+
+    Only the sidebar tree display changes; filiation, orchestration and
+    reporting are unchanged. This undoes detach-tree, which fits sessions with
+    no topical link with their spawner (a coordinator spawning independent work).
+    """
+    run_batch(
+        session_ids or [],
+        kind="session:update_tree_detached",
+        prepare=lambda resolved: {
+            "session_id": resolved.session_id,
+            "tree_detached": False,
         },
         timeout=timeout,
         spawned_by=spawned_by,

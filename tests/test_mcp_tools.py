@@ -47,6 +47,10 @@ def test_tool_names_are_mcp_safe_and_bijective():
         "update_session_notify",
         "update_sessions_mute",
         "update_sessions_notify",
+        "update_session_detach_tree",
+        "update_session_attach_tree",
+        "update_sessions_detach_tree",
+        "update_sessions_attach_tree",
     ):
         assert name in names
 
@@ -60,6 +64,8 @@ def test_schemas_and_descriptions():
     create_properties = by_name["create_session"].input_schema["properties"]
     assert create_properties["mute_on_user_turn"]["type"] == "boolean"
     assert "finished-working" in create_properties["mute_on_user_turn"]["description"]
+    assert create_properties["tree_detached"]["type"] == "boolean"
+    assert "topical" in create_properties["tree_detached"]["description"]
 
 
 def test_annotations_and_always_load():
