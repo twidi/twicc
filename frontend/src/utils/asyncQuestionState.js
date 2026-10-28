@@ -21,6 +21,7 @@ async function restoreRefsWith(owner, sessionId, attachments, action) {
 export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages, recover, fetch, send, uuid, pendingSends, cancelDraftSave, remove, stageSend, markDispatched, restoreStaged }) {
     const preparingSends = new Map()
     const recoveryReads = new Map()
+    const questionLoads = new Map()
     const deletedSessions = new Set()
     const getSends = (sessionId, owner) => {
         const existing = pendingSends(sessionId, owner)
@@ -234,12 +235,21 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
         async loadAsyncQuestions(projectId, sessionId) {
             const session = this.sessions[sessionId]
             if (session && (session.provider !== 'codex' || session.type === 'subagent' || session.draft)) return null
-            const response = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/async-questions/`)
-            if (!response.ok) throw new Error(`Failed to load async questions: ${response.status}`)
-            const snapshot = await response.json()
-            await this.reconcileAsyncQuestionSends(projectId, sessionId)
-            await this.applyAsyncQuestionSnapshot(sessionId, snapshot)
-            return this.localState.asyncQuestionSnapshots[sessionId]
+            // Opening a session asks from several places at once (the route, the chat
+            // list, the connection refresh): concurrent callers share one request.
+            const inFlight = questionLoads.get(sessionId)
+            if (inFlight) return inFlight
+            const load = (async () => {
+                const response = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/async-questions/`)
+                if (!response.ok) throw new Error(`Failed to load async questions: ${response.status}`)
+                const snapshot = await response.json()
+                await this.reconcileAsyncQuestionSends(projectId, sessionId)
+                await this.applyAsyncQuestionSnapshot(sessionId, snapshot)
+                return this.localState.asyncQuestionSnapshots[sessionId]
+            })()
+            questionLoads.set(sessionId, load)
+            load.finally(() => { if (questionLoads.get(sessionId) === load) questionLoads.delete(sessionId) }).catch(() => {})
+            return load
         },
 
         applyAsyncQuestionSnapshot(sessionId, snapshot) {

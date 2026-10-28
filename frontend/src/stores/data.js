@@ -4535,7 +4535,6 @@ export const useDataStore = defineStore('data', {
          */
         async loadSessionMetadata(projectId, sessionId, parentSessionId = null, { signal, onFailure, onBytes } = {}) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
-            if (!parentSessionId) this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
             // Build URL (handle subagent case)
             const baseUrl = parentSessionId
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`

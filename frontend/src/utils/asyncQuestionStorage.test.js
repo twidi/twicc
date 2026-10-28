@@ -75,6 +75,17 @@ it('hydration preserves text and choices typed while storage waits', async () =>
     assert.equal(state.localState.draftMessages.s.message, 'Typed during hydrate')
 })
 
+it('concurrent loads of one session share a single request, a later load fetches again', async () => {
+    const wait = deferred(), urls = []
+    const { state } = harness({ fetch: url => { urls.push(url); return wait.promise } })
+    const first = state.loadAsyncQuestions('p', 's'), second = state.loadAsyncQuestions('p', 's')
+    wait.resolve({ ok: true, json: async () => snapshot(2) })
+    assert.equal(await first, await second)
+    assert.equal(urls.length, 1)
+    await state.loadAsyncQuestions('p', 's')
+    assert.equal(urls.length, 2)
+})
+
 it('lower fetched revisions cannot overwrite newer WS or widget state', async () => {
     const wait = deferred()
     const { state } = harness({ fetch: () => wait.promise })
