@@ -208,10 +208,13 @@ test('children index omits detached children', () => {
 })
 
 test('the ancestor walk stops at a detached session', () => {
+    // `a` is collapsed with a loaded child: if the walk from `c` leaked past the
+    // detached `b`, `a` would become a candidate and show up as a collapsed row.
     const sessions = {
-        a: s('a', 1), b: s('b', 2, { spawned_by: 'a', tree_detached: true }), c: s('c', 3, { spawned_by: 'b' }),
+        a: s('a', 1), x: s('x', 1, { spawned_by: 'a' }),
+        b: s('b', 2, { spawned_by: 'a', tree_detached: true }), c: s('c', 3, { spawned_by: 'b' }),
     }
-    const rows = select({ sessions, processStates: { b: proc(4), c: proc(5) } })
+    const rows = select({ sessions, processStates: { b: proc(4), c: proc(5) }, collapsed: ['a'] })
     assert.deepEqual([...ids(rows)].sort(), ['b', 'c'])
 })
 
