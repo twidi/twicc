@@ -60,7 +60,7 @@ The default reduced projection:
     "context_usage": 85000, "context_max": 200000, "total_cost": 1.801, "user_message_count": 12,
     "model": {"raw": "claude-opus-4-20250514", "family": "opus", "version": "4"},
     "git_branch": "feature/auth", "archived": false, "hidden": false, "pinned": null, "stale": false,
-    "unavailable_reason": null, "mute_on_user_turn": false,
+    "unavailable_reason": null, "mute_on_user_turn": false, "tree_detached": false,
     "has_artifacts": false, "has_plan": true, "has_workflows": false, "has_tasks": true, "has_goals": false,
     "last_line": 245, "cwd": "/home/twidi/dev/myproject", "git_directory": "/home/twidi/dev/myproject",
     "project_directory": "/home/twidi/dev/myproject",
@@ -102,6 +102,7 @@ With `--full`, each row is the full payload (`session <ID> --full`): the fields 
 - `last_new_content_at` — when the last item was appended.
 - `last_viewed_at` (`--full` only) — the user's last visit in TwiCC.
 - `hidden` — hidden from all listings and broadcasts.
+- `tree_detached` — shown detached from its spawner in the sidebar tree (display only).
 - `spawned_by` — the session that spawned it, or `null`.
 - `spawn_root` — root of the spawned-session tree; `null` before the session joins one.
 - `annotations` — free-form JSON object set at creation.

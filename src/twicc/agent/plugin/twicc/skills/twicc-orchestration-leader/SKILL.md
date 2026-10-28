@@ -30,7 +30,7 @@ Follow the standard briefing in `twicc-orchestration`, and be explicit about the
 - a **manager** child → load `twicc-orchestration` + `twicc-orchestration-manager`;
 - a **worker** child → load `twicc-orchestration` + `twicc-orchestration-worker`.
 
-Put each child's mandate (the actual work and context) in the message — never in annotations — and tell it that it reports to you. Set short tracking annotations on it for visibility (`mode`, `job`/`role`, …; see `twicc-orchestration`). Spawn with `twicc-create-session` and apply the shared visibility and notification policy in `twicc-orchestration`.
+Put each child's mandate (the actual work and context) in the message — never in annotations — and tell it that it reports to you. Set short tracking annotations on it for visibility (`mode`, `job`/`role`, …; see `twicc-orchestration`). Spawn with `twicc-create-session` and apply the shared visibility, notification and sidebar tree placement policy in `twicc-orchestration` (`--tree-detached` for a child with no topical link with you).
 
 Children report to **you**, but they don't have to route everything through you: when two of them share a real cross-dependency, tell them in their briefs that they are siblings who may coordinate directly (`send-message <sibling_id>` / `send-messages --siblings self`, discovered via `sessions --siblings self`) — you still wait on and aggregate them yourself. See `patterns/peer-coordination.md`. Isolate children only when independence must be guaranteed (e.g. a quorum).
 

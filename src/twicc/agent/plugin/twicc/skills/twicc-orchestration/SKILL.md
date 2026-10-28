@@ -121,6 +121,15 @@ Never loop until `summary.concluded == summary.total`: `concluded` counts `repli
 
 Global notification settings still apply. Session mute does not enable or change them.
 
+## Sidebar tree placement
+
+By default a child you spawn nests under you in the user's sidebar tree.
+
+1. Pass `--tree-detached` when the child has no topical link with you: you are a coordinator spawning independent work in other projects or on other subjects.
+2. Leave it off when the child serves your own work (a sub-task, a bug found while working on this).
+3. Only the sidebar tree display changes; filiation, orchestration and reporting are unchanged.
+4. Change it later with `twicc-update-session detach-tree` / `attach-tree` (`twicc-update-sessions` for a batch).
+
 ## Annotations
 
 Annotations are short key/value tags on a session (free-form JSON). They are **strongly recommended** in an orchestration: they turn a tree of opaque sessions into a legible map.

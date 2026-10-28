@@ -1,16 +1,20 @@
 # `create-session --hidden/--no-question-widget/...` — session behavior
 
-Hide the session, turn off question widgets, mute its notifications, annotate it, attach files. MCP tool: `mcp__twicc__create_session`. Read `SKILL.md` first: it resolves `$TWICC`.
+Hide the session, turn off question widgets, mute its notifications, detach it from your sidebar tree, annotate it, attach files. MCP tool: `mcp__twicc__create_session`. Read `SKILL.md` first: it resolves `$TWICC`.
 
 ## Usage
 
 ```bash
-$TWICC create-session [--hidden] [--question-widget|--no-question-widget] [--mute-on-user-turn] [--annotation KEY=VALUE]... [--annotations-file PATH] [--attach VALUE]... '<PROMPT>'
+$TWICC create-session [--hidden] [--question-widget|--no-question-widget] [--mute-on-user-turn] [--tree-detached] [--annotation KEY=VALUE]... [--annotations-file PATH] [--attach VALUE]... '<PROMPT>'
 ```
 
 ### `--mute-on-user-turn`
 
 Suppresses only this session's finished-working notifications (toast, sound, browser notification, and Apprise user-turn event). Choose it when a controlling agent will read and handle the result. Questions and approvals still notify. Independent of `--hidden`; does not change global notification settings.
+
+### `--tree-detached`
+
+Shows the new session detached from you in the sidebar tree. Matters only when you are a session. Use it when the new session has no topical link with you (you are a coordinator spawning independent work in other projects or on other subjects); leave it off when the child serves your own work (a sub-task, a bug found while working on this). Only the sidebar tree display changes; filiation, orchestration and reporting are unchanged.
 
 ### `--no-question-widget`
 
@@ -82,5 +86,5 @@ $TWICC create-session --provider claude_code --attach /home/twidi/screenshot.png
 
 ## Related commands
 
-- `$TWICC update-session <session_id> annotations|hide|unhide|mute|notify` — change these after creation. Skill: `twicc-update-session`.
+- `$TWICC update-session <session_id> annotations|hide|unhide|mute|notify|detach-tree|attach-tree` — change these after creation. Skill: `twicc-update-session`.
 - `$TWICC session <ID> messages --tail 1` — read a hidden child's answer. Skill: `twicc-session`.

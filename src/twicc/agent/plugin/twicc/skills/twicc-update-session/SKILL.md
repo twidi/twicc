@@ -1,7 +1,7 @@
 ---
 name: twicc-update-session
-description: Update an existing TwiCC session — change settings, title, annotations, archive/unarchive, pin/unpin, hide/unhide, or mute/notify. Use when you or the user want to change a session without sending a message.
-argument-hint: <session_id|self> {settings|title|annotations|archive|unarchive|pin|unpin|hide|unhide|mute|notify} [ARGS / OPTIONS]
+description: Update an existing TwiCC session — change settings, title, annotations, archive/unarchive, pin/unpin, hide/unhide, mute/notify, or detach-tree/attach-tree. Use when you or the user want to change a session without sending a message.
+argument-hint: <session_id|self> {settings|title|annotations|archive|unarchive|pin|unpin|hide|unhide|mute|notify|detach-tree|attach-tree} [ARGS / OPTIONS]
 ---
 
 # TwiCC Update Session
@@ -17,6 +17,7 @@ Change one existing session without sending a message. This file is the index; e
 - Pin to project / workspace / globally, or unpin → `pin <MODE>` / `unpin`.
 - Hide from all listings and broadcasts / unhide → `hide` / `unhide`.
 - Suppress or restore finished-working notifications → `mute` / `notify`.
+- Show a spawned session detached from its spawner in the sidebar tree, or nest it again → `detach-tree` / `attach-tree`.
 - Several sessions at once (every sub-command except `title`) → `$TWICC update-sessions` (skill: `twicc-update-sessions`).
 
 ## How to invoke
@@ -86,10 +87,11 @@ Server (exit 3): every local code — the common ones above and each sub-command
 | `pin` / `unpin` | Pin to project / workspace / all, or unpin. | `pin.md` |
 | `hide` / `unhide` | Hide from all listings and broadcasts, or unhide. | `hide.md` |
 | `mute` / `notify` | Suppress or restore finished-working notifications. | `mute.md` |
+| `detach-tree` / `attach-tree` | Show a spawned session detached from its spawner in the sidebar tree, or restore its nesting. | `detach-tree.md` |
 
 ## Related commands
 
-- `$TWICC update-sessions <op> [SESSION_ID...]` — apply the same update, including `mute` or `notify`, to several sessions at once (no `title`). Skill: `twicc-update-sessions`.
+- `$TWICC update-sessions <op> [SESSION_ID...]` — apply the same update, including `mute`, `notify`, `detach-tree` or `attach-tree`, to several sessions at once (no `title`). Skill: `twicc-update-sessions`.
 - `$TWICC info [models|agent-settings|presets]` — discover providers, models, agent-settings values and presets before editing a session. Skill: `twicc-info`.
 - `$TWICC session <session_id> stop` — stop the agent without touching the row. Skill: `twicc-session`.
 - `$TWICC send-message <session_id>` — send a message (settings unchanged). Skill: `twicc-send-message`.

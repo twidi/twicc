@@ -97,7 +97,7 @@ $TWICC create-session --provider claude_code 'Hello'
 | Agent settings | `--model`, `--effort`, `--permission-mode`, `--thinking`, `--claude-in-chrome`, `--fast-mode`, `--context-max`: values, aliases, defaults, untrusted projects. | `agent-settings.md` |
 | Wait for the answer, follow up | `--wait-reply`, `--wait-timeout`, `--no-reply-text`, `--wait-background`, the `outcome` table; then how to track, read, and continue the child. | `wait-reply.md` |
 | Worktree | `--worktree-branch`, `--worktree-path`, `--worktree-start-from`: land the session in a new or existing git worktree. | `worktree.md` |
-| Session behavior | `--hidden`, `--no-question-widget`, `--mute-on-user-turn`, annotations, attachments. | `session-behavior.md` |
+| Session behavior | `--hidden`, `--no-question-widget`, `--mute-on-user-turn`, `--tree-detached`, annotations, attachments. | `session-behavior.md` |
 
 ## Related commands
 

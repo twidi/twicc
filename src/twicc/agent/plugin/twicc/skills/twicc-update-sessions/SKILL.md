@@ -1,7 +1,7 @@
 ---
 name: twicc-update-sessions
-description: Apply the same update to several TwiCC sessions — archive/unarchive, pin/unpin, hide/unhide, mute/notify, annotations, or settings. Use when you or the user want to change many sessions in one call (e.g. mute every child, tag every worker, or bump model/effort).
-argument-hint: '{archive|unarchive|pin|unpin|hide|unhide|mute|notify|annotations|settings} [SESSION_ID...] [--spawned-by X|--descendants X] [--annotation ...]'
+description: Apply the same update to several TwiCC sessions — archive/unarchive, pin/unpin, hide/unhide, mute/notify, detach-tree/attach-tree, annotations, or settings. Use when you or the user want to change many sessions in one call (e.g. mute every child, tag every worker, or bump model/effort).
+argument-hint: '{archive|unarchive|pin|unpin|hide|unhide|mute|notify|detach-tree|attach-tree|annotations|settings} [SESSION_ID...] [--spawned-by X|--descendants X] [--annotation ...]'
 ---
 
 # TwiCC Update Sessions
@@ -12,6 +12,7 @@ Apply the SAME change to every targeted session in one call: the batch sibling o
 
 - Hide or unhide several sessions at once → `hide` / `unhide`.
 - Suppress or restore finished-working notifications for several sessions → `mute` / `notify`.
+- Show several spawned sessions detached from their spawner in the sidebar tree, or nest them again → `detach-tree` / `attach-tree`.
 - Archive / unarchive, or pin / unpin a set of sessions → `archive` / `pin` / etc.
 - Tag every session in an orchestration with the same annotation → `annotations` with `--spawned-by self` or `--descendants self`.
 - Change model / effort / permission mode of a whole batch → `settings` (applied per session against its own provider).
@@ -96,6 +97,7 @@ One object keyed by session_id, plus a summary:
 | `pin` / `unpin` | Pin with one scope, or unpin. | `pin.md` |
 | `hide` / `unhide` | Hide (per-session preconditions), or unhide. | `hide.md` |
 | `mute` / `notify` | Suppress or restore finished-working notifications. | `mute.md` |
+| `detach-tree` / `attach-tree` | Show sessions detached from their spawner in the sidebar tree, or restore their nesting. | `detach-tree.md` |
 
 ## Related commands
 

@@ -87,7 +87,10 @@ launch mode; shortcuts break in installed setups.
 
 They let you spawn sessions on any enabled provider, message them, observe them,
 and search history. `twicc-create-session` makes them visible or hidden
-(`--hidden`): follow the user's request, else pick by context.
+(`--hidden`): follow the user's request, else pick by context. It also lets you
+detach a new session from you in the sidebar tree when it has no topical link
+with your work (a coordinator spawning independent work); leave it nested when
+the child serves your own work.
 
 Sessions share no memory — any prompt you hand a spawned session must be
 self-contained.
