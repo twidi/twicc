@@ -291,7 +291,7 @@ def test_browser_settings_only_updates_publish_once(monkeypatch, ready_session, 
     consumer = asgi.WSConsumer()
     consumer.send_json = AsyncMock()
     consumer.channel_layer = layer
-    # Hidden frontend settings keep their existing reset-to-NULL behavior.
+    # Hidden frontend settings are left alone by a browser send: the stored value stays.
     ready_session.question_widget = False
     ready_session.save(update_fields=["question_widget"])
     before = service.read_question_snapshot(ready_session.id)
@@ -299,11 +299,10 @@ def test_browser_settings_only_updates_publish_once(monkeypatch, ready_session, 
         "session_id": ready_session.id, "project_id": ready_session.project_id,
         "text": "", "request_id": "settings", "question_widget": False,
     }))
-    assert len(updates(layer)) == 1
-    changed = updates(layer)[0]["snapshot"]
-    assert changed["widget_enabled"] is True
-    assert changed["revision"] > before["revision"]
-    assert changed["batches"] == before["batches"]
+    assert updates(layer) == []
+    ready_session.refresh_from_db()
+    assert ready_session.question_widget is False
+    assert service.read_question_snapshot(ready_session.id) == before
     manager.send_to_session.assert_not_awaited()
 
 
