@@ -6273,6 +6273,49 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
+         * Detach a session from its parent in the sidebar tree, or reattach it.
+         * @param {string} projectId - The project ID
+         * @param {string} sessionId - The session ID
+         * @param {boolean} value - True to detach, false to reattach
+         * @throws {Error} If the update fails
+         */
+        async setSessionTreeDetached(projectId, sessionId, value) {
+            // Optimistic update
+            const session = this.sessions[sessionId]
+            const oldValue = session?.tree_detached
+
+            if (session) {
+                session.tree_detached = value
+            }
+
+            try {
+                const response = await apiFetch(
+                    `/api/projects/${projectId}/sessions/${sessionId}/`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tree_detached: value })
+                    }
+                )
+
+                if (!response.ok) {
+                    const data = await response.json()
+                    throw new Error(data.error || 'Failed to update session')
+                }
+
+                const updatedSession = await response.json()
+                this.updateSessionFromServer({ id: sessionId, ...updatedSession })
+
+            } catch (error) {
+                // Rollback on error
+                if (session && oldValue !== undefined) {
+                    session.tree_detached = oldValue
+                }
+                throw error
+            }
+        },
+
+        /**
          * Set whether a session sends a notification when the agent finishes work.
          * @param {string} projectId - The project ID
          * @param {string} sessionId - The session ID

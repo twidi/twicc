@@ -980,6 +980,7 @@ defineExpose({
                     :scope-project-ids="scopeProjectIds"
                     :filter-project-id="filterProjectId"
                     :tree-row="treeRowMeta.get(session.id) ?? null"
+                    :can-detach-from-tree="showAsTree"
                     @toggle-tree="onToggleTree"
                     @select="handleSelect"
                     @drop-data="handleDropData"

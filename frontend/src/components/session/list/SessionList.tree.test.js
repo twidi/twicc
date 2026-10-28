@@ -78,3 +78,8 @@ test('row metadata carries sameProjectAsParent from the pure helper and compares
     assert.ok(sfc.includes('sameProjectAsParent: sharesProjectWithParent(tree.value, id)'))
     assert.ok(sfc.includes('a.sameProjectAsParent === b.sameProjectAsParent'))
 })
+
+test('rows get can-detach-from-tree from the option, not from treeActive', () => {
+    assert.ok(sfc.includes(':can-detach-from-tree="showAsTree"'))
+    assert.ok(!sfc.includes(':can-detach-from-tree="treeActive"'))
+})

@@ -49,6 +49,11 @@ const props = defineProps({
     selectionEnabled: { type: Boolean, default: true },
     // Preview rows keep active semantics without the sidebar selection style.
     highlightActive: { type: Boolean, default: true },
+    // Offers "Detach from parent" / "Reattach to parent" (tree option on).
+    canDetachFromTree: {
+        type: Boolean,
+        default: false
+    },
     session: {
         type: Object,
         required: true
@@ -425,6 +430,11 @@ function handleMousedown(event) {
 // Rename dialog (provided by ProjectView)
 const openRenameDialog = inject('openRenameDialog', null)
 
+/** Whether the menu offers detach/reattach: regular spawned sessions only. */
+const showTreeDetachEntry = computed(() =>
+    props.canDetachFromTree && !!props.session.spawned_by
+    && !props.session.draft && !props.session.ephemeral && !props.session.parent_session_id)
+
 /**
  * Handle dropdown menu selection for a session.
  * @param {CustomEvent} event - The wa-select event
@@ -449,6 +459,10 @@ function handleMenuSelect(event) {
     }
     if (action === 'rename') {
         openRenameDialog(session)
+    } else if (action === 'detach-tree') {
+        store.setSessionTreeDetached(session.project_id, session.id, true)
+    } else if (action === 'attach-tree') {
+        store.setSessionTreeDetached(session.project_id, session.id, false)
     } else if (action === 'share') {
         // Open the globally-mounted ShareDialog (ProjectView) for this session.
         window.dispatchEvent(new CustomEvent('twicc:open-share-dialog', {
@@ -770,6 +784,10 @@ function handleMenuSelect(event) {
             <wa-dropdown-item v-if="canToggleReadState && !hasUnread" value="mark-unread">
                 <wa-icon slot="icon" name="eye"></wa-icon>
                 Mark as unread
+            </wa-dropdown-item>
+            <wa-dropdown-item v-if="showTreeDetachEntry" :value="session.tree_detached ? 'attach-tree' : 'detach-tree'">
+                <wa-icon slot="icon" name="sitemap"></wa-icon>
+                {{ session.tree_detached ? 'Reattach to parent' : 'Detach from parent' }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral && !session.archived" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>

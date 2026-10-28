@@ -99,3 +99,23 @@ test('a child in its parent project hides the project marker, the dot, its toolt
     assert.match(source, /v-if="showWorktreeIcon"/)
     assert.doesNotMatch(source, /showWorktreeIcon = computed\([^)]*effectiveShowProjectName/)
 })
+
+test('canDetachFromTree prop defaults to false', () => {
+    assert.match(source, /canDetachFromTree: \{\s*type: Boolean,\s*default: false\s*\}/)
+})
+
+test('the menu offers detach/reattach right before archive, for regular spawned sessions only', () => {
+    assert.match(source, /const showTreeDetachEntry = computed\(\(\) =>\s*props\.canDetachFromTree && !!props\.session\.spawned_by\s*&& !props\.session\.draft && !props\.session\.ephemeral && !props\.session\.parent_session_id\)/)
+    assert.match(source, /<wa-dropdown-item v-if="showTreeDetachEntry" :value="session\.tree_detached \? 'attach-tree' : 'detach-tree'">\s*<wa-icon slot="icon" name="sitemap"><\/wa-icon>\s*\{\{ session\.tree_detached \? 'Reattach to parent' : 'Detach from parent' \}\}\s*<\/wa-dropdown-item>\s*<wa-dropdown-item v-if="!session\.draft && !session\.ephemeral && !session\.archived" value="archive">/)
+})
+
+test('handleMenuSelect branches call the store action after the ephemeral guard', () => {
+    assert.match(source, /if \(action === 'rename'\) \{\s*openRenameDialog\(session\)\s*\} else if \(action === 'detach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, true\)\s*\} else if \(action === 'attach-tree'\) \{\s*store\.setSessionTreeDetached\(session\.project_id, session\.id, false\)/)
+})
+
+test('store action setSessionTreeDetached is optimistic, patches and rolls back', () => {
+    const data = readFileSync(new URL('../../../stores/data.js', import.meta.url), 'utf8')
+    assert.match(data, /async setSessionTreeDetached\(projectId, sessionId, value\) \{\s*\/\/ Optimistic update\s*const session = this\.sessions\[sessionId\]\s*const oldValue = session\?\.tree_detached\s*if \(session\) \{\s*session\.tree_detached = value\s*\}/)
+    assert.match(data, /body: JSON\.stringify\(\{ tree_detached: value \}\)/)
+    assert.match(data, /this\.updateSessionFromServer\(\{ id: sessionId, \.\.\.updatedSession \}\)\s*\} catch \(error\) \{\s*\/\/ Rollback on error\s*if \(session && oldValue !== undefined\) \{\s*session\.tree_detached = oldValue\s*\}\s*throw error/)
+})
