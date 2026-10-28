@@ -91,6 +91,48 @@ export function formatDayKey(timestampMs) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// Day keys of ISO timestamp strings. The chat derives one per displayed row on
+// every recompute (day separators), and its rows are rebuilt each time: parsing
+// and formatting thousands of dates was most of that work, for strings that never
+// change. Cleared when it grows past the limit (far above one chat's rows), and
+// when the local time zone changes (see refreshDayKeysTimeZone).
+const dayKeyCache = new Map()
+const DAY_KEY_CACHE_LIMIT = 50_000
+let dayKeyTimeZone = null
+
+/**
+ * Drop the cached day keys if the local time zone changed since they were computed
+ * (a laptop that travels with the tab open). Call once per pass over the rows.
+ */
+export function refreshDayKeysTimeZone() {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (zone !== dayKeyTimeZone) {
+        dayKeyCache.clear()
+        dayKeyTimeZone = zone
+    }
+}
+
+/**
+ * Local calendar-day key of an ISO timestamp string, as formatDayKey(Date.parse(value)).
+ *
+ * @param {string|null|undefined} timestamp - ISO 8601 timestamp.
+ * @returns {string|null} e.g. "2026-06-05", or null when not a valid timestamp.
+ */
+export function dayKeyOfTimestamp(timestamp) {
+    if (typeof timestamp !== 'string') {
+        const ms = Date.parse(timestamp)
+        return Number.isFinite(ms) ? formatDayKey(ms) : null
+    }
+    let key = dayKeyCache.get(timestamp)
+    if (key === undefined) {
+        const ms = Date.parse(timestamp)
+        key = Number.isFinite(ms) ? formatDayKey(ms) : null
+        if (dayKeyCache.size >= DAY_KEY_CACHE_LIMIT) dayKeyCache.clear()
+        dayKeyCache.set(timestamp, key)
+    }
+    return key
+}
+
 /**
  * Human-readable, locale-aware label for a day separator, e.g.
  * "Friday, June 5, 2026" / "vendredi 5 juin 2026" (local time).

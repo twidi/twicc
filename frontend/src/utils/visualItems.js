@@ -2,7 +2,7 @@
 
 import { DISPLAY_LEVEL, DISPLAY_MODE, SYNTHETIC_ITEM } from '../constants.js'
 import { getParsedContent, setParsedContent } from './parsedContent.js'
-import { formatDayKey, formatDaySeparatorLabel } from './date.js'
+import { dayKeyOfTimestamp, formatDayKey, formatDaySeparatorLabel, refreshDayKeysTimeZone } from './date.js'
 
 /**
  * Decide whether an item is visible in conversation mode (non-detailed branch).
@@ -317,8 +317,7 @@ export function computeVisualItems(items, mode, expandedGroups = [], isAssistant
  */
 function visualItemDayKey(vi) {
     if (!vi || vi.isDaySeparator || !vi.timestamp) return null
-    const ms = Date.parse(vi.timestamp)
-    return Number.isFinite(ms) ? formatDayKey(ms) : null
+    return dayKeyOfTimestamp(vi.timestamp)
 }
 
 /**
@@ -360,6 +359,7 @@ function makeDaySeparatorItem(beforeItem, dayItem) {
  */
 export function insertDaySeparators(visualItems) {
     if (!visualItems || visualItems.length === 0) return visualItems
+    refreshDayKeysTimeZone()
 
     const n = visualItems.length
     const result = []

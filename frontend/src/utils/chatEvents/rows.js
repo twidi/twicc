@@ -1,6 +1,6 @@
 import { toRaw } from 'vue'
 import { hasContent } from '../parsedContent.js'
-import { formatDayKey, formatDaySeparatorLabel } from '../date.js'
+import { dayKeyOfTimestamp, formatDaySeparatorLabel, refreshDayKeysTimeZone } from '../date.js'
 
 export const isSessionEvent = item => item?.isSessionEvent === true
 export const isTranscriptLoadCandidate = item => typeof item?.lineNum === 'number' && item.lineNum > 0 && !hasContent(item)
@@ -26,14 +26,14 @@ export function mergeSessionEventRows({ sourceItems, messageRows, boundaries }) 
 
 /** Calendar context follows displayed portions. Events never modify logical block flags. */
 export function insertEventDaySeparators(rows) {
+    refreshDayKeysTimeZone()
     const result = []
     let day = null
     for (const row of rows) {
-        const ms = Date.parse(row.timestamp)
-        const nextDay = Number.isFinite(ms) ? formatDayKey(ms) : null
+        const nextDay = dayKeyOfTimestamp(row.timestamp)
         if (day && nextDay && nextDay !== day) {
             result.push({ lineNum: `daysep-${row.lineNum}`, isDaySeparator: true,
-                dayKey: nextDay, dayLabel: formatDaySeparatorLabel(ms) })
+                dayKey: nextDay, dayLabel: formatDaySeparatorLabel(Date.parse(row.timestamp)) })
         }
         if (nextDay) day = nextDay
         result.push(row)
