@@ -1,6 +1,8 @@
 import { computed } from 'vue'
-import { isSessionUnread } from './sessions.js'
 import { unreadBackgroundKind, userTurnBackgroundShellCount } from './backgroundWork.js'
+import { getRootSessions } from './rootSessions.js'
+import { getUnreadMemos } from './unreadMemos.js'
+import { noteStageRun } from './stageRuns.js'
 
 const indexes = new WeakMap()
 const EMPTY = Object.freeze({ processCount: 0, pendingRequestCount: 0, hasAssistantTurn: false,
@@ -41,12 +43,17 @@ export function getProjectActivityIndex(store) {
         }
         return retainMap(previous, next, sameSummary)
     })
+    // Iterates the roots (subagents never count) through the per-session `unread`
+    // memo, so a timestamp change that does not flip a session's unread state
+    // stops at its memo (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, 5.5).
     const unreadCounts = computed(previous => {
+        noteStageRun('unread:counts')
         const next = new Map()
         if (!store.isStartupInProgress) {
-            for (const session of Object.values(store.sessions)) {
+            const memos = getUnreadMemos(store)
+            for (const session of getRootSessions(store)) {
+                if (!memos.unread(session)) continue
                 const ps = store.processStates[session.id]
-                if (!isSessionUnread(session, ps)) continue
                 let unread = next.get(session.project_id)
                 if (!unread) next.set(session.project_id, unread = { count: 0, background: 0, shells: 0 })
                 unread.count++

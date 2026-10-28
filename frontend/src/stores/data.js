@@ -9,6 +9,7 @@ import { refreshStatisticsHome } from '../composables/statisticsRefresh.js'
 import { buildProjectActivityIndex, createProjectActivityComparator } from '../utils/projectActivity.js'
 import { getScopeSessionList, getStableSessionList } from '../utils/sessionLists.js'
 import { getRootSessions } from '../utils/rootSessions.js'
+import { getUnreadMemos } from '../utils/unreadMemos.js'
 import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clearAgentLinkCache, markAgentStopped as cacheAgentStop, markAgentIdle, beginAgentFetch, applyAgentSnapshot, rootAgentToolLine, staleSyntheticAgentIds, buildAgentTree, hasTreeAgents, runStateFromPayload, interactionFromPayload, setAgentRunState as cacheAgentRunState, setAgentInteraction as cacheAgentInteraction, dropRootAgentState, effectiveAgentRun } from '../utils/agentLinkIndex'
 // frontend/src/stores/data.js
 
@@ -1039,6 +1040,8 @@ export const useDataStore = defineStore('data', {
         getScopeSessionList: (state) => (scope) => getScopeSessionList(state, scope),
         // Root sessions (no `parent_session_id`), reactive records in store order.
         rootSessions: (state) => getRootSessions(state),
+        // Memoized `hasUnreadContent(session)`: a timestamp change that does not flip it stops at the memo.
+        hasUnreadContentMemo: (state) => (session) => getUnreadMemos(state).unreadContent(session),
         getSession: (state) => (id) => state.sessions[id],
         getSessionProvider: (state) => (sessionId) => state.sessions[sessionId]?.provider ?? null,
         getSessionItems: (state) => (sessionId) => state.sessionItems[sessionId] || [],

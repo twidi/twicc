@@ -28,8 +28,11 @@ import { computed, reactive, toRaw } from 'vue'
 import { ALL_PROJECTS_ID, baselineProjectInputs,
     hasActiveStartupPhase as baselineHasActiveStartupPhase } from './sidebarBaseline/projectInputs.js'
 import { getStableSessionList as baselineGetStableSessionList } from './sidebarBaseline/sessionLists.js'
+import { createBaselineActivityIndex } from './sidebarBaseline/projectProcessActivity.js'
 import { getScopeSessionList, getStableSessionList } from '../../src/utils/sessionLists.js'
 import { getRootSessions } from '../../src/utils/rootSessions.js'
+import { getUnreadMemos } from '../../src/utils/unreadMemos.js'
+import { getProjectActivityIndex } from '../../src/utils/projectProcessActivity.js'
 import { isWorkspaceProjectId } from '../../src/utils/workspaceIds.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
 
@@ -322,7 +325,7 @@ export function applyStep(state, step) {
 }
 
 // The store logic both facades share: the design does not change it.
-function createStoreFacades(state, { getStableSessionList: stableList, hasActiveStartupPhase: inStartup }) {
+function createStoreFacades(state, { getStableSessionList: stableList, hasActiveStartupPhase: inStartup, activityIndex }) {
     const inputs = baselineProjectInputs(state, FIXTURE_WORKSPACES)
     const getProject = computed(() => (id) => state.projects[id])
     const getMainRepoProjectId = computed(() => (projectId) =>
@@ -340,6 +343,10 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
     const getProjectSessions = computed(() => (projectId) => stableList(state, projectId, ALL_PROJECTS_ID))
     const getAllSessions = computed(() => stableList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID))
     const isStartupInProgress = computed(() => inStartup(state.startupProgress))
+    const projectActivitySummary = computed(() => {
+        const index = activityIndex(data)
+        return (projectIds, previous) => index.summary(projectIds, previous)
+    })
 
     const data = {
         get sessions() { return state.sessions },
@@ -356,6 +363,8 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         get getProjectSessions() { return getProjectSessions.value },
         get getAllSessions() { return getAllSessions.value },
         get isStartupInProgress() { return isStartupInProgress.value },
+        // Like the real getter: the project badges read the unread index through it.
+        get getProjectActivitySummary() { return projectActivitySummary.value },
     }
 
     const getWorkspaceById = computed(() => (id) => FIXTURE_WORKSPACES.find(w => w.id === id) || null)
@@ -382,6 +391,7 @@ export function createBaselineData(state) {
         getStableSessionList: (owner, scopeId, allProjectsId) =>
             baselineGetStableSessionList(owner, scopeId, allProjectsId, baselineHasActiveStartupPhase),
         hasActiveStartupPhase: baselineHasActiveStartupPhase,
+        activityIndex: createBaselineActivityIndex,
     })
 }
 
@@ -391,12 +401,15 @@ export function createBaselineData(state) {
  * in the real store. Later tasks plug their shipped modules in here.
  */
 export function createShippedData(state) {
-    const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase })
+    const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase,
+        activityIndex: getProjectActivityIndex })
     const rootSessions = computed(() => getRootSessions(state))
     const scopeSessionList = computed(() => (scope) => getScopeSessionList(state, scope))
+    const hasUnreadContentMemo = computed(() => (session) => getUnreadMemos(state).unreadContent(session))
     Object.defineProperties(facades.data, {
         rootSessions: { get: () => rootSessions.value, enumerable: true },
         getScopeSessionList: { get: () => scopeSessionList.value, enumerable: true },
+        hasUnreadContentMemo: { get: () => hasUnreadContentMemo.value, enumerable: true },
     })
     return facades
 }
