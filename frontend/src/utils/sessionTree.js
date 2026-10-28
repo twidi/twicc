@@ -341,3 +341,18 @@ export function findMissingAncestorIds(candidates, lookup, skipIds) {
     }
     return [...missing]
 }
+
+/**
+ * Whether a tree row is a child whose session belongs to the same project as its
+ * direct parent. Roots never do. The reference is always the direct parent, so the
+ * comparison restarts below a session of another project.
+ *
+ * @param {{ nodes: Map<string, Object> }} tree
+ * @param {string} id
+ * @returns {boolean}
+ */
+export function sharesProjectWithParent(tree, id) {
+    const node = tree.nodes.get(id)
+    const parent = node?.parentId ? tree.nodes.get(node.parentId) : null
+    return !!parent && parent.session.project_id === node.session.project_id
+}

@@ -241,6 +241,8 @@ const projectDotColor = computed(() => {
  * the badge tells the user it belongs elsewhere).
  */
 const effectiveShowProjectName = computed(() => {
+    // A tree child in its parent's project: the parent row already shows it.
+    if (props.treeRow?.sameProjectAsParent) return false
     if (props.showProjectName) return true
     if (!props.scopeProjectIds) return false
     return !props.scopeProjectIds.includes(props.session.project_id)

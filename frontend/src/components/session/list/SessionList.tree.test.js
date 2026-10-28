@@ -72,3 +72,8 @@ test('row metadata carries the guide data and the cumulative activity, compared 
     assert.ok(!sfc.includes('sameSummary'))
     assert.ok(!sfc.includes('node.summary'))
 })
+
+test('row metadata carries sameProjectAsParent from the pure helper and compares it', () => {
+    assert.ok(sfc.includes('sameProjectAsParent: sharesProjectWithParent(tree.value, id)'))
+    assert.ok(sfc.includes('a.sameProjectAsParent === b.sameProjectAsParent'))
+})

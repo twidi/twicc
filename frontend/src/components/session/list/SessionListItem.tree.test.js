@@ -90,3 +90,12 @@ test('template compiles', () => {
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: 'SessionListItem.vue', id: 'tree-test',
         compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
 })
+
+test('a child in its parent project hides the project marker, the dot, its tooltip and the project line when empty', () => {
+    assert.match(source, /effectiveShowProjectName = computed\(\(\) => \{\s*\/\/[^\n]*\n\s*if \(props\.treeRow\?\.sameProjectAsParent\) return false/)
+    assert.match(source, /v-if="compactView && effectiveShowProjectName"\s+:id="rowId\('compact-project-dot'\)"/)
+    assert.match(source, /v-if="!compactView && \(effectiveShowProjectName \|\| hasCodeComments \|\| \(hasUnread/)
+    // The worktree marker does not depend on the project name flag.
+    assert.match(source, /v-if="showWorktreeIcon"/)
+    assert.doesNotMatch(source, /showWorktreeIcon = computed\([^)]*effectiveShowProjectName/)
+})

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSessionTree, treeActivity, treeGuides, flattenTree, extendTreeCandidates, findMissingAncestorIds, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
+import { buildSessionTree, treeActivity, treeGuides, flattenTree, extendTreeCandidates, findMissingAncestorIds, sharesProjectWithParent, TREE_MAX_INDENT_LEVEL } from './sessionTree.js'
 
 const s = (id, o = {}) => ({ id, project_id: 'p', mtime: 100, spawned_by: null, ...o })
 const lookupOf = list => id => list.find(x => x.id === id) ?? null
@@ -505,4 +505,43 @@ test('terminates on a cycle', () => {
 
 test('deduplicates ids shared by several candidates', () => {
     assert.deepEqual(missing([s('a', { spawned_by: 'g' }), s('b', { spawned_by: 'g' })]), ['g'])
+})
+
+test('sharesProjectWithParent: child of the same project', () => {
+    const t = build([s('a'), s('b', { spawned_by: 'a' })])
+    assert.equal(sharesProjectWithParent(t, 'b'), true)
+})
+
+test('sharesProjectWithParent: a worktree (own project id) is different', () => {
+    const t = build([s('a'), s('b', { spawned_by: 'a', project_id: 'p-worktree' })])
+    assert.equal(sharesProjectWithParent(t, 'b'), false)
+})
+
+test('sharesProjectWithParent: a root never shares', () => {
+    const t = build([s('a'), s('b')])
+    assert.equal(sharesProjectWithParent(t, 'a'), false)
+})
+
+test('sharesProjectWithParent: the reference is the direct parent (A, A, A)', () => {
+    const t = build([s('a'), s('b', { spawned_by: 'a' }), s('c', { spawned_by: 'b' })])
+    assert.equal(sharesProjectWithParent(t, 'c'), true)
+})
+
+test('sharesProjectWithParent: the comparison restarts below another project (A, B, B)', () => {
+    const t = build([
+        s('a'),
+        s('b', { spawned_by: 'a', project_id: 'q' }),
+        s('c', { spawned_by: 'b', project_id: 'q' }),
+    ])
+    assert.equal(sharesProjectWithParent(t, 'b'), false)
+    assert.equal(sharesProjectWithParent(t, 'c'), true)
+})
+
+test('sharesProjectWithParent: back to the first project (A, B, A) shows again', () => {
+    const t = build([
+        s('a'),
+        s('b', { spawned_by: 'a', project_id: 'q' }),
+        s('c', { spawned_by: 'b' }),
+    ])
+    assert.equal(sharesProjectWithParent(t, 'c'), false)
 })

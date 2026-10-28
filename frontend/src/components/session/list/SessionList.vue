@@ -14,7 +14,7 @@ import { useSessionSelectionStore } from '../../../stores/sessionSelection'
 import { useSessionTreeExpansionStore } from '../../../stores/sessionTreeExpansion'
 import { isWorkspaceProjectId, extractWorkspaceId } from '../../../utils/workspaceIds'
 import { computeSidebarSessionBlocks } from '../../../utils/sidebarSessions'
-import { buildSessionTree, flattenTree, treeActivity } from '../../../utils/sessionTree.js'
+import { buildSessionTree, flattenTree, treeActivity, sharesProjectWithParent } from '../../../utils/sessionTree.js'
 import { isSessionUnread } from '../../../utils/sessions'
 import { retainSessionArray } from '../../../utils/sessionLists.js'
 import { matchQuery } from '../../../utils/textFilter'
@@ -177,6 +177,7 @@ const sameActivity = (a, b) => a === b || (!!a && !!b && ACTIVITY_KEYS.every(key
 const sameThrough = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])
 const sameRowMeta = (a, b) => a.depth === b.depth && a.isLast === b.isLast && sameThrough(a.through, b.through)
     && a.hasChildren === b.hasChildren && a.expanded === b.expanded && a.hint === b.hint
+    && a.sameProjectAsParent === b.sameProjectAsParent
     && sameActivity(a.activity, b.activity)
 // Per-row tree metadata. An unchanged entry keeps its previous object, so an mtime tick
 // of an active session does not re-render every row. `activity` is the cumulative activity
@@ -193,6 +194,7 @@ const treeRowMeta = computed(previous => {
             isLast,
             through,
             hasChildren,
+            sameProjectAsParent: sharesProjectWithParent(tree.value, id),
             expanded,
             activity: hasChildren && !expanded
                 ? treeActivity([id, ...node.descendantIds], {
