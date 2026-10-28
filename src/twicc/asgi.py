@@ -1312,11 +1312,24 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 from twicc.core.serializers import serialize_session
                 from twicc.core.services.session_update import persist_session_settings
 
+                # Hidden fields are never in the frontend payload: leave their stored
+                # value alone instead of resetting it to "use global default".
                 await run_under_db_write_lock(
-                    lambda: sync_to_async(persist_session_settings)(session_id, agent_settings._asdict())
+                    lambda: sync_to_async(persist_session_settings)(
+                        session_id,
+                        {
+                            field: value for field, value in agent_settings._asdict().items()
+                            if field not in AGENT_SETTINGS_HIDDEN_FROM_FRONTEND
+                        },
+                    )
                 )
                 # Broadcast session update so all clients see the new settings
                 session_obj = await sync_to_async(Session.objects.filter(id=session_id).first)()
+                # The agent gets the stored value of the hidden fields, not the missing one.
+                if session_obj:
+                    agent_settings = agent_settings._replace(**{
+                        field: getattr(session_obj, field) for field in AGENT_SETTINGS_HIDDEN_FROM_FRONTEND
+                    })
                 if session_obj and not session_obj.hidden:
                     await self.channel_layer.group_send(
                         "updates",
