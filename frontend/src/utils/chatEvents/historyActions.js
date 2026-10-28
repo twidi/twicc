@@ -1,8 +1,10 @@
+import { toRaw } from 'vue'
 import { createSessionEventHistory, createSessionEventHistoryState } from './history.js'
 import { bindTimelineEvents } from '../timeline/liveEvents.js'
 
 /** Pinia action factory: controllers and subscriptions stay outside reactive state. */
 export function createSessionEventHistoryActions({ fetchPage, eventTarget = () => globalThis.window }) {
+    // Keyed by the raw store: in dev, Pinia's devtools plugin calls each action with a fresh Proxy as `this`.
     const owners = new WeakMap()
     function syncActive(entry) {
         const active = [...entry.consumers.values()].some(Boolean)
@@ -19,8 +21,8 @@ export function createSessionEventHistoryActions({ fetchPage, eventTarget = () =
         ensureSessionEventHistory(sessionId) {
             const session = this.sessions[sessionId]
             if (!session || session.draft || session.hidden || session.ephemeral) return null
-            let entries = owners.get(this)
-            if (!entries) { entries = new Map(); owners.set(this, entries) }
+            let entries = owners.get(toRaw(this))
+            if (!entries) { entries = new Map(); owners.set(toRaw(this), entries) }
             if (entries.has(sessionId)) return entries.get(sessionId).controller
             this.localState.sessionEventHistory[sessionId] = createSessionEventHistoryState()
             const state = this.localState.sessionEventHistory[sessionId]
@@ -44,29 +46,29 @@ export function createSessionEventHistoryActions({ fetchPage, eventTarget = () =
         retainSessionEventHistory(sessionId, owner, active) {
             const controller = this.ensureSessionEventHistory(sessionId)
             if (!controller) return
-            const entry = owners.get(this).get(sessionId)
+            const entry = owners.get(toRaw(this)).get(sessionId)
             entry.consumers.set(owner, active)
             syncActive(entry)
         },
         releaseSessionEventHistory(sessionId, owner) {
-            const entry = owners.get(this)?.get(sessionId)
+            const entry = owners.get(toRaw(this))?.get(sessionId)
             if (!entry) return
             entry.consumers.delete(owner)
             if (!entry.consumers.size) this.clearSessionEventHistory(sessionId)
             else syncActive(entry)
         },
         refreshSessionEventHistory(sessionId) {
-            const existing = owners.get(this)?.get(sessionId)?.controller
+            const existing = owners.get(toRaw(this))?.get(sessionId)?.controller
             if (existing) existing.refresh()
             else this.ensureSessionEventHistory(sessionId)
         },
         retrySessionEventHistory(sessionId) {
-            const controller = owners.get(this)?.get(sessionId)?.controller
+            const controller = owners.get(toRaw(this))?.get(sessionId)?.controller
             if (controller) controller.retry()
             else this.ensureSessionEventHistory(sessionId)
         },
         clearSessionEventHistory(sessionId) {
-            const entries = owners.get(this), entry = entries?.get(sessionId)
+            const entries = owners.get(toRaw(this)), entry = entries?.get(sessionId)
             entry?.controller.dispose()
             entry?.unbind?.()
             entries?.delete(sessionId)

@@ -23,6 +23,22 @@ test('persisted empty chats load once; a mode recompute does not restart travers
     assert.deepEqual(f.changes, ['s'])
     f.store.clearSessionEventHistory('s')
 })
+test('ownership survives a fresh Proxy as `this` on every action call (Pinia devtools in dev)', async () => {
+    const f = fixture(), store = f.store
+    for (const name of Object.keys(createSessionEventHistoryActions({ fetchPage: () => {} }))) {
+        const action = store[name]
+        store[name] = function (...args) {
+            const tracked = new Proxy(store, { get: (...a) => Reflect.get(...a), set: (...a) => Reflect.set(...a) })
+            return action.apply(tracked, args)
+        }
+    }
+    const owner = Symbol('owner')
+    store.retainSessionEventHistory('s', owner, true); await tick()
+    assert.equal(f.requests.length, 1)
+    store.releaseSessionEventHistory('s', owner)
+    assert.equal(f.requests[0].signal.aborted, true)
+    assert.equal(store.localState.sessionEventHistory.s, undefined)
+})
 test('drafts, unknown sessions and hidden sessions do not start requests', async () => {
     const f = fixture(); f.store.sessions.s.draft = true; f.store.ensureSessionEventHistory('s')
     f.store.sessions.h = { hidden: true }; f.store.ensureSessionEventHistory('h'); f.store.ensureSessionEventHistory('missing')
