@@ -16,22 +16,23 @@ const base = { id: 's', project_id: 'p', mtime: 10, title: 'Session', last_line:
     last_new_content_at: '2026-10-07T12:00:00Z',
     tasks: { items: [] }, goals: [{ objectives: ['Goal'] }], plan_paths: [{ path: 'docs/plan.md' }], layout: {} }
 
-function fixture() {
+function fixture({ projectState = { sessionsFetched: true, hasMoreSessions: true }, fetchPage = null } = {}) {
     let result = copy(base), ok = true
     const response = async () => ({ ok, status: ok ? 200 : 500, json: async () => copy(result) })
     const deps = { getSessionCutoffMs, markAgentIdle: () => {}, jsonValuesEqual,
         apiFetch: response, fetch: response, sessionsLoadInFlight: new Map(),
-        syncBaseline: { sessionMtime: (_, local) => local }, isWorkspaceProjectId: () => false }
+        syncBaseline: { sessionMtime: (_, local) => local }, isWorkspaceProjectId: () => false,
+        FIRST_SESSIONS_PAGE_SIZE: 30 }
     const names = ['updateSession', 'async loadSessions', 'async loadStickySessions', 'async loadSessionById',
         'async refreshSessionRecord', 'async renameSession']
     const actions = new Function(...Object.keys(deps), `return { ${names.map(action).join('')} }`)(...Object.values(deps))
     const useFixture = defineStore('session-rest-reconciliation', {
         state: () => ({ sessions: { s: copy(base) }, localState: { agentRunStates: {},
-            sessions: { s: { itemsFetched: true } }, projects: { p: { sessionsFetched: true, hasMoreSessions: true } } } }),
+            sessions: { s: { itemsFetched: true } }, projects: { p: copy(projectState) } } }),
         actions: { ...actions, _cleanStaleChildSynthetics() {}, _hydrateSessionLayoutFromPersisted() {},
             tryFinalizePendingBinding() {}, _tryLinkPeerDelivery() {},
             _ensureProjectLocalState(id) { return this.localState.projects[id] },
-            _fetchSessionsPage: async () => copy(result),
+            _fetchSessionsPage: fetchPage ?? (async () => copy(result)),
         },
     })
     return { store: useFixture(createPinia()), respond(value, success = true) { result = value; ok = success } }
@@ -90,4 +91,115 @@ test('rename responses keep unrelated references and failed renames restore the 
     respond({ error: 'Failure' }, false)
     await assert.rejects(store.renameSession('p', 's', 'Failed'), /Failure/)
     assert.equal(store.sessions.s.title, 'Renamed')
+})
+
+// A scope never fetched yet: the store loads a small page first, then the rest.
+const coldState = { sessionsFetched: false, sessionsLoading: false, sessionsLoadingError: false,
+    hasMoreSessions: true, oldestSessionMtime: null }
+const row = (id, mtime) => ({ ...copy(base), id, mtime })
+
+function pagedFixture(pages, projectState = coldState) {
+    const calls = []
+    const { store } = fixture({ projectState, fetchPage: async (projectId, options) => {
+        calls.push({ projectId, ...options })
+        const page = pages.shift()
+        if (page instanceof Error) throw page
+        return typeof page === 'function' ? page() : copy(page)
+    } })
+    return { store, calls, state: store.localState.projects.p }
+}
+
+test('a first load fetches a small page, then the rest of a normal page after its cursor', async () => {
+    const { store, calls, state } = pagedFixture([
+        { sessions: [row('s', 20), row('b', 15)], has_more: true },
+        { sessions: [row('c', 12), row('d', 11)], has_more: true },
+    ])
+    const changed = await store.loadSessions('p', { isInitialLoading: true })
+    assert.deepEqual(calls, [
+        { projectId: 'p', beforeMtime: null, limit: 30 },
+        { projectId: 'p', beforeMtime: 15 },
+    ])
+    assert.deepEqual(Object.keys(store.sessions).sort(), ['b', 'c', 'd', 's'])
+    assert.deepEqual([...changed], ['s'])
+    assert.equal(state.sessionsFetched, true)
+    assert.equal(state.hasMoreSessions, true)
+    assert.equal(state.oldestSessionMtime, 11)
+    assert.equal(state.sessionsLoading, false)
+})
+
+test('the cursor stays unpublished while the second request runs', async () => {
+    let release
+    const second = new Promise(resolve => { release = resolve })
+    const { store, state } = pagedFixture([
+        { sessions: [row('a', 20)], has_more: true },
+        () => second,
+    ])
+    const loading = store.loadSessions('p')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.ok(store.sessions.a, 'the small page is merged before the second request settles')
+    assert.equal(state.sessionsFetched, true)
+    assert.equal(state.sessionsLoading, true)
+    assert.equal(state.oldestSessionMtime, null)
+    assert.equal(state.hasMoreSessions, true)
+    release({ sessions: [row('b', 10)], has_more: false })
+    await loading
+    assert.equal(state.oldestSessionMtime, 10)
+    assert.equal(state.hasMoreSessions, false)
+})
+
+test('a small first page that is complete makes a single request', async () => {
+    const { store, calls, state } = pagedFixture([{ sessions: [row('a', 20)], has_more: false }])
+    await store.loadSessions('p')
+    assert.equal(calls.length, 1)
+    assert.equal(state.hasMoreSessions, false)
+    assert.equal(state.oldestSessionMtime, 20)
+})
+
+test('a fetched scope keeps a single request of the default size, forced or not', async () => {
+    for (const force of [false, true]) {
+        const { store, calls, state } = pagedFixture(
+            [{ sessions: [row('a', 5)], has_more: true }],
+            { ...coldState, sessionsFetched: true, oldestSessionMtime: 8 },
+        )
+        await store.loadSessions('p', { force })
+        assert.deepEqual(calls, [{ projectId: 'p', beforeMtime: force ? null : 8, limit: null }], `force=${force}`)
+        assert.equal(state.oldestSessionMtime, 5)
+    }
+})
+
+test('a failed second request keeps the small page and resumes after it', async () => {
+    const { store, calls, state } = pagedFixture([
+        { sessions: [row('a', 20), row('b', 15)], has_more: true },
+        new Error('network'),
+        { sessions: [row('c', 10)], has_more: false },
+    ])
+    const originalError = console.error
+    console.error = () => {}
+    try {
+        await assert.rejects(store.loadSessions('p', { isInitialLoading: true }), /network/)
+    } finally {
+        console.error = originalError
+    }
+    assert.ok(store.sessions.a && store.sessions.b)
+    assert.equal(state.sessionsLoadingError, false)
+    assert.equal(state.sessionsFetched, true)
+    assert.equal(state.hasMoreSessions, true)
+    assert.equal(state.oldestSessionMtime, 15)
+    await store.loadSessions('p')
+    assert.deepEqual(calls.at(-1), { projectId: 'p', beforeMtime: 15, limit: null })
+    assert.equal(state.oldestSessionMtime, 10)
+    assert.equal(state.hasMoreSessions, false)
+})
+
+test('a failed small first page is a failed initial load', async () => {
+    const { store, state } = pagedFixture([new Error('network')])
+    const originalError = console.error
+    console.error = () => {}
+    try {
+        await assert.rejects(store.loadSessions('p', { isInitialLoading: true }), /network/)
+    } finally {
+        console.error = originalError
+    }
+    assert.equal(state.sessionsLoadingError, true)
+    assert.equal(state.sessionsFetched, false)
 })

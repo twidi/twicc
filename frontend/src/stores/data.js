@@ -164,6 +164,10 @@ const debouncedSaves = new Map()
 // reconciliation relies on the returned ids to know which sessions to reload.
 const sessionsLoadInFlight = new Map() // projectId -> Promise<Set<sessionId>>
 
+// Size of the first page of a scope never fetched yet: enough to fill the sidebar.
+// The rest of a normal page (the server's default size) follows in a second request.
+const FIRST_SESSIONS_PAGE_SIZE = 30
+
 // Shared by the conversation's first load and reconnect recovery.
 const sessionHistoryInFlight = new Map() // sessionId -> Promise<boolean>
 const sessionHistoryControllers = new Map() // sessionId -> AbortController of the opening load in flight
@@ -2584,12 +2588,13 @@ export const useDataStore = defineStore('data', {
         /**
          * Fetch a page of sessions from the API.
          * @param {string} projectId - Project ID or ALL_PROJECTS_ID
+         * @param {Object} options
+         * @param {number|null} options.beforeMtime - Pagination cursor (null = from the most recent)
+         * @param {number|null} options.limit - Page size (null = the server's default page size)
          * @returns {Promise<{sessions: Array, has_more: boolean}>}
          * @private
          */
-        async _fetchSessionsPage(projectId) {
-            const state = this._ensureProjectLocalState(projectId)
-
+        async _fetchSessionsPage(projectId, { beforeMtime = null, limit = null } = {}) {
             // Build URL based on project type. A single real project always uses
             // its own endpoint, which already returns the project's sessions AND
             // its git worktrees' in one response (their sessions belong to the
@@ -2604,8 +2609,11 @@ export const useDataStore = defineStore('data', {
 
             // Add cursor if we have one (for pagination)
             const params = new URLSearchParams()
-            if (state.oldestSessionMtime != null) {
-                params.set('before_mtime', state.oldestSessionMtime)
+            if (beforeMtime != null) {
+                params.set('before_mtime', beforeMtime)
+            }
+            if (limit != null) {
+                params.set('limit', limit)
             }
 
             // For workspace mode, filter by the workspace's visible project IDs
@@ -2670,18 +2678,19 @@ export const useDataStore = defineStore('data', {
                 return changedIds
             }
 
+            // A scope never fetched yet shows nothing: load a small first page so the
+            // most recent sessions appear after one short round trip, then the rest of
+            // a normal page in a second request.
+            const splitFirstPage = !state.sessionsFetched
+
             // Reset pagination state if force
             if (force) {
                 state.oldestSessionMtime = null
                 state.hasMoreSessions = true
             }
 
-            state.sessionsLoading = true
-
-            try {
-                const data = await this._fetchSessionsPage(projectId)
-
-                // Merge sessions into store and track changes
+            // Merge a page into the store and track changes.
+            const mergePage = async (data) => {
                 for (const fresh of data.sessions) {
                     const local = this.sessions[fresh.id]
                     const wasItemsFetched = this.localState.sessions[fresh.id]?.itemsFetched
@@ -2699,9 +2708,7 @@ export const useDataStore = defineStore('data', {
                     this.updateSessionFromServer(fresh)
                 }
 
-                // Update pagination state
                 state.sessionsFetched = true
-                state.hasMoreSessions = data.has_more
 
                 // Cascade: when fetching a workspace scope, mark each member project
                 // as fetched too. Without this, the `areProjectSessionsFetched` guard
@@ -2728,17 +2735,48 @@ export const useDataStore = defineStore('data', {
                     }
                 }
 
-                // Update cursor (oldest mtime received)
-                if (data.sessions.length > 0) {
-                    const oldestReceived = Math.min(...data.sessions.map(s => s.mtime))
-                    state.oldestSessionMtime = oldestReceived
+                // Oldest mtime received, the cursor of the next page
+                return data.sessions.length > 0 ? Math.min(...data.sessions.map(s => s.mtime)) : null
+            }
+
+            state.sessionsLoading = true
+            let firstPageMerged = false
+
+            try {
+                let data = await this._fetchSessionsPage(projectId, {
+                    beforeMtime: state.oldestSessionMtime,
+                    limit: splitFirstPage ? FIRST_SESSIONS_PAGE_SIZE : null,
+                })
+                let cursor = (await mergePage(data)) ?? state.oldestSessionMtime
+                firstPageMerged = true
+
+                // The cursor and has-more flag are published once the whole first page
+                // is merged: while they keep their previous values, the session lists
+                // apply no cursor bound, so sessions already in the store stay visible
+                // during the second request.
+                if (splitFirstPage && data.has_more) {
+                    try {
+                        data = await this._fetchSessionsPage(projectId, { beforeMtime: cursor })
+                    } catch (error) {
+                        // Keep the small page: the next loadSessions resumes after it.
+                        state.oldestSessionMtime = cursor
+                        state.hasMoreSessions = true
+                        throw error
+                    }
+                    cursor = (await mergePage(data)) ?? cursor
                 }
+
+                // Update pagination state
+                state.hasMoreSessions = data.has_more
+                state.oldestSessionMtime = cursor
 
                 state.sessionsLoadingError = false
                 return changedIds
             } catch (error) {
                 console.error('Failed to load sessions:', error)
-                if (isInitialLoading) {
+                // A failed second request leaves the small page on screen: it is not
+                // a failed initial load.
+                if (isInitialLoading && !firstPageMerged) {
                     state.sessionsLoadingError = true
                 }
                 throw error  // Re-throw for reconciliation retry logic

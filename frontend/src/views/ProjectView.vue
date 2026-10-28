@@ -814,10 +814,13 @@ function openAdvancedSearch() {
 // set (pinned / unread / running-process sessions across every project) so
 // newly activated sessions in other projects surface in the sidebar without
 // waiting for a page reload — the initial App.vue load only fires once at
-// auth, so it may have raced or missed HMR updates.
-watch(effectiveProjectId, async (newProjectId) => {
+// auth, so it may have raced or missed HMR updates. The sticky load does not
+// wait for the sessions load: a first load runs a second request after the
+// first small page, and the sticky set does not depend on it.
+watch(effectiveProjectId, (newProjectId) => {
     if (newProjectId) {
-        await store.loadSessions(newProjectId, { isInitialLoading: true })
+        // Failures are logged and exposed by the store's loading-error state.
+        store.loadSessions(newProjectId, { isInitialLoading: true }).catch(() => {})
     }
     store.loadStickySessions()
 }, { immediate: true })

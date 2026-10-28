@@ -81,12 +81,14 @@ async def _get_sessions_page(
     pinned_only: bool = False,
     unread_only: bool = False,
     active_session_ids: list[str] | None = None,
+    limit: int = SESSIONS_PAGE_SIZE,
 ) -> dict:
     """Get a page of sessions with pagination support.
 
     Args:
         project_id: Project ID to filter by, or None for all projects.
         before_mtime: Cursor for pagination - only return sessions with mtime < this value.
+        limit: Page size, 1..SESSIONS_PAGE_SIZE (the caller validates it).
         project_id_list: List of project IDs to filter by (used when project_id is None).
         pinned_only: If True, include pinned sessions (any pin mode) in the union.
         unread_only: If True, include sessions with unread content — not muted,
@@ -142,16 +144,39 @@ async def _get_sessions_page(
 
     # Fetch one extra to detect if there are more
     sessions = await sync_to_async(list)(
-        sessions.order_by("-mtime")[: SESSIONS_PAGE_SIZE + 1]
+        sessions.order_by("-mtime")[: limit + 1]
     )
 
-    has_more = len(sessions) > SESSIONS_PAGE_SIZE
-    sessions = sessions[:SESSIONS_PAGE_SIZE]
+    has_more = len(sessions) > limit
+    sessions = sessions[:limit]
 
     return {
         "sessions": [serialize_session(s) for s in sessions],
         "has_more": has_more,
     }
+
+
+def _parse_sessions_limit(request) -> int | None:
+    """Read the optional ``limit`` query param of the session list endpoints.
+
+    Returns SESSIONS_PAGE_SIZE when absent, the value when it is an integer in
+    1..SESSIONS_PAGE_SIZE, and None when it is invalid (the caller answers 400).
+    """
+    raw = request.GET.get("limit")
+    if raw is None:
+        return SESSIONS_PAGE_SIZE
+    try:
+        limit = int(raw)
+    except ValueError:
+        return None
+    return limit if 1 <= limit <= SESSIONS_PAGE_SIZE else None
+
+
+def _invalid_sessions_limit_response() -> JsonResponse:
+    return JsonResponse(
+        {"error": f"Invalid 'limit' parameter: must be an integer between 1 and {SESSIONS_PAGE_SIZE}"},
+        status=400,
+    )
 
 
 async def all_sessions(request):
@@ -161,6 +186,7 @@ async def all_sessions(request):
 
     Query params (optional):
         before_mtime: Cursor for pagination - only return sessions older than this mtime.
+        limit: Page size, 1..SESSIONS_PAGE_SIZE (default SESSIONS_PAGE_SIZE); anything else: 400.
         project_ids: Comma-separated list of project IDs to filter by.
         pinned: When "1"/"true", include pinned sessions (any pin mode) in the result.
         unread: When "1"/"true", include sessions with unread content in the
@@ -173,6 +199,9 @@ async def all_sessions(request):
     (a single-project sidebar only loads its own project's sessions). When no such
     flag is set, the endpoint returns a regular paginated list.
     """
+    limit = _parse_sessions_limit(request)
+    if limit is None:
+        return _invalid_sessions_limit_response()
     before_mtime = request.GET.get("before_mtime")
     project_ids_param = request.GET.get("project_ids")
     project_id_list = project_ids_param.split(",") if project_ids_param else None
@@ -192,6 +221,7 @@ async def all_sessions(request):
         pinned_only=pinned_only,
         unread_only=unread_only,
         active_session_ids=active_session_ids,
+        limit=limit,
     ))
 
 
@@ -1003,7 +1033,11 @@ async def project_sessions(request, project_id):
 
     Query params (optional):
         before_mtime: Cursor for pagination - only return sessions older than this mtime.
+        limit: Page size, 1..SESSIONS_PAGE_SIZE (default SESSIONS_PAGE_SIZE); anything else: 400.
     """
+    limit = _parse_sessions_limit(request)
+    if limit is None:
+        return _invalid_sessions_limit_response()
     if not await Project.objects.filter(id=project_id).aexists():
         raise Http404("Project not found")
 
@@ -1017,7 +1051,7 @@ async def project_sessions(request, project_id):
     scope_ids = [project_id, *worktree_ids]
 
     before_mtime = request.GET.get("before_mtime")
-    result = await _get_sessions_page(None, before_mtime, project_id_list=scope_ids)
+    result = await _get_sessions_page(None, before_mtime, project_id_list=scope_ids, limit=limit)
     result["scope_project_ids"] = scope_ids
     return JsonResponse(result)
 

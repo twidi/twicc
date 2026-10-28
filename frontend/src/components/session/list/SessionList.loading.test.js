@@ -11,7 +11,7 @@ import { jsonValuesEqual } from '../../../utils/jsonValuesEqual.js'
 const storeSource = readFileSync(new URL('../../../stores/data.js', import.meta.url), 'utf8')
 const storeStart = storeSource.indexOf('        async loadSessions(')
 const storeEnd = storeSource.indexOf('        /**\n         * Load all "sticky"', storeStart)
-const createStoreActions = new Function('sessionsLoadInFlight', 'syncBaseline', 'isWorkspaceProjectId',
+const createStoreActions = new Function('sessionsLoadInFlight', 'syncBaseline', 'isWorkspaceProjectId', 'FIRST_SESSIONS_PAGE_SIZE',
     `return { ${storeSource.slice(storeStart, storeEnd)} }`)
 const updateStart = storeSource.indexOf('        updateSession(session)')
 const updateEnd = storeSource.indexOf('        /**', updateStart)
@@ -53,7 +53,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
             const request = deferred(); requests.push(request)
             return request.promise
         },
-        ...createStoreActions(new Map(), { sessionMtime: (_, local) => local }, id => id.startsWith('workspace:')),
+        ...createStoreActions(new Map(), { sessionMtime: (_, local) => local }, id => id.startsWith('workspace:'), 30),
 
     }
     const noMotion = { itemClass() {}, itemStyle() {}, noteLive() {}, dropLive() {}, hold() {}, release() {}, clear() {} }
