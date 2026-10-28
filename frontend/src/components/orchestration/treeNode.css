@@ -125,7 +125,16 @@
     color: var(--wa-color-text-quiet);
 }
 
-.orch-current-tag {
+/* The "current" and "detached" tags travel together: inline on a wide pane, on their own line when narrow. */
+.orch-tags {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.orch-current-tag,
+.orch-detached-tag {
     flex-shrink: 0;
     align-self: center;
     white-space: nowrap;
@@ -138,6 +147,30 @@
     letter-spacing: 0.05em;
     line-height: 1.4;
     color: var(--wa-color-brand-on-quiet);
+}
+
+/* Neutral variant: informative, not a state of the viewer. */
+.orch-detached-tag {
+    border-color: var(--wa-color-neutral-border-quiet);
+    color: var(--wa-color-text-quiet);
+}
+
+/* Narrow pane (same container and breakpoint as the panel's stacked layout in OrchestrationPanel.vue): the
+   tags drop to their own full-width line below the title. Room is kept on the first line for the icons. */
+@container orch (max-width: 480px) {
+    .ocard-title {
+        flex-wrap: wrap;
+    }
+
+    .ocard-title-text {
+        flex: 0 1 auto;
+        max-width: calc(100% - 3.5rem);
+    }
+
+    .orch-tags {
+        flex-basis: 100%;
+        flex-wrap: wrap;
+    }
 }
 
 .orch-status-icon {

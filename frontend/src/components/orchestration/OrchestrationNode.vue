@@ -49,6 +49,11 @@ const PROCESS_STATUS = {
 const nodeData = visibleComputed(() => nodesById.value[props.node.id] ?? null)
 const isCurrent = visibleComputed(() => props.node.id === props.currentSessionId)
 const isHidden = visibleComputed(() => nodeData.value?.session?.hidden === true)
+// ``tree_detached`` is inert without a parent: only a spawned session can be a detached root in the sidebar tree.
+const isDetached = visibleComputed(() => {
+    const session = nodeData.value?.session
+    return session?.tree_detached === true && !!session.spawned_by
+})
 
 // Preserve the current frame (all-projects vs single-project prefix + project filter + workspace).
 const sessionRoute = visibleComputed(() => sessionRouteLocation(
@@ -204,7 +209,14 @@ const expanded = ref(true)
                         class="orch-status-icon"
                         :class="status.pulse === 'work' ? 'robot-working' : (status.pulse ? `orch-status-icon--pulse-${status.pulse}` : null)"
                     ></wa-icon>
-                    <span v-if="isCurrent" class="orch-current-tag">current</span>
+                    <span v-if="isCurrent || isDetached" class="orch-tags">
+                        <span v-if="isCurrent" class="orch-current-tag">current</span>
+                        <span
+                            v-if="isDetached"
+                            class="orch-detached-tag"
+                            title="Shown as a separate root in the sidebar tree. The session is still part of this orchestration."
+                        >detached</span>
+                    </span>
                 </span>
                 <button
                     v-if="hasChildren"
