@@ -60,7 +60,6 @@ function countReads(record, field) {
 
 const total = (counters) => counters.reduce((sum, counter) => sum + counter.reads, 0)
 
-/** Mount SessionList on `state` in the scope `projectId`. */
 // The animation-frame stubs of a test: the originals are saved at its first
 // mount and restored after its last unmount, so the globals end exactly as they
 // started even with several mounts per test (`t.after` runs its hooks in FIFO order).
@@ -92,6 +91,7 @@ function releaseAnimationFrames(t) {
     }
 }
 
+/** Mount SessionList on `state` in the scope `projectId`. */
 function mountList(t, state, projectId) {
     const { data, workspaces } = createShippedData(state)
     // The data facade plus the list's own store needs. A load never settles: these tests do not paginate.

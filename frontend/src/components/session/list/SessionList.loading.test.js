@@ -19,13 +19,34 @@ const updateStart = storeSource.indexOf('        updateSession(session)')
 const updateEnd = storeSource.indexOf('        /**', updateStart)
 const updateActions = new Function('getSessionCutoffMs', 'markAgentIdle', 'jsonValuesEqual',
     `return { ${storeSource.slice(updateStart, updateEnd)} }`)(getSessionCutoffMs, () => {}, jsonValuesEqual)
+// The animation-frame globals of a test: the originals are saved at its first
+// mount and restored after its last unmount, so the globals end exactly as they
+// started even with several mounts per test (`t.after` runs its hooks in FIFO order).
+const ANIMATION_FRAME_GLOBALS = ['requestAnimationFrame', 'cancelAnimationFrame']
+const animationFrameMounts = new WeakMap()
+function holdAnimationFrames(t) {
+    const held = animationFrameMounts.get(t)
+    if (held) held.mounts += 1
+    else animationFrameMounts.set(t, { mounts: 1, saved: ANIMATION_FRAME_GLOBALS.map(name => [name in globalThis, globalThis[name]]) })
+}
+function releaseAnimationFrames(t) {
+    const held = animationFrameMounts.get(t)
+    held.mounts -= 1
+    if (held.mounts > 0) return
+    animationFrameMounts.delete(t)
+    for (const [index, name] of ANIMATION_FRAME_GLOBALS.entries()) {
+        const [present, value] = held.saved[index]
+        if (present) globalThis[name] = value
+        else delete globalThis[name]
+    }
+}
 function mount(t, { initialLoading = false, height = 140, more = true, initialSessions = {} } = {}) {
     const { renderer, root } = makeRenderer(height)
     const props = Vue.reactive({ projectId: 'p', searchQuery: 'match' })
     const active = Vue.ref(true), calls = [], requests = []
     const state = Vue.reactive({ sessionsLoading: false, sessionsFetched: true, hasMoreSessions: more, oldestSessionMtime: 100 })
     const sessions = Vue.reactive(initialSessions)
-    const savedRAF = [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame]
+    holdAnimationFrames(t)
     const pendingRAF = new Map(), scrollerInputs = [], scrollerAPIs = [], updates = []
     let nextRAF = 0
     globalThis.requestAnimationFrame = callback => { pendingRAF.set(++nextRAF, callback); return nextRAF }
@@ -92,10 +113,7 @@ function mount(t, { initialLoading = false, height = 140, more = true, initialSe
     const app = renderer.createApp({ setup: () => () => Vue.h(Vue.KeepAlive, () => active.value ? Vue.h(component, props) : null) })
     app.mount(root); t.after(() => {
         app.unmount()
-        for (const [index, name] of ['requestAnimationFrame', 'cancelAnimationFrame'].entries()) {
-            if (savedRAF[index] === undefined) delete globalThis[name]
-            else globalThis[name] = savedRAF[index]
-        }
+        releaseAnimationFrames(t)
     })
     async function finish({ cursor = state.oldestSessionMtime, id, title = 'other', more = true, fail = false } = {}) {
         const request = requests.at(-1)
