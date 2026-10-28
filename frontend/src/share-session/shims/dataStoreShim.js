@@ -291,19 +291,31 @@ export const useDataStore = defineStore('shareData', {
             }
             if (settings.areMessageTimestampsShown) markLiveTimestampAnchor(vis)
             const render = settings.areMessageTimestampsShown ? insertDaySeparators(vis) : vis
-            const cache = this._cache[sessionId] || new Map()
+            // Like the SPA store: compare on the raw cache (a proxy read per key of every row
+            // is most of a recompute's cost), but write a cached row's parsed content through
+            // its reactive proxy, and only when it changed, so a rendered row still re-renders.
+            const cacheProxy = this._cache[sessionId]
+            const cache = toRaw(cacheProxy) || new Map()
             const next = new Map()
             const stable = render.map((vi) => {
                 const cached = cache.get(vi.lineNum)
                 if (visualItemEqual(cached, vi)) {
-                    const p = getParsedContent(vi); if (p !== null) setParsedContent(cached, p)
+                    // The working row's content never changes here (no label, no tools), but
+                    // each recompute rebuilds it: keep the cached one, as the SPA store does.
+                    const unchangedWorking = vi.syntheticKind === SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind
+                        && getParsedContent(cached) !== null
+                    const p = getParsedContent(vi)
+                    if (!unchangedWorking && p !== null && getParsedContent(cached) !== p) setParsedContent(cacheProxy.get(vi.lineNum), p)
                     next.set(vi.lineNum, cached); return cached
                 }
                 const p = getParsedContent(vi); if (p !== null) setParsedContent(vi, p)
                 next.set(vi.lineNum, vi); return vi
             })
             this._cache[sessionId] = next
-            this.visualItems[sessionId] = stable
+            const previous = toRaw(this.visualItems[sessionId])
+            if (!previous || previous.length !== stable.length || stable.some((row, index) => row !== previous[index])) {
+                this.visualItems[sessionId] = stable
+            }
         },
 
         // ── Toggles / detail state (persist within the tab session) ──────

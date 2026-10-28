@@ -77,3 +77,44 @@ test('the live socket hands updated_metadata to its items callback', () => {
         globalThis.location = previousLocation
     }
 })
+
+test('a re-parsed row reaches the render through the stabilized row', async () => {
+    const store = makeStore()
+    store.addSessionItems('s', [message(1)])
+    const row = () => store.getSessionVisualItems('s')[0]
+    const first = row()
+    const seen = []
+    Vue.watch(Vue.computed(() => parsed.getParsedContent(row())), value => seen.push(value))
+    // Same content, parsed again (a content reload): the row is reused, its parsed content renews.
+    parsed.clearParsedContent(store.getSessionItem('s', 1))
+    store.recomputeVisualItems('s')
+    await Vue.nextTick()
+    assert.equal(Vue.toRaw(row()), Vue.toRaw(first), 'the row object is reused')
+    assert.equal(seen.length, 1, 'its new parsed content reaches the render')
+})
+
+test('a recompute with nothing changed keeps the same visual list', async () => {
+    const store = makeStore()
+    store.addSessionItems('s', [message(1)])
+    const seen = []
+    Vue.watch(() => store.visualItems.s, list => seen.push(list.length))
+    store.recomputeVisualItems('s')
+    await Vue.nextTick()
+    assert.deepEqual(seen, [], 'an identical list is not replaced')
+    store.addSessionItems('s', [tool(2, 1)], [{ ...message(1), content: undefined, group_tail: 2 }])
+    await Vue.nextTick()
+    assert.deepEqual(seen, [1], 'a changed list is')
+})
+
+test('a live batch does not re-render the unchanged working row', async () => {
+    const store = makeStore()
+    store.addSessionItems('s', [message(1)])
+    store.setLiveAssistantTurn('s', true)
+    const working = () => store.getSessionVisualItems('s').find(row => row.syntheticKind === constants.SYNTHETIC_ITEM.WORKING_ASSISTANT_MESSAGE.kind)
+    assert.ok(working(), 'the working row is shown during the turn')
+    const seen = []
+    Vue.watch(Vue.computed(() => parsed.getParsedContent(working())), value => seen.push(value))
+    store.addSessionItems('s', [tool(2, 2)])
+    await Vue.nextTick()
+    assert.deepEqual(seen, [], 'its content object is kept')
+})
