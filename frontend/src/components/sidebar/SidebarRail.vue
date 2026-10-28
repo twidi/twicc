@@ -39,6 +39,7 @@ const route = useRoute()
 const router = useRouter()
 const currentSessionId = computed(() => props.mode === 'sessions' ? route.params.sessionId || null : null)
 const treeExpansion = useSessionTreeExpansionStore()
+const RAIL_PREVIEW_MAX_DESCENDANTS = 5
 const isTreeMode = computed(() => settingsStore.isShowSessionsAsTree)
 // Tree mode (spec §14): the user's explicit collapse is the only collapsed state; the rail never writes it.
 const { rows, treeCandidates } = useRailActiveSessions(store, () => currentSessionId.value, {
@@ -238,6 +239,26 @@ function activate(item) {
                                 :compact-view="false" :show-project-name="true" :show-title-tooltip="false"
                                 @select="openSession"
                             />
+                            <template v-if="row.activeDescendants?.length">
+                                <wa-divider class="rail-preview-divider" />
+                                <button
+                                    v-for="child in row.activeDescendants.slice(0, RAIL_PREVIEW_MAX_DESCENDANTS)" :key="child.session.id"
+                                    type="button" class="rail-preview-child" @click="openSession(child.session)"
+                                >
+                                    <span class="rail-preview-child-title">{{ child.session.title || child.session.id }}</span>
+                                    <wa-icon v-if="child.hasUnread" name="eye" class="rail-unread" />
+                                    <wa-icon v-else-if="child.pendingRequest" name="hand" class="rail-pending" />
+                                    <ProcessIndicator
+                                        v-else-if="child.processState" :state="child.processState.state" size="small"
+                                        :has-active-crons="child.hasActiveCrons"
+                                        :background-shells="child.userTurnBackgroundShells"
+                                        :animate-states="['assistant_turn']"
+                                    />
+                                </button>
+                                <div v-if="row.activeDescendants.length > RAIL_PREVIEW_MAX_DESCENDANTS" class="rail-preview-more">
+                                    +{{ row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS }} more
+                                </div>
+                            </template>
                         </div>
                     </AppTooltip>
                 </div>
@@ -478,6 +499,48 @@ function activate(item) {
     white-space: normal;
     container-type: inline-size;
     container-name: session-list;
+}
+
+.rail-preview-divider {
+    --color: var(--sidebar-divider-color, var(--wa-color-surface-border));
+    margin-block: var(--wa-space-xs);
+}
+
+.rail-preview-child {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-s);
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    border: 0;
+    border-radius: var(--wa-form-control-border-radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: var(--wa-font-size-s);
+    text-align: start;
+    cursor: pointer;
+}
+
+.rail-preview-child:hover, .rail-preview-child:focus-visible {
+    background: var(--rail-button-fill-hover);
+}
+
+.rail-preview-child-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rail-preview-child > wa-icon { font-size: 0.75rem; }
+
+.rail-preview-more {
+    padding: var(--wa-space-2xs) var(--wa-space-s);
+    font-size: var(--wa-font-size-s);
+    color: var(--wa-color-text-quiet);
 }
 
 .rail-session-preview :deep(.session-item-wrapper) {

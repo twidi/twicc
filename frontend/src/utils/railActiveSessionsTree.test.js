@@ -178,3 +178,26 @@ test('showMarkDot: same project as the nearest ancestor with a button', () => {
     const sessions2 = { ...sessions, viaIdle: s('viaIdle', 1, { spawned_by: 'idle' }) }
     assert.equal(dots(select({ sessions: sessions2, processStates })).viaIdle, true)
 })
+
+test('collapsed row: activeDescendants lists active descendants in tree order, any depth, idle excluded', () => {
+    const sessions = {
+        top: s('top', 1), a: s('a', 1, { spawned_by: 'top' }), a1: s('a1', 1, { spawned_by: 'a' }),
+        idle: s('idle', 1, { spawned_by: 'top' }), b: s('b', 1, { spawned_by: 'top' }),
+        hid: s('hid', 1, { spawned_by: 'top', hidden: true }),
+    }
+    const processStates = {
+        top: proc(1), a: proc(2), a1: proc(3, { pending_requests: [{}] }), b: proc(4), hid: proc(5),
+    }
+    const row = select({ sessions, processStates, collapsed: ['top'] }).find(r => r.session.id === 'top')
+    assert.deepEqual(row.activeDescendants.map(e => e.session.id), ['b', 'a', 'a1'])
+    assert.equal(row.activeDescendants[2].pendingRequest, true)
+    assert.equal(row.activeDescendants[1].processState, processStates.a)
+})
+
+test('collapsed row without active descendant has an empty list; expanded rows carry none', () => {
+    const sessions = { top: s('top', 1), idle: s('idle', 1, { spawned_by: 'top' }) }
+    const processStates = { top: proc(1) }
+    const rows = select({ sessions, processStates, collapsed: ['top'] })
+    assert.deepEqual(rows[0].activeDescendants, [])
+    assert.equal('activeDescendants' in select({ sessions, processStates })[0], false)
+})

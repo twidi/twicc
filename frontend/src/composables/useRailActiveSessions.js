@@ -16,9 +16,16 @@ const ACTIVITY_KEYS = ['processCount', 'pendingRequestCount', 'hasAssistantTurn'
 const sameActivity = (a, b) => !!a && !!b && ACTIVITY_KEYS.every(key => a[key] === b[key])
 const NO_CANDIDATES = []
 
+function sameEntries(a, b) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+        && a.every((entry, i) => Object.keys(entry).length === Object.keys(b[i]).length
+            && Object.keys(b[i]).every(key => entry[key] === b[i][key]))
+}
+
 function sameRow(a, b) {
     if (Object.keys(a).length !== Object.keys(b).length) return false
     return Object.keys(b).every(key => a[key] === b[key]
+        || (key === 'activeDescendants' && sameEntries(a.activeDescendants, b.activeDescendants))
         || (key === 'cumulative' && sameActivity(a.cumulative, b.cumulative))
         || (key === 'session' && a.metadataStatus !== 'loaded' && b.metadataStatus !== 'loaded'
             && Object.keys(a.session).length === Object.keys(b.session).length

@@ -3,6 +3,8 @@
  * Pure: no Vue or Pinia import, explicit `.js` imports (loads under `node --test`).
  */
 
+import { activeCronCount, userTurnBackgroundShellCount } from './backgroundWork.js'
+import { processActivityDisplayMode } from './processActivity.js'
 import { isSessionUnread } from './sessions.js'
 import { buildSessionTree, flattenTree, isBlocking, isParticipant, treeActivity } from './sessionTree.js'
 
@@ -36,7 +38,9 @@ export function sameChildrenIndex(a, b) {
  * and the descendants of every collapsed candidate. Ordinary rows are the flat
  * rows plus `groupId` (the root node id of their tree) and `showMarkDot`
  * (same project as the nearest ancestor with a button). A collapsed node with loaded children becomes one row
- * `{ session, groupId, cumulative }` carrying the cumulative summary of the node and its
+ * `{ session, groupId, activeDescendants, cumulative }` (`activeDescendants`: tree-ordered entries
+ * `{ session, processState, hasUnread, pendingRequest, ... }` of the descendants that contribute to the
+ * cumulative indicator) carrying the cumulative summary of the node and its
  * descendants (no `processState`: the node may be idle).
  *
  * @param {Object[]} flatRows - result of selectRailActiveSessions
@@ -88,6 +92,30 @@ export function selectRailTreeRows(flatRows, {
         while (node.parentId) node = tree.nodes.get(node.parentId)
         return node.id
     }
+    // Active descendants of a collapsed node, tree order (pre-order). "Active" = contributes
+    // to the cumulative indicator (same function, same exclusions, the viewed session is never unread).
+    const activityOpts = { processStates, sessions: lookup, viewedId, isUnread }
+    const activeDescendants = id => {
+        const found = []
+        const visit = parentId => {
+            for (const childId of tree.nodes.get(parentId).childIds) {
+                const child = tree.nodes.get(childId)
+                const processState = processStates[childId]
+                const unread = isUnread(child.session, processState) && childId !== viewedId
+                if (processActivityDisplayMode(treeActivity([childId], activityOpts)) !== null) {
+                    found.push({
+                        session: child.session, processState, hasUnread: unread,
+                        pendingRequest: (processState?.pending_requests?.length || 0) > 0,
+                        userTurnBackgroundShells: processState ? userTurnBackgroundShellCount(processState) : 0,
+                        hasActiveCrons: processState ? activeCronCount(processState) > 0 : false,
+                    })
+                }
+                visit(childId)
+            }
+        }
+        visit(id)
+        return found
+    }
     const rows = []
     for (const { id } of flattenTree(tree, nodeId => !isCollapsed(nodeId))) {
         const node = tree.nodes.get(id)
@@ -95,6 +123,7 @@ export function selectRailTreeRows(flatRows, {
             rows.push({
                 session: node.session,
                 groupId: rootOf(id),
+                activeDescendants: activeDescendants(id),
                 cumulative: treeActivity([id, ...node.descendantIds], {
                     processStates, sessions: lookup, viewedId, isUnread,
                 }),
