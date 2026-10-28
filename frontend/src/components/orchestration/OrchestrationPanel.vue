@@ -455,6 +455,7 @@ onUnmounted(() => {
                         {{ view === 'agents' ? 'Subagents' : 'Sessions' }}
                     </span>
                     <wa-button
+                        class="orch-refresh"
                         size="small"
                         appearance="plain"
                         title="Refresh"
@@ -463,7 +464,7 @@ onUnmounted(() => {
                         @click="refresh()"
                     >
                         <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
-                        <span class="orch-refresh-label">Refresh</span>
+                        Refresh
                     </wa-button>
                 </div>
                 <OrchestrationSummary v-if="summary" v-bind="summary" :show-costs="showCosts" />
@@ -615,8 +616,13 @@ onUnmounted(() => {
 .orch-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    flex-wrap: wrap;
     gap: var(--wa-space-s);
+}
+
+/* Stays on the right, also when it wraps under the switch on a narrow pane. */
+.orch-refresh {
+    margin-inline-start: auto;
 }
 
 .orch-view-switch {
@@ -772,24 +778,8 @@ a.orch-parent-link:hover {
     opacity: 0 !important;
 }
 
-/* Narrow pane: the switch and Refresh go icon-only (labels stay for assistive tech), and the header is no
-   longer fixed — it scrolls away with the body, so a short pane keeps room for the cards. */
-@container orch (max-width: 420px) {
-    .orch-view-switch :deep(.segmented-icon) {
-        margin-inline-end: 0;
-    }
-
-    .orch-view-switch :deep(.segmented-label),
-    .orch-refresh-label {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-    }
-}
-
+/* Narrow pane: the header is no longer fixed — it scrolls away with the body, so a short pane keeps room for
+   the cards. */
 @container orch (max-width: 480px) {
     .orch-frame {
         display: block;
