@@ -105,6 +105,15 @@ export function flattenTree(node) {
     return [node, ...(node.children ?? []).flatMap(flattenTree)]
 }
 
+/**
+ * Copy of ``node`` ({ id, children, ... }) keeping only the nodes ``keep(node)`` accepts and their ancestors;
+ * ``null`` when nothing in the subtree qualifies.
+ */
+export function pruneTree(node, keep) {
+    const children = (node.children ?? []).map(child => pruneTree(child, keep)).filter(Boolean)
+    return keep(node) || children.length ? { ...node, children } : null
+}
+
 /** The topology node of the session that spawned ``sessionId``; null when none or not in the payload. */
 export function parentOf(nodesById, sessionId) {
     const parentId = nodesById[sessionId]?.session?.spawned_by

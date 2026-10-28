@@ -27,7 +27,7 @@ import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
 import { agentForestCost } from '../../utils/agentTreeMetrics'
 import {
-    bucketOfProcessState, computeTimeline, computeTreeGeometry, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf,
+    bucketOfProcessState, computeTimeline, computeTreeGeometry, cumulativeSeconds, countBuckets, findSubtree, flattenTree, isoMs, parentOf, pruneTree,
     reuseUnchangedMap, reuseUnchangedNodes, reuseUnchangedTree,
 } from '../../utils/orchestrationView'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
@@ -66,6 +66,9 @@ const view = visibleComputed(() => {
     if (canSwitchView.value) return selectedView.value
     return props.hasSpawnTree ? 'sessions' : 'agents'
 }, props.hasSpawnTree ? 'sessions' : 'agents')
+// "Show inactive" switch (local, checked on every opening). Unchecked: only the live sessions / running
+// subagents remain, plus their ancestors. Counts, costs and bars keep covering the whole tree.
+const showInactive = ref(true)
 const sessionsActive = computed(() => panelActive.value && view.value === 'sessions')
 const agentsActive = computed(() => panelActive.value && view.value === 'agents')
 const sessionComputed = useVisibleComputed(sessionsActive)
@@ -130,6 +133,12 @@ const subtree = sessionComputed(() => {
     const tree = topology.value?.tree
     return tree && nodesById.value[props.sessionId] ? findSubtree(tree, props.sessionId) : null
 }, null)
+// The tree the cards render: the current session is always kept, as the root.
+const shownSubtree = sessionComputed(() => {
+    if (!subtree.value || showInactive.value) return subtree.value
+    return pruneTree(subtree.value, n => n.id === props.sessionId || stateBucketOf(n.id) !== 'stopped')
+        ?? { ...subtree.value, children: [] }
+}, null)
 const currentNode = sessionComputed(() => nodesById.value[props.sessionId] ?? null, null)
 const sessionNodes = sessionComputed(() => (subtree.value ? flattenTree(subtree.value) : []), [])
 const stateBucketOf = (id) => bucketOfProcessState(nodesById.value[id]?.process?.state ?? 'dead')
@@ -157,6 +166,10 @@ const showHiddenNote = sessionComputed(() => parentHidden.value
     || sessionNodes.value.some(n => nodesById.value[n.id]?.session?.hidden === true))
 
 // ── Agents view ─────────────────────────────────────────────────────────────
+const shownAgentTree = agentComputed(() => {
+    if (showInactive.value) return agentTree.value
+    return agentTree.value.map(node => pruneTree(node, n => agentIsRunning(n.id))).filter(Boolean)
+}, [])
 const agentNodes = agentComputed(() => agentTree.value.flatMap(flattenTree), [])
 const agentIsRunning = (id) => !!store.getProcessState(id)
 const agentCounts = agentComputed(() => countBuckets(agentNodes.value.map(n => (agentIsRunning(n.id) ? 'working' : 'stopped'))))
@@ -454,8 +467,13 @@ onUnmounted(() => {
                         <wa-icon :name="view === 'agents' ? 'robot' : 'diagram-project'"></wa-icon>
                         {{ view === 'agents' ? 'Subagents' : 'Sessions' }}
                     </span>
+                    <wa-switch
+                        class="orch-inactive-switch"
+                        size="small"
+                        :checked="showInactive"
+                        @change="showInactive = $event.target.checked"
+                    >Show inactive</wa-switch>
                     <wa-button
-                        class="orch-refresh"
                         size="small"
                         appearance="plain"
                         title="Refresh"
@@ -500,12 +518,16 @@ onUnmounted(() => {
                     </div>
                     <div v-else-if="agentNodes.length" ref="agentsTreeEl" class="orch-tree">
                         <AgentTreeNode
-                            v-for="node in agentTree"
+                            v-for="node in shownAgentTree"
                             :key="node.id"
                             :node="node"
                             :session-id="sessionId"
                             :project-id="projectId"
                         />
+                        <div v-if="!shownAgentTree.length" class="orch-empty-line">
+                            <wa-icon name="robot"></wa-icon>
+                            No running subagent.
+                        </div>
                     </div>
                     <div v-else class="orch-state orch-state-empty">
                         <wa-icon name="robot"></wa-icon>
@@ -539,13 +561,17 @@ onUnmounted(() => {
                             </div>
                             <div ref="sessionsTreeEl" class="orch-tree">
                                 <OrchestrationNode
-                                    :node="subtree"
+                                    :node="shownSubtree"
                                     :current-session-id="sessionId"
                                 />
                             </div>
                             <div v-if="!subtree.children.length" class="orch-empty-line">
                                 <wa-icon name="diagram-project"></wa-icon>
                                 This session has not spawned any session.
+                            </div>
+                            <div v-else-if="!shownSubtree.children.length" class="orch-empty-line">
+                                <wa-icon name="diagram-project"></wa-icon>
+                                No live spawned session.
                             </div>
                         </template>
                         <div v-else-if="topology" class="orch-state orch-state-empty">
@@ -618,11 +644,18 @@ onUnmounted(() => {
     align-items: center;
     flex-wrap: wrap;
     gap: var(--wa-space-s);
+    /* The switch and Refresh sit on the right. The view switch (or the mode tag) takes the free space of its
+       own line, and every other line packs to the right, so each of them wraps alone and stays on the right. */
+    justify-content: flex-end;
 }
 
-/* Stays on the right, also when it wraps under the switch on a narrow pane. */
-.orch-refresh {
-    margin-inline-start: auto;
+.orch-view-switch,
+.orch-mode-tag {
+    margin-inline-end: auto;
+}
+
+.orch-inactive-switch {
+    white-space: nowrap;
 }
 
 .orch-view-switch {

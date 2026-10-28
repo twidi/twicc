@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import {
     agentModelLabel, annotationEntries, annotationValueText, bucketOfProcessState, buildAnnotationTree,
-    computeTimeline, computeTreeGeometry, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf,
+    computeTimeline, computeTreeGeometry, countBuckets, cumulativeSeconds, findSubtree, flattenAnnotations, flattenTree, isoMs, parentOf, pruneTree,
     lineIndices, nextFitCount, splitCommonPrefix, reuseUnchangedNodes, reuseUnchangedTree, reuseUnchangedMap,
 } from './orchestrationView.js'
 
@@ -41,6 +41,15 @@ test('findSubtree finds a node at any depth, null when absent or without a tree'
 
 test('flattenTree lists the node first, then its descendants, depth first', () => {
     assert.deepEqual(flattenTree(tree).map(n => n.id), ['root', 'a', 'a1', 'a2', 'b'])
+})
+
+test('pruneTree keeps the accepted nodes with their ancestors and drops the other branches', () => {
+    const chain = { id: 'A', children: [{ id: 'B', children: [{ id: 'C', children: [{ id: 'D', children: [] }] }] }] }
+    const pruned = pruneTree(chain, n => n.id === 'C')
+    assert.deepEqual(flattenTree(pruned).map(n => n.id), ['A', 'B', 'C'])
+    assert.equal(pruneTree(tree, () => false), null)
+    assert.deepEqual(flattenTree(pruneTree(tree, n => n.id === 'a2')).map(n => n.id), ['root', 'a', 'a2'])
+    assert.equal(chain.children[0].children[0].children.length, 1)
 })
 
 test('parentOf resolves the spawner, null when unknown, absent or missing from the payload', () => {
