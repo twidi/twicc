@@ -34,8 +34,8 @@ export function sameChildrenIndex(a, b) {
  *
  * The tree covers the rail-active sessions (`flatRows`), their ancestor chains
  * and the descendants of every collapsed candidate. Ordinary rows are the flat
- * row objects themselves. A collapsed node with loaded children becomes one row
- * `{ session, cumulative }` carrying the cumulative summary of the node and its
+ * rows plus `groupId` (the root node id of their tree). A collapsed node with loaded children becomes one row
+ * `{ session, groupId, cumulative }` carrying the cumulative summary of the node and its
  * descendants (no `processState`: the node may be idle).
  *
  * @param {Object[]} flatRows - result of selectRailActiveSessions
@@ -82,18 +82,24 @@ export function selectRailTreeRows(flatRows, {
     }
 
     const tree = buildSessionTree([...candidates.values()], { lookup, processStates, viewedId, isUnread })
+    const rootOf = id => {
+        let node = tree.nodes.get(id)
+        while (node.parentId) node = tree.nodes.get(node.parentId)
+        return node.id
+    }
     const rows = []
     for (const { id } of flattenTree(tree, nodeId => !isCollapsed(nodeId))) {
         const node = tree.nodes.get(id)
         if (node.childIds.length && isCollapsed(id)) {
             rows.push({
                 session: node.session,
+                groupId: rootOf(id),
                 cumulative: treeActivity([id, ...node.descendantIds], {
                     processStates, sessions: lookup, viewedId, isUnread,
                 }),
             })
         } else if (rowById.has(id)) {
-            rows.push(rowById.get(id))
+            rows.push({ ...rowById.get(id), groupId: rootOf(id) })
         }
     }
     return rows

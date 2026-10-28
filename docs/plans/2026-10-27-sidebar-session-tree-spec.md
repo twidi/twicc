@@ -122,7 +122,7 @@ The icon rail lists one button per session that has a live process, globally (no
 - **One button per collapsed node.** A collapsed node, and everything below it, shows as a single button: the node's own session, even when it has no live process itself. Its indicator is the **cumulative indicator** of §9: the node and every loaded descendant, same set and rules. Clicking the button opens the node's own session.
 - **Expanded nodes.** Each session with a live process keeps its own button and its own indicators, as today. An idle ancestor of such a session gets no button.
 - **Tooltip.** The button's tooltip is unchanged: the preview of the button's session. (Showing the subtree there is a possible later change.)
-- **No nesting cue.** Buttons are not indented or linked: only the order and the collapsed buttons change. The rail has too little room for more.
+- **Link cue.** Buttons are not indented. The buttons of one tree, when there are two or more, are chained by a short 1 px vertical segment centred on each button's project mark, in the separators' color, drawn between a mark and the next one (so a tree of three buttons has two segments, however many levels it spans). The segment is painted above the buttons, also above the open session's highlighted button, and never catches the pointer. A tree with a single button has none.
 - With the option off, the rail is unchanged.
 
 ## 13. Left to the builder

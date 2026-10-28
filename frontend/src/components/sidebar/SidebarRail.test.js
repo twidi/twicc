@@ -124,7 +124,7 @@ test('global active entries reuse the full isolated row and canonical navigation
     assert.match(source, /useRailActiveSessions\(store, \(\) => currentSessionId.value, \{/)
     assert.match(source, /props.mode === 'sessions' \? route.params.sessionId \|\| null : null/)
     assert.match(source, /router.push\(sessionRouteLocation\(session, route\)\)/)
-    assert.match(source, /v-for="row in rows" :key="row.session.id"/)
+    assert.match(source, /v-for="row in railRows" :key="row.session.id"/)
     assert.equal((source.match(/v-if="hasCentralContent"/g) ?? []).length, 2)
     assert.match(source, /force interactive hoist placement="right"/)
     assert.match(source, /id-prefix="rail-preview-" :show-menu="false" :selection-enabled="false"/)
@@ -154,4 +154,23 @@ test('tree mode: collapsed state is the read-only explicit false and a node row 
     assert.doesNotMatch(source, /treeExpansion\.(toggle|reveal|reconcile)|setExpanded/)
     assert.match(source, /<ProcessActivityIndicator\s+v-if="row.cumulative" :summary="row.cumulative" size="small" :tooltip="false"\s*\/>\s*<template v-else>[\s\S]*v-if="row.hasUnread"[\s\S]*row.processState.state[\s\S]*<\/template>/)
     assert.match(source, /:aria-pressed="row.session.id === currentSessionId"/)
+})
+
+test('tree mode: a short segment chains the project marks of one tree, drawn by the non-last rows', () => {
+    const source = read()
+    assert.match(source, /v-for="row in railRows" :key="row.session.id" class="rail-session"\s*:class="row.groupClass"/)
+    assert.match(source, /all\[index - 1\]\?\.groupId === group/)
+    assert.match(source, /'rail-session--grouped'/)
+    assert.match(source, /'rail-session--group-middle' : 'rail-session--group-last'\) : 'rail-session--group-first'/)
+    assert.doesNotMatch(source, /\.rail-spacer \{[^}]*margin-inline/)
+    assert.match(source, /\.rail-session--group-first::after,\s*\.rail-session--group-middle::after \{[^}]*z-index: 1;[^}]*width: 1px;[^}]*top: calc\(var\(--rail-button-size\) - var\(--rail-mark-free\) \+ var\(--rail-mark-clearance\)\);[^}]*height: calc\(2 \* var\(--rail-mark-free\) \+ var\(--rail-gap\) - 2 \* var\(--rail-mark-clearance\)\);[^}]*var\(--sidebar-divider-color, var\(--wa-color-surface-border\)\);[^}]*pointer-events: none;/)
+    assert.doesNotMatch(source, /group-last::(before|after)/)
+    assert.match(source, /--project-mark-icon-size: var\(--rail-mark-size\);/)
+})
+
+test('tree mode: .rail-session creates no stacking context that could hide the segment', () => {
+    const source = read()
+    const rule = source.match(/\.rail-session--grouped \{([^}]*)\}/)[1]
+    assert.doesNotMatch(rule, /z-index|isolation|overflow|transform|opacity|filter/)
+    assert.doesNotMatch(source, /\.rail-session \{[^}]*(z-index|isolation|overflow|transform|opacity|filter)/)
 })

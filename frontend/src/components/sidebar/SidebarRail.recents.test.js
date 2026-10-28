@@ -11,7 +11,7 @@ async function render(rows = [], recentProjects = [], recentWorkspaces = []) {
     const { descriptor } = parse(source)
     const compiled = compileTemplate({ source: descriptor.template.content, filename: 'SidebarRail.vue', id: 'rail', compilerOptions: { mode: 'function' } })
     const render = runInNewContext(`(function() { ${compiled.code} })()`, { Vue })
-    const ctx = { top: [], bottom: [], rows, recentProjects, recentWorkspaces,
+    const ctx = { top: [], bottom: [], rows, railRows: rows, recentProjects, recentWorkspaces,
         hasCentralContent: !!(rows.length || recentProjects.length || recentWorkspaces.length),
         currentSessionId: null, route: { name: 'project', params: { projectId: 'p' }, query: {} },
         store: { resolvedProjectIcons: {}, getProjectDisplayName: id => `Project ${id}` },

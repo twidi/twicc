@@ -47,6 +47,20 @@ const { rows, treeCandidates } = useRailActiveSessions(store, () => currentSessi
 })
 useSessionTreeAncestors(treeCandidates, isTreeMode)
 
+// Tree mode: consecutive rows of the same tree (groupId) get a linking line. Singles get none.
+const railRows = computed(() => rows.value.map((row, index, all) => {
+    const group = row.groupId
+    const linkedBefore = !!group && all[index - 1]?.groupId === group
+    const linkedAfter = !!group && all[index + 1]?.groupId === group
+    return {
+        ...row,
+        groupClass: linkedBefore || linkedAfter ? [
+            'rail-session--grouped',
+            linkedBefore ? (linkedAfter ? 'rail-session--group-middle' : 'rail-session--group-last') : 'rail-session--group-first',
+        ] : null,
+    }
+}))
+
 const hasCentralContent = computed(() => rows.value.length || recentProjects.value.length || recentWorkspaces.value.length)
 const navigateScope = createRailScopeNavigation(router)
 function scopeSelected(kind, id) {
@@ -169,7 +183,10 @@ function activate(item) {
             </template>
             <wa-divider v-if="hasCentralContent" class="rail-divider" />
             <div class="rail-spacer">
-                <div v-for="row in rows" :key="row.session.id" class="rail-session">
+                <div
+                    v-for="row in railRows" :key="row.session.id" class="rail-session"
+                    :class="row.groupClass"
+                >
                     <button
                         :id="`sidebar-rail-session-${row.session.id}`"
                         type="button" class="rail-button rail-session-button"
@@ -332,6 +349,34 @@ function activate(item) {
     margin-top: var(--rail-gap);
 }
 
+/* Tree mode: a short 1px segment chains the project marks of consecutive buttons of one tree.
+   Each non-last row draws the segment from just below its mark to just above the next row's mark,
+   so it crosses the row gap. .rail-session creates no stacking context, so z-index: 1 puts it above the buttons. It lies inside the button's horizontal extent, over the mark's centre. */
+.rail-session {
+    --rail-mark-size: 0.95rem;
+    --project-mark-icon-size: var(--rail-mark-size);
+    --rail-mark-free: calc((var(--rail-button-size) - var(--rail-mark-size)) / 2);
+    --rail-mark-clearance: 2px;
+}
+
+.rail-session--grouped {
+    position: relative;
+}
+
+.rail-session--group-first::after,
+.rail-session--group-middle::after {
+    content: '';
+    position: absolute;
+    /* Above the button's own background (pressed, hover, focus): ::after follows the button in paint order. */
+    z-index: 1;
+    inset-inline-start: calc(var(--rail-mark-size) / 2 - 0.5px);
+    width: 1px;
+    top: calc(var(--rail-button-size) - var(--rail-mark-free) + var(--rail-mark-clearance));
+    height: calc(2 * var(--rail-mark-free) + var(--rail-gap) - 2 * var(--rail-mark-clearance));
+    background: var(--sidebar-divider-color, var(--wa-color-surface-border));
+    pointer-events: none;
+}
+
 .rail-divider.rail-group-divider { margin-block: var(--rail-gap); }
 
 .rail-scope-button {
@@ -371,7 +416,6 @@ function activate(item) {
     justify-content: center;
     gap: 0.2rem;
     --project-mark-size: 0.55rem;
-    --project-mark-icon-size: 0.95rem;
 }
 
 .rail-session-button > wa-icon {

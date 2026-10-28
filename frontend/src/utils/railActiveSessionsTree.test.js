@@ -30,7 +30,21 @@ test('with no spawn links the rows equal the flat selection', () => {
     const flat = selectRailActiveSessions(processStates, sessions)
     const rows = select({ sessions, processStates })
     assert.deepEqual(ids(rows), ids(flat))
-    assert.deepEqual(rows, flat)
+    assert.deepEqual(rows, flat.map(row => ({ ...row, groupId: row.session.id })))
+})
+
+test('rows carry the root node id of their tree as groupId, collapsed rows included', () => {
+    const sessions = {
+        idleRoot: s('idleRoot', 1), kid: s('kid', 1, { spawned_by: 'idleRoot' }),
+        grand: s('grand', 1, { spawned_by: 'kid' }), solo: s('solo', 1),
+        top: s('top', 1), mid: s('mid', 1, { spawned_by: 'top' }), leaf: s('leaf', 1, { spawned_by: 'mid' }),
+    }
+    const processStates = { kid: proc(70), grand: proc(65), solo: proc(60), leaf: proc(10) }
+    const groups = rows => Object.fromEntries(rows.map(row => [row.session.id, row.groupId]))
+    assert.deepEqual(groups(select({ sessions, processStates })),
+        { kid: 'idleRoot', grand: 'idleRoot', solo: 'solo', leaf: 'top' })
+    assert.deepEqual(groups(select({ sessions, processStates, collapsed: ['kid', 'top'] })),
+        { kid: 'idleRoot', solo: 'solo', top: 'top' })
 })
 
 test('child follows its parent; roots follow the effective state', () => {
