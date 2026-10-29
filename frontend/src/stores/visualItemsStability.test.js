@@ -1,5 +1,6 @@
 import { normalizeChatTimestamp, placeSessionEvents } from '../utils/chatEvents/placement.js'
 import { projectEventSegments } from '../utils/chatEvents/segments.js'
+import { createVisualItemsViews } from '../utils/visualItemsViews.js'
 import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { orderCompactItems } from '../utils/chatEvents/placement.js'
@@ -30,7 +31,8 @@ function fixture({ working = false, items = [message(1)], sessions = {}, extraIt
     const deps = { placeSessionEvents, projectEventSegments, mergeSessionEventRows, insertEventDaySeparators, jsonValuesEqual, useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM,
         computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor, orderCompactItems,
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive,
-        isLaunchedEphemeral: () => false, toRaw, normalizeChatTimestamp, debugAppendSafeSessions: new Set() }
+        isLaunchedEphemeral: () => false, toRaw, normalizeChatTimestamp, debugAppendSafeSessions: new Set(),
+        visualItemsViews: createVisualItemsViews({ document: null }) }
     const actions = new Function(...Object.keys(deps), `${helperSource}\nreturn { ${actionSource}\n${toggleSource} }`)(...Object.values(deps))
     const store = defineStore(`visual-stability-${++id}`, {
         state: () => ({ sessions: { main: { id: 'main', provider: 'claude_code' }, ...sessions }, sessionItems: { main: items, ...extraItems },

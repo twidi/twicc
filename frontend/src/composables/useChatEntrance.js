@@ -119,6 +119,12 @@ export function useChatEntrance({ items, getKey, isRevealed, env = globalThis })
         pendingViewChange = true
     }
 
+    // Take the current rows as the baseline, none entering: rows the store kept back while
+    // the list was off screen (see registerVisualItemsView) arrived then, not now.
+    function resetBaseline() {
+        run(true)
+    }
+
     function clear() {
         for (const id of timers.values()) env.clearTimeout(id)
         timers.clear()
@@ -127,5 +133,5 @@ export function useChatEntrance({ items, getKey, isRevealed, env = globalThis })
 
     onScopeDispose(clear)
 
-    return { itemClass, itemStyle, noteLive, noteRetired, noteViewChange, clear }
+    return { itemClass, itemStyle, noteLive, noteRetired, noteViewChange, resetBaseline, clear }
 }

@@ -6,6 +6,7 @@ import { toRaw } from 'vue'
 import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
 import { normalizeChatTimestamp, placeSessionEvents, orderCompactItems } from '../utils/chatEvents/placement.js'
 import { projectEventSegments, setEventSegmentExpanded } from '../utils/chatEvents/segments.js'
+import { createVisualItemsViews } from '../utils/visualItemsViews.js'
 import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
 import { captureEventScroll, planEventScrollRestore } from '../utils/chatEvents/scroll.js'
 import { compareNewestFirst } from '../utils/timeline/eventTime.js'
@@ -51,7 +52,7 @@ function fixture(t, provider = 'codex', items = tools(provider)) {
         getParsedContent, setParsedContent, buildBackgroundWorkStatusLines, isBufferActive, isLaunchedEphemeral: () => false,
         getProviderHelpers: provider => ({ matchesStreamingBlock: provider === 'codex' ? codexMatch : claudeMatch }),
         flushBuffer, destroySessionBuffers, clearBlockInactivityTimer: () => {}, toRaw, normalizeChatTimestamp,
-        debugAppendSafeSessions: new Set() }
+        debugAppendSafeSessions: new Set(), visualItemsViews: createVisualItemsViews({ document: null }) }
     const helpers = section('function computeLastToolVisible(', '\n/**') + section('function getStreamingItemMetadata(', '\n/**')
     const actionNames = ['recomputeVisualItems', 'toggleExpandedGroup', 'expandGroup', '_retireStreamingBlocks']
     const actions = new Function(...Object.keys(dependencies), `${helpers}; return { ${actionNames.map(name => section(`        ${name}(`, '\n        /**')).join('\n')} }`)(...Object.values(dependencies))

@@ -2,7 +2,7 @@
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { computed, watch, ref, reactive, shallowReactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
 import { useDataStore } from '../../../stores/data'
 import { DISPLAY_MODE } from '../../../constants'
@@ -697,6 +697,9 @@ onDeactivated(() => {
 
     pendingEventScroll = null
     scrollIntentAtDeactivation = scrollIntent
+    // Rows kept back while another tab of the session was on screen arrived before this:
+    // take them in before counting them (see "Deferred rows").
+    takeInOffScreenRows()
     // Capture state for reactivation: track item count and scroll position
     itemCountAtDeactivation = visualItems.value?.length ?? null
     const scroller = scrollerRef.value
@@ -723,6 +726,9 @@ onDeactivated(() => {
 // and the user was near bottom, scroll to bottom instead of restoring the anchor.
 // This must also be deferred if the container is not yet visible.
 onActivated(() => {
+    // The route change usually brought the deferred rows in already (see "Deferred rows"
+    // below); otherwise bring them in now, before handlePostResume counts them.
+    if (store.flushDeferredVisualItems(props.sessionId)) adoptDeferredRows({ follow: false })
     handlePostResume()
     // Coming back to an already-loaded session: verify its items still cover
     // everything the server has. Broadcasts lost during a disconnect can leave
@@ -790,6 +796,57 @@ function onScrollerBecameVisible() {
         scrollToBottomUntilStable(options)
     }
 }
+
+// ── Deferred rows ────────────────────────────────────────────────────────────
+// The store defers the rows of a session a list showed and none shows now, and of every
+// such session while the page is hidden (stores/data.js registerVisualItemsView). This
+// list shows its session while it is on screen and KeepAlive-active, and takes in the
+// rows it missed when it shows again: they arrived while it was off screen, so they do
+// not enter, and a list shown again does not follow them to the bottom (handlePostResume
+// decides on a reactivation). The page showing again is different: a visible list
+// followed its rows while the page was hidden.
+const keptActive = ref(true)
+onActivated(() => { keptActive.value = true })
+onDeactivated(() => { keptActive.value = false })
+// The rows a catch-up brought in, which the length watcher below must not follow. (A row
+// that arrived just before the list showed again loses its entrance too.)
+let deferredRows = null
+function adoptDeferredRows({ follow }) {
+    entrance.resetBaseline()
+    deferredRows = follow ? null : visualItems.value
+}
+const visualItemsView = { onDeferredRecompute: () => adoptDeferredRows({ follow: true }) }
+let shownSessionId = null
+watch([() => props.sessionId, () => props.viewActive && sessionActive.value && keptActive.value], ([id, shown]) => {
+    if (shownSessionId !== null && (!shown || shownSessionId !== id)) {
+        store.unregisterVisualItemsView(shownSessionId, visualItemsView)
+        shownSessionId = null
+    }
+    if (shown && shownSessionId === null) {
+        shownSessionId = id
+        if (store.registerVisualItemsView(id, visualItemsView)) adoptDeferredRows({ follow: false })
+    }
+}, { immediate: true, flush: 'sync' })
+onBeforeUnmount(() => {
+    if (shownSessionId !== null) store.unregisterVisualItemsView(shownSessionId, visualItemsView)
+})
+// On leaving. A list off screen behind another tab of its session let its rows wait, where
+// a list never deferred had them before KeepAlive cached it: the deactivation counts them,
+// and handlePostResume compares on return. (Its container is hidden, so its scroller
+// suspended long before, with the rows of then, in both cases.) A list on screen behind a
+// hidden page keeps them waiting: a list never deferred followed them to the bottom, and on
+// return handlePostResume, counting them as new, does the same.
+function takeInOffScreenRows() {
+    if (!props.viewActive && store.flushDeferredVisualItems(props.sessionId)) adoptDeferredRows({ follow: false })
+}
+// KeepAlive reactivates a cached list when the route comes back to its session view, then
+// runs the scroller's resume and handlePostResume, and only then marks the view active.
+// Catch up on the route change instead: the list renders the rows before all of that and
+// while still inactive (no entrance, no follow), as when the rows were never deferred.
+const route = useRoute()
+watch(() => route?.params.sessionId === (props.parentSessionId ?? props.sessionId), targeted => {
+    if (targeted && !keptActive.value) store.flushDeferredVisualItems(props.sessionId)
+}, { flush: 'sync' })
 
 // Build base URL for API calls (handles subagent case)
 const apiBaseUrl = computed(() => {
@@ -1042,6 +1099,10 @@ watch(
 watch(
     () => visualItems.value?.length,
     async (newLength, oldLength) => {
+        // Rows a list shown again takes in did not arrive now (see "Deferred rows").
+        const adopted = deferredRows
+        deferredRows = null
+        if (visualItems.value === adopted) return
         // The displayItems transaction owns event-related structure changes.
         if (visualItems.value.some(isSessionEvent) || displayItems.value.some(isSessionEvent)) return
         // Only handle additions (not initial load or removals)

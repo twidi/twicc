@@ -249,3 +249,21 @@ test('not revealed: a live line gets no class, and does not enter once revealed'
     assert.equal(entrance.itemClass(row(2)), null)
     scope.stop()
 })
+
+test('resetBaseline takes the rows in without an entrance, and forgets the lines noted before', async () => {
+    const { items, entrance, scope, env } = setup()
+    // Live lines noted while the list was off screen: the store kept their rows back.
+    entrance.noteLive([2, 3])
+    items.value = [row(1), row(2), row(3)]
+    entrance.resetBaseline()
+    await nextTick()
+    assert.equal(entrance.itemClass(row(2)), null)
+    assert.equal(entrance.itemClass(row(3)), null)
+    assert.equal(env.timers.size, 0)
+    // A line arriving now still enters.
+    entrance.noteLive([4])
+    items.value = [row(1), row(2), row(3), row(4)]
+    await nextTick()
+    assert.deepEqual(entrance.itemClass(row(4)), ['chat-entering', 'is-card'])
+    scope.stop()
+})

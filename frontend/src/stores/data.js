@@ -101,6 +101,7 @@ import { syncBaseline } from '../utils/syncBaseline'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent'
 import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers, isBufferActive } from '../utils/streamingBuffer'
+import { visualItemsViews } from '../utils/visualItemsViews.js'
 
 /**
  * The local preview URLs the optimistic bubbles show (`attachmentItems[].src`,
@@ -3382,6 +3383,7 @@ export const useDataStore = defineStore('data', {
             }
             delete this.sessionItems[sessionId]
             debugAppendSafeSessions.delete(sessionId)
+            visualItemsViews.clearStale(sessionId)
             delete this.localState.sessionEventSegments?.[sessionId]
             delete this.localState.sessionEventRetired?.[sessionId]
             delete this.localState.sessionExpandedGroups[sessionId]
@@ -3462,6 +3464,21 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId
          */
         recomputeVisualItems(sessionId) {
+            // A session a chat view showed, and that none shows now (or the page is hidden),
+            // waits: the view recomputes it when it shows again (registerVisualItemsView).
+            // The rows wait, not always the event projection: a segment takes its state from
+            // the previous projection (same key, a shared line, or whether one ran at all),
+            // so a skipped projection could change a later one, and what a toggle or a
+            // retired stream reads. Only a projection that keeps no state (no event, segment
+            // or transfer: it returns at once) is skipped with the rows.
+            const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
+            const deferred = visualItemsViews.defers(sessionId) && !!this.localState.sessionVisualItems[sessionId]
+            if (deferred && !events.length && !this.localState.sessionEventSegments?.[sessionId]?.length
+                && !this.localState.sessionEventRetired?.[sessionId]?.length) {
+                visualItemsViews.markStale(sessionId)
+                return
+            }
+            visualItemsViews.clearStale(sessionId)
             // Get effective display mode from settings store, unless this session
             // or one of its ancestors has the dev-mode debug override forced
             // (header toggle), which wins.
@@ -3500,7 +3517,6 @@ export const useDataStore = defineStore('data', {
             }
             const failedSends = this.localState.failedSends[sessionId]
             const hasFailedSends = !!failedSends && Object.keys(failedSends).length > 0
-            const events = this.localState.sessionEventHistory?.[sessionId]?.snapshot?.events || []
             if (!sourceItems.length && !events.length && !this.localState.optimisticMessages[sessionId] && !hasFailedSends) {
                 if (!this.localState.sessionVisualItems[sessionId] || this.localState.sessionVisualItems[sessionId].length) {
                     this.localState.sessionVisualItems[sessionId] = []
@@ -3705,6 +3721,11 @@ export const useDataStore = defineStore('data', {
                 const groups = (this.localState.sessionInternalExpandedGroups[sessionId] ||= {})[lineNum] ||= []
                 if (!groups.includes(startIndex)) groups.push(startIndex)
             }
+            // Deferred: the segment state above is up to date, the rows wait for a view.
+            if (deferred) {
+                visualItemsViews.markStale(sessionId)
+                return
+            }
             if (workingMessage) {
                 const status = getParsedContent(workingMessage)
                 status.lastToolVisible = computeLastToolVisible(projection.items, processState?.lastStartedToolId,
@@ -3779,7 +3800,8 @@ export const useDataStore = defineStore('data', {
             // what still runs. Appended last, after the flags and separators
             // (see makeBackgroundWorkStatusItem). Kept in sync by setProcessState,
             // setActiveProcesses and the process_background_work handler, which
-            // recompute when backgroundWorkStatusKey changes.
+            // recompute when backgroundWorkStatusKey changes. A deferred session builds
+            // it at its catch-up time (its times can differ from an always-shown list's).
             const statusItem = isLaunchedEphemeral(this.sessions[sessionId])
                 ? null
                 : makeBackgroundWorkStatusItem(
@@ -3842,6 +3864,49 @@ export const useDataStore = defineStore('data', {
         recomputeAllVisualItems() {
             for (const sessionId of new Set([...Object.keys(this.sessionItems), ...Object.keys(this.localState.sessionEventHistory || {})])) {
                 this.recomputeVisualItems(sessionId)
+            }
+        },
+
+        /**
+         * A chat view shows the session (on screen, KeepAlive-active): count it, so the
+         * session's recomputes run again, and bring its deferred rows up to date before the
+         * view reads them. `view.onDeferredRecompute()` runs after a later catch-up (the page
+         * shows again).
+         * @param {string} sessionId
+         * @param {Object} view - The view's handle, passed again to unregisterVisualItemsView
+         * @returns {boolean} true when deferred rows were recomputed
+         */
+        registerVisualItemsView(sessionId, view) {
+            visualItemsViews.register(sessionId, view, () => this.flushShownVisualItems())
+            return this.flushDeferredVisualItems(sessionId)
+        },
+
+        /**
+         * The view no longer shows the session (off screen, deactivated, unmounted).
+         * @param {string} sessionId
+         * @param {Object} view
+         */
+        unregisterVisualItemsView(sessionId, view) {
+            visualItemsViews.unregister(sessionId, view)
+        },
+
+        /**
+         * Recompute a session whose last recompute was deferred, whether a view shows it
+         * or not (a cached view about to show it again).
+         * @param {string} sessionId
+         * @returns {boolean} true when deferred rows were recomputed
+         */
+        flushDeferredVisualItems(sessionId) {
+            if (!visualItemsViews.isStale(sessionId)) return false
+            visualItemsViews.undeferred(sessionId, () => this.recomputeVisualItems(sessionId))
+            return true
+        },
+
+        /** The page shows again: recompute the deferred sessions a view shows, and tell their views. */
+        flushShownVisualItems() {
+            for (const sessionId of visualItemsViews.staleShown()) {
+                if (!this.flushDeferredVisualItems(sessionId)) continue
+                for (const view of visualItemsViews.viewsOf(sessionId)) view.onDeferredRecompute?.()
             }
         },
 

@@ -4,6 +4,7 @@
 // with an oracle built from the same source, every shortcut turned off.
 import { normalizeChatTimestamp, placeSessionEvents, orderCompactItems } from '../utils/chatEvents/placement.js'
 import { projectEventSegments } from '../utils/chatEvents/segments.js'
+import { createVisualItemsViews } from '../utils/visualItemsViews.js'
 import { mergeSessionEventRows, insertEventDaySeparators } from '../utils/chatEvents/rows.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import test from 'node:test'
@@ -54,6 +55,7 @@ function makeStore(body, { items, events = [], mode = DISPLAY_MODE.NORMAL, proce
         useSettingsStore: () => settings, DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM, computeVisualItems, visualItemEqual,
         insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor, orderCompactItems, getParsedContent, setParsedContent,
         hasContent, buildBackgroundWorkStatusLines, isBufferActive, isLaunchedEphemeral: () => false, toRaw, normalizeChatTimestamp,
+        visualItemsViews: createVisualItemsViews({ document: null }),
         getProviderHelpers: () => ({ matchesStreamingBlock: () => false }) }
     const actions = new Function(...Object.keys(deps),
         `const debugAppendSafeSessions = new Set()\n${helperSource}\nreturn { ${body} }`)(...Object.values(deps))
