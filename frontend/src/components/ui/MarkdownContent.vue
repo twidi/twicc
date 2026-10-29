@@ -14,6 +14,7 @@ import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRende
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION } from '../../inline-artifacts/context.js'
 import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
+import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
 import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
@@ -602,6 +603,15 @@ onScopeDispose(() => {
 
 const showRaw = ref(false)
 
+const toolbar = ref(null)
+const toolbarToggle = ref(null)
+const { opened: toolbarOpen, toggle: toggleToolbar, close: closeToolbar } = useMarkdownToolbar(toolbar, toolbarToggle)
+// Provided by SessionItem: false when the toolbar is hidden (debug display mode).
+const toolbarEnabled = inject('markdownToolbarEnabled', ref(true))
+watch([() => props.showToolbar, toolbarEnabled], ([shown, enabled]) => {
+    if (!shown || !enabled) closeToolbar()
+})
+
 function toggleRaw() {
     showRaw.value = !showRaw.value
 }
@@ -820,8 +830,21 @@ function handleLinkClick(event) {
                 </li>
             </ul>
         </wa-details>
-        <div v-if="showToolbar" class="markdown-toolbar">
+        <div v-if="showToolbar" ref="toolbar" class="markdown-toolbar" :data-open="toolbarOpen">
             <wa-button-group orientation="vertical" label="Markdown tools">
+                <wa-button
+                    ref="toolbarToggle"
+                    class="markdown-toolbar-toggle"
+                    size="small"
+                    :variant="toolbarOpen ? 'brand' : 'neutral'"
+                    appearance="filled"
+                    :title="toolbarOpen ? 'Hide actions' : 'Show actions'"
+                    :aria-label="toolbarOpen ? 'Hide actions' : 'Show actions'"
+                    :aria-expanded="toolbarOpen"
+                    @click="toggleToolbar"
+                >
+                    <wa-icon name="screwdriver-wrench"></wa-icon>
+                </wa-button>
                 <wa-button
                     size="small"
                     :variant="showRaw ? 'neutral' : 'brand'"
@@ -982,7 +1005,7 @@ function handleLinkClick(event) {
     margin-bottom: 0 !important;
 }
 
-/* -- Floating toolbar (raw toggle + copy) ---------------------------- */
+/* -- Floating toolbar (click to reveal raw toggle + copy) ------------ */
 .markdown-toolbar {
     position: absolute;
     top: 0;
@@ -996,16 +1019,21 @@ function handleLinkClick(event) {
     transition: opacity 0.15s ease;
     z-index: 2;
 }
+.markdown-toolbar[data-open="false"] wa-button:not(.markdown-toolbar-toggle) {
+    display: none;
+}
 .markdown-content-wrapper:hover .markdown-toolbar {
     opacity: 0.3;
+}
+.markdown-content-wrapper .markdown-toolbar[data-open="true"] {
+    opacity: 1;
+    z-index: 3;
 }
 .markdown-toolbar:hover {
     opacity: 1 !important;
 }
-@media (pointer:coarse) {
-    .markdown-content-wrapper:focus {
-        opacity: 1 !important;
-    }
+.markdown-content-wrapper .markdown-toolbar:focus-within {
+    opacity: 1;
 }
 .markdown-toolbar wa-button wa-icon {
     width: .6rem;

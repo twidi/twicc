@@ -165,6 +165,8 @@ const inlineContext = computed(() => {
 // Whether this item's session renders in debug mode (the per-session dev-mode
 // override, the only way in) — drives the "show JSON" toggle visibility.
 const isEffectiveDebug = computed(() => dataStore.getEffectiveDisplayMode(props.sessionId) === DISPLAY_MODE.DEBUG)
+// Lets nested Markdown toolbars close when CSS hides them (debug view), including tool output.
+provide('markdownToolbarEnabled', computed(() => !isEffectiveDebug.value))
 
 // Failed-send bubble (messaging pattern): shows the failure banner under the
 // regular user-message rendering.
