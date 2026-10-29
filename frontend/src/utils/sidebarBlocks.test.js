@@ -9,17 +9,15 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computed, effect, isReactive, reactive, toRaw } from 'vue'
+import { computed, effect, isReactive, toRaw } from 'vue'
 import { computeSidebarNaturalMembership, computeSidebarSessionBlocks, orderSidebarNatural, useSidebarSessionBlocks }
     from './sidebarSessions.js'
 import { resolveSessionScope } from './sessionLists.js'
 import { observeStageRuns } from './stageRuns.js'
-import { sessionSortComparator } from './sessionSort.js'
 import { hasUnreadContent } from './sessions.js'
 import { extractWorkspaceId, isWorkspaceProjectId } from './workspaceIds.js'
-import { computeSidebarSessionBlocks as baselineSessionBlocks } from '../../tests/helpers/sidebarBaseline/sidebarSessions.js'
-import { FIXTURE_IDS as ID, FIXTURE_SCOPES, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState, createBaselineData,
-    createShippedData, progressMessage, startupPhase, tick } from '../../tests/helpers/sidebarFixture.js'
+import { FIXTURE_IDS as ID, FIXTURE_SCOPES, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState,
+    createFixtureStores, progressMessage, reloadedState, startupPhase, tick } from '../../tests/helpers/sidebarFixture.js'
 
 const ALL = '__all__'
 const SCOPES = ['p0', 'ws:w']
@@ -38,7 +36,7 @@ const blockStages = (tree) => tree ? BLOCK_STAGES : BLOCK_STAGES.filter(name => 
 function setup({ roots = 60, cutoffRoots = 40, prepare = null } = {}) {
     const state = buildSidebarState({ roots, cutoffRoots })
     prepare?.(state)
-    return { state, ...createShippedData(state) }
+    return { state, ...createFixtureStores(state) }
 }
 
 function blockOptions({ data, workspaces }, scope, overrides = {}) {
@@ -144,67 +142,27 @@ function assertStagesCanRun({ state }, probe, names, label) {
 }
 
 // ---------------------------------------------------------------------------
-// Parity helpers
+// Block comparison
 
-/** The extension ids the shipped natural membership gives for these options. */
-const extensionIds = (options) => new Set(ids(computeSidebarNaturalMembership(options).extension))
-
-/**
- * Same blocks, ids and order. In `natural`, inside a run of entries with equal
- * sort keys, extension sessions may trade places with each other (design 5.4):
- * every other entry keeps its slot, and the extension slots hold the same ids.
- */
-function assertSameBlocks(actual, expected, { processStates, extension = new Set() }, label) {
+/** Same blocks: the same ids, in the same order. */
+function assertSameBlocks(actual, expected, label) {
     assert.equal(actual.extra?.id ?? null, expected.extra?.id ?? null, `${label}: extra`)
-    assert.deepEqual(ids(actual.crossFilterPinned), ids(expected.crossFilterPinned), `${label}: crossFilterPinned`)
-    assert.deepEqual(ids(actual.crossFilterActive), ids(expected.crossFilterActive), `${label}: crossFilterActive`)
-    const got = actual.natural
-    const want = expected.natural
-    assert.equal(got.length, want.length, `${label}: natural length ${ids(got)} vs ${ids(want)}`)
-    const compare = sessionSortComparator(toRaw(processStates))
-    for (let i = 0; i < want.length;) {
-        let j = i + 1
-        while (j < want.length && compare(toRaw(want[j - 1]), toRaw(want[j])) === 0) j++
-        const run = ids(want.slice(i, j))
-        if (run.filter(id => extension.has(id)).length > 1) {
-            const gotRun = ids(got.slice(i, j))
-            run.forEach((id, k) => {
-                if (!extension.has(id)) assert.equal(gotRun[k], id, `${label}: natural tie run at ${i + k}`)
-            })
-            const extensionSlots = (list) => list.filter(id => extension.has(id)).sort()
-            assert.deepEqual(extensionSlots(gotRun), extensionSlots(run), `${label}: extension ties at ${i}`)
-        } else {
-            assert.deepEqual(ids(got.slice(i, j)), run, `${label}: natural at ${i}`)
-        }
-        i = j
+    for (const block of ['crossFilterPinned', 'crossFilterActive', 'natural']) {
+        assert.deepEqual(ids(actual[block]), ids(expected[block]), `${label}: ${block}`)
     }
 }
 
-test('parity helper: inside a tie run, only extension sessions trade places', () => {
-    // a, x, y and b tie (same mtime, no process, no pin); x and y are extension sessions.
-    const session = (id) => ({ id, mtime: 100, pinned: null })
-    const blocks = (...order) => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: order.map(session) })
-    const want = blocks('a', 'x', 'y', 'b')
-    const context = { processStates: {}, extension: new Set(['x', 'y']) }
-    assertSameBlocks(blocks('a', 'y', 'x', 'b'), want, context, 'extension swap')
-    assert.throws(() => assertSameBlocks(blocks('x', 'a', 'y', 'b'), want, context, 'natural moved'), /natural tie run/)
-    assert.throws(() => assertSameBlocks(blocks('a', 'x', 'b', 'y'), want, context, 'natural moved'), /natural tie run/)
-    // A single extension session in the run has no other extension session to trade with.
-    const single = { processStates: {}, extension: new Set(['x']) }
-    assert.throws(() => assertSameBlocks(blocks('a', 'b', 'x', 'y'), want, single, 'single'), /natural at 0/)
-})
-
-/** The frozen baseline blocks on the live state. */
-function baselineBlocks(state, options) {
-    const { data, workspaces } = createBaselineData(state)
-    return baselineSessionBlocks({ ...options, data, workspaces })
+/**
+ * The blocks a reload shows: fresh stores on a copy of the data, outside startup,
+ * computed in one shot. No live update may leave the sidebar behind them.
+ */
+function reloadedBlocks(state, options) {
+    return computeSidebarSessionBlocks({ ...options, ...createFixtureStores(reloadedState(state)) })
 }
 
-/** The frozen baseline blocks on a copy of the data outside startup (the state the data implies). */
-function baselineOutsideStartup(state, options) {
-    const copy = reactive(structuredClone({ ...toRaw(state), startupProgress: {} }))
-    const blocks = baselineBlocks(copy, options)
-    return { blocks, processStates: copy.processStates }
+/** Assert that the live blocks of a view equal those of a reload. */
+function assertSameAsReload(view, state, label) {
+    assertSameBlocks(view.blocks.value, reloadedBlocks(state, view.options), label)
 }
 
 // ---------------------------------------------------------------------------
@@ -236,22 +194,14 @@ test('a project mtime change reruns no block stage', () => {
             const context = setup()
             const { state } = context
             const view = mountView(context, scope, { showAsTree: tree, showArchivedProjects: false })
-            // The baseline reads the activity-sorted `getProjects` on this path: it reruns.
-            const baseline = createBaselineData(state)
-            let baselineRuns = 0
-            const baselineView = computed(() => {
-                baselineRuns++
-                return baselineSessionBlocks({ ...view.options, ...baseline })
-            })
-            const probe = watch(context, [view], { extra: () => baselineView.value })
+            const probe = watch(context, [view])
             const label = view.label
             const before = view.blocks.value
             const projects = context.data.getProjects
-            baselineRuns = 0
             state.projects.p3.mtime += 5000
             probe.flush()
+            // The activity-sorted project list changes; the blocks do not depend on it.
             assert.notStrictEqual(context.data.getProjects, projects, `${label}: the facade getProjects follows activity`)
-            assert.equal(baselineRuns, 1, `${label}: the baseline reruns on this path`)
             assertNoRuns(probe, BLOCK_STAGES, label)
             assert.strictEqual(view.blocks.value, before, label)
             assertStagesCanRun(context, probe, blockStages(tree), label)
@@ -442,21 +392,24 @@ test('during startup an archive, a hide, a cutoff crossing, a natural reorder an
             const view = mountView(context, scope, { showAsTree: tree })
             const probe = watch(context, [view])
             const label = view.label
+            // After each progress message, the sidebar shows what a reload would.
             const check = (change) => {
                 progressMessage(state)
                 probe.flush()
-                const expected = baselineOutsideStartup(state, view.options)
-                assertSameBlocks(view.blocks.value, expected.blocks,
-                    { processStates: expected.processStates, extension: extensionIds(view.options) }, `${label}: ${change}`)
+                assertSameAsReload(view, state, `${label}: ${change}`)
             }
+            const natural = () => ids(view.blocks.value.natural)
             if (tree) assert.deepEqual(ids(view.stages.natural.value.extension).sort(), [ID.ancestor, oldId].sort(), label)
             state.sessions[ID.p0Second].archived = true
             check('archive')
+            assert.ok(!natural().includes(ID.p0Second), `${label}: archive shown`)
             state.sessions[ID.p0Recent].hidden = true
             check('hide')
+            assert.ok(!natural().includes(ID.p0Recent), `${label}: hide shown`)
             // r0 (p0) is a read natural member: the tick flips it to unread.
             tick(state, 'r0', { top: true })
             check('natural reorder')
+            assert.ok(natural().indexOf('r0') < natural().indexOf(ID.child), `${label}: natural reorder shown`)
             if (tree) {
                 const before = ids(view.blocks.value.natural)
                 assert.ok(before.indexOf(oldId) < before.indexOf(ID.ancestor), label)
@@ -536,9 +489,10 @@ test('during startup, writes between two progress messages rerun no natural stag
             // The writes changed the natural members, so the order stage reruns in both modes.
             assert.ok(probe.runs('blocks:naturalOrder') >= 1, `${label}: naturalOrder positive control`)
             if (tree) assert.ok(probe.runs('blocks:extension') >= 1, `${label}: extension positive control`)
-            const expected = baselineOutsideStartup(state, view.options)
-            assertSameBlocks(view.blocks.value, expected.blocks,
-                { processStates: expected.processStates, extension: extensionIds(view.options) }, label)
+            // The progress message shows every write at once, as a reload would.
+            assertSameAsReload(view, state, label)
+            const natural = ids(view.blocks.value.natural)
+            for (const gone of [ID.p0Second, ID.p0Recent]) assert.ok(!natural.includes(gone), `${label}: ${gone} gone`)
             probe.stop()
         }
     }
@@ -587,7 +541,7 @@ test('a subagent add or removal reruns no block stage; an unreadContent flip rea
             probe.flush()
             assert.ok(probe.runs('rootSessions') >= 2, `${label}: the root index reran`)
             assertNoRuns(probe, [...BLOCK_STAGES, 'unread:counts'], label)
-            // Counting getters on the fields the baseline reads first for a subagent.
+            // Counting getters on the fields an unread check would read first for a subagent.
             let reads = 0
             for (const session of Object.values(toRaw(state.sessions))) {
                 if (!session.parent_session_id) continue
@@ -647,7 +601,127 @@ test('the natural order never holds a list member twice, even if the extension h
 })
 
 // ---------------------------------------------------------------------------
-// Parity with the frozen baseline (7.1 #9)
+// What each update shows, and live equals reload (7.1 #9)
+
+/** The first natural session without a process, a pin or an ephemeral run: the top of the date-sorted part. */
+const firstQuiet = (view, state) => view.blocks.value.natural
+    .find(s => !s.pinned && !s.ephemeral && state.processStates[s.id] == null)?.id
+
+/**
+ * What each step of the update sequence shows in the flat views p0, ws:w and all
+ * projects, mounted together on one state from the start (`showActiveAcrossFilters`
+ * on, archived hidden). `see({ p0, w, all }, label)` gets the three views'
+ * `{ natural, pinned, active, quiet }`: the natural ids, the "Pinned elsewhere" and
+ * "Active elsewhere" ids, and `firstQuiet`.
+ */
+const STEP_EFFECTS = {
+    'in-scope tick without order change': (v, before) => {
+        for (const scope of ['p0', 'w', 'all']) assert.deepEqual(v[scope].natural, before[scope].natural, scope)
+    },
+    'in-scope tick with order change': (v) => {
+        for (const scope of ['p0', 'w', 'all']) assert.equal(v[scope].quiet, ID.p0Recent, scope)
+    },
+    'out-of-scope tick without order change': (v, before) => {
+        for (const scope of ['p0', 'w']) assert.deepEqual(v[scope].active, [ID.unread1, ID.unread2], scope)
+        assert.deepEqual(v.all.natural, before.all.natural)
+    },
+    'out-of-scope tick with order change': (v) => {
+        for (const scope of ['p0', 'w']) assert.deepEqual(v[scope].active, [ID.unread2, ID.unread1], scope)
+        assert.equal(v.all.quiet, ID.unread2)
+    },
+    'unread flip to unread on a user_turn session with background work': (v, before) => {
+        for (const scope of ['p0', 'w', 'all']) assert.deepEqual(v[scope], before[scope], scope)
+    },
+    'unread flip to read': (v) => {
+        for (const scope of ['p0', 'w']) assert.deepEqual(v[scope].active, [ID.unread2], scope)
+    },
+    'pin change': (v) => {
+        for (const scope of ['p0', 'w']) assert.deepEqual(v[scope].pinned, [ID.pinned1, ID.pinned2, ID.p3Recent], scope)
+        // All projects: no cross-filter block; the pinned roots lead the natural block, after the ephemeral one.
+        assert.deepEqual(v.all.natural.slice(0, 4), [ID.ephemeral, ID.pinned1, ID.pinned2, ID.p3Recent])
+    },
+    'archive': (v) => {
+        for (const scope of ['p0', 'w', 'all']) assert.ok(!v[scope].natural.includes(ID.p0Second), scope)
+    },
+    'hide': (v) => {
+        for (const scope of ['w', 'all']) assert.ok(!v[scope].natural.includes(ID.p1Recent), scope)
+    },
+    'cutoff crossing': (v) => {
+        // old-p2-wt1 crosses the all-projects cutoff with a real batch: it turns unread.
+        assert.ok(v.all.natural.includes(ID.oldWorktree))
+        for (const scope of ['p0', 'w']) assert.ok(v[scope].active.includes(ID.oldWorktree), scope)
+    },
+    'root add': (v) => {
+        for (const scope of ['p0', 'w', 'all']) assert.equal(v[scope].quiet, 'added-root', scope)
+    },
+    'root removal': (v) => {
+        for (const scope of ['p0', 'w', 'all']) assert.ok(!v[scope].natural.includes(ID.p0Recent), scope)
+    },
+    'subagent add': (v, before) => {
+        for (const scope of ['p0', 'w', 'all']) assert.deepEqual(v[scope], before[scope], scope)
+    },
+    'subagent removal': (v, before) => {
+        for (const scope of ['p0', 'w', 'all']) assert.deepEqual(v[scope], before[scope], scope)
+    },
+    'workspace member archived': (v, before, state) => {
+        const inP1 = (id) => state.sessions[id]?.project_id === 'p1'
+        assert.ok(before.w.natural.some(inP1), 'w showed p1 sessions')
+        for (const scope of ['w', 'all']) assert.ok(!v[scope].natural.some(inP1), scope)
+        assert.deepEqual(v.p0, before.p0)
+    },
+    'worktree added to p2': (v) => {
+        assert.ok(v.all.natural.includes('p2-wt3-root'))
+        for (const scope of ['p0', 'w']) assert.ok(!v[scope].natural.includes('p2-wt3-root'), scope)
+    },
+    'worktree added to p0': (v, before) => {
+        for (const scope of ['p0', 'w', 'all']) assert.ok(v[scope].natural.includes('p0-wt1-root'), scope)
+        // p0 is now a main repository with a worktree: its view uses the all-projects cursor, so cut-p0 leaves it.
+        assert.ok(before.p0.natural.includes(ID.cutP0) && !v.p0.natural.includes(ID.cutP0))
+    },
+    'workspace gains a project': (v, before) => {
+        assert.ok(v.w.natural.includes('p2-wt3-root'), 'w shows the p2 worktree sessions')
+        assert.ok(v.w.natural.includes(ID.cutP2) === false, 'cut-p2 stays under the all-projects cutoff')
+        assert.deepEqual(v.p0, before.p0)
+    },
+    'workspace loses a project': (v, before, state) => {
+        const inP2 = (id) => state.sessions[id]?.project_id.startsWith('p2')
+        assert.ok(!v.w.natural.some(inP2))
+    },
+    'process start': (v, before, state) => {
+        // unread-1 runs: still "Active elsewhere" (a process), and in the process part of all projects.
+        for (const scope of ['p0', 'w']) assert.ok(v[scope].active.includes(ID.unread1), scope)
+        assert.ok(v.all.natural.indexOf(ID.unread1) < v.all.natural.indexOf(v.all.quiet))
+        assert.ok(state.processStates[ID.unread1])
+    },
+    'process stop': (v) => {
+        for (const scope of ['p0', 'w']) assert.deepEqual(v[scope].natural.slice(0, 2), [ID.processAssistant, ID.processShell], scope)
+        for (const scope of ['p0', 'w']) assert.notEqual(v[scope].natural[2], ID.processCron, scope)
+    },
+    // The startup write hides cut-p0, which none of these views shows any more (see the p0 worktree step);
+    // the startup tests above cover what a progress message shows.
+    'startup phase with one untracked write': (v, before) => assert.deepEqual(v, before),
+    'progress message': (v, before) => assert.deepEqual(v, before),
+    'end of startup': (v, before) => assert.deepEqual(v, before),
+}
+
+test('each step of the update sequence shows its effect in the p0, ws:w and all-projects views', () => {
+    assert.deepEqual(Object.keys(STEP_EFFECTS), FIXTURE_UPDATE_SEQUENCE.map(step => step.name))
+    const context = setup()
+    const { state } = context
+    const views = { p0: mountView(context, 'p0'), w: mountView(context, 'ws:w'), all: mountView(context, ALL) }
+    const probe = watch(context, Object.values(views))
+    const see = () => Object.fromEntries(Object.entries(views).map(([scope, view]) => [scope, {
+        natural: ids(view.blocks.value.natural), pinned: ids(view.blocks.value.crossFilterPinned),
+        active: ids(view.blocks.value.crossFilterActive), quiet: firstQuiet(view, state),
+    }]))
+    for (const step of FIXTURE_UPDATE_SEQUENCE) {
+        const before = see()
+        applyStep(state, step)
+        probe.flush()
+        STEP_EFFECTS[step.name](see(), before, state)
+    }
+    probe.stop()
+})
 
 /**
  * Own setup of the workspace-pin variant: two read roots pinned `workspace`,
@@ -660,7 +734,7 @@ function addWorkspacePinnedRoots(state) {
     addRoot(state, WORKSPACE_PINNED.outside, 'p8', { pinned: 'workspace' })
 }
 
-const PARITY_VARIANTS = [
+const VIEW_VARIANTS = [
     { name: 'default', options: { sessionId: null, showArchivedProjects: false, showArchived: false } },
     { name: 'selected, archived shown', options: { sessionId: ID.p3Recent, showArchivedProjects: true, showArchived: true } },
     // The active workspace w in every scope, and no "Active elsewhere" block.
@@ -668,10 +742,10 @@ const PARITY_VARIANTS = [
         showArchived: false, activeWorkspaceId: 'w', showActiveAcrossFilters: false } },
 ]
 
-test('the blocks equal the frozen baseline in every fixture scope, flat and tree, along an update sequence', () => {
+test('the live blocks equal those of a reload in every fixture scope, flat and tree, along the update sequence', () => {
     for (const scope of FIXTURE_SCOPES) {
         for (const tree of [false, true]) {
-            for (const variant of PARITY_VARIANTS) {
+            for (const variant of VIEW_VARIANTS) {
                 const context = setup({ prepare: (state) => {
                     state.settings.isShowArchivedProjects = variant.options.showArchivedProjects
                     variant.prepare?.(state)
@@ -681,15 +755,9 @@ test('the blocks equal the frozen baseline in every fixture scope, flat and tree
                 const probe = watch(context, [view])
                 const compare = (step) => {
                     const label = `${view.label} ${variant.name}: ${step.name}`
-                    const extension = extensionIds(view.options)
-                    const expected = step.startup === 'progress'
-                        ? baselineOutsideStartup(state, view.options)
-                        : { blocks: baselineBlocks(state, view.options), processStates: state.processStates }
-                    assertSameBlocks(view.blocks.value, expected.blocks,
-                        { processStates: expected.processStates, extension }, label)
+                    assertSameAsReload(view, state, label)
                     // The one-shot wrapper gives the same blocks.
-                    assertSameBlocks(computeSidebarSessionBlocks(view.options), view.blocks.value,
-                        { processStates: state.processStates }, `${label} (one-shot)`)
+                    assertSameBlocks(computeSidebarSessionBlocks(view.options), view.blocks.value, `${label} (one-shot)`)
                 }
                 if (variant.prepare && ['p0', 'p2', 'ws:w1'].includes(scope)) {
                     // The variant reaches the workspace-pin path: only the member's pin is "Pinned elsewhere".
@@ -702,6 +770,7 @@ test('the blocks equal the frozen baseline in every fixture scope, flat and tree
                 for (const step of FIXTURE_UPDATE_SEQUENCE) {
                     applyStep(state, step)
                     probe.flush()
+                    // Between a startup write and the next progress message, the sidebar may lag (5.3).
                     if (step.startup !== 'write') compare(step)
                 }
                 probe.stop()
@@ -710,7 +779,7 @@ test('the blocks equal the frozen baseline in every fixture scope, flat and tree
     }
 })
 
-test('during startup the blocks after each progress message equal the baseline outside startup, and equal the baseline at the end', () => {
+test('during startup each progress message shows what a reload would, and so does the end of startup', () => {
     for (const scope of FIXTURE_SCOPES) {
         for (const tree of [false, true]) {
             const context = setup()
@@ -722,15 +791,11 @@ test('during startup the blocks after each progress message equal the baseline o
                 applyStep(state, step)
                 progressMessage(state)
                 probe.flush()
-                const expected = baselineOutsideStartup(state, view.options)
-                assertSameBlocks(view.blocks.value, expected.blocks,
-                    { processStates: expected.processStates, extension: extensionIds(view.options) },
-                    `${view.label}: ${step.name}`)
+                assertSameAsReload(view, state, `${view.label}: ${step.name}`)
             }
             startupPhase(state, false)
             probe.flush()
-            assertSameBlocks(view.blocks.value, baselineBlocks(state, view.options),
-                { processStates: state.processStates, extension: extensionIds(view.options) }, `${view.label}: end`)
+            assertSameAsReload(view, state, `${view.label}: end`)
             probe.stop()
         }
     }
@@ -755,7 +820,7 @@ test('a workspace whose member gets archived switches to the new scope list', ()
     assert.deepEqual(scope.projectIds, ['p0'])
     assert.strictEqual(list, data.getScopeSessionList(scope))
     assert.ok(!view.blocks.value.natural.some(s => s.project_id === 'p1'))
-    assertSameBlocks(view.blocks.value, baselineBlocks(state, view.options), { processStates: state.processStates }, 'ws:w')
+    assertSameAsReload(view, state, 'ws:w')
     probe.stop()
 })
 
@@ -775,7 +840,7 @@ test('a worktree added to a workspace member brings its sessions into the ws:w n
         mtime: topMtime(state), archived: false, worktree_of: 'p0' }
     probe.flush()
     assert.deepEqual(ids(view.blocks.value.natural.filter(s => s.project_id === 'p0-wt')), ['wt-root-2', 'wt-root-1'], label)
-    assertSameBlocks(view.blocks.value, baselineBlocks(state, view.options), { processStates: state.processStates }, label)
+    assertSameAsReload(view, state, label)
     probe.stop()
 })
 
@@ -801,7 +866,6 @@ test('a selected subagent is never extra', () => {
             assert.ok(state.sessions[sessionId].parent_session_id, sessionId)
             const view = mountView(context, scope, { sessionId })
             assert.equal(view.blocks.value.extra, null, `${view.label}: ${sessionId}`)
-            assert.equal(baselineBlocks(state, view.options).extra, null, `${view.label}: baseline ${sessionId}`)
         }
         // Positive control: the out-of-scope root itself is extra.
         const view = mountView(context, scope, { sessionId: ID.p3Recent })
@@ -824,16 +888,14 @@ test('drafts and ephemeral roots keep their place and stay out of Active elsewhe
         assert.ok(hasUnreadContent(state.sessions[ID.ephemeral]))
         const p3 = mountView(context, 'p3', { showAsTree: tree })
         const natural = ids(p3.blocks.value.natural)
-        assert.equal(natural[0], ID.ephemeral, `${p3.label}: ephemeral first`)
-        assert.ok(natural.includes(ID.draft), p3.label)
-        assertSameBlocks(p3.blocks.value, baselineBlocks(state, p3.options),
-            { processStates: state.processStates, extension: extensionIds(p3.options) }, p3.label)
+        // The launched ephemeral root leads; the draft keeps its mtime place (the second most recent root).
+        assert.deepEqual(natural.slice(0, 3), [ID.ephemeral, ID.draft, ID.p3Recent], p3.label)
         for (const scope of SCOPES) {
             const view = mountView(context, scope, { showAsTree: tree })
             const active = ids(view.blocks.value.crossFilterActive)
             assert.ok(!active.includes(ID.draft) && !active.includes(ID.ephemeral), view.label)
-            assertSameBlocks(view.blocks.value, baselineBlocks(state, view.options),
-                { processStates: state.processStates, extension: extensionIds(view.options) }, view.label)
+            // The rest of "Active elsewhere" is unchanged: the two unread roots of the fixture.
+            assert.deepEqual(active, [ID.unread1, ID.unread2], view.label)
         }
     }
 })

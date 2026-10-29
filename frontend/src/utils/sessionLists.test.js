@@ -9,8 +9,7 @@ import assert from 'node:assert/strict'
 import { effect, isReactive, toRaw } from 'vue'
 import { getScopeSessionList, getStableSessionList, resolveSessionScope } from './sessionLists.js'
 import { observeStageRuns } from './stageRuns.js'
-import { getStableSessionList as baselineGetStableSessionList } from '../../tests/helpers/sidebarBaseline/sessionLists.js'
-import { FIXTURE_IDS as ID, buildSidebarState, createShippedData, progressMessage, startupPhase, tick }
+import { FIXTURE_IDS as ID, buildSidebarState, createFixtureStores, progressMessage, startupPhase, tick }
     from '../../tests/helpers/sidebarFixture.js'
 
 const ALL = '__all__'
@@ -20,7 +19,7 @@ const ids = (sessions) => sessions.map(s => s.id)
 /** A fixture with pagination cutoffs, its shipped facades, and a scope resolver. */
 function setup({ roots = 60, cutoffRoots = 40 } = {}) {
     const state = buildSidebarState({ roots, cutoffRoots })
-    const { data, workspaces } = createShippedData(state)
+    const { data, workspaces } = createFixtureStores(state)
     const resolve = (effectiveProjectId) => resolveSessionScope({
         effectiveProjectId,
         getProjectScopeIds: data.getProjectScopeIds,
@@ -69,7 +68,7 @@ function countReads(record, field) {
 
 const total = (counters) => counters.reduce((sum, counter) => sum + counter.reads, 0)
 
-/** Project ids of a fixture scope, as the baseline natural scope sees them. */
+/** Project ids of a fixture scope: the fixture workspaces `w` and `w1`, or a project and its worktrees. */
 function scopeProjectSet(state, scopeId) {
     if (scopeId === 'ws:w') return new Set(['p0', 'p1'])
     if (scopeId === 'ws:w1') return new Set(['p0'])
@@ -77,16 +76,32 @@ function scopeProjectSet(state, scopeId) {
 }
 
 /**
- * The ordered list the frozen baseline gives outside startup for a fixture
- * scope: its own list for a single project, the all-projects list filtered on
- * the scope for a multi-project scope.
+ * The ids a scope list must show (design 5.2), outside startup:
+ *   - the roots of the scope's projects that are not hidden;
+ *   - while the scope's cursor has more sessions to load, only those at or above its
+ *     oldest mtime. A single project uses its own cursor; a workspace, a main
+ *     repository with worktrees and all projects use the all-projects cursor;
+ *   - in this order: the launched ephemeral root, the pinned roots, the roots with a
+ *     process (most recently started first), then by mtime, most recent first.
+ * The fixture gives every root a distinct mtime and every process a distinct start.
  */
 function expectedIds(state, scopeId) {
-    const list = (id) => baselineGetStableSessionList(state, id, ALL, () => false)
-    if (scopeId === ALL) return ids(list(ALL))
-    const set = scopeProjectSet(state, scopeId)
-    if (scopeId.startsWith('ws:') || set.size > 1) return ids(list(ALL).filter(s => set.has(s.project_id)))
-    return ids(list(scopeId))
+    const projectIds = scopeId === ALL ? null : scopeProjectSet(state, scopeId)
+    const single = projectIds !== null && !scopeId.startsWith('ws:') && projectIds.size === 1
+    const cursor = state.localState.projects[single ? scopeId : ALL]
+    const shown = Object.values(state.sessions).filter(s => !s.parent_session_id && !s.hidden
+        && (!projectIds || projectIds.has(s.project_id))
+        && (!cursor?.hasMoreSessions || s.mtime >= cursor.oldestSessionMtime))
+    const key = (s) => {
+        const process = state.processStates[s.id]
+        return [s.ephemeral && !s.draft ? 0 : 1, s.pinned ? 0 : 1, process ? 0 : 1, -(process?.started_at ?? 0), -s.mtime]
+    }
+    const compare = (a, b) => {
+        const [ka, kb] = [key(a), key(b)]
+        const i = ka.findIndex((value, k) => value !== kb[k])
+        return i < 0 ? 0 : ka[i] - kb[i]
+    }
+    return ids(shown.sort(compare))
 }
 
 /**
@@ -106,13 +121,13 @@ function assertStagesCanRun(state, probe, label) {
 }
 
 /**
- * Probes of the active in-scope tick, on the fields the baseline reads first
- * in that path (plan "Probes that can fail"). Single project: `project_id` of
- * out-of-scope roots and their subagents, `parent_session_id` and `hidden` of
- * the subagents of in-scope roots. Multi-project: `parent_session_id` of
- * every subagent and out-of-scope root, and `mtime` of out-of-scope roots
- * (the baseline reads them through the all-projects list). `categories` maps
- * each probe category to its counters.
+ * Probes of the active in-scope tick, on the fields a list that scans the whole
+ * store would read on that path. Single project: `project_id` of out-of-scope
+ * roots and their subagents, `parent_session_id` and `hidden` of the subagents
+ * of in-scope roots. Multi-project: `parent_session_id` of every subagent and
+ * out-of-scope root, and `mtime` of out-of-scope roots (an all-projects list
+ * filtered on the scope reads them). `categories` maps each probe category to
+ * its counters; each counter's `read()` reads its field through the state.
  */
 function installTickProbes(state, scopeId) {
     const inScope = scopeProjectSet(state, scopeId)
@@ -124,6 +139,7 @@ function installTickProbes(state, scopeId) {
     const categories = new Map()
     const probe = (category, record, field) => {
         const counter = countReads(record, field)
+        counter.read = () => state.sessions[record.id][field]
         if (!categories.has(category)) categories.set(category, [])
         categories.get(category).push(counter)
         probes.push(counter)
@@ -181,29 +197,18 @@ test('an active in-scope tick reads only in-scope candidate mtimes and reruns no
     }
 })
 
-// The baseline never reads `hidden` of a subagent: its filter stops at the
-// truthy `parent_session_id`. That probe only proves the shipped list does
-// not read it either, so this test does not require the baseline to reach it.
-const PROBES_THE_BASELINE_NEVER_REACHES = new Set(['hidden of subagents of in-scope roots'])
-
-test('the probes of the active in-scope tick catch the baseline list', () => {
-    // The probes above can fail: the baseline path of each scope reads every
-    // reachable probe category on the same tick.
-    for (const [scopeId, baselineId] of [['p0', 'p0'], ['ws:w', ALL]]) {
+test('the probes of the active in-scope tick count every read of their field', () => {
+    // The zero reads above can fail: a read of any probed field through the state counts.
+    for (const scopeId of ['p0', 'ws:w']) {
         const state = buildSidebarState({ roots: 60, cutoffRoots: 40 })
-        makeUnread(state, ID.processAssistant)
-        const { probes, categories } = installTickProbes(state, scopeId)
-        const probe = subscribe(() => baselineGetStableSessionList(state, baselineId, ALL, () => false))
-        tick(state, ID.processAssistant)
-        for (const counter of probes) counter.reads = 0
-        probe.flush()
-        assert.ok(total(probes) > 0, scopeId)
+        const { categories } = installTickProbes(state, scopeId)
         assert.ok(categories.size >= 3, scopeId)
         for (const [category, counters] of categories) {
-            if (PROBES_THE_BASELINE_NEVER_REACHES.has(category)) continue
-            assert.ok(total(counters) > 0, `${scopeId}: ${category}`)
+            assert.ok(counters.length > 0, `${scopeId}: ${category}`)
+            for (const counter of counters) counter.reads = 0  // the probe set-up's own reads
+            for (const counter of counters) counter.read()
+            assert.ok(counters.every(counter => counter.reads === 1), `${scopeId}: ${category}`)
         }
-        probe.stop()
     }
 })
 
@@ -266,6 +271,9 @@ test('a one-project workspace and the same project scope are two lists with thei
     assert.ok(!ids(workspaceList.members).includes(ID.cutP0))
     assert.deepEqual(ids(workspaceList.ordered), expectedIds(state, 'ws:w1'))
     assert.deepEqual(ids(projectList.ordered), expectedIds(state, 'p0'))
+    // The head of p0 in plain terms: the sessions with a process by start, then by mtime.
+    assert.deepEqual(ids(projectList.ordered).slice(0, 6),
+        [ID.processAssistant, ID.processShell, ID.processCron, ID.child, ID.p0Recent, ID.p0Second])
     // Stable object per key; the store getters return the module's values unchanged.
     assert.strictEqual(getScopeSessionList(state, resolve('ws:w1')), workspaceList)
     assert.strictEqual(data.getScopeSessionList(project), projectList)

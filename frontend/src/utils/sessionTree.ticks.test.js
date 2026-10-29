@@ -3,17 +3,16 @@
 //
 // `buildSessionTree` reads `mtime` only for inactive subtrees, and the sidebar
 // gives it the per-session `unread` memo, so a tick of an active session, or of
-// a `user_turn` session that stays unread, rebuilds no tree. The parity oracle
-// is the frozen baseline `buildSessionTree` (tests/helpers/sidebarBaseline/).
+// a `user_turn` session that stays unread, rebuilds no tree. Along the update
+// sequence, the live tree must equal the tree of a reload.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { computed, effect, toRaw } from 'vue'
 import { buildSessionTree } from './sessionTree.js'
-import { buildSessionTree as baselineBuildSessionTree } from '../../tests/helpers/sidebarBaseline/sessionTree.js'
 import { computeSidebarSessionBlocks, useSidebarSessionBlocks } from './sidebarSessions.js'
 import { getUnreadMemos } from './unreadMemos.js'
 import { isSessionUnread } from './sessions.js'
-import { buildSidebarState, createShippedData, tick, applyStep, FIXTURE_IDS, FIXTURE_SCOPES,
+import { buildSidebarState, createFixtureStores, tick, applyStep, reloadedState, FIXTURE_IDS, FIXTURE_SCOPES,
     FIXTURE_UPDATE_SEQUENCE } from '../../tests/helpers/sidebarFixture.js'
 
 const ID = FIXTURE_IDS
@@ -80,12 +79,12 @@ function treeShape(tree) {
 test('buildSessionTree reads no mtime of an active child nor of its active ancestor', () => {
     for (const scope of SCOPES) {
         const { state, leafId } = treeFixture()
-        const { data, workspaces } = createShippedData(state)
+        const { data, workspaces } = createFixtureStores(state)
         const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, scope))
         for (const id of [ID.processAssistant, ID.p0Recent, ID.processShell, ID.p0Second, leafId]) {
             assert.ok(natural.some(s => s.id === id), `${scope}: ${id} is a tree candidate`)
         }
-        // Counters installed after the own setup; the baseline reads `mtime` first for every node.
+        // Counters installed after the own setup; a tree that sorted every node by date would read them.
         const activeChild = countReads(state.sessions[ID.processAssistant], 'mtime')
         const activeAncestor = countReads(state.sessions[ID.p0Recent], 'mtime')
         const userTurnChild = countReads(state.sessions[ID.processShell], 'mtime')
@@ -105,29 +104,30 @@ test('buildSessionTree reads no mtime of an active child nor of its active ances
     }
 })
 
-test('the tree equals the baseline tree in every fixture scope along the update sequence', () => {
-    for (const scope of FIXTURE_SCOPES) {
-        const { state } = treeFixture()
-        const { data, workspaces } = createShippedData(state)
-        const memos = getUnreadMemos(data)
-        const check = (label) => {
-            const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, scope))
-            const lookup = id => state.sessions[id] ?? null
-            const expected = baselineBuildSessionTree(natural, {
-                lookup, processStates: state.processStates, viewedId: ID.p0Second, isUnread: isSessionUnread,
-            })
-            const actual = buildSessionTree(natural, {
-                lookup, processStates: state.processStates, viewedId: ID.p0Second,
-                isUnread: session => memos.unread(session),
-            })
-            assert.deepEqual(treeShape(actual), treeShape(expected), `${String(scope)}: ${label}`)
-        }
-        check('initial')
-        for (const step of FIXTURE_UPDATE_SEQUENCE) {
-            applyStep(state, step)
-            check(step.name)
-        }
+test('the p0 tree nests the sessions by spawned_by and marks the subtrees with a process active', () => {
+    const { state, leafId } = treeFixture()
+    const { data, workspaces } = createFixtureStores(state)
+    const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, 'p0'))
+    const tree = buildSessionTree(natural, {
+        lookup: id => state.sessions[id] ?? null, processStates: state.processStates, isUnread: isSessionUnread,
+    })
+    const parentOf = (id) => tree.nodes.get(id).parentId
+    assert.equal(parentOf(ID.processAssistant), ID.p0Recent)
+    assert.equal(parentOf(leafId), ID.processAssistant)
+    assert.equal(parentOf(ID.processShell), ID.p0Second)
+    // `ancestor` sits below every cutoff: the tree brings it in as the parent of `child`.
+    assert.equal(parentOf(ID.child), ID.ancestor)
+    for (const id of [ID.p0Recent, ID.p0Second, ID.ancestor, ID.processCron]) {
+        assert.ok(tree.rootIds.includes(id), `${id} is a root`)
     }
+    for (const id of [ID.processAssistant, ID.processShell, ID.child, leafId]) {
+        assert.ok(!tree.rootIds.includes(id), `${id} is not a root`)
+    }
+    // A process anywhere in a subtree makes its root active; `ancestor` and `child` have none.
+    assert.equal(tree.nodes.get(ID.p0Recent).effective.active, true)
+    assert.equal(tree.nodes.get(ID.p0Second).effective.active, true)
+    assert.equal(tree.nodes.get(ID.ancestor).effective.active, false)
+    assert.ok(tree.nodes.get(ID.ancestor).effective.dateKey > 0, 'an inactive subtree has a dateKey')
 })
 
 /**
@@ -135,8 +135,8 @@ test('the tree equals the baseline tree in every fixture scope along the update 
  * `useSidebarSessionBlocks`, with the unread memo of the data store. One subscriber
  * reads it once per flush, like the list's watchers; `runs()` counts the rebuilds.
  */
-function mountTree(state, scope) {
-    const { data, workspaces } = createShippedData(state)
+function mountTree(state, scope, viewedId = null) {
+    const { data, workspaces } = createFixtureStores(state)
     const { blocks } = useSidebarSessionBlocks(() => blockOptions(data, workspaces, scope))
     const natural = computed(() => blocks.value.natural)
     let runs = 0
@@ -145,7 +145,7 @@ function mountTree(state, scope) {
         return buildSessionTree(natural.value, {
             lookup: id => data.sessions[id] ?? null,
             processStates: data.processStates,
-            viewedId: null,
+            viewedId,
             isUnread: session => getUnreadMemos(data).unread(session),
         })
     })
@@ -158,6 +158,34 @@ function mountTree(state, scope) {
         stop: () => runner.effect.stop(),
     }
 }
+
+/** The tree a reload shows: fresh stores on a copy of the data, the unread rule read directly. */
+function reloadedTree(state, scope, viewedId) {
+    const copy = reloadedState(state)
+    const { data, workspaces } = createFixtureStores(copy)
+    const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, scope))
+    return buildSessionTree(natural, {
+        lookup: id => copy.sessions[id] ?? null, processStates: copy.processStates, viewedId, isUnread: isSessionUnread,
+    })
+}
+
+test('outside startup the live tree equals the tree of a reload, in every fixture scope along the update sequence', () => {
+    for (const scope of FIXTURE_SCOPES) {
+        const { state } = treeFixture()
+        const view = mountTree(state, scope, ID.p0Second)
+        const check = (label) => {
+            view.flush()
+            assert.deepEqual(treeShape(view.tree.value), treeShape(reloadedTree(state, scope, ID.p0Second)),
+                `${String(scope)}: ${label}`)
+        }
+        check('initial')
+        for (const step of FIXTURE_UPDATE_SEQUENCE) {
+            applyStep(state, step)
+            if (step.startup !== 'write' && step.startup !== 'progress') check(step.name)
+        }
+        view.stop()
+    }
+})
 
 test('an active child tick and a user_turn tick without flip rebuild no tree', () => {
     for (const scope of SCOPES) {

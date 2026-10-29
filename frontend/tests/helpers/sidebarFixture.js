@@ -1,12 +1,11 @@
-// Shared store fixture of the sidebar recompute tests and benchmark
+// Shared store fixture of the sidebar tests
 // (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, section 7).
 //
-// `buildSidebarState` builds a deterministic reactive store state. Two data
-// facades read it the way the real Pinia stores do: `createBaselineData` over
-// the frozen baseline copies (`./sidebarBaseline/`, the parity oracle and the
-// benchmark "before"), `createShippedData` over the shipped modules. In both,
-// every field that is a Pinia getter in the real store is a `computed` read
-// through a property getter, so it caches like Pinia does.
+// `buildSidebarState` builds a deterministic reactive store state.
+// `createFixtureStores` gives the `{ data, workspaces }` store facades that read
+// it the way the real Pinia stores do: every field that is a Pinia getter in the
+// real store is a `computed` read through a property getter, so it caches like
+// Pinia does.
 //
 // Fixture layout (rank 0 = most recent root, every root a distinct mtime):
 //   - top block, above every cutoff: the launched ephemeral root and the draft
@@ -25,9 +24,8 @@
 // has `subagentsPerRoot` subagents (`<root>-sa<k>`), inserted right after it.
 
 import { computed, reactive, toRaw } from 'vue'
-import { ALL_PROJECTS_ID, baselineProjectInputs, createBaselineActivityIndex,
-    hasActiveStartupPhase as baselineHasActiveStartupPhase } from './sidebarBaseline/projectInputs.js'
-import { getStableSessionList as baselineGetStableSessionList } from './sidebarBaseline/sessionLists.js'
+import { ALL_PROJECTS_ID } from '../../src/constants.js'
+import { buildProjectActivityIndex, createProjectActivityComparator } from '../../src/utils/projectActivity.js'
 import { getScopeSessionList, getStableSessionList } from '../../src/utils/sessionLists.js'
 import { getRootSessions } from '../../src/utils/rootSessions.js'
 import { getUnreadMemos } from '../../src/utils/unreadMemos.js'
@@ -282,7 +280,7 @@ function addWorktree(state, parentId, id) {
 const step = (name, apply, startup = null) => Object.freeze({ name, startup, apply })
 
 /**
- * The shared update sequence of the parity and coverage tests, applied in
+ * The shared update sequence of the behaviour and coverage tests, applied in
  * order on one state with `applyStep`. `startup` marks the startup steps:
  * `'write'` (a phase starts and one untracked write happens: no comparison
  * until the next message), `'progress'` (a progress message) and `'end'`.
@@ -337,9 +335,32 @@ export function applyStep(state, step) {
     step.apply(state)
 }
 
-// The store logic both facades share: the design does not change it.
-function createStoreFacades(state, { getStableSessionList: stableList, hasActiveStartupPhase: inStartup, activityIndex }) {
-    const inputs = baselineProjectInputs(state, state.workspaces)
+/**
+ * A fresh copy of the state, outside startup: what a page reload would load
+ * from the same data. Its stores share no cache with the live state, so blocks
+ * computed on it are what the sidebar must show after the live updates.
+ */
+export function reloadedState(state) {
+    return reactive(structuredClone({ ...toRaw(state), startupProgress: {} }))
+}
+
+/**
+ * `{ data, workspaces }` store facades over the state, wired like `stores/data.js`
+ * and `stores/workspaces.js`: the project getters (`getProjects`, `getWorktreesOf`)
+ * are the activity-sorted ones, the workspace membership reads the activity-free
+ * inputs (`archivedProjectIds`, `worktreeIdsByParent`).
+ */
+export function createFixtureStores(state) {
+    // Like the store: derived activity, the comparator, and the activity-sorted project lists.
+    const projectActivityById = computed(() => buildProjectActivityIndex(Object.values(state.projects)))
+    const projectActivityComparator = computed(() => createProjectActivityComparator(projectActivityById.value))
+    const getProjects = computed(() => Object.values(state.projects).sort(projectActivityComparator.value))
+    const getWorktreesOf = computed(() => {
+        const comparator = projectActivityComparator.value
+        return (projectId) => Object.values(state.projects)
+            .filter(project => project.worktree_of === projectId)
+            .sort(comparator)
+    })
     const getProject = computed(() => (id) => state.projects[id])
     const getMainRepoProjectId = computed(() => (projectId) =>
         (projectId && state.projects[projectId]?.worktree_of) || projectId)
@@ -353,11 +374,18 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         }
         return ids
     })
-    const getProjectSessions = computed(() => (projectId) => stableList(state, projectId, ALL_PROJECTS_ID))
-    const getAllSessions = computed(() => stableList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID))
-    const isStartupInProgress = computed(() => inStartup(state.startupProgress))
+    const getProjectSessions = computed(() => (projectId) => getStableSessionList(state, projectId, ALL_PROJECTS_ID))
+    const getAllSessions = computed(() => getStableSessionList(state, ALL_PROJECTS_ID, ALL_PROJECTS_ID))
+    const isStartupInProgress = computed(() => hasActiveStartupPhase(state.startupProgress))
+    // Like the store getter: a function, so each call reads `startupProgress`.
+    const inStartupPhase = computed(() => () => hasActiveStartupPhase(state.startupProgress))
+    const rootSessions = computed(() => getRootSessions(state))
+    const scopeSessionList = computed(() => (scope) => getScopeSessionList(state, scope))
+    const hasUnreadContentMemo = computed(() => (session) => getUnreadMemos(state).unreadContent(session))
+    const archivedProjectIds = computed(() => getArchivedProjectIds(state))
+    const worktreeIdsByParent = computed(() => getWorktreeIdsByParent(state))
     const projectActivitySummary = computed(() => {
-        const index = activityIndex(data)
+        const index = getProjectActivityIndex(data)
         return (projectIds, previous) => index.summary(projectIds, previous)
     })
 
@@ -367,15 +395,21 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         get processStates() { return state.processStates },
         get startupProgress() { return state.startupProgress },
         get localState() { return state.localState },
-        get projectActivityById() { return inputs.projectActivityById },
-        get getProjects() { return inputs.getProjects },
-        get getWorktreesOf() { return inputs.getWorktreesOf },
+        get projectActivityById() { return projectActivityById.value },
+        get getProjects() { return getProjects.value },
+        get getWorktreesOf() { return getWorktreesOf.value },
         get getProject() { return getProject.value },
         get getMainRepoProjectId() { return getMainRepoProjectId.value },
         get getProjectScopeIds() { return getProjectScopeIds.value },
         get getProjectSessions() { return getProjectSessions.value },
         get getAllSessions() { return getAllSessions.value },
         get isStartupInProgress() { return isStartupInProgress.value },
+        get inStartupPhase() { return inStartupPhase.value },
+        get rootSessions() { return rootSessions.value },
+        get getScopeSessionList() { return scopeSessionList.value },
+        get hasUnreadContentMemo() { return hasUnreadContentMemo.value },
+        get archivedProjectIds() { return archivedProjectIds.value },
+        get worktreeIdsByParent() { return worktreeIdsByParent.value },
         // Like the real getter: the project badges read the unread index through it.
         get getProjectActivitySummary() { return projectActivitySummary.value },
     }
@@ -388,63 +422,21 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         const mainRepoId = data.getMainRepoProjectId(projectId)
         return mainRepoId !== projectId && ws.projectIds.includes(mainRepoId)
     })
-    const workspaces = {
-        get getAllWorkspaces() { return state.workspaces },
-        get getWorkspaceById() { return getWorkspaceById.value },
-        get getVisibleProjectIds() { return inputs.getVisibleProjectIds },
-        get getAllProjectIds() { return inputs.getAllProjectIds },
-        get workspaceContainsProject() { return workspaceContainsProject.value },
-    }
-    return { data, workspaces }
-}
-
-/** `{ data, workspaces }` store facades over the frozen baseline copies. */
-export function createBaselineData(state) {
-    return createStoreFacades(state, {
-        getStableSessionList: (owner, scopeId, allProjectsId) =>
-            baselineGetStableSessionList(owner, scopeId, allProjectsId, baselineHasActiveStartupPhase),
-        hasActiveStartupPhase: baselineHasActiveStartupPhase,
-        activityIndex: createBaselineActivityIndex,
-    })
-}
-
-/**
- * `{ data, workspaces }` store facades over the shipped modules. The project
- * getters (`getProjects`, `getWorktreesOf`) stay the activity-sorted ones, as
- * in the real store; the workspace membership reads the activity-free inputs
- * (`archivedProjectIds`, `worktreeIdsByParent`) like the real stores do. Later
- * tasks plug their shipped modules in here.
- */
-export function createShippedData(state) {
-    const facades = createStoreFacades(state, { getStableSessionList, hasActiveStartupPhase,
-        activityIndex: getProjectActivityIndex })
-    const rootSessions = computed(() => getRootSessions(state))
-    const scopeSessionList = computed(() => (scope) => getScopeSessionList(state, scope))
-    const hasUnreadContentMemo = computed(() => (session) => getUnreadMemos(state).unreadContent(session))
-    const archivedProjectIds = computed(() => getArchivedProjectIds(state))
-    const worktreeIdsByParent = computed(() => getWorktreeIdsByParent(state))
-    // Like the store getter: a function, so each call reads `startupProgress`.
-    const inStartupPhase = computed(() => () => hasActiveStartupPhase(state.startupProgress))
-    Object.defineProperties(facades.data, {
-        rootSessions: { get: () => rootSessions.value, enumerable: true },
-        getScopeSessionList: { get: () => scopeSessionList.value, enumerable: true },
-        hasUnreadContentMemo: { get: () => hasUnreadContentMemo.value, enumerable: true },
-        archivedProjectIds: { get: () => archivedProjectIds.value, enumerable: true },
-        worktreeIdsByParent: { get: () => worktreeIdsByParent.value, enumerable: true },
-        inStartupPhase: { get: () => inStartupPhase.value, enumerable: true },
-    })
     // Like `stores/workspaces.js`: one membership per store, each parameter read on each evaluation.
     const membership = createWorkspaceMembership({
-        getWorkspaceById: (id) => facades.workspaces.getWorkspaceById(id),
-        getProject: (id) => facades.data.getProject(id),
-        getWorktreeIdsByParent: () => facades.data.worktreeIdsByParent,
+        getWorkspaceById: (id) => getWorkspaceById.value(id),
+        getProject: (id) => getProject.value(id),
+        getWorktreeIdsByParent: () => worktreeIdsByParent.value,
         isShowArchived: () => state.settings.isShowArchivedProjects,
     })
     const getVisibleProjectIds = computed(() => (workspaceId) => membership.visible(workspaceId))
     const getAllProjectIds = computed(() => (workspaceId) => membership.all(workspaceId))
-    Object.defineProperties(facades.workspaces, {
-        getVisibleProjectIds: { get: () => getVisibleProjectIds.value, enumerable: true },
-        getAllProjectIds: { get: () => getAllProjectIds.value, enumerable: true },
-    })
-    return facades
+    const workspaces = {
+        get getAllWorkspaces() { return state.workspaces },
+        get getWorkspaceById() { return getWorkspaceById.value },
+        get getVisibleProjectIds() { return getVisibleProjectIds.value },
+        get getAllProjectIds() { return getAllProjectIds.value },
+        get workspaceContainsProject() { return workspaceContainsProject.value },
+    }
+    return { data, workspaces }
 }

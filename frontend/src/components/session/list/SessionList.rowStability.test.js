@@ -13,7 +13,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as Vue from 'vue'
 import { compileComponent, makeRenderer, virtualScroller, row, flush } from '../../../../tests/helpers/scrollerComponentHarness.js'
-import { buildSidebarState, tick, FIXTURE_IDS, createShippedData } from '../../../../tests/helpers/sidebarFixture.js'
+import { buildSidebarState, tick, FIXTURE_IDS, createFixtureStores } from '../../../../tests/helpers/sidebarFixture.js'
 import { ALL_PROJECTS_ID } from '../../../constants.js'
 import * as sidebarSessions from '../../../utils/sidebarSessions.js'
 import * as sessionLists from '../../../utils/sessionLists.js'
@@ -98,7 +98,7 @@ function releaseAnimationFrames(t) {
  * `sessionTreeModule` replaces the tree helpers (a counting wrapper).
  */
 function mountList(t, state, projectId, { showAsTree = false, sessionTreeModule = sessionTree } = {}) {
-    const { data, workspaces } = createShippedData(state)
+    const { data, workspaces } = createFixtureStores(state)
     // The data facade plus the list's own store needs. A load never settles: these tests do not paginate.
     const store = Object.defineProperties({
         hasMoreSessions: id => state.localState.projects[id]?.hasMoreSessions ?? true,

@@ -1,3 +1,0 @@
-# Frozen sidebar baseline
-
-These files are copies of the sidebar derivations at commit `5cf064fb4` (`sessionLists.js`, `sidebarSessions.js`, `sessionTree.js` and `projectProcessActivity.js` from `frontend/src/utils/`, plus the store logic of `getProjects`, `getWorktreesOf`, `getVisibleProjectIds` and `getAllProjectIds` in `projectInputs.js`), with only their imports rewritten so they load under node. `projectInputs.js` also re-exports the frozen activity index under its test-side name `createBaselineActivityIndex`. They are the parity oracle of the sidebar tests and the "before" of `scripts/benchmark_sidebar_recompute.mjs` (design: `docs/plans/2026-10-28-sidebar-recompute-cost-design.md`, section 7). They are frozen: never edit them, even when the shipped code changes.

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { reactive } from 'vue'
 import { computeSidebarSessionBlocks } from './sidebarSessions.js'
-import { createShippedData } from '../../tests/helpers/sidebarFixture.js'
+import { createFixtureStores } from '../../tests/helpers/sidebarFixture.js'
 
 function fixture(scope) {
     const state = reactive({ sessions: {
@@ -12,7 +12,7 @@ function fixture(scope) {
     }, projects: {}, processStates: {}, localState: { projects: {} }, startupProgress: {},
         settings: { isShowArchivedProjects: true } })
     // The shipped root index, scope lists, archived set, unread memo and startup probe.
-    const shipped = createShippedData(state).data
+    const shipped = createFixtureStores(state).data
     const data = {
         get sessions() { return state.sessions },
         get processStates() { return state.processStates },

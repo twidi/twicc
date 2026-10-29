@@ -10,7 +10,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as Vue from 'vue'
 import { compileComponent, makeRenderer, virtualScroller, row, flush } from '../../../../tests/helpers/scrollerComponentHarness.js'
-import { buildSidebarState, FIXTURE_IDS, createShippedData } from '../../../../tests/helpers/sidebarFixture.js'
+import { buildSidebarState, FIXTURE_IDS, createFixtureStores } from '../../../../tests/helpers/sidebarFixture.js'
 import { ALL_PROJECTS_ID } from '../../../constants.js'
 import * as sidebarSessions from '../../../utils/sidebarSessions.js'
 import * as sessionLists from '../../../utils/sessionLists.js'
@@ -72,7 +72,7 @@ function stubAnimationFrames(t) {
 
 /** Mount SessionList on `state` with reactive `props`; returns the last tree and the rootKey reads. */
 function mountList(t, state, props) {
-    const { data, workspaces } = createShippedData(state)
+    const { data, workspaces } = createFixtureStores(state)
     const store = Object.defineProperties({
         hasMoreSessions: id => state.localState.projects[id]?.hasMoreSessions ?? true,
         areSessionsLoading: id => state.localState.projects[id]?.sessionsLoading ?? false,
@@ -134,7 +134,7 @@ function mountList(t, state, props) {
 
 /** The rail on the same state: tree mode follows `flags.tree`. */
 function mountRail(t, state, flags) {
-    const { data } = createShippedData(state)
+    const { data } = createFixtureStores(state)
     const store = Object.defineProperties({ loadSessionById: () => Promise.resolve(null) }, Object.getOwnPropertyDescriptors(data))
     const scope = Vue.effectScope()
     const api = scope.run(() => useRailActiveSessions(store, () => null, { treeEnabled: () => flags.tree }))

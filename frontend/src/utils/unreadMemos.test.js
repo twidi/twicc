@@ -4,13 +4,12 @@ import { effect, isReactive, toRaw } from 'vue'
 import { getUnreadMemos } from './unreadMemos.js'
 import { getProjectActivityIndex } from './projectProcessActivity.js'
 import { observeStageRuns } from './stageRuns.js'
-import { createBaselineActivityIndex } from '../../tests/helpers/sidebarBaseline/projectInputs.js'
-import { FIXTURE_IDS as ID, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState, createBaselineData,
-    createShippedData, startupPhase, tick } from '../../tests/helpers/sidebarFixture.js'
+import { FIXTURE_IDS as ID, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState, createFixtureStores,
+    reloadedState, startupPhase, tick } from '../../tests/helpers/sidebarFixture.js'
 
 // Unread index over the roots through the per-session memos
 // (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, 5.5 and 7.1 #5, #6, #9, #10).
-// Every test except the parity test reads `summary(['p0'])` and
+// Every test except the two update-sequence tests reads `summary(['p0'])` and
 // `summary(<visible ids of w>)`.
 
 const UNREAD_FIELDS = ['unreadCount', 'unreadBackgroundCount', 'unreadShellCount']
@@ -18,7 +17,7 @@ const stepNamed = (name) => FIXTURE_UPDATE_SEQUENCE.find(step => step.name === n
 const unreadOf = (summary) => UNREAD_FIELDS.map(key => summary[key])
 
 function setup(state = buildSidebarState({ roots: 40 })) {
-    const shipped = createShippedData(state)
+    const shipped = createFixtureStores(state)
     return { state, ...shipped, index: getProjectActivityIndex(shipped.data) }
 }
 
@@ -227,22 +226,78 @@ test('removing a session drops it from the counts at once', () => {
     probe.stop()
 })
 
-test('the summary equals the frozen baseline index along an update sequence', () => {
+/**
+ * The favicon count after each step of the update sequence. A root counts when it has
+ * unread content and is not hidden, archived, a draft or ephemeral, and has no process
+ * outside `user_turn`. The fixture starts with two (unread-1, unread-2). During startup
+ * the index counts nothing.
+ */
+const EXPECTED_TOTAL_UNREAD = new Map([
+    ['in-scope tick without order change', 2],      // an open tick of the assistant_turn session
+    ['in-scope tick with order change', 3],         // p0-recent turns unread
+    ['out-of-scope tick without order change', 3],  // unread-1 was already unread
+    ['out-of-scope tick with order change', 3],     // unread-2 too
+    ['unread flip to unread on a user_turn session with background work', 4],  // proc-shell
+    ['unread flip to read', 3],                     // unread-1
+    ['pin change', 3], ['archive', 3], ['hide', 3], // all three on read roots
+    ['cutoff crossing', 4],                         // a real batch: old-p2-wt1 turns unread
+    ['root add', 4],                                // a read root
+    ['root removal', 3],                            // p0-recent, unread
+    ['subagent add', 3], ['subagent removal', 3],   // subagents never count
+    ['workspace member archived', 3], ['worktree added to p2', 3], ['worktree added to p0', 3],
+    ['workspace gains a project', 3], ['workspace loses a project', 3],
+    ['process start', 3],                           // on unread-1, read since its flip
+    ['process stop', 3],                            // proc-cron, read
+    ['startup phase with one untracked write', 0], ['progress message', 0],
+    ['end of startup', 3],
+])
+
+/** Every project summary and the total of an index (the project badges and the favicon). */
+const readIndex = (state, index) => ({
+    projects: Object.fromEntries(Object.keys(state.projects).map(id => [id, index.summary([id])])),
+    totalUnread: index.totalUnread(),
+})
+
+test('the favicon count follows each step of the update sequence', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const shipped = getProjectActivityIndex(createShippedData(state).data)
-    const baseline = createBaselineActivityIndex(createBaselineData(state).data)
-    const read = (index) => ({
-        projects: Object.fromEntries(Object.keys(state.projects).map(id => [id, index.summary([id])])),
-        totalUnread: index.totalUnread(),
-    })
-    // Keep both indexes subscribed, as in the app.
-    let latest = {}
-    const runner = effect(() => { latest = { shipped: read(shipped), baseline: read(baseline) } })
-    assert.deepEqual(latest.shipped, latest.baseline, 'initial state')
+    const index = getProjectActivityIndex(createFixtureStores(state).data)
+    // Kept subscribed, as in the app.
+    let total = null
+    const runner = effect(() => { total = index.totalUnread() })
+    assert.equal(total, 2, 'initial state')
+    assert.deepEqual([...EXPECTED_TOTAL_UNREAD.keys()], FIXTURE_UPDATE_SEQUENCE.map(step => step.name))
     for (const step of FIXTURE_UPDATE_SEQUENCE) {
         applyStep(state, step)
-        assert.deepEqual(read(shipped), read(baseline), step.name)
-        assert.deepEqual(latest.shipped, latest.baseline, `${step.name} (subscribed)`)
+        assert.equal(total, EXPECTED_TOTAL_UNREAD.get(step.name), step.name)
+        if (step.name === 'unread flip to unread on a user_turn session with background work') {
+            // p0 holds p0-recent and proc-shell, whose unread state comes with a background shell.
+            assert.deepEqual(unreadOf(index.summary(['p0'])), [2, 1, 1], step.name)
+        }
+        if (step.name === 'cutoff crossing') assert.equal(index.summary(['p2-wt1']).unreadCount, 1, step.name)
+        if (step.name === 'process start') {
+            const p4 = index.summary(['p4'])
+            assert.deepEqual([p4.processCount, p4.hasAssistantTurn], [1, true], step.name)
+        }
+        if (step.name === 'process stop') assert.equal(index.summary(['p0']).processCount, 2, step.name)
+    }
+    runner.effect.stop()
+})
+
+test('outside startup the live summaries equal those of a reload, along the update sequence', () => {
+    // A reload reads the same data with fresh stores: no live update may leave a summary behind.
+    const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
+    const index = getProjectActivityIndex(createFixtureStores(state).data)
+    let latest = null
+    const runner = effect(() => { latest = readIndex(state, index) })
+    const reload = () => {
+        const copy = reloadedState(state)
+        return readIndex(copy, getProjectActivityIndex(createFixtureStores(copy).data))
+    }
+    assert.deepEqual(latest, reload(), 'initial state')
+    for (const step of FIXTURE_UPDATE_SEQUENCE) {
+        applyStep(state, step)
+        if (step.startup === 'write' || step.startup === 'progress') continue
+        assert.deepEqual(latest, reload(), step.name)
     }
     runner.effect.stop()
 })

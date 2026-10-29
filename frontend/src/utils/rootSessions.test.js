@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { effect, isReactive, reactive, toRaw } from 'vue'
 import { getRootSessions } from './rootSessions.js'
 import { observeStageRuns } from './stageRuns.js'
-import { buildSidebarState, createShippedData, progressMessage, startupPhase } from '../../tests/helpers/sidebarFixture.js'
+import { buildSidebarState, createFixtureStores, progressMessage, startupPhase } from '../../tests/helpers/sidebarFixture.js'
 
 const root = (id) => ({ id, project_id: 'p', parent_session_id: null, mtime: 1 })
 const subagent = (id, parent) => ({ id, project_id: 'p', parent_session_id: parent, mtime: 1 })
@@ -144,7 +144,7 @@ test('outside startup a subagent parent change reruns the index', () => {
 
 test('the shipped data facade exposes the index of its state', () => {
     const state = buildSidebarState({ roots: 20 })
-    const { data } = createShippedData(state)
+    const { data } = createFixtureStores(state)
     assert.strictEqual(data.rootSessions, getRootSessions(state))
     assert.equal(data.rootSessions.length, 20)
     assert.ok(data.rootSessions.every(session => !session.parent_session_id))

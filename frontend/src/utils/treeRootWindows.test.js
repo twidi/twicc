@@ -13,10 +13,9 @@ import { buildSessionTree } from './sessionTree.js'
 import { sessionSortComparator } from './sessionSort.js'
 import { getTreeRootWindows, nextRootWindows, collectProcessInputs, processAncestry, NO_ROOT_WINDOWS } from './treeRootWindows.js'
 import { observeStageRuns } from './stageRuns.js'
-import { buildSessionTree as baselineBuildSessionTree } from '../../tests/helpers/sidebarBaseline/sessionTree.js'
 import { computeSidebarSessionBlocks } from './sidebarSessions.js'
 import { isSessionUnread } from './sessions.js'
-import { buildSidebarState, createShippedData, applyStep, FIXTURE_IDS, FIXTURE_SCOPES,
+import { buildSidebarState, createFixtureStores, applyStep, FIXTURE_IDS, FIXTURE_SCOPES,
     FIXTURE_UPDATE_SEQUENCE } from '../../tests/helpers/sidebarFixture.js'
 
 const flush = () => nextTick()
@@ -475,17 +474,18 @@ const OWN_IDENTITY_STEPS = [
     } },
 ]
 
-test('15. own identities only: every tree equals the baseline tree, root order included, along the sequence', async () => {
+test('15. own identities only: every tree equals the tree without the tracker, root order included, along the sequence', async () => {
     for (const scope of FIXTURE_SCOPES) {
         const state = buildSidebarState({ roots: 60, cutoffRoots: 40 })
-        const { data, workspaces } = createShippedData(state)
+        const { data, workspaces } = createFixtureStores(state)
         const tracker = getTreeRootWindows(state)
         let compared = 0
         const check = (label) => {
             const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, scope))
             const lookup = id => state.sessions[id] ?? null
             const opts = { lookup, processStates: state.processStates, viewedId: FIXTURE_IDS.p0Second, isUnread: isSessionUnread }
-            const expected = baselineBuildSessionTree(natural, opts)
+            // Each active root holds only its own process: its window key is its own start.
+            const expected = buildSessionTree(natural, opts)
             const actual = buildSessionTree(natural, { ...opts, rootKey: tracker.rootKey })
             assert.deepEqual(treeShape(actual), treeShape(expected), `${String(scope)}: ${label}`)
             compared += actual.rootIds.filter(id => actual.nodes.get(id).effective.active).length
@@ -503,10 +503,10 @@ test('15. own identities only: every tree equals the baseline tree, root order i
     }
 })
 
-test('15. with trees: effective fields, child order and triggerIds equal the baseline in every scope', async () => {
+test('15. with trees: the tracker changes the root order only, never the effective fields, child order or triggerIds', async () => {
     for (const scope of FIXTURE_SCOPES) {
         const state = buildSidebarState({ roots: 60, cutoffRoots: 40 })
-        const { data, workspaces } = createShippedData(state)
+        const { data, workspaces } = createFixtureStores(state)
         const ID = FIXTURE_IDS
         // Own setup: chains with processes below idle ancestors, and a worker start below a leader.
         state.sessions[ID.processAssistant].spawned_by = ID.p0Recent
@@ -520,7 +520,7 @@ test('15. with trees: effective fields, child order and triggerIds equal the bas
         const check = (label) => {
             const { natural } = computeSidebarSessionBlocks(blockOptions(data, workspaces, scope))
             const opts = { lookup: id => state.sessions[id] ?? null, processStates: state.processStates, isUnread: isSessionUnread }
-            const expected = baselineBuildSessionTree(natural, opts)
+            const expected = buildSessionTree(natural, opts)
             const actual = buildSessionTree(natural, { ...opts, rootKey: tracker.rootKey })
             assert.deepEqual(treeShape(actual, { withRootOrder: false }), treeShape(expected, { withRootOrder: false }),
                 `${String(scope)}: ${label}`)

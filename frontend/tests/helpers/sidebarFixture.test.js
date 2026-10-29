@@ -1,28 +1,28 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { isReactive, toRaw } from 'vue'
-import { computeSidebarSessionBlocks } from './sidebarBaseline/sidebarSessions.js'
-import { computeSidebarSessionBlocks as computeShippedBlocks } from '../../src/utils/sidebarSessions.js'
-import { createBaselineActivityIndex } from './sidebarBaseline/projectInputs.js'
+import { computeSidebarSessionBlocks } from '../../src/utils/sidebarSessions.js'
+import { getProjectActivityIndex } from '../../src/utils/projectProcessActivity.js'
 import { hasUnreadContent, isSessionUnread } from '../../src/utils/sessions.js'
 import { hasActiveStartupPhase } from '../../src/utils/startupPhase.js'
 import { FIXTURE_IDS as ID, FIXTURE_SCOPES, FIXTURE_UPDATE_SEQUENCE, applyStep, buildSidebarState,
-    createBaselineData, createShippedData, progressMessage, startupPhase, tick } from './sidebarFixture.js'
+    createFixtureStores, progressMessage, startupPhase, tick } from './sidebarFixture.js'
 
-const blocksOf = (data, workspaces, effectiveProjectId, extra = {}, compute = computeSidebarSessionBlocks) => compute({
+const blocksOf = (data, workspaces, effectiveProjectId, extra = {}) => computeSidebarSessionBlocks({
     data, workspaces, effectiveProjectId, activeWorkspaceId: null, sessionId: null, showArchived: false,
     showArchivedProjects: false, showActiveAcrossFilters: true, ...extra })
 const ids = (sessions) => sessions.map(s => s.id)
 const sorted = (sessions) => ids(sessions).sort()
 
-test('baseline facade gives non-empty root-only blocks in every fixture scope', () => {
+test('the facades give non-empty root-only blocks in every fixture scope, flat and tree', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     for (const effectiveProjectId of FIXTURE_SCOPES) {
-        const blocks = computeSidebarSessionBlocks({ data, workspaces, effectiveProjectId, activeWorkspaceId: null,
-            sessionId: null, showArchived: false, showArchivedProjects: false, showActiveAcrossFilters: true })
-        assert.ok(blocks.natural.length > 0, String(effectiveProjectId))
-        assert.ok(blocks.natural.every(s => !s.parent_session_id))
+        for (const showAsTree of [false, true]) {
+            const blocks = blocksOf(data, workspaces, effectiveProjectId, { showAsTree })
+            assert.ok(blocks.natural.length > 0, `${effectiveProjectId} ${showAsTree}`)
+            assert.ok(blocks.natural.every(s => !s.parent_session_id), `${effectiveProjectId} ${showAsTree}`)
+        }
     }
 })
 
@@ -45,7 +45,7 @@ test('the fixture is deterministic and holds the requested store size', () => {
 
 test('Active elsewhere and Pinned elsewhere hold exactly the placed sessions', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     for (const scope of ['p0', 'ws:w', 'ws:w1']) {
         const blocks = blocksOf(data, workspaces, scope)
         assert.deepEqual(sorted(blocks.crossFilterActive), [ID.unread1, ID.unread2], scope)
@@ -64,7 +64,7 @@ test('Active elsewhere and Pinned elsewhere hold exactly the placed sessions', (
 
 test('cutoff placements make single-project and multi-project lists differ', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     const natural = (scope) => ids(blocksOf(data, workspaces, scope).natural)
     assert.ok(natural('p0').includes(ID.cutP0))
     for (const scope of ['ws:w', 'ws:w1', '__all__']) assert.ok(!natural(scope).includes(ID.cutP0), scope)
@@ -84,7 +84,7 @@ test('cutoff placements make single-project and multi-project lists differ', () 
 
 test('the tree extension holds the old p0 ancestor in p0 and both workspaces', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     for (const scope of ['p0', 'ws:w', 'ws:w1']) {
         assert.ok(!ids(blocksOf(data, workspaces, scope).natural).includes(ID.ancestor), scope)
         const tree = blocksOf(data, workspaces, scope, { showAsTree: true })
@@ -95,7 +95,7 @@ test('the tree extension holds the old p0 ancestor in p0 and both workspaces', (
 
 test('the draft and the launched ephemeral root sit in p3', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     const p3 = ids(blocksOf(data, workspaces, 'p3').natural)
     assert.equal(p3[0], ID.ephemeral)
     assert.ok(p3.includes(ID.draft))
@@ -103,9 +103,9 @@ test('the draft and the launched ephemeral root sit in p3', () => {
     assert.equal(state.sessions[ID.ephemeral].ephemeral, true)
 })
 
-test('the baseline unread index counts the two placed unread roots', () => {
+test('the unread index counts the two placed unread roots', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const index = createBaselineActivityIndex(createBaselineData(state).data)
+    const index = getProjectActivityIndex(createFixtureStores(state).data)
     assert.equal(index.totalUnread(), 2)
     assert.equal(index.summary(['p0']).unreadCount, 0)
     // The two p0 user_turn sessions carry a shell and a cron once they read as unread.
@@ -116,7 +116,7 @@ test('the baseline unread index counts the two placed unread roots', () => {
 
 test('a tick flips a read session to unread, an open tick does not, and top moves it first', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
+    const { data, workspaces } = createFixtureStores(state)
     const session = state.sessions[ID.p0Second]
     const before = { mtime: session.mtime, lastLine: session.last_line }
     tick(state, ID.p0Second, { open: true })
@@ -148,22 +148,17 @@ test('startupPhase and progressMessage write a real phase shape and replace the 
 
 test('the update sequence applies in order and ends outside startup', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const { data, workspaces } = createBaselineData(state)
-    const shipped = createShippedData(state).workspaces
-    const members = (facade) => [...facade.getVisibleProjectIds('w')].sort()
+    const { data, workspaces } = createFixtureStores(state)
+    const members = () => [...workspaces.getVisibleProjectIds('w')].sort()
     const seen = []
     for (const step of FIXTURE_UPDATE_SEQUENCE) {
         applyStep(state, step)
         seen.push(step.name)
-        // Both facades see a membership change (the parity tests would agree on a frozen list too).
+        // The facade sees a membership change of the reactive workspace list.
         if (step.name === 'workspace gains a project') {
-            for (const facade of [workspaces, shipped]) {
-                assert.deepEqual(members(facade), ['p0', 'p0-wt1', 'p2', 'p2-wt1', 'p2-wt2', 'p2-wt3'])
-            }
+            assert.deepEqual(members(), ['p0', 'p0-wt1', 'p2', 'p2-wt1', 'p2-wt2', 'p2-wt3'])
         }
-        if (step.name === 'workspace loses a project') {
-            for (const facade of [workspaces, shipped]) assert.deepEqual(members(facade), ['p0', 'p0-wt1'])
-        }
+        if (step.name === 'workspace loses a project') assert.deepEqual(members(), ['p0', 'p0-wt1'])
         if (step.name === 'cutoff crossing') {
             assert.ok(state.sessions[ID.oldWorktree].mtime > state.localState.projects.__all__.oldestSessionMtime)
             assert.ok(state.sessions[ID.oldWorktree].last_new_content_at > state.sessions[ID.oldWorktree].last_viewed_at,
@@ -181,32 +176,16 @@ test('the update sequence applies in order and ends outside startup', () => {
     assert.deepEqual(workspaces.getVisibleProjectIds('w'), ['p0', 'p0-wt1'])
 })
 
-test('both facades expose cached getters and the activity-sorted project inputs', () => {
+test('the facades expose cached getters and the activity-sorted project inputs', () => {
     const state = buildSidebarState({ roots: 20 })
-    for (const { data, workspaces } of [createBaselineData(state), createShippedData(state)]) {
-        assert.strictEqual(data.getProjects, data.getProjects)
-        assert.strictEqual(data.getAllSessions, data.getAllSessions)
-        const projects = data.getProjects
-        state.projects.p9.mtime += 10_000  // above every other project, on each pass
-        assert.notStrictEqual(data.getProjects, projects)
-        assert.equal(data.getProjects[0].id, 'p9')
-        assert.deepEqual(data.getWorktreesOf('p2').map(p => p.id), ['p2-wt2', 'p2-wt1'])
-        assert.deepEqual(workspaces.getAllProjectIds('w'), ['p0', 'p1'])
-        assert.deepEqual(data.getProjectScopeIds('p2'), ['p2', 'p2-wt1', 'p2-wt2'])
-    }
-})
-
-test('the shipped facade gives the same blocks as the baseline facade', () => {
-    const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
-    const baseline = createBaselineData(state)
-    const shipped = createShippedData(state)
-    for (const scope of FIXTURE_SCOPES) {
-        for (const showAsTree of [false, true]) {
-            const expected = blocksOf(baseline.data, baseline.workspaces, scope, { showAsTree })
-            const actual = blocksOf(shipped.data, shipped.workspaces, scope, { showAsTree }, computeShippedBlocks)
-            for (const key of ['crossFilterPinned', 'crossFilterActive', 'natural']) {
-                assert.deepEqual(ids(actual[key]), ids(expected[key]), `${scope} ${showAsTree} ${key}`)
-            }
-        }
-    }
+    const { data, workspaces } = createFixtureStores(state)
+    assert.strictEqual(data.getProjects, data.getProjects)
+    assert.strictEqual(data.getAllSessions, data.getAllSessions)
+    const projects = data.getProjects
+    state.projects.p9.mtime += 10_000  // above every other project
+    assert.notStrictEqual(data.getProjects, projects)
+    assert.equal(data.getProjects[0].id, 'p9')
+    assert.deepEqual(data.getWorktreesOf('p2').map(p => p.id), ['p2-wt2', 'p2-wt1'])
+    assert.deepEqual(workspaces.getAllProjectIds('w'), ['p0', 'p1'])
+    assert.deepEqual(data.getProjectScopeIds('p2'), ['p2', 'p2-wt1', 'p2-wt2'])
 })

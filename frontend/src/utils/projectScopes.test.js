@@ -3,12 +3,11 @@ import assert from 'node:assert/strict'
 import { effect, reactive, toRaw } from 'vue'
 import { createWorkspaceMembership, getArchivedProjectIds, getWorktreeIdsByParent } from './projectScopes.js'
 import { observeStageRuns } from './stageRuns.js'
-import { baselineProjectInputs } from '../../tests/helpers/sidebarBaseline/projectInputs.js'
-import { buildSidebarState, createBaselineData, createShippedData } from '../../tests/helpers/sidebarFixture.js'
+import { buildSidebarState, createFixtureStores } from '../../tests/helpers/sidebarFixture.js'
 
 // Activity-free project inputs (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md,
-// 5.6 and 7.1 #3). The probes count reads of the project `mtime`: the baseline
-// project inputs read it first (activity sort), so a regression to them fails.
+// 5.6 and 7.1 #3). The probes count reads of the project `mtime`: any activity sort
+// reads it first, so a membership that sorted by activity would fail them.
 
 /** Install a counting getter on `mtime` of every project record (present ones only). */
 function countMtimeReads(state) {
@@ -61,23 +60,6 @@ function membershipOver(state, workspaces, isShowArchived) {
     })
 }
 
-/**
- * The ids with each run of worktrees that directly follows its parent sorted:
- * the member order stays exact, the worktrees of a member compare as a set.
- */
-function worktreesAsSets(ids, projects) {
-    const out = []
-    let i = 0
-    while (i < ids.length) {
-        const head = ids[i++]
-        out.push(head)
-        const run = []
-        while (i < ids.length && projects[ids[i]]?.worktree_of === head) run.push(ids[i++])
-        out.push(...run.sort())
-    }
-    return out
-}
-
 test('archivedProjectIds reads no mtime and keeps its instance on an activity change', () => {
     const state = buildSidebarState({ roots: 18 })
     // Own setup: two archived projects, a plain one and a worktree.
@@ -116,7 +98,7 @@ test('the worktree index ignores activity and lists worktrees in id order', () =
     // Own setup: the p2 worktrees in activity order are p2-wt2, p2-wt1 (the fixture
     // makes p2-wt2 the more recent); a worktree of p0 holds a second parent entry.
     state.projects['p0-wt1'] = project('p0-wt1', 1, 'p0')
-    const { data } = createBaselineData(state)
+    const { data } = createFixtureStores(state)
     assert.deepEqual(data.getWorktreesOf('p2').map(p => p.id), ['p2-wt2', 'p2-wt1'])
 
     const mtimes = countMtimeReads(state)
@@ -145,7 +127,7 @@ test('the worktree index ignores activity and lists worktrees in id order', () =
     probe.stop()
 })
 
-test('visible and all modes equal the frozen baseline, member order exact and worktrees as a set', () => {
+test('visible and all modes: members in workspace order, each followed by its worktrees in id order', () => {
     const state = buildSidebarState({ roots: 18 })
     // Own setup: p1 is an archived member, p2-wt1 an archived worktree of the member p2
     // (whose worktree ids are not in activity order), ghost an unknown member, p2-wt2 a
@@ -158,44 +140,34 @@ test('visible and all modes equal the frozen baseline, member order exact and wo
         { id: 'empty', projectIds: [] },
     ]
     const settings = reactive({ showArchived: false })
-    const isShowArchived = () => settings.showArchived
-    const membership = membershipOver(state, workspaces, isShowArchived)
-    const baseline = baselineProjectInputs(state, workspaces, isShowArchived)
-    const check = (label) => {
+    const membership = membershipOver(state, workspaces, () => settings.showArchived)
+    // `all` lists every member and worktree once, whatever exists or is archived: it never changes here.
+    const all = { x: ['p3', 'ghost', 'p2', 'p2-wt1', 'p2-wt2', 'p1', 'p9'], 'only-worktree': ['p2-wt1', 'p2', 'p2-wt2'],
+        empty: [], unknown: [] }
+    // `visible` skips unknown projects, and archived ones unless shown; an archived member takes its worktrees along.
+    const check = (label, visible) => {
         for (const wsId of ['x', 'only-worktree', 'empty', 'unknown']) {
-            for (const [mode, actual, expected] of [
-                ['visible', membership.visible(wsId), baseline.getVisibleProjectIds(wsId)],
-                ['all', membership.all(wsId), baseline.getAllProjectIds(wsId)],
-            ]) {
-                const where = `${label} ${wsId} ${mode}`
-                assert.deepEqual(worktreesAsSets(actual, state.projects), worktreesAsSets(expected, state.projects), where)
-                // The shipped order is exact: worktrees in id order.
-                assert.deepEqual(actual, worktreesAsSets(actual, state.projects), where)
-            }
+            assert.deepEqual(membership.visible(wsId), visible[wsId] ?? [], `${label} ${wsId} visible`)
+            assert.deepEqual(membership.all(wsId), all[wsId], `${label} ${wsId} all`)
         }
     }
 
-    check('show archived off')
-    assert.deepEqual(membership.visible('x'), ['p3', 'p2', 'p2-wt2', 'p9'])
-    assert.deepEqual(membership.all('x'), ['p3', 'ghost', 'p2', 'p2-wt1', 'p2-wt2', 'p1', 'p9'])
-    // The fixture sorts the p2 worktrees differently by activity: the set comparison matters.
-    assert.deepEqual(baseline.getAllProjectIds('x'), ['p3', 'ghost', 'p2', 'p2-wt2', 'p2-wt1', 'p1', 'p9'])
+    check('show archived off', { x: ['p3', 'p2', 'p2-wt2', 'p9'], 'only-worktree': ['p2', 'p2-wt2'] })
     settings.showArchived = true
-    check('show archived on')
-    assert.deepEqual(membership.visible('x'), ['p3', 'p2', 'p2-wt1', 'p2-wt2', 'p1', 'p9'])
+    const shown = { x: ['p3', 'p2', 'p2-wt1', 'p2-wt2', 'p1', 'p9'], 'only-worktree': ['p2-wt1', 'p2', 'p2-wt2'] }
+    check('show archived on', shown)
     // An archived member with worktrees: off, its worktrees go too; on, they come back.
     state.projects.p2.archived = true
-    check('archived parent, show archived on')
+    check('archived parent, show archived on', shown)
     settings.showArchived = false
-    check('archived parent, show archived off')
-    assert.deepEqual(membership.visible('x'), ['p3', 'p2-wt2', 'p9'])
+    check('archived parent, show archived off', { x: ['p3', 'p2-wt2', 'p9'], 'only-worktree': [] })
 })
 
 test('a project mtime change reruns no membership evaluation', () => {
     const state = buildSidebarState({ roots: 18 })
-    // Own setup: w = {p0, p1} gets a worktree of p0, so the baseline would sort it by activity.
+    // Own setup: w = {p0, p1} gets a worktree of p0, which an activity sort would order by mtime.
     state.projects['p0-wt1'] = project('p0-wt1', 1, 'p0')
-    const { workspaces } = createShippedData(state)
+    const { workspaces } = createFixtureStores(state)
     const mtimes = countMtimeReads(state)
     const probe = subscribe(() => [workspaces.getVisibleProjectIds('w'), workspaces.getAllProjectIds('w')])
     const [visible, all] = probe.value()
@@ -229,7 +201,7 @@ test('a project mtime change reruns no membership evaluation', () => {
 
 test('archiving a member changes the visible ids at once', () => {
     const state = buildSidebarState({ roots: 18 })
-    const { workspaces } = createShippedData(state)
+    const { workspaces } = createFixtureStores(state)
     const probe = subscribe(() => workspaces.getVisibleProjectIds('w'))
     assert.deepEqual(probe.value(), ['p0', 'p1'])
     const visible = probe.value()
@@ -259,7 +231,7 @@ test('archiving a member changes the visible ids at once', () => {
 
 test('a worktree added to a member appears in the visible ids at once', () => {
     const state = buildSidebarState({ roots: 18 })
-    const { workspaces } = createShippedData(state)
+    const { workspaces } = createFixtureStores(state)
     const probe = subscribe(() => [workspaces.getVisibleProjectIds('w'), workspaces.getAllProjectIds('w')])
     assert.deepEqual(probe.value(), [['p0', 'p1'], ['p0', 'p1']])
     const [visible, all] = probe.value()
