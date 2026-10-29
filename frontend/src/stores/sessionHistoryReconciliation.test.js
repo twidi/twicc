@@ -209,18 +209,13 @@ function slowBody(value, chunks, delayMs) {
     }) }
 }
 
-test('a slow download that keeps receiving data outlives the stall timeout and reports its progress', async () => {
+test('a slow download that keeps receiving data outlives the stall timeout', async () => {
     const { store, respond } = fixture({ stallMs: 60 })
     delete store.localState.sessions.s
     respond(async url => slowBody(url.includes('metadata') ? metadata : transcript, 6, 25))
-    const seen = []
-    const stop = setInterval(() => seen.push(store.localState.sessions.s?.itemsLoadedBytes ?? 0), 10)
     const started = Date.now()
     assert.equal(await store.loadSessionHistory('p', 's', 2), true)
-    clearInterval(stop)
     assert.ok(Date.now() - started > 60, 'the load lasted longer than the stall timeout')
-    assert.ok(Math.max(...seen) > 0, 'bytes received are published while loading')
-    assert.equal(store.localState.sessions.s.itemsLoadedBytes, null)
     assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
 })
 

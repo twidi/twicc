@@ -9,7 +9,6 @@ import { DISPLAY_MODE } from '../../../constants'
 import { useSettingsStore } from '../../../stores/settings'
 import { toast } from '../../../composables/useToast'
 import { apiFetch } from '../../../utils/api'
-import { formatAttachmentSize } from '../../../utils/composerAttachments.js'
 import { captureEventScroll, planEventScrollRestore, eventStructureChanged } from '../../../utils/chatEvents/scroll.js'
 import { isSessionEvent, isTranscriptLoadCandidate } from '../../../utils/chatEvents/rows.js'
 import { authorRunKey, authorRunPosition } from '../../../utils/timeline/authorLabel.js'
@@ -519,11 +518,6 @@ watch(isLoading, (loading) => {
     if (loading) slowLoadTimer = setTimeout(() => { isLoadSlow.value = true }, SLOW_LOAD_NOTICE_DELAY_MS)
 }, { immediate: true })
 onBeforeUnmount(() => clearTimeout(slowLoadTimer))
-const loadedSizeLabel = computed(() => {
-    const bytes = store.getSessionItemsLoadedBytes(props.sessionId)
-    return bytes > 0 ? formatAttachmentSize(bytes) : null
-})
-
 // =============================================================================
 // Live chat entrances (visual refresh step 5a)
 // =============================================================================
@@ -2579,7 +2573,6 @@ defineExpose({
                     <wa-icon slot="icon" name="hourglass"></wa-icon>
                     <div class="chat-slow-notice-copy">
                         <span>Network is slow or this session is big: loading can take a while.</span>
-                        <span v-if="loadedSizeLabel" class="chat-slow-notice-size">{{ loadedSizeLabel }} received</span>
                     </div>
                 </wa-callout>
             </Transition>
@@ -2862,11 +2855,6 @@ defineExpose({
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
-}
-
-.chat-slow-notice-size {
-    font-size: var(--wa-font-size-s);
-    opacity: 0.8;
 }
 
 .chat-slow-notice-enter-active,

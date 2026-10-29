@@ -661,7 +661,7 @@ export const useDataStore = defineStore('data', {
                 loadingError: false
             },
             projects: {},   // { projectId: { sessionsFetched, sessionsLoading, sessionsLoadingError, hasMoreSessions, oldestSessionMtime } }
-            sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError, itemsLoadingErrorReason, itemsLoadedBytes } }
+            sessions: {},   // { sessionId: { itemsFetched, itemsLoading, itemsLoadingError, itemsLoadingErrorReason } }
 
             // Expanded groups - per session (session-level groups)
             // { sessionId: [groupHeadLineNum, ...] }
@@ -1304,8 +1304,6 @@ export const useDataStore = defineStore('data', {
             state.localState.projects[projectId]?.sessionsLoadingError ?? false,
         didSessionItemsFailToLoad: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsLoadingError ?? false,
-        getSessionItemsLoadedBytes: (state) => (sessionId) =>
-            state.localState.sessions[sessionId]?.itemsLoadedBytes ?? 0,
         getSessionItemsLoadingErrorReason: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsLoadingErrorReason ?? null,
 
@@ -2988,19 +2986,13 @@ export const useDataStore = defineStore('data', {
                 stallTimer = setTimeout(() => stall.abort(new DOMException('No data received', 'TimeoutError')),
                     SESSION_HISTORY_STALL_TIMEOUT_MS)
             }
-            let receivedBytes = 0
-            const onBytes = (length) => {
-                armStallTimer()
-                receivedBytes += length
-                if (!controller.signal.aborted) local.itemsLoadedBytes = receivedBytes
-            }
+            const onBytes = () => armStallTimer()
             sessionHistoryControllers.set(sessionId, controller)
             // Register before publishing loading state: a watcher or live item
             // may start coverage while this opening request is still pending.
             const pending = Promise.resolve().then(async () => {
                 local.itemsFetched = true
                 local.itemsLoading = true
-                local.itemsLoadedBytes = 0
                 armStallTimer()
                 const first = parentSessionId ? 1 : Math.max(1, lastLine - INITIAL_ITEMS_COUNT + 1)
                 const last = parentSessionId ? Math.min(lastLine, INITIAL_ITEMS_COUNT) : lastLine
@@ -3051,7 +3043,6 @@ export const useDataStore = defineStore('data', {
                     // A superseded load leaves the loading state to its successor.
                     if (!controller.signal.aborted && this.localState.sessions[sessionId] === local) {
                         local.itemsLoading = false
-                        local.itemsLoadedBytes = null
                     }
                 }
             })
