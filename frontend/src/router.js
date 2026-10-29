@@ -178,6 +178,13 @@ router.afterEach((to) => {
     }
 })
 
+// The login page has no rail: the audio of a private message must not keep playing there.
+router.afterEach(async (to) => {
+    if (to.name !== 'login') return
+    const { useTextToSpeechStore } = await import('./stores/textToSpeech')
+    useTextToSpeechStore().stop()
+})
+
 // Per-scope last-location memory — restore a scope's last screen when re-entering it.
 // Registered last so it sees the workspace-finalized `to` and records settled routes.
 registerScopeMemory(router)

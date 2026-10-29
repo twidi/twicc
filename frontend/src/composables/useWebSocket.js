@@ -580,6 +580,16 @@ export function sendMessageSnippetsConfig(config) {
 }
 
 /**
+ * Send the text-to-speech config to the backend for persistence.
+ * The backend will broadcast the updated config to all connected clients.
+ * @param {Object} config - ``{ active_id, configs }``
+ * @returns {boolean} - True if message was sent, false if not connected
+ */
+export function sendTtsConfig(config) {
+    return sendWsMessage({ type: 'update_tts_config', config })
+}
+
+/**
  * Push a provider's agent settings presets config to the backend for
  * persistence. The backend writes it to the per-provider presets file
  * (resolved via ``BaseProviderHelpers.get_settings_presets_path``) and
@@ -1823,6 +1833,14 @@ export function useWebSocket() {
                 // Lazy import to avoid circular dependency (useWebSocket.js → messageSnippets.js)
                 import('../stores/messageSnippets').then(({ useMessageSnippetsStore }) => {
                     useMessageSnippetsStore().applyConfig(msg.config)
+                })
+                break
+            case 'tts_config_updated':
+                // Apply text-to-speech config from backend (on connect or when another client updates).
+                // The whole message: key_present and env_path sit next to config.
+                // Lazy import to avoid circular dependency (useWebSocket.js → textToSpeech.js)
+                import('../stores/textToSpeech').then(({ useTextToSpeechStore }) => {
+                    useTextToSpeechStore().applyConfig(msg)
                 })
                 break
             case 'agent_settings_presets_updated':

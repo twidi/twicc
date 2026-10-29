@@ -111,6 +111,7 @@ import { useCodeCommentsStore } from './stores/codeComments'
 import { useWorkspacesStore } from './stores/workspaces'
 import { useTerminalConfigStore } from './stores/terminalConfig'
 import { useMessageSnippetsStore } from './stores/messageSnippets'
+import { useTextToSpeechStore } from './stores/textToSpeech'
 import { useTipsStore } from './stores/tips'
 import { useHelpStore } from './stores/help'
 import { useAgentSettingsPresetsStore } from './stores/agentSettingsPresets'
@@ -309,6 +310,7 @@ async function initializeApp() {
         useWorkspacesStore().applyWorkspaces(bootstrapData.workspaces)
         useTerminalConfigStore().applyConfig(bootstrapData.terminal_config)
         useMessageSnippetsStore().applyConfig(bootstrapData.message_snippets)
+        useTextToSpeechStore().applyConfig(bootstrapData.tts)
         useTipsStore().applyManifest(bootstrapData.tips_manifest)
         useTipsStore().applyDefaultEnabled(bootstrapData.tips_default_enabled)
         useTipsStore().applySeenTips(bootstrapData.seen_tips)
