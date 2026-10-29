@@ -101,8 +101,25 @@ function speedText(config) {
     return config.speed == null ? '' : String(config.speed)
 }
 
+function revertSpeed(config, field) {
+    const stored = speedText(config)
+    field.value = stored
+    // The host value can already equal `stored` (a bad input reports ''), so it would not
+    // re-render: reset the native input too.
+    if (field.input) field.input.value = stored
+}
+
 function onSpeedChange(config, event) {
-    const raw = event.target.value.trim()
+    const field = event.target
+    // Firefox lets letters into a number input, which then reports ''. Read the native input's
+    // validity (the host's mirrored `validity` updates after this event): a bad input is not
+    // an empty one, and must not clear the stored speed.
+    const validity = field.input?.validity ?? field.validity
+    if (validity?.badInput) {
+        revertSpeed(config, field)
+        return
+    }
+    const raw = field.value.trim()
     if (raw === '') {
         if (config.speed !== null) commit(config.id, { speed: null })
         return
@@ -110,7 +127,7 @@ function onSpeedChange(config, event) {
     const speed = Number(raw)
     if (!Number.isFinite(speed) || speed <= 0) {
         // Not a usable speed: back to the stored value.
-        event.target.value = speedText(config)
+        revertSpeed(config, field)
         return
     }
     if (speed !== config.speed) commit(config.id, { speed })
@@ -382,8 +399,6 @@ function answerNo(id) {
 }
 
 .tts-configs {
-    /* Size container: the rows wrap on a narrow panel. */
-    container-type: inline-size;
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-m);
