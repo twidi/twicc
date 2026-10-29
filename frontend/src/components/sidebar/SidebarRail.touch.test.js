@@ -40,7 +40,7 @@ function fixture(t, isTouchDevice = true) {
         useSessionTreeAncestors: () => {}, useDataStore: () => ({}),
         useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => ({ push: route => pushed.push(route) }),
         useRailRecentProjects: () => ({ recentProjects: { value: [] }, recentWorkspaces: { value: [] } }),
-        useWorkspacesStore: () => ({}), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
+        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => ({ status: 'idle', stop() {} }), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
         useRailActiveSessions: () => ({ rows: { value: [] }, treeCandidates: { value: [] } }), sessionRouteLocation: session => session.id,
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),

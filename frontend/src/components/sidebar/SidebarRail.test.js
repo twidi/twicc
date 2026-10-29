@@ -43,7 +43,7 @@ test('rail slot, flexible spacer, and short-height scrolling preserve button siz
     assert.match(source, /\.rail-spacer \{\s*flex: 1;\s*min-height: 0;\s*overflow-x: hidden;\s*overflow-y: auto;/)
     assert.match(source, /\.rail-settings \{[^}]*display: flex;[^}]*flex: none;/)
     assert.match(source, /:deep\(wa-tooltip\) \{\s*position: absolute;/)
-    assert.match(source, /@container rail \(height < 25rem\)[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*scrollbar-width: none;/)
+    assert.match(source, /@container rail \(height < 27\.5rem\)[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*scrollbar-width: none;/)
     assert.match(source, /\.panel-card::-webkit-scrollbar \{\s*display: none;/)
     assert.match(source, /\.rail-divider \{\s*flex: none;/)
 })

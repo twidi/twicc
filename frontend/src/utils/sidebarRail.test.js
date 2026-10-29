@@ -7,7 +7,7 @@ import {
     resolveRailItems,
 } from './sidebarRail.js'
 
-const state = { mode: 'sessions', sidebarOpen: true, peerConfigured: true, inboxCount: 3, isMac: false }
+const state = { mode: 'sessions', sidebarOpen: true, peerConfigured: true, inboxCount: 3, isMac: false, speechStatus: 'idle' }
 
 test('resolves the shipped items with the specified icons, labels and groups', () => {
     const items = resolveRailItems(state)
@@ -138,5 +138,15 @@ test('New session is always immediately above Command palette', () => {
         assert.equal(items[index].group, 'bottom')
         assert.equal(items[index + 1].id, 'palette')
         assert.equal(items[index].disabled, false)
+    }
+})
+
+test('shows the speech indicator first in the bottom group only while busy', () => {
+    assert.equal(resolveRailItems(state).some(item => item.id === 'speech'), false)
+    for (const [speechStatus, label] of [['loading', 'Cancel the text-to-speech request'], ['playing', 'Stop reading aloud']]) {
+        const items = resolveRailItems({ ...state, speechStatus })
+        const bottom = items.filter(item => item.group === 'bottom').map(item => item.id)
+        assert.deepEqual(bottom, ['speech', 'new-session', 'palette', 'inbox', 'settings', 'toggle'])
+        assert.equal(items.find(item => item.id === 'speech').label, label)
     }
 })

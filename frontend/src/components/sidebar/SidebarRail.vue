@@ -16,6 +16,7 @@ import ProcessIndicator from '../ui/ProcessIndicator.vue'
 import ProcessActivityIndicator from '../ui/ProcessActivityIndicator.vue'
 import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
+import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
 import AppTooltip, { onTooltipDismissal } from '../ui/AppTooltip.vue'
 import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
@@ -32,6 +33,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['new-session', 'home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
 const settingsStore = useSettingsStore()
+const tts = useTextToSpeechStore()
 const store = useDataStore()
 const workspacesStore = useWorkspacesStore()
 const { recentProjects, recentWorkspaces } = useRailRecentProjects(store, workspacesStore, settingsStore)
@@ -159,6 +161,7 @@ const items = computed(() => resolveRailItems({
     peerConfigured: props.peerConfigured,
     inboxCount: props.inboxCount,
     isMac: settingsStore.isMac,
+    speechStatus: tts.status,
 }))
 const top = computed(() => items.value.filter(item => item.group === 'top'))
 const bottom = computed(() => items.value.filter(item => item.group === 'bottom'))
@@ -166,6 +169,7 @@ const bottom = computed(() => items.value.filter(item => item.group === 'bottom'
 function activate(item) {
     if (item.id === 'sessions' || item.id === 'artifacts') emit('select-mode', item.id)
     else if (item.id === 'toggle') emit('toggle-sidebar')
+    else if (item.id === 'speech') tts.stop()
     else emit(item.id)
 }
 </script>
@@ -325,11 +329,13 @@ function activate(item) {
                 <template v-else>
                     <button
                         :id="`sidebar-rail-${item.id}`" type="button" class="rail-button"
+                        :class="{ 'rail-speech--playing': item.id === 'speech' && tts.status === 'playing' }"
                         :aria-label="item.label" :aria-pressed="item.active" :disabled="item.disabled"
                         @click="activate(item)"
                     >
                         <wa-icon :name="item.icon" />
                         <PeerInboxBadge v-if="item.id === 'inbox'" :count="item.badge" />
+                        <wa-spinner v-if="item.id === 'speech' && tts.status === 'loading'" class="rail-speech-spinner" />
                     </button>
                     <AppTooltip :for="`sidebar-rail-${item.id}`" placement="right">{{ item.label }}</AppTooltip>
                 </template>
@@ -563,6 +569,19 @@ function activate(item) {
     flex: none;
 }
 
+.rail-speech--playing {
+    color: var(--wa-color-success-60);
+}
+
+/* Out of the button's centred grid, like the inbox badge: a ring around the icon. */
+.rail-speech-spinner {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    font-size: calc(var(--rail-icon-size) * 1.6);
+    pointer-events: none;
+}
+
 :deep(wa-tooltip) {
     position: absolute;
 }
@@ -575,7 +594,7 @@ function activate(item) {
     }
 }
 
-@container rail (height < 25rem) {
+@container rail (height < 27.5rem) {
     /* Keep controls reachable and bound the independently scrolling central groups. */
     .panel-card {
         overflow-x: hidden;

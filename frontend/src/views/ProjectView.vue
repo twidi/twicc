@@ -7,6 +7,7 @@ import { useDataStore, ALL_PROJECTS_ID } from '../stores/data'
 import { useSettingsStore } from '../stores/settings'
 import { useSharesStore } from '../stores/shares'
 import { usePeersStore } from '../stores/peers'
+import { useTextToSpeechStore } from '../stores/textToSpeech'
 import { useHelpStore } from '../stores/help'
 import { useWorkspacesStore } from '../stores/workspaces'
 import { SESSION_TIME_FORMAT } from '../constants'
@@ -67,6 +68,7 @@ const store = useDataStore()
 const settingsStore = useSettingsStore()
 const sharesStore = useSharesStore()
 const peersStore = usePeersStore()
+const tts = useTextToSpeechStore()
 const peerSystemConfigured = usePeerSystemConfigured()
 const helpStore = useHelpStore()
 const { registerCommands, unregisterCommands, openPalette } = useCommandRegistry()
@@ -1713,6 +1715,7 @@ function openPeerInbox() {
                 class="sidebar-toggle rail-button" :aria-label="OPEN_SIDEBAR_LABEL" @click="handleFloatingToggle">
             <wa-icon name="angles-right"></wa-icon>
             <PeerInboxBadge v-if="peersStore.inboxCount > 0" :count="peersStore.inboxCount" />
+            <wa-icon v-if="tts.status !== 'idle'" name="volume-up" class="sidebar-toggle-speech-mark" aria-hidden="true"></wa-icon>
         </button>
         <AppTooltip for="sidebar-toggle-button" placement="top">{{ OPEN_SIDEBAR_LABEL }}</AppTooltip>
 
@@ -3414,6 +3417,25 @@ html.wa-dark .usage-burn-chip-danger {
 }
 .project-view-wrapper--peer .sidebar-toggle {
     --sidebar-toggle-offset: var(--wa-space-xs);
+}
+
+/* Text-to-speech busy mark, the same for loading and playing. The bottom-inline-end corner keeps
+   it clear of the inbox badge (top-inline-end); the surface ring matches the badge's. */
+.sidebar-toggle-speech-mark {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-end: 0;
+    translate: 30% 30%;
+    /* wa-icon is 1.25em by 1em: square it so the disc is round. */
+    width: 1.25em;
+    height: 1.25em;
+    padding: 0.2rem;
+    border-radius: 50%;
+    background: var(--wa-color-brand-fill-quiet);
+    color: var(--wa-color-brand-on-quiet);
+    box-shadow: 0 0 0 2px var(--surface-solid);
+    font-size: 0.7rem;
+    pointer-events: none;
 }
 
 .sidebar-backdrop {

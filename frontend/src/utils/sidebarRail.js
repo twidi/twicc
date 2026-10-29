@@ -14,6 +14,13 @@ export const RAIL_ITEM_DEFINITIONS = [
         label: state => state.isMac ? 'Full-text search (⌘⇧F)' : 'Full-text search (Ctrl+Shift+F)',
         group: 'top',
     },
+    {
+        id: 'speech',
+        icon: 'volume-up',
+        label: state => state.speechStatus === 'loading' ? 'Cancel the text-to-speech request' : 'Stop reading aloud',
+        group: 'bottom',
+        requires: state => state.speechStatus === 'loading' || state.speechStatus === 'playing',
+    },
     { id: 'new-session', icon: 'plus', label: 'New session', group: 'bottom' },
     {
         id: 'palette',
