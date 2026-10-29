@@ -84,7 +84,11 @@ const CUTOFF_ROOTS = [{ id: ID.cutP2, project_id: 'p2' }, { id: ID.cutP0, projec
 const BOTTOM_ROOTS = [{ id: ID.oldWorktree, project_id: 'p2-wt1' }, { id: ID.ancestor, project_id: 'p0' }]
 const PLACED_BELOW = CUTOFF_ROOTS.length + BOTTOM_ROOTS.length
 
-/** The workspaces of the fixture: `w` = {p0, p1}, `w1` = {p0} (a one-project workspace). */
+/**
+ * The initial workspaces of the fixture: `w` = {p0, p1}, `w1` = {p0} (a one-project
+ * workspace). Each state holds its own reactive copy (`state.workspaces`), which the
+ * steps change the way `stores/workspaces.js` does.
+ */
 export const FIXTURE_WORKSPACES = Object.freeze([
     Object.freeze({ id: 'w', name: 'Workspace w', archived: false, projectIds: Object.freeze(['p0', 'p1']) }),
     Object.freeze({ id: 'w1', name: 'Workspace w1', archived: false, projectIds: Object.freeze(['p0']) }),
@@ -161,7 +165,7 @@ function projectRecord(id, mtime, worktreeOf = null) {
  * @param {number} [options.projects=10] - plain projects `p0`…`p<n-1>` (at least 8), plus the worktrees `p2-wt1`, `p2-wt2`
  * @param {?number} [options.cutoffRoots=null] - number of roots above the `__all__` cutoff; null: every
  *     scope is fully loaded (`hasMoreSessions: false`), with the same cursor values
- * @returns {Object} reactive `{ sessions, projects, processStates, startupProgress, settings, localState }`
+ * @returns {Object} reactive `{ sessions, projects, processStates, startupProgress, settings, localState, workspaces }`
  */
 export function buildSidebarState({ roots, subagentsPerRoot = 2, projects = 10, cutoffRoots = null }) {
     if (projects < 8) throw new Error('the fixture needs at least 8 projects')
@@ -216,6 +220,7 @@ export function buildSidebarState({ roots, subagentsPerRoot = 2, projects = 10, 
         startupProgress: {},
         settings: { isShowArchivedProjects: false },
         localState: { projects: localProjects },
+        workspaces: FIXTURE_WORKSPACES.map(ws => ({ ...ws, projectIds: [...ws.projectIds] })),
     })
     const topMtime = mtimeOfRank(0)
     metaByState.set(toRaw(state), { topMtime, contentSeconds: topMtime + 1000 })
@@ -226,15 +231,15 @@ export function buildSidebarState({ roots, subagentsPerRoot = 2, projects = 10, 
  * One real batch of a session: `mtime`, `last_line` and `last_new_content_at`
  * advance; for the open session `last_viewed_at` follows. A tick therefore
  * flips a read session to unread, except an open tick. `top` gives the session
- * an mtime above every mtime written through the fixture; otherwise the mtime
- * advances by 1, less than the gap between two fixture roots. Reads the
- * session's own `mtime` and `last_line` once.
+ * an mtime above every mtime written through the fixture; `mtime` gives it that
+ * exact mtime; otherwise the mtime advances by 1, less than the gap between two
+ * fixture roots. Reads the session's own `mtime` and `last_line` once.
  */
-export function tick(state, sessionId, { open = false, top = false } = {}) {
+export function tick(state, sessionId, { open = false, top = false, mtime: at = null } = {}) {
     const session = state.sessions[sessionId]
     if (!session) throw new Error(`unknown session ${sessionId}`)
     const meta = metaOf(state)
-    const mtime = top ? nextTopMtime(state) : session.mtime + 1
+    const mtime = top ? nextTopMtime(state) : at ?? session.mtime + 1
     meta.topMtime = Math.max(meta.topMtime, mtime)
     const contentAt = nextContentTime(state)
     session.mtime = mtime
@@ -294,9 +299,8 @@ export const FIXTURE_UPDATE_SEQUENCE = Object.freeze([
     step('pin change', state => { state.sessions[ID.p3Recent].pinned = 'all' }),
     step('archive', state => { state.sessions[ID.p0Second].archived = true }),
     step('hide', state => { state.sessions[ID.p1Recent].hidden = true }),
-    step('cutoff crossing', state => {
-        state.sessions[ID.oldWorktree].mtime = state.localState.projects[ALL_PROJECTS_ID].oldestSessionMtime + 1
-    }),
+    step('cutoff crossing', state => tick(state, ID.oldWorktree,
+        { mtime: state.localState.projects[ALL_PROJECTS_ID].oldestSessionMtime + 1 })),
     step('root add', state => addRoot(state, { id: 'added-root', project_id: 'p0' })),
     step('root removal', state => { delete state.sessions[ID.p0Recent] }),
     step('subagent add', state => {
@@ -306,6 +310,15 @@ export const FIXTURE_UPDATE_SEQUENCE = Object.freeze([
     step('workspace member archived', state => { state.projects.p1.archived = true }),
     step('worktree added to p2', state => addWorktree(state, 'p2', 'p2-wt3')),
     step('worktree added to p0', state => addWorktree(state, 'p0', 'p0-wt1')),
+    // Like `updateWorkspace`: a new `projectIds` array. p2 brings its worktrees along.
+    step('workspace gains a project', state => {
+        const ws = state.workspaces.find(w => w.id === 'w')
+        ws.projectIds = [...ws.projectIds, 'p2']
+    }),
+    step('workspace loses a project', state => {
+        const ws = state.workspaces.find(w => w.id === 'w')
+        ws.projectIds = ws.projectIds.filter(id => id !== 'p2')
+    }),
     step('process start', state => {
         state.processStates[ID.unread1] = processRecord(toRaw(state.sessions[ID.unread1]),
             { state: 'assistant_turn', started_at: 400 })
@@ -326,7 +339,7 @@ export function applyStep(state, step) {
 
 // The store logic both facades share: the design does not change it.
 function createStoreFacades(state, { getStableSessionList: stableList, hasActiveStartupPhase: inStartup, activityIndex }) {
-    const inputs = baselineProjectInputs(state, FIXTURE_WORKSPACES)
+    const inputs = baselineProjectInputs(state, state.workspaces)
     const getProject = computed(() => (id) => state.projects[id])
     const getMainRepoProjectId = computed(() => (projectId) =>
         (projectId && state.projects[projectId]?.worktree_of) || projectId)
@@ -367,7 +380,7 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         get getProjectActivitySummary() { return projectActivitySummary.value },
     }
 
-    const getWorkspaceById = computed(() => (id) => FIXTURE_WORKSPACES.find(w => w.id === id) || null)
+    const getWorkspaceById = computed(() => (id) => state.workspaces.find(w => w.id === id) || null)
     const workspaceContainsProject = computed(() => (workspaceId, projectId) => {
         const ws = getWorkspaceById.value(workspaceId)
         if (!ws || !projectId) return false
@@ -376,7 +389,7 @@ function createStoreFacades(state, { getStableSessionList: stableList, hasActive
         return mainRepoId !== projectId && ws.projectIds.includes(mainRepoId)
     })
     const workspaces = {
-        get getAllWorkspaces() { return FIXTURE_WORKSPACES },
+        get getAllWorkspaces() { return state.workspaces },
         get getWorkspaceById() { return getWorkspaceById.value },
         get getVisibleProjectIds() { return inputs.getVisibleProjectIds },
         get getAllProjectIds() { return inputs.getAllProjectIds },

@@ -150,8 +150,9 @@ function assertStagesCanRun({ state }, probe, names, label) {
 const extensionIds = (options) => new Set(ids(computeSidebarNaturalMembership(options).extension))
 
 /**
- * Same blocks, ids and order. In `natural`, a run of entries with equal sort
- * keys that holds an extension session is compared as a set (design 5.4).
+ * Same blocks, ids and order. In `natural`, inside a run of entries with equal
+ * sort keys, extension sessions may trade places with each other (design 5.4):
+ * every other entry keeps its slot, and the extension slots hold the same ids.
  */
 function assertSameBlocks(actual, expected, { processStates, extension = new Set() }, label) {
     assert.equal(actual.extra?.id ?? null, expected.extra?.id ?? null, `${label}: extra`)
@@ -165,14 +166,33 @@ function assertSameBlocks(actual, expected, { processStates, extension = new Set
         let j = i + 1
         while (j < want.length && compare(toRaw(want[j - 1]), toRaw(want[j])) === 0) j++
         const run = ids(want.slice(i, j))
-        if (run.some(id => extension.has(id))) {
-            assert.deepEqual(ids(got.slice(i, j)).sort(), [...run].sort(), `${label}: natural tie run at ${i}`)
+        if (run.filter(id => extension.has(id)).length > 1) {
+            const gotRun = ids(got.slice(i, j))
+            run.forEach((id, k) => {
+                if (!extension.has(id)) assert.equal(gotRun[k], id, `${label}: natural tie run at ${i + k}`)
+            })
+            const extensionSlots = (list) => list.filter(id => extension.has(id)).sort()
+            assert.deepEqual(extensionSlots(gotRun), extensionSlots(run), `${label}: extension ties at ${i}`)
         } else {
             assert.deepEqual(ids(got.slice(i, j)), run, `${label}: natural at ${i}`)
         }
         i = j
     }
 }
+
+test('parity helper: inside a tie run, only extension sessions trade places', () => {
+    // a, x, y and b tie (same mtime, no process, no pin); x and y are extension sessions.
+    const session = (id) => ({ id, mtime: 100, pinned: null })
+    const blocks = (...order) => ({ extra: null, crossFilterPinned: [], crossFilterActive: [], natural: order.map(session) })
+    const want = blocks('a', 'x', 'y', 'b')
+    const context = { processStates: {}, extension: new Set(['x', 'y']) }
+    assertSameBlocks(blocks('a', 'y', 'x', 'b'), want, context, 'extension swap')
+    assert.throws(() => assertSameBlocks(blocks('x', 'a', 'y', 'b'), want, context, 'natural moved'), /natural tie run/)
+    assert.throws(() => assertSameBlocks(blocks('a', 'x', 'b', 'y'), want, context, 'natural moved'), /natural tie run/)
+    // A single extension session in the run has no other extension session to trade with.
+    const single = { processStates: {}, extension: new Set(['x']) }
+    assert.throws(() => assertSameBlocks(blocks('a', 'b', 'x', 'y'), want, single, 'single'), /natural at 0/)
+})
 
 /** The frozen baseline blocks on the live state. */
 function baselineBlocks(state, options) {

@@ -1,7 +1,8 @@
 // Sidebar recompute benchmark
 // (design: docs/plans/2026-10-28-sidebar-recompute-cost-design.md, 7.2 and 10).
 //
-// Run: cd frontend && node scripts/benchmark_sidebar_recompute.mjs   (several minutes)
+// Run: cd frontend && node --expose-gc scripts/benchmark_sidebar_recompute.mjs   (several minutes;
+// without --expose-gc, no collection is forced between two measures)
 //
 // Measures, in one process, the cost of one live-update batch on the sidebar
 // derivations "before" (the frozen baseline copies of tests/helpers/sidebarBaseline/)
@@ -19,7 +20,9 @@
 //     unread index (one summary per project, the workspace summary, the total) and,
 //     in tree mode, `buildSessionTree` + `flattenTree`.
 //   - Median of 5 runs of 20 batches, after 10 warm-up batches; store sizes 3 000
-//     and 9 000 (1 000 and 3 000 roots, 2 subagents each).
+//     and 9 000 (1 000 and 3 000 roots, 2 subagents each). The implementation that
+//     runs first alternates from one scenario to the next; each measure drops its
+//     state before the next one, which starts with a forced collection (--expose-gc).
 //
 // The benchmark is evidence, not a gate: the exit code is 0 whatever the ratios.
 // The deterministic tests of design 7.1 are the gate. A `checkPremises` failure is
@@ -139,7 +142,9 @@ function mount(impl, state, { scope, tree = false }) {
     return {
         blocks,
         treeRows,
-        flush() { if (dirty) { dirty = false; runner() } },
+        // Like a component's update job (`effect.runIfDirty`): the body reruns only when a
+        // dependency really changed, not when a computed it reads was merely notified.
+        flush() { if (dirty) { dirty = false; runner.effect.runIfDirty() } },
         stop() { runner.effect.stop() },
     }
 }
@@ -186,8 +191,13 @@ function checkPremises(state, view, scenario, size) {
     }
 }
 
-/** Time one implementation on one scenario: median ms per batch, and the final blocks. */
+/**
+ * Time one implementation on one scenario: median ms per batch, and the final blocks.
+ * Checks the premises, then keeps nothing of the state: the next measure does not run
+ * next to it in memory.
+ */
 function measure(impl, scenario, roots) {
+    globalThis.gc?.()
     const state = buildSidebarState({ roots, subagentsPerRoot: SUBAGENTS_PER_ROOT,
         cutoffRoots: roots - ROOTS_BELOW_CUTOFF })
     const view = mount(impl, state, scenario)
@@ -199,7 +209,8 @@ function measure(impl, scenario, roots) {
         for (let b = 0; b < BATCHES_PER_RUN; b++) batch(state, view, scenario, i++)
         perBatch.push((performance.now() - start) / BATCHES_PER_RUN)
     }
-    const result = { ms: median(perBatch), state, view, snapshot: snapshot(view) }
+    checkPremises(state, view, scenario, roots * (1 + SUBAGENTS_PER_ROOT))
+    const result = { ms: median(perBatch), snapshot: snapshot(view) }
     view.stop()
     return result
 }
@@ -218,11 +229,12 @@ console.log('Scenario'.padEnd(LABEL_WIDTH) + 'store'.padStart(6) + 'before ms'.p
 const results = []
 for (const roots of ROOT_COUNTS) {
     const size = roots * (1 + SUBAGENTS_PER_ROOT)
-    for (const scenario of SCENARIOS) {
-        const before = measure(IMPLEMENTATIONS.before, scenario, roots)
-        const after = measure(IMPLEMENTATIONS.after, scenario, roots)
-        checkPremises(before.state, before.view, scenario, size)
-        checkPremises(after.state, after.view, scenario, size)
+    for (const [n, scenario] of SCENARIOS.entries()) {
+        // Alternate which implementation runs first, so neither always gets the warmer JIT.
+        const order = n % 2 === 0 ? ['before', 'after'] : ['after', 'before']
+        const measured = {}
+        for (const name of order) measured[name] = measure(IMPLEMENTATIONS[name], scenario, roots)
+        const { before, after } = measured
         const ratio = before.ms / after.ms
         const same = before.snapshot === after.snapshot
         results.push({ scenario, size, ratio, same })

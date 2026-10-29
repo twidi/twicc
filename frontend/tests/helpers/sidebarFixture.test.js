@@ -149,10 +149,26 @@ test('startupPhase and progressMessage write a real phase shape and replace the 
 test('the update sequence applies in order and ends outside startup', () => {
     const state = buildSidebarState({ roots: 60, cutoffRoots: 50 })
     const { data, workspaces } = createBaselineData(state)
+    const shipped = createShippedData(state).workspaces
+    const members = (facade) => [...facade.getVisibleProjectIds('w')].sort()
     const seen = []
     for (const step of FIXTURE_UPDATE_SEQUENCE) {
         applyStep(state, step)
         seen.push(step.name)
+        // Both facades see a membership change (the parity tests would agree on a frozen list too).
+        if (step.name === 'workspace gains a project') {
+            for (const facade of [workspaces, shipped]) {
+                assert.deepEqual(members(facade), ['p0', 'p0-wt1', 'p2', 'p2-wt1', 'p2-wt2', 'p2-wt3'])
+            }
+        }
+        if (step.name === 'workspace loses a project') {
+            for (const facade of [workspaces, shipped]) assert.deepEqual(members(facade), ['p0', 'p0-wt1'])
+        }
+        if (step.name === 'cutoff crossing') {
+            assert.ok(state.sessions[ID.oldWorktree].mtime > state.localState.projects.__all__.oldestSessionMtime)
+            assert.ok(state.sessions[ID.oldWorktree].last_new_content_at > state.sessions[ID.oldWorktree].last_viewed_at,
+                'a real batch: the session turns unread')
+        }
         if (step.startup === 'write' || step.startup === 'progress') assert.ok(data.isStartupInProgress, step.name)
         else assert.ok(!data.isStartupInProgress, step.name)
     }
