@@ -41,7 +41,7 @@ async function onClick() {
 
 <template>
     <wa-button
-        v-if="store.available || store.statusForText(text) !== 'idle'"
+        v-if="store.available || status !== 'idle'"
         :class="{ 'markdown-toolbar-speech--busy': status !== 'idle' }"
         size="small"
         :variant="status === 'playing' ? 'brand' : 'neutral'"

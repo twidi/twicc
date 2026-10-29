@@ -57,7 +57,7 @@ test('the button is a small filled wa-button shown when available or busy', () =
     assert.match(buttonSource, /^\s*<wa-button\b/m)
     assert.match(buttonSource, /size="small"/)
     assert.match(buttonSource, /appearance="filled"/)
-    assert.match(buttonSource, /v-if="store\.available \|\| store\.statusForText\(text\) !== 'idle'"/)
+    assert.match(buttonSource, /v-if="store\.available \|\| status !== 'idle'"/)
     assert.match(buttonSource, /markdown-toolbar-speech--busy/)
 })
 
