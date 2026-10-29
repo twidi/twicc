@@ -212,6 +212,25 @@ test('a DEBUG_ONLY-only append that skips its recompute leaves the list as a rec
     assert.ok(skipped > 100, `the shortcut must actually skip recomputes (skipped ${skipped})`)
 })
 
+test('a timed synthetic row does not anchor the placement for a skipped DEBUG_ONLY append', () => {
+    // No real line is timed: the event renders before line 1. A timed DEBUG_ONLY line
+    // earlier than the event moves it after line 1, before the (timed) optimistic row.
+    const at = seconds => new Date(T0 + seconds * 1000).toISOString()
+    const items = [{ line_num: 1, kind: 'user_message', display_level: DISPLAY_LEVEL.ALWAYS, group_head: null, group_tail: null, timestamp: null, content: null }]
+    const events = [{ id: 1, kind: 'title.changed', session_id: 'main', data: {}, occurred_at: at(20) }]
+    const line = [{ line_num: 2, kind: 'system', display_level: DISPLAY_LEVEL.DEBUG_ONLY, group_head: null, group_tail: null, timestamp: at(15), content: '{}' }]
+    const stores = [actionSource, ORACLE].map(body => {
+        const store = makeStore(body, { items: copy(items), events, optimistic: true })
+        store.localState.optimisticMessages.main.timestamp = at(10)
+        store.recomputeVisualItems('main')
+        store.addSessionItems('main', copy(line))
+        return store
+    })
+    assert.deepEqual(stores[1].localState.sessionVisualItems.main.map(row => row.lineNum),
+        [1, 'event:1', SYNTHETIC_ITEM.OPTIMISTIC_USER_MESSAGE.lineNum])
+    assert.deepEqual(rendered(stores[0]), rendered(stores[1]))
+})
+
 test('the /compact reorder sees the same window after it moves a command', () => {
     // Moving the first command shifts the summary by one: its next window reaches one
     // line further (line 13 here), past 9 stubs.

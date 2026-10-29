@@ -3699,12 +3699,12 @@ export const useDataStore = defineStore('data', {
             // Whether a later append of DEBUG_ONLY lines alone may skip its recompute (see
             // addSessionItems). Outside the debug view such lines only add times, and a time
             // appended after every real line moves no event when each one is already bound
-            // to a real line and a timed line anchors the placement. (No event binds to a
-            // synthetic line today, the only timed one being an ephemeral session's result;
-            // the line check keeps this exact if another timed synthetic row appears.)
+            // to a real line and a timed real line anchors the placement. (The events later than
+            // every real line bind to the first synthetic row, or to none: the line check
+            // leaves both cases unsafe, as such a time can bind them to the new line.)
             const lastBoundaryLine = eventBoundaries.at(-1)?.beforeLine
             if (mode !== DISPLAY_MODE.DEBUG && (!events.length || (typeof lastBoundaryLine === 'number' && lastBoundaryLine > 0
-                && placementItems.some(item => normalizeChatTimestamp(item.timestamp) !== null)))) {
+                && placementItems.some(item => item.line_num > 0 && normalizeChatTimestamp(item.timestamp) !== null)))) {
                 debugAppendSafeSessions.add(sessionId)
             } else {
                 debugAppendSafeSessions.delete(sessionId)

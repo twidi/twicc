@@ -158,3 +158,53 @@ for (const provider of ['claude_code', 'codex']) {
         assert.equal(f.rows().filter(row => row.isSessionEvent).length, 1); assert.equal(f.rows().some(row => row.lineNum === optimistic.line_num), false)
     })
 }
+// Synthetic rows (not yet in the JSONL) stand for what happens now: they render after
+// every notice, also the notices later than every real line (a resume: stop, then resume).
+for (const provider of ['claude_code', 'codex']) {
+    const untimed = (line, extra = {}) => message(line, { timestamp: undefined, ...extra })
+    const order = f => f.rows().filter(row => typeof row.lineNum === 'number' || row.isSessionEvent).map(row => row.lineNum)
+    const { OPTIMISTIC_USER_MESSAGE: OPTIMISTIC, WORKING_ASSISTANT_MESSAGE: WORKING, STARTING_ASSISTANT_MESSAGE: STARTING,
+        STREAMING_BLOCK: STREAMING, FAILED_USER_MESSAGE: FAILED } = SYNTHETIC_ITEM
+    test(`${provider}: trailing notices render before the optimistic and working rows`, async t => {
+        const f = fixture(t, provider, [message(1, { kind: 'user_message' }), message(2)]); await f.complete([event(1, 10), event(2, 11)])
+        assert.deepEqual(order(f), [1, 2, 'event:1', 'event:2'])
+        f.store.localState.optimisticMessages.s = untimed(OPTIMISTIC.lineNum, { kind: 'user_message' })
+        f.store.processStates.s = { state: PROCESS_STATE.ASSISTANT_TURN }; f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 2, 'event:1', 'event:2', OPTIMISTIC.lineNum, WORKING.lineNum])
+        // Once the real lines arrive, the notices stay before them.
+        delete f.store.localState.optimisticMessages.s
+        f.store.sessionItems.s.push(message(12, { kind: 'user_message' }), message(13)); f.store.processStates.s = { state: PROCESS_STATE.USER_TURN }
+        f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 2, 'event:1', 'event:2', 12, 13])
+    })
+    test(`${provider}: trailing notices render before the starting row and a failed send`, async t => {
+        const f = fixture(t, provider, [message(1, { kind: 'user_message' }), message(2)]); await f.complete([event(1, 10)])
+        f.store.processStates.s = { state: PROCESS_STATE.STARTING }; f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 2, 'event:1', STARTING.lineNum])
+        f.store.processStates.s = { state: PROCESS_STATE.USER_TURN }
+        f.store.localState.failedSends.s = { a: { sentAt: 1, item: untimed(FAILED.baseLineNum, { kind: 'user_message' }) } }
+        f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 2, 'event:1', FAILED.baseLineNum])
+    })
+    test(`${provider}: trailing notices render before streaming blocks and cut the group they join`, async t => {
+        const f = fixture(t, provider, [message(1, { kind: 'user_message' }),
+            message(2, { kind: 'tool_call', display_level: DISPLAY_LEVEL.COLLAPSIBLE, group_head: 2, group_tail: 2 })])
+        await f.complete([event(1, 10)])
+        f.store.processStates.s = { state: PROCESS_STATE.ASSISTANT_TURN }
+        f.store.localState.streamingBlocks.s = { messageId: 'm', blocks: [
+            { blockIndex: 0, blockType: 'thinking', uuid: 'm', stopped: true, text: 'Thinking' },
+            { blockIndex: 1, blockType: 'text', uuid: 'm', stopped: false, text: 'Answer' }] }
+        f.store.toggleExpandedGroup('s', 2); f.settings.getDisplayMode = DISPLAY_MODE.NORMAL; f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 2, 'event:1', STREAMING.baseLineNum, STREAMING.baseLineNum - 1])
+        // The streamed thinking joins group 2, on the other side of the notice: its own segment.
+        assert.deepEqual(f.store.localState.sessionEventSegments.s.map(segment => [segment.originalHead, segment.members]),
+            [[2, [2]], [2, [STREAMING.baseLineNum]]])
+    })
+    test(`${provider}: notices bound to real lines keep their place before the synthetic rows`, async t => {
+        const f = fixture(t, provider, [message(1, { kind: 'user_message' }), message(5)]); await f.complete([event(1, 3), event(2, 4)])
+        assert.deepEqual(order(f), [1, 'event:1', 'event:2', 5])
+        f.store.localState.optimisticMessages.s = untimed(OPTIMISTIC.lineNum, { kind: 'user_message' })
+        f.store.processStates.s = { state: PROCESS_STATE.ASSISTANT_TURN }; f.store.recomputeVisualItems('s')
+        assert.deepEqual(order(f), [1, 'event:1', 'event:2', 5, OPTIMISTIC.lineNum, WORKING.lineNum])
+    })
+}

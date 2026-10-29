@@ -28,8 +28,17 @@ test('missing and regressing timestamps keep source order through a monotonic fa
     assert.deepEqual(boundaries([], [event(1, 20)]), [[null, [1]]])
 })
 test('synthetic rows reconcile deterministically without duplicating events', () => {
-    assert.deepEqual(boundaries([source(1, 10), source(-1, null)], [event(1, 15)]), [[null, [1]]])
+    assert.deepEqual(boundaries([source(1, 10), source(-1, null)], [event(1, 15)]), [[-1, [1]]])
     assert.deepEqual(boundaries([source(1, 10), source(2, 20)], [event(1, 15)]), [[2, [1]]])
+})
+test('events later than every real line bind to the first synthetic row, whatever its time', () => {
+    const live = [source(1, 10), source(2, 20), source(-3000, null), source(-2000, null), source(-500, null)]
+    assert.deepEqual(boundaries(live, [event(1, 15), event(2, 30), event(3, 40)]), [[2, [1]], [-3000, [2, 3]]])
+    // Events bound to real lines keep their place.
+    assert.deepEqual(boundaries(live, [event(1, 5), event(2, 15)]), [[1, [1]], [2, [2]]])
+    // A timed synthetic row (an ephemeral prompt or result) never takes an event past another one.
+    assert.deepEqual(boundaries([source(1, 10), source(-2000, 20), source(-400, 30)], [event(1, 25), event(2, 35)]), [[-2000, [1, 2]]])
+    assert.deepEqual(boundaries([source(-2000, null), source(-500, null)], [event(1, 15)]), [[-2000, [1]]])
 })
 test('compact correction copies only reordered arrays and preserves source identities', () => {
     const summary = { ...source(2, 20), kind: 'compact_summary' }

@@ -27,19 +27,28 @@ export function normalizeChatTimestamp(value) {
  * DEBUG_ONLY stubs (left out of the items metadata) carry no time until their content
  * loads. Nothing changes on screen when every displayed row is timed and times never
  * decrease across the stub. Otherwise an event can move past one or more displayed rows
- * once the stub loads: untimed rows on either side of it (such as the synthetic working,
- * optimistic and streaming rows), or displayed rows after it with an earlier time.
+ * once the stub loads: untimed rows on either side of it, or displayed rows after it
+ * with an earlier time.
+ *
+ * The synthetic rows (negative line numbers: failed sends, optimistic, starting,
+ * streaming, working, ephemeral result) always end the list and stand for what happens
+ * now, so every event renders before them, whatever its time: the events left after
+ * the last real line bind to the first synthetic row (`beforeLine: null` only when
+ * there is none).
  */
 export function placeSessionEvents(items, events) {
     const sorted = [...events].sort((a, b) => compareNewestFirst(b, a))
     if (!sorted.length) return []
+    let realEnd = items.length
+    while (realEnd > 0 && items[realEnd - 1].line_num < 0) realEnd--
     const times = toRaw(items).map(item => timestampOf(item, 'timestamp'))
     const eventTimes = sorted.map(event => timestampOf(event, 'occurred_at'))
-    let previous = times.find(time => time !== null) ?? null
+    let previous = null
+    for (let i = 0; i < realEnd && previous === null; i++) previous = times[i]
     if (previous === null) return [{ beforeLine: items[0]?.line_num ?? null, events: sorted }]
     const boundaries = []
     let eventIndex = 0
-    for (let i = 0; i < items.length; i++) {
+    for (let i = 0; i < realEnd; i++) {
         const time = times[i]
         if (time !== null && time > previous) previous = time
         const atBoundary = []
@@ -50,7 +59,7 @@ export function placeSessionEvents(items, events) {
         }
         if (atBoundary.length) boundaries.push({ beforeLine: items[i].line_num, events: atBoundary })
     }
-    if (eventIndex < sorted.length) boundaries.push({ beforeLine: null, events: sorted.slice(eventIndex) })
+    if (eventIndex < sorted.length) boundaries.push({ beforeLine: items[realEnd]?.line_num ?? null, events: sorted.slice(eventIndex) })
     return boundaries
 }
 
