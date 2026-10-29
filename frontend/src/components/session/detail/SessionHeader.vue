@@ -2,6 +2,7 @@
 import { ref, computed, watch, inject } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 import { useDataStore } from '../../../stores/data'
+import { toast } from '../../../composables/useToast'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
 import { PROCESS_STATE, DISPLAY_MODE } from '../../../constants'
@@ -174,6 +175,13 @@ const displayDirectory = computed(() => {
     }
     return null
 })
+
+// Copy a value to the clipboard and confirm with a toast (same pattern as GitPanelHeader).
+function copyToClipboard(value, label) {
+    if (!value) return
+    navigator.clipboard.writeText(value)
+    toast.success(`${label} copied to clipboard`, { duration: 2000 })
+}
 
 // Directory split in "parent folders" + "last folder" so the template can emphasise the folder
 // that identifies the checkout (the last one, e.g. the worktree name).
@@ -672,17 +680,17 @@ defineExpose({
                  branch. For a draft, displayDirectory falls back to the project path and there is no
                  branch yet, so only the folder shows. -->
             <div v-if="displayDirectory || session.git_branch" class="session-git-info">
-                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory">
+                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory" @click="copyToClipboard(displayDirectory, 'Directory')">
                     <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
                     <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
                 </span>
-                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
+                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }} (click to copy)</AppTooltip>
 
-                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch">
+                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch" @click="copyToClipboard(session.git_branch, 'Branch')">
                     <wa-icon auto-width name="code-branch"></wa-icon>
                     <span class="git-branch-name">{{ session.git_branch }}</span>
                 </span>
-                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch</AppTooltip>
+                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">Git branch (click to copy)</AppTooltip>
             </div>
 
             <!-- Action buttons (main session), right under the identity row: part of the compact panel, and
@@ -1214,6 +1222,7 @@ defineExpose({
 
 .git-directory {
     flex: 1 1 14rem;
+    cursor: pointer;
 }
 
 /* direction: rtl moves the ellipsis to the START of the path; the inner span restores ltr so the
@@ -1238,6 +1247,7 @@ defineExpose({
 
 .git-branch {
     flex: 0 1 auto;
+    cursor: pointer;
     padding: 0.125rem var(--wa-space-s) 0.125rem var(--wa-space-xs);
     border-radius: 999px;
     background: color-mix(in oklab, var(--wa-color-brand-60) 14%, transparent);
