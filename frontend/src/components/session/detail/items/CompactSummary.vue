@@ -85,7 +85,7 @@ function onAfterHide() {
             <strong class="items-details-summary-name">Session compacted</strong>
         </span>
         <div v-if="isOpen || isClosing()" class="compact-summary-body">
-            <MarkdownContent v-if="hasContent" :source="content" />
+            <MarkdownContent v-if="hasContent" :source="content" speakable />
             <p v-else class="compact-summary-placeholder">{{ placeholder }}</p>
         </div>
     </wa-details>

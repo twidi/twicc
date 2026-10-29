@@ -122,9 +122,13 @@ test('the toolbar CSS keeps an open or focused toolbar visible while the message
     const hoverRule = source.indexOf('.markdown-content-wrapper:hover .markdown-toolbar')
     const openRule = source.indexOf('.markdown-content-wrapper .markdown-toolbar[data-open="true"]')
     const focusRule = source.indexOf('.markdown-content-wrapper .markdown-toolbar:focus-within')
+    const busyRule = source.indexOf('.markdown-content-wrapper .markdown-toolbar:has(.markdown-toolbar-speech--busy)')
     assert.match(source, /\.markdown-toolbar\s*\{[^}]*opacity:\s*0;/s)
     assert.match(source, /\.markdown-content-wrapper:hover \.markdown-toolbar\s*\{[^}]*opacity:\s*0\.3;/s)
-    // Later rules win the cascade: open and focus must come after hover.
+    // Later rules win the cascade: open, focus and a busy speech button must come after hover.
     assert.ok(hoverRule >= 0 && hoverRule < openRule && openRule < focusRule)
-    assert.match(source, /\.markdown-toolbar\[data-open="false"\] wa-button:not\(\.markdown-toolbar-toggle\)\s*\{[^}]*display:\s*none/s)
+    assert.ok(hoverRule < busyRule)
+    assert.match(source, /\.markdown-content-wrapper \.markdown-toolbar:has\(\.markdown-toolbar-speech--busy\)\s*\{[^}]*opacity:\s*1;/s)
+    // A closed toolbar hides its actions, except a busy speech button.
+    assert.match(source, /\.markdown-toolbar\[data-open="false"\] wa-button:not\(\.markdown-toolbar-toggle\):not\(\.markdown-toolbar-speech--busy\)\s*\{[^}]*display:\s*none/s)
 })

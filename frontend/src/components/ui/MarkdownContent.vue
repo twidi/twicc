@@ -14,6 +14,7 @@ import { useMarkdownRenderEligibility } from '../../composables/useMarkdownRende
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION } from '../../inline-artifacts/context.js'
 import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
+import TextToSpeechButton from './TextToSpeechButton.vue'
 import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
 import { useSettingsStore } from '../../stores/settings'
@@ -46,6 +47,12 @@ const props = defineProps({
     // Enabled by the file-preview panes (Files / Plan / Git .md diffs) where the
     // rendered document can be long; left off for chat, tips, changelog, etc.
     showToc: {
+        type: Boolean,
+        default: false
+    },
+    // Opt-in read-aloud button in the toolbar (it shows only while text-to-speech
+    // is available). Set by the chat text messages and the compact summaries only.
+    speakable: {
         type: Boolean,
         default: false
     }
@@ -863,6 +870,7 @@ function handleLinkClick(event) {
                 >
                     <wa-icon name="copy"></wa-icon>
                 </wa-button>
+                <TextToSpeechButton v-if="speakable" :text="source" />
             </wa-button-group>
         </div>
         <pre v-if="showRaw" class="markdown-raw">{{ source }}</pre>
@@ -1019,11 +1027,16 @@ function handleLinkClick(event) {
     transition: opacity 0.15s ease;
     z-index: 2;
 }
-.markdown-toolbar[data-open="false"] wa-button:not(.markdown-toolbar-toggle) {
+.markdown-toolbar[data-open="false"] wa-button:not(.markdown-toolbar-toggle):not(.markdown-toolbar-speech--busy) {
     display: none;
 }
 .markdown-content-wrapper:hover .markdown-toolbar {
     opacity: 0.3;
+}
+/* A loading or playing speech button stays visible and opaque, toolbar closed or not.
+   Same specificity as the hover rule above: it must come after it. */
+.markdown-content-wrapper .markdown-toolbar:has(.markdown-toolbar-speech--busy) {
+    opacity: 1;
 }
 .markdown-content-wrapper .markdown-toolbar[data-open="true"] {
     opacity: 1;
@@ -1037,6 +1050,9 @@ function handleLinkClick(event) {
 }
 .markdown-toolbar wa-button wa-icon {
     width: .6rem;
+}
+.markdown-toolbar wa-button wa-spinner {
+    font-size: .6rem;
 }
 
 .markdown-raw {
