@@ -133,7 +133,7 @@ watch(() => props.selectedBookmarkId, (id) => {
                     >
                         <ProjectBadge
                             :project-id="group.projectId"
-                            gap="var(--wa-space-3xs)"
+                            gap="var(--wa-space-2xs)"
                             class="group-badge"
                         />
                     </div>
@@ -240,12 +240,10 @@ watch(() => props.selectedBookmarkId, (id) => {
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: var(--wa-space-3xs);
+    gap: var(--wa-space-2xs);
     overflow: hidden;
-}
-
-.group-badge {
-    font-weight: 400;
+    /* Project groups are containers: same weight as the other directory rows. */
+    font-weight: 500;
 }
 
 .bookmark-name {
