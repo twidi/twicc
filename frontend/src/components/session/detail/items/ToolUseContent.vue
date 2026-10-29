@@ -977,7 +977,7 @@ startResultFetch()
                          callout below already tells the user what happened,
                          and a View Agent click would just be a no-op. -->
                     <template v-else-if="agentId">
-                        <AppTooltip v-if="isAgentRunning && agentRunStartedAt" :for="viewAgentButtonId">
+                        <AppTooltip deferred v-if="isAgentRunning && agentRunStartedAt" :for="viewAgentButtonId">
                             Agent running for <ProcessDuration :state-changed-at="agentRunStartedAt" />
                         </AppTooltip>
                         <wa-button
@@ -1004,7 +1004,7 @@ startResultFetch()
                         >
                             <wa-icon name="ban" label="Stop Agent"></wa-icon>
                         </wa-button>
-                        <AppTooltip v-if="showStopAgent" :for="`stop-agent-${props.toolId}`">Stop this agent</AppTooltip>
+                        <AppTooltip deferred v-if="showStopAgent" :for="`stop-agent-${props.toolId}`">Stop this agent</AppTooltip>
                     </template>
                 </template>
                 <!-- View Workflow indicator for the Workflow tool_use (regular sessions only) -->
@@ -1019,11 +1019,11 @@ startResultFetch()
                         <wa-icon slot="start" name="sitemap"></wa-icon>
                         View Workflow
                     </wa-button>
-                    <AppTooltip :for="viewWorkflowButtonId">Open this workflow run</AppTooltip>
+                    <AppTooltip deferred :for="viewWorkflowButtonId">Open this workflow run</AppTooltip>
                 </template>
                 <!-- Tool running spinner (Bash, WebFetch, MCP, etc.) -->
                 <template v-if="isToolRunning">
-                    <AppTooltip v-if="toolStartedAt" :for="toolSpinnerId">
+                    <AppTooltip deferred v-if="toolStartedAt" :for="toolSpinnerId">
                         Running for <ProcessDuration :state-changed-at="toolStartedAt" />
                     </AppTooltip>
                     <wa-spinner :id="toolSpinnerId" class="tool-running-spinner"></wa-spinner>
@@ -1047,7 +1047,7 @@ startResultFetch()
                     >
                         <wa-icon name="folder-open"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
+                    <AppTooltip deferred :for="viewInFilesButtonId">View in Files tab</AppTooltip>
                 </template>
             </div>
         </div>

@@ -220,14 +220,15 @@ function toggleJsonView() {
                 </wa-button>
                 <CodeCommentsIndicator :count="blockCommentsCount" :show-tooltip="false" class="detail-toggle-comments" />
             </div>
-            <AppTooltip v-if="showDetailToggle" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
+            <AppTooltip deferred v-if="showDetailToggle" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
                 {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
             </AppTooltip>
 
-            <!-- JSON toggle button (visible on hover) -->
+            <!-- JSON toggle button (visible on hover), only in debug mode: the CSS hides it
+                 everywhere else, so it is not mounted there, nor its tooltip. -->
             <div class="json-toggle-container">
                 <wa-button
-                    v-if="!showJson"
+                    v-if="isEffectiveDebug && !showJson"
                     :id="`json-toggle-${sessionId}-${lineNum}`"
                     class="json-toggle"
                     :variant="showJson ? 'warning' : 'neutral'"
@@ -236,7 +237,7 @@ function toggleJsonView() {
                 >
                     <wa-icon name="code"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="!showJson" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</AppTooltip>
+                <AppTooltip v-if="isEffectiveDebug && !showJson" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</AppTooltip>
             </div>
         </div>
 
