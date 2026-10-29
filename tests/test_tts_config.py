@@ -1,10 +1,13 @@
 """Speech configs stored in ``<data_dir>/tts.json`` (``twicc.tts.config``)."""
 
+import asyncio
+
 import orjson
 import pytest
 from asgiref.sync import async_to_sync
 from django.test import AsyncClient
 
+from tests.test_hidden_sessions_snapshot import _close, _communicator, _connect_frames
 from twicc.paths import get_env_path, get_tts_config_path
 from twicc.tts.config import (
     empty_tts_config,
@@ -205,3 +208,44 @@ def test_bootstrap_carries_the_tts_payload(tmp_data_dir, settings, monkeypatch):
         "key_present": False,
         "env_path": str(get_env_path()),
     }
+
+
+@pytest.mark.parametrize("subscribe", [None, "tts_config_updated"])
+def test_ws_connect_sends_the_tts_payload(transactional_db, tmp_data_dir, monkeypatch, subscribe):
+    monkeypatch.setattr("twicc.tts.config.get_env_secret", lambda key: "sk-or-secret")
+    config = write_tts_config({"active_id": "a", "configs": [_entry()]})
+
+    async def scenario():
+        comm = _communicator(subscribe)
+        connected, _ = await comm.connect()
+        assert connected
+        try:
+            return await _connect_frames(comm)
+        finally:
+            await _close(comm)
+
+    frames = asyncio.run(scenario())
+    assert frames is not None
+    tts_frames = [frame for frame in frames if frame.get("type") == "tts_config_updated"]
+    assert tts_frames == [{
+        "type": "tts_config_updated",
+        "config": config,
+        "key_present": True,
+        "env_path": str(get_env_path()),
+    }]
+    assert "sk-or-secret" not in orjson.dumps(frames).decode()
+
+
+def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transactional_db, tmp_data_dir):
+    async def scenario():
+        comm = _communicator("active_processes")
+        connected, _ = await comm.connect()
+        assert connected
+        try:
+            return await _connect_frames(comm)
+        finally:
+            await _close(comm)
+
+    frames = asyncio.run(scenario())
+    assert frames is not None
+    assert all(frame.get("type") != "tts_config_updated" for frame in frames)
