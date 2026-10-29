@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -1309,7 +1310,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             return
         try:
             if override_state is not None and project_id is not None:
-                now = asyncio.get_event_loop().time()
+                now = time.time()
                 info = AgentInfo(
                     session_id=session_id,
                     project_id=project_id,
