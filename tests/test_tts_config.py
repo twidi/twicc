@@ -2,8 +2,10 @@
 
 import orjson
 import pytest
+from asgiref.sync import async_to_sync
+from django.test import AsyncClient
 
-from twicc.paths import get_tts_config_path
+from twicc.paths import get_env_path, get_tts_config_path
 from twicc.tts.config import (
     empty_tts_config,
     normalize_tts_config,
@@ -77,7 +79,7 @@ def test_normalize_non_dict_or_bad_configs_is_empty(raw):
     assert normalize_tts_config(raw) == empty_tts_config()
 
 
-@pytest.mark.parametrize("speed", [0, -1, float("inf"), float("nan"), "1.0", True])
+@pytest.mark.parametrize("speed", [0, -1, float("inf"), float("nan"), "1.0", True, pytest.param(10**400, id="huge-int")])
 def test_normalize_rejects_a_bad_speed(speed):
     out = normalize_tts_config({"configs": [{"id": "a", "speed": speed}]})
     assert out["configs"][0]["speed"] is None
@@ -144,3 +146,62 @@ def test_client_payload_reports_key_presence_without_the_key(monkeypatch):
 def test_client_payload_reports_a_missing_key(monkeypatch):
     monkeypatch.setattr("twicc.tts.config.get_env_secret", lambda key: None)
     assert tts_client_payload(empty_tts_config())["key_present"] is False
+
+
+# --- wiring: WebSocket update handler and bootstrap ---------------------------
+
+
+@pytest.fixture
+def ws_consumer():
+    """A consumer whose channel layer records ``group_send`` calls."""
+    from twicc.asgi import WSConsumer
+
+    sent: list[tuple[str, dict]] = []
+
+    class Layer:
+        async def group_send(self, group, message):
+            sent.append((group, message))
+
+    consumer = WSConsumer()
+    consumer.channel_layer = Layer()
+    return consumer, sent
+
+
+def test_ws_update_writes_normalized_and_broadcasts(tmp_data_dir, ws_consumer, monkeypatch):
+    monkeypatch.setattr("twicc.tts.config.get_env_secret", lambda key: "sk-or-secret")
+    consumer, sent = ws_consumer
+    async_to_sync(consumer._handle_update_tts_config)({
+        "type": "update_tts_config",
+        "config": {"active_id": "zz", "configs": [{"id": "a", "speed": -1}, "junk"]},
+    })
+    normalized = normalize_tts_config({"configs": [{"id": "a"}]})
+    assert read_tts_config() == normalized
+    assert sent == [("updates", {"type": "broadcast", "data": {
+        "type": "tts_config_updated",
+        "config": normalized,
+        "key_present": True,
+        "env_path": str(get_env_path()),
+    }})]
+    assert "sk-or-secret" not in orjson.dumps(sent).decode()
+
+
+@pytest.mark.parametrize("config", [None, "junk", ["a"]])
+def test_ws_update_rejects_a_non_dict_config(tmp_data_dir, ws_consumer, config):
+    consumer, sent = ws_consumer
+    async_to_sync(consumer._handle_update_tts_config)({"type": "update_tts_config", "config": config})
+    assert not get_tts_config_path().exists()
+    assert sent == []
+
+
+@pytest.mark.django_db
+def test_bootstrap_carries_the_tts_payload(tmp_data_dir, settings, monkeypatch):
+    monkeypatch.setattr("twicc.tts.config.get_env_secret", lambda key: None)
+    settings.TWICC_PASSWORD_HASH = ""
+    config = write_tts_config({"active_id": "a", "configs": [_entry()]})
+    response = async_to_sync(AsyncClient().get)("/api/bootstrap/")
+    assert response.status_code == 200
+    assert orjson.loads(response.content)["tts"] == {
+        "config": config,
+        "key_present": False,
+        "env_path": str(get_env_path()),
+    }

@@ -29,9 +29,14 @@ def _speed(value: object) -> float | None:
     """A finite positive number as a float, else None (``bool`` is not a number here)."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    if not math.isfinite(value) or value <= 0:
+    try:
+        # The WebSocket JSON decoder keeps big ints: 10**400 does not fit a float.
+        speed = float(value)
+    except OverflowError:
         return None
-    return float(value)
+    if not math.isfinite(speed) or speed <= 0:
+        return None
+    return speed
 
 
 def _speech_fields(raw: dict) -> dict:
