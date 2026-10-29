@@ -746,11 +746,18 @@ defineExpose({ handleKeyNavigation })
     margin-block: var(--wa-space-3xs);
 }
 
+.bookmark-item-wrapper {
+    /* The menu sits closer to the row's right edge than in the shared default (xs); the room kept
+       for it before the name (1.5rem at the default) shrinks by the same amount (as SessionListItem). */
+    --sidebar-row-menu-right: var(--wa-space-3xs);
+    --bookmark-menu-reserve: calc(1.5rem - var(--wa-space-xs) + var(--sidebar-row-menu-right));
+}
+
 .bookmark-name-row {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: var(--wa-space-xs);
+    gap: calc(var(--wa-space-xs) * 0.75);
     width: 100%;
     min-width: 0;
 }
@@ -770,7 +777,7 @@ defineExpose({ handleKeyNavigation })
     /* Visual space for the actions menu overlaying the row's top-right corner,
        so a long name ellipsizes before it rather than running underneath
        (matches SessionListItem). */
-    margin-right: 1.5rem;
+    margin-right: var(--bookmark-menu-reserve);
 }
 
 .bookmark-meta {
