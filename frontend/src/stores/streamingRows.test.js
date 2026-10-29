@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { computed, createRenderer, h, nextTick, onMounted, shallowRef, watch } from 'vue'
+import { computed, createRenderer, h, nextTick, onMounted, shallowRef, toRaw, watch } from 'vue'
 import { useVirtualScroll } from '../composables/useVirtualScroll.js'
 import { useListExit } from '../composables/useListExit.js'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers } from '../utils/streamingBuffer.js'
@@ -22,7 +22,7 @@ function action(name) {
     assert.ok(end > start, `action ${name} boundary not found`)
     return source.slice(start, end)
 }
-const deps = { getProviderHelpers: provider => ({ codex: { matchesStreamingBlock: codexMatch }, claude_code: { matchesStreamingBlock: claudeMatch } })[provider], SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, feedDelta, flushBuffer, destroySessionBuffers, createStreamPublicationIdentity, isBufferActive, STREAM_BLOCK_INACTIVITY_MS: 1000,
+const deps = { toRaw, getProviderHelpers: provider => ({ codex: { matchesStreamingBlock: codexMatch }, claude_code: { matchesStreamingBlock: claudeMatch } })[provider], SYNTHETIC_ITEM, setParsedContent, getParsedContent, initBuffer, feedDelta, flushBuffer, destroySessionBuffers, createStreamPublicationIdentity, isBufferActive, STREAM_BLOCK_INACTIVITY_MS: 1000,
     clearBlockInactivityTimer(block) { if (block._inactivityTimer) clearTimeout(block._inactivityTimer); block._inactivityTimer = null } }
 const actions = new Function(...Object.keys(deps), `return { ${['_findStreamingReplacement', '_onBufferDrain', 'streamBlockStart', 'streamBlockDelta', 'streamBlockStop', '_retireStreamingBlocks'].map(action).join('')} }`)(...Object.values(deps))
 let fixtureId = 0

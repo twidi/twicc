@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
+import { toRaw } from 'vue'
 import { getParsedContent, setParsedContent, clearParsedContent, hasContent } from '../utils/parsedContent.js'
 import { initBuffer, feedDelta, flushBuffer, destroySessionBuffers, destroyAllBuffers, isBufferActive } from '../utils/streamingBuffer.js'
 import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry.js'
@@ -22,7 +23,7 @@ let fixtureId = 0
 function makeRetirementFixture({ provider = 'codex', fetches = [] } = {}) {
     const sessionId = `retirement-${++fixtureId}`, otherSessionId = `${sessionId}-other`, recomputations = [], retirements = []
     const deferred = []
-    const deps = { getParsedContent, setParsedContent, clearParsedContent, hasContent, initBuffer, feedDelta, flushBuffer,
+    const deps = { toRaw, getParsedContent, setParsedContent, clearParsedContent, hasContent, initBuffer, feedDelta, flushBuffer,
         destroySessionBuffers, isBufferActive, createStreamPublicationIdentity, SYNTHETIC_ITEM, STREAM_BLOCK_INACTIVITY_MS: 1000,
         getProviderHelpers: provider => ({ codex: { matchesStreamingBlock: codexMatch }, claude_code: { matchesStreamingBlock: claudeMatch } })[provider],
         clearBlockInactivityTimer(block) { clearTimeout(block._inactivityTimer); block._inactivityTimer = null },

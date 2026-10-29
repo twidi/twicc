@@ -3196,7 +3196,10 @@ export const useDataStore = defineStore('data', {
                 if (!serverLastLine) return true
                 const projectId = session.project_id
                 const parentSessionId = session.parent_session_id || null
-                const items = this.sessionItems[sessionId] || []
+                // Read the raw array: this scan only reads, and on a big session a proxy read
+                // per line costs more than a hundred ms (it runs on every return to the session
+                // and, for every loaded session, on every reconnect).
+                const items = toRaw(this.sessionItems[sessionId]) || []
                 // "Bare" = neither content nor metadata (placeholder or absent).
                 const isBare = (item) => !item || (item.display_level == null && !hasContent(item))
 
@@ -5852,7 +5855,10 @@ export const useDataStore = defineStore('data', {
             const provider = this.getSession(sessionId)?.provider ?? this.processStates[sessionId]?.provider
             const helpers = getProviderHelpers(provider)
             if (!helpers) return null
-            const items = this.sessionItems[sessionId] ?? []
+            // Read the raw array: at a block's start the real line does not exist yet, so the
+            // scan usually covers every line, and through the reactive proxy that costs more
+            // than a hundred ms on a big session. The item found is only read by the caller.
+            const items = toRaw(this.sessionItems[sessionId]) ?? []
             for (let i = items.length - 1; i >= 0; i--) {
                 const item = items[i]
                 if (item && helpers.matchesStreamingBlock(getParsedContent(item), item.kind, messageId, block)) return item
