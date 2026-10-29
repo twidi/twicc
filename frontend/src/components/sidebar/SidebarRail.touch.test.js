@@ -11,7 +11,7 @@ const chunk = tooltipEntry.match(/from "(\.\.\/\.\.\/chunks\/[^"\n]+)"/)[1]
 const tooltipSource = readFileSync(new URL(chunk, new URL('../../../node_modules/@awesome.me/webawesome/dist-cdn/components/tooltip/tooltip.js', import.meta.url)), 'utf8')
 const focusBody = tooltipSource.match(/this.handleFocus = \(\) => \{([\s\S]*?)\n    \};/)[1]
 
-function fixture(t, isTouchDevice = true) {
+function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }) {
     t.mock.timers.enable({ apis: ['setTimeout'] })
     const document = new EventTarget()
     const listeners = new Map()
@@ -32,7 +32,7 @@ function fixture(t, isTouchDevice = true) {
     let unmount
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide})`, {
+    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide, activate})`, {
         document, Map, createRailSessionLongPress,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
@@ -40,7 +40,7 @@ function fixture(t, isTouchDevice = true) {
         useSessionTreeAncestors: () => {}, useDataStore: () => ({}),
         useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => ({ push: route => pushed.push(route) }),
         useRailRecentProjects: () => ({ recentProjects: { value: [] }, recentWorkspaces: { value: [] } }),
-        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => ({ status: 'idle', stop() {} }), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
+        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => tts, nextTick: () => Promise.resolve(), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
         useRailActiveSessions: () => ({ rows: { value: [] }, treeCandidates: { value: [] } }), sessionRouteLocation: session => session.id,
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),
@@ -56,7 +56,7 @@ function fixture(t, isTouchDevice = true) {
         button: 0, currentTarget: { isConnected: true }, clientX: 0, clientY: 0 })
     const click = () => api.sessionClick(session, { detail: 1, preventDefault() {}, stopPropagation() {} })
     t.after(() => unmount())
-    return { api, tooltip, pushed, down, click, watchers, listeners, unmount,
+    return { api, document, tooltip, pushed, down, click, watchers, listeners, unmount,
         key: () => { const event = new Event('keydown'); Object.assign(event, { key: 'Tab' }); document.dispatchEvent(event) },
         dismiss: () => globalDismiss?.() }
 }
@@ -183,4 +183,24 @@ test('a nested tooltip hide does not cancel the rail preview timeout', t => {
     t.mock.timers.tick(3000)
     assert.equal(f.tooltip.hidden, 1)
     assert.equal(f.tooltip.open, false)
+})
+
+test('stopping the speech indicator hands its focus to New session', async t => {
+    for (const focused of [true, false]) await t.test(focused ? 'focused' : 'not focused', async t => {
+        const calls = []
+        const tts = { status: 'playing', stop() { calls.push('stop') } }
+        const f = fixture(t, false, tts)
+        const speech = { id: 'sidebar-rail-speech' }
+        const newSession = { id: 'sidebar-rail-new-session', focus() { calls.push('focus') } }
+        f.document.activeElement = focused ? speech : null
+        f.document.getElementById = id => {
+            // The speech button is gone once stopped: focus waits for the re-render.
+            assert.deepEqual(calls, ['stop', 'tick'])
+            return id === newSession.id ? newSession : null
+        }
+        const pending = f.api.activate({ id: 'speech' })
+        calls.push('tick')
+        await pending
+        assert.deepEqual(calls, focused ? ['stop', 'tick', 'focus'] : ['stop', 'tick'])
+    })
 })

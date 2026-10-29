@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useRailActiveSessions } from '../../composables/useRailActiveSessions'
@@ -169,8 +169,17 @@ const bottom = computed(() => items.value.filter(item => item.group === 'bottom'
 function activate(item) {
     if (item.id === 'sessions' || item.id === 'artifacts') emit('select-mode', item.id)
     else if (item.id === 'toggle') emit('toggle-sidebar')
-    else if (item.id === 'speech') tts.stop()
+    else if (item.id === 'speech') return stopSpeech()
     else emit(item.id)
+}
+
+// The indicator unmounts once stopped: hand its focus to the next bottom item, not to <body>.
+async function stopSpeech() {
+    const hadFocus = document.activeElement?.id === 'sidebar-rail-speech'
+    tts.stop()
+    if (!hadFocus) return
+    await nextTick()
+    document.getElementById('sidebar-rail-new-session')?.focus()
 }
 </script>
 
