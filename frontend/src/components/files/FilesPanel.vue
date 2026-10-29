@@ -83,6 +83,11 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    // Web Awesome icon name for the tree's root node. Defaults to the folder icon.
+    rootIcon: {
+        type: String,
+        default: null,
+    },
     // The root folder may not exist on disk yet (the backend creates it on the
     // first write into it): a missing root shows as an empty tree instead of an
     // error, and its context menu only offers New file / New folder / Upload files.
@@ -1119,6 +1124,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                 :error="error"
                 :root-path="directory"
                 :root-label="rootLabel"
+                :root-icon="rootIcon"
                 :search-fn="doSearch"
                 :lazy-load-fn="lazyLoadDir"
                 :project-id="projectId"

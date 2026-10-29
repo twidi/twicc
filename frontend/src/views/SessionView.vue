@@ -2708,6 +2708,7 @@ onBeforeUnmount(() => {
                         :show-root-selector="false"
                         lazy-root
                         root-label="Session artifacts"
+                        root-icon="folder-open"
                         :preview-by-default="true"
                         :artifact-bookmark-session-id="session?.id"
                         :artifact-bookmarks="sessionArtifactBookmarks"

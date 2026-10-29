@@ -71,6 +71,11 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    // Optional Web Awesome icon name for the root node (defaults to the folder icon).
+    rootIcon: {
+        type: String,
+        default: null,
+    },
     searchFn: {
         type: Function,
         default: null,
@@ -1453,6 +1458,7 @@ defineExpose({
                         :node="displayTree"
                         :path="rootPath"
                         :root-label="rootLabel"
+                        :root-icon="rootIcon"
                         :project-id="projectId"
                         :session-id="sessionId"
                         :is-root="true"

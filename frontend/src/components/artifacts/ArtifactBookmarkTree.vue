@@ -196,6 +196,8 @@ watch(() => props.selectedBookmarkId, (id) => {
 
 .bookmark-tree-root > .node-label {
     padding-left: var(--wa-space-2xs);
+    /* Same weight as the "Session artifacts" root (FileTree.vue .is-directory). */
+    font-weight: 500;
 }
 
 .bookmark-tree-root > .node-children > .file-tree-node > .node-label {

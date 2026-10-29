@@ -72,6 +72,12 @@ const props = defineProps({
         type: String,
         default: null,
     },
+    // Web Awesome icon name for the root node only. Replaces the vscode-icons
+    // folder icon, e.g. to align a virtual-looking root with sibling tree roots.
+    rootIcon: {
+        type: String,
+        default: null,
+    },
     allOpen: {
         type: Boolean,
         default: false,
@@ -383,6 +389,7 @@ function onTouchEnd(event) {
         >
             <!-- Loading spinner (replaces icon while fetching) -->
             <wa-spinner v-if="isLoading" class="node-spinner"></wa-spinner>
+            <wa-icon v-else-if="isRoot && rootIcon" :name="rootIcon" class="node-icon"></wa-icon>
             <img
                 v-else
                 :src="iconUrl"
