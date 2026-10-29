@@ -3485,9 +3485,14 @@ export const useDataStore = defineStore('data', {
                 let compactWindowEnd = -1
                 for (let i = 0; i < sourceItems.length; i++) {
                     const item = sourceItems[i]
-                    if (item.kind === 'compact_summary') compactWindowEnd = i + 9
-                    else if (item.kind === 'user_message' && i <= compactWindowEnd) compactWindowEnd++
-                    if (item.display_level !== DISPLAY_LEVEL.DEBUG_ONLY || item.timestamp != null || i <= compactWindowEnd) items.push(item)
+                    // Level first: most lines are DEBUG_ONLY, and one is never a compact_summary
+                    // nor a user_message (the backend makes those ALWAYS), so only the others
+                    // can move the window.
+                    if (item.display_level !== DISPLAY_LEVEL.DEBUG_ONLY) {
+                        if (item.kind === 'compact_summary') compactWindowEnd = i + 9
+                        else if (item.kind === 'user_message' && i <= compactWindowEnd) compactWindowEnd++
+                        items.push(item)
+                    } else if (item.timestamp != null || i <= compactWindowEnd) items.push(item)
                 }
             }
             const failedSends = this.localState.failedSends[sessionId]
