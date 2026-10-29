@@ -25,12 +25,12 @@ def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _speed(value: object) -> float | None:
+def positive_speed(value: object) -> float | None:
     """A finite positive number as a float, else None (``bool`` is not a number here)."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     try:
-        # The WebSocket JSON decoder keeps big ints: 10**400 does not fit a float.
+        # The WebSocket JSON decoder (stdlib ``json``) keeps big ints: 10**400 does not fit a float.
         speed = float(value)
     except OverflowError:
         return None
@@ -46,7 +46,7 @@ def _speech_fields(raw: dict) -> dict:
         "model": _string(raw.get("model")),
         "voice": _string(raw.get("voice")),
         "response_format": response_format if response_format in TTS_RESPONSE_FORMATS else "mp3",
-        "speed": _speed(raw.get("speed")),
+        "speed": positive_speed(raw.get("speed")),
         "instructions": _string(raw.get("instructions")),
     }
 

@@ -12,6 +12,7 @@ from twicc.paths import get_env_path, get_tts_config_path
 from twicc.tts.config import (
     empty_tts_config,
     normalize_tts_config,
+    positive_speed,
     read_tts_config,
     tts_client_payload,
     write_tts_config,
@@ -86,6 +87,20 @@ def test_normalize_non_dict_or_bad_configs_is_empty(raw):
 def test_normalize_rejects_a_bad_speed(speed):
     out = normalize_tts_config({"configs": [{"id": "a", "speed": speed}]})
     assert out["configs"][0]["speed"] is None
+
+
+@pytest.mark.parametrize(
+    "speed", [None, 0, -1, float("inf"), float("nan"), "1.0", True, pytest.param(10**400, id="huge-int")]
+)
+def test_positive_speed_rejects(speed):
+    assert positive_speed(speed) is None
+
+
+@pytest.mark.parametrize(("speed", "expected"), [(2, 2.0), (0.5, 0.5)])
+def test_positive_speed_returns_a_float(speed, expected):
+    result = positive_speed(speed)
+    assert result == expected
+    assert isinstance(result, float)
 
 
 def test_normalize_keeps_a_positive_speed_as_float():

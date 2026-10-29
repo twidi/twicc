@@ -6,14 +6,13 @@ would run to the end and may be billed).
 """
 
 import logging
-import math
 
 import orjson
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse, JsonResponse
 
 from twicc.paths import get_env_path
-from twicc.tts.config import TTS_RESPONSE_FORMATS, openrouter_api_key
+from twicc.tts.config import TTS_RESPONSE_FORMATS, openrouter_api_key, positive_speed
 from twicc.tts.openrouter import (
     SpeechError,
     SpeechRequest,
@@ -43,17 +42,11 @@ def _optional_string(data: dict, field: str) -> str:
 
 
 def _speed(value: object) -> float | None:
-    """None, or *value* as a finite positive float (``bool`` is not a number here)."""
+    """None, or *value* as a finite positive float. Raises ``ValueError`` otherwise."""
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError("'speed' must be a number")  # noqa: TRY004 - the view maps ValueError to 400
-    try:
-        # The JSON decoder keeps big ints: 10**400 does not fit a float.
-        speed = float(value)
-    except OverflowError:
-        raise ValueError("'speed' must be a finite positive number") from None
-    if not math.isfinite(speed) or speed <= 0:
+    speed = positive_speed(value)
+    if speed is None:
         raise ValueError("'speed' must be a finite positive number")
     return speed
 
@@ -118,14 +111,18 @@ async def tts_speech(request):
         except SpeechError as error:
             extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
             return _error(error.message, 502, **extra)
-        if audio.generation_id:
-            schedule_cost_log(audio.generation_id, api_key)
+        response = HttpResponse(audio.content, content_type=audio.content_type)
+        response["Cache-Control"] = "no-store"
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
         logger.exception("TTS speech request failed")
         return _error("Text-to-speech failed", 500)
-    response = HttpResponse(audio.content, content_type=audio.content_type)
-    response["Cache-Control"] = "no-store"
+    if audio.generation_id:
+        # The audio is billed already: a failed cost lookup must not cost the user the response.
+        try:
+            schedule_cost_log(audio.generation_id, api_key)
+        except Exception:
+            logger.exception("TTS cost lookup for %s could not be scheduled", audio.generation_id)
     return response
 
 

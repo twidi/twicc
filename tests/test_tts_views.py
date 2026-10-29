@@ -48,6 +48,20 @@ def calls(monkeypatch):
     return recorded
 
 
+@pytest.fixture
+def views_log(caplog, monkeypatch):
+    """Route the views logger straight to caplog.
+
+    settings_test's ``disable_existing_loggers: True`` can disable this logger,
+    depending on the suite's import order.
+    """
+    logger = logging.getLogger("twicc.tts.views")
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.setattr(logger, "propagate", False)
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    return caplog
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -97,54 +111,63 @@ def test_parse_speech_request_defaults():
     )
 
 
+TEXT_ERROR = "'text' must be a non-empty string"
+MODEL_ERROR = "'model' must be a non-empty string"
+FORMAT_ERROR = "'response_format' must be one of: mp3, pcm"
+SPEED_ERROR = "'speed' must be a finite positive number"
+
+
 @pytest.mark.parametrize(
-    "data",
+    ("data", "message"),
     [
-        [],
-        "text",
-        None,
-        {**VALID_PAYLOAD, "text": ""},
-        {**VALID_PAYLOAD, "text": "   \n"},
-        {**VALID_PAYLOAD, "text": 12},
-        {key: value for key, value in VALID_PAYLOAD.items() if key != "model"},
-        {**VALID_PAYLOAD, "model": "  "},
-        {**VALID_PAYLOAD, "model": 3},
-        {**VALID_PAYLOAD, "voice": 3},
-        {**VALID_PAYLOAD, "instructions": ["x"]},
-        {**VALID_PAYLOAD, "response_format": "ogg"},
-        {key: value for key, value in VALID_PAYLOAD.items() if key != "response_format"},
-        {**VALID_PAYLOAD, "speed": 0},
-        {**VALID_PAYLOAD, "speed": -1},
-        {**VALID_PAYLOAD, "speed": True},
-        {**VALID_PAYLOAD, "speed": "1.0"},
-        {**VALID_PAYLOAD, "speed": float("inf")},
-        {**VALID_PAYLOAD, "speed": float("nan")},
-        {**VALID_PAYLOAD, "speed": 10**400},
+        ([], "The body must be a JSON object"),
+        ("text", "The body must be a JSON object"),
+        (None, "The body must be a JSON object"),
+        ({**VALID_PAYLOAD, "text": ""}, TEXT_ERROR),
+        ({**VALID_PAYLOAD, "text": "   \n"}, TEXT_ERROR),
+        ({**VALID_PAYLOAD, "text": 12}, TEXT_ERROR),
+        ({key: value for key, value in VALID_PAYLOAD.items() if key != "model"}, MODEL_ERROR),
+        ({**VALID_PAYLOAD, "model": "  "}, MODEL_ERROR),
+        ({**VALID_PAYLOAD, "model": 3}, MODEL_ERROR),
+        ({**VALID_PAYLOAD, "voice": 3}, "'voice' must be a string"),
+        ({**VALID_PAYLOAD, "instructions": ["x"]}, "'instructions' must be a string"),
+        ({**VALID_PAYLOAD, "response_format": "ogg"}, FORMAT_ERROR),
+        ({key: value for key, value in VALID_PAYLOAD.items() if key != "response_format"}, FORMAT_ERROR),
+        ({**VALID_PAYLOAD, "speed": 0}, SPEED_ERROR),
+        ({**VALID_PAYLOAD, "speed": -1}, SPEED_ERROR),
+        ({**VALID_PAYLOAD, "speed": True}, SPEED_ERROR),
+        ({**VALID_PAYLOAD, "speed": "1.0"}, SPEED_ERROR),
+        ({**VALID_PAYLOAD, "speed": float("inf")}, SPEED_ERROR),
+        ({**VALID_PAYLOAD, "speed": float("nan")}, SPEED_ERROR),
+        # orjson refuses such a number in a body; only a direct Python caller can pass it.
+        pytest.param({**VALID_PAYLOAD, "speed": 10**400}, SPEED_ERROR, id="huge-int-direct-caller"),
     ],
 )
-def test_parse_speech_request_rejects(data):
-    with pytest.raises(ValueError):
+def test_parse_speech_request_rejects(data, message):
+    with pytest.raises(ValueError) as excinfo:
         parse_speech_request(data)
+    assert str(excinfo.value) == message
 
 
 # --- POST /api/tts/speech/ ------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "message"),
     [
-        {key: value for key, value in VALID_PAYLOAD.items() if key != "text"},
-        {**VALID_PAYLOAD, "model": "   "},
-        {**VALID_PAYLOAD, "response_format": "ogg"},
-        {**VALID_PAYLOAD, "speed": 0},
+        ({key: value for key, value in VALID_PAYLOAD.items() if key != "text"}, TEXT_ERROR),
+        ({**VALID_PAYLOAD, "model": "   "}, MODEL_ERROR),
+        ({**VALID_PAYLOAD, "response_format": "ogg"}, FORMAT_ERROR),
+        ({**VALID_PAYLOAD, "speed": 0}, SPEED_ERROR),
+        ([VALID_PAYLOAD], "The body must be a JSON object"),
     ],
 )
-def test_rejects_invalid_payloads(client, calls, monkeypatch, body):
+def test_rejects_invalid_payloads(client, calls, monkeypatch, body, message):
     # An invalid payload is a 400 even without a key: validation runs first.
     monkeypatch.setattr(views, "openrouter_api_key", lambda: None)
     response = _post_json(client, body)
     assert response.status_code == 400
-    assert isinstance(response.json()["error"], str)
+    assert response.json() == {"error": message}
 
 
 def test_rejects_invalid_json(client, calls):
@@ -192,6 +215,22 @@ def test_success_without_generation_id_schedules_no_cost(client, calls, monkeypa
     assert calls["cost"] == []
 
 
+def test_cost_log_failure_keeps_the_audio(client, calls, monkeypatch, views_log):
+    # The audio is billed already: a failing cost lookup must not turn it into a 500.
+    _set_synthesize(monkeypatch, calls, SpeechAudio(b"ID3audio", "audio/mpeg", "gen-1"))
+
+    def _broken_cost_log(generation_id, api_key):
+        raise RuntimeError("no running loop")
+
+    monkeypatch.setattr(views, "schedule_cost_log", _broken_cost_log)
+    response = _post_json(client, VALID_PAYLOAD)
+    assert response.status_code == 200
+    assert response.content == b"ID3audio"
+    assert response["Content-Type"] == "audio/mpeg"
+    errors = [record for record in views_log.records if record.exc_info]
+    assert [record.getMessage() for record in errors] == ["TTS cost lookup for gen-1 could not be scheduled"]
+
+
 def test_upstream_401_is_not_relayed_as_401(client, calls, monkeypatch):
     _set_synthesize(monkeypatch, calls, SpeechError("No auth credentials found", upstream_status=401))
     response = _post_json(client, VALID_PAYLOAD)
@@ -207,21 +246,15 @@ def test_upstream_error_without_status_has_no_upstream_status(client, calls, mon
     assert response.json() == {"error": "Could not reach OpenRouter"}
 
 
-def test_unexpected_exception_returns_own_json_500(client, calls, monkeypatch, settings, caplog):
+def test_unexpected_exception_returns_own_json_500(client, calls, monkeypatch, settings, views_log):
     settings.DEBUG = True
-    # settings_test's ``disable_existing_loggers: True`` can disable this logger,
-    # depending on the suite's import order: route it straight to caplog.
-    logger = logging.getLogger("twicc.tts.views")
-    monkeypatch.setattr(logger, "disabled", False)
-    monkeypatch.setattr(logger, "propagate", False)
-    monkeypatch.setattr(logger, "handlers", [caplog.handler])
     _set_synthesize(monkeypatch, calls, RuntimeError("sk-or-leak"))
     response = _post_json(client, VALID_PAYLOAD)
     assert response.status_code == 500
     assert response["Content-Type"] == "application/json"
     assert response.json() == {"error": "Text-to-speech failed"}
     assert b"sk-or-leak" not in response.content
-    assert any(record.exc_info for record in caplog.records)
+    assert any(record.exc_info for record in views_log.records)
 
 
 def test_cancellation_propagates(calls, monkeypatch):
