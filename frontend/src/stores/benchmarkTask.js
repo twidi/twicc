@@ -19,6 +19,10 @@ export const useBenchmarkTaskStore = defineStore('benchmarkTask', {
         defaultProviderOnly: false,
         showOlder: false,
         hoverDetails: false,
+        // Which model & effort picker is shown: 'simple' (provider / model /
+        // effort) or 'matrix' (the score matrix + its task controls). Not part
+        // of the transient controls: it stays where the user left it.
+        pickerMode: 'simple',
     }),
 
     actions: {
@@ -33,6 +37,14 @@ export const useBenchmarkTaskStore = defineStore('benchmarkTask', {
 
         setFavor(value) {
             if (value === 'cost' || value === 'speed') this.favor = value
+        },
+
+        setPickerMode(mode) {
+            if (mode !== 'simple' && mode !== 'matrix') return
+            this.pickerMode = mode
+            // Auto-select is a matrix control: leaving the matrix must not leave
+            // it silently rewriting the selection.
+            if (mode === 'simple') this.autoSelectBest = false
         },
 
         // "Show older models" and "Auto-select best" (+ its "Default provider

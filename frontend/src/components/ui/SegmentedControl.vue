@@ -9,7 +9,8 @@
  * caller shows its own visible label.
  *
  * An option can carry trailing content (an activity indicator, say) through a slot named
- * `option-<value>`, shown after its label.
+ * `option-<value>`, shown after its label, and leading content (a provider icon, say) through
+ * a slot named `option-start-<value>`, shown before its icon and label.
  *
  * Usage:
  *   <SegmentedControl label="Favor" v-model="favor"
@@ -61,6 +62,7 @@ useGlideInk({
             @change="onChange"
         >
             <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value" :title="option.title ?? option.label" :aria-label="option.title ?? null">
+                <slot :name="`option-start-${option.value}`" :option="option"></slot>
                 <wa-icon v-if="option.icon" :name="option.icon" class="segmented-icon"></wa-icon>
                 <span class="segmented-label">{{ option.label }}</span>
                 <slot :name="`option-${option.value}`" :option="option"></slot>

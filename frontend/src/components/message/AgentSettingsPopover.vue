@@ -15,8 +15,7 @@ import { useDataStore } from '../../stores/data'
 import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import AgentSettingsPresetsDialog from '../app/AgentSettingsPresetsDialog.vue'
 import AgentSettingsSummaryView from './AgentSettingsSummaryView.vue'
-import AgentSettingsMatrix from './AgentSettingsMatrix.vue'
-import AgentSettingsBenchmarkTask from './AgentSettingsBenchmarkTask.vue'
+import AgentSettingsModelPicker from './AgentSettingsModelPicker.vue'
 import AgentSettingsSwitches from './AgentSettingsSwitches.vue'
 import MatrixHeadingLinks from './MatrixHeadingLinks.vue'
 import ProviderIcon from '../ui/ProviderIcon.vue'
@@ -556,15 +555,13 @@ onBeforeUnmount(() => {
                     <MatrixHeadingLinks />
                 </div>
 
-                <!-- Provider × model × effort matrix — owns those three fields. -->
-                <AgentSettingsMatrix
+                <!-- Simple picker (default) or provider × model × effort matrix with
+                     its task controls — either owns those three fields. -->
+                <AgentSettingsModelPicker
                     :blocks="matrixBlocks"
                     :effort-columns="matrixEffortColumns"
                     @select="onMatrixSelect"
                 />
-
-                <!-- Task controls driving the matrix's benchmark scores. -->
-                <AgentSettingsBenchmarkTask :provider-count="matrixBlocks.length" />
 
                 <!-- Switches (context toggle, thinking, Chrome MCP, fast mode) share
                      one wrapping flex row; the permission select renders below. -->
