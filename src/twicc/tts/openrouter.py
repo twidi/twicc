@@ -151,7 +151,7 @@ def _audio_from_response(response: httpx.Response) -> SpeechAudio:
         pcm_format = parse_pcm_format(content_type)
         if pcm_format is None:
             logger.warning(
-                "TTS PCM response without a rate (Content-Type %r): using %s Hz mono",
+                "TTS PCM response without a usable rate/channels (%r); assuming %s Hz mono",
                 content_type,
                 DEFAULT_PCM_RATE,
             )
