@@ -18,6 +18,7 @@ import shlex
 import subprocess
 import time
 
+from twicc.paths import ENV_SECRET_KEYS
 from twicc.provider_homes import provider_env_overlay
 from twicc.server_env import DJANGO_SETTINGS_ENV
 from twicc.terminal import HYBRID_TMUX_SOCKET_NAME, get_tmux_path
@@ -76,6 +77,9 @@ def _hybrid_launch_env() -> dict[str, str]:
 def _purged_env_names() -> list[str]:
     names = {name for name in os.environ if name.startswith(_PURGED_ENV_PREFIXES)}
     names.update(_PURGED_ENV_NAMES)
+    # The ``.env`` secrets never reach the backend's environment, but the tmux
+    # server can still hold one from an older backend that loaded it there.
+    names.update(ENV_SECRET_KEYS)
     return sorted(names)
 
 

@@ -109,6 +109,11 @@ def test_strip_names_are_disjoint_from_kept_families():
     assert {"EDITOR", "VISUAL", "PAGER"}.isdisjoint(_TERMINAL_ENV_STRIP_NAMES)
 
 
+def test_sanitize_strips_the_openrouter_key():
+    env = {"TWICC_OPENROUTER_API_KEY": "x", "TWICC_DEBUG": "1"}
+    sanitize_terminal_env(env)
+    assert env == {"TWICC_DEBUG": "1"}
+
 def test_purge_tmux_global_env_noop_without_tmux(monkeypatch):
     """When tmux is not installed, the global-env purge is a silent no-op."""
     monkeypatch.setattr("twicc.terminal.get_tmux_path", lambda: None)

@@ -16,14 +16,17 @@ def env_loader(tmp_path):
 
     The loader mutates ``os.environ`` directly (not through monkeypatch), so the
     whole environment and the loader's state are snapshotted and put back —
-    including the ``settings_test`` provider-home values a real load would drop.
+    including the ``settings_test`` provider-home values a real load would drop,
+    and the in-memory secrets (``{}`` under ``settings_test``).
     """
     saved_env = dict(os.environ)
     saved_loaded, saved_warnings = paths._ENV_LOADED, list(paths._ENV_WARNINGS)
     saved_undo = dict(paths._ENV_LOAD_UNDO)
+    saved_secrets = dict(paths._ENV_SECRETS)
     os.environ["TWICC_DATA_DIR"] = str(tmp_path)
-    # The settings_test isolation values would otherwise be "inherited" here.
-    for key in paths.PROVIDER_HOME_KEYS:
+    # The settings_test isolation values (and a secret the developer's shell
+    # exports) would otherwise be "inherited" here.
+    for key in (*paths.PROVIDER_HOME_KEYS, *paths.ENV_SECRET_KEYS):
         os.environ.pop(key, None)
     paths._reset_env_loader()
     yield tmp_path / ".env"
@@ -33,6 +36,8 @@ def env_loader(tmp_path):
     paths._ENV_WARNINGS[:] = saved_warnings
     paths._ENV_LOAD_UNDO.clear()
     paths._ENV_LOAD_UNDO.update(saved_undo)
+    paths._ENV_SECRETS.clear()
+    paths._ENV_SECRETS.update(saved_secrets)
 
 
 def test_undo_gives_back_the_inherited_environment(env_loader):
@@ -145,3 +150,39 @@ def test_warnings_are_a_copy(env_loader):
     warnings = paths.get_env_load_warnings()
     warnings.clear()
     assert len(paths.get_env_load_warnings()) == 1
+
+
+def test_secret_key_is_held_in_memory_not_in_environ(env_loader):
+    env_loader.write_text("TWICC_OPENROUTER_API_KEY=sk-or-test\nTWICC_TEST_FOO=1\n")
+    paths.ensure_env_loaded()
+    assert paths.get_env_secret("TWICC_OPENROUTER_API_KEY") == "sk-or-test"
+    assert "TWICC_OPENROUTER_API_KEY" not in os.environ
+    assert os.environ["TWICC_TEST_FOO"] == "1"
+
+
+def test_inherited_secret_key_is_dropped_without_logging_its_value(env_loader):
+    os.environ["TWICC_OPENROUTER_API_KEY"] = "sk-or-inherited"
+    paths.ensure_env_loaded()
+    assert "TWICC_OPENROUTER_API_KEY" not in os.environ
+    assert paths.get_env_secret("TWICC_OPENROUTER_API_KEY") is None
+    assert not any("sk-or-inherited" in w for w in paths.get_env_load_warnings())
+    paths._undo_env_load()
+    assert os.environ["TWICC_OPENROUTER_API_KEY"] == "sk-or-inherited"
+
+
+def test_empty_secret_reads_as_absent(env_loader):
+    env_loader.write_text("TWICC_OPENROUTER_API_KEY=\n")
+    paths.ensure_env_loaded()
+    assert paths.get_env_secret("TWICC_OPENROUTER_API_KEY") is None
+
+
+def test_undo_forgets_the_secrets(env_loader):
+    env_loader.write_text("TWICC_OPENROUTER_API_KEY=sk-or-test\n")
+    paths.ensure_env_loaded()
+    paths._undo_env_load()
+    assert paths.get_env_secret("TWICC_OPENROUTER_API_KEY") is None
+
+
+def test_the_test_settings_hold_no_secret():
+    # Outside the env_loader fixture: the state settings_test left behind.
+    assert paths._ENV_SECRETS == {}

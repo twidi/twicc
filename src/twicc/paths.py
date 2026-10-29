@@ -29,7 +29,9 @@ The ``.env`` of the data dir is the instance configuration: it is loaded into
 ``os.environ`` once per process by :func:`ensure_env_loaded` (a key defined
 there wins over the inherited environment). The provider home keys
 (:data:`PROVIDER_HOME_KEYS`) are read ONLY from that file; ``TWICC_DATA_DIR``
-is read ONLY from the environment because it locates the file. Design:
+is read ONLY from the environment because it locates the file. The secret keys
+(:data:`ENV_SECRET_KEYS`) are read ONLY from that file too, and never reach
+``os.environ``: :func:`get_env_secret` serves them from memory. Design:
 docs/plans/2026-09-02-provider-home-dirs-design.md.
 """
 
@@ -55,11 +57,22 @@ PROVIDER_HOME_KEYS: tuple[str, ...] = (
     "CODEX_HOME",
 )
 
+# The OpenRouter API key used by text-to-speech.
+OPENROUTER_API_KEY_ENV = "TWICC_OPENROUTER_API_KEY"
+
+# Secrets of the ``.env``: kept in memory by :func:`ensure_env_loaded` and read
+# through :func:`get_env_secret`, never written to ``os.environ``, so no process
+# TwiCC launches (terminal, provider CLI, agent tool) can inherit them. An
+# inherited value is dropped: a secret comes only from the ``.env``.
+ENV_SECRET_KEYS: tuple[str, ...] = (OPENROUTER_API_KEY_ENV,)
+
 _ENV_LOADED = False
 _ENV_WARNINGS: list[str] = []
 # What the first :func:`ensure_env_loaded` replaced: key -> inherited value
 # (None = the key was absent). Lets the test harness undo the load.
 _ENV_LOAD_UNDO: dict[str, str | None] = {}
+# The non-empty ``.env`` values of :data:`ENV_SECRET_KEYS`: key -> value.
+_ENV_SECRETS: dict[str, str] = {}
 
 # Data dirs this process must never resolve. Always empty in production: the
 # test settings fill it with the developer's real data dirs, so a test that
@@ -113,6 +126,12 @@ def ensure_env_loaded() -> None:
     worktree started from an agent session of another instance would silently
     write into that instance's provider homes. ``KEY=`` (empty) counts as defined.
 
+    The secret keys (:data:`ENV_SECRET_KEYS`) never go to ``os.environ``: a
+    non-empty value from the file is kept in memory for :func:`get_env_secret`,
+    and an inherited value is dropped, with a warning that never shows it. Every
+    TwiCC process loads its ``.env`` through this function, so a secret is never
+    inheritable.
+
     Idempotent: only the first call loads; later calls are no-ops, so values a
     test harness sets afterwards are neither overridden nor dropped. Warnings
     are kept for :func:`get_env_load_warnings`.
@@ -128,9 +147,17 @@ def ensure_env_loaded() -> None:
         _ENV_WARNINGS.append(f"Ignoring {TWICC_DATA_DIR_ENV} in {env_path}: environment-only")
         del values[TWICC_DATA_DIR_ENV]
     for key, value in values.items():
-        if value is not None:  # bare ``KEY`` lines carry None
+        if key in ENV_SECRET_KEYS:
+            if value:  # empty and bare ``KEY`` lines read as absent
+                _ENV_SECRETS[key] = value
+        elif value is not None:  # bare ``KEY`` lines carry None
             _ENV_LOAD_UNDO.setdefault(key, os.environ.get(key))
             os.environ[key] = value
+    for key in ENV_SECRET_KEYS:
+        if key in os.environ:
+            _ENV_WARNINGS.append(f"Ignoring inherited {key}: not read from the environment")
+            _ENV_LOAD_UNDO.setdefault(key, os.environ[key])
+            del os.environ[key]
     for key in PROVIDER_HOME_KEYS:
         if values.get(key) is None and key in os.environ:
             _ENV_WARNINGS.append(
@@ -139,6 +166,11 @@ def ensure_env_loaded() -> None:
             _ENV_LOAD_UNDO.setdefault(key, os.environ[key])
             del os.environ[key]
     _ENV_LOADED = True
+
+
+def get_env_secret(key: str) -> str | None:
+    """The ``.env`` value of a secret key (:data:`ENV_SECRET_KEYS`); None when absent or empty."""
+    return _ENV_SECRETS.get(key)  # only non-empty values are stored
 
 
 def get_env_load_warnings() -> list[str]:
@@ -152,13 +184,15 @@ def _reset_env_loader() -> None:
     _ENV_LOADED = False
     _ENV_WARNINGS.clear()
     _ENV_LOAD_UNDO.clear()
+    _ENV_SECRETS.clear()
 
 
 def _undo_env_load() -> None:
     """Tests only: give ``os.environ`` back the values the ``.env`` load replaced.
 
-    The loader stays marked as done, so a later :func:`ensure_env_loaded` does
-    not load the file again: the process behaves as if its ``.env`` were empty.
+    The in-memory secrets are forgotten too. The loader stays marked as done, so
+    a later :func:`ensure_env_loaded` does not load the file again: the process
+    behaves as if its ``.env`` were empty.
     """
     global _ENV_LOADED
     for key, inherited in _ENV_LOAD_UNDO.items():
@@ -167,6 +201,7 @@ def _undo_env_load() -> None:
         else:
             os.environ[key] = inherited
     _ENV_LOAD_UNDO.clear()
+    _ENV_SECRETS.clear()
     _ENV_LOADED = True
 
 

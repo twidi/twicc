@@ -45,7 +45,7 @@ from django.conf import settings
 from twicc.auth.access import scope_allowed
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
-from twicc.paths import tmux_socket_suffix
+from twicc.paths import ENV_SECRET_KEYS, tmux_socket_suffix
 from twicc.provider_homes import provider_env_overlay
 from twicc.providers.helpers import get_provider_helpers_registry
 from twicc.server_env import DJANGO_SETTINGS_ENV
@@ -300,10 +300,17 @@ _TERMINAL_ENV_STRIP_PREFIXES: tuple[str, ...] = ("GIT_CONFIG_KEY_", "GIT_CONFIG_
 
 
 def _terminal_env_keys_to_strip(keys) -> list[str]:
-    """Return the subset of ``keys`` that are terminal-env noise to remove."""
+    """Return the subset of ``keys`` that are terminal-env noise to remove.
+
+    Also returns the ``.env`` secret keys (``twicc.paths.ENV_SECRET_KEYS``): the
+    backend never holds them in its environment, but a tmux server started by
+    an older backend can still carry one.
+    """
     return [
         key for key in keys
-        if key in _TERMINAL_ENV_STRIP_NAMES or key.startswith(_TERMINAL_ENV_STRIP_PREFIXES)
+        if key in _TERMINAL_ENV_STRIP_NAMES
+        or key in ENV_SECRET_KEYS
+        or key.startswith(_TERMINAL_ENV_STRIP_PREFIXES)
     ]
 
 

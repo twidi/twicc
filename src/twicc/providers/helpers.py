@@ -1432,17 +1432,24 @@ class ProviderHelpersRegistry:
         markers from the parent TwiCC process, so a newly launched provider
         CLI starts clean. Each provider's helper decides what its markers are.
 
+        Also drops the ``.env`` secrets (``twicc.paths.ENV_SECRET_KEYS``): the
+        backend never holds them in its environment, but an environment taken
+        from a tmux server started by an older backend can still carry one.
+
         Ends by re-applying the configured provider homes
         (``twicc.provider_homes.provider_env_overlay``): no purge, however it
         is widened later, may strip the values that keep a launched process
         on this instance's homes.
         """
+        from twicc.paths import ENV_SECRET_KEYS
         from twicc.provider_homes import provider_env_overlay
         from twicc.server_env import strip_django_settings_env
 
         for helpers in self._helpers.values():
             helpers.purge_env_vars(env)
         strip_django_settings_env(env)
+        for key in ENV_SECRET_KEYS:
+            env.pop(key, None)
         env.update(provider_env_overlay())
 
 
