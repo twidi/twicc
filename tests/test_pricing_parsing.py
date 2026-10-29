@@ -186,6 +186,7 @@ CODEX_MODEL_CASES: list[ModelCase] = [
     # suffix, so each tier folds into its own pricing family — they are priced
     # differently, unlike a dated snapshot of the same model.
     ModelCase("gpt-sol",   "5.6", ("openai/gpt-5.6-sol",),   ("gpt-5.6-sol",)),
+    ModelCase("gpt-terra", "6.1", ("openai/gpt-6.1-terra",), ("gpt-6.1-terra",)),
     ModelCase("gpt-terra", "5.6", ("openai/gpt-5.6-terra",), ("gpt-5.6-terra",)),
     ModelCase("gpt-luna",  "5.6", ("openai/gpt-5.6-luna",),  ("gpt-5.6-luna",)),
 

@@ -48,7 +48,8 @@ def helpers():
         ("gpt-luna", 272_000),   # latest of family gpt-luna = gpt-6-luna
         # GPT-5.6 tiers temporarily rolled back to 272K (see module docstring).
         ("gpt-sol-5.6", 272_000),
-        ("gpt-terra", 272_000),
+        ("gpt-terra", 272_000),  # latest of family gpt-terra = gpt-6.1-terra
+        ("gpt-terra-5.6", 272_000),
         ("gpt-luna-5.6", 272_000),
         ("gpt", 272_000),        # latest of family gpt = gpt-5.5
         ("gpt-5.4", 272_000),
@@ -69,11 +70,12 @@ def test_astra_alias_resolves_to_the_codex_model(helpers):
 @pytest.mark.parametrize(
     ("selected_model", "sdk_model"),
     [
-        # Bare tier aliases follow the latest generation; GPT-6 has no Terra.
+        # Bare tier aliases follow the latest generation; GPT-6 has no Terra, GPT-6.1 does.
         ("gpt-sol", "gpt-6.1-sol"),
         ("gpt-sol-6", "gpt-6-sol"),
         ("gpt-luna", "gpt-6-luna"),
-        ("gpt-terra", "gpt-5.6-terra"),
+        ("gpt-terra", "gpt-6.1-terra"),
+        ("gpt-terra-5.6", "gpt-5.6-terra"),
         # The 5.6 tiers stay reachable through their versioned aliases.
         ("gpt-sol-5.6", "gpt-5.6-sol"),
         ("gpt-luna-5.6", "gpt-5.6-luna"),
@@ -163,7 +165,7 @@ def test_constraints_map_each_window_to_its_models(helpers):
     assert set(constraints[272_000]) == {
         "gpt-astra-6", "gpt-astra", "gpt-sol-6.1", "gpt-sol-6", "gpt-luna-6",
         "gpt-5.5", "gpt", "gpt-5.4", "gpt-mini-5.4", "gpt-mini",
-        "gpt-sol-5.6", "gpt-sol", "gpt-terra-5.6", "gpt-terra", "gpt-luna-5.6", "gpt-luna",
+        "gpt-sol-5.6", "gpt-sol", "gpt-terra-6.1", "gpt-terra-5.6", "gpt-terra", "gpt-luna-5.6", "gpt-luna",
     }
     assert 372_000 not in constraints
 

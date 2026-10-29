@@ -34,6 +34,7 @@ def temp_settings(tmp_path, monkeypatch):
         ("gpt-sol-6", True),
         ("gpt-sol-5.6", True),
         ("gpt-terra", True),
+        ("gpt-terra-5.6", True),
         ("gpt-luna", True),
         ("gpt-luna-5.6", True),
         ("gpt", True),
@@ -57,7 +58,7 @@ def test_fast_constraint_lists_only_supported_models(helpers) -> None:
     assert supported == {
         "gpt-astra-6", "gpt-astra",
         "gpt-sol-6.1", "gpt-sol-6", "gpt-sol-5.6", "gpt-sol",
-        "gpt-terra-5.6", "gpt-terra",
+        "gpt-terra-6.1", "gpt-terra-5.6", "gpt-terra",
         "gpt-luna-6", "gpt-luna-5.6", "gpt-luna",
         "gpt-5.5", "gpt", "gpt-5.4",
     }

@@ -303,12 +303,12 @@ class CodexHelpers(BaseProviderHelpers):
             cache_write_5m_price=Decimal("2.50"),
             cache_write_1h_price=Decimal("2.50"),
         ),
-        "gpt-terra": FamilyPrices(  # gpt-5.6-terra pricing
-            input_price=Decimal("2.50"),
-            output_price=Decimal("15.00"),
-            cache_read_price=Decimal("0.25"),
-            cache_write_5m_price=Decimal("3.125"),
-            cache_write_1h_price=Decimal("3.125"),
+        "gpt-terra": FamilyPrices(  # gpt-6.1-terra pricing
+            input_price=Decimal("1.00"),
+            output_price=Decimal("5.00"),
+            cache_read_price=Decimal("0.05"),
+            cache_write_5m_price=Decimal("1.25"),
+            cache_write_1h_price=Decimal("1.25"),
         ),
         "gpt-luna": FamilyPrices(  # gpt-6-luna pricing
             input_price=Decimal("0.10"),

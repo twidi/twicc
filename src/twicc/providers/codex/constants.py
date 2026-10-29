@@ -117,12 +117,12 @@ AGENT_SETTINGS_ALIASES: dict[str, dict[str, str]] = {
     # $0.75/$4.50), so Luna is now the cheapest model of the catalogue outright
     # — and the mini retires on 2026-08-31 anyway. The bare ``gpt-luna`` alias
     # now resolves to GPT-6 Luna ($0.10/$0.50).
-    # ``medium``/``balanced`` point at Sol: GPT-6 has no Terra tier, and GPT-6
-    # Sol costs less than GPT-5.6 Terra ($2/$10 against $2/$12). The bare
-    # ``gpt-sol`` alias now resolves to GPT-6.1 Sol, same $2/$10 rates.
+    # ``medium``/``balanced`` point at Terra: GPT-6.1 Terra ($1/$5) costs half
+    # of GPT-6.1 Sol ($2/$10). They pointed at Sol while Terra stayed on 5.6
+    # ($2/$12), which Sol undercut.
     "selected_model": {
         "min": "gpt-luna", "fastest": "gpt-luna", "cheapest": "gpt-luna",
-        "medium": "gpt-sol", "balanced": "gpt-sol",
+        "medium": "gpt-terra", "balanced": "gpt-terra",
         "max": "gpt-astra", "strongest": "gpt-astra",
     },
     # ``max`` is a native effort since GPT-5.6, so native-first keeps it as-is
@@ -226,8 +226,9 @@ GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED = True
 # ``full_name`` (``gpt-5.6-sol`` → family ``gpt-sol``), which keeps the registry
 # and the price table in agreement without a second mapping. GPT-6 keeps the
 # tiers as families — ``gpt-6-sol`` is version ``6`` of ``gpt-sol`` — and adds
-# Astra above them. GPT-6 has no Terra tier, so ``gpt-terra`` stays on 5.6.
-# GPT-6.1 so far only ships Sol: ``gpt-6.1-sol`` is version ``6.1`` of ``gpt-sol``.
+# Astra above them. GPT-6 has no Terra tier, so ``gpt-terra`` stayed on 5.6 until
+# GPT-6.1. GPT-6.1 ships Sol and Terra: ``gpt-6.1-sol`` and ``gpt-6.1-terra`` are
+# version ``6.1`` of their families.
 #
 # ``weight`` is laid out by *tier block*, not by generation — the same shape as
 # Claude Code, where Sonnet 5 sits below Opus 4.5. Each tier opens a block with
@@ -304,10 +305,25 @@ MODEL_VERSIONS: list[ModelVersion] = [
     ModelVersion(
         provider=Provider.CODEX,
         model="gpt-terra",
+        version="6.1",
+        full_name="gpt-6.1-terra",
+        retirement_date=None,
+        latest=True,
+        weight=130,
+        provider_extra=CodexModelExtra(
+            supports_effort_max=True,
+            supports_effort_ultra=True,
+            supports_fast=True,
+            context_window=272_000,
+        ),
+    ),
+    ModelVersion(
+        provider=Provider.CODEX,
+        model="gpt-terra",
         version="5.6",
         full_name="gpt-5.6-terra",
         retirement_date=None,
-        latest=True,
+        latest=False,
         weight=120,
         provider_extra=CodexModelExtra(
             supports_effort_max=True,

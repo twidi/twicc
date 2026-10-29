@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **GPT-6.1 Terra** — support for OpenAI's new Terra model, now the latest Terra (GPT-5.6 Terra remains selectable).
 - **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace. Filter it, see the same events in the chat, and query it from CLI, MCP and RPC API.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
 - **Browser tab** — New button to clear the embedded page and free the resources it uses.
