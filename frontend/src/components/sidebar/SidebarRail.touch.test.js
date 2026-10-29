@@ -185,22 +185,25 @@ test('a nested tooltip hide does not cancel the rail preview timeout', t => {
     assert.equal(f.tooltip.open, false)
 })
 
-test('stopping the speech indicator hands its focus to New session', async t => {
-    for (const focused of [true, false]) await t.test(focused ? 'focused' : 'not focused', async t => {
-        const calls = []
-        const tts = { status: 'playing', stop() { calls.push('stop') } }
-        const f = fixture(t, false, tts)
-        const speech = { id: 'sidebar-rail-speech' }
-        const newSession = { id: 'sidebar-rail-new-session', focus() { calls.push('focus') } }
-        f.document.activeElement = focused ? speech : null
-        f.document.getElementById = id => {
-            // The speech button is gone once stopped: focus waits for the re-render.
-            assert.deepEqual(calls, ['stop', 'tick'])
-            return id === newSession.id ? newSession : null
-        }
-        const pending = f.api.activate({ id: 'speech' })
-        calls.push('tick')
-        await pending
-        assert.deepEqual(calls, focused ? ['stop', 'tick', 'focus'] : ['stop', 'tick'])
-    })
+test('stopping the speech indicator hands its keyboard focus to New session', async t => {
+    for (const [focused, focusVisible, handOff] of [[true, true, true], [true, false, false], [false, false, false]]) {
+        const name = !focused ? 'not focused' : focusVisible ? 'keyboard focus' : 'mouse focus'
+        await t.test(name, async t => {
+            const calls = []
+            const tts = { status: 'playing', stop() { calls.push('stop') } }
+            const f = fixture(t, false, tts)
+            const speech = { id: 'sidebar-rail-speech', matches: selector => selector === ':focus-visible' && focusVisible }
+            const newSession = { id: 'sidebar-rail-new-session', focus() { calls.push('focus') } }
+            f.document.activeElement = focused ? speech : null
+            f.document.getElementById = id => {
+                // The speech button is gone once stopped: focus waits for the re-render.
+                assert.deepEqual(calls, ['stop', 'tick'])
+                return id === newSession.id ? newSession : null
+            }
+            const pending = f.api.activate({ id: 'speech' })
+            calls.push('tick')
+            await pending
+            assert.deepEqual(calls, handOff ? ['stop', 'tick', 'focus'] : ['stop', 'tick'])
+        })
+    }
 })

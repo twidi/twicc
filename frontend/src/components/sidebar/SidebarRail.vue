@@ -173,9 +173,12 @@ function activate(item) {
     else emit(item.id)
 }
 
-// The indicator unmounts once stopped: hand its focus to the next bottom item, not to <body>.
+// The indicator unmounts once stopped: hand its keyboard focus to the next bottom item, not to
+// <body>. A mouse click also focuses the button, but without :focus-visible: no hand-off then, or
+// the New session tooltip would open with no keyboard action.
 async function stopSpeech() {
-    const hadFocus = document.activeElement?.id === 'sidebar-rail-speech'
+    const focused = document.activeElement
+    const hadFocus = focused?.id === 'sidebar-rail-speech' && !!focused.matches?.(':focus-visible')
     tts.stop()
     if (!hadFocus) return
     await nextTick()
