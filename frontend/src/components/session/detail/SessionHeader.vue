@@ -1063,6 +1063,9 @@ defineExpose({
     flex-direction: column;
     background: var(--main-header-footer-bg-color);
     position: relative;
+    /* Lets the stats box react to the header's own width, not the viewport's. */
+    container-type: inline-size;
+    container-name: session-header;
 }
 
 .session-title {
@@ -1267,7 +1270,7 @@ defineExpose({
     margin-inline: var(--wa-space-xs);
 }
 
-/* Cells size to their content (never truncated) and share the leftover width. */
+/* Cells size to their content (never truncated), separated by a thin divider. */
 .stats-grid {
     display: flex;
     flex-wrap: wrap;
@@ -1282,7 +1285,25 @@ defineExpose({
     align-items: center;
     gap: 2px;
     flex: 1 1 auto;
-    padding: calc(var(--wa-space-xs) / 2) calc(var(--wa-space-m) / 2);
+    padding: calc(var(--wa-space-xs) / 2) var(--wa-space-m);
+}
+
+/* On a wide header the box fits its content and the cells stop stretching, so values do not float
+   in empty space. Narrower, the cells share the full width. */
+@container session-header (min-width: 40rem) {
+    .session-stats {
+        width: fit-content;
+        max-width: calc(100% - 2 * var(--wa-space-xs));
+    }
+
+    .stat {
+        flex: 0 0 auto;
+    }
+}
+
+/* Tooltips sit between the cells in the DOM, so the divider cannot use a sibling combinator. */
+.stat:not(:first-child) {
+    border-inline-start: var(--divider-size) solid var(--wa-color-surface-border);
 }
 
 /* Trial: the labels (Messages, Activity, Cost, Model, Context) are not drawn. They stay in the DOM,
