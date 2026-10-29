@@ -84,6 +84,31 @@ def test_parse_pcm_format():
     assert parse_pcm_format("audio/pcm;rate=48000;channels=2") == (48000, 2)
     assert parse_pcm_format("audio/pcm") is None
     assert parse_pcm_format("audio/pcm;rate=abc") is None
+    assert parse_pcm_format("audio/pcm;rate=384000;channels=8") == (384000, 8)
+    assert parse_pcm_format("audio/pcm;rate=384001") is None
+    assert parse_pcm_format("audio/pcm;rate=99999999999") is None
+    assert parse_pcm_format("audio/pcm;rate=24000;channels=9") is None
+    assert parse_pcm_format("audio/pcm;rate=24000;channels=40000") is None
+    assert parse_pcm_format("audio/pcm;rate=0") is None
+    assert parse_pcm_format("audio/pcm;rate=24000;channels=0") is None
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["audio/pcm;rate=99999999999;channels=1", "audio/pcm;rate=24000;channels=40000"],
+)
+def test_malformed_pcm_header_falls_back_to_24k_mono(monkeypatch, caplog, content_type):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    def handler(request):
+        return httpx.Response(200, content=b"\x00\x00" * 10, headers={"content-type": content_type})
+
+    _mock_transport(monkeypatch, handler)
+    audio = asyncio.run(synthesize(_request("pcm"), "k"))
+
+    with wave.open(io.BytesIO(audio.content)) as w:
+        assert (w.getframerate(), w.getnchannels(), w.getnframes()) == (24000, 1, 10)
+    assert any(r.levelno == logging.WARNING for r in caplog.records if r.name == LOGGER_NAME)
 
 
 def test_wrap_pcm_as_wav_header():
@@ -286,8 +311,16 @@ def test_cancelled_request_is_logged_and_reraised(monkeypatch, caplog):
     assert "cancelled" in lines[0]
 
 
+def _capture_http_stack_logs(caplog, monkeypatch):
+    """Capture httpx and httpcore at DEBUG too, so a key leak there is caught."""
+    for name in ("httpx", "httpcore"):
+        monkeypatch.setattr(logging.getLogger(name), "disabled", False)
+        caplog.set_level(logging.DEBUG, logger=name)
+
+
 def test_logs_never_contain_the_key(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    _capture_http_stack_logs(caplog, monkeypatch)
     key = "sk-or-XYZ"
     responses = iter(
         [
@@ -310,7 +343,24 @@ def test_logs_never_contain_the_key(monkeypatch, caplog):
     assert "gen-1" in lines[0] and "ok" in lines[0]
     assert "openai/gpt-4o-mini-tts" in lines[0] and "Kore" in lines[0] and "mp3" in lines[0]
     assert "upstream_error 400" in lines[1]
+    # The HTTP stack logs reached caplog too (httpx logs each request).
+    assert any(r.name == "httpx" for r in caplog.records)
     assert key not in caplog.text
+
+
+def test_unexpected_error_is_logged_as_error(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    def handler(request):
+        raise RuntimeError("boom")
+
+    _mock_transport(monkeypatch, handler)
+    with pytest.raises(RuntimeError):
+        asyncio.run(synthesize(_request(), "k"))
+
+    lines = [r.getMessage() for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.INFO]
+    assert len(lines) == 1
+    assert lines[0].endswith("outcome=error")
 
 
 def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
@@ -357,6 +407,40 @@ def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
     assert len(hits) == 3
 
 
+def test_models_callers_cannot_corrupt_the_cache(monkeypatch):
+    payload = {"data": [{"id": "m", "name": "M", "supported_voices": ["alloy"]}]}
+
+    def handler(request):
+        return httpx.Response(200, content=orjson.dumps(payload))
+
+    _mock_transport(monkeypatch, handler)
+    first = asyncio.run(fetch_speech_models())
+    first[0]["voices"].append("intruder")
+    first[0]["name"] = "changed"
+    first.append({"id": "extra"})
+    second = asyncio.run(fetch_speech_models())
+    second[0]["voices"].clear()
+
+    assert asyncio.run(fetch_speech_models()) == [{"id": "m", "name": "M", "voices": ["alloy"]}]
+
+
+def test_models_voices_keep_only_a_list_of_strings(monkeypatch):
+    payload = {
+        "data": [
+            {"id": "a", "supported_voices": ["alloy", 3, None, {"x": 1}, "nova"]},
+            {"id": "b", "supported_voices": "alloy"},
+            {"id": "c", "supported_voices": {"alloy": True}},
+            {"id": "d"},
+        ]
+    }
+
+    def handler(request):
+        return httpx.Response(200, content=orjson.dumps(payload))
+
+    _mock_transport(monkeypatch, handler)
+    assert [m["voices"] for m in asyncio.run(fetch_speech_models())] == [["alloy", "nova"], [], [], []]
+
+
 def test_models_bad_payloads_return_empty(monkeypatch):
     bodies = iter([(500, b"oops"), (200, b"not json"), (200, orjson.dumps({"nope": []})), (200, orjson.dumps({"data": [{"name": "no id"}]}))])
 
@@ -389,7 +473,8 @@ def test_models_cache_expires(monkeypatch):
 
 
 def test_cost_lookup_retries_on_404(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    _capture_http_stack_logs(caplog, monkeypatch)
     calls = []
     responses = iter(
         [

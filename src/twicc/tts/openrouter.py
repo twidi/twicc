@@ -39,6 +39,9 @@ GENERIC_PROVIDER_HINT = ". Check the model, the voice, the format and the text l
 DEFAULT_PCM_RATE = 24000
 DEFAULT_PCM_CHANNELS = 1
 PCM_SAMPLE_WIDTH = 2  # 16-bit little-endian
+# Above these, the header is malformed (and ``wave`` cannot write it).
+MAX_PCM_RATE = 384000
+MAX_PCM_CHANNELS = 8
 
 
 class SpeechRequest(NamedTuple):
@@ -87,7 +90,10 @@ def build_payload(request: SpeechRequest) -> dict:
 
 
 def parse_pcm_format(content_type: str) -> tuple[int, int] | None:
-    """``(rate, channels)`` from ``audio/pcm;rate=24000;channels=1``; None without a valid rate."""
+    """``(rate, channels)`` from ``audio/pcm;rate=24000;channels=1``.
+
+    None without a rate, or when a value is not a plausible integer.
+    """
     params = {}
     for part in content_type.split(";")[1:]:
         name, _, value = part.partition("=")
@@ -97,7 +103,7 @@ def parse_pcm_format(content_type: str) -> tuple[int, int] | None:
         channels = int(params.get("channels") or DEFAULT_PCM_CHANNELS)
     except (KeyError, ValueError):
         return None
-    if rate <= 0 or channels <= 0:
+    if not (0 < rate <= MAX_PCM_RATE and 0 < channels <= MAX_PCM_CHANNELS):
         return None
     return rate, channels
 
@@ -163,7 +169,7 @@ def _audio_from_response(response: httpx.Response) -> SpeechAudio:
 async def synthesize(request: SpeechRequest, api_key: str) -> SpeechAudio:
     """Turn *request* into audio. Raises :class:`SpeechError` with a user-safe message."""
     started = time.monotonic()
-    outcome = "ok"
+    outcome = "error"
     audio_size = 0
     generation_id = None
     try:
@@ -172,6 +178,7 @@ async def synthesize(request: SpeechRequest, api_key: str) -> SpeechAudio:
         generation_id = response.headers.get("x-generation-id") or None
         audio = _audio_from_response(response)
         audio_size = len(audio.content)
+        outcome = "ok"
         return audio
     except SpeechError as error:
         outcome = f"upstream_error {error.upstream_status}"
@@ -209,6 +216,19 @@ def _clear_models_cache() -> None:
     _models_cache = None
 
 
+def _voices(entry: dict) -> list[str]:
+    """The string items of ``supported_voices``; ``[]`` when it is not a list."""
+    voices = entry.get("supported_voices")
+    if not isinstance(voices, list):
+        return []
+    return [voice for voice in voices if isinstance(voice, str)]
+
+
+def _copy_models(models: list[dict]) -> list[dict]:
+    """A copy a caller can mutate without reaching the cache."""
+    return [{**model, "voices": list(model["voices"])} for model in models]
+
+
 async def fetch_speech_models() -> list[dict]:
     """The speech models as ``[{"id", "name", "voices"}]``; ``[]`` on any failure.
 
@@ -216,21 +236,21 @@ async def fetch_speech_models() -> list[dict]:
     """
     global _models_cache
     if _models_cache is not None and time.monotonic() - _models_cache[0] < MODELS_CACHE_TTL:
-        return _models_cache[1]
+        return _copy_models(_models_cache[1])
     try:
         async with _make_client(LOOKUP_TIMEOUT) as client:
             response = await client.get(MODELS_URL)
         response.raise_for_status()
         entries = orjson.loads(response.content)["data"]
         models = [
-            {"id": entry["id"], "name": entry.get("name") or entry["id"], "voices": entry.get("supported_voices") or []}
+            {"id": entry["id"], "name": entry.get("name") or entry["id"], "voices": _voices(entry)}
             for entry in entries
         ]
     except Exception:  # noqa: BLE001 - suggestions only: the fields stay free text
         logger.debug("TTS models list unavailable")
         return []
     _models_cache = (time.monotonic(), models)
-    return models
+    return _copy_models(models)
 
 
 # Strong references to the running cost lookups (asyncio keeps only weak ones).
