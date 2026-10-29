@@ -3066,57 +3066,6 @@ export const useDataStore = defineStore('data', {
         },
 
         /**
-         * Load all items for a session from the API.
-         * @param {string} projectId
-         * @param {string} sessionId
-         * @param {Object} options
-         * @param {boolean} options.isInitialLoading - If true, enables UI feedback (loading states, error handling)
-         */
-        async loadSessionItems(projectId, sessionId, { isInitialLoading = false } = {}) {
-            if (isLaunchedEphemeral(this.sessions[sessionId])) return
-            this.loadAsyncQuestions(projectId, sessionId).catch(error => console.warn('Failed to load async questions:', error))
-            // Skip if already fetched
-            if (this.localState.sessions[sessionId]?.itemsFetched) {
-                return
-            }
-            // Initialize localState for this session if needed
-            if (!this.localState.sessions[sessionId]) {
-                this.localState.sessions[sessionId] = {}
-            }
-
-            // Only set loading if isInitialLoading is true (initial load case)
-            if (isInitialLoading) {
-                this.localState.sessions[sessionId].itemsLoading = true
-            }
-
-            try {
-                const res = await apiFetch(`/api/projects/${projectId}/sessions/${sessionId}/items/`)
-                if (!res.ok) {
-                    console.error('Failed to load session items:', res.status, res.statusText)
-                    if (isInitialLoading) {
-                        this.localState.sessions[sessionId].itemsLoadingError = true
-                    }
-                    return
-                }
-                const items = await res.json()
-                this.sessionItems[sessionId] = items
-                this.clearOptimisticMessageIfMatched(sessionId, items)
-                this.localState.sessions[sessionId].itemsFetched = true
-                this.localState.sessions[sessionId].itemsLoadingError = false
-                // Session opening = audit point for sends whose outcome was
-                // lost with a previous WebSocket/tab (send-failure recovery).
-                this.auditInflightSends(sessionId)
-            } catch (error) {
-                console.error('Failed to load session items:', error)
-                if (isInitialLoading) {
-                    this.localState.sessions[sessionId].itemsLoadingError = true
-                }
-            } finally {
-                this.localState.sessions[sessionId].itemsLoading = false
-            }
-        },
-
-        /**
          * Load specific ranges of session items.
          * @param {string} projectId
          * @param {string} sessionId
