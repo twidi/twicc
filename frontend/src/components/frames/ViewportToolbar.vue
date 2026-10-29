@@ -99,8 +99,6 @@ function swap() {
 </template>
 
 <style scoped>
-/* Same look as the select-area sub-toolbar (SelectAreaToolbar.vue) — scoped
-   twins, kept in sync by hand. */
 .viewport-toolbar {
     display: flex;
     align-items: center;

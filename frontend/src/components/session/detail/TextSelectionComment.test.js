@@ -22,6 +22,7 @@ async function loadComponent() {
         export const inject = (key, fallback) => globalThis.__tscProvided?.[key] ?? fallback
         export const nextTick = callback => Promise.resolve().then(callback)
         export const computed = getter => ({ __v_isRef: true, get value() { return getter() } })
+        export const watch = () => {}
         export const onMounted = () => {}
         export const onBeforeUnmount = () => {}
     `)
@@ -65,6 +66,9 @@ function setupComponent(component, overrides = {}, emit = () => {}) {
         captureScreenshot: null,
         attachScreenshot: null,
         focusComposerOnAdd: false,
+        persistent: false,
+        anchorRect: null,
+        avoidRect: null,
         ...overrides,
     }, {
         expose() {},
@@ -446,5 +450,36 @@ test('rendered form offers a close control and two actions with a composer and d
         const withoutComposer = buttons(render({}, [], {}, setup))
         assert.equal(withoutComposer[0].props['aria-label'], 'Close')
         assert.deepEqual(withoutComposer.slice(2).map(button => button.children.trim()), ['Add to message'])
+    } finally { f.cleanup() }
+})
+
+test('persistent: Add to message keeps the card open, empties the form and announces it', async () => {
+    const f = await formFixture({ available: true, pending: false, send() { assert.fail('must not send') } }, { persistent: true })
+    try {
+        f.bindings.commentText.value = 'comment'
+        f.bindings.includeScreenshot.value = true
+        await f.bindings.addToMessage()
+        assert.equal(f.inserted.length, 1)
+        assert.deepEqual(f.emitted, ['added'])
+        assert.equal(f.bindings.commentText.value, '')
+        assert.equal(f.bindings.includeScreenshot.value, false)
+    } finally { f.cleanup() }
+})
+
+test('persistent: nothing is added or sent until an element is picked', async () => {
+    const f = await formFixture({ available: true, pending: false, send() { assert.fail('must not send') } }, { persistent: true, selectedText: '' })
+    try {
+        await f.bindings.addToMessage()
+        await f.bindings.sendToAgent()
+        assert.deepEqual(f.inserted, [])
+        assert.deepEqual(f.emitted, [])
+    } finally { f.cleanup() }
+})
+
+test('persistent: Send to Agent still closes the card (leaves the mode)', async () => {
+    const f = await formFixture({ available: true, pending: false, async send(_text, options) { options.onPrepared() } }, { persistent: true })
+    try {
+        await f.bindings.sendToAgent()
+        assert.deepEqual(f.emitted, ['send-prepared', 'close'])
     } finally { f.cleanup() }
 })

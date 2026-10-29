@@ -4,17 +4,32 @@
 // expands a panel with a textarea + "Add to message" action. Nothing is persisted
 // to IndexedDB — the user must send the message right away.
 
-import { ref, inject, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, inject, nextTick, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { formatComment } from '../../../stores/codeComments'
 import { useSettingsStore } from '../../../stores/settings'
 import { isOpen as mediaPreviewOpen, openMediaPreview } from '../../../composables/useMediaPreview'
 import { toast } from '../../../composables/useToast'
 
 const props = defineProps({
-    /** The text the user selected in the session view. */
-    selectedText: { type: String, required: true },
-    /** Viewport-relative position: { top, left, above } — anchored at selection edge. */
-    position: { type: Object, required: true },
+    /** The text the user selected in the session view. In persistent mode: the
+     *  description of the picked element ('' while nothing is picked); it is
+     *  inserted like a quote but never shown. */
+    selectedText: { type: String, default: '' },
+    /** Viewport-relative position: { top, left, above } — anchored at selection edge.
+     *  Ignored in persistent mode (see anchorRect). */
+    position: { type: Object, default: null },
+    /** Persistent mode (element picking): the card IS the mode. It opens expanded,
+     *  ignores clicks outside, stays open after "Add to message" (the owner
+     *  decides when to close), shows the `header` slot instead of the quote, and
+     *  is inert until `selectedText` is non-empty. */
+    persistent: { type: Boolean, default: false },
+    /** Persistent mode: viewport rect (left/top/right/bottom) of the area the card
+     *  sits in. It starts centered at the bottom edge, or at the top edge when
+     *  the bottom would hide `avoidRect`. */
+    anchorRect: { type: Object, default: null },
+    /** Persistent mode: viewport rect ({ left, top, width, height }) of the picked
+     *  element, which the card tries not to cover until the user drags it. */
+    avoidRect: { type: Object, default: null },
     /** When true, skip the collapsed button and open the panel immediately on mount. */
     autoExpand: { type: Boolean, default: false },
     /** Optional source suffix for the formatted output (e.g. "from terminal"). */
@@ -51,7 +66,7 @@ const props = defineProps({
     focusComposerOnAdd: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['close', 'send-prepared'])
+const emit = defineEmits(['close', 'send-prepared', 'added'])
 
 const insertTextAtCursor = inject('insertTextAtCursor', null)
 const selectionCommentSend = inject('selectionCommentSend', null)
@@ -78,6 +93,8 @@ const commentText = ref('')
 const textareaRef = ref(null)
 const rootRef = ref(null)
 const isDragging = ref(false)
+// Persistent mode: the card is inert until an element is picked.
+const ready = computed(() => !props.persistent || !!props.selectedText)
 
 // ── Screenshot capture (opt-in, only when captureScreenshot is provided) ──
 const includeScreenshot = ref(false)
@@ -89,11 +106,25 @@ const submitting = ref(false)          // attaching + inserting on "Add to messa
 const panelOffset = ref({ dx: 0, dy: 0 })
 const SELECTION_GAP = 16
 
+// Persistent mode placement: 'bottom' (card above the anchor's bottom edge) or
+// 'top'. Automatic until the user drags the card, then their spot wins for the
+// rest of the mode.
+const placement = ref('bottom')
+const userMoved = ref(false)
+
+const effectivePosition = computed(() => {
+    if (!props.persistent) return props.position
+    const rect = props.anchorRect
+    const left = rect ? (rect.left + rect.right) / 2 : window.innerWidth / 2
+    if (placement.value === 'top') return { top: rect ? rect.top : 0, left, above: false }
+    return { top: rect ? rect.bottom : window.innerHeight, left, above: true }
+})
+
 const rootStyle = computed(() => {
-    const above = props.position.above
+    const above = effectivePosition.value.above
     const base = {
-        left: props.position.left + 'px',
-        top: (props.position.top + (above ? -SELECTION_GAP : SELECTION_GAP)) + 'px',
+        left: effectivePosition.value.left + 'px',
+        top: (effectivePosition.value.top + (above ? -SELECTION_GAP : SELECTION_GAP)) + 'px',
     }
     if (expanded.value) {
         const { dx, dy } = panelOffset.value
@@ -151,6 +182,42 @@ function clampToViewport() {
     }
 }
 
+function overlaps(a, b, margin = 8) {
+    return (
+        a.left < b.left + b.width + margin &&
+        a.left + a.width > b.left - margin &&
+        a.top < b.top + b.height + margin &&
+        a.top + a.height > b.top - margin
+    )
+}
+
+/**
+ * Persistent mode: pick the anchor edge whose card position leaves the picked
+ * element visible (bottom preferred). Skipped once the user has dragged the card.
+ */
+function updatePlacement() {
+    const el = rootRef.value
+    const rect = props.anchorRect
+    if (!props.persistent || userMoved.value || !el || !rect) return
+    const card = el.getBoundingClientRect()
+    const avoid = props.avoidRect
+    // Nothing to avoid (selection just cleared): stay where the card is.
+    let next = placement.value
+    if (avoid) {
+        next = 'bottom'
+        const left = (rect.left + rect.right) / 2 - card.width / 2
+        const candidates = {
+            bottom: { left, top: rect.bottom - SELECTION_GAP - card.height, width: card.width, height: card.height },
+            top: { left, top: rect.top + SELECTION_GAP, width: card.width, height: card.height },
+        }
+        if (overlaps(candidates.bottom, avoid) && !overlaps(candidates.top, avoid)) next = 'top'
+    }
+    if (next === placement.value) return
+    placement.value = next
+    panelOffset.value = { dx: 0, dy: 0 }
+    nextTick(clampToViewport)
+}
+
 let viewportClampScheduled = false
 
 /** Re-clamp once per frame when the mobile keyboard changes the visible viewport. */
@@ -195,7 +262,15 @@ function onDragPointerDown(e) {
     const target = e.target
     if (!target.closest('.tsc-grip') && target.closest('.tsc-quote, wa-textarea, wa-button, textarea, button, a, .tsc-shot')) return
     e.preventDefault()
+    // Keep receiving the moves when the pointer crosses an iframe (the picked
+    // page), which would otherwise swallow them.
+    try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+        // Not capturable (synthetic event): the document listeners still work.
+    }
     isDragging.value = true
+    userMoved.value = true
     dragStart = { x: e.clientX, y: e.clientY, ...panelOffset.value }
     document.addEventListener('pointermove', onDragPointerMove)
     document.addEventListener('pointerup', onDragPointerUp)
@@ -229,8 +304,11 @@ function expand() {
     props.clearSourceSelection?.()
     addViewportListeners()
     nextTick(() => {
+        updatePlacement()
         clampToViewport()
-        textareaRef.value?.focus()
+        // Persistent mode starts with nothing to type about: no focus (and no
+        // virtual keyboard) until an element is picked.
+        if (!props.persistent) textareaRef.value?.focus()
     })
 }
 
@@ -238,6 +316,20 @@ function close() {
     removeViewportListeners()
     emit('close')
 }
+
+// Persistent mode: picking another element invalidates the screenshot (it shows
+// the previous one) and in-flight captures. On desktop the textarea takes the
+// focus so the user can type right away; on touch it would pop the keyboard.
+let selectionVersion = 0
+watch(() => props.selectedText, (text) => {
+    if (!props.persistent) return
+    selectionVersion++
+    includeScreenshot.value = false
+    screenshotDataUrl.value = null
+    screenshotLoading.value = false
+    if (text && !settingsStore.isTouchDevice) nextTick(() => textareaRef.value?.focus())
+})
+watch(() => props.avoidRect, () => nextTick(updatePlacement))
 
 // Toggle the "Include screenshot" switch. Turning it on captures once (the
 // result is cached in screenshotDataUrl); turning it off drops the capture.
@@ -249,18 +341,24 @@ async function onIncludeToggle(event) {
         return
     }
     if (screenshotDataUrl.value || !props.captureScreenshot) return
+    const version = selectionVersion
     screenshotLoading.value = true
     try {
         const dataUrl = await props.captureScreenshot()
         if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
             throw new Error('no image returned')
         }
-        screenshotDataUrl.value = dataUrl
+        // Persistent mode: another element was picked meanwhile — the capture
+        // shows the wrong one.
+        if (version === selectionVersion) screenshotDataUrl.value = dataUrl
     } catch (e) {
+        // Persistent mode: a failure caused by the selection moving on is not
+        // worth a toast (the watcher above already reset the switch).
+        if (version !== selectionVersion || !ready.value) return
         includeScreenshot.value = false
         toast.error(`Screenshot failed: ${e?.message || e}`)
     } finally {
-        screenshotLoading.value = false
+        if (version === selectionVersion) screenshotLoading.value = false
     }
 }
 
@@ -293,7 +391,7 @@ function getFormattedComment() {
 }
 
 async function sendToAgent() {
-    if (!canSendToAgent.value || selectionSendPending.value || submitting.value || screenshotLoading.value) return
+    if (!ready.value || !canSendToAgent.value || selectionSendPending.value || submitting.value || screenshotLoading.value) return
     submitting.value = true
     const screenshot = screenshotDataUrl.value
     const attach = props.attachScreenshot
@@ -317,7 +415,7 @@ async function sendToAgent() {
 /** @param {{fromKeyboard?: boolean}} [options] - `fromKeyboard` when ⌘↵ triggered
  *  the add, as opposed to a tap/click on the button. See the focus rule below. */
 async function addToMessage({ fromKeyboard = false } = {}) {
-    if (!canAdd.value || screenshotLoading.value || submitting.value) return
+    if (!ready.value || !canAdd.value || screenshotLoading.value || submitting.value) return
 
     submitting.value = true
     // Attach first: a rejected attachment (size cap, etc.) must not leave the
@@ -343,6 +441,14 @@ async function addToMessage({ fromKeyboard = false } = {}) {
     const focusComposer = props.focusComposerOnAdd && (fromKeyboard || !settingsStore.isTouchDevice)
     insertTextAtCursor(formatted + '\n', { focus: focusComposer })
     submitting.value = false
+    if (props.persistent) {
+        // The mode goes on: ready for the next element, starting empty.
+        commentText.value = ''
+        includeScreenshot.value = false
+        screenshotDataUrl.value = null
+        emit('added')
+        return
+    }
     close()
 }
 
@@ -369,6 +475,7 @@ function handleKeydown(e) {
 // preview is open (it mounts elsewhere in the DOM, so a click inside it reads
 // as "outside" here; dismissing the comment then would be wrong).
 function handleDocumentMousedown(e) {
+    if (props.persistent) return
     if (rootRef.value?.contains(e.target)) return
     if (mediaPreviewOpen.value) return
     close()
@@ -376,7 +483,7 @@ function handleDocumentMousedown(e) {
 
 onMounted(() => {
     document.addEventListener('mousedown', handleDocumentMousedown, true)
-    if (props.autoExpand) expand()
+    if (props.autoExpand || props.persistent) expand()
 })
 
 onBeforeUnmount(() => {
@@ -424,11 +531,12 @@ defineExpose({ isExpanded: expanded })
         <div
             v-else
             class="tsc-panel glass-surface"
-            :class="{ dragging: isDragging }"
+            :class="{ dragging: isDragging, persistent }"
             @keydown="handleKeydown"
             @pointerdown="onDragPointerDown"
         >
-            <div class="tsc-quote quote-card">{{ selectedText }}</div>
+            <div v-if="!persistent" class="tsc-quote quote-card">{{ selectedText }}</div>
+            <div v-else class="tsc-header"><slot name="header"></slot></div>
             <wa-button
                 class="tsc-corner tsc-close"
                 size="small"
@@ -457,10 +565,11 @@ defineExpose({ isExpanded: expanded })
             <wa-textarea
                 ref="textareaRef"
                 :value="commentText"
+                :disabled="!ready"
                 @input="commentText = $event.target.value"
                 :placeholder="placeholderText"
                 size="small"
-                rows="3"
+                :rows="persistent ? 2 : 3"
             ></wa-textarea>
 
             <!-- Optional screenshot capture (only when a capture handler is
@@ -470,7 +579,7 @@ defineExpose({ isExpanded: expanded })
                     <wa-switch
                         size="small"
                         :checked="includeScreenshot"
-                        :disabled="screenshotLoading || submitting"
+                        :disabled="!ready || screenshotLoading || submitting"
                         @change="onIncludeToggle"
                     >Include screenshot</wa-switch>
                     <wa-spinner v-if="screenshotLoading"></wa-spinner>
@@ -484,7 +593,7 @@ defineExpose({ isExpanded: expanded })
                 </div>
             </div>
 
-            <div v-if="showHelpHint" class="tsc-help">
+            <div v-if="showHelpHint && !persistent" class="tsc-help">
                 <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered.
                 <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">Dismiss</a>
             </div>
@@ -494,7 +603,7 @@ defineExpose({ isExpanded: expanded })
                     size="small"
                     variant="brand"
                     appearance="outlined"
-                    :disabled="!canAdd || screenshotLoading || submitting"
+                    :disabled="!ready || !canAdd || screenshotLoading || submitting"
                     @click="addToMessage()"
                 >
                     Add to message
@@ -503,7 +612,7 @@ defineExpose({ isExpanded: expanded })
                     v-if="canSendToAgent"
                     size="small"
                     variant="brand"
-                    :disabled="screenshotLoading || submitting || selectionSendPending"
+                    :disabled="!ready || screenshotLoading || submitting || selectionSendPending"
                     @click="sendToAgent"
                 >
                     Send to Agent
@@ -604,6 +713,22 @@ defineExpose({ isExpanded: expanded })
     word-break: break-word;
     cursor: auto;
     touch-action: auto; /* allow native scroll within quote */
+}
+
+/* Persistent mode: stands where the quote would be. Not a drag opt-out, so the
+   gaps between its controls still move the card. */
+.tsc-header {
+    padding-top: 0;
+}
+
+/* Persistent mode keeps the page visible: tighter than the one-shot dialog. */
+.tsc-panel.persistent {
+    gap: var(--wa-space-xs);
+    padding: var(--wa-space-xs) var(--wa-space-s) var(--wa-space-s);
+}
+
+.tsc-panel.persistent .tsc-actions {
+    margin-top: 0;
 }
 
 /* ── Screenshot capture ──────────────────────────────────────────── */

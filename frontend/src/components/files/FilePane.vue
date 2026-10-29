@@ -17,7 +17,7 @@ import ArtifactBookmarkButton from '../artifacts/ArtifactBookmarkButton.vue'
 import ArtifactBrokerPrompt from '../artifacts/ArtifactBrokerPrompt.vue'
 import PersistentFrame from '../frames/PersistentFrame.vue'
 import FloatingPreviewTools from '../frames/FloatingPreviewTools.vue'
-import SelectAreaToolbar from '../frames/SelectAreaToolbar.vue'
+import SelectAreaNav from '../frames/SelectAreaNav.vue'
 import ViewportStage from '../frames/ViewportStage.vue'
 import ViewportToolbar from '../frames/ViewportToolbar.vue'
 import { useDataStore } from '../../stores/data'
@@ -412,9 +412,12 @@ const viewportStageRef = ref(null)
 const composerSessionId = computed(() => props.sessionId || props.artifactBookmarkSessionId || null)
 // Gate: in a session tab (inSessionContext) with a resolvable composer session.
 const canSelectElement = computed(() => inSessionContext.value && !!composerSessionId.value)
-const selectToolbarRef = ref(null)
 const selectModeActive = ref(false)
 const selectState = ref(null)
+// The comment card (see "Element comment card" below) sits over the preview and
+// keeps off the locked element: both rects are in host-viewport coordinates.
+const selectAnchorRect = ref(null)
+const selectAvoidRect = ref(null)
 let picker = null
 
 async function createPicker() {
@@ -442,6 +445,7 @@ async function createPicker() {
         doc,
         onState: (state) => {
             selectState.value = state
+            applyPickerState(state)
         },
     })
     picker.enable()
@@ -451,18 +455,28 @@ function destroyPicker() {
     picker?.destroy()
     picker = null
     selectState.value = null
+    elementCommentText.value = ''
+    selectAvoidRect.value = null
 }
 
 function setSelectMode(enabled) {
     if (selectModeActive.value === enabled) return
     selectModeActive.value = enabled
-    // Drop any open element comment so a stale one can't flash back on re-entry.
-    elementCommentPosition.value = null
-    if (enabled) createPicker()
-    else destroyPicker()
+    if (enabled) {
+        // The card and the text-selection widget share the screen, not state.
+        closeTextSelectionComment()
+        const frameRect = previewIframeRef.value?.getBoundingClientRect()
+        selectAnchorRect.value = frameRect
+            ? { left: frameRect.left, top: frameRect.top, right: frameRect.right, bottom: frameRect.bottom }
+            : null
+        createPicker()
+    } else {
+        selectAnchorRect.value = null
+        destroyPicker()
+    }
 }
 
-// Toolbar relays. Named functions (not inline arrows in the template) so the
+// Card relays. Named functions (not inline arrows in the template) so the
 // non-reactive `picker` closure variable is always read at call time.
 function selectNav(direction) {
     picker?.nav(direction)
@@ -502,14 +516,22 @@ watch(() => props.filePath, () => setSelectMode(false))
 watch(isHtmlPreviewActive, (active) => {
     if (!active) setSelectMode(false)
 })
+// The card lives in <body>, outside this pane: nothing hides it with the pane.
+// Leave the mode whenever the preview is no longer on screen — another tab or
+// session shown (`active`, KeepAlive), the overlay closed, the dock collapsed
+// (the frame's visibility covers those) — or the pane is destroyed.
+const previewFrameVisible = computed(() => persistentFrameRef.value?.visible ?? false)
+watch([previewFrameVisible, () => props.active], ([visible, active]) => {
+    if (selectModeActive.value && (!visible || !active)) setSelectMode(false)
+})
+onBeforeUnmount(() => setSelectMode(false))
 
-// --- Element comment widget (select mode) ---
-// Second TextSelectionComment instance, parallel to the text-selection one
-// (they share the screen, not state — opening one closes the other). The
-// "quote" is the picked element's description; the screenshot switch renders
-// the element itself.
+// --- Element comment card (select mode) ---
+// A persistent TextSelectionComment instance, parallel to the text-selection
+// one: it is open for as long as the mode is on. Its text is the picked
+// element's description (empty until a click locks one); the screenshot switch
+// renders the element itself.
 const elementCommentText = ref('')
-const elementCommentPosition = ref(null) // viewport anchor, or null = closed
 const elementCommentSourceLabel = computed(() => {
     // "artifact" in the Artifacts context (bookmark session id set), plain
     // "file" for a repo .html in the Files tab.
@@ -517,17 +539,30 @@ const elementCommentSourceLabel = computed(() => {
     return `from the HTML preview of the ${noun} at ${props.displayPath || props.filePath}`
 })
 
-function openElementComment() {
-    const description = picker?.describe()
-    const rect = selectToolbarRef.value?.$el?.getBoundingClientRect()
-    if (!description || !rect) return
+// Follows the picker: a locked element is described for the card, anything
+// else (hover only, cleared) leaves it inert.
+function applyPickerState(state) {
+    const description = state.locked && state.hasSelection ? picker?.describe() : null
+    if (!description) {
+        elementCommentText.value = ''
+        selectAvoidRect.value = null
+        return
+    }
     const lines = []
     if (description.openingTag) lines.push(`Element: ${description.openingTag}`)
     if (description.text) lines.push(`Text: "${description.text}"`)
     lines.push(`Path: ${description.chain}`)
-    closeTextSelectionComment()
     elementCommentText.value = lines.join('\n')
-    elementCommentPosition.value = { top: rect.bottom, left: rect.left + rect.width / 2, above: false }
+    // The picker's rect is relative to the iframe's viewport.
+    const frameRect = previewIframeRef.value?.getBoundingClientRect()
+    selectAvoidRect.value = state.rect && frameRect
+        ? {
+              left: frameRect.left + state.rect.left,
+              top: frameRect.top + state.rect.top,
+              width: state.rect.width,
+              height: state.rect.height,
+          }
+        : null
 }
 
 // Passed to the comment widget's "Include screenshot" switch; rejects cleanly
@@ -1644,15 +1679,6 @@ function goToNextDiff() {
                         v-model:height="viewportHeight"
                         @close="responsiveActive = false"
                     />
-                    <SelectAreaToolbar
-                        v-if="selectModeActive"
-                        ref="selectToolbarRef"
-                        :state="selectState"
-                        @nav="selectNav"
-                        @clear="selectClear"
-                        @comment="openElementComment"
-                        @close="setSelectMode(false)"
-                    />
                     <!-- The stage wrappers render in BOTH modes (only restyled)
                          so PersistentFrame never unmounts on a mode toggle — a
                          remount would re-register the pooled iframe and reload
@@ -1827,23 +1853,30 @@ function goToNextDiff() {
             />
         </Teleport>
 
-        <!-- Element-select comment widget (HTML preview) — teleported to body
-             like every other consumer. The "quote" is the element description;
-             no source selection to clear. -->
+        <!-- Element-select card (HTML preview) — open for as long as the mode is
+             on; closing it leaves the mode. Teleported to body like every other
+             consumer. The text is the element description (never shown); no
+             source selection to clear. -->
         <Teleport to="body">
             <TextSelectionComment
-                v-if="elementCommentPosition"
+                v-if="selectModeActive"
+                persistent
                 :selected-text="elementCommentText"
-                :position="elementCommentPosition"
+                :anchor-rect="selectAnchorRect"
+                :avoid-rect="selectAvoidRect"
                 :source-label="elementCommentSourceLabel"
                 subject="selected area"
-                auto-expand
                 :clear-source-selection="() => {}"
                 :capture-screenshot="captureElementScreenshot"
                 :attach-screenshot="attachElementScreenshot"
+                @added="selectClear"
                 @send-prepared="isPreviewFullscreen = false"
-                @close="elementCommentPosition = null"
-            />
+                @close="setSelectMode(false)"
+            >
+                <template #header>
+                    <SelectAreaNav :state="selectState" @nav="selectNav" @clear="selectClear" />
+                </template>
+            </TextSelectionComment>
         </Teleport>
     </div>
 </template>

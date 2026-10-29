@@ -164,7 +164,7 @@ const overlayEl = computed(() =>
     pooled ? pool.frameOverlayEl(props.frameId) : inlineOverlayEl.value
 )
 
-defineExpose({ frameEl, overlayEl })
+defineExpose({ frameEl, overlayEl, visible })
 </script>
 
 <template>

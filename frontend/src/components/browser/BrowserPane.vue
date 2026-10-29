@@ -41,7 +41,7 @@ import {
 import { debounce } from '../../utils/debounce'
 import { showHelp } from '../help/showHelp'
 import PersistentFrame from '../frames/PersistentFrame.vue'
-import SelectAreaToolbar from '../frames/SelectAreaToolbar.vue'
+import SelectAreaNav from '../frames/SelectAreaNav.vue'
 import ViewportStage from '../frames/ViewportStage.vue'
 import ViewportToolbar from '../frames/ViewportToolbar.vue'
 import ProjectBadge from '../project/ProjectBadge.vue'
@@ -160,8 +160,7 @@ function onWindowMessage(event) {
         hadCompanion = true
         // A hello means a fresh document — any select-area overlay died with
         // the old one, so the host flag must not claim the mode is still on.
-        selectAreaActive.value = false
-        selectState.value = null
+        resetSelectArea()
         // Fresh document → the previous page's errors are gone.
         pageErrors.value = []
         pageErrorTotal.value = 0
@@ -197,7 +196,7 @@ function onWindowMessage(event) {
         }
     } else if (data.type === 'select-state') {
         // Capabilities of the currently highlighted element (select-area
-        // mode) — drives the select toolbar's navigation buttons. Ignored
+        // mode) — drives the select card's navigation buttons. Ignored
         // when the mode is off (a late message from a just-disabled overlay).
         if (selectAreaActive.value) {
             selectState.value = {
@@ -208,16 +207,18 @@ function onWindowMessage(event) {
                 canPrevSibling: data.canPrevSibling === true,
                 canNextSibling: data.canNextSibling === true,
             }
+            applySelectState(data.rect)
         }
     } else if (data.type === 'select-describe') {
-        // The companion described the highlighted element (opening tag + text
-        // + ancestor chain) — open the comment widget on it.
-        if (selectAreaActive.value && typeof data.chain === 'string') {
+        // The companion described the locked element (opening tag + text +
+        // ancestor chain) — it becomes the card's comment target. A late reply
+        // for an element that is no longer locked is dropped.
+        if (selectAreaActive.value && selectState.value?.locked && typeof data.chain === 'string') {
             const lines = []
             if (typeof data.openingTag === 'string' && data.openingTag) lines.push(`Element: ${data.openingTag}`)
             if (typeof data.text === 'string' && data.text) lines.push(`Text: "${data.text}"`)
             lines.push(`Path: ${data.chain}`)
-            openSelectComment(lines.join('\n'))
+            selectDescription.value = lines.join('\n')
         }
     } else if (data.type === 'select-capture') {
         // Answer to a capture request (see captureScreenshot): resolve/reject
@@ -250,8 +251,7 @@ function onWindowMessage(event) {
         // Document going away (navigation / reload). Undetermined until the
         // next document says hello or the post-load grace period expires.
         companionStatus.value = 'waiting'
-        selectAreaActive.value = false
-        selectState.value = null
+        resetSelectArea()
         pageErrors.value = []
         pageErrorTotal.value = 0
         rejectPendingCapture('page navigating away')
@@ -648,8 +648,16 @@ function openBrowserHelp() {
 // mirrors what we asked for — it resets on hello/bye above, since the overlay
 // lives and dies with the page's document. `selectState` is the companion's
 // report on the highlighted element (null until one is highlighted).
+// While the mode is on, a persistent comment card (see "Comment widget" below)
+// is open; `selectDescription` is its target: the locked element's description,
+// '' while nothing is locked.
 const selectAreaActive = ref(false)
 const selectState = ref(null)
+const selectDescription = ref('')
+// The card sits over the page and keeps off the locked element: both rects are
+// in host-viewport coordinates.
+const selectAnchorRect = ref(null)
+const selectAvoidRect = ref(null)
 
 // A single in-flight screenshot capture: { resolve, reject, timer }, or null.
 // The companion answers with a select-capture message (resolved in
@@ -664,15 +672,59 @@ function rejectPendingCapture(reason) {
     reject(new Error(reason))
 }
 
+function resetSelectArea() {
+    selectAreaActive.value = false
+    selectState.value = null
+    selectDescription.value = ''
+    selectAnchorRect.value = null
+    selectAvoidRect.value = null
+}
+
+// Follows the companion's report: a locked element is described for the card
+// (the answer arrives as a select-describe message), anything else (hover only,
+// cleared) leaves it inert. `rect` is relative to the embedded page's viewport.
+function applySelectState(rect) {
+    selectDescription.value = ''
+    selectAvoidRect.value = null
+    rejectPendingCapture('selection changed')
+    if (!selectState.value?.locked || !selectState.value.hasSelection) return
+    const frameRect = frameEl.value?.getBoundingClientRect()
+    if (frameRect && rect && [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)) {
+        selectAvoidRect.value = {
+            left: frameRect.left + rect.left,
+            top: frameRect.top + rect.top,
+            width: rect.width,
+            height: rect.height,
+        }
+    }
+    sendToCompanion(hostMessage('command', { action: 'select-describe' }))
+}
+
 function setSelectArea(enabled) {
     if (selectAreaActive.value === enabled) return
+    resetSelectArea()
     selectAreaActive.value = enabled
-    selectState.value = null
     rejectPendingCapture('select mode changed')
     // Drop any open comment widget so a stale one can't flash back on re-entry.
     commentPosition.value = null
+    if (enabled) {
+        const frameRect = frameEl.value?.getBoundingClientRect()
+        selectAnchorRect.value = frameRect
+            ? { left: frameRect.left, top: frameRect.top, right: frameRect.right, bottom: frameRect.bottom }
+            : null
+    }
     sendToCompanion(hostMessage('command', { action: 'select-mode', enabled }))
 }
+
+// The card lives in <body>, outside this pane: nothing hides it with the pane.
+// Leave the mode whenever the page is no longer on screen — another tab or
+// session shown (`active`, KeepAlive), the overlay closed, the dock collapsed
+// (the frame's visibility covers those) — or the pane is destroyed.
+const frameVisible = computed(() => persistentFrameRef.value?.visible ?? false)
+watch([frameVisible, () => props.active], ([visible, active]) => {
+    if (selectAreaActive.value && (!visible || !active)) setSelectArea(false)
+})
+onBeforeUnmount(() => setSelectArea(false))
 
 function selectNav(direction) {
     sendToCompanion(hostMessage('command', { action: 'select-nav', direction }))
@@ -680,10 +732,6 @@ function selectNav(direction) {
 
 function selectClear() {
     sendToCompanion(hostMessage('command', { action: 'select-clear' }))
-}
-
-function selectComment() {
-    sendToCompanion(hostMessage('command', { action: 'select-describe' }))
 }
 
 // Passed to the comment widget's "Include screenshot" switch. Fires a capture
@@ -712,28 +760,14 @@ async function attachScreenshot(dataUrl, options = {}) {
 }
 
 // ── Comment widget: reuses the text-selection comment window for two sources —
-// a picked element (select-area, with the screenshot switch) and the page's
-// captured errors. One shared position/text/subject drives a single instance;
-// `commentAllowScreenshot` gates the Include-screenshot switch (element only).
-// Initial position: horizontally centered, top edge right below the anchor —
-// the user can drag it anywhere afterwards, as usual.
-const selectToolbarRef = ref(null)
+// a picked element (select-area: a persistent card open while the mode is on,
+// with the screenshot switch) and the page's captured errors (opened from the
+// toolbar badge, anchored below it, dragged anywhere afterwards).
 const commentText = ref('')
-const commentPosition = ref(null)          // viewport anchor, or null = closed
-const commentSubject = ref('selected area')
-const commentAllowScreenshot = ref(false)
+const commentPosition = ref(null)          // errors widget anchor, or null = closed
 // Rendered into the formatted message header so the agent knows which page the
 // element / errors live on.
 const commentSourceLabel = computed(() => `from the browser page at ${currentUrl.value}`)
-
-function openSelectComment(description) {
-    const rect = selectToolbarRef.value?.$el?.getBoundingClientRect()
-    if (!rect) return
-    commentText.value = description
-    commentSubject.value = 'selected area'
-    commentAllowScreenshot.value = true
-    commentPosition.value = { top: rect.bottom, left: rect.left + rect.width / 2, above: false }
-}
 
 // ── Page errors: the companion buffers console.error / uncaught exceptions /
 // unhandled rejections and pushes the list here; a toolbar badge shows the
@@ -753,9 +787,9 @@ function openErrorComment(event) {
     if (!pageErrors.value.length) return
     const rect = event.currentTarget?.getBoundingClientRect()
     if (!rect) return
+    // The select card and the errors widget would stack on the same page.
+    setSelectArea(false)
     commentText.value = formatErrorList()
-    commentSubject.value = 'page errors'
-    commentAllowScreenshot.value = false
     commentPosition.value = { top: rect.bottom, left: rect.left + rect.width / 2, above: false }
 }
 
@@ -1217,35 +1251,43 @@ async function makeDefaultSavedUrl(opt) {
             @close="responsiveActive = false"
         />
 
-        <!-- Select-area toolbar: shown while the picking mode is on. The
-             navigation buttons walk the page's DOM from the highlighted
-             element — every step is executed by the companion in the page. -->
-        <SelectAreaToolbar
-            v-if="selectAreaActive"
-            ref="selectToolbarRef"
-            :state="selectState"
-            @nav="selectNav"
-            @clear="selectClear"
-            @comment="selectComment"
-            @close="setSelectArea(false)"
-        />
-
-        <!-- Comment widget (teleported to body like every other consumer —
-             avoids overflow clipping and sits above fullscreen). Shared by the
-             select-area flow (element description, with the screenshot switch)
-             and the page-errors flow (error list, no screenshot). No source
-             selection to clear: the "quote" is the text we hand it. -->
+        <!-- Comment widgets (teleported to body like every other consumer —
+             avoids overflow clipping and sits above fullscreen). No source
+             selection to clear: the "quote" is the text we hand it.
+             - Select-area card: open for as long as the picking mode is on;
+               closing it leaves the mode. The navigation buttons walk the
+               page's DOM from the highlighted element — every step is executed
+               by the companion in the page. The element description is never
+               shown.
+             - Page-errors widget: the error list, no screenshot. -->
         <Teleport to="body">
+            <TextSelectionComment
+                v-if="selectAreaActive"
+                persistent
+                :selected-text="selectDescription"
+                :anchor-rect="selectAnchorRect"
+                :avoid-rect="selectAvoidRect"
+                :source-label="commentSourceLabel"
+                subject="selected area"
+                :clear-source-selection="() => {}"
+                :capture-screenshot="captureScreenshot"
+                :attach-screenshot="attachScreenshot"
+                @added="selectClear"
+                @send-prepared="isFullscreen = false"
+                @close="setSelectArea(false)"
+            >
+                <template #header>
+                    <SelectAreaNav :state="selectState" @nav="selectNav" @clear="selectClear" />
+                </template>
+            </TextSelectionComment>
             <TextSelectionComment
                 v-if="commentPosition"
                 :selected-text="commentText"
                 :position="commentPosition"
                 :source-label="commentSourceLabel"
-                :subject="commentSubject"
+                subject="page errors"
                 auto-expand
                 :clear-source-selection="() => {}"
-                :capture-screenshot="commentAllowScreenshot ? captureScreenshot : null"
-                :attach-screenshot="commentAllowScreenshot ? attachScreenshot : null"
                 @send-prepared="isFullscreen = false"
                 @close="commentPosition = null"
             />

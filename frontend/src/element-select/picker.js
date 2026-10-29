@@ -22,15 +22,18 @@ const MAX_TAG = 300
  * @param {Document} opts.doc  Its document.
  * @param {(state: object) => void} opts.onState  Fired on every selection
  *        change with { hasSelection, locked, canParent, canFirstChild,
- *        canPrevSibling, canNextSibling } — drives the host toolbar's buttons.
+ *        canPrevSibling, canNextSibling, rect } — drives the host card's
+ *        navigation buttons; `rect` ({ left, top, width, height } in this
+ *        window's viewport, null without selection) lets the host keep its
+ *        card off the element.
  */
 export function createElementPicker({ win, doc, onState }) {
     // A full-viewport overlay swallows every pointer interaction — the page
     // must not react at all while the mode is on — and the element under the
     // pointer gets a dashed outline. Two states: hovering (red outline
     // follows the pointer) and locked (a click/tap turned it green; hover is
-    // ignored so the user can travel to the host's toolbar without losing the
-    // selection — toolbar navigation and clear both keep/lift the lock). The
+    // ignored so the user can travel to the host's card without losing the
+    // selection — navigation and clear both keep/lift the lock). The
     // outline box is a separate pointer-events:none node, so hit-testing
     // skips it; elementsFromPoint sees the page through the overlay by
     // filtering our own two nodes out.
@@ -62,13 +65,15 @@ export function createElementPicker({ win, doc, onState }) {
         return node
     }
 
-    // Where the host's toolbar buttons can go from the current element —
+    // Where the host's navigation buttons can go from the current element —
     // reported on every element change so the buttons enable/disable live.
     function emitState() {
         const el = current
+        const box = el ? el.getBoundingClientRect() : null
         onState({
             hasSelection: !!el,
             locked,
+            rect: box ? { left: box.left, top: box.top, width: box.width, height: box.height } : null,
             canParent: !!(el && stepFrom(el, 'parent')),
             canFirstChild: !!(el && stepFrom(el, 'first-child')),
             canPrevSibling: !!(el && stepFrom(el, 'prev-sibling')),
