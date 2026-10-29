@@ -29,6 +29,7 @@ import {
 import NotificationSettings from './NotificationSettings.vue'
 import TipsSettings from '../settings/TipsSettings.vue'
 import HelpSettings from '../settings/HelpSettings.vue'
+import TextToSpeechSettings from '../settings/TextToSpeechSettings.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 import PeerHelpLink from '../peer/PeerHelpLink.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
@@ -114,6 +115,7 @@ const sections = computed(() => [
     { id: 'terminal',      label: 'Terminal' },
     { id: 'sharing',       label: 'Sharing', synced: true },
     { id: 'usage',         label: 'Providers quotas/usage', navLabel: 'Usage' },
+    { id: 'tts',           label: 'Text to Speech', synced: true },
     { id: 'mcp',           label: 'External MCP', navLabel: 'MCP', synced: true },
     { id: 'peers',         label: 'Peers', synced: true, badge: peersStore.inboxCount },
 ])
@@ -1627,6 +1629,8 @@ function onChangelogClose() {
 
                     <!-- Notifications Section -->
                     <NotificationSettings v-if="activeSection === 'notifications'" ref="notificationSettingsRef" @go-to-public-base-url="goToPublicBaseUrl" />
+
+                    <TextToSpeechSettings v-if="activeSection === 'tts'" />
 
                     <McpSettings v-if="activeSection === 'mcp'" />
                     <!-- Sharing Section -->

@@ -17,6 +17,7 @@ test('orders settings from general controls through advanced peer settings', () 
         "id: 'terminal'",
         "id: 'sharing'",
         "id: 'usage'",
+        "id: 'tts'",
         "id: 'peers'",
     ]
 
