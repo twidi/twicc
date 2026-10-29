@@ -27,14 +27,14 @@ test('3. the session header marks a draft and a stale session with icons, and ta
     const src = read('../components/session/detail/SessionHeader.vue')
     assert.doesNotMatch(src, /<wa-tag[^>]*>\s*(Archived|Arch\.|Draft|Stale)\s*<\/wa-tag>/)
     assert.doesNotMatch(src, /session-title-tags/)
-    assert.match(src, /name="file-pen"[\s\S]{0,80}session-state-icon--draft/)
-    assert.match(src, /name="link-slash"[\s\S]{0,120}session-state-icon--stale/)
+    assert.match(src, /name="pencil"[\s\S]{0,80}session-state-icon--draft/)
+    assert.match(src, /name="circle-xmark"[\s\S]{0,120}session-state-icon--stale/)
 })
 
-test('3b. stale is the link-slash icon in the sidebar, the switcher, the header and the read-only callout, in the warning colour', () => {
+test('3b. stale is the circle-xmark icon in the sidebar, the switcher, the header and the read-only callout, in the warning colour', () => {
     assert.match(norm(css), /\.session-state-icon--stale \{ color: var\(--wa-color-warning-60\); \}/)
     for (const f of ['../components/session/list/SessionListItem.vue', '../components/app/SessionSwitcher.vue', '../components/session/detail/SessionHeader.vue', '../components/session/detail/SessionItemsList.vue']) {
-        assert.match(read(f), /name="link-slash"[\s\S]{0,160}session-state-icon--stale/, f)
+        assert.match(read(f), /name="circle-xmark"[\s\S]{0,160}session-state-icon--stale/, f)
     }
 })
 

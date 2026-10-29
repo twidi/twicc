@@ -500,7 +500,7 @@ defineExpose({
             <wa-icon
                 v-if="session.stale"
                 :id="`session-header-${sessionId}-stale-icon`"
-                name="link-slash"
+                name="circle-xmark"
                 label="Session files deleted"
                 class="session-state-icon session-state-icon--stale"
             ></wa-icon>
@@ -522,7 +522,7 @@ defineExpose({
             <wa-icon
                 v-if="!session.archived && session.draft && !processState"
                 :id="`session-header-${sessionId}-draft-icon`"
-                name="file-pen"
+                name="pencil"
                 label="Draft"
                 class="session-state-icon session-state-icon--draft"
             ></wa-icon>

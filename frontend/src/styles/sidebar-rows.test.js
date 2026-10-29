@@ -122,7 +122,7 @@ test('3. the moved rules, with their values, in order', () => {
     })
     const menu = rule(rules, ['.sidebar-row-menu'])
     assert.deepEqual(menu.decls, {
-        display: 'block', position: 'absolute', top: 'var(--wa-space-2xs)', right: 'var(--wa-space-xs)', 'z-index': '1',
+        display: 'block', position: 'absolute', top: 'var(--wa-space-2xs)', right: 'var(--sidebar-row-menu-right, var(--wa-space-xs))', 'z-index': '1',
     })
     assert.deepEqual(rule(rules, ['.sidebar-row-wrapper--compact .sidebar-row-menu']).decls, { top: '0' })
     const trigger = rule(rules, ['.sidebar-row-menu-trigger'])

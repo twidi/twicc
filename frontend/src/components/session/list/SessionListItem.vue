@@ -581,13 +581,15 @@ function handleMenuSelect(event) {
                     <ProjectBadge v-if="isProjectWorktree" :project-id="session.project_id" :dot="false" />
                     <template v-else>{{ projectPathTitle(store.getProject(session.project_id)) || store.getProjectDisplayName(session.project_id) }}</template>
                 </AppTooltip>
+                <!-- Marker icons: tighter gap among themselves; the gaps to the project mark and to the title are the row's -->
+                <span class="session-leading-icons">
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                 <wa-icon v-if="session.archived" :id="rowId('session-archived')" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
                 <AppTooltip deferred :hoist="!!idPrefix" v-if="session.archived" :for="rowId('session-archived')">Archived</AppTooltip>
                 <wa-icon v-if="session.ephemeral && !session.archived" name="ghost" label="Ephemeral session" class="session-state-icon session-state-icon--ephemeral" :class="session.ephemeralPhase"></wa-icon>
-                <wa-icon v-if="session.draft && !processState && !session.archived" :id="rowId('session-draft')" name="file-pen" label="Draft" class="session-state-icon session-state-icon--draft"></wa-icon>
+                <wa-icon v-if="session.draft && !processState && !session.archived" :id="rowId('session-draft')" name="pencil" label="Draft" class="session-state-icon session-state-icon--draft"></wa-icon>
                 <AppTooltip deferred :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">Draft</AppTooltip>
-                <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="link-slash" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
+                <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="circle-xmark" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
                 <AppTooltip deferred :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">Session files were deleted from disk</AppTooltip>
                 <ProviderIcon v-if="showProviderIcon && providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
@@ -600,6 +602,7 @@ function handleMenuSelect(event) {
                 <AppTooltip deferred :hoist="!!idPrefix" v-if="showWorktreeIcon" :for="rowId('session-worktree')">
                     <ProjectBadge :project-id="session.project_id" :dot="false" />
                 </AppTooltip>
+                </span>
                 <ScrollableText class="session-name" :text="getSessionDisplayName(session)" />
                 <!-- Compact mode: code comments indicator -->
                 <wa-icon
@@ -829,6 +832,10 @@ function handleMenuSelect(event) {
    menu): styles/sidebar-rows.css, shared with the artifacts list. */
 .session-item-wrapper {
     padding-inline: var(--sidebar-row-inset, var(--wa-space-2xs));
+    /* The menu sits closer to the row's right edge than in the shared default (xs); the room kept
+       for it before the title and the indicators (1.5rem at the default) shrinks by the same amount. */
+    --sidebar-row-menu-right: var(--wa-space-3xs);
+    --session-menu-reserve: calc(1.5rem - var(--wa-space-xs) + var(--sidebar-row-menu-right));
 }
 
 /* Tree rows. The wrapper carries the indentation (the button keeps its base box, which the
@@ -964,8 +971,24 @@ function handleMenuSelect(event) {
 .session-name-row {
     display: flex;
     align-items: center;
-    gap: var(--wa-space-xs);
+    gap: calc(var(--wa-space-xs) * 0.75);
     min-width: 0;
+}
+
+/* Marker icons before the title (pin, state, provider, worktree): wrapped to tighten their mutual gap. */
+.session-leading-icons {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.session-leading-icons:empty {
+    display: none;
+}
+
+/* Marker icons are drawn at 75% of their former size. */
+.session-leading-icons .session-state-icon {
+    font-size: 0.75em;
 }
 
 .pinned-icon {
@@ -977,20 +1000,21 @@ function handleMenuSelect(event) {
 
 .provider-icon {
     flex-shrink: 0;
+    font-size: 0.75em;
 }
 
 /* Marker shown before the title when the session lives in a git worktree. */
 .session-worktree-icon {
     flex-shrink: 0;
     color: var(--wa-color-text-quiet);
-    font-size: 0.85em;
+    font-size: calc(0.85em * 0.75);
 }
 
 .session-name {
     font-size: var(--wa-font-size-s);
     font-weight: 700;
     /* Visual space for dropdown button */
-    margin-right: 1.5rem;
+    margin-right: var(--session-menu-reserve);
 }
 
 
@@ -1001,7 +1025,7 @@ function handleMenuSelect(event) {
     color: var(--wa-color-brand);
     font-size: var(--wa-font-size-xs);
     position: relative;
-    left: -1.5rem;
+    left: calc(-1 * var(--session-menu-reserve));
 }
 
 /* Compact mode: inline pending request indicator */
@@ -1012,7 +1036,7 @@ function handleMenuSelect(event) {
     font-size: var(--wa-font-size-xs);
     animation: pending-pulse 1.5s ease-in-out infinite;
     position: relative;
-    left: -1.5rem;
+    left: calc(-1 * var(--session-menu-reserve));
 }
 
 /* Compact mode: inline unread indicator */
@@ -1022,7 +1046,7 @@ function handleMenuSelect(event) {
     color: var(--wa-color-warning-60);
     font-size: var(--wa-font-size-xs);
     position: relative;
-    left: -1.5rem;
+    left: calc(-1 * var(--session-menu-reserve));
     /* The unread eye breathes (opacity only: kept under reduced motion). */
     animation: motion-status-pulse 2.4s ease-in-out infinite;
 }
@@ -1032,7 +1056,7 @@ function handleMenuSelect(event) {
     margin-left: auto;
     flex-shrink: 0;
     position: relative;
-    left: -1.5rem;
+    left: calc(-1 * var(--session-menu-reserve));
 }
 
 /* Unread indicator — orange eye icon (same color as warning/pending) */

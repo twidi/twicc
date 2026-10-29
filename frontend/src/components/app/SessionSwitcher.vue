@@ -147,13 +147,13 @@ useGlideInk({
                             ></wa-icon>
                             <wa-icon
                                 v-if="row.isDraft && !row.session.archived"
-                                name="file-pen"
+                                name="pencil"
                                 label="Draft"
                                 class="session-state-icon session-state-icon--draft"
                             ></wa-icon>
                             <wa-icon
                                 v-if="row.session.stale"
-                                name="link-slash"
+                                name="circle-xmark"
                                 label="Session files deleted"
                                 class="session-state-icon session-state-icon--stale"
                             ></wa-icon>

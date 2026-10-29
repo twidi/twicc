@@ -200,7 +200,7 @@ html.wa-dark .sidebar-row-list > .glide-ink {
     display: block;
     position: absolute;
     top: var(--wa-space-2xs);
-    right: var(--wa-space-xs);
+    right: var(--sidebar-row-menu-right, var(--wa-space-xs));
     z-index: 1;
 }
 .sidebar-row-wrapper--compact .sidebar-row-menu {
