@@ -1,8 +1,34 @@
 // The audio output of the text-to-speech store: one HTMLAudioElement for the whole app.
 
-/** A WAV file with no samples: playing it inside a click unlocks the element for later playback. */
-const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
+/**
+ * A silent WAV data URI: 50 ms of zero samples, 8 kHz mono, 16-bit PCM (844 bytes).
+ * Playing it inside a click unlocks the element for later playback. It carries real samples:
+ * a WAV with an empty data chunk can fail to decode, which would leave the element locked.
+ */
+export function silentWavDataUri() {
+    const sampleRate = 8000
+    const dataBytes = (sampleRate / 20) * 2
+    const view = new DataView(new ArrayBuffer(44 + dataBytes))
+    const writeTag = (offset, tag) => [...tag].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)))
+    writeTag(0, 'RIFF')
+    view.setUint32(4, 36 + dataBytes, true)
+    writeTag(8, 'WAVE')
+    writeTag(12, 'fmt ')
+    view.setUint32(16, 16, true) // fmt chunk size
+    view.setUint16(20, 1, true) // PCM
+    view.setUint16(22, 1, true) // mono
+    view.setUint32(24, sampleRate, true)
+    view.setUint32(28, sampleRate * 2, true) // byte rate
+    view.setUint16(32, 2, true) // block align
+    view.setUint16(34, 16, true) // bits per sample
+    writeTag(36, 'data')
+    view.setUint32(40, dataBytes, true)
+    // The samples stay at zero (ArrayBuffer is zero-filled).
+    const binary = String.fromCharCode(...new Uint8Array(view.buffer))
+    return `data:audio/wav;base64,${btoa(binary)}`
+}
 
+let silentWav = null
 let playerFactory = null
 
 /** Tests only: make `createSpeechPlayer()` return `factory()` instead of the real player. */
@@ -44,7 +70,8 @@ function createAudioElementPlayer() {
     return {
         prime() {
             detach()
-            audio.src = SILENT_WAV
+            silentWav ??= silentWavDataUri()
+            audio.src = silentWav
             audio.play()?.catch(() => {})
         },
 

@@ -121,9 +121,12 @@ test('stop during loading resolves as aborted without error', async () => {
 
 test('ignores a response that lands after a newer play', async () => {
     const resolvers = []
-    store._requestSpeech = (body) => new Promise(resolve => { resolvers.push({ text: body.text, resolve }) })
+    store._requestSpeech = (body, signal) => new Promise(resolve => { resolvers.push({ text: body.text, signal, resolve }) })
     const first = store.play('a')
+    assert.equal(resolvers[0].signal.aborted, false)
     const second = store.play('b')
+    assert.equal(resolvers[0].signal.aborted, true)
+    assert.equal(resolvers[1].signal.aborted, false)
     resolvers[1].resolve(audioResponse('b-audio'))
     assert.deepEqual(await second, { ok: true })
     resolvers[0].resolve(audioResponse('a-audio'))
@@ -250,6 +253,18 @@ test('applyConfig fills the state from the payload', () => {
     assert.equal(store.envPath, '/data/.env')
     assert.equal(store.activeConfig.id, 'c1')
     assert.equal(store.available, true)
+})
+
+test('mutations never touch the applied payload', () => {
+    const received = payload({ configs: [makeConfig('c1'), makeConfig('c2')] })
+    const snapshot = structuredClone(received)
+    store.applyConfig(received)
+    store.addConfig()
+    store.duplicateConfig('c1')
+    store.updateConfig('c2', { voice: 'other' })
+    store.markValidated('c2', { ...FIELDS, voice: 'other' })
+    store.deleteConfig('c1')
+    assert.deepEqual(received, snapshot)
 })
 
 test('activate refuses an unvalidated config; markValidated checks the tested fields', () => {

@@ -137,7 +137,8 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
          */
         applyConfig(payload) {
             const config = payload?.config ?? {}
-            this.configs = Array.isArray(config.configs) ? config.configs : []
+            // Copies: the mutations below never touch the payload received.
+            this.configs = Array.isArray(config.configs) ? config.configs.map(entry => ({ ...entry })) : []
             this.activeId = config.active_id ?? null
             this.keyPresent = Boolean(payload?.key_present)
             this.envPath = payload?.env_path ?? ''
