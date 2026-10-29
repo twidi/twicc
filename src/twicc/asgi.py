@@ -69,6 +69,7 @@ from twicc.synced_settings import _settings_lock, prepare_settings_for_client, r
 from twicc.workspaces import read_workspaces
 from twicc.layouts import read_layouts
 from twicc.message_snippets import read_message_snippets_config, write_message_snippets_config
+from twicc.tts.config import read_tts_config, tts_client_payload, write_tts_config
 from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
 from twicc.seen_help import read_seen_help, write_seen_help
 from twicc.seen_tips import read_seen_tips, write_seen_tips
@@ -734,6 +735,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             message_snippets = await sync_to_async(read_message_snippets_config)()
             await self.send_json({"type": "message_snippets_updated", "config": message_snippets})
 
+        if self._should_send("tts_config_updated"):
+            tts_config = await sync_to_async(read_tts_config)()
+            await self.send_json({"type": "tts_config_updated", **tts_client_payload(tts_config)})
+
         if self._should_send("workspaces_updated"):
             workspaces = await sync_to_async(read_workspaces)()
             await self.send_json({"type": "workspaces_updated", "workspaces": workspaces.get("workspaces", [])})
@@ -967,6 +972,9 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
         elif msg_type == "update_message_snippets":
             await self._handle_update_message_snippets(content)
+
+        elif msg_type == "update_tts_config":
+            await self._handle_update_tts_config(content)
 
         elif msg_type == "update_agent_settings_presets":
             await self._handle_update_agent_settings_presets(content)
@@ -2220,6 +2228,27 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "data": {
                     "type": "message_snippets_updated",
                     "config": config,
+                },
+            },
+        )
+
+    async def _handle_update_tts_config(self, content: dict) -> None:
+        """Handle text-to-speech configs update from client."""
+        config = content.get("config")
+        if not isinstance(config, dict):
+            logger.warning("Invalid TTS config update: config is not a dict")
+            return
+
+        normalized = await sync_to_async(write_tts_config)(config)
+
+        # Broadcast the normalized configs to all connected clients
+        await self.channel_layer.group_send(
+            "updates",
+            {
+                "type": "broadcast",
+                "data": {
+                    "type": "tts_config_updated",
+                    **tts_client_payload(normalized),
                 },
             },
         )

@@ -3820,7 +3820,7 @@ async def bootstrap(request):
     """GET /api/bootstrap/ - All data needed before the app can mount.
 
     Returns synced settings (with defaults and categories), workspaces,
-    terminal config, and message snippets in a single response so the
+    terminal config, message snippets and TTS configs in a single response so the
     frontend doesn't have to wait for the WebSocket connection.
     """
     from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
@@ -3830,6 +3830,7 @@ async def bootstrap(request):
     from twicc.synced_settings import SYNCED_SETTINGS_DEFAULTS, prepare_settings_for_client, read_synced_settings
     from twicc.terminal_config import read_terminal_config
     from twicc.tips_manifest import manifest_to_dict
+    from twicc.tts.config import read_tts_config, tts_client_payload
     from twicc.workspaces import read_workspaces
 
     # Bootstrap reads several user config / settings JSON files plus
@@ -3844,6 +3845,7 @@ async def bootstrap(request):
     workspaces_data = await asyncio.to_thread(read_workspaces)
     terminal_config = await asyncio.to_thread(read_terminal_config)
     message_snippets = await asyncio.to_thread(read_message_snippets_config)
+    tts_config = await asyncio.to_thread(read_tts_config)
     seen_tips = await asyncio.to_thread(read_seen_tips)
     tips_manifest = await asyncio.to_thread(manifest_to_dict)
     seen_help = await asyncio.to_thread(read_seen_help)
@@ -3882,6 +3884,7 @@ async def bootstrap(request):
         "workspaces": workspaces_data.get("workspaces", []),
         "terminal_config": terminal_config,
         "message_snippets": message_snippets,
+        "tts": tts_client_payload(tts_config),
         "seen_tips": seen_tips,
         "tips_manifest": tips_manifest,
         "tips_default_enabled": settings.TIPS_DEFAULT_ENABLED,

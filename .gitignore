@@ -311,6 +311,7 @@ drop-requests/
 settings.json
 terminal-config.json
 message-snippets.json
+tts.json
 workspaces.json
 layouts.json
 seen-tips.json

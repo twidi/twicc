@@ -36,6 +36,7 @@ COVERED_FILENAMES: frozenset[str] = frozenset({
     "seen-tips.json",
     "seen-help.json",
     "api-tokens.json",
+    "tts.json",
     ".env",
     "secret-key",
 })

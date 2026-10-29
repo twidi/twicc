@@ -33,7 +33,7 @@ def _tokens(name: str, last_used_at: str) -> bytes:
 def test_covered_names():
     for name in ("settings.json", "workspaces.json", "layouts.json", "message-snippets.json",
                  "terminal-config.json", "codex-settings-presets.json", "claude_code-settings-presets.json",
-                 "seen-tips.json", "seen-help.json", "api-tokens.json", ".env", "secret-key"):
+                 "seen-tips.json", "seen-help.json", "api-tokens.json", "tts.json", ".env", "secret-key"):
         assert data_backups.is_covered(name), name
     for name in ("providers-status.json", "telemetry.json", "twicc.info.json", "twicc.heartbeat",
                  "settings.json.lock", "settings.json.ab12.tmp", "tmpab12.tmp", "secret-key.tmp", "backups"):

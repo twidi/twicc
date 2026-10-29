@@ -343,6 +343,11 @@ def get_message_snippets_config_path() -> Path:
     return get_data_dir() / "message-snippets.json"
 
 
+def get_tts_config_path() -> Path:
+    """Path to the text-to-speech configs file (``<data_dir>/tts.json``)."""
+    return get_data_dir() / "tts.json"
+
+
 def get_workspaces_path() -> Path:
     """Path to the workspaces definition file."""
     return get_data_dir() / "workspaces.json"
