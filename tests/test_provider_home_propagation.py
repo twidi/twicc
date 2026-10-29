@@ -176,6 +176,7 @@ def test_registry_purge_drops_the_openrouter_key():
     get_provider_helpers_registry().purge_env_vars(env)
     assert "TWICC_OPENROUTER_API_KEY" not in env
 
+
 def test_cli_package_loads_the_env_before_any_command_module():
     """``cli/__init__.py`` calls ``ensure_env_loaded()`` before importing ``twicc.cli.*``."""
     import twicc.cli as cli_package

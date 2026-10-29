@@ -170,6 +170,17 @@ def test_inherited_secret_key_is_dropped_without_logging_its_value(env_loader):
     assert os.environ["TWICC_OPENROUTER_API_KEY"] == "sk-or-inherited"
 
 
+def test_secret_in_file_wins_and_the_inherited_one_is_still_dropped(env_loader):
+    os.environ["TWICC_OPENROUTER_API_KEY"] = "sk-or-inherited"
+    env_loader.write_text("TWICC_OPENROUTER_API_KEY=sk-or-file\n")
+    paths.ensure_env_loaded()
+    assert paths.get_env_secret("TWICC_OPENROUTER_API_KEY") == "sk-or-file"
+    assert "TWICC_OPENROUTER_API_KEY" not in os.environ
+    assert not any(
+        "sk-or-inherited" in w or "sk-or-file" in w for w in paths.get_env_load_warnings()
+    )
+
+
 def test_empty_secret_reads_as_absent(env_loader):
     env_loader.write_text("TWICC_OPENROUTER_API_KEY=\n")
     paths.ensure_env_loaded()
