@@ -20,13 +20,10 @@ export class SpeechCache {
 
     /** The cached blob, or null when absent or expired. */
     get(key) {
+        this._dropExpired()
         const entry = this._entries.get(key)
         if (!entry) return null
         this._entries.delete(key)
-        if (this._now() - entry.storedAt >= this._ttlMs) {
-            this._totalBytes -= entry.blob.size
-            return null
-        }
         this._entries.set(key, entry)
         return entry.blob
     }

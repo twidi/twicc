@@ -89,6 +89,7 @@ test('availability needs the key, an active config, and its validation', () => {
     assert.equal(isTtsAvailable({ keyPresent: true, configs, activeId: 'b' }), false)
     assert.equal(isTtsAvailable({ keyPresent: true, configs, activeId: 'missing' }), false)
     assert.equal(isTtsAvailable({ keyPresent: true, configs: [], activeId: 'a' }), false)
+    assert.equal(isTtsAvailable({ keyPresent: true, configs: undefined, activeId: 'a' }), false)
 })
 
 test('duplicate keeps the validation and is named "(copy)"', () => {
@@ -98,6 +99,8 @@ test('duplicate keeps the validation and is named "(copy)"', () => {
     assert.equal(copy.name, 'Kore (copy)')
     assert.deepEqual(speechFieldsOf(copy), speechFieldsOf(config))
     assert.equal(isConfigValidated(copy), true)
+    assert.deepEqual(copy.validated, config.validated)
+    assert.notEqual(copy.validated, config.validated)
     assert.notEqual(copy, config)
     assert.equal(config.id, 'a')
 })

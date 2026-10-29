@@ -41,13 +41,13 @@ export function patchTtsConfig(config, patch) {
 }
 
 export function duplicateTtsConfig(config, id) {
-    return { ...config, id, name: `${config.name} (copy)` }
+    return { ...config, id, name: `${config.name} (copy)`, validated: config.validated && { ...config.validated } }
 }
 
 /** The message buttons show only with the key, an active config, and its validation. */
 export function isTtsAvailable({ keyPresent, configs, activeId }) {
     if (!keyPresent || activeId == null) return false
-    const active = configs.find(config => config.id === activeId)
+    const active = (configs ?? []).find(config => config.id === activeId)
     return isConfigValidated(active)
 }
 

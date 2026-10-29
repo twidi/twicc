@@ -10,6 +10,17 @@ test('reading an entry does not extend its lifetime', () => {
     t = 1000; assert.equal(cache.get('a'), null)
 })
 
+test('a read releases every expired entry', () => {
+    let t = 0
+    const cache = new SpeechCache({ ttlMs: 1000, now: () => t })
+    cache.set('a', new Blob(['xx']))
+    cache.set('b', new Blob(['yyy']))
+    assert.equal(cache.totalBytes, 5)
+    t = 1000
+    assert.equal(cache.get('a'), null)
+    assert.equal(cache.totalBytes, 0)
+})
+
 test('cache stores and returns a blob', () => {
     const cache = new SpeechCache()
     const blob = new Blob(['abc'])
