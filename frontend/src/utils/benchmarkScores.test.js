@@ -30,10 +30,10 @@ function row(model, ii, { effort = 'high', provider = 'codex', evals = {} } = {}
 }
 const key = r => scoreKey(r.provider, r.model, r.effort)
 
-test('exposes the 7 task types in order, general first', () => {
-    assert.deepEqual(TASK_TYPES.map(t => t.id), ['general', 'coding', 'office', 'automation', 'science', 'knowledge', 'longdocs'])
+test('exposes the 6 task types in order, general first', () => {
+    assert.deepEqual(TASK_TYPES.map(t => t.id), ['general', 'coding', 'office', 'automation', 'science', 'knowledge'])
     assert.equal(TASK_TYPES[0].evals, null)
-    assert.equal(EVAL_KEYS.length, 10)
+    assert.equal(EVAL_KEYS.length, 9)
 })
 
 test('general uses the Intelligence Index and Terminal-Bench 4.0 cost / time', () => {
@@ -44,23 +44,23 @@ test('general uses the Intelligence Index and Terminal-Bench 4.0 cost / time', (
 test('normalizes Elo and Omniscience scores to 0..100', () => {
     const r = row('m', 50, {
         evals: {
-            aa_briefcase: { score: 1500 }, gdpval_aa: { score: 1300 }, gdp_pdf: { score: 0.3 },
+            aa_briefcase: { score: 1500 }, gdp_pdf: { score: 0.3 },
             aa_omniscience: { score: 20 },
         },
     })
-    assert.ok(Math.abs(typeMetrics(r, 'office').ability - 40) < 1e-9) // mean(0.5, 0.4, 0.3)
+    assert.ok(Math.abs(typeMetrics(r, 'office').ability - 40) < 1e-9) // mean(0.5, 0.3)
     assert.ok(Math.abs(typeMetrics(r, 'knowledge').ability - 60) < 1e-9) // (20 + 100) / 200
 })
 
 test('averages cost and time over the type evaluations', () => {
-    const r = row('m', 50, { evals: { terminalbench_4_0: { cost_usd: 5, time_s: 600 }, scicode: { cost_usd: 1, time_s: 10 } } })
+    const r = row('m', 50, { evals: { terminalbench_4_0: { cost_usd: 5, time_s: 600 }, frontiercode_2_0: { cost_usd: 1, time_s: 10 } } })
     assert.deepEqual(typeMetrics(r, 'coding'), { ability: 50, cost: 3, time: 305 })
 })
 
 test('a null score nulls the ability, a null cost or time nulls only that value', () => {
-    const noScore = row('m', 50, { evals: { scicode: { score: null } } })
+    const noScore = row('m', 50, { evals: { frontiercode_2_0: { score: null } } })
     assert.equal(typeMetrics(noScore, 'coding').ability, null)
-    const noTime = row('m', 50, { evals: { scicode: { time_s: null } } })
+    const noTime = row('m', 50, { evals: { frontiercode_2_0: { time_s: null } } })
     assert.deepEqual(typeMetrics(noTime, 'coding'), { ability: 50, cost: 1, time: null })
 })
 
@@ -91,7 +91,7 @@ test('general tolerance is 2 points: 2 below the target at equal cost scores 50'
 
 test('the tolerance scales with the type range', () => {
     // coding abilities 20 / 40 / 39 (range 20); general 20 / 60 / 40 (range 40) → tolerance 1.
-    const coding = (a) => ({ terminalbench_4_0: { score: a }, scicode: { score: a } })
+    const coding = (a) => ({ terminalbench_4_0: { score: a }, frontiercode_2_0: { score: a } })
     const rows = [row('x', 20, { evals: coding(0.2) }), row('y', 60, { evals: coding(0.4) }), row('z', 40, { evals: coding(0.39) })]
     const s = computeBenchmarkScores(rows, opts({ taskType: 'coding', difficulty: 100 }), ALL)
     assert.equal(s.get(key(rows[1])).score, 100)
@@ -128,7 +128,7 @@ test('degenerate cases return safe results', () => {
     assert.equal(s.get(key(flat[0])).target, 50)
     assert.deepEqual(flat.map(r => s.get(key(r)).score), [100, 50])
     // Flat general range, spread coding range: tolerance stays 2.
-    const coding = (a) => ({ terminalbench_4_0: { score: a }, scicode: { score: a } })
+    const coding = (a) => ({ terminalbench_4_0: { score: a }, frontiercode_2_0: { score: a } })
     const g = [row('p', 50, { evals: coding(0.2) }), row('q', 50, { evals: coding(0.6) }), row('r', 50, { evals: coding(0.58) })]
     const sg = computeBenchmarkScores(g, opts({ taskType: 'coding', difficulty: 100 }), ALL)
     assert.equal(sg.get(key(g[2])).score, 50)
@@ -243,12 +243,12 @@ test('formats cost and time as the spec says', () => {
     assert.equal(formatTime(null), '—')
 })
 
-// Opus 5.5 high, as in Appendix A (only the evaluations the checks use).
-const opusHigh = row('claude-opus-5-5', 53.58, {
+// Opus 5.5 high, from the 2026-10-29 snapshot (only the evaluations the checks use).
+const opusHigh = row('claude-opus-5-5', 51.69, {
     provider: 'claude_code',
     evals: {
-        terminalbench_4_0: { score: 0.566, cost_usd: 5.12, time_s: 696 },
-        scicode: { score: 0.604, cost_usd: 0.0402, time_s: 9.14 },
+        terminalbench_4_0: { score: 0.566, cost_usd: 5.12, time_s: 777 },
+        frontiercode_2_0: { score: 0.359, cost_usd: 2.49, time_s: 331 },
     },
 })
 
@@ -256,10 +256,10 @@ test('details for general', () => {
     const d = formatBenchmarkDetails(opusHigh, { score: 43, target: 45.98 }, 'general')
     assert.deepEqual(d.map(x => [x.label, x.value]), [
         ['Score', '43'],
-        ['Intelligence Index', '53.6'],
+        ['Intelligence Index', '51.7'],
         ['Target', '46.0'],
         ['Cost / task', '$5.12'],
-        ['Time / task', '11.6 min'],
+        ['Time / task', '12.9 min'],
     ])
     for (const x of d) assert.ok(x.description.length > 0)
 })
@@ -268,10 +268,10 @@ test('details for coding', () => {
     const d = formatBenchmarkDetails(opusHigh, { score: 56, target: 50.51 }, 'coding')
     assert.deepEqual(d.map(x => [x.label, x.value]), [
         ['Score', '56'],
-        ['Coding & terminal score', '58.5'],
+        ['Coding & terminal score', '46.3'],
         ['Target', '50.5'],
-        ['Cost / task', '$2.58'],
-        ['Time / task', '5.9 min'],
+        ['Cost / task', '$3.81'],
+        ['Time / task', '9.2 min'],
     ])
 })
 
@@ -280,16 +280,16 @@ const data = JSON.parse(readFileSync(new URL('../data/modelBenchmarks.json', imp
 // Appendix B of the design doc (tolerance 4, square penalty, 2^-d score); the
 // values below follow the tuned model (tolerance 2, 4th-power penalty,
 // 100 / (1 + log2(1 + d)) score) and were computed by an independent script
-// on the 2026-10-09 snapshot.
+// on the 2026-10-29 snapshot (Intelligence Index v5.0).
 const REFERENCE_CASES = [
-    ['general', 'cost', 0, 21.01, ['codex gpt-6-luna low', 100], ['codex gpt-5.6-luna low', 48]],
-    ['general', 'cost', 50, 46.02, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 66]],
-    ['general', 'cost', 100, 57.62, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 84]],
-    ['general', 'speed', 50, 46.02, ['codex gpt-6-astra low', 100], ['claude_code claude-sonnet-5-5 high', 65]],
-    ['coding', 'cost', 50, 50.51, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-sol high', 66]],
-    ['office', 'cost', 100, 53.40, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-sonnet-5-5 max', 59]],
-    ['knowledge', 'speed', 0, 42.65, ['claude_code claude-sonnet-5 low', 100], ['claude_code claude-sonnet-5 medium', 48]],
-    ['longdocs', 'cost', 100, 85.30, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-opus-5-5 max', 81]],
+    ['general', 'cost', 0, 9.67, ['codex gpt-6-luna low', 100], ['codex gpt-6-luna medium', 31]],
+    ['general', 'cost', 50, 42.96, ['codex gpt-6.1-terra high', 100], ['codex gpt-6.1-sol medium', 64]],
+    ['general', 'cost', 100, 58.41, ['claude_code claude-opus-5-5 xhigh', 100], ['codex gpt-6-astra max', 91]],
+    ['general', 'speed', 50, 42.96, ['codex gpt-6-astra low', 100], ['codex gpt-6.1-terra high', 69]],
+    ['coding', 'cost', 50, 36.55, ['codex gpt-6.1-terra high', 100], ['codex gpt-6.1-sol medium', 72]],
+    ['office', 'cost', 100, 45.65, ['claude_code claude-opus-5-5 xhigh', 100], ['claude_code claude-sonnet-5-5 max', 61]],
+    ['knowledge', 'speed', 0, 40.95, ['claude_code claude-fable-5-1 low', 100], ['codex gpt-6.1-terra low', 85]],
+    ['science', 'cost', 50, 47.17, ['codex gpt-6.1-sol medium', 100], ['codex gpt-6.1-terra xhigh', 72]],
 ]
 
 test('reproduces the reference cases on the real snapshot', () => {
@@ -302,6 +302,5 @@ test('reproduces the reference cases on the real snapshot', () => {
         assert.deepEqual([ranked[1][0], ranked[1][1].score], second, label)
     }
     const speed = computeBenchmarkScores(data.rows, { taskType: 'general', difficulty: 50, favor: 'speed' }, ALL)
-    assert.equal(speed.has('codex gpt-6-sol medium'), false)
     assert.equal(speed.has('codex gpt-6-luna medium'), false)
 })

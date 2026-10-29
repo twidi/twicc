@@ -4,7 +4,9 @@
  * Spec: docs/plans/2026-09-23-artificial-analysis-benchmark-scores-design.md §4.
  * Tuned since the spec: tolerance 2 (was 4), 4th-power penalty (was squared),
  * score 100 / (1 + log2(1 + d)) (was 100 × 2^-d); older models only form the
- * scoring reference while shown (was: always); no "Based on" detail row.
+ * scoring reference while shown (was: always); no "Based on" detail row;
+ * Intelligence Index v5.0 evaluations (was v4.3), 6 task types ("Long
+ * documents" dropped: AA-LCR left the index with its cost and time).
  * Rows come from the frozen Artificial Analysis snapshot
  * (``data/modelBenchmarks.json``). The user picks a task type, a difficulty and
  * whether to favor cost or speed. The difficulty sets a target on the task
@@ -35,36 +37,34 @@ export const PENALTY_EXPONENT = 4
 
 // The Artificial Analysis evaluation keys of a snapshot row, with their display
 // names (the keys drive TASK_TYPES and the data tests; the help page lists the names).
+// The nine evaluations of the Intelligence Index v5.0.
 export const EVAL_LABELS = {
     terminalbench_4_0: 'Terminal-Bench 4.0',
-    scicode: 'SciCode',
+    frontiercode_2_0: 'FrontierCode 2.0',
     aa_briefcase: 'AA-Briefcase',
-    gdpval_aa: 'GDPval-AA',
     gdp_pdf: 'GDP.pdf',
     automationbench_aa: 'AutomationBench-AA',
-    humanitys_last_exam: "Humanity's Last Exam",
-    critpt: 'CritPt',
+    hle_diamond: 'HLE Diamond',
+    critpt_v2_hard: 'CritPt v2 Hard',
+    terminal_bench_science: 'Terminal-Bench-Science',
     aa_omniscience: 'AA-Omniscience',
-    aa_lcr: 'AA-LCR',
 }
 
 // Task types, in display order. ``evals: null`` = the Intelligence Index, with
 // Terminal-Bench 4.0 cost and time.
 export const TASK_TYPES = [
     { id: 'general', label: 'General (Intelligence Index)', evals: null },
-    { id: 'coding', label: 'Coding & terminal', evals: ['terminalbench_4_0', 'scicode'] },
-    { id: 'office', label: 'Office & knowledge work', evals: ['aa_briefcase', 'gdpval_aa', 'gdp_pdf'] },
+    { id: 'coding', label: 'Coding & terminal', evals: ['terminalbench_4_0', 'frontiercode_2_0'] },
+    { id: 'office', label: 'Office & knowledge work', evals: ['aa_briefcase', 'gdp_pdf'] },
     { id: 'automation', label: 'Automation & tools', evals: ['automationbench_aa'] },
-    { id: 'science', label: 'Science & reasoning', evals: ['humanitys_last_exam', 'critpt', 'scicode'] },
+    { id: 'science', label: 'Science & reasoning', evals: ['hle_diamond', 'critpt_v2_hard', 'terminal_bench_science'] },
     { id: 'knowledge', label: 'Factual knowledge', evals: ['aa_omniscience'] },
-    { id: 'longdocs', label: 'Long documents', evals: ['aa_lcr'] },
 ]
 
 // Evaluation scores not already a 0..1 rate: Elo as Artificial Analysis converts
 // it, and the Omniscience index from -100..100.
 const EVAL_NORMALIZERS = {
     aa_briefcase: s => (s - 500) / 2000,
-    gdpval_aa: s => (s - 500) / 2000,
     aa_omniscience: s => (s + 100) / 200,
 }
 
