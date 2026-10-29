@@ -67,6 +67,7 @@ function tagWithClass(template, className) {
 
 const SESSIONS = '../components/session/list/SessionListItem.vue'
 const ARTIFACTS = '../components/artifacts/ArtifactBookmarkList.vue'
+const MENU = '../components/ui/LazyRowMenu.vue'
 const css = read('sidebar-rows.css')
 const cssStripped = stripComments(css)
 const rules = parseFlat(css)
@@ -154,8 +155,7 @@ test('4. both components put the shared classes on their row elements', () => {
     assert.match(sRow, /class="session-item sidebar-row"/)
     assert.match(sRow, /'sidebar-row--active': showActiveStyle,/)
     assert.match(sRow, /'sidebar-row--highlighted': highlighted/)
-    assert.match(tagWithClass(sessions, 'sidebar-row-menu'), /class="session-menu sidebar-row-menu"/)
-    assert.match(tagWithClass(sessions, 'sidebar-row-menu-trigger'), /class="session-menu-trigger sidebar-row-menu-trigger"/)
+    assert.match(collapse(sessions), /<LazyRowMenu [^>]*menu-class="session-menu" trigger-class="session-menu-trigger"/)
 
     const artifacts = templateOf(read(ARTIFACTS))
     const aWrapper = tagWithClass(artifacts, 'sidebar-row-wrapper')
@@ -167,8 +167,18 @@ test('4. both components put the shared classes on their row elements', () => {
     assert.match(aRow, /class="bookmark-item sidebar-row"/)
     assert.match(aRow, /'sidebar-row--active': isActive\(b\),/)
     assert.match(aRow, /'sidebar-row--highlighted': index === highlightedIndex,/)
-    assert.match(tagWithClass(artifacts, 'sidebar-row-menu'), /class="bookmark-menu sidebar-row-menu"/)
-    assert.match(tagWithClass(artifacts, 'sidebar-row-menu-trigger'), /class="bookmark-menu-trigger sidebar-row-menu-trigger"/)
+    assert.match(collapse(artifacts), /<LazyRowMenu [^>]*menu-class="bookmark-menu" trigger-class="bookmark-menu-trigger"/)
+
+    // The shared menu component puts the shared classes on both of its forms: the bare
+    // trigger of a closed row and the mounted dropdown.
+    const menu = templateOf(read(MENU))
+    const tags = collapse(menu).match(/<[\w-]+\b(?:[^>"]|"[^"]*")*>/g) ?? []
+    const withClass = (name) => tags.filter((t) => (t.match(/\sclass="([^"]*)"/)?.[1] ?? '').split(/\s+/).includes(name))
+    assert.deepEqual(withClass('sidebar-row-menu').map((t) => t.match(/^<([\w-]+)/)[1]), ['wa-dropdown', 'span'])
+    assert.deepEqual(withClass('sidebar-row-menu-trigger').map((t) => t.match(/^<([\w-]+)/)[1]), ['wa-button', 'wa-button'])
+    for (const tag of [...withClass('sidebar-row-menu'), ...withClass('sidebar-row-menu-trigger')]) {
+        assert.ok(tag.includes(':class="menuClass"') || tag.includes(':class="triggerClass"'), tag)
+    }
 })
 
 test('5. neither component keeps a copy of the moved rules', () => {

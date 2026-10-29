@@ -16,8 +16,8 @@ test('row namespaces every tooltip target and preserves default IDs', () => {
     assert.ok(targets.length > 10)
     for (const target of targets) assert.ok(ids.includes(target), target)
     assert.doesNotMatch(source, /:id="`|:for="`/)
-    assert.match(source, /<wa-dropdown\s+v-if="showMenu"/)
-    assert.match(source, /<AppTooltip v-if="showMenu"[^>]*session-menu-trigger/)
+    assert.match(source, /<LazyRowMenu\s+v-if="showMenu"\s+:trigger-id="rowId\('session-menu-trigger'\)"/)
+    assert.match(source, /<LazyRowMenu[^>]*:hoist-tooltip="!!idPrefix"/)
     assert.match(source, /inject\('openRenameDialog', null\)/)
 })
 

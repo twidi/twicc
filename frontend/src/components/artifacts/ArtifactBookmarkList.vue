@@ -37,6 +37,7 @@ import { SESSION_TIME_FORMAT } from '../../constants'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import ProjectMark from '../project/ProjectMark.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
+import LazyRowMenu from '../ui/LazyRowMenu.vue'
 import ScrollableText from '../ui/ScrollableText.vue'
 import ArtifactBookmarkDialog from './ArtifactBookmarkDialog.vue'
 import ArtifactsHelpButton from './ArtifactsHelpButton.vue'
@@ -659,22 +660,14 @@ defineExpose({ handleKeyNavigation })
             </wa-button>
             <!-- Row actions menu (outside the button to avoid nesting), mirroring
                  the ArtifactsBrowserView header. Share is gated on a configured
-                 share host. -->
-            <wa-dropdown
-                class="bookmark-menu sidebar-row-menu"
-                placement="bottom-end"
-                @wa-select="(e) => handleMenuSelect(e, b)"
+                 share host. Mounted on first use. -->
+            <LazyRowMenu
+                :trigger-id="`bookmark-menu-trigger-${b.id}`"
+                label="Artifact actions"
+                menu-class="bookmark-menu"
+                trigger-class="bookmark-menu-trigger"
+                @select="(e) => handleMenuSelect(e, b)"
             >
-                <wa-button
-                    :id="`bookmark-menu-trigger-${b.id}`"
-                    slot="trigger"
-                    variant="neutral"
-                    appearance="plain"
-                    size="small"
-                    class="bookmark-menu-trigger sidebar-row-menu-trigger"
-                >
-                    <wa-icon name="ellipsis-v" label="Artifact actions"></wa-icon>
-                </wa-button>
                 <wa-dropdown-item value="edit">
                     <wa-icon slot="icon" name="pencil"></wa-icon>
                     Edit…
@@ -692,8 +685,7 @@ defineExpose({ handleKeyNavigation })
                     <wa-icon slot="icon" name="trash"></wa-icon>
                     Remove bookmark
                 </wa-dropdown-item>
-            </wa-dropdown>
-            <AppTooltip :for="`bookmark-menu-trigger-${b.id}`">Artifact actions</AppTooltip>
+            </LazyRowMenu>
             </div>
             </div>
         </div>

@@ -1689,6 +1689,7 @@ function onHide(event) {
                                 compact-view
                                 show-project-name
                                 :show-title-tooltip="false"
+                                :show-menu="false"
                                 @select="selectedSessionId = row.session.id"
                             />
                         </template>
@@ -1958,9 +1959,6 @@ function onHide(event) {
        form shows. The picker is always wide enough for the full form. */
     container-type: inline-size;
 }
-/* The rows are real SessionListItems (visuals owned by the component). Only
-   the session-actions "…" menu is out of place in a delivery picker. */
-.pr-picker :deep(.session-menu) { display: none !important; }
 .pr-empty { color: var(--wa-color-text-quiet); padding: var(--wa-space-s); margin: 0; }
 .pr-picker-more {
     display: flex;

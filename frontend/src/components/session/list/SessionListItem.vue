@@ -37,6 +37,7 @@ import ProcessDuration from '../../ui/ProcessDuration.vue'
 import ProcessActivityIndicator from '../../ui/ProcessActivityIndicator.vue'
 import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
+import LazyRowMenu from '../../ui/LazyRowMenu.vue'
 import ScrollableText from '../../ui/ScrollableText.vue'
 import { getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
@@ -732,23 +733,16 @@ function handleMenuSelect(event) {
             </div>
         </wa-button>
         <AppTooltip :hoist="!!idPrefix" v-if="showTitleTooltip" :for="rowId('session-button')" placement="right">{{ session.title || session.id }}</AppTooltip>
-        <!-- Session dropdown menu (outside button to avoid nesting issues) -->
-        <wa-dropdown
+        <!-- Session dropdown menu (outside button to avoid nesting issues), mounted on first use -->
+        <LazyRowMenu
             v-if="showMenu"
-            class="session-menu sidebar-row-menu"
-            placement="bottom-end"
-            @wa-select="handleMenuSelect"
+            :trigger-id="rowId('session-menu-trigger')"
+            label="Session actions"
+            menu-class="session-menu"
+            trigger-class="session-menu-trigger"
+            :hoist-tooltip="!!idPrefix"
+            @select="handleMenuSelect"
         >
-            <wa-button
-                :id="rowId('session-menu-trigger')"
-                slot="trigger"
-                variant="neutral"
-                appearance="plain"
-                size="small"
-                class="session-menu-trigger sidebar-row-menu-trigger"
-            >
-                <wa-icon name="ellipsis-v" label="Session menu"></wa-icon>
-            </wa-button>
             <!-- Standard actions -->
             <wa-dropdown-item v-if="!session.ephemeral || session.draft" value="rename">
                 <wa-icon slot="icon" name="pencil"></wa-icon>
@@ -825,8 +819,7 @@ function handleMenuSelect(event) {
                     </span>
                 </span>
             </wa-dropdown-item>
-        </wa-dropdown>
-        <AppTooltip v-if="showMenu" :hoist="!!idPrefix" :for="rowId('session-menu-trigger')">Session actions</AppTooltip>
+        </LazyRowMenu>
     </div>
 </template>
 
