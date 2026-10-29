@@ -20,6 +20,7 @@
  *     sidebar-row-menu / sidebar-row-menu-trigger (styles/sidebar-rows.css).
  *   - placement: the dropdown placement.
  *   - hoistTooltip: forwarded to the tooltip's `hoist`.
+ *   - deferredTooltip: forwarded to the tooltip's `deferred` (AppTooltip).
  *
  * Emits `select` with the wa-select event.
  */
@@ -33,6 +34,7 @@ defineProps({
     triggerClass: { type: String, default: '' },
     placement: { type: String, default: 'bottom-end' },
     hoistTooltip: { type: Boolean, default: false },
+    deferredTooltip: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select'])
@@ -88,5 +90,5 @@ async function mountMenu() {
     </span>
     <!-- Keyed on the mount: wa-tooltip resolves its `for` anchor only when it connects,
          and the mount replaces the trigger button. -->
-    <AppTooltip :key="menuMounted" :hoist="hoistTooltip" :for="triggerId">{{ label }}</AppTooltip>
+    <AppTooltip :key="menuMounted" :deferred="deferredTooltip" :hoist="hoistTooltip" :for="triggerId">{{ label }}</AppTooltip>
 </template>

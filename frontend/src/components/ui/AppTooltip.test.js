@@ -30,6 +30,8 @@ function fixture(trigger = 'manual', runtime = null) {
         useSettingsStore: () => ({ isTouchDevice: true }), computed: fn => ({ get value() { return fn() } }),
         ref: () => ({ value: null }), watch: (_, callback) => { watcher = callback },
         onBeforeUnmount: callback => { cleanup = callback },
+        // Deferred mode has its own tests (AppTooltip.deferred.test.js).
+        useAttrs: () => ({}), onMounted: () => {}, onUpdated: () => {},
     })
     const api = createApi()
     const hooks = runtime ? runtime.takeHooks() : { watcher, cleanup }

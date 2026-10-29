@@ -577,18 +577,18 @@ function handleMenuSelect(event) {
                     :icon-url="store.resolvedProjectIcons[session.project_id] || null"
                     :color="projectDotColor"
                 />
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && effectiveShowProjectName" :for="rowId('compact-project-dot')">
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && effectiveShowProjectName" :for="rowId('compact-project-dot')">
                     <ProjectBadge v-if="isProjectWorktree" :project-id="session.project_id" :dot="false" />
                     <template v-else>{{ projectPathTitle(store.getProject(session.project_id)) || store.getProjectDisplayName(session.project_id) }}</template>
                 </AppTooltip>
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
                 <wa-icon v-if="session.archived" :id="rowId('session-archived')" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="session.archived" :for="rowId('session-archived')">Archived</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.archived" :for="rowId('session-archived')">Archived</AppTooltip>
                 <wa-icon v-if="session.ephemeral && !session.archived" name="ghost" label="Ephemeral session" class="session-state-icon session-state-icon--ephemeral" :class="session.ephemeralPhase"></wa-icon>
                 <wa-icon v-if="session.draft && !processState && !session.archived" :id="rowId('session-draft')" name="file-pen" label="Draft" class="session-state-icon session-state-icon--draft"></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">Draft</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">Draft</AppTooltip>
                 <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="link-slash" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">Session files were deleted from disk</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">Session files were deleted from disk</AppTooltip>
                 <ProviderIcon v-if="showProviderIcon && providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
                     v-if="showWorktreeIcon"
@@ -597,7 +597,7 @@ function handleMenuSelect(event) {
                     auto-width
                     class="session-worktree-icon"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="showWorktreeIcon" :for="rowId('session-worktree')">
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="showWorktreeIcon" :for="rowId('session-worktree')">
                     <ProjectBadge :project-id="session.project_id" :dot="false" />
                 </AppTooltip>
                 <ScrollableText class="session-name" :text="getSessionDisplayName(session)" />
@@ -615,7 +615,7 @@ function handleMenuSelect(event) {
                     name="eye"
                     class="compact-unread-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread && !processState" :for="rowId('compact-unread')">New content to read</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread && !processState" :for="rowId('compact-unread')">New content to read</AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
                     v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest"
@@ -623,7 +623,7 @@ function handleMenuSelect(event) {
                     name="hand"
                     class="compact-pending-request-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
                 <!-- Compact mode: process indicator (shows the unread eye itself; hidden when the pending request hand is shown) -->
                 <ProcessIndicator
                     v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)"
@@ -637,7 +637,7 @@ function handleMenuSelect(event) {
                     :style="hasUnread ? { fontSize: 'var(--wa-font-size-xs)' } : undefined"
                     class="compact-process-indicator"
                 />
-                <AppTooltip :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)" :for="rowId('compact-process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)" :for="rowId('compact-process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
                 <!-- Collapsed tree row, compact: the cumulative indicator replaces the three above -->
                 <ProcessActivityIndicator
                     v-if="compactView && cumulativeMode"
@@ -662,7 +662,7 @@ function handleMenuSelect(event) {
                     name="eye"
                     class="unread-indicator standalone-unread-indicator"
                 ></wa-icon>
-                <AppTooltip :hoist="!!idPrefix" v-if="hasUnread && !processState && !cumulativeMode" :for="rowId('standalone-unread')">New content to read</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="hasUnread && !processState && !cumulativeMode" :for="rowId('standalone-unread')">New content to read</AppTooltip>
             </div>
             <!-- Process info row (hidden in compact mode): the own process (memory, duration, indicator) and/or
                  the cumulative indicator of a collapsed tree parent, which takes the place of the own indicators -->
@@ -676,7 +676,7 @@ function handleMenuSelect(event) {
                         {{ formatMemory(processState.memory) }}
                     </template>
                 </span>
-                <AppTooltip :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-memory')">{{ providerLabel }} memory usage</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-memory')">{{ providerLabel }} memory usage</AppTooltip>
 
                 <span :id="rowId('process-duration')" class="process-duration">
                     <ProcessDuration
@@ -684,7 +684,7 @@ function handleMenuSelect(event) {
                         :state-changed-at="processState.state_changed_at"
                     />
                 </span>
-                <AppTooltip :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-duration')">Assistant turn duration</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-duration')">Assistant turn duration</AppTooltip>
 
                 <span class="process-indicator-cell">
                     <ProcessActivityIndicator
@@ -699,7 +699,7 @@ function handleMenuSelect(event) {
                             name="hand"
                             class="pending-request-indicator"
                         ></wa-icon>
-                        <AppTooltip :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
+                        <AppTooltip deferred :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
                         <!-- The indicator shows the unread eye itself (alone, or alternating with background work) -->
                         <ProcessIndicator
                             :id="rowId('process-indicator')"
@@ -710,18 +710,18 @@ function handleMenuSelect(event) {
                             size="small"
                             :animate-states="animateStates"
                         />
-                        <AppTooltip :hoist="!!idPrefix" :for="rowId('process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
+                        <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
                     </template>
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
             <div v-if="!compactView && !session.draft && !session.ephemeral" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
                 <span :id="rowId('session-messages')" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count ?? '??' }}</span>
-                <AppTooltip :hoist="!!idPrefix" :for="rowId('session-messages')">Number of message turns</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-messages')">Number of message turns</AppTooltip>
 
                 <template v-if="showCosts">
                     <CostDisplay :id="rowId('session-cost')" :cost="session.total_cost" class="session-cost" />
-                    <AppTooltip :hoist="!!idPrefix" :for="rowId('session-cost')">Total session cost</AppTooltip>
+                    <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-cost')">Total session cost</AppTooltip>
                 </template>
 
                 <span :id="rowId('session-mtime')" class="session-mtime">
@@ -729,10 +729,10 @@ function handleMenuSelect(event) {
                     <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                     <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
                 </span>
-                <AppTooltip :hoist="!!idPrefix" :for="rowId('session-mtime')">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-mtime')">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</AppTooltip>
             </div>
         </wa-button>
-        <AppTooltip :hoist="!!idPrefix" v-if="showTitleTooltip" :for="rowId('session-button')" placement="right">{{ session.title || session.id }}</AppTooltip>
+        <AppTooltip deferred :hoist="!!idPrefix" v-if="showTitleTooltip" :for="rowId('session-button')" placement="right">{{ session.title || session.id }}</AppTooltip>
         <!-- Session dropdown menu (outside button to avoid nesting issues), mounted on first use -->
         <LazyRowMenu
             v-if="showMenu"
@@ -741,6 +741,7 @@ function handleMenuSelect(event) {
             menu-class="session-menu"
             trigger-class="session-menu-trigger"
             :hoist-tooltip="!!idPrefix"
+            deferred-tooltip
             @select="handleMenuSelect"
         >
             <!-- Standard actions -->

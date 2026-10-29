@@ -21,6 +21,42 @@ export function hideAllTooltips() {
         el.hide()
     }
 }
+
+/**
+ * Deferred tooltips: anchor id -> the mount callbacks of the tooltips waiting on it.
+ * One document listener serves them all, in capture so it sees every hover and focus
+ * whatever the target does. It walks the whole composed path: an anchor can sit inside
+ * another one (a row's meta spans inside the row button), and both tooltips react to
+ * the same hover, as their wa-tooltips would.
+ */
+const deferredAnchors = new Map()
+
+function handleDeferredTrigger(event) {
+    const trigger = event.type === 'focusin' ? 'focus' : 'hover'
+    for (const node of event.composedPath()) {
+        const callbacks = node.id ? deferredAnchors.get(node.id) : null
+        if (callbacks) for (const mount of [...callbacks]) mount(trigger)
+    }
+}
+
+function registerDeferredAnchor(id, mount) {
+    if (deferredAnchors.size === 0) {
+        document.addEventListener('mouseover', handleDeferredTrigger, { capture: true })
+        document.addEventListener('focusin', handleDeferredTrigger, { capture: true })
+    }
+    if (!deferredAnchors.has(id)) deferredAnchors.set(id, new Set())
+    deferredAnchors.get(id).add(mount)
+}
+
+function unregisterDeferredAnchor(id, mount) {
+    const callbacks = deferredAnchors.get(id)
+    if (!callbacks?.delete(mount) || callbacks.size > 0) return
+    deferredAnchors.delete(id)
+    if (deferredAnchors.size === 0) {
+        document.removeEventListener('mouseover', handleDeferredTrigger, { capture: true })
+        document.removeEventListener('focusin', handleDeferredTrigger, { capture: true })
+    }
+}
 </script>
 
 <script setup>
@@ -41,6 +77,11 @@ export function hideAllTooltips() {
  *     able to reach (buttons, links). Adds a grace period before it closes,
  *     cancelled as soon as the pointer lands on it. See cancelPendingHide.
  *   - lazy: Mount the slot on show and remove it after the hide animation.
+ *   - deferred: Mount the wa-tooltip itself on the first hover or focus of its
+ *     anchor, then keep it. For rows a list mounts by the dozen. Supports the
+ *     default `hover focus` trigger only, and no use of the exposed methods
+ *     before that first hover or focus. Until then, the anchor has no
+ *     aria-labelledby.
  *
  * All extra attributes are forwarded to the underlying <wa-tooltip>.
  *
@@ -48,7 +89,7 @@ export function hideAllTooltips() {
  * the toasts (styles/glass.css). The slotted content resolves the page's own tokens, so
  * nothing inside needs flipping.
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onUpdated, ref, useAttrs, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { serializeTooltipTransitions } from '../../utils/tooltipTransitions.js'
 
@@ -94,10 +135,65 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    deferred: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const settingsStore = useSettingsStore()
 const shouldShow = computed(() => props.force || !settingsStore.isTouchDevice)
+
+// Deferred mode: the wa-tooltip mounts on the first hover or focus of its anchor.
+const attrs = useAttrs()
+const deferredMounted = ref(false)
+const renderTooltip = computed(() => shouldShow.value && (!props.deferred || deferredMounted.value))
+let pendingTrigger = null
+let registeredAnchorId = null
+
+function mountDeferred(trigger) {
+    pendingTrigger = trigger
+    deferredMounted.value = true
+    syncDeferredRegistration()
+}
+
+// `for` is a fallthrough attribute, which is not reactive: synced on mount and on each
+// update (a change of attributes updates the component).
+function syncDeferredRegistration() {
+    const wanted = props.deferred && shouldShow.value && !deferredMounted.value ? attrs.for || null : null
+    if (wanted === registeredAnchorId) return
+    if (registeredAnchorId) unregisterDeferredAnchor(registeredAnchorId, mountDeferred)
+    if (wanted) registerDeferredAnchor(wanted, mountDeferred)
+    registeredAnchorId = wanted
+}
+
+onMounted(syncDeferredRegistration)
+onUpdated(syncDeferredRegistration)
+onBeforeUnmount(() => {
+    if (registeredAnchorId) unregisterDeferredAnchor(registeredAnchorId, mountDeferred)
+    registeredAnchorId = null
+})
+
+/**
+ * The wa-tooltip binds its anchor listeners when it connects, after the event that
+ * mounted it: replay that event. A hover shows after the element's own delay if the
+ * pointer is still there, through `hoverTimeout` so the element's mouseout cancels
+ * it. A focus shows at once, as the element does.
+ */
+async function replayDeferredTrigger(el) {
+    const trigger = pendingTrigger
+    pendingTrigger = null
+    await el.updateComplete
+    if (tooltipEl.value !== el || !el.anchor || !el.hasTrigger?.(trigger)) return
+    if (trigger === 'focus') {
+        if (el.anchor.matches(':focus-within')) el.show()
+        return
+    }
+    clearPendingTimer(el)
+    el.hoverTimeout = setTimeout(() => {
+        if (el.anchor?.matches(':hover')) el.show()
+    }, el.showDelay)
+}
 
 const tooltipEl = ref(null)
 const contentMounted = ref(false)
@@ -257,6 +353,7 @@ watch([tooltipEl, () => props.interactive], ([el, interactive]) => {
     el.addEventListener('wa-after-hide', handleAfterHide)
     mountedTooltips.add(el)
     listeningEl = el
+    if (pendingTrigger) replayDeferredTrigger(el)
 })
 
 onBeforeUnmount(stopListening)
@@ -264,7 +361,7 @@ onBeforeUnmount(stopListening)
 
 <template>
     <wa-tooltip
-        v-if="shouldShow"
+        v-if="renderTooltip"
         ref="tooltipEl"
         :show-delay="TOOLTIP_SHOW_DELAY_MS"
         :distance="TOOLTIP_DISTANCE"

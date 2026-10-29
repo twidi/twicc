@@ -18,6 +18,11 @@ test('row namespaces every tooltip target and preserves default IDs', () => {
     assert.doesNotMatch(source, /:id="`|:for="`/)
     assert.match(source, /<LazyRowMenu\s+v-if="showMenu"\s+:trigger-id="rowId\('session-menu-trigger'\)"/)
     assert.match(source, /<LazyRowMenu[^>]*:hoist-tooltip="!!idPrefix"/)
+    // Rows mount by the dozen: every row tooltip waits for a first hover or focus.
+    const tooltips = [...source.matchAll(/<AppTooltip\b[^>]*>/g)].map(match => match[0])
+    assert.ok(tooltips.length > 10)
+    for (const tag of tooltips) assert.match(tag, /^<AppTooltip deferred /, tag)
+    assert.match(source, /<LazyRowMenu[^>]*\sdeferred-tooltip\s/)
     assert.match(source, /inject\('openRenameDialog', null\)/)
 })
 
