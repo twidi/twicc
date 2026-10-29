@@ -335,7 +335,7 @@ let lastPersistedUrl = null
 const persistUrlDebounced = debounce(async () => {
     const sessionRow = store.getSession(props.sessionId)
     if (!sessionRow || sessionRow.draft) return
-    const url = currentUrl.value
+    const url = currentUrl.value || null
     if (url === lastPersistedUrl) return
     try {
         const response = await apiFetch(`/api/projects/${props.projectId}/sessions/${props.sessionId}/`, {
@@ -454,6 +454,34 @@ function refresh() {
 
 function goHome() {
     if (primaryHomeUrl.value) navigate(primaryHomeUrl.value)
+}
+
+// Back to the blank state: the iframe is re-created on an empty src, so the
+// page (and everything it holds: timers, WebGL, workers…) is torn down. Useful
+// when the embedded page eats resources. Host-side state is reset the same way
+// a fresh pane starts; the old document's late messages are dropped by the
+// contentWindow identity check.
+function clearBrowser() {
+    clearHelloGraceTimer()
+    rejectPendingCapture('browser cleared')
+    resetSelectArea()
+    pageErrors.value = []
+    pageErrorTotal.value = 0
+    probeResult.value = null
+    currentUrl.value = ''
+    inputUrl.value = ''
+    frameSrc.value = ''
+    frameKey.value++
+    loading.value = false
+    companionStatus.value = 'absent'
+    companionOrigin = null
+    hadCompanion = false
+    urlHistory.value = []
+    historyIndex.value = -1
+    navStack.value = []
+    navIndex.value = -1
+    responsiveActive.value = false
+    persistUrlDebounced()
 }
 
 function openExternal() {
@@ -1150,6 +1178,11 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-icon name="arrow-up-right-from-square"></wa-icon>
                 </wa-button>
                 <AppTooltip :for="`browser-external-${instanceId}`">Open in a new browser tab</AppTooltip>
+
+                <wa-button :id="`browser-clear-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" @click="clearBrowser">
+                    <wa-icon name="power-off"></wa-icon>
+                </wa-button>
+                <AppTooltip :for="`browser-clear-${instanceId}`">Clear the browser (unload the page to free resources)</AppTooltip>
 
                 <wa-button
                     :id="fullscreenButtonId"
