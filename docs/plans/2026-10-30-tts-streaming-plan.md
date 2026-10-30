@@ -772,6 +772,10 @@ Report the results, the Task 1 matrix cells not tested, and the commits. Do not 
 
 ## Spike decisions (filled in Task 1)
 
-- `RANGE_ANSWER`: _pending_
-- `BUFFERED_FORMATS`: _pending_ (default `{ ios: ['pcm'] }`)
-- Cells not tested: _pending_
+- `RANGE_ANSWER`: `"full"`. Chrome 156 on Android takes the end of a short `206 bytes 0-L/*` answer to its first `Range: bytes=0-` as the end of the media. "full" passes in Chrome and Firefox (a long read, closed, then resumed at ×4).
+- `BUFFERED_FORMATS`: `{ ios: ['pcm', 'mp3'], safari: ['mp3'] }`. iOS/iPadOS and Safari are not tested: buffered keeps today's behaviour there.
+- Read of a failed stream: a `410` (`{"error": "The audio stopped before the end"}`). Otherwise Chrome hangs on a retried cut read.
+- Cells not tested: every iOS/iPadOS and Safari cell; desktop Chrome and Firefox (only Android phones were available); Firefox Android MP3 on the lock screen (app switch only).
+- Measured (Android):
+  - Firefox 160: every cell passes. Web Audio and `<audio>` keep playing in the background. A cut is reported as a normal `ended`.
+  - Chrome 156: PCM passes every cell, lock screen included. MP3 passes with "full", lock screen included. A cut hangs (hence the `410`).
