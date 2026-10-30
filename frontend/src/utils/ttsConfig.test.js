@@ -10,7 +10,6 @@ import {
     patchTtsConfig,
     duplicateTtsConfig,
     isTtsAvailable,
-    speechCacheKey,
     ttsConfigDisplayName,
     ttsConfigAutoName,
     formatTtsModelPrice,
@@ -217,17 +216,6 @@ test('duplicate keeps the validation and is named "(copy)"', () => {
     assert.notEqual(copy.validated, config.validated)
     assert.notEqual(copy, config)
     assert.equal(config.id, 'a')
-})
-
-test('cache key changes with any speech field', () => {
-    const fields = speechFieldsOf({ ...createTtsConfig('a'), model: 'm', voice: 'v' })
-    const key = speechCacheKey('hello', fields)
-    assert.equal(key, JSON.stringify(['hello', 'm', 'v', 'mp3', null, '']))
-    assert.equal(speechCacheKey('hello', { ...fields }), key)
-    assert.notEqual(speechCacheKey('hello!', fields), key)
-    for (const field of SPEECH_FIELDS) {
-        assert.notEqual(speechCacheKey('hello', { ...fields, [field]: 'changed' }), key, field)
-    }
 })
 
 const RUN = { at: '2026-10-30T10:42:00+00:00', generation_id: 'gen-1', chars: 2000, generation_ms: 2200, audio_seconds: 143, cost: 0.008 }

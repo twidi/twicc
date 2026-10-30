@@ -140,10 +140,6 @@ export function isTtsAvailable({ keyPresent, configs, activeId }) {
     return isConfigValidated(active)
 }
 
-export function speechCacheKey(text, fields) {
-    return JSON.stringify([text, ...SPEECH_FIELDS.map(field => fields[field])])
-}
-
 // ── Last test run ────────────────────────────────────────────────
 
 // Two significant digits, no trailing zero: 0.4, 1.1, 12.

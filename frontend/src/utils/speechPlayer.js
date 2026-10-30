@@ -47,9 +47,6 @@ export function setSpeechPlayerFactory(factory) {
  *   `handlers` is `{ onPlaying(), onEnded(), onError(reason) }`. Each handler fires at most once,
  *   and only one of `onEnded` and `onError` fires. The reason is `'refused'` when the browser
  *   cannot or will not play the audio, `'network'` when the download fails.
- * - `play(blob, onEnded, onError)` plays the blob and resolves when the audio starts. It
- *   rejects like `HTMLMediaElement.play()` (an `AbortError` when `stop()` interrupts it).
- *   Legacy: the store moves to `playUrl` and `playBlob`, then this method goes away.
  * - `stop()` pauses the audio and releases it. No handler fires after it.
  *
  * The player owns every object URL it creates and revokes it on the next playback or `stop()`.
@@ -130,17 +127,6 @@ function createAudioElementPlayer() {
             objectUrl = URL.createObjectURL(blob)
             start(objectUrl, handlers)
             if (previousUrl) URL.revokeObjectURL(previousUrl)
-        },
-
-        async play(blob, onEnded, onError) {
-            detach()
-            const previousUrl = objectUrl
-            objectUrl = URL.createObjectURL(blob)
-            audio.src = objectUrl
-            if (previousUrl) URL.revokeObjectURL(previousUrl)
-            audio.onended = () => onEnded()
-            audio.onerror = () => onError()
-            await audio.play()
         },
 
         stop() {
