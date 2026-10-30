@@ -20,6 +20,8 @@ import {
     speechFieldsOf,
     ttsConfigAutoName,
     ttsConfigDisplayName,
+    ttsLastTestFacts,
+    ttsTestStats,
     shouldAskAfterTest,
     ttsModelOptions,
     ttsTestState,
@@ -50,6 +52,10 @@ const openIds = ref({}) // { [id]: true } -- the expanded cards
 onMounted(() => {
     store.loadModels()
 })
+
+function lastTestWhen(lastTest) {
+    return new Date(lastTest.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
 
 function testStateOf(config) {
     return ttsTestState(store.playback, config.id)
@@ -316,8 +322,8 @@ function answerNo(id) {
             <wa-textarea
                 id="tts-test-text"
                 size="small"
-                rows="2"
-                resize="auto"
+                rows="3"
+                resize="none"
                 :value.prop="testText"
                 @input="onTestTextInput"
                 @change="onTestTextChange"
@@ -338,6 +344,7 @@ function answerNo(id) {
                 <div slot="summary" class="tts-summary">
                     <span class="tts-summary-text">
                         <span class="tts-summary-name">{{ ttsConfigDisplayName(config, store.models) }}</span>
+                        <span v-if="ttsTestStats(config.last_test)" class="tts-summary-note" title="Last test run: cost per 1,000 characters, per minute of audio, and generation time per 1,000 characters">{{ ttsTestStats(config.last_test) }}</span>
                         <span v-if="config.note" class="tts-summary-note" :title="config.note">{{ config.note }}</span>
                     </span>
                     <wa-icon
@@ -408,6 +415,10 @@ function answerNo(id) {
                 </div>
 
                 <div class="tts-config-body">
+                    <div v-if="ttsLastTestFacts(config.last_test)" class="tts-last-test">
+                        <span class="setting-group-label">Last test run · {{ lastTestWhen(config.last_test) }}</span>
+                        <span class="setting-group-hint">{{ ttsLastTestFacts(config.last_test) }}</span>
+                    </div>
                     <div class="tts-field">
                         <label class="setting-group-label" :for="`tts-${config.id}-name`">Name</label>
                         <wa-input
@@ -689,6 +700,12 @@ function answerNo(id) {
     align-items: baseline;
     justify-content: space-between;
     gap: var(--wa-space-xs);
+}
+
+.tts-last-test {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3xs);
 }
 
 .tts-model-link {

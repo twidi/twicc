@@ -77,7 +77,9 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
         let blob = useCache ? cache.get(key) : null
         if (!blob) {
             controller = new AbortController()
-            const response = await store._requestSpeech({ text, ...fields }, controller.signal)
+            // A settings test names its config: the backend keeps the run as its last test.
+            const body = configId ? { text, ...fields, config_id: configId } : { text, ...fields }
+            const response = await store._requestSpeech(body, controller.signal)
             if (generation !== mine) return ABORTED
             if (!response.ok) {
                 const error = await errorMessageOf(response)

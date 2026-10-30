@@ -39,6 +39,7 @@ def _entry(**overrides) -> dict:
         "instructions": "",
         "note": "",
         "validated": None,
+        "last_test": None,
     }
     entry.update(overrides)
     return entry
@@ -82,7 +83,7 @@ def test_normalize_fills_defaults_for_a_bare_entry():
     out = normalize_tts_config({"configs": [{"id": "a"}]})
     assert out == {"active_id": None, "configs": [{
         "id": "a", "name": "", "model": "", "voice": "", "response_format": "mp3",
-        "speed": None, "instructions": "", "note": "", "validated": None,
+        "speed": None, "instructions": "", "note": "", "validated": None, "last_test": None,
     }], "test_text": ""}
 
 
@@ -283,3 +284,41 @@ def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transacti
     frames = asyncio.run(scenario())
     assert frames is not None
     assert all(frame.get("type") != "tts_config_updated" for frame in frames)
+
+
+LAST_TEST = {
+    "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
+    "generation_ms": 2200, "audio_seconds": 143.0, "cost": None,
+}
+
+
+def test_last_test_is_normalized_or_dropped():
+    out = normalize_tts_config({"configs": [
+        _entry(last_test={**LAST_TEST, "chars": 2000.0, "cost": "x"}),
+        _entry(id="b", last_test={"at": "now"}),
+        _entry(id="c", last_test="junk"),
+    ]})
+    assert out["configs"][0]["last_test"] == {**LAST_TEST, "chars": 2000}
+    assert [c["last_test"] for c in out["configs"][1:]] == [None, None]
+
+
+def test_a_client_write_keeps_the_recorded_last_test(tmp_data_dir):
+    from twicc.tts.config import write_client_tts_config
+    write_tts_config({"configs": [_entry(last_test=LAST_TEST)]})
+    # The client renames the config and sends a forged (or missing) last test.
+    out = write_client_tts_config({"configs": [_entry(name="Renamed", last_test={**LAST_TEST, "cost": 9.0}), _entry(id="new")]})
+    assert out["configs"][0]["name"] == "Renamed"
+    assert out["configs"][0]["last_test"] == LAST_TEST
+    assert out["configs"][1]["last_test"] is None
+
+
+def test_record_last_test_and_its_cost(tmp_data_dir):
+    from twicc.tts.config import record_last_test
+    write_tts_config({"configs": [_entry()]})
+    assert record_last_test("missing", LAST_TEST) is None
+    assert record_last_test("a", LAST_TEST)["configs"][0]["last_test"] == LAST_TEST
+    # The cost of an older run does not land on a newer one.
+    assert record_last_test("a", {"generation_id": "gen-0", "cost": 0.5}) is None
+    out = record_last_test("a", {"generation_id": "gen-1", "cost": 0.008})
+    assert out["configs"][0]["last_test"] == {**LAST_TEST, "cost": 0.008}
+    assert read_tts_config()["configs"][0]["last_test"]["cost"] == 0.008

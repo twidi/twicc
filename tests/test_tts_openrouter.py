@@ -603,3 +603,28 @@ def test_schedule_cost_log_runs_in_the_background(monkeypatch):
     asyncio.run(main())
     assert seen == [("gen-1", "k")]
     assert not openrouter._cost_tasks
+
+
+def test_audio_duration_of_wav_and_mp3():
+    from twicc.tts.openrouter import audio_duration_seconds
+    wav = wrap_pcm_as_wav(b"\x00\x00" * 48000, 24000, 1)
+    assert audio_duration_seconds(wav, "audio/wav") == 2.0
+    # MPEG-2 Layer III, 128 kbit/s (FF F3, bitrate index 12 = 128): 32 000 bytes = 2 s.
+    mp3 = (b"\xff\xf3\xc4\x00" + b"\x00" * 412) * 77
+    mp3 = mp3[:32000]
+    assert audio_duration_seconds(mp3, "audio/mpeg") == 2.0
+    # An ID3v2 tag before the first frame is skipped.
+    tagged = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\x00" * 10 + mp3
+    assert audio_duration_seconds(tagged, "audio/mpeg") == len(tagged) * 8 / 128000
+    assert audio_duration_seconds(b"junk", "audio/mpeg") is None
+    assert audio_duration_seconds(b"junk", "audio/wav") is None
+    assert audio_duration_seconds(b"x", "audio/ogg") is None
+
+
+def test_cost_lookup_returns_the_cost(monkeypatch):
+    def handler(request):
+        return httpx.Response(200, content=orjson.dumps({"data": {"total_cost": 0.0008, "provider_name": "P"}}))
+
+    _mock_transport(monkeypatch, handler)
+    cost = asyncio.run(openrouter._log_generation_cost("gen-1", "k", first_delay=0, retry_delay=0))
+    assert cost == 0.0008

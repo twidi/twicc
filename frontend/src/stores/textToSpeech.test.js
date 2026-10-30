@@ -391,3 +391,12 @@ test('a fresh store is not available (share pages never feed it)', () => {
     setActivePinia(createPinia())
     assert.equal(useTextToSpeechStore().available, false)
 })
+
+test('a settings test sends its config id, a message read does not', async () => {
+    const bodies = []
+    store._requestSpeech = async (body) => { bodies.push(body); return audioResponse() }
+    await store.playWith('hello', FIELDS, { configId: 'c1' })
+    await store.play('hello again')
+    assert.equal(bodies[0].config_id, 'c1')
+    assert.equal('config_id' in bodies[1], false)
+})

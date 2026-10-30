@@ -44,7 +44,7 @@ def calls(monkeypatch):
 
     monkeypatch.setattr(views, "openrouter_api_key", lambda: "k")
     monkeypatch.setattr(views, "synthesize", _no_synthesize)
-    monkeypatch.setattr(views, "schedule_cost_log", lambda gen_id, key: recorded["cost"].append((gen_id, key)))
+    monkeypatch.setattr(views, "schedule_cost_log", lambda gen_id, key, on_cost=None: recorded["cost"].append((gen_id, key)))
     return recorded
 
 
@@ -219,7 +219,7 @@ def test_cost_log_failure_keeps_the_audio(client, calls, monkeypatch, views_log)
     # The audio is billed already: a failing cost lookup must not turn it into a 500.
     _set_synthesize(monkeypatch, calls, SpeechAudio(b"ID3audio", "audio/mpeg", "gen-1"))
 
-    def _broken_cost_log(generation_id, api_key):
+    def _broken_cost_log(generation_id, api_key, on_cost=None):
         raise RuntimeError("no running loop")
 
     monkeypatch.setattr(views, "schedule_cost_log", _broken_cost_log)
@@ -293,3 +293,37 @@ def test_models_rejects_other_methods(client):
     response = _run(client.post(MODELS_PATH))
     assert response.status_code == 405
     assert response["Allow"] == "GET"
+
+
+def test_a_settings_test_records_its_run_then_its_cost(client, calls, monkeypatch):
+    _set_synthesize(monkeypatch, calls, SpeechAudio(b"ID3audio", "audio/mpeg", "gen-1"))
+    recorded = []
+
+    async def fake_record(config_id, update):
+        recorded.append((config_id, update))
+
+    scheduled = []
+    monkeypatch.setattr(views, "_record_last_test", fake_record)
+    monkeypatch.setattr(views, "schedule_cost_log", lambda gen_id, key, on_cost=None: scheduled.append(on_cost))
+    response = _post_json(client, {**VALID_PAYLOAD, "config_id": "cfg-1"})
+    assert response.status_code == 200
+    [(config_id, run)] = recorded
+    assert config_id == "cfg-1"
+    assert run["generation_id"] == "gen-1"
+    assert run["chars"] == len(VALID_PAYLOAD["text"])
+    assert run["cost"] is None and run["generation_ms"] >= 0 and "at" in run
+    # The cost callback updates the same run once the lookup finds it.
+    asyncio.run(scheduled[0](0.008))
+    assert recorded[-1] == ("cfg-1", {"generation_id": "gen-1", "cost": 0.008})
+
+
+def test_a_message_read_records_no_run(client, calls, monkeypatch):
+    _set_synthesize(monkeypatch, calls, SpeechAudio(b"ID3audio", "audio/mpeg", "gen-1"))
+    recorded = []
+
+    async def fake_record(config_id, update):
+        recorded.append(config_id)
+
+    monkeypatch.setattr(views, "_record_last_test", fake_record)
+    assert _post_json(client, VALID_PAYLOAD).status_code == 200
+    assert recorded == []

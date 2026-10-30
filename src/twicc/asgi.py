@@ -69,7 +69,7 @@ from twicc.synced_settings import _settings_lock, prepare_settings_for_client, r
 from twicc.workspaces import read_workspaces
 from twicc.layouts import read_layouts
 from twicc.message_snippets import read_message_snippets_config, write_message_snippets_config
-from twicc.tts.config import read_tts_config, tts_client_payload, write_tts_config
+from twicc.tts.config import read_tts_config, tts_client_payload, write_client_tts_config
 from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
 from twicc.seen_help import read_seen_help, write_seen_help
 from twicc.seen_tips import read_seen_tips, write_seen_tips
@@ -2239,7 +2239,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("Invalid TTS config update: config is not a dict")
             return
 
-        normalized = await sync_to_async(write_tts_config)(config)
+        normalized = await sync_to_async(write_client_tts_config)(config)
 
         # Broadcast the normalized configs to all connected clients
         await self.channel_layer.group_send(

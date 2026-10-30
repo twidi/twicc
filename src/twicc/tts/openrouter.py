@@ -282,11 +282,24 @@ async def fetch_speech_models() -> list[dict]:
 _cost_tasks: set[asyncio.Task] = set()
 
 
-def schedule_cost_log(generation_id: str, api_key: str) -> None:
-    """Log the real cost of *generation_id* in the background (fire-and-forget)."""
-    task = asyncio.get_running_loop().create_task(_log_generation_cost(generation_id, api_key))
+def schedule_cost_log(generation_id: str, api_key: str, on_cost=None) -> None:
+    """Log the real cost of *generation_id* in the background (fire-and-forget).
+
+    *on_cost*, an async callable, then receives the cost when the lookup found one.
+    """
+    task = asyncio.get_running_loop().create_task(_cost_then(generation_id, api_key, on_cost))
     _cost_tasks.add(task)
     task.add_done_callback(_cost_tasks.discard)
+
+
+async def _cost_then(generation_id: str, api_key: str, on_cost) -> None:
+    cost = await _log_generation_cost(generation_id, api_key)
+    if cost is None or on_cost is None:
+        return
+    try:
+        await on_cost(cost)
+    except Exception:  # noqa: BLE001 - fire-and-forget: never raise
+        logger.exception("TTS cost %s: could not be recorded", generation_id)
 
 
 async def _log_generation_cost(
@@ -296,8 +309,10 @@ async def _log_generation_cost(
     first_delay: float = 15.0,
     retry_delay: float = 5.0,
     attempts: int = 4,
-) -> None:
-    """Fetch and log the cost of a generation. Never raises (it runs fire-and-forget).
+) -> float | None:
+    """Fetch and log the cost of a generation, and return it (None when unknown).
+
+    Never raises (it runs fire-and-forget).
 
     OpenRouter answers 404 for some seconds after the speech response: wait
     *first_delay*, then retry every *retry_delay* on 404, *attempts* times at most.
@@ -323,7 +338,49 @@ async def _log_generation_cost(
                     data.get("total_cost"),
                     data.get("provider_name"),
                 )
-                return
+                return _price(data.get("total_cost"))
         logger.debug("TTS cost %s: still not found after %d attempts", generation_id, attempts)
     except Exception:  # noqa: BLE001 - fire-and-forget: never raise, never log the exception text
         logger.debug("TTS cost %s: lookup failed", generation_id)
+    return None
+
+
+# MPEG audio bitrates (kbit/s) by bitrate index, for Layer III: MPEG-1, and MPEG-2 / 2.5.
+_MP3_BITRATES = {
+    1: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+    2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+}
+
+
+def _mp3_bitrate(content: bytes) -> int | None:
+    """The bitrate (bit/s) of the first MPEG Layer III frame, past an ID3v2 tag."""
+    start = 0
+    if content[:3] == b"ID3" and len(content) >= 10:
+        size = content[6:10]
+        start = 10 + ((size[0] << 21) | (size[1] << 14) | (size[2] << 7) | size[3])
+    for i in range(start, max(start, len(content) - 4)):
+        if content[i] != 0xFF or (content[i + 1] & 0xE0) != 0xE0:
+            continue
+        version_bits = (content[i + 1] >> 3) & 0x03  # 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+        layer_bits = (content[i + 1] >> 1) & 0x03  # 1 = Layer III
+        index = content[i + 2] >> 4
+        if version_bits == 1 or layer_bits != 1 or index in (0, 15):
+            continue
+        return _MP3_BITRATES[1 if version_bits == 3 else 2][index] * 1000
+    return None
+
+
+def audio_duration_seconds(content: bytes, content_type: str) -> float | None:
+    """The length of an audio body: exact for WAV, from the bitrate for MP3 (constant bitrate,
+    as OpenRouter sends it). None for another type or an unreadable body."""
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    try:
+        if media_type == "audio/wav":
+            with wave.open(io.BytesIO(content)) as reader:
+                return reader.getnframes() / reader.getframerate()
+        if media_type == "audio/mpeg":
+            bitrate = _mp3_bitrate(content)
+            return len(content) * 8 / bitrate if bitrate else None
+    except (wave.Error, EOFError, ZeroDivisionError):
+        return None
+    return None

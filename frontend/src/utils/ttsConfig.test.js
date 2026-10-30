@@ -20,6 +20,8 @@ import {
     openRouterModelUrl,
     ttsTestState,
     shouldAskAfterTest,
+    ttsTestStats,
+    ttsLastTestFacts,
 } from './ttsConfig.js'
 
 const validatedConfig = (id = 'a') => {
@@ -226,4 +228,22 @@ test('cache key changes with any speech field', () => {
     for (const field of SPEECH_FIELDS) {
         assert.notEqual(speechCacheKey('hello', { ...fields, [field]: 'changed' }), key, field)
     }
+})
+
+const RUN = { at: '2026-10-30T10:42:00+00:00', generation_id: 'gen-1', chars: 2000, generation_ms: 2200, audio_seconds: 143, cost: 0.008 }
+
+test('the last test stats compare across texts of any length', () => {
+    assert.equal(ttsTestStats(RUN), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch')
+    assert.equal(ttsTestStats({ ...RUN, audio_seconds: null }), '0.4¢ / 1k ch · 1.1 s / 1k ch')
+    assert.equal(ttsTestStats({ ...RUN, cost: null }), 'price pending… · 1.1 s / 1k ch')
+    assert.equal(ttsTestStats({ ...RUN, cost: null, generation_id: '' }), 'price unknown · 1.1 s / 1k ch')
+    assert.equal(ttsTestStats({ ...RUN, cost: 0.08, chars: 1000, generation_ms: 15000 }), '8¢ / 1k ch · 3.4¢ / mn · 15 s / 1k ch')
+    assert.equal(ttsTestStats(null), '')
+    assert.equal(ttsTestStats({ ...RUN, chars: 0 }), '')
+})
+
+test('the last test facts give the exact figures', () => {
+    assert.equal(ttsLastTestFacts(RUN), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+    assert.equal(ttsLastTestFacts({ ...RUN, chars: 35, audio_seconds: 3.24, generation_ms: 1760, cost: null }), '35 chars · 3.2 s of audio · generated in 1.8 s · price pending…')
+    assert.equal(ttsLastTestFacts(undefined), '')
 })

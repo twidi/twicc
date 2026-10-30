@@ -143,3 +143,49 @@ export function isTtsAvailable({ keyPresent, configs, activeId }) {
 export function speechCacheKey(text, fields) {
     return JSON.stringify([text, ...SPEECH_FIELDS.map(field => fields[field])])
 }
+
+// ── Last test run ────────────────────────────────────────────────
+
+// Two significant digits, no trailing zero: 0.4, 1.1, 12.
+function shortNumber(value) {
+    return value >= 10 ? String(Math.round(value)) : String(Number(value.toPrecision(2)))
+}
+
+function pendingPrice(lastTest) {
+    // No generation id: OpenRouter's lookup cannot run, the price will not come.
+    return lastTest.generation_id ? 'price pending…' : 'price unknown'
+}
+
+/**
+ * The compact stats of a config's last test run, comparable across texts of any length:
+ * "0.4¢ / 1k ch · 0.3¢ / mn · 1.1 s / 1k ch" (cost per 1,000 characters, per minute of audio,
+ * generation time per 1,000 characters). '' without a usable run.
+ */
+export function ttsTestStats(lastTest) {
+    if (!lastTest?.chars) return ''
+    const parts = []
+    if (lastTest.cost == null) {
+        parts.push(pendingPrice(lastTest))
+    } else {
+        parts.push(`${shortNumber((lastTest.cost / lastTest.chars) * 1000 * 100)}¢ / 1k ch`)
+        if (lastTest.audio_seconds) parts.push(`${shortNumber((lastTest.cost / lastTest.audio_seconds) * 60 * 100)}¢ / mn`)
+    }
+    parts.push(`${shortNumber(lastTest.generation_ms / lastTest.chars)} s / 1k ch`)
+    return parts.join(' · ')
+}
+
+function audioLength(seconds) {
+    if (seconds < 60) return `${shortNumber(seconds)} s`
+    const minutes = Math.floor(seconds / 60)
+    return `${minutes} min ${Math.round(seconds - minutes * 60)} s`
+}
+
+/** The exact figures of the last test run: "2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080". */
+export function ttsLastTestFacts(lastTest) {
+    if (!lastTest?.chars) return ''
+    const parts = [`${lastTest.chars.toLocaleString('en')} chars`]
+    if (lastTest.audio_seconds) parts.push(`${audioLength(lastTest.audio_seconds)} of audio`)
+    parts.push(`generated in ${shortNumber(lastTest.generation_ms / 1000)} s`)
+    parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
+    return parts.join(' · ')
+}
