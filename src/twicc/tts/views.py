@@ -3,9 +3,10 @@
 A speech goes through four steps (design: ``docs/plans/2026-10-30-tts-streaming-design.md``):
 
 - open (``POST /api/tts/speech/``): start the upstream call in the background, and
-  answer an audio id once its headers arrive;
-- read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive (a 410
-  once the speech failed);
+  answer an audio id once its headers arrive; a long text is sent in parts
+  (:mod:`twicc.tts.parts`);
+- read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive, at the
+  playback pace for a paced stream (a 410 once the speech failed);
 - ending (``GET /api/tts/audio/<id>/ending/``): how the speech ended;
 - release (``DELETE /api/tts/audio/<id>/``): drop the audio id; a running upstream call stops.
 
@@ -44,6 +45,7 @@ from twicc.tts.openrouter import (
     pump_speech,
     schedule_cost_log,
 )
+from twicc.tts.parts import has_speech, speech_parts
 from twicc.tts.streams import (
     AudioStream,
     ending_of,
@@ -68,6 +70,7 @@ READ_SLICE = 64 * 1024
 SPEECH_FAILED = "Text-to-speech failed"
 AUDIO_GONE = "The audio is no longer available"
 AUDIO_CUT = "The audio stopped before the end"
+NOTHING_TO_SAY = "There is nothing to read aloud in this text"
 
 _RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
@@ -102,14 +105,16 @@ def _speed(value: object) -> float | None:
 def parse_speech_request(data: object) -> SpeechRequest:
     """Validate the speech payload into a :class:`SpeechRequest`. Raises ``ValueError``.
 
-    ``text`` is kept as is, but must hold more than whitespace. The other
-    strings are stripped.
+    ``text`` is kept as is, but must hold more than whitespace, and something to
+    read aloud (a letter or a digit). The other strings are stripped.
     """
     if not isinstance(data, dict):
         raise ValueError("The body must be a JSON object")  # noqa: TRY004 - the view maps ValueError to 400
     text = data.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ValueError("'text' must be a non-empty string")
+    if not has_speech(text):
+        raise ValueError(NOTHING_TO_SAY)
     model = data.get("model")
     if not isinstance(model, str) or not model.strip():
         raise ValueError("'model' must be a non-empty string")
@@ -151,11 +156,15 @@ def _opened(stream: AudioStream) -> JsonResponse:
 async def tts_speech(request):
     """POST /api/tts/speech/ — open a speech.
 
-    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?}``.
+    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?}``.
     Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
+    A text without speech is a 400, without upstream call. A text longer than its
+    first part is sent in parts, into one audio; its reads are paced, unless
+    ``buffered: true`` (the browser buffers the whole audio before it plays).
+
     A settings test sends its ``config_id``: once the audio is complete, the run
-    (characters, times, audio length, then the cost once known) becomes that
+    (characters, times, audio length, parts, then the cost once known) becomes that
     config's ``last_test`` in tts.json. ``cache: true`` reads and fills the audio
     cache, except for a settings test.
 
@@ -197,8 +206,11 @@ async def tts_speech(request):
             cached = speech_cache.get(speech_request)
             if cached is not None:
                 return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
+        buffered = data.get("buffered") is True
+        parts = speech_parts(speech_request)
+        paced = len(parts) > 1 and not buffered
         stream = start_stream(
-            lambda sink: pump_speech(speech_request, api_key, sink),
+            lambda sink: pump_speech(speech_request, api_key, sink, parts, paced=paced),
             label=label,
             on_end=_end_steps(speech_request, api_key, config_id, use_cache),
         )
@@ -228,11 +240,15 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
     Each step has its own guard: one failure never skips the others. A failed speech does nothing.
+    The cost of a split speech is the sum of its parts' costs: it is recorded only when every part
+    has a generation id.
     """
 
     async def on_end(stream: AudioStream) -> None:
         if stream.state != "complete":
             return
+        # A pump that marks no part is one part (the rule of ``AudioStream.finish``).
+        parts = max(stream.parts_sent, 1)
         # An empty audio is not worth a cache entry: the next read asks again.
         if use_cache and stream.data:
             try:
@@ -249,22 +265,25 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
                     "first_audio_ms": stream.first_audio_ms,
                     "audio_seconds": audio_duration_seconds(stream.data, stream.content_type),
                     "cost": None,
+                    "parts": parts,
                 })
             except Exception:
                 logger.exception("TTS last test of %s could not be recorded", config_id)
-        if stream.generation_id:
+        if stream.generation_ids:
             # The audio is billed already: a failed cost lookup must not cost the user anything else.
-            generation_id = stream.generation_id
+            generation_ids = list(stream.generation_ids)
             on_cost = None
-            if config_id:
+            if config_id and len(generation_ids) == parts:
+                # The recorded run carries the first part's id: the total updates it.
+                generation_id = stream.generation_id
 
                 async def on_cost(cost):
                     await _record_last_test(config_id, {"generation_id": generation_id, "cost": cost})
 
             try:
-                schedule_cost_log([generation_id], api_key, on_cost)
+                schedule_cost_log(generation_ids, api_key, on_cost)
             except Exception:
-                logger.exception("TTS cost lookup for %s could not be scheduled", generation_id)
+                logger.exception("TTS cost lookup for %s could not be scheduled", ",".join(generation_ids))
 
     return on_end
 
@@ -296,23 +315,28 @@ def _audio_headers(response: HttpResponse) -> HttpResponse:
 
 
 async def _audio_body(stream: AudioStream, start: int, last: int | None):
-    """The audio bytes of *stream* from *start*, as they arrive, in slices of ``READ_SLICE`` at most.
+    """The audio bytes of *stream* from *start*, as they become deliverable, in slices of ``READ_SLICE`` at most.
 
-    *last* set: a range body, which ends after the byte *last*, already received.
+    A paced stream delivers its bytes at the playback pace (``AudioStream.deliverable``),
+    also once it is complete or failed.
+
+    *last* set: a range body, which ends after the byte *last*, already deliverable.
     *last* None: the body ends with the stream.
     """
     offset = start
     while True:
-        limit = len(stream.data) if last is None else last + 1
+        limit = stream.deliverable() if last is None else last + 1
         if offset < limit:
             end = min(limit, offset + READ_SLICE)
             yield bytes(stream.data[offset:end])
             offset = end
             continue
         # A released stream ends the body too: its reader is gone, or does not matter any more.
-        if last is not None or stream.state in ("complete", "released"):
+        if last is not None or stream.state == "released":
             return
-        if stream.state == "failed":
+        if stream.state == "complete" and offset >= len(stream.data):
+            return
+        if stream.state == "failed" and offset >= len(stream.data):
             # The abnormal end: the ASGI server closes the connection without the final
             # chunk, so the browser sees a cut audio, not a complete one. Uvicorn then logs
             # "Exception in ASGI application" with a traceback, once per failed stream that
@@ -324,9 +348,9 @@ async def _audio_body(stream: AudioStream, start: int, last: int | None):
 async def tts_audio(request, audio_id: str):
     """GET /api/tts/audio/<id>/ — read the audio. DELETE — release it.
 
-    A plain read streams the audio from its start, as it arrives. A ``Range``
-    read (with ``RANGE_ANSWER == "partial"``) answers the received bytes from its
-    offset, after waiting for the first one.
+    A plain read streams the audio from its start, as it arrives (at the playback
+    pace for a paced stream). A ``Range`` read (with ``RANGE_ANSWER == "partial"``)
+    answers the deliverable bytes from its offset, after waiting for the first one.
 
     A read of a failed speech is a 410: Chrome retries a cut read, and given the
     same bytes then the same cut, it hangs without an ``error`` event. A read
@@ -354,12 +378,13 @@ async def tts_audio(request, audio_id: str):
         await stream.wait_for_more(start)
         if stream.state == "released":
             return _gone()
-        received = len(stream.data)
+        # The received bytes a read may send now: all of them, unless the stream is paced.
+        received = stream.deliverable()
         if received <= start and stream.state == "failed":
             return _cut()
         if received > start:
             last = received - 1 if end is None else min(received - 1, end)
-            total = received if stream.state == "complete" else "*"
+            total = len(stream.data) if stream.state == "complete" else "*"
             response = StreamingHttpResponse(
                 _audio_body(stream, start, last), status=206, content_type=stream.content_type
             )
@@ -368,7 +393,7 @@ async def tts_audio(request, audio_id: str):
             return _audio_headers(response)
         # No byte from the offset: the speech completed before it.
         response = HttpResponse(status=416, content_type=stream.content_type)
-        response["Content-Range"] = f"bytes */{received}"
+        response["Content-Range"] = f"bytes */{len(stream.data)}"
         return _audio_headers(response)
     except Exception:
         logger.exception("TTS audio read failed")

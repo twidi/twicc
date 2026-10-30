@@ -21,7 +21,7 @@ from twicc.tts import streams, views
 from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
 from twicc.tts.streams import get_stream
-from twicc.tts.views import parse_range, parse_speech_request
+from twicc.tts.views import NOTHING_TO_SAY, parse_range, parse_speech_request
 
 SPEECH_PATH = "/api/tts/speech/"
 MODELS_PATH = "/api/tts/models/"
@@ -39,6 +39,9 @@ VALID_PAYLOAD = {
 }
 CACHED_PAYLOAD = {**VALID_PAYLOAD, "cache": True}
 TEST_PAYLOAD = {**VALID_PAYLOAD, "config_id": "cfg-1"}
+# 1,000 samples of 2 bytes a second: 2,000 bytes are one second of audio.
+PACED_TYPE = "audio/pcm;rate=1000;channels=1"
+PACED_AUDIO = bytes(range(250)) * 8  # 2,000 bytes
 
 
 def _audio_path(audio_id: str) -> str:
@@ -85,10 +88,11 @@ class FakeSpeech:
 
 
 class Upstream:
-    """What the views called: the pump, the last-test records and the cost lookups."""
+    """What the views called: the pump (and its parts and pacing), the last-test records and the cost lookups."""
 
     def __init__(self):
         self.pump = FakeSpeech()
+        self.pump_args: list[tuple[list[str] | None, bool]] = []
         self.records: list[tuple[str, dict]] = []
         self.cost: list[tuple[tuple[str, ...], str]] = []
         self.on_costs = []
@@ -111,6 +115,13 @@ def _reset_streams_and_cache():
 
 
 @pytest.fixture
+def fast_pacing(monkeypatch):
+    """A paced read delivers 0.1 s ahead of the playback position, and wakes up every 0.05 s at least."""
+    monkeypatch.setattr(streams, "PACE_MARGIN", 0.1)
+    monkeypatch.setattr(streams, "PACE_TICK", 0.05)
+
+
+@pytest.fixture
 def partial_ranges(monkeypatch):
     """Answer a ``Range`` read with a 206: the path kept selectable besides the shipped "full"."""
     monkeypatch.setattr(views, "RANGE_ANSWER", "partial")
@@ -127,8 +138,13 @@ def upstream(monkeypatch):
     """The key is ``"k"``; the pump, the last-test record and the cost lookup are fakes."""
     fake = Upstream()
     monkeypatch.setattr(views, "openrouter_api_key", lambda: "k")
-    # Through a lambda: a test can swap ``fake.pump`` for a fresh one.
-    monkeypatch.setattr(views, "pump_speech", lambda request, api_key, stream: fake.pump(request, api_key, stream))
+
+    # Through a function: a test can swap ``fake.pump`` for a fresh one.
+    def pump_speech(request, api_key, stream, parts=None, *, paced=False):
+        fake.pump_args.append((parts, paced))
+        return fake.pump(request, api_key, stream)
+
+    monkeypatch.setattr(views, "pump_speech", pump_speech)
     monkeypatch.setattr(views, "_record_last_test", fake.record_last_test)
     monkeypatch.setattr(views, "schedule_cost_log", fake.schedule_cost_log)
     return fake
@@ -218,6 +234,11 @@ async def _body(response) -> bytes:
     return b"".join(await _chunks(response))
 
 
+async def _collect(chunks) -> bytes:
+    """The rest of an already started body (bound it with ``_within``)."""
+    return b"".join([chunk async for chunk in chunks])
+
+
 async def _next(iterator) -> bytes:
     return await _within(anext(iterator))
 
@@ -270,6 +291,7 @@ SPEED_ERROR = "'speed' must be a finite positive number"
         ({**VALID_PAYLOAD, "text": ""}, TEXT_ERROR),
         ({**VALID_PAYLOAD, "text": "   \n"}, TEXT_ERROR),
         ({**VALID_PAYLOAD, "text": 12}, TEXT_ERROR),
+        ({**VALID_PAYLOAD, "text": "👍"}, NOTHING_TO_SAY),
         ({key: value for key, value in VALID_PAYLOAD.items() if key != "model"}, MODEL_ERROR),
         ({**VALID_PAYLOAD, "model": "  "}, MODEL_ERROR),
         ({**VALID_PAYLOAD, "model": 3}, MODEL_ERROR),
@@ -334,6 +356,13 @@ def test_rejects_invalid_payloads(client, upstream, monkeypatch, body, message):
     response = _post_json(client, body)
     assert response.status_code == 400
     assert response.json() == {"error": message}
+    assert upstream.pump.calls == []
+
+
+def test_a_text_with_nothing_to_say_is_400_without_upstream(client, upstream):
+    response = _post_json(client, {**VALID_PAYLOAD, "text": "…"})
+    assert response.status_code == 400
+    assert response.json() == {"error": "There is nothing to read aloud in this text"}
     assert upstream.pump.calls == []
 
 
@@ -463,6 +492,28 @@ def test_open_returns_the_audio_id_and_type(client, upstream):
     asyncio.run(scenario())
 
 
+def test_open_passes_the_parts_and_pacing_to_the_pump(client, upstream, monkeypatch):
+    async def run(body):
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("finish")
+        await _open_id(client, body)
+        await _settle()
+
+    async def scenario():
+        with monkeypatch.context() as patch:
+            patch.setattr(views, "speech_parts", lambda request: ["a", "b"])
+            await run(VALID_PAYLOAD)
+            await run({**VALID_PAYLOAD, "buffered": True})
+        await run(VALID_PAYLOAD)
+
+    asyncio.run(scenario())
+    assert upstream.pump_args == [
+        (["a", "b"], True),
+        (["a", "b"], False),
+        ([VALID_PAYLOAD["text"]], False),
+    ]
+
+
 def test_open_waits_for_headers_only(client, upstream):
     async def scenario():
         gate = asyncio.Event()
@@ -568,6 +619,24 @@ def test_range_read_serves_received_bytes_from_the_offset(client, upstream, part
     asyncio.run(scenario())
 
 
+def test_range_read_of_a_paced_stream_serves_the_deliverable_bytes(client, upstream, partial_ranges, fast_pacing):
+    async def scenario():
+        upstream.pump.send("set_headers", PACED_TYPE, "gen-1")
+        upstream.pump.send("pace")
+        upstream.pump.send("append", PACED_AUDIO)
+        upstream.pump.send("finish")
+        audio_id = await _open_id(client)
+        response = await _read(client, audio_id, "bytes=0-")
+        assert response.status_code == 206
+        last = int(response["Content-Length"]) - 1
+        # The received bytes of a paced stream are its deliverable ones; the total stays the whole audio.
+        assert 200 <= last + 1 <= 600
+        assert response["Content-Range"] == f"bytes 0-{last}/{len(PACED_AUDIO)}"
+        assert await _body(response) == PACED_AUDIO[: last + 1]
+
+    asyncio.run(scenario())
+
+
 def test_range_beyond_a_complete_audio_is_416(client, upstream, partial_ranges):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
@@ -629,6 +698,79 @@ def test_range_read_of_a_running_stream_streams_from_the_start(client, upstream)
         assert await _body(response) == b"0123456789abc"
 
     asyncio.run(scenario())
+
+
+def test_a_paced_read_delivers_the_audio_as_the_playback_advances(client, upstream, fast_pacing):
+    async def scenario():
+        upstream.pump.send("set_headers", PACED_TYPE, "gen-1")
+        upstream.pump.send("pace")
+        upstream.pump.send("append", PACED_AUDIO)
+        upstream.pump.send("finish")
+        audio_id = await _open_id(client)
+        response = await _read(client, audio_id)
+        chunks = aiter(response.streaming_content)
+        first = await _next(chunks)
+        # About PACE_MARGIN (0.1 s, 200 bytes) ahead of the playback position, not the whole audio.
+        assert 200 <= len(first) <= 600
+        rest = await _within(_collect(chunks), 2.0)
+        return first + rest
+
+    assert asyncio.run(scenario()) == PACED_AUDIO
+
+
+def test_a_second_read_of_a_paced_stream_gets_the_deliverable_bytes_at_once(client, upstream, fast_pacing):
+    async def scenario():
+        upstream.pump.send("set_headers", PACED_TYPE, "gen-1")
+        upstream.pump.send("pace")
+        upstream.pump.send("append", PACED_AUDIO)
+        upstream.pump.send("finish")
+        audio_id = await _open_id(client)
+        stream = get_stream(audio_id)
+        first_read = asyncio.create_task(_within(_body(await _read(client, audio_id)), 2.0))
+        await asyncio.sleep(0.5)
+        # A media element that reads the stream again from its start (Review Focus 3).
+        deliverable = stream.deliverable()
+        assert 0 < deliverable < len(PACED_AUDIO)
+        second = await _read(client, audio_id)
+        chunks = aiter(second.streaming_content)
+        received = b""
+        async with asyncio.timeout(0.1):
+            while len(received) < deliverable:
+                received += await anext(chunks)
+        assert received == PACED_AUDIO[: len(received)]
+        rest = await _within(_collect(chunks), 2.0)
+        return await first_read, received + rest
+
+    first, second = asyncio.run(scenario())
+    assert first == second == PACED_AUDIO
+
+
+def test_a_later_part_failure_delivers_the_received_audio_then_cuts(client, upstream, fast_pacing):
+    async def scenario():
+        upstream.pump.send("begin_part")
+        upstream.pump.send("set_headers", PACED_TYPE, "g1")
+        upstream.pump.send("pace")
+        upstream.pump.send("append", PACED_AUDIO)
+        upstream.pump.send("end_part")
+        upstream.pump.send("begin_part")
+        audio_id = await _open_id(client)
+        response = await _read(client, audio_id)
+        chunks = aiter(response.streaming_content)
+        received = await _next(chunks)
+        # The second part fails while the read still delivers the first part's audio.
+        upstream.pump.send("fail", SpeechError("Rate limited", upstream_status=429))
+        await _settle()
+        assert await _ending(client, audio_id) == {"state": "failed", "error": "Rate limited"}
+        retried = await _read(client, audio_id)
+        assert retried.status_code == 410
+        assert retried.json() == CUT
+        with pytest.raises(ConnectionAbortedError):
+            async with asyncio.timeout(2.0):
+                async for chunk in chunks:
+                    received += chunk
+        return received
+
+    assert asyncio.run(scenario()) == PACED_AUDIO
 
 
 def test_no_reader_does_not_stop_the_upstream(client, upstream):
@@ -1058,20 +1200,23 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
     monkeypatch.setattr(views, "audio_duration_seconds", measure)
 
     async def scenario():
+        upstream.pump.send("begin_part")
         upstream.pump.send("set_headers", content_type, "gen-1")
         upstream.pump.send("append", audio)
         audio_id = await _open_id(client, TEST_PAYLOAD)
         await _settle()
         assert upstream.records == []  # not at the open: at the complete audio
+        upstream.pump.send("end_part")
         upstream.pump.send("finish")
         await _settle()
         stream = get_stream(audio_id)
         [(config_id, run)] = upstream.records
         assert config_id == "cfg-1"
         assert set(run) == {
-            "at", "generation_id", "chars", "generation_ms", "first_audio_ms", "audio_seconds", "cost"
+            "at", "generation_id", "chars", "generation_ms", "first_audio_ms", "audio_seconds", "cost", "parts"
         }
         assert run["generation_id"] == "gen-1"
+        assert run["parts"] == 1
         assert run["chars"] == len(VALID_PAYLOAD["text"])
         assert run["generation_ms"] == stream.generation_ms
         assert run["first_audio_ms"] == stream.first_audio_ms
@@ -1086,6 +1231,65 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
         assert upstream.records[-1] == ("cfg-1", {"generation_id": "gen-1", "cost": 0.008})
 
     asyncio.run(scenario())
+
+
+def test_a_pump_without_part_marks_counts_as_one_part(client, upstream):
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("append", b"ID3audio")
+        upstream.pump.send("finish")
+        await _open_id(client, TEST_PAYLOAD)
+        await _settle()
+
+    asyncio.run(scenario())
+    [(_config_id, run)] = upstream.records
+    assert run["parts"] == 1
+    assert upstream.cost == [(("gen-1",), "k")]
+    assert upstream.on_costs[0] is not None
+
+
+def _send_parts(pump, generation_ids) -> None:
+    """Queue a speech of one part per id (None: a part without id), as the real pump sends it."""
+    for index, generation_id in enumerate(generation_ids):
+        pump.send("begin_part")
+        if index:
+            pump.send("add_part_headers", "audio/mpeg", generation_id)
+        else:
+            pump.send("set_headers", "audio/mpeg", generation_id)
+        pump.send("append", b"part%d" % index)
+        pump.send("end_part")
+    pump.send("finish")
+
+
+def test_a_split_run_records_its_parts_and_the_summed_cost(client, upstream):
+    async def scenario():
+        _send_parts(upstream.pump, ["g1", "g2", "g3"])
+        await _open_id(client, TEST_PAYLOAD)
+        await _settle()
+        [(config_id, run)] = upstream.records
+        assert config_id == "cfg-1"
+        assert run["parts"] == 3
+        assert run["generation_id"] == "g1"
+        assert upstream.cost == [(("g1", "g2", "g3"), "k")]
+        # The lookup gives the total of the three parts: it updates the run of the first id.
+        await _within(upstream.on_costs[0](0.006))
+        assert upstream.records[-1] == ("cfg-1", {"generation_id": "g1", "cost": 0.006})
+
+    asyncio.run(scenario())
+
+
+def test_a_part_without_generation_id_records_no_cost(client, upstream):
+    async def scenario():
+        _send_parts(upstream.pump, ["g1", None, "g3"])
+        await _open_id(client, TEST_PAYLOAD)
+        await _settle()
+
+    asyncio.run(scenario())
+    [(_config_id, run)] = upstream.records
+    assert run["parts"] == 3
+    # The two known costs are still logged, but their sum is not the run's cost.
+    assert upstream.cost == [(("g1", "g3"), "k")]
+    assert upstream.on_costs == [None]
 
 
 def test_a_message_read_records_no_run(client, upstream):

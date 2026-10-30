@@ -72,6 +72,7 @@ def _last_test(value: object) -> dict | None:
     """The last test run of a config, written by the backend only; None when absent or unusable.
 
     ``cost`` (USD) comes some seconds after the run, through the generation lookup.
+    ``parts`` is the number of requests of the text; None in a record written before split texts.
     """
     if not isinstance(value, dict) or not isinstance(value.get("at"), str):
         return None
@@ -87,6 +88,7 @@ def _last_test(value: object) -> dict | None:
         "first_audio_ms": _non_negative(value.get("first_audio_ms"), int),
         "audio_seconds": _non_negative(value.get("audio_seconds"), float),
         "cost": _non_negative(value.get("cost"), float),
+        "parts": _non_negative(value.get("parts"), int),
     }
 
 

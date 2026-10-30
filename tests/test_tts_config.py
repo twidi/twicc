@@ -288,7 +288,7 @@ def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transacti
 
 LAST_TEST = {
     "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
-    "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None,
+    "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None, "parts": 3,
 }
 
 
@@ -312,6 +312,18 @@ def test_last_test_keeps_first_audio_ms():
     # A record written before the field existed stays valid.
     old_record = {key: value for key, value in LAST_TEST.items() if key != "first_audio_ms"}
     assert first_audio_ms(old_record) == {**LAST_TEST, "first_audio_ms": None}
+
+
+def test_last_test_keeps_parts():
+    def last_test(record):
+        return normalize_tts_config({"configs": [_entry(last_test=record)]})["configs"][0]["last_test"]
+
+    assert last_test(LAST_TEST)["parts"] == 3
+    assert last_test({**LAST_TEST, "parts": -1})["parts"] is None
+    assert last_test({**LAST_TEST, "parts": "x"})["parts"] is None
+    # A record written before split texts: still valid, without a part count.
+    old_record = {key: value for key, value in LAST_TEST.items() if key != "parts"}
+    assert last_test(old_record) == {**LAST_TEST, "parts": None}
 
 
 def test_a_client_write_keeps_the_recorded_last_test(tmp_data_dir):
