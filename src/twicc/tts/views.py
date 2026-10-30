@@ -262,7 +262,7 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
                     await _record_last_test(config_id, {"generation_id": generation_id, "cost": cost})
 
             try:
-                schedule_cost_log(generation_id, api_key, on_cost)
+                schedule_cost_log([generation_id], api_key, on_cost)
             except Exception:
                 logger.exception("TTS cost lookup for %s could not be scheduled", generation_id)
 

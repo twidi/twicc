@@ -90,14 +90,14 @@ class Upstream:
     def __init__(self):
         self.pump = FakeSpeech()
         self.records: list[tuple[str, dict]] = []
-        self.cost: list[tuple[str, str]] = []
+        self.cost: list[tuple[tuple[str, ...], str]] = []
         self.on_costs = []
 
     async def record_last_test(self, config_id, update):
         self.records.append((config_id, update))
 
-    def schedule_cost_log(self, generation_id, api_key, on_cost=None):
-        self.cost.append((generation_id, api_key))
+    def schedule_cost_log(self, generation_ids, api_key, on_cost=None):
+        self.cost.append((tuple(generation_ids), api_key))
         self.on_costs.append(on_cost)
 
 
@@ -795,7 +795,7 @@ def test_release_after_complete_still_records_and_caches(client, upstream, monke
     [(config_id, run)] = upstream.records
     assert config_id == "cfg-1"
     assert run["generation_id"] == "gen-2"
-    assert upstream.cost == [("gen-1", "k"), ("gen-2", "k")]
+    assert upstream.cost == [(("gen-1",), "k"), (("gen-2",), "k")]
 
 
 def test_read_ending_and_release_rearm_the_safety_timer(client, upstream, monkeypatch):
@@ -929,7 +929,7 @@ def test_cache_hit_serves_without_upstream(client, upstream):
         assert len(upstream.pump.calls) == 2
 
     asyncio.run(scenario())
-    assert upstream.cost == [("gen-1", "k"), ("gen-3", "k")]  # a cache hit costs nothing
+    assert upstream.cost == [(("gen-1",), "k"), (("gen-3",), "k")]  # a cache hit costs nothing
 
 
 def test_a_cache_hit_survives_eviction(client, upstream):
@@ -995,7 +995,7 @@ def test_a_failed_or_released_audio_is_not_cached(client, upstream):
         assert len(upstream.pump.calls) == 1  # no cache hit
 
     asyncio.run(scenario())
-    assert upstream.cost == [("gen-3", "k")]  # a failed or released audio has no cost lookup
+    assert upstream.cost == [(("gen-3",), "k")]  # a failed or released audio has no cost lookup
 
 
 # --- End of speech: last test run, cost lookup ----------------------------------
@@ -1030,7 +1030,7 @@ def test_a_complete_audio_schedules_the_cost_lookup(client, upstream):
         await _settle()
 
     asyncio.run(scenario())
-    assert upstream.cost == [("gen-1", "k")]
+    assert upstream.cost == [(("gen-1",), "k")]
     assert upstream.on_costs == [None]  # a message read records no cost
 
 
@@ -1081,7 +1081,7 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
         assert measured[0] is stream.data  # no copy of the audio
         assert run["cost"] is None
         # The cost callback updates the same run once the lookup finds it.
-        assert upstream.cost == [("gen-1", "k")]
+        assert upstream.cost == [(("gen-1",), "k")]
         await _within(upstream.on_costs[0](0.008))
         assert upstream.records[-1] == ("cfg-1", {"generation_id": "gen-1", "cost": 0.008})
 
@@ -1124,10 +1124,10 @@ def test_on_end_steps_fail_independently(client, upstream, monkeypatch, views_lo
             upstream.pump.send("finish")
             audio_ids.append(await _open_id(client, body))
             await _settle()
-        assert upstream.cost == [("gen-1", "k"), ("gen-2", "k")]
+        assert upstream.cost == [(("gen-1",), "k"), (("gen-2",), "k")]
 
         # A failing cost step: the audio stays readable.
-        def broken_cost_log(generation_id, api_key, on_cost=None):
+        def broken_cost_log(generation_ids, api_key, on_cost=None):
             raise RuntimeError("no running loop")
 
         monkeypatch.setattr(views, "schedule_cost_log", broken_cost_log)

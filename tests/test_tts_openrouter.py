@@ -470,6 +470,288 @@ def test_pump_cancellation_propagates(monkeypatch, when):
     asyncio.run(scenario())
 
 
+PARTS = ["Part one.", "Part two.", "Part three."]
+
+
+def _parts_transport(monkeypatch, answers) -> list[str]:
+    """Answer the n-th speech request with ``answers[n]`` (a response, or an exception to raise).
+
+    Returns the list that receives the ``input`` of each request, as it arrives.
+    """
+    inputs = []
+
+    def handler(request):
+        inputs.append(orjson.loads(request.content)["input"])
+        answer = answers[len(inputs) - 1]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    _mock_transport(monkeypatch, handler)
+    return inputs
+
+
+def _audio(content: bytes, content_type: str = "audio/mpeg", generation_id: str | None = None) -> httpx.Response:
+    headers = {"content-type": content_type}
+    if generation_id:
+        headers["x-generation-id"] = generation_id
+    return httpx.Response(200, content=content, headers=headers)
+
+
+async def _until(predicate, seconds: float = 1.0) -> None:
+    """Wait until ``predicate()`` holds, failing the test instead of hanging."""
+    async with asyncio.timeout(seconds):
+        while not predicate():
+            await asyncio.sleep(0.005)
+
+
+def test_pump_sends_the_parts_one_after_the_other(monkeypatch):
+    async def scenario():
+        bodies = [asyncio.Queue() for _ in PARTS]
+        inputs = _parts_transport(
+            monkeypatch,
+            [
+                httpx.Response(
+                    200, headers={"content-type": "audio/mpeg", "x-generation-id": f"gen-{n}"}, stream=_QueueBody(body)
+                )
+                for n, body in enumerate(bodies, 1)
+            ],
+        )
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_speech(_request(), "k", stream, PARTS))
+
+        await _within(stream.ready)
+        bodies[0].put_nowait(b"audio-one")
+        await _within(stream.wait_for_more(0))
+        await asyncio.sleep(0.05)
+        assert inputs == ["Part one."]  # the next part waits for this body to close
+
+        bodies[0].put_nowait(None)
+        await _until(lambda: len(inputs) == 2)
+        assert inputs == ["Part one.", "Part two."]
+        bodies[1].put_nowait(b"audio-two")
+        bodies[1].put_nowait(None)
+        await _until(lambda: len(inputs) == 3)
+        bodies[2].put_nowait(b"audio-three")
+        bodies[2].put_nowait(None)
+        await _within(pump)
+
+        assert inputs == PARTS
+        assert bytes(stream.data) == b"audio-oneaudio-twoaudio-three"
+        assert stream.parts_sent == 3
+        assert stream.generation_ids == ["gen-1", "gen-2", "gen-3"]
+        assert stream.generation_id == "gen-1"
+        assert stream.state == "complete"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("paced", [True, False])
+def test_pump_paces_only_when_asked(monkeypatch, paced):
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(b"one"), _audio(b"two")])
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS[:2], paced=paced))
+        assert stream.state == "complete"
+        assert stream.paced is paced
+
+    asyncio.run(scenario())
+
+
+def test_pump_waits_for_the_lookahead_before_each_next_part(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(monkeypatch, [_audio(b"one"), _audio(b"two"), _audio(b"three")])
+        stream = AudioStream(LABEL)
+        waits = []
+
+        async def wait_for_lookahead():
+            waits.append(len(inputs))  # the requests sent when the wait starts
+
+        stream.wait_for_lookahead = wait_for_lookahead
+        await _within(pump_speech(_request(), "k", stream, PARTS))
+        assert waits == [1, 2]
+        assert stream.state == "complete"
+
+    asyncio.run(scenario())
+
+
+def test_a_later_part_error_fails_the_running_stream(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(
+            monkeypatch,
+            [
+                _audio(b"one", generation_id="gen-1"),
+                httpx.Response(
+                    429,
+                    content=orjson.dumps({"error": {"message": "Rate limited"}}),
+                    headers={"content-type": "application/json"},
+                ),
+                _audio(b"three"),
+            ],
+        )
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS))
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", "Rate limited", 429)
+        assert stream.ready.result() is None  # the first part's headers had arrived
+        assert bytes(stream.data) == b"one"
+        assert inputs == PARTS[:2]
+
+    asyncio.run(scenario())
+
+
+def test_a_later_part_network_error_fails_with_its_message(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(
+            monkeypatch, [_audio(b"one"), httpx.ConnectError("secret-ish detail"), _audio(b"three")]
+        )
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS))
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", "Could not reach OpenRouter", None)
+        assert bytes(stream.data) == b"one"
+        assert inputs == PARTS[:2]
+
+    asyncio.run(scenario())
+
+
+def test_a_later_part_with_another_type_fails(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(
+            monkeypatch,
+            [
+                _audio(b"\x00\x01" * 4, "audio/pcm;rate=44100;channels=1"),
+                _audio(b"\x00\x01" * 4, "audio/pcm;rate=24000"),
+                _audio(b"\x00\x01" * 4, "audio/pcm;rate=44100;channels=1"),
+            ],
+        )
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request("pcm"), "k", stream, PARTS))
+        assert (stream.state, stream.error) == ("failed", streams.PART_TYPE_CHANGED)
+        assert bytes(stream.data) == b"\x00\x01" * 4
+        assert inputs == PARTS[:2]
+
+    asyncio.run(scenario())
+
+
+def test_pump_strips_mp3_heads_of_split_texts_only(monkeypatch):
+    part = _id3(30) + _frame(b"Info") + _frame()
+
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(part), _audio(part)])
+        split = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", split, PARTS[:2]))
+        assert split.state == "complete"
+        assert bytes(split.data) == _id3(30) + _frame() + _frame()
+
+        _parts_transport(monkeypatch, [_audio(part)])
+        single = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", single))
+        assert bytes(single.data) == part
+
+    asyncio.run(scenario())
+
+
+def test_a_xing_tagged_constant_bitrate_first_part_keeps_pacing(monkeypatch):
+    # MiniMax writes an empty Xing placeholder on constant-bitrate audio: the tag alone does not
+    # make the rate variable. The info frame is still dropped from every part.
+    first = _id3(30) + _frame(b"Xing") + _frame() + _frame()
+    later = _id3(30) + _frame(b"Xing") + _frame()
+
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(first), _audio(later)])
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS[:2], paced=True))
+        assert stream.state == "complete"
+        assert bytes(stream.data) == _id3(30) + _frame() * 3
+        assert stream.byte_rate() == 16000.0
+
+    asyncio.run(scenario())
+
+
+def test_a_variable_bitrate_first_part_disables_pacing(monkeypatch):
+    # Frames with different bitrates: the rate is unknown, the speech is neither paced nor held.
+    first = _frame() + _frame(bitrate_index=5) + _frame()
+
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(first), _audio(_frame())])
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS[:2], paced=True))
+        assert stream.state == "complete"
+        assert stream.byte_rate() is None
+        assert stream.deliverable() == len(stream.data)
+
+    asyncio.run(scenario())
+
+
+def test_pump_trims_split_pcm_parts_to_whole_frames(monkeypatch):
+    pcm_type = "audio/pcm;rate=24000;channels=2"  # 4-byte frames
+
+    def chunked(*chunks: bytes) -> httpx.Response:
+        body = asyncio.Queue()
+        for chunk in (*chunks, None):
+            body.put_nowait(chunk)
+        return httpx.Response(200, headers={"content-type": pcm_type}, stream=_QueueBody(body))
+
+    async def scenario():
+        _parts_transport(monkeypatch, [chunked(b"abc", b"defg"), chunked(b"12345678")])
+        split = AudioStream(LABEL)
+        await _within(pump_speech(_request("pcm"), "k", split, PARTS[:2]))
+        assert split.state == "complete"
+        assert bytes(split.data) == b"abcd" + b"12345678"
+
+        _parts_transport(monkeypatch, [chunked(b"abc", b"defg")])
+        single = AudioStream(LABEL)
+        await _within(pump_speech(_request("pcm"), "k", single))
+        assert bytes(single.data) == b"abcdefg"
+
+    asyncio.run(scenario())
+
+
+def test_release_during_the_lookahead_wait_sends_no_next_part(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=STREAMS_LOGGER_NAME)
+    inputs = _parts_transport(monkeypatch, [_audio(b"one"), _audio(b"two"), _audio(b"three")])
+    entered = []
+    cancelled = []
+
+    async def wait_for_lookahead(self):
+        entered.append(len(inputs))
+        try:
+            await asyncio.Event().wait()  # never set
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(AudioStream, "wait_for_lookahead", wait_for_lookahead)
+
+    async def scenario():
+        stream = start_stream(lambda s: pump_speech(_request(), "k", s, PARTS), label=LABEL)
+        await _until(lambda: entered)
+        streams.release_stream(stream.id)
+        with pytest.raises(asyncio.CancelledError):
+            await _within(stream._task)
+        assert stream.state == "released"
+
+    asyncio.run(scenario())
+
+    assert cancelled == [True]
+    assert inputs == PARTS[:1]
+    lines = [r.getMessage() for r in caplog.records if r.name == STREAMS_LOGGER_NAME and r.levelno == logging.INFO]
+    assert len(lines) == 1
+    assert " parts=1 " in lines[0]
+    assert lines[0].endswith("outcome=released")
+
+
+def test_an_empty_later_part_does_not_end_the_speech(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(monkeypatch, [_audio(_frame()), _audio(b""), _audio(_frame())])
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS))
+        assert inputs == PARTS
+        assert bytes(stream.data) == _frame() * 2
+        assert stream.state == "complete"
+
+    asyncio.run(scenario())
+
+
 def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
     hits = []
     payload = {
@@ -708,7 +990,7 @@ def test_schedule_cost_log_runs_in_the_background(monkeypatch):
     monkeypatch.setattr(openrouter, "_log_generation_cost", fake_log)
 
     async def main():
-        openrouter.schedule_cost_log("gen-1", "k")
+        openrouter.schedule_cost_log(["gen-1"], "k")
         assert len(openrouter._cost_tasks) == 1
         await asyncio.gather(*openrouter._cost_tasks)
         await asyncio.sleep(0)
@@ -716,6 +998,64 @@ def test_schedule_cost_log_runs_in_the_background(monkeypatch):
     asyncio.run(main())
     assert seen == [("gen-1", "k")]
     assert not openrouter._cost_tasks
+
+
+def _run_cost_log(monkeypatch, costs: dict) -> tuple[list[str], list[float]]:
+    """``schedule_cost_log`` over the ids of *costs*, each lookup returning its cost.
+
+    Returns the looked-up ids and the totals given to ``on_cost``.
+    """
+    looked_up = []
+    totals = []
+
+    async def fake_log(generation_id, api_key):
+        looked_up.append(generation_id)
+        return costs[generation_id]
+
+    async def on_cost(total):
+        totals.append(total)
+
+    monkeypatch.setattr(openrouter, "_log_generation_cost", fake_log)
+
+    async def main():
+        openrouter.schedule_cost_log(list(costs), "k", on_cost)
+        await asyncio.gather(*openrouter._cost_tasks)
+
+    asyncio.run(main())
+    return looked_up, totals
+
+
+def test_schedule_cost_log_sums_the_parts(monkeypatch):
+    looked_up, totals = _run_cost_log(monkeypatch, {"gen-1": 0.001, "gen-2": 0.002, "gen-3": 0.003})
+    assert sorted(looked_up) == ["gen-1", "gen-2", "gen-3"]
+    assert totals == [pytest.approx(0.006)]
+
+
+def test_schedule_cost_log_gives_no_total_when_a_cost_is_missing(monkeypatch):
+    looked_up, totals = _run_cost_log(monkeypatch, {"gen-1": 0.001, "gen-2": None, "gen-3": 0.003})
+    assert sorted(looked_up) == ["gen-1", "gen-2", "gen-3"]
+    assert totals == []
+
+
+def test_schedule_cost_log_looks_the_parts_up_in_parallel(monkeypatch):
+    running = []
+    peak = []
+
+    async def fake_log(generation_id, api_key):
+        running.append(generation_id)
+        await asyncio.sleep(0.01)
+        peak.append(len(running))
+        running.remove(generation_id)
+        return 0.001
+
+    monkeypatch.setattr(openrouter, "_log_generation_cost", fake_log)
+
+    async def main():
+        openrouter.schedule_cost_log(["gen-1", "gen-2", "gen-3"], "k")
+        await asyncio.gather(*openrouter._cost_tasks)
+
+    asyncio.run(main())
+    assert max(peak) == 3
 
 
 def test_audio_duration_of_mp3():

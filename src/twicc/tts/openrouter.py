@@ -1,9 +1,9 @@
 """Async client for the OpenRouter text-to-speech API.
 
-Three calls: stream the speech of a text into an audio stream (``POST
-/audio/speech``, :func:`pump_speech`), list the speech models
-(``GET /models?output_modalities=speech``), and log the real cost of a
-generation (``GET /generation?id=…``) in the background.
+Three calls: stream the speech of a text, in one request or part by part, into
+an audio stream (``POST /audio/speech``, :func:`pump_speech`), list the speech
+models (``GET /models?output_modalities=speech``), and log the real cost of the
+generations of a speech (``GET /generation?id=…``) in the background.
 
 The API key is always a parameter: this module never reads it from the
 environment, and never puts it (or an exception text, or a header) in a log
@@ -14,13 +14,14 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, NamedTuple
 
 import httpx
 import orjson
 
 from twicc.tts.model_catalog import speech_model_facts
-from twicc.tts.part_audio import MP3_HEADER_SIZE, id3_tag_size, mp3_frame
+from twicc.tts.part_audio import MP3_HEADER_SIZE, Mp3HeadFilter, PcmFrameTrimmer, id3_tag_size, mp3_frame
 
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
@@ -148,35 +149,38 @@ def upstream_error_message(status: int, body: bytes) -> str:
     return message
 
 
-async def pump_speech(request: SpeechRequest, api_key: str, stream: "AudioStream") -> None:
+async def pump_speech(
+    request: SpeechRequest,
+    api_key: str,
+    stream: "AudioStream",
+    parts: Sequence[str] | None = None,
+    *,
+    paced: bool = False,
+) -> None:
     """Stream the speech of *request* into *stream*, chunk by chunk, as it arrives.
 
+    *parts* are the texts to speak, one request each, in order, into the same
+    stream (None: the request's text, in one request). A part is requested once
+    the previous part's audio has fully arrived and the stream's lookahead
+    allows it. With *paced*, the stream delivers its audio at the playback pace.
+
     The upstream ``Content-Type`` decides, not the requested format. An upstream
-    error, or a success that is not audio, fails the stream before its headers.
-    A timeout or a network error fails it with a user-safe message, before or
-    after its headers. A cancellation (a release) propagates: the ``async with``
-    closes the upstream call.
+    error, or a success that is not audio, fails the stream (before its headers
+    on the first part) and sends no next part. A later part of another type
+    fails it too. A timeout or a network error fails it with a user-safe
+    message, before or after its headers. A cancellation (a release) propagates:
+    the ``async with`` closes the upstream call.
     """
+    texts = [request.text] if parts is None else list(parts)
+    split = len(texts) > 1
     try:
-        async with (
-            _make_client(SPEECH_TIMEOUT) as client,
-            client.stream("POST", SPEECH_URL, json=build_payload(request), headers=_auth_headers(api_key)) as response,
-        ):
-            status = response.status_code
-            content_type = response.headers.get("content-type", "")
-            media_type = content_type.split(";", 1)[0].strip().lower()
-            if not response.is_success or not media_type.startswith("audio/"):
-                # An error, or a success that is not audio (JSON, HTML, ...): its message, else its status.
-                body = await response.aread()
-                stream.fail(SpeechError(upstream_error_message(status, body), upstream_status=status))
-                return
-            if media_type == "audio/pcm":
-                content_type = pcm_content_type(content_type)
-            stream.set_headers(content_type, response.headers.get("x-generation-id") or None)
-            # aiter_bytes, not aiter_raw: httpx asks for gzip, and only aiter_bytes
-            # decodes it (without re-chunking).
-            async for chunk in response.aiter_bytes():
-                stream.append(chunk)
+        async with _make_client(SPEECH_TIMEOUT) as client:
+            for index, text in enumerate(texts):
+                if index:
+                    await stream.wait_for_lookahead()
+                part_request = request._replace(text=text)
+                if not await _pump_part(client, part_request, api_key, stream, index, split=split, paced=paced):
+                    return
     except httpx.TimeoutException:
         _fail_if_live(stream, SpeechError("OpenRouter did not answer in time"))
         return
@@ -184,6 +188,65 @@ async def pump_speech(request: SpeechRequest, api_key: str, stream: "AudioStream
         _fail_if_live(stream, SpeechError("Could not reach OpenRouter"))
         return
     stream.finish()
+
+
+async def _pump_part(
+    client: httpx.AsyncClient,
+    request: SpeechRequest,
+    api_key: str,
+    stream: "AudioStream",
+    index: int,
+    *,
+    split: bool,
+    paced: bool,
+) -> bool:
+    """Stream the speech of one part into *stream*. False when the part failed the stream.
+
+    The audio of a split text is filtered part by part: an MP3 part loses its
+    info frame (and its ID3 tag after the first part), a PCM part its partial
+    last frame. The audio of a single part is never filtered.
+    """
+    stream.begin_part()
+    async with client.stream(
+        "POST", SPEECH_URL, json=build_payload(request), headers=_auth_headers(api_key)
+    ) as response:
+        status = response.status_code
+        content_type = response.headers.get("content-type", "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if not response.is_success or not media_type.startswith("audio/"):
+            # An error, or a success that is not audio (JSON, HTML, ...): its message, else its status.
+            body = await response.aread()
+            stream.fail(SpeechError(upstream_error_message(status, body), upstream_status=status))
+            return False
+        if media_type == "audio/pcm":
+            content_type = pcm_content_type(content_type)
+        generation_id = response.headers.get("x-generation-id") or None
+        if index == 0:
+            stream.set_headers(content_type, generation_id)
+            if paced:
+                stream.pace()
+        elif not stream.add_part_headers(content_type, generation_id):
+            return False
+        head_filter = trimmer = None
+        if split and media_type == "audio/mpeg":
+            head_filter = Mp3HeadFilter(drop_id3=index > 0)
+        elif split and media_type == "audio/pcm":
+            _rate, channels = parse_pcm_format(content_type)
+            trimmer = PcmFrameTrimmer(channels * PCM_SAMPLE_WIDTH)
+        # aiter_bytes, not aiter_raw: httpx asks for gzip, and only aiter_bytes
+        # decodes it (without re-chunking).
+        async for chunk in response.aiter_bytes():
+            if head_filter is not None:
+                chunk = head_filter.feed(chunk)
+            elif trimmer is not None:
+                chunk = trimmer.feed(chunk)
+            stream.append(chunk)
+        if head_filter is not None:
+            stream.append(head_filter.flush())
+        elif trimmer is not None and (dropped := trimmer.end()):
+            logger.debug("TTS part %d: %d bytes of a partial PCM frame dropped", index + 1, dropped)
+        stream.end_part()
+    return True
 
 
 def _fail_if_live(stream: "AudioStream", error: SpeechError) -> None:
@@ -278,24 +341,26 @@ async def fetch_speech_models() -> list[dict]:
 _cost_tasks: set[asyncio.Task] = set()
 
 
-def schedule_cost_log(generation_id: str, api_key: str, on_cost=None) -> None:
-    """Log the real cost of *generation_id* in the background (fire-and-forget).
+def schedule_cost_log(generation_ids: list[str], api_key: str, on_cost=None) -> None:
+    """Log the real cost of each of *generation_ids* (the parts of one speech) in the
+    background, in parallel, one line each (fire-and-forget).
 
-    *on_cost*, an async callable, then receives the cost when the lookup found one.
+    *on_cost*, an async callable, then receives the total cost, once, when every
+    lookup found a cost.
     """
-    task = asyncio.get_running_loop().create_task(_cost_then(generation_id, api_key, on_cost))
+    task = asyncio.get_running_loop().create_task(_costs_then(list(generation_ids), api_key, on_cost))
     _cost_tasks.add(task)
     task.add_done_callback(_cost_tasks.discard)
 
 
-async def _cost_then(generation_id: str, api_key: str, on_cost) -> None:
-    cost = await _log_generation_cost(generation_id, api_key)
-    if cost is None or on_cost is None:
+async def _costs_then(generation_ids: list[str], api_key: str, on_cost) -> None:
+    costs = await asyncio.gather(*(_log_generation_cost(generation_id, api_key) for generation_id in generation_ids))
+    if not costs or None in costs or on_cost is None:
         return
     try:
-        await on_cost(cost)
+        await on_cost(sum(costs))
     except Exception:  # noqa: BLE001 - fire-and-forget: never raise
-        logger.exception("TTS cost %s: could not be recorded", generation_id)
+        logger.exception("TTS cost %s: could not be recorded", ",".join(generation_ids))
 
 
 async def _log_generation_cost(
