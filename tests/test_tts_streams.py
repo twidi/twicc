@@ -8,6 +8,7 @@ A fake pump drives the stream's sink from an ``asyncio.Queue``.
 
 import asyncio
 import logging
+import re
 
 import pytest
 
@@ -471,6 +472,26 @@ def test_a_cancelled_pump_task_settles_ready():
     asyncio.run(scenario())
 
 
+def test_a_task_cancelled_before_its_first_step_ends_the_stream(streams_log):
+    async def scenario():
+        pump = FakePump()
+        stream = start_stream(pump, label=LABEL)
+        # Cancelled before the task ran at all: ``_run`` never starts.
+        stream._task.cancel()
+        reader = asyncio.create_task(stream.wait_for_more(0))
+        with pytest.raises(SpeechError) as exc_info:
+            await _within(stream.ready)
+        assert exc_info.value.message == "Text-to-speech stopped"
+        await _within(reader)
+        assert stream._task.cancelled()
+        assert not pump.cancelled  # the pump never started
+        assert ending_of(stream.id) == {"state": "failed", "error": "Text-to-speech stopped"}
+
+    asyncio.run(scenario())
+    [line] = _speech_lines(streams_log)
+    assert line.endswith("error='Text-to-speech stopped' outcome=failed")
+
+
 def test_a_settle_after_a_cancelled_waiter_does_not_raise():
     # A cancelled open view cancels the ready future it awaits.
     async def cancel_a_waiter(stream):
@@ -705,5 +726,18 @@ def test_one_log_line_per_speech_without_the_key(monkeypatch, streams_log):
     assert "generation=gen-1" in lines[0]
     assert "generation_ms=None" not in lines[0]
     assert "generation=gen-2" in lines[1]
-    assert "bytes=8 first_audio_ms=None generation_ms=None generation=None" in lines[7]
+    assert re.search(r"bytes=8 first_audio_ms=None generation_ms=None duration_ms=\d+ generation=None ", lines[7])
+    # Every line has its duration, and the user-safe error of a failed speech.
+    assert all(re.search(r" duration_ms=\d+ ", line) for line in lines)
+    errors = [line.split(" error=", 1)[1].rsplit(" outcome=", 1)[0] for line in lines]
+    assert errors == [
+        "None",
+        "None",
+        "None",
+        repr(HINTED_400),
+        "'Could not reach OpenRouter'",
+        "None",
+        "None",
+        "None",
+    ]
     assert key not in streams_log.text

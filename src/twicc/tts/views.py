@@ -210,8 +210,9 @@ async def tts_speech(request):
             release_stream(stream.id, outcome="cancelled")
             raise
         except Exception:
+            # The pump's own error: its task logged it with its traceback already.
             release_stream(stream.id)
-            raise
+            return _error(SPEECH_FAILED, 500)
         return _opened(stream)
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
@@ -228,7 +229,8 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
     async def on_end(stream: AudioStream) -> None:
         if stream.state != "complete":
             return
-        if use_cache:
+        # An empty audio is not worth a cache entry: the next read asks again.
+        if use_cache and stream.data:
             try:
                 speech_cache.set(speech_request, CachedAudio(bytes(stream.data), stream.content_type))
             except Exception:
@@ -241,7 +243,7 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
                     "chars": len(speech_request.text),
                     "generation_ms": stream.generation_ms,
                     "first_audio_ms": stream.first_audio_ms,
-                    "audio_seconds": audio_duration_seconds(bytes(stream.data), stream.content_type),
+                    "audio_seconds": audio_duration_seconds(stream.data, stream.content_type),
                     "cost": None,
                 })
             except Exception:
@@ -346,6 +348,7 @@ async def tts_audio(request, audio_id: str):
                 _audio_body(stream, start, last), status=206, content_type=stream.content_type
             )
             response["Content-Range"] = f"bytes {start}-{last}/{total}"
+            response["Content-Length"] = str(last - start + 1)
             return _audio_headers(response)
         # No byte from the offset: the speech ended before it (complete or failed).
         response = HttpResponse(status=416, content_type=stream.content_type)

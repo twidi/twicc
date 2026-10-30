@@ -52,8 +52,9 @@ class FakeSpeech:
     """The fake ``pump_speech``: it runs the queued items in order.
 
     An item is a sink call ``(name, *args)`` (it returns after ``finish`` or
-    ``fail``) or ``("raise", error)``. With an empty queue it waits, as an
-    upstream that sends nothing yet.
+    ``fail``), ``("raise", error)`` or ``("wait", event)`` (the next items wait
+    for the event). With an empty queue it waits, as an upstream that sends
+    nothing yet.
     """
 
     def __init__(self):
@@ -71,6 +72,9 @@ class FakeSpeech:
                 name, *args = await self.queue.get()
                 if name == "raise":
                     raise args[0]
+                if name == "wait":
+                    await args[0].wait()
+                    continue
                 getattr(stream, name)(*args)
                 if name in ("finish", "fail"):
                     return
@@ -402,7 +406,10 @@ def test_unexpected_exception_returns_own_json_500(client, upstream, settings, v
     assert response["Content-Type"] == "application/json"
     assert response.json() == {"error": "Text-to-speech failed"}
     assert b"sk-or-leak" not in response.content
-    assert any(record.exc_info for record in views_log.records if record.name == "twicc.tts.views")
+    # One traceback: the pump's task logs it, the open view does not log it again.
+    tracebacks = [record for record in views_log.records if record.exc_info]
+    assert [record.name for record in tracebacks] == [STREAMS_LOGGER_NAME]
+    assert tracebacks[0].exc_info[1].args == ("sk-or-leak",)
     assert streams._streams == {}
 
 
@@ -451,16 +458,21 @@ def test_open_returns_the_audio_id_and_type(client, upstream):
 
 def test_open_waits_for_headers_only(client, upstream):
     async def scenario():
+        gate = asyncio.Event()
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("wait", gate)
+        # A chunk already queued: the pump holds it back until the open answered.
+        upstream.pump.send("append", b"abc")
+        upstream.pump.send("finish")
         audio_id = await _open_id(client)
         # The open answered while the upstream has sent no audio yet.
         stream = get_stream(audio_id)
         assert stream.state == "running"
         assert stream.data == b""
-        upstream.pump.send("append", b"abc")
-        upstream.pump.send("finish")
+        gate.set()
         await _settle()
         assert stream.state == "complete"
+        assert stream.data == b"abc"
 
     asyncio.run(scenario())
 
@@ -519,12 +531,13 @@ def test_range_read_serves_received_bytes_from_the_offset(client, upstream):
         assert response["Content-Range"] == "bytes 5-9/*"
         assert response["Accept-Ranges"] == "bytes"
         assert response["Cache-Control"] == "no-store"
-        assert not response.has_header("Content-Length")
+        assert response["Content-Length"] == "5"
         # The body ends at the last received byte: the stream still runs.
         assert await _body(response) == b"56789"
 
         response = await _read(client, audio_id, "bytes=2-4")
         assert response["Content-Range"] == "bytes 2-4/*"
+        assert response["Content-Length"] == "3"
         assert await _body(response) == b"234"
 
         # From the end of the received bytes: the read waits for more.
@@ -535,12 +548,14 @@ def test_range_read_serves_received_bytes_from_the_offset(client, upstream):
         response = await _within(waiting)
         assert response.status_code == 206
         assert response["Content-Range"] == "bytes 10-12/*"
+        assert response["Content-Length"] == "3"
         assert await _body(response) == b"abc"
 
         upstream.pump.send("finish")
         await _settle()
         response = await _read(client, audio_id, "bytes=5-")
         assert response["Content-Range"] == "bytes 5-12/13"
+        assert response["Content-Length"] == "8"
         assert await _body(response) == b"56789abc"
 
     asyncio.run(scenario())
@@ -717,6 +732,43 @@ def test_release_after_complete_still_records_and_caches(client, upstream, monke
     assert upstream.cost == [("gen-1", "k"), ("gen-2", "k")]
 
 
+def test_read_ending_and_release_rearm_the_safety_timer(client, upstream, monkeypatch):
+    touched = []
+    touch = streams.AudioStream.touch
+
+    def spy(stream):
+        touched.append(stream.id)
+        touch(stream)
+
+    monkeypatch.setattr(streams.AudioStream, "touch", spy)
+
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("append", b"abc")
+        upstream.pump.send("finish")
+        audio_id = await _open_id(client)
+        await _settle()
+        stream = get_stream(audio_id)
+        timers = [stream._safety_timer]
+        for step in (
+            lambda: _read(client, audio_id),
+            lambda: _read(client, audio_id, "bytes=1-"),
+            lambda: _ending(client, audio_id),
+        ):
+            touched.clear()
+            await step()
+            assert touched == [audio_id]
+            # A new timer replaced the previous one.
+            assert stream._safety_timer is not timers[-1]
+            assert timers[-1].cancelled()
+            timers.append(stream._safety_timer)
+        touched.clear()
+        await _release(client, audio_id)
+        assert touched == [audio_id]
+
+    asyncio.run(scenario())
+
+
 def test_release_of_an_unknown_id_is_204(client, upstream):
     response = asyncio.run(_release(client, "unknown-id"))
     assert response.status_code == 204
@@ -871,6 +923,24 @@ def test_a_failed_or_released_audio_is_not_cached(client, upstream):
 # --- End of speech: last test run, cost lookup ----------------------------------
 
 
+def test_an_empty_complete_audio_is_not_cached(client, upstream):
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("finish")
+        await _open_id(client, CACHED_PAYLOAD)
+        await _settle()
+        assert speech_cache.get(parse_speech_request(VALID_PAYLOAD)) is None
+
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-2")
+        upstream.pump.send("append", b"abc")
+        upstream.pump.send("finish")
+        await _open_id(client, CACHED_PAYLOAD)
+        await _settle()
+        assert len(upstream.pump.calls) == 2  # no cache hit
+
+    asyncio.run(scenario())
+
+
 def test_a_complete_audio_schedules_the_cost_lookup(client, upstream):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
@@ -898,9 +968,16 @@ def test_success_without_generation_id_schedules_no_cost(client, upstream):
     assert upstream.cost == []
 
 
-def test_a_settings_test_records_its_run_then_its_cost(client, upstream):
+def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeypatch):
     content_type = "audio/pcm;rate=24000;channels=1"
     audio = b"\x00\x00" * 24000  # one second
+    measured = []
+
+    def measure(content, content_type):
+        measured.append(content)
+        return audio_duration_seconds(content, content_type)
+
+    monkeypatch.setattr(views, "audio_duration_seconds", measure)
 
     async def scenario():
         upstream.pump.send("set_headers", content_type, "gen-1")
@@ -922,6 +999,8 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream):
         assert run["first_audio_ms"] == stream.first_audio_ms
         assert run["first_audio_ms"] is not None
         assert run["audio_seconds"] == audio_duration_seconds(audio, content_type) == 1.0
+        assert measured == [stream.data]
+        assert measured[0] is stream.data  # no copy of the audio
         assert run["cost"] is None
         # The cost callback updates the same run once the lookup finds it.
         assert upstream.cost == [("gen-1", "k")]

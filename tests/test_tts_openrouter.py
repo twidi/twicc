@@ -394,6 +394,32 @@ def test_pump_timeout_and_network_errors(monkeypatch, error, message, when):
     asyncio.run(scenario())
 
 
+def test_pump_keeps_the_first_failure_when_the_close_fails(monkeypatch):
+    # An upstream error fails the stream; then closing the upstream call raises a
+    # network error. The first failure stands, and the pump does not raise.
+    class FailingCloseClient(httpx.AsyncClient):
+        async def __aexit__(self, *args):
+            await super().__aexit__(*args)
+            raise httpx.ReadError("close failed")
+
+    monkeypatch.setattr(
+        openrouter,
+        "_make_client",
+        lambda timeout: FailingCloseClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(500, content=b"<html>")), timeout=timeout
+        ),
+    )
+
+    async def scenario():
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream))
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", "OpenRouter returned HTTP 500", 500)
+        with pytest.raises(SpeechError):
+            await stream.ready
+
+    asyncio.run(scenario())
+
+
 def test_pump_lets_an_unexpected_error_through(monkeypatch):
     # Not an upstream failure: the stream task logs it with its traceback.
     def handler(request):
@@ -694,14 +720,22 @@ def test_audio_duration_of_mp3():
     assert audio_duration_seconds(b"x", "audio/ogg") is None
 
 
-def test_audio_duration_of_pcm_and_mp3():
+def test_audio_duration_of_pcm():
     from twicc.tts.openrouter import audio_duration_seconds
     # 16-bit samples: 88 200 bytes at 44 100 Hz mono = 1 s.
     assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm;rate=44100;channels=1") == 1.0
     assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm;rate=22050;channels=2") == 1.0
     assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm") is None
+
+
+def test_audio_duration_reads_a_bytearray():
+    # The views pass the stream's own bytearray: no copy of the audio.
+    from twicc.tts.openrouter import audio_duration_seconds
+    assert audio_duration_seconds(bytearray(88200), "audio/pcm;rate=44100;channels=1") == 1.0
     mp3 = ((b"\xff\xf3\xc4\x00" + b"\x00" * 412) * 77)[:32000]
-    assert audio_duration_seconds(mp3, "audio/mpeg") == 2.0
+    tagged = bytearray(b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\x00" * 10 + mp3)
+    assert audio_duration_seconds(bytearray(mp3), "audio/mpeg") == 2.0
+    assert audio_duration_seconds(tagged, "audio/mpeg") == len(tagged) * 8 / 128000
 
 
 def test_cost_lookup_returns_the_cost(monkeypatch):

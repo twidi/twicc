@@ -173,12 +173,19 @@ async def pump_speech(request: SpeechRequest, api_key: str, stream: "AudioStream
             async for chunk in response.aiter_bytes():
                 stream.append(chunk)
     except httpx.TimeoutException:
-        stream.fail(SpeechError("OpenRouter did not answer in time"))
+        _fail_if_live(stream, SpeechError("OpenRouter did not answer in time"))
         return
     except httpx.HTTPError:
-        stream.fail(SpeechError("Could not reach OpenRouter"))
+        _fail_if_live(stream, SpeechError("Could not reach OpenRouter"))
         return
     stream.finish()
+
+
+def _fail_if_live(stream: "AudioStream", error: SpeechError) -> None:
+    # An error while closing the upstream call can follow an upstream error that
+    # failed the stream already: the first failure stands.
+    if stream.state in ("opening", "running"):
+        stream.fail(error)
 
 
 # (monotonic time of the fetch, models) of the last successful fetch.
@@ -326,7 +333,7 @@ _MP3_BITRATES = {
 }
 
 
-def _mp3_bitrate(content: bytes) -> int | None:
+def _mp3_bitrate(content: bytes | bytearray) -> int | None:
     """The bitrate (bit/s) of the first MPEG Layer III frame, past an ID3v2 tag."""
     start = 0
     if content[:3] == b"ID3" and len(content) >= 10:
@@ -344,7 +351,7 @@ def _mp3_bitrate(content: bytes) -> int | None:
     return None
 
 
-def audio_duration_seconds(content: bytes, content_type: str) -> float | None:
+def audio_duration_seconds(content: bytes | bytearray, content_type: str) -> float | None:
     """The length of an audio body: exact for PCM (from the rate and channels of its type),
     from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). None for another
     type or an unreadable body."""

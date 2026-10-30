@@ -13,7 +13,7 @@ class FakeClock:
 
 
 def _key(text: str) -> SpeechRequest:
-    return SpeechRequest(text, "m", "Kore", "pcm", None, "")
+    return SpeechRequest(text=text, model="m", voice="Kore", response_format="pcm", speed=None, instructions="")
 
 
 def _audio(content: bytes) -> CachedAudio:

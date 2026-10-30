@@ -79,8 +79,8 @@ class AudioCache:
 
     def _drop_expired(self) -> None:
         now = self._now()
-        for key in [key for key, entry in self._entries.items() if now - entry.stored_at >= self._ttl]:
-            self._remove(key)
+        for expired in [key for key, entry in self._entries.items() if now - entry.stored_at >= self._ttl]:
+            self._remove(expired)
 
 
 speech_cache = AudioCache()

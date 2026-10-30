@@ -162,13 +162,16 @@ class AudioStream:
         self._log(outcome)
 
     def _log(self, outcome: str) -> None:
+        # ``error`` is the user-safe message of the speech (never the key), or None.
         logger.info(
-            "TTS speech %s bytes=%d first_audio_ms=%s generation_ms=%s generation=%s outcome=%s",
+            "TTS speech %s bytes=%d first_audio_ms=%s generation_ms=%s duration_ms=%d generation=%s error=%r outcome=%s",
             " ".join(f"{name}={value}" for name, value in self.label.items()),
             len(self.data),
             self.first_audio_ms,
             self.generation_ms,
+            _elapsed_ms(self._started),
             self.generation_id,
+            self.error,
             outcome,
         )
 
@@ -233,7 +236,20 @@ def start_stream(
     stream._task = task
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
+    task.add_done_callback(lambda _task: _end_unstarted(stream))
     return stream
+
+
+def _end_unstarted(stream: AudioStream) -> None:
+    """The task ended: settle what ``_run`` did not.
+
+    A task cancelled before its first step never enters ``_run``: its ``finally``
+    never settles ``ready``, and its stream would stay live, readers waiting.
+    """
+    stream._settle_ready(SpeechError(STOPPED_MESSAGE))
+    if stream.state in _LIVE_STATES:
+        stream.error = STOPPED_MESSAGE
+        stream._end("failed", "failed")
 
 
 def stream_from_bytes(content: bytes, content_type: str, *, label: dict) -> AudioStream:
