@@ -9,17 +9,29 @@ A fake pump drives the stream's sink from an ``asyncio.Queue``.
 import asyncio
 import logging
 import re
+import time
 
 import pytest
 
+from tests.test_tts_part_audio import _frame
 from twicc.tts import streams
 from twicc.tts.audio_cache import speech_cache
-from twicc.tts.openrouter import SpeechError
-from twicc.tts.streams import ending_of, get_stream, release_stream, start_stream, stream_from_bytes
+from twicc.tts.openrouter import RATE_SCAN_BYTES, SpeechError
+from twicc.tts.streams import (
+    PART_TYPE_CHANGED,
+    AudioStream,
+    ending_of,
+    get_stream,
+    release_stream,
+    start_stream,
+    stream_from_bytes,
+)
 
 LOGGER_NAME = "twicc.tts.streams"
 LABEL = {"model": "openai/gpt-4o-mini-tts", "voice": "Kore", "format": "mp3", "chars": 11}
 HINTED_400 = "Provider returned 400. Check the model, the voice, the format and the text length."
+# 1,000 samples per second, mono, 16 bits: 2,000 bytes per second.
+PCM_TYPE = "audio/pcm;rate=1000;channels=1"
 
 
 @pytest.fixture(autouse=True)
@@ -706,6 +718,20 @@ def test_one_log_line_per_speech_without_the_key(monkeypatch, streams_log):
         # The failed stream's release adds no line.
         release_stream(failed.id)
 
+        # A speech in two parts: every part's generation id.
+        pump, run = keyed_pump()
+        split = start_stream(run, label=LABEL)
+        pump.send("begin_part")
+        pump.send("set_headers", "audio/mpeg", "g1")
+        pump.send("append", b"12")
+        pump.send("end_part")
+        pump.send("begin_part")
+        pump.send("add_part_headers", "audio/mpeg", "g2")
+        pump.send("append", b"34")
+        pump.send("end_part")
+        pump.send("finish")
+        await _within(split._task)
+
     asyncio.run(scenario())
 
     lines = _speech_lines(streams_log)
@@ -719,9 +745,13 @@ def test_one_log_line_per_speech_without_the_key(monkeypatch, streams_log):
         "expired_unread",
         "expired_unreleased",
         "cached",
+        "ok",
     ]
     for line in lines:
-        assert line.startswith("TTS speech model=openai/gpt-4o-mini-tts voice=Kore format=mp3 chars=11 ")
+        assert line.startswith("TTS speech model=openai/gpt-4o-mini-tts voice=Kore format=mp3 chars=11 parts=")
+    assert " parts=0 bytes=5 " in lines[0]  # a pump that marks no part
+    assert " parts=2 bytes=4 " in lines[8]
+    assert "generation=g1,g2 " in lines[8]
     assert "bytes=5 first_audio_ms=" in lines[0]
     assert "generation=gen-1" in lines[0]
     assert "generation_ms=None" not in lines[0]
@@ -739,5 +769,290 @@ def test_one_log_line_per_speech_without_the_key(monkeypatch, streams_log):
         "None",
         "None",
         "None",
+        "None",
     ]
     assert key not in streams_log.text
+
+
+# -- Parts, pacing and lookahead. ----------------------------------------------
+
+
+@pytest.fixture
+def fast_pacing(monkeypatch):
+    """Pacing on a test scale: a 0.1 s margin, a 0.05 s tick, a 0.2 s lookahead."""
+    monkeypatch.setattr(streams, "PACE_MARGIN", 0.1)
+    monkeypatch.setattr(streams, "PACE_TICK", 0.05)
+    monkeypatch.setattr(streams, "LOOKAHEAD_SECONDS", 0.2)
+
+
+def _paced_stream(content_type: str) -> AudioStream:
+    """A paced stream with its first part started and its headers (not registered: no timer)."""
+    stream = AudioStream(LABEL)
+    stream.begin_part()
+    stream.set_headers(content_type, None)
+    stream.pace()
+    return stream
+
+
+async def _returns_at_once(awaitable) -> None:
+    """Await *awaitable*: it must not wait for a pace tick (0.05 s under ``fast_pacing``)."""
+    await _within(awaitable, 0.02)
+
+
+def test_parts_sum_their_generation_time():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        await asyncio.sleep(0.05)
+        stream.set_headers(PCM_TYPE, "g1")
+        stream.append(b"ab")
+        stream.end_part()
+        await asyncio.sleep(0.2)  # the wait between two parts is not generation time
+        stream.begin_part()
+        await asyncio.sleep(0.05)
+        assert stream.add_part_headers(PCM_TYPE, "g2") is True
+        stream.append(b"cd")
+        stream.end_part()
+        stream.finish()
+        assert 100 <= stream.generation_ms < 250
+
+    asyncio.run(scenario())
+
+
+def test_every_part_brings_its_generation_id():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        stream.set_headers("audio/mpeg", "g1")
+        stream.begin_part()
+        assert stream.add_part_headers("audio/mpeg", "g2") is True
+        stream.begin_part()
+        assert stream.add_part_headers("audio/mpeg", None) is True
+        assert stream.generation_ids == ["g1", "g2"]
+        assert stream.generation_id == "g1"
+        assert stream.parts_sent == 3
+        assert stream.state == "running"
+
+    asyncio.run(scenario())
+
+
+def test_begin_part_is_allowed_while_opening_or_running_only():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()  # the first part comes before any headers
+        stream.set_headers("audio/mpeg", None)
+        stream.end_part()
+        stream.begin_part()
+        stream.end_part()
+        stream.finish()
+        with pytest.raises(RuntimeError):
+            stream.begin_part()
+        assert stream.parts_sent == 2
+
+    asyncio.run(scenario())
+
+
+def test_end_part_needs_a_started_part():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        stream.set_headers("audio/mpeg", None)
+        stream.end_part()
+        with pytest.raises(RuntimeError):
+            stream.end_part()  # that part ended already
+
+    asyncio.run(scenario())
+
+
+def test_a_later_part_with_another_type_fails_the_stream():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        streams._register(stream)  # for ending_of
+        stream.begin_part()
+        stream.set_headers("audio/pcm;rate=44100;channels=1", "g1")
+        stream.append(b"ab")
+        stream.end_part()
+        stream.begin_part()
+        assert stream.add_part_headers("audio/pcm;rate=24000;channels=1", None) is False
+        assert stream.state == "failed"
+        assert ending_of(stream.id) == {"state": "failed", "error": PART_TYPE_CHANGED}
+        assert stream.generation_ids == ["g1"]
+
+    asyncio.run(scenario())
+
+
+def test_an_unpaced_stream_delivers_everything_received(fast_pacing):
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        stream.set_headers(PCM_TYPE, None)
+        stream.append(b"\x00" * 2000)
+        assert stream.deliverable() == len(stream.data) == 2000
+        await _returns_at_once(stream.wait_for_more(1999))
+
+    asyncio.run(scenario())
+
+
+def test_a_paced_stream_delivers_up_to_the_position_plus_the_margin(fast_pacing):
+    async def scenario():
+        stream = _paced_stream(PCM_TYPE)
+        assert stream.byte_rate() == 2000.0
+        assert stream.deliverable() == 0  # no audio yet
+        stream.append(b"\x00" * 2000)
+        assert 200 <= stream.deliverable() < 400  # (0 s + 0.1 s margin) * 2,000 B/s
+        await asyncio.sleep(1)
+        assert stream.deliverable() == 2000
+
+    asyncio.run(scenario())
+
+
+def test_a_paced_reader_wakes_as_the_position_advances(fast_pacing):
+    async def scenario():
+        stream = _paced_stream(PCM_TYPE)
+        stream.append(b"\x00" * 2000)
+        offset = stream.deliverable()
+        reader = asyncio.create_task(stream.wait_for_more(offset))
+        await _settle()
+        assert not reader.done()  # no new append: only the position wakes it
+        await _within(reader, 0.3)
+        assert stream.deliverable() > offset
+
+    asyncio.run(scenario())
+
+
+def test_a_finished_paced_stream_still_paces_then_ends(fast_pacing):
+    async def scenario():
+        stream = _paced_stream(PCM_TYPE)
+        stream.append(b"\x00" * 2000)
+        stream.end_part()
+        stream.finish()
+        offset = stream.deliverable()
+        assert offset < len(stream.data)
+        reader = asyncio.create_task(stream.wait_for_more(offset))
+        await _settle()
+        assert not reader.done()
+        await _within(reader, 0.3)
+        assert stream.deliverable() > offset
+        await _returns_at_once(stream.wait_for_more(len(stream.data)))  # nothing more comes
+
+    asyncio.run(scenario())
+
+
+def test_wait_for_lookahead_sleeps_until_the_audio_ahead_drops_below_the_lookahead(fast_pacing):
+    async def scenario():
+        stream = _paced_stream(PCM_TYPE)
+        stream.append(b"\x00" * 1000)  # 0.5 s of audio, 0.3 s past the 0.2 s lookahead
+        started = time.monotonic()
+        await _within(stream.wait_for_lookahead())
+        assert 0.25 <= time.monotonic() - started < 0.6
+
+    asyncio.run(scenario())
+
+
+def test_wait_for_lookahead_returns_at_once_when_not_paced(fast_pacing):
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        stream.set_headers(PCM_TYPE, None)
+        stream.append(b"\x00" * 1000)
+        await _returns_at_once(stream.wait_for_lookahead())
+
+    asyncio.run(scenario())
+
+
+def test_wait_for_lookahead_without_audio_returns_at_once(fast_pacing):
+    async def scenario():
+        stream = _paced_stream(PCM_TYPE)
+        await _returns_at_once(stream.wait_for_lookahead())
+
+    asyncio.run(scenario())
+
+
+def test_an_unknown_byte_rate_disables_pacing_and_lookahead(fast_pacing):
+    async def scenario():
+        stream = _paced_stream("audio/mpeg")
+        stream.append(b"xxxx" * 1000)
+        assert stream.deliverable() == len(stream.data)
+        await _returns_at_once(stream.wait_for_lookahead())
+        await _returns_at_once(stream.wait_for_more(len(stream.data) - 1))
+
+    asyncio.run(scenario())
+
+
+def test_an_unreadable_byte_rate_is_given_up_after_the_scan_size(monkeypatch, fast_pacing):
+    calls = []
+
+    def counting(head):
+        calls.append(len(head))
+        return original(head)
+
+    original = streams.mp3_frame_bitrates
+    monkeypatch.setattr(streams, "mp3_frame_bitrates", counting)
+
+    async def scenario():
+        stream = _paced_stream("audio/mpeg")
+        stream.append(b"x" * RATE_SCAN_BYTES)
+        assert stream.byte_rate() is None
+        stream.append(_frame())
+        assert stream.byte_rate() is None  # no rescan of a growing buffer
+        stream.end_part()
+        assert stream.byte_rate() is None
+        assert stream.deliverable() == len(stream.data)
+
+    asyncio.run(scenario())
+    assert calls == [RATE_SCAN_BYTES]
+
+
+def test_a_variable_rate_stream_is_not_paced(fast_pacing):
+    async def scenario():
+        frames = _frame() * 160  # past RATE_SCAN_BYTES: the rate is decided on the bytes alone
+
+        variable = _paced_stream("audio/mpeg")
+        variable.mark_variable_rate()
+        variable.append(frames)
+        assert variable.byte_rate() is None
+        assert variable.deliverable() == len(variable.data)
+
+        constant = _paced_stream("audio/mpeg")
+        constant.append(frames)
+        assert constant.byte_rate() == 16000.0
+        assert constant.deliverable() < len(constant.data)
+
+    asyncio.run(scenario())
+
+
+def test_frames_with_different_bitrates_make_the_rate_unknown(fast_pacing):
+    async def scenario():
+        mixed = _paced_stream("audio/mpeg")
+        mixed.append(_frame(bitrate_index=5) + _frame())
+        mixed.end_part()
+        assert mixed.byte_rate() is None
+        assert mixed.deliverable() == len(mixed.data)
+
+        same = _paced_stream("audio/mpeg")
+        same.append(_frame() + _frame())
+        same.end_part()
+        assert same.byte_rate() == 16000.0
+
+    asyncio.run(scenario())
+
+
+def test_an_mp3_rate_is_not_decided_before_the_scan_size_or_the_part_end(fast_pacing):
+    async def scenario():
+        running = _paced_stream("audio/mpeg")
+        running.append(_frame())
+        assert running.byte_rate() is None  # the first part still runs
+        assert running.deliverable() == len(running.data)
+        running.end_part()
+        assert running.byte_rate() == 16000.0
+
+        empty_first = _paced_stream("audio/mpeg")
+        empty_first.end_part()  # no audio came: still undecided
+        assert empty_first.byte_rate() is None
+        empty_first.begin_part()
+        assert empty_first.add_part_headers("audio/mpeg", None) is True
+        empty_first.append(_frame())
+        empty_first.end_part()
+        assert empty_first.byte_rate() == 16000.0
+
+    asyncio.run(scenario())

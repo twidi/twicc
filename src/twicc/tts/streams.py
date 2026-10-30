@@ -13,6 +13,13 @@ An audio id lives until it is released, with two expiries:
 No reader is not a stop: a media element can close its read and come back
 with a range, so nothing here closes the upstream because no reader is connected.
 
+A long text is sent in parts, one request each, into the same stream. A paced
+stream (a split speech) delivers its audio at most ``PACE_MARGIN`` seconds ahead
+of its playback position, and the pump waits before a next part while more than
+``LOOKAHEAD_SECONDS`` of audio is ahead: a stop then spares the parts not sent.
+Both need the byte rate of the audio; when it is unknown, the speech is neither
+paced nor held.
+
 Exactly one log line per speech, at its first terminal event. It never holds
 the API key: this module never sees it.
 """
@@ -23,7 +30,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 
-from twicc.tts.openrouter import SpeechError
+from twicc.tts.openrouter import RATE_SCAN_BYTES, SpeechError, bytes_per_second, mp3_frame_bitrates
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,14 @@ SAFETY_TTL = 3 * 3600.0
 
 STOPPED_MESSAGE = "Text-to-speech stopped"
 FAILED_MESSAGE = "Text-to-speech failed"
+PART_TYPE_CHANGED = "The audio format changed between two parts of the text"
+
+# Audio ahead of the playback position past which the pump waits before a next part.
+LOOKAHEAD_SECONDS = 60.0
+# How far ahead of the playback position a paced read delivers (never above LOOKAHEAD_SECONDS).
+PACE_MARGIN = 10.0
+# The shortest wait of a paced read for its next byte.
+PACE_TICK = 1.0
 
 # The pump still runs (or has not started yet).
 _LIVE_STATES = ("opening", "running")
@@ -51,13 +66,19 @@ class AudioStream:
 
     States: ``opening`` (no headers yet), ``running``, ``complete``, ``failed``,
     ``released``. The pump calls the sink methods; the views call the reader methods.
+
+    The playback position of a paced stream is estimated from the time of its
+    first audio byte and its byte rate.
     """
 
     def __init__(self, label: dict):
         self.id: str = secrets.token_urlsafe(24)
         self.label = label  # model, voice, format, chars: for the log line
         self.content_type: str | None = None
-        self.generation_id: str | None = None
+        self.generation_id: str | None = None  # the first part's
+        self.generation_ids: list[str] = []  # the non-empty ids of every part, in order
+        self.parts_sent = 0
+        self.paced = False
         self.state = "opening"
         self.error: str | None = None
         self.upstream_status: int | None = None
@@ -68,6 +89,14 @@ class AudioStream:
         self.ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self.claimed = False
         self._started = time.monotonic()
+        self._first_audio_at: float | None = None
+        self._part_started: float | None = None
+        self._parts_seconds = 0.0
+        # The byte rate, once decided (``None`` then means unknown for good).
+        self._rate: float | None = None
+        self._rate_decided = False
+        # An MP3 part ended after some audio: its rate can be decided below RATE_SCAN_BYTES.
+        self._rate_scan_due = False
         # Set, then replaced, on each change: every waiting reader wakes up.
         self._more = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -76,27 +105,70 @@ class AudioStream:
 
     # -- Sink: called by the pump. ------------------------------------------
 
+    def begin_part(self) -> None:
+        """A part request starts (the first one comes before any headers)."""
+        self._expect("begin_part", *_LIVE_STATES)
+        self.parts_sent += 1
+        self._part_started = time.monotonic()
+
+    def end_part(self) -> None:
+        """The part's last byte arrived: its request-to-last-byte time counts as generation time."""
+        self._expect("end_part", "running")
+        if self._part_started is None:
+            raise RuntimeError("AudioStream.end_part() without a started part")
+        self._parts_seconds += time.monotonic() - self._part_started
+        self._part_started = None
+        if self._first_audio_at is not None:
+            self._rate_scan_due = True
+            self.byte_rate()  # decide it on this part's bytes, before the next part grows them
+
     def set_headers(self, content_type: str, generation_id: str | None) -> None:
         self._expect("set_headers", "opening")
         self.content_type = content_type
         self.generation_id = generation_id
+        if generation_id:
+            self.generation_ids.append(generation_id)
         self.state = "running"
         self._settle_ready()
         self._arm_unclaimed_timer()
+
+    def add_part_headers(self, content_type: str, generation_id: str | None) -> bool:
+        """A later part's headers. Another type than the first part's fails the stream (False)."""
+        self._expect("add_part_headers", "running")
+        if content_type != self.content_type:
+            self.fail(SpeechError(PART_TYPE_CHANGED))
+            return False
+        if generation_id:
+            self.generation_ids.append(generation_id)
+        return True
 
     def append(self, chunk: bytes) -> None:
         self._expect("append", "running")
         if not chunk:
             return
-        if self.first_audio_ms is None:
+        if self._first_audio_at is None:
+            self._first_audio_at = time.monotonic()
             self.first_audio_ms = _elapsed_ms(self._started)
         self.data += chunk
         self._wake()
 
     def finish(self) -> None:
         self._expect("finish", "running")
-        self.generation_ms = _elapsed_ms(self._started)
+        # A pump that marks no part is one part, from the stream creation on.
+        if self.parts_sent:
+            self.generation_ms = round(self._parts_seconds * 1000)
+        else:
+            self.generation_ms = _elapsed_ms(self._started)
         self._end("complete", "ok")
+
+    def pace(self) -> None:
+        """Deliver the audio at the playback pace, and hold the next parts by the lookahead."""
+        self.paced = True
+
+    def mark_variable_rate(self) -> None:
+        """The audio has a variable bitrate: the byte rate is unknown for good."""
+        self._rate, self._rate_decided = None, True
+        self._wake()  # a paced reader may now read everything received
 
     def fail(self, error: SpeechError) -> None:
         self._expect("fail", *_LIVE_STATES)
@@ -107,10 +179,68 @@ class AudioStream:
 
     # -- Readers: called by the views. ---------------------------------------
 
+    def byte_rate(self) -> float | None:
+        """The audio bytes per second, or None while unknown.
+
+        PCM: from its type. MP3: decided once, on the received bytes, when they reach
+        ``RATE_SCAN_BYTES`` or when a part ends after some audio; before that it is None,
+        undecided. The scanned frames must share one bitrate, else it is None for good.
+        """
+        if self._rate_decided:
+            return self._rate
+        if self.content_type is None:
+            return None
+        if self.content_type.split(";", 1)[0].strip().lower() == "audio/mpeg":
+            if len(self.data) < RATE_SCAN_BYTES and not self._rate_scan_due:
+                return None
+            bitrates = mp3_frame_bitrates(self.data)
+            rate = bytes_per_second(self.content_type, self.data) if len(set(bitrates)) == 1 else None
+        else:
+            rate = bytes_per_second(self.content_type, self.data)
+        self._rate, self._rate_decided = rate, True
+        return rate
+
+    def _playback_seconds(self) -> float | None:
+        """Seconds since the first audio byte; None when not paced or without byte rate or audio."""
+        if not self.paced or self._first_audio_at is None or self.byte_rate() is None:
+            return None
+        return time.monotonic() - self._first_audio_at
+
+    def deliverable(self) -> int:
+        """The bytes any read may send now: all received, or up to PACE_MARGIN past the position."""
+        elapsed = self._playback_seconds()
+        if elapsed is None:
+            return len(self.data)
+        return min(len(self.data), int((elapsed + PACE_MARGIN) * self._rate))
+
     async def wait_for_more(self, offset: int) -> None:
-        """Return when there are bytes past *offset*, or when the stream no longer grows."""
-        while len(self.data) <= offset and self.state in _LIVE_STATES:
-            await self._more.wait()
+        """Return when bytes past *offset* are deliverable, or when no more will come."""
+        while True:
+            if self.state == "released" or self.deliverable() > offset:
+                return
+            if self.state not in _LIVE_STATES and offset >= len(self.data):
+                return
+            more = self._more
+            elapsed = self._playback_seconds()
+            if elapsed is None or len(self.data) <= offset:
+                await more.wait()
+                continue
+            # Paced: the byte at *offset* is received; wait until the position reaches it.
+            needed = (offset + 1) / self._rate - PACE_MARGIN - elapsed
+            try:
+                async with asyncio.timeout(max(PACE_TICK, needed)):
+                    await more.wait()
+            except TimeoutError:
+                pass
+
+    async def wait_for_lookahead(self) -> None:
+        """Before a next part: wait while more than LOOKAHEAD_SECONDS of audio is ahead."""
+        elapsed = self._playback_seconds()
+        if elapsed is None:
+            return
+        ahead = len(self.data) / self._rate - elapsed
+        if ahead > LOOKAHEAD_SECONDS:
+            await asyncio.sleep(ahead - LOOKAHEAD_SECONDS)
 
     def touch(self) -> None:
         """Re-arm the safety timer: it counts from the last activity."""
@@ -164,13 +294,15 @@ class AudioStream:
     def _log(self, outcome: str) -> None:
         # ``error`` is the user-safe message of the speech (never the key), or None.
         logger.info(
-            "TTS speech %s bytes=%d first_audio_ms=%s generation_ms=%s duration_ms=%d generation=%s error=%r outcome=%s",
+            "TTS speech %s parts=%d bytes=%d first_audio_ms=%s generation_ms=%s duration_ms=%d generation=%s "
+            "error=%r outcome=%s",
             " ".join(f"{name}={value}" for name, value in self.label.items()),
+            self.parts_sent,
             len(self.data),
             self.first_audio_ms,
             self.generation_ms,
             _elapsed_ms(self._started),
-            self.generation_id,
+            ",".join(self.generation_ids) or None,
             self.error,
             outcome,
         )
