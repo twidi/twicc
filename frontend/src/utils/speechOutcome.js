@@ -39,7 +39,7 @@ export function playbackMode(contentType, platform) {
 }
 
 /**
- * 'ios', 'android', 'safari' (desktop Safari on macOS) or 'desktop'.
+ * 'ios', 'android', 'safari' (desktop WebKit: Safari and other WebKit browsers) or 'desktop'.
  * iPadOS shows a Mac user agent: its touch points tell it apart.
  * The other browsers also put "Safari/" in their user agent: their own token tells them apart.
  */

@@ -816,9 +816,18 @@ def test_read_ending_and_release_rearm_the_safety_timer(client, upstream, monkey
         await _settle()
         stream = get_stream(audio_id)
         timers = [stream._safety_timer]
+
+        async def range_read():
+            # The range branch runs only with "partial": with the shipped "full", it is a plain read.
+            with monkeypatch.context() as patch:
+                patch.setattr(views, "RANGE_ANSWER", "partial")
+                response = await _read(client, audio_id, "bytes=1-")
+            assert response.status_code == 206
+            return response
+
         for step in (
             lambda: _read(client, audio_id),
-            lambda: _read(client, audio_id, "bytes=1-"),
+            range_read,
             lambda: _ending(client, audio_id),
         ):
             touched.clear()
@@ -858,7 +867,10 @@ def test_range_read_released_while_it_waits_is_404(client, upstream, partial_ran
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"abc")
         audio_id = await _open_id(client)
+        stream = get_stream(audio_id)
         waiting = asyncio.create_task(_read(client, audio_id, "bytes=3-"))
+        # The view claims the stream, then waits on it in the same step.
+        await _within(_until(lambda: stream.claimed))
         await _settle()
         assert not waiting.done()
         await _release(client, audio_id)
