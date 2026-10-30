@@ -97,6 +97,8 @@ test('currentPlatform detects iOS, iPadOS and Android', () => {
     const macUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
     assert.equal(currentPlatform(nav(macUserAgent, 'MacIntel', 5)), 'ios')
     assert.equal(currentPlatform(nav(macUserAgent, 'MacIntel', 0)), 'desktop')
+    // The boundary: one touch point is a Mac with a touch device, not an iPad.
+    assert.equal(currentPlatform(nav(macUserAgent, 'MacIntel', 1)), 'desktop')
     assert.equal(currentPlatform(nav('Mozilla/5.0 (Linux; Android 15; Pixel 9)', 'Linux armv8l', 5)), 'android')
     assert.equal(currentPlatform(nav('Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0', 'Linux x86_64')), 'desktop')
     assert.equal(currentPlatform(undefined), 'desktop')

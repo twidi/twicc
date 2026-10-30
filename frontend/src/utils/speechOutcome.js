@@ -1,5 +1,7 @@
 // How a speech playback ends, and which player plays it (spec: docs/plans/2026-10-30-tts-streaming-design.md).
 
+import { isPcmType } from './pcmAudio.js'
+
 export const REFUSED = 'The browser refused to play the audio'
 export const UNREACHABLE = 'Could not reach TwiCC'
 export const CUT = 'The audio stopped before the end'
@@ -28,7 +30,7 @@ export const BUFFERED_FORMATS = { ios: ['pcm'] }
 
 /** 'buffered', 'pcm-stream' or 'media': the player for this audio type on this platform. */
 export function playbackMode(contentType, platform) {
-    const format = contentType.toLowerCase().startsWith('audio/pcm') ? 'pcm' : 'mp3'
+    const format = isPcmType(contentType) ? 'pcm' : 'mp3'
     if (BUFFERED_FORMATS[platform]?.includes(format)) return 'buffered'
     return format === 'pcm' ? 'pcm-stream' : 'media'
 }

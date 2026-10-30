@@ -285,6 +285,35 @@ test('a pcm type streams through the pcm player with its rate', async () => {
     assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
 })
 
+test('an mp3 playback suspends the pcm context the click primed', async () => {
+    const result = await startPlaying()
+    const afterPrime = log.slice(log.indexOf('pcm-prime'))
+    assert.ok(afterPrime.indexOf('pcm-stop') < afterPrime.indexOf('playUrl'))
+    assert.ok(afterPrime.includes('pcm-stop'))
+    fakePlayer.handlers.onEnded()
+    assert.deepEqual(await result.ended, { ok: true })
+})
+
+test('a pcm playback keeps the context until its end, then suspends it', async () => {
+    store._openSpeech = async () => opened('a1', PCM_TYPE)
+    const pending = store.play('hello')
+    await until(() => fakePcmPlayer.handlers)
+    fakePcmPlayer.handlers.onPlaying()
+    const result = await pending
+    const afterPrime = log.slice(log.indexOf('pcm-prime'))
+    assert.deepEqual(afterPrime.filter(entry => entry.startsWith('pcm')), ['pcm-prime', 'pcm-play'])
+    fakePcmPlayer.handlers.onEnded()
+    await result.ended
+    assert.equal(log.at(-1), 'pcm-stop')
+})
+
+test('an open failure suspends the pcm context', async () => {
+    store._openSpeech = async () => jsonResponse(502, { error: 'Provider returned 400' })
+    await store.play('hello')
+    assert.equal(log.at(-1), 'pcm-stop')
+    assert.equal(log.lastIndexOf('pcm-stop') > log.indexOf('pcm-prime'), true)
+})
+
 test('a pcm type without a rate and channels is refused', async () => {
     store._openSpeech = async () => opened('a1', 'audio/pcm')
     assert.deepEqual(await store.play('hello'), { ok: false, error: REFUSED })
@@ -364,11 +393,62 @@ test('the ending step runs when the player ends, not when the download ends', as
     assert.deepEqual(await result.ended, { ok: true })
 })
 
+test('a pcm playback runs the ending step when the pcm player ends, not when the download ends', async () => {
+    store._openSpeech = async () => opened('a1', PCM_TYPE)
+    const pending = store.play('hello')
+    await until(() => fakePcmPlayer.handlers)
+    fakePcmPlayer.handlers.onPlaying()
+    const result = await pending
+    await settle()
+    assert.deepEqual(endings, [])
+    assert.deepEqual(released, [])
+    fakePcmPlayer.handlers.onEnded()
+    await until(() => endings.length)
+    assert.deepEqual(endings, ['a1'])
+    assert.deepEqual(await result.ended, { ok: true })
+})
+
+test('an ending answer that lands after a stop changes nothing', async () => {
+    let resolveEnding
+    store._fetchEnding = async (audioId) => {
+        endings.push(audioId)
+        return new Promise(resolve => { resolveEnding = resolve })
+    }
+    const result = await startPlaying()
+    fakePlayer.handlers.onEnded()
+    await until(() => resolveEnding)
+    store.stop()
+    assert.deepEqual(await result.ended, ABORTED)
+    assert.equal(store.status, 'idle')
+    resolveEnding(jsonResponse(200, { state: 'failed', error: 'Could not reach OpenRouter' }))
+    await settle()
+    // One release only: the stop's.
+    assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
+    assert.equal(store.status, 'idle')
+    assert.deepEqual(store.playback, { text: null, status: 'idle', source: null, configId: null })
+})
+
+test('the ending request has a timeout; a timed-out request is no answer', async () => {
+    const signals = []
+    store._fetchEnding = async (audioId, signal) => {
+        signals.push(signal)
+        throw new DOMException('The operation timed out.', 'TimeoutError')
+    }
+    let result = await startPlaying()
+    fakePlayer.handlers.onEnded()
+    assert.deepEqual(await result.ended, { ok: true })
+    result = await startPlaying()
+    fakePlayer.handlers.onError('network')
+    assert.deepEqual(await result.ended, { ok: false, error: UNREACHABLE })
+    assert.equal(signals.length, 2)
+    assert.ok(signals.every(signal => signal instanceof AbortSignal && !signal.aborted))
+})
+
 test('a normal end with a complete answer ends ok and releases', async () => {
     const result = await startPlaying()
     fakePlayer.handlers.onEnded()
     assert.deepEqual(await result.ended, { ok: true })
-    assert.deepEqual(log.slice(-2), ['ending', 'release'])
+    assert.deepEqual(log.filter(entry => !entry.endsWith('stop')).slice(-2), ['ending', 'release'])
     assert.deepEqual(released, [['a1', undefined]])
     assert.equal(store.status, 'idle')
 })
@@ -506,17 +586,72 @@ test('a stale player callback is ignored', async () => {
     assert.equal(store.playback.text, 'b')
 })
 
-test('pagehide releases the current audio id with keepalive', async () => {
+/** A `pagehide` event; `persisted`: the page goes to the back-forward cache. */
+function pageHide(persisted = false) {
+    return Object.assign(new Event('pagehide'), { persisted })
+}
+
+/** A fetch that records its calls and answers a 204. */
+function recordingFetch() {
+    const calls = []
+    const fetchImpl = (url, options) => {
+        calls.push([url, options])
+        return Promise.resolve(new Response(null, { status: 204 }))
+    }
+    return { calls, fetchImpl }
+}
+
+test('pagehide releases the current audio id at once, with keepalive', async () => {
     const target = new EventTarget()
-    installPageHideRelease(target)
-    installPageHideRelease(target)
+    const network = recordingFetch()
+    installPageHideRelease(target, network.fetchImpl)
+    installPageHideRelease(target, network.fetchImpl)
     // Nothing to release yet.
-    target.dispatchEvent(new Event('pagehide'))
+    target.dispatchEvent(pageHide())
+    assert.deepEqual(network.calls, [])
+    const result = await startPlaying()
+    target.dispatchEvent(pageHide())
+    // Synchronous, inside the event; one listener per target, however many calls.
+    assert.deepEqual(network.calls, [['/api/tts/audio/a1/', { method: 'DELETE', keepalive: true }]])
+    // The audio id is forgotten: neither a second pagehide nor a stop releases it again.
+    target.dispatchEvent(pageHide())
+    store.stop()
+    assert.equal(network.calls.length, 1)
     assert.deepEqual(released, [])
-    await startPlaying()
-    target.dispatchEvent(new Event('pagehide'))
-    // One listener per target, however many calls.
-    assert.deepEqual(released, [['a1', { keepalive: true }]])
+    assert.deepEqual(await result.ended, ABORTED)
+})
+
+test('pagehide into the back-forward cache also stops the playback', async () => {
+    const target = new EventTarget()
+    const network = recordingFetch()
+    installPageHideRelease(target, network.fetchImpl)
+    const result = await startPlaying()
+    target.dispatchEvent(pageHide(true))
+    assert.deepEqual(network.calls, [['/api/tts/audio/a1/', { method: 'DELETE', keepalive: true }]])
+    assert.equal(store.status, 'idle')
+    assert.ok(log.includes('stop'))
+    assert.deepEqual(await result.ended, ABORTED)
+    assert.deepEqual(released, [])  // released once, by the pagehide
+
+    // A reload (not persisted) leaves the playback alone: the page goes away.
+    const next = await startPlaying('again')
+    target.dispatchEvent(pageHide(false))
+    assert.equal(store.status, 'playing')
+    assert.equal(network.calls.length, 2)
+    store.stop()
+    assert.deepEqual(await next.ended, ABORTED)
+})
+
+test('pagehide into the back-forward cache stops a playback still loading', async () => {
+    const target = new EventTarget()
+    const network = recordingFetch()
+    installPageHideRelease(target, network.fetchImpl)
+    store._openSpeech = abortableRequest('open')
+    const pending = store.play('hello')
+    target.dispatchEvent(pageHide(true))
+    assert.deepEqual(await pending, ABORTED)
+    assert.equal(store.status, 'idle')
+    assert.deepEqual(network.calls, [])
 })
 
 test('applyConfig stops a message playback when availability is lost', async () => {

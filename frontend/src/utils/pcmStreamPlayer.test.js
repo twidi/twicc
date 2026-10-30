@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createPcmStreamPlayer, START_BUFFER_SECONDS } from './pcmStreamPlayer.js'
+import { CATCH_UP_LEAD_SECONDS, createPcmStreamPlayer, START_BUFFER_SECONDS } from './pcmStreamPlayer.js'
 
 // 1000 Hz mono keeps the numbers readable: the start buffer is 300 frames (600 bytes).
 const FORMAT = { rate: 1000, channels: 1 }
@@ -13,14 +13,23 @@ function pcm(frames) {
     return bytes
 }
 
+/** A context that runs; `resume()` makes a suspended one run again. */
 function fakeContext() {
     const ctx = {
         currentTime: 0,
         destination: { name: 'destination' },
+        state: 'running',
         resumeCalls: 0,
+        suspendCalls: 0,
         sources: [],
         resume() {
             ctx.resumeCalls++
+            ctx.state = 'running'
+            return Promise.resolve()
+        },
+        suspend() {
+            ctx.suspendCalls++
+            ctx.state = 'suspended'
             return Promise.resolve()
         },
         createBuffer(channels, length, sampleRate) {
@@ -96,10 +105,10 @@ function recordingHandlers() {
     }
 }
 
-function setup(fetchOptions) {
+function setup(fetchOptions, playerOptions = {}) {
     const ctx = fakeContext()
     const network = fakeFetch(fetchOptions)
-    const player = createPcmStreamPlayer({ fetchImpl: network.fetchImpl, audioContextFactory: () => ctx })
+    const player = createPcmStreamPlayer({ fetchImpl: network.fetchImpl, audioContextFactory: () => ctx, ...playerOptions })
     const { events, handlers } = recordingHandlers()
     return { ctx, network, player, events, handlers }
 }
@@ -152,7 +161,8 @@ test('schedules buffers back to back', async () => {
     network.push(pcm(80))
     await flush()
     const [first, second, third] = ctx.sources
-    assert.equal(first.when, 5)
+    // The clock already passed the start of the playback: the first buffer starts just ahead of it.
+    assert.equal(first.when, 5 + CATCH_UP_LEAD_SECONDS)
     assert.equal(second.when, first.when + first.buffer.duration)
     assert.equal(third.when, second.when + second.buffer.duration)
 })
@@ -165,15 +175,18 @@ test('catches up after an underrun', async () => {
     await flush()
     assert.equal(ctx.sources[0].when, 0)
 
-    // The clock passed the end of the scheduled audio: the next buffer starts now, not in the past.
+    // The clock passed the end of the scheduled audio: the next buffer starts just ahead of the
+    // clock, not in the past (its start would be cut).
     ctx.currentTime = 2
     network.push(pcm(100))
     await flush()
-    assert.equal(ctx.sources[1].when, 2)
+    assert.equal(ctx.sources[1].when, 2 + CATCH_UP_LEAD_SECONDS)
 
+    // The following buffers abut exactly, even when the clock moved on a little.
+    ctx.currentTime = 2.05
     network.push(pcm(100))
     await flush()
-    assert.equal(ctx.sources[2].when, 2 + ctx.sources[1].buffer.duration)
+    assert.equal(ctx.sources[2].when, ctx.sources[1].when + ctx.sources[1].buffer.duration)
 })
 
 test('fires onPlaying once and onEnded after the last source', async () => {
@@ -348,10 +361,12 @@ test('a new play stops the previous one', async () => {
     assert.deepEqual(next.events, ['playing', 'ended'])
 })
 
-test('an audio failure inside the player reports refused and stops', async () => {
+test('an audio failure inside the player reports refused, logs it and stops', async (t) => {
+    const logged = t.mock.method(console, 'error', () => {})
     const { ctx, network, player, events, handlers } = setup()
+    const failure = new DOMException('Unsupported rate', 'NotSupportedError')
     ctx.createBuffer = () => {
-        throw new DOMException('Unsupported rate', 'NotSupportedError')
+        throw failure
     }
     player.play('/a', FORMAT, handlers)
     await flush()
@@ -359,6 +374,8 @@ test('an audio failure inside the player reports refused and stops', async () =>
     await flush()
     assert.deepEqual(events, ['error:refused'])
     assert.equal(network.calls[0].signal.aborted, true)
+    assert.deepEqual(logged.mock.calls.map(call => call.arguments), [[failure]])
+    assert.equal(ctx.state, 'suspended')
 })
 
 test('a stop from onPlaying silences the rest of the playback', async () => {
@@ -379,4 +396,149 @@ test('a stop from onPlaying silences the rest of the playback', async () => {
     assert.equal(ctx.sources.length, 1)
     assert.equal(ctx.sources[0].stopped, true)
     assert.deepEqual(events, ['playing'])
+})
+
+test('plays interleaved stereo on two channels', async () => {
+    const { ctx, network, player, events, handlers } = setup()
+    const stereo = { rate: 1000, channels: 2 }
+    player.play('/a', stereo, handlers)
+    await flush()
+    // Every frame: left -1 (0x8000), right 0.5 (0x4000).
+    const frames = START_FRAMES
+    const bytes = new Uint8Array(frames * 4)
+    for (let frame = 0; frame < frames; frame++) {
+        bytes[frame * 4 + 1] = 0x80
+        bytes[frame * 4 + 3] = 0x40
+    }
+    network.push(bytes)
+    await flush()
+    assert.deepEqual(events, ['playing'])
+    const [source] = ctx.sources
+    assert.equal(source.buffer.numberOfChannels, 2)
+    assert.equal(source.buffer.length, frames)
+    assert.ok(source.buffer.getChannelData(0).every(sample => sample === -1))
+    assert.ok(source.buffer.getChannelData(1).every(sample => sample === 0.5))
+})
+
+test('the context is suspended between playbacks', async () => {
+    const { ctx, network, player, events, handlers } = setup()
+    // A stop without a playback (the speech played through another player) suspends it too.
+    player.prime()
+    assert.equal(ctx.state, 'running')
+    player.stop()
+    assert.equal(ctx.state, 'suspended')
+
+    // An ended playback.
+    player.prime()
+    player.play('/a', FORMAT, handlers)
+    await flush()
+    network.push(pcm(START_FRAMES))
+    network.close()
+    await flush()
+    assert.equal(ctx.state, 'running')
+    ctx.sources[0].onended()
+    assert.deepEqual(events, ['playing', 'ended'])
+    assert.equal(ctx.state, 'suspended')
+
+    // A failed playback.
+    const failed = setup({ status: 404 })
+    failed.player.prime()
+    failed.player.play('/a', FORMAT, failed.handlers)
+    await flush()
+    assert.deepEqual(failed.events, ['error:network'])
+    assert.equal(failed.ctx.state, 'suspended')
+
+    // A stopped playback; the next prime, inside the click, makes it run again.
+    const stopped = setup()
+    stopped.player.prime()
+    stopped.player.play('/a', FORMAT, stopped.handlers)
+    await flush()
+    stopped.player.stop()
+    assert.equal(stopped.ctx.state, 'suspended')
+    stopped.player.prime()
+    assert.equal(stopped.ctx.state, 'running')
+})
+
+test('a new play keeps the context running', async () => {
+    const ctx = fakeContext()
+    const first = fakeFetch()
+    const second = fakeFetch()
+    const fetches = [first.fetchImpl, second.fetchImpl]
+    const player = createPcmStreamPlayer({
+        fetchImpl: (...args) => fetches.shift()(...args),
+        audioContextFactory: () => ctx,
+    })
+    player.prime()
+    player.play('/a', FORMAT, recordingHandlers().handlers)
+    await flush()
+    const next = recordingHandlers()
+    player.play('/b', FORMAT, next.handlers)
+    assert.equal(first.calls[0].signal.aborted, true)
+    assert.equal(ctx.suspendCalls, 0)
+    assert.equal(ctx.state, 'running')
+    await flush()
+    second.push(pcm(START_FRAMES))
+    await flush()
+    assert.deepEqual(next.events, ['playing'])
+    player.stop()
+})
+
+test('without an audio context, prime does not throw and play reports refused', async (t) => {
+    const logged = t.mock.method(console, 'error', () => {})
+    const network = fakeFetch()
+    const failure = new Error('No AudioContext')
+    const player = createPcmStreamPlayer({
+        fetchImpl: network.fetchImpl,
+        audioContextFactory: () => {
+            throw failure
+        },
+    })
+    player.prime()
+    const { events, handlers } = recordingHandlers()
+    player.play('/a', FORMAT, handlers)
+    await flush()
+    assert.deepEqual(events, ['error:refused'])
+    assert.equal(network.calls.length, 0)
+    assert.deepEqual(logged.mock.calls.map(call => call.arguments), [[failure]])
+    player.stop()
+})
+
+test('a suspended context resumes before the first buffer', async () => {
+    const { ctx, network, player, events, handlers } = setup()
+    ctx.state = 'suspended'
+    player.play('/a', FORMAT, handlers)
+    await flush()
+    network.push(pcm(START_FRAMES))
+    await flush()
+    assert.equal(ctx.resumeCalls, 1)
+    assert.equal(ctx.sources.length, 1)
+    assert.deepEqual(events, ['playing'])
+})
+
+test('a context that does not run refuses the playback', async () => {
+    // The resume answers, but the context stays suspended.
+    const answered = setup()
+    answered.ctx.state = 'suspended'
+    answered.ctx.resume = () => Promise.resolve()
+    answered.player.play('/a', FORMAT, answered.handlers)
+    await flush()
+    answered.network.push(pcm(START_FRAMES))
+    await flush()
+    assert.equal(answered.ctx.sources.length, 0)
+    assert.deepEqual(answered.events, ['error:refused'])
+    assert.equal(answered.network.calls[0].signal.aborted, true)
+
+    // The resume never answers (the browser waits for a user gesture): refused after the timeout.
+    const pending = setup({}, { resumeTimeoutMs: 5 })
+    pending.ctx.state = 'suspended'
+    pending.ctx.resume = () => new Promise(() => {})
+    pending.player.play('/a', FORMAT, pending.handlers)
+    await flush()
+    pending.network.push(pcm(50))
+    pending.network.close()
+    await flush()
+    assert.deepEqual(pending.events, [])
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(pending.ctx.sources.length, 0)
+    assert.deepEqual(pending.events, ['error:refused'])
 })

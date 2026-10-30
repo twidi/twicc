@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { generateUUID } from '../utils/crypto.js'
-import { parsePcmType, pcmToWavBlob } from '../utils/pcmAudio.js'
+import { isPcmType, parsePcmType, pcmToWavBlob } from '../utils/pcmAudio.js'
 import { createPcmStreamPlayer } from '../utils/pcmStreamPlayer.js'
 import { currentPlatform, playbackMode, speechEndResult, UNREACHABLE } from '../utils/speechOutcome.js'
 import { createSpeechPlayer } from '../utils/speechPlayer.js'
@@ -34,6 +34,8 @@ let pcmPlayer = null
 let generation = 0
 // The audio id of the current playback, and the store that opened it: `{ id, store }`, or null.
 let currentAudio = null
+// The store of the latest playback: a page kept in the back-forward cache stops it.
+let playbackStore = null
 // Resolves the promise the current playback still owes (its start or its end) with ABORTED.
 let abortPending = null
 // The targets that already release the current audio on `pagehide`.
@@ -43,6 +45,8 @@ let modelsGeneration = 0
 
 const ABORTED = Object.freeze({ ok: false, aborted: true })
 const BACKEND_STATES = new Set(['complete', 'failed', 'running', 'unknown'])
+// The ending request gives up after this delay: no answer, which the end table handles.
+const ENDING_TIMEOUT_MS = 10000
 
 /** Tests only: forget the in-flight requests, the players, the current audio and the pagehide targets. */
 export function _resetSpeechForTests() {
@@ -53,6 +57,7 @@ export function _resetSpeechForTests() {
     player = null
     pcmPlayer = null
     currentAudio = null
+    playbackStore = null
     abortPending = null
     pageHideTargets = new WeakSet()
     // Never back to 0: a continuation left by a previous test must not match a new playback.
@@ -68,12 +73,21 @@ export function audioUrl(audioId) {
 /**
  * Release the current audio when the page goes away (a reload, a closed tab): the backend
  * would otherwise keep it until its timeout. Adds one listener per target, however many calls.
+ *
+ * The DELETE leaves synchronously, inside the event (no lazy import: the page may be gone after
+ * it). A page kept in the back-forward cache (`persisted`) also stops its playback: its audio id
+ * is released. `fetchImpl` is a seam for the tests.
  */
-export function installPageHideRelease(target) {
+export function installPageHideRelease(target, fetchImpl = (...args) => fetch(...args)) {
     if (pageHideTargets.has(target)) return
     pageHideTargets.add(target)
-    target.addEventListener('pagehide', () => {
-        if (currentAudio) currentAudio.store._releaseAudio(currentAudio.id, { keepalive: true })
+    target.addEventListener('pagehide', (event) => {
+        const audio = currentAudio
+        if (audio) {
+            currentAudio = null
+            fetchImpl(audioUrl(audio.id), { method: 'DELETE', keepalive: true }).catch(() => {})
+        }
+        if (event.persisted) playbackStore?.stop()
     })
 }
 
@@ -94,7 +108,7 @@ async function errorMessageOf(response) {
 /** The backend's ending answer `{ state, error }`, or null: a failed request, a non-2xx answer, another body. */
 async function readEnding(store, audioId) {
     try {
-        const response = await store._fetchEnding(audioId)
+        const response = await store._fetchEnding(audioId, AbortSignal.timeout(ENDING_TIMEOUT_MS))
         if (!response.ok) return null
         const data = await response.json()
         return BACKEND_STATES.has(data?.state) ? { state: data.state, error: data.error ?? null } : null
@@ -119,6 +133,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     // Synchronous, inside the click: later playback on the element and the context is user-activated.
     player.prime()
     pcmPlayer.prime()
+    playbackStore = store
     if (typeof window !== 'undefined') installPageHideRelease(window)
     store.playback = { text, status: 'loading', source, configId }
 
@@ -150,15 +165,18 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     }
     controller = null
     currentAudio = { id: opened.audioId, store }
-    return new Promise(resolveStart => play(store, mine, opened, { text, source, configId }, resolveStart))
+    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId }, resolveStart))
 }
 
 function backToIdle(store, mine) {
-    if (generation === mine) store.playback = { text: null, status: 'idle', source: null, configId: null }
+    if (generation !== mine) return
+    store.playback = { text: null, status: 'idle', source: null, configId: null }
+    // The click primed the PCM context: suspend it until the next playback.
+    pcmPlayer?.stop()
 }
 
 /** Play the open audio with the player of its type and platform, then run the ending step. */
-function play(store, mine, { audioId, contentType }, { text, source, configId }, resolveStart) {
+function playOpened(store, mine, { audioId, contentType }, { text, source, configId }, resolveStart) {
     let started = false
     let finishing = false
     let resolveEnded
@@ -199,11 +217,13 @@ function play(store, mine, { audioId, contentType }, { text, source, configId },
 
     const url = audioUrl(audioId)
     const mode = playbackMode(contentType, currentPlatform())
+    // Only the 'pcm-stream' mode plays through the PCM context the click primed: suspend it.
+    if (mode !== 'pcm-stream') pcmPlayer.stop()
     if (mode === 'media') {
         player.playUrl(url, handlers)
         return
     }
-    const pcm = contentType.toLowerCase().startsWith('audio/pcm')
+    const pcm = isPcmType(contentType)
     const format = pcm ? parsePcmType(contentType) : null
     // A PCM audio without its rate and channel count cannot play.
     if (pcm && !format) handlers.onError('refused')
@@ -436,17 +456,17 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             return apiFetch(url, { signal })
         },
 
-        /** How the audio ended on the backend: `{ state, error }`. */
-        async _fetchEnding(audioId) {
+        /** How the audio ended on the backend: `{ state, error }`. `signal` ends a request that takes too long. */
+        async _fetchEnding(audioId, signal) {
             const { apiFetch } = await import('../utils/api.js')
-            return apiFetch(`${audioUrl(audioId)}ending/`)
+            return apiFetch(`${audioUrl(audioId)}ending/`, { signal })
         },
 
         /** Free the audio on the backend. Never rejects: the backend expires an audio nobody releases. */
-        async _releaseAudio(audioId, { keepalive = false } = {}) {
+        async _releaseAudio(audioId) {
             try {
                 const { apiFetch } = await import('../utils/api.js')
-                await apiFetch(audioUrl(audioId), { method: 'DELETE', keepalive })
+                await apiFetch(audioUrl(audioId), { method: 'DELETE' })
             } catch {
                 // Ignored.
             }

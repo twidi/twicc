@@ -5,6 +5,12 @@ import { createPcm16Decoder } from './pcmAudio.js'
 /** The audio held back before the first buffer plays, so a small network delay does not cut the sound. */
 export const START_BUFFER_SECONDS = 0.3
 
+/** After an underrun, the next buffer starts this far ahead of the clock: a start in the past is cut. */
+export const CATCH_UP_LEAD_SECONDS = 0.02
+
+/** How long the first buffer waits for a suspended context to run, before the playback is refused. */
+const RESUME_TIMEOUT_MS = 2000
+
 let playerFactory = null
 
 /** Tests only: make `createPcmStreamPlayer()` return `factory()` instead of the real player. */
@@ -13,23 +19,32 @@ export function setPcmStreamPlayerFactory(factory) {
 }
 
 /**
- * Create the PCM streaming player. `fetchImpl` and `audioContextFactory` are seams for the tests.
+ * Create the PCM streaming player. `fetchImpl`, `audioContextFactory` and `resumeTimeoutMs` are
+ * seams for the tests.
  *
  * - `prime()` runs synchronously inside the user's click. It creates the context once and resumes
- *   it, so the sound of a playback that starts after a long request is allowed.
+ *   it, so the sound of a playback that starts after a long request is allowed. It never throws:
+ *   without an audio context, the next `play()` reports `'refused'`.
  * - `play(url, { rate, channels }, handlers)` reads the 16-bit PCM body of `url` and plays it chunk
  *   after chunk. `handlers` is `{ onPlaying(), onEnded(), onError(reason) }`. Each handler fires
- *   at most once, and only one of `onEnded` and `onError` fires. The reason is `'network'` for a
- *   failed request or body, `'refused'` when the browser cannot play the samples.
- * - `stop()` aborts the request and silences the scheduled audio. No handler fires after it.
+ *   at most once, and only one of `onEnded` and `onError` fires. An empty body fires `onEnded`
+ *   without `onPlaying`. The reason is `'network'` for a failed request or body, `'refused'` when
+ *   the browser cannot play the samples (no context, a context that does not run, a refused buffer).
+ * - `stop()` aborts the request, silences the scheduled audio and suspends the context. No handler
+ *   fires after it.
  *
- * The context stays open between playbacks: it is reused.
+ * The context is reused, and suspended between playbacks: a running context keeps the audio
+ * output busy for the life of the tab.
  */
-export function createPcmStreamPlayer({ fetchImpl = fetch, audioContextFactory = () => new AudioContext() } = {}) {
-    return playerFactory ? playerFactory() : createWebAudioPlayer(fetchImpl, audioContextFactory)
+export function createPcmStreamPlayer({
+    fetchImpl = fetch,
+    audioContextFactory = () => new AudioContext(),
+    resumeTimeoutMs = RESUME_TIMEOUT_MS,
+} = {}) {
+    return playerFactory ? playerFactory() : createWebAudioPlayer(fetchImpl, audioContextFactory, resumeTimeoutMs)
 }
 
-function createWebAudioPlayer(fetchImpl, audioContextFactory) {
+function createWebAudioPlayer(fetchImpl, audioContextFactory, resumeTimeoutMs) {
     let ctx = null
     // The playback in progress: `{ controller, sources }`, or null.
     let current = null
@@ -39,7 +54,36 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
         return ctx
     }
 
+    function suspend() {
+        ctx?.suspend()?.catch(() => {})
+    }
+
+    /** True once the context runs: at once, or after a resume within the timeout. */
+    async function running(audio) {
+        if (audio.state === 'running') return true
+        let timer
+        try {
+            await Promise.race([
+                audio.resume(),
+                new Promise(resolve => {
+                    timer = setTimeout(resolve, resumeTimeoutMs)
+                }),
+            ])
+        } catch {
+            // Refused: the state below tells.
+        } finally {
+            clearTimeout(timer)
+        }
+        return audio.state === 'running'
+    }
+
     function stop() {
+        halt()
+        suspend()
+    }
+
+    // Abort the playback in progress and silence its sources. The context keeps its state.
+    function halt() {
         if (!current) return
         const { controller, sources } = current
         current = null
@@ -73,6 +117,7 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
         function finish() {
             if (!live()) return
             current = null
+            suspend()
             if (readFailed) handlers.onError('network')
             else handlers.onEnded()
         }
@@ -80,7 +125,14 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
         function fail() {
             if (!live()) return
             current = null
+            suspend()
             handlers.onError('network')
+        }
+
+        function refuse() {
+            if (!live()) return
+            stop()
+            handlers.onError('refused')
         }
 
         function schedule(samples) {
@@ -95,7 +147,8 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
                 playback.sources.delete(source)
                 if (bodyDone && playback.sources.size === 0) finish()
             }
-            const when = Math.max(next, audio.currentTime)
+            // After an underrun the clock passed `next`: start a little ahead, then abut again.
+            const when = next >= audio.currentTime ? next : audio.currentTime + CATCH_UP_LEAD_SECONDS
             source.start(when)
             next = when + frames / rate
             playback.sources.add(source)
@@ -105,7 +158,13 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
             }
         }
 
-        function release() {
+        async function release() {
+            if (!held.length) return
+            // A suspended context has a still clock: its sources would never play nor end.
+            if (!(await running(audio))) {
+                refuse()
+                return
+            }
             // A handler can stop the playback while the held chunks are scheduled.
             for (const samples of held.splice(0)) if (live()) schedule(samples)
         }
@@ -143,7 +202,7 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
             } else {
                 held.push(samples)
                 heldFrames += samples[0].length
-                if (heldFrames / rate >= START_BUFFER_SECONDS) release()
+                if (heldFrames / rate >= START_BUFFER_SECONDS) await release()
             }
         }
 
@@ -153,27 +212,34 @@ function createWebAudioPlayer(fetchImpl, audioContextFactory) {
             return
         }
         // A body shorter than the start buffer plays when it ends.
-        release()
+        await release()
+        if (!live()) return
         bodyDone = true
         if (playback.sources.size === 0) finish()
     }
 
     return {
         prime() {
-            context()
-                .resume()
-                ?.catch(() => {})
+            try {
+                context()
+                    .resume()
+                    ?.catch(() => {})
+            } catch {
+                // No audio context in this browser: the next play reports it refused.
+            }
         },
 
         play(url, format, handlers) {
-            stop()
+            halt()
             const playback = { controller: new AbortController(), sources: new Set() }
             current = playback
-            // The browser could not take the samples (a buffer it refuses to create, for example):
-            // stop the playback and report it, so the caller does not wait for an end that never comes.
+            // The browser could not take the samples (no context, a buffer it refuses to create, for
+            // example): stop the playback and report it, so the caller does not wait for an end that
+            // never comes.
             run(playback, url, format, handlers).catch(error => {
                 // A throw after the end comes from a handler: it is not this player's to hide.
                 if (current !== playback) throw error
+                console.error(error)
                 stop()
                 handlers.onError('refused')
             })

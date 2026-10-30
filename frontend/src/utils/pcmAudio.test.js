@@ -1,6 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parsePcmType, createPcm16Decoder, pcmToWavBlob } from './pcmAudio.js'
+import { isPcmType, parsePcmType, createPcm16Decoder, pcmToWavBlob } from './pcmAudio.js'
+
+test('tells a pcm type, with or without its parameters', () => {
+    assert.equal(isPcmType('audio/pcm;rate=24000;channels=1'), true)
+    assert.equal(isPcmType('Audio/PCM ; rate=24000'), true)
+    assert.equal(isPcmType('audio/pcm'), true)
+    assert.equal(isPcmType('audio/mpeg'), false)
+    assert.equal(isPcmType('audio/pcmx'), false)
+    assert.equal(isPcmType(''), false)
+})
 
 test('parses only explicit pcm types', () => {
     assert.deepEqual(parsePcmType('audio/pcm;rate=24000;channels=1'), { rate: 24000, channels: 1 })
@@ -34,6 +43,18 @@ test('keeps an odd byte for the next chunk', () => {
     assert.equal(third.length, 0)
     const [fourth] = decoder.decode(new Uint8Array([0x40]))
     assert.deepEqual([...fourth], [0.5])
+})
+
+test('reads a chunk that starts inside its buffer', () => {
+    // A stream chunk can be a view at a non-zero byteOffset of a larger buffer.
+    const buffer = new Uint8Array([0xaa, 0x00, 0x40, 0x00, 0x80, 0xbb]).buffer
+    const decoder = createPcm16Decoder(1)
+    const [samples] = decoder.decode(new Uint8Array(buffer, 1, 4))
+    assert.deepEqual([...samples], [0.5, -1])
+    // The same with an odd length: the last byte waits, the next chunk completes it.
+    const odd = createPcm16Decoder(1)
+    assert.deepEqual([...odd.decode(new Uint8Array(buffer, 1, 3))[0]], [0.5])
+    assert.deepEqual([...odd.decode(new Uint8Array([0x80]))[0]], [-1])
 })
 
 test('splits interleaved stereo frames', () => {
@@ -74,4 +95,21 @@ test('wraps chunks in a wav header', async () => {
     assert.equal(stereo.getUint32(24, true), 44100)
     assert.equal(stereo.getUint32(28, true), 44100 * 4)
     assert.equal(stereo.getUint16(32, true), 4)
+})
+
+test('declares and keeps whole frames only', async () => {
+    // Mono: 2 bytes a frame. 5 bytes received: the last byte is dropped.
+    const mono = pcmToWavBlob([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])], 24000, 1)
+    assert.equal(mono.size, 44 + 4)
+    const monoBytes = new Uint8Array(await mono.arrayBuffer())
+    const monoView = new DataView(monoBytes.buffer)
+    assert.equal(monoView.getUint32(4, true), 36 + 4)
+    assert.equal(monoView.getUint32(40, true), 4)
+    assert.deepEqual([...monoBytes.slice(44)], [1, 2, 3, 4])
+
+    // Stereo: 4 bytes a frame. 7 bytes received: one whole frame.
+    const stereo = pcmToWavBlob([new Uint8Array([1, 2, 3, 4, 5, 6, 7])], 24000, 2)
+    const stereoBytes = new Uint8Array(await stereo.arrayBuffer())
+    assert.equal(new DataView(stereoBytes.buffer).getUint32(40, true), 4)
+    assert.deepEqual([...stereoBytes.slice(44)], [1, 2, 3, 4])
 })
