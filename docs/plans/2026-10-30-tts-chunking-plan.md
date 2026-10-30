@@ -568,12 +568,33 @@ git commit  # fix(tts): apply the speech splitting check decisions
 
 ## Check decisions (filled in Task 1 and Task 8)
 
-- `WHOLE_MP3_MODELS`:
-- MP3 facts per checked model (ID3, info frame, bitrate, CBR):
-- PCM parts' byte counts modulo the frame size:
-- Joined files in the browsers (Task 1 Step 3):
-- ElevenLabs v3, 250 characters, time to the first byte:
-- Task 1 spend:
+Task 1 ran on 2026-10-30: one French text of 972 characters, cut into parts of 252, 467 and 251 characters, sent part after part to each model with its first listed voice (ElevenLabs `george`, MiniMax `English_expressive_narrator`, Seed none listed, HeyGen `nadine`). Every part answered `200`.
+
+- **Stop gate hit (MiniMax).** `minimax/speech-2.8-turbo` is CBR (every frame of the three parts at 128 kbit/s), but the first frame of each part holds `Xing`, not `Info`. Its Xing counts are empty (frames 0, bytes 0): an encoder that writes to a stream cannot fill them in. Under the *Byte rate* rule, the runtime reads it as VBR and drops pacing and lookahead for this model. Per *Decision rules*, the controller and the user decide before Task 2.
+- Automatic checks of `joined` (decode errors; decoded and `ffprobe` durations against the sum of the parts, tolerance 0.6 s for 2 seams; longest silence at a seam, limit 1.0 s):
+
+  | Case | Decode errors | Sum of parts | Decoded | `ffprobe` (PCM: bytes) | Longest seam silence | Automatic result |
+  |---|---|---|---|---|---|---|
+  | `elevenlabs` | none | 61.84 s | 61.96 s | 61.96 s | none | pass |
+  | `minimax` | none | 61.17 s | 61.23 s | 61.24 s | none | pass (stop gate above) |
+  | `seed` | none | 53.33 s | 53.42 s | 53.42 s | 0.58 s (seam 2) | pass |
+  | `heygen` (PCM) | none | 55.26 s | 55.26 s | 55.26 s | none | pass |
+
+  The plain concatenation (`raw.mp3`) of each MP3 case gives `Header missing` / `Invalid data found` decode errors (the ID3 tags of parts 2 and 3 inside the stream). Its `ffprobe` duration is near the sum (53.48 s for Seed): `ffprobe` does not stop at the first part's info frame.
+- `WHOLE_MP3_MODELS`: no model from the automatic checks. Pending: the user's listening (Task 1 Step 3) and the MiniMax stop-gate decision.
+- MP3 facts per checked model (ID3, info frame, bitrate, CBR), the same in all three parts:
+
+  | Model | ID3v2 tag | First frame | Info frame | Encoder | Bitrates | Tail |
+  |---|---|---|---|---|---|---|
+  | `elevenlabs/eleven-v3` | 44 bytes | MPEG-1 Layer III, 128 kbit/s, 44,100 Hz, mono | `Info` (counts filled) | `Lavf` | 128 kbit/s only: CBR | none |
+  | `minimax/speech-2.8-turbo` | 45 bytes | MPEG-1 Layer III, 128 kbit/s, 32,000 Hz, mono | `Xing` (frames 0, bytes 0) | `Lavf` | 128 kbit/s only: CBR | none |
+  | `bytedance-seed/seed-audio-1-0` | 45 bytes | MPEG-1 Layer III, 128 kbit/s, 44,100 Hz, stereo (joint stereo frames) | `Info` (counts filled) | `Lavc59.37` | 128 kbit/s only: CBR | none |
+
+  No `LAME` string in any first frame (the info frames carry `Lavf` / `Lavc`). No CRC on the first frames. No ID3v1 or APE tag at the end of a part. Task 3's filter sees two kinds: `Info` at offset 21 (MPEG-1 mono) or 36 (MPEG-1 stereo), and `Xing` at offset 21 (MPEG-1 mono).
+- PCM parts' byte counts modulo the frame size: 0, 0, 0 (`audio/pcm;rate=44100;channels=1`, frame 2 bytes; parts of 1,262,782, 2,310,784 and 1,300,670 bytes). The three `Content-Type` values are equal.
+- Joined files in the browsers (Task 1 Step 3): **pending: user listening.** Files in the controller session's Artifacts tab, folder `tts-chunking-spike/`: `elevenlabs-joined.mp3`, `minimax-joined.mp3`, `seed-joined.mp3` (with `seed-raw.mp3` to compare), `heygen-joined.wav`.
+- ElevenLabs v3, 250 characters, time to the first byte: 4.62 s (headers and first byte together, last byte at 4.65 s). 467 characters: 7.83 s. Other models, first byte of the 252-character part: MiniMax 0.77 s, Seed 15.04 s, HeyGen 1.00 s.
+- Task 1 spend: $0.2688 (OpenRouter generation lookups, 12 parts, 3,880 characters): ElevenLabs $0.0776, MiniMax $0.0582, Seed $0.1330, HeyGen $0.
 - `PACE_MARGIN`:
 - `BUFFERED_SENDING`:
 - Cells not tested:
