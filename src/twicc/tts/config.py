@@ -84,6 +84,7 @@ def _last_test(value: object) -> dict | None:
         "generation_id": _string(value.get("generation_id")),
         "chars": chars,
         "generation_ms": generation_ms,
+        "first_audio_ms": _non_negative(value.get("first_audio_ms"), int),
         "audio_seconds": _non_negative(value.get("audio_seconds"), float),
         "cost": _non_negative(value.get("cost"), float),
     }

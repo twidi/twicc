@@ -109,6 +109,25 @@ def parse_pcm_format(content_type: str) -> tuple[int, int] | None:
     return rate, channels
 
 
+def _pcm_format_or_default(content_type: str) -> tuple[int, int]:
+    """``(rate, channels)`` of a PCM ``Content-Type``; 24 kHz mono, with a warning, when unusable."""
+    pcm_format = parse_pcm_format(content_type)
+    if pcm_format is None:
+        logger.warning(
+            "TTS PCM response without a usable rate/channels (%r); assuming %s Hz mono",
+            content_type,
+            DEFAULT_PCM_RATE,
+        )
+        pcm_format = (DEFAULT_PCM_RATE, DEFAULT_PCM_CHANNELS)
+    return pcm_format
+
+
+def pcm_content_type(content_type: str) -> str:
+    """The upstream PCM ``Content-Type`` with an explicit rate and channel count."""
+    rate, channels = _pcm_format_or_default(content_type)
+    return f"audio/pcm;rate={rate};channels={channels}"
+
+
 def wrap_pcm_as_wav(pcm: bytes, rate: int, channels: int) -> bytes:
     """Raw 16-bit PCM samples wrapped in a WAV container."""
     buffer = io.BytesIO()
@@ -149,15 +168,7 @@ def _audio_from_response(response: httpx.Response) -> SpeechAudio:
     generation_id = response.headers.get("x-generation-id") or None
 
     if media_type == "audio/pcm":
-        pcm_format = parse_pcm_format(content_type)
-        if pcm_format is None:
-            logger.warning(
-                "TTS PCM response without a usable rate/channels (%r); assuming %s Hz mono",
-                content_type,
-                DEFAULT_PCM_RATE,
-            )
-            pcm_format = (DEFAULT_PCM_RATE, DEFAULT_PCM_CHANNELS)
-        rate, channels = pcm_format
+        rate, channels = _pcm_format_or_default(content_type)
         return SpeechAudio(wrap_pcm_as_wav(response.content, rate, channels), "audio/wav", generation_id)
 
     if media_type.startswith("audio/"):
@@ -371,9 +382,16 @@ def _mp3_bitrate(content: bytes) -> int | None:
 
 
 def audio_duration_seconds(content: bytes, content_type: str) -> float | None:
-    """The length of an audio body: exact for WAV, from the bitrate for MP3 (constant bitrate,
-    as OpenRouter sends it). None for another type or an unreadable body."""
+    """The length of an audio body: exact for PCM (from the rate and channels of its type) and
+    WAV, from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). None for another
+    type or an unreadable body."""
     media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type == "audio/pcm":
+        pcm_format = parse_pcm_format(content_type)
+        if pcm_format is None:
+            return None
+        rate, channels = pcm_format
+        return len(content) / (rate * channels * PCM_SAMPLE_WIDTH)
     try:
         if media_type == "audio/wav":
             with wave.open(io.BytesIO(content)) as reader:

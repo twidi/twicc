@@ -288,7 +288,7 @@ def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transacti
 
 LAST_TEST = {
     "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
-    "generation_ms": 2200, "audio_seconds": 143.0, "cost": None,
+    "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None,
 }
 
 
@@ -300,6 +300,18 @@ def test_last_test_is_normalized_or_dropped():
     ]})
     assert out["configs"][0]["last_test"] == {**LAST_TEST, "chars": 2000}
     assert [c["last_test"] for c in out["configs"][1:]] == [None, None]
+
+
+def test_last_test_keeps_first_audio_ms():
+    def first_audio_ms(last_test):
+        return normalize_tts_config({"configs": [_entry(last_test=last_test)]})["configs"][0]["last_test"]
+
+    assert first_audio_ms(LAST_TEST)["first_audio_ms"] == 1160
+    assert first_audio_ms({**LAST_TEST, "first_audio_ms": -1})["first_audio_ms"] is None
+    assert first_audio_ms({**LAST_TEST, "first_audio_ms": "x"})["first_audio_ms"] is None
+    # A record written before the field existed stays valid.
+    old_record = {key: value for key, value in LAST_TEST.items() if key != "first_audio_ms"}
+    assert first_audio_ms(old_record) == {**LAST_TEST, "first_audio_ms": None}
 
 
 def test_a_client_write_keeps_the_recorded_last_test(tmp_data_dir):

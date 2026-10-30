@@ -25,6 +25,7 @@ from twicc.tts.openrouter import (
     build_payload,
     fetch_speech_models,
     parse_pcm_format,
+    pcm_content_type,
     synthesize,
     upstream_error_message,
     wrap_pcm_as_wav,
@@ -93,22 +94,18 @@ def test_parse_pcm_format():
     assert parse_pcm_format("audio/pcm;rate=24000;channels=0") is None
 
 
-@pytest.mark.parametrize(
-    "content_type",
-    ["audio/pcm;rate=99999999999;channels=1", "audio/pcm;rate=24000;channels=40000"],
-)
-def test_malformed_pcm_header_falls_back_to_24k_mono(monkeypatch, caplog, content_type):
+def test_pcm_content_type_is_explicit():
+    assert pcm_content_type("audio/pcm;rate=44100;channels=1") == "audio/pcm;rate=44100;channels=1"
+    assert pcm_content_type("audio/pcm;rate=44100") == "audio/pcm;rate=44100;channels=1"
+
+
+@pytest.mark.parametrize("content_type", ["audio/pcm", "audio/pcm;rate=abc", "audio/pcm;rate=999999"])
+def test_pcm_content_type_falls_back_to_24k_mono(caplog, content_type):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    def handler(request):
-        return httpx.Response(200, content=b"\x00\x00" * 10, headers={"content-type": content_type})
-
-    _mock_transport(monkeypatch, handler)
-    audio = asyncio.run(synthesize(_request("pcm"), "k"))
-
-    with wave.open(io.BytesIO(audio.content)) as w:
-        assert (w.getframerate(), w.getnchannels(), w.getnframes()) == (24000, 1, 10)
-    assert any(r.levelno == logging.WARNING for r in caplog.records if r.name == LOGGER_NAME)
+    assert pcm_content_type(content_type) == "audio/pcm;rate=24000;channels=1"
+    warnings = [r for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert content_type in warnings[0].getMessage()
 
 
 def test_wrap_pcm_as_wav_header():
@@ -174,23 +171,6 @@ def test_synthesize_decides_from_upstream_type_not_requested_format(monkeypatch)
 
     assert audio.content == mp3
     assert audio.content_type == "audio/mpeg"
-
-
-def test_pcm_without_rate_falls_back_to_24k_mono(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    def handler(request):
-        return httpx.Response(200, content=b"\x00\x00" * 100, headers={"content-type": "audio/pcm"})
-
-    _mock_transport(monkeypatch, handler)
-    audio = asyncio.run(synthesize(_request("pcm"), "k"))
-
-    assert audio.content_type == "audio/wav"
-    with wave.open(io.BytesIO(audio.content)) as w:
-        assert (w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()) == (24000, 1, 2, 100)
-    warnings = [r for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "audio/pcm" in warnings[0].getMessage()
 
 
 def test_upstream_error_message_and_hint():
@@ -619,6 +599,16 @@ def test_audio_duration_of_wav_and_mp3():
     assert audio_duration_seconds(b"junk", "audio/mpeg") is None
     assert audio_duration_seconds(b"junk", "audio/wav") is None
     assert audio_duration_seconds(b"x", "audio/ogg") is None
+
+
+def test_audio_duration_of_pcm_and_mp3():
+    from twicc.tts.openrouter import audio_duration_seconds
+    # 16-bit samples: 88 200 bytes at 44 100 Hz mono = 1 s.
+    assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm;rate=44100;channels=1") == 1.0
+    assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm;rate=22050;channels=2") == 1.0
+    assert audio_duration_seconds(b"\x00" * 88200, "audio/pcm") is None
+    mp3 = ((b"\xff\xf3\xc4\x00" + b"\x00" * 412) * 77)[:32000]
+    assert audio_duration_seconds(mp3, "audio/mpeg") == 2.0
 
 
 def test_cost_lookup_returns_the_cost(monkeypatch):
