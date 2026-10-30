@@ -19,18 +19,23 @@ from twicc.tts import openrouter, streams
 from twicc.tts.openrouter import (
     GENERATION_URL,
     MODELS_URL,
+    RATE_SCAN_BYTES,
     SPEECH_URL,
     SpeechError,
     SpeechRequest,
     _log_generation_cost,
     build_payload,
+    bytes_per_second,
     fetch_speech_models,
+    mp3_frame_bitrates,
     parse_pcm_format,
     pcm_content_type,
     pump_speech,
     upstream_error_message,
 )
 from twicc.tts.streams import AudioStream, start_stream
+
+from tests.test_tts_part_audio import _frame, _id3
 
 LOGGER_NAME = "twicc.tts.openrouter"
 STREAMS_LOGGER_NAME = "twicc.tts.streams"
@@ -742,6 +747,42 @@ def test_audio_duration_reads_a_bytearray():
     tagged = bytearray(b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\x00" * 10 + mp3)
     assert audio_duration_seconds(bytearray(mp3), "audio/mpeg") == 2.0
     assert audio_duration_seconds(tagged, "audio/mpeg") == len(tagged) * 8 / 128000
+
+
+def test_bytes_per_second():
+    assert bytes_per_second("audio/pcm;rate=44100;channels=1", b"") == 88200.0
+    assert bytes_per_second("audio/pcm;rate=24000;channels=2", b"") == 96000.0
+    assert bytes_per_second("audio/mpeg", _frame()) == 16000.0
+    assert bytes_per_second("audio/mpeg", _id3(30) + _frame()) == 16000.0
+    assert bytes_per_second("audio/mpeg", bytearray(_frame())) == 16000.0
+    assert bytes_per_second("audio/mpeg", b"xxxx") is None
+    # Only the first RATE_SCAN_BYTES bytes are read.
+    assert bytes_per_second("audio/mpeg", b"x" * RATE_SCAN_BYTES + _frame()) is None
+    assert bytes_per_second("audio/pcm", b"") is None
+    assert bytes_per_second("audio/ogg", _frame()) is None
+
+
+def test_mp3_frame_bitrates():
+    frames = _id3(30) + _frame() + _frame(bitrate_index=5) + _frame()
+    assert mp3_frame_bitrates(frames) == [128000, 64000, 128000]
+    assert mp3_frame_bitrates(bytearray(frames)) == [128000, 64000, 128000]
+    # A truncated last frame is not counted.
+    assert mp3_frame_bitrates(frames[:-1]) == [128000, 64000]
+    # The walk stops at bytes that are not a frame header.
+    assert mp3_frame_bitrates(_frame() + b"xxxx" + _frame()) == [128000]
+    assert mp3_frame_bitrates(b"xxxx") == []
+    assert mp3_frame_bitrates(b"") == []
+    # Only the first RATE_SCAN_BYTES bytes are read.
+    many = _frame() * (RATE_SCAN_BYTES // len(_frame()) + 5)
+    assert len(mp3_frame_bitrates(many)) == RATE_SCAN_BYTES // len(_frame())
+
+
+def test_audio_duration_reads_past_the_rate_scan():
+    # The duration reads the whole body: a large ID3 tag keeps the MP3 measurable.
+    from twicc.tts.openrouter import audio_duration_seconds
+    tagged = _id3(RATE_SCAN_BYTES) + _frame() * 10
+    assert audio_duration_seconds(tagged, "audio/mpeg") == len(tagged) / 16000.0
+    assert bytes_per_second("audio/mpeg", tagged) is None
 
 
 def test_cost_lookup_returns_the_cost(monkeypatch):

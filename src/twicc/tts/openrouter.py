@@ -20,6 +20,7 @@ import httpx
 import orjson
 
 from twicc.tts.model_catalog import speech_model_facts
+from twicc.tts.part_audio import MP3_HEADER_SIZE, id3_tag_size, mp3_frame
 
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
@@ -48,6 +49,8 @@ PCM_SAMPLE_WIDTH = 2  # 16-bit little-endian
 # Above these, the PCM type is malformed.
 MAX_PCM_RATE = 384000
 MAX_PCM_CHANNELS = 8
+# The MP3 byte rate (for pacing and lookahead) is read in the first bytes of the audio only.
+RATE_SCAN_BYTES = 64 * 1024
 
 
 class SpeechRequest(NamedTuple):
@@ -338,43 +341,64 @@ async def _log_generation_cost(
     return None
 
 
-# MPEG audio bitrates (kbit/s) by bitrate index, for Layer III: MPEG-1, and MPEG-2 / 2.5.
-_MP3_BITRATES = {
-    1: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
-    2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
-}
-
-
-def _mp3_bitrate(content: bytes | bytearray) -> int | None:
-    """The bitrate (bit/s) of the first MPEG Layer III frame, past an ID3v2 tag."""
-    start = 0
-    if content[:3] == b"ID3" and len(content) >= 10:
-        size = content[6:10]
-        start = 10 + ((size[0] << 21) | (size[1] << 14) | (size[2] << 7) | size[3])
-    for i in range(start, max(start, len(content) - 4)):
-        if content[i] != 0xFF or (content[i + 1] & 0xE0) != 0xE0:
-            continue
-        version_bits = (content[i + 1] >> 3) & 0x03  # 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
-        layer_bits = (content[i + 1] >> 1) & 0x03  # 1 = Layer III
-        index = content[i + 2] >> 4
-        if version_bits == 1 or layer_bits != 1 or index in (0, 15):
-            continue
-        return _MP3_BITRATES[1 if version_bits == 3 else 2][index] * 1000
+def _mp3_bitrate(content: bytes | bytearray, scan_bytes: int | None = None) -> int | None:
+    """The bitrate (bit/s) of the first MPEG Layer III frame, past an ID3v2 tag, whose header
+    lies in the first ``scan_bytes`` bytes of ``content`` (all of it when None)."""
+    size = len(content) if scan_bytes is None else min(len(content), scan_bytes)
+    last_header = size - MP3_HEADER_SIZE
+    position = id3_tag_size(content) or 0
+    while position <= last_header and (position := content.find(b"\xff", position, last_header + 1)) != -1:
+        if frame := mp3_frame(content, position):
+            return frame.bitrate
+        position += 1
     return None
 
 
-def audio_duration_seconds(content: bytes | bytearray, content_type: str) -> float | None:
-    """The length of an audio body: exact for PCM (from the rate and channels of its type),
-    from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). None for another
-    type or an unreadable body."""
+def mp3_frame_bitrates(head: bytes | bytearray) -> list[int]:
+    """The bitrates (bit/s) of the consecutive MPEG Layer III frames from the first one, past an
+    ID3v2 tag, within the first ``RATE_SCAN_BYTES`` bytes of ``head``. The walk stops at the end
+    of those bytes, at a truncated frame, or at bytes that are not a frame header."""
+    size = min(len(head), RATE_SCAN_BYTES)
+    position = id3_tag_size(head) or 0
+    bitrates = []
+    while position + MP3_HEADER_SIZE <= size:
+        frame = mp3_frame(head, position)
+        if frame is None or position + frame.length > size:
+            break
+        bitrates.append(frame.bitrate)
+        position += frame.length
+    return bitrates
+
+
+def _byte_rate(content_type: str, content: bytes | bytearray, scan_bytes: int | None) -> float | None:
+    """The audio bytes per second of a body of ``content_type``, its MP3 bitrate read in the
+    first ``scan_bytes`` bytes of ``content`` (all of it when None). None for another type, an
+    unusable PCM type, or no readable MP3 frame."""
     media_type = content_type.split(";", 1)[0].strip().lower()
     if media_type == "audio/pcm":
         pcm_format = parse_pcm_format(content_type)
         if pcm_format is None:
             return None
         rate, channels = pcm_format
-        return len(content) / (rate * channels * PCM_SAMPLE_WIDTH)
+        return float(rate * channels * PCM_SAMPLE_WIDTH)
     if media_type == "audio/mpeg":
-        bitrate = _mp3_bitrate(content)
-        return len(content) * 8 / bitrate if bitrate else None
+        bitrate = _mp3_bitrate(content, scan_bytes)
+        return bitrate / 8 if bitrate else None
     return None
+
+
+def bytes_per_second(content_type: str, head: bytes | bytearray) -> float | None:
+    """The audio bytes per second of a stream of ``content_type``: from the rate and channels of
+    a PCM type, from the bitrate of the first frame in the first ``RATE_SCAN_BYTES`` bytes of
+    ``head`` for MP3 (constant bitrate assumed). None for another type, an unusable PCM type, or
+    no readable MP3 frame in the scanned bytes."""
+    return _byte_rate(content_type, head, RATE_SCAN_BYTES)
+
+
+def audio_duration_seconds(content: bytes | bytearray, content_type: str) -> float | None:
+    """The length of an audio body: exact for PCM (from the rate and channels of its type),
+    from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). The whole body is
+    read for the bitrate, so a large ID3 tag still gives a duration. None for another type or
+    an unreadable body."""
+    rate = _byte_rate(content_type, content, None)
+    return len(content) / rate if rate else None
