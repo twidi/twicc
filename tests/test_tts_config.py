@@ -37,6 +37,7 @@ def _entry(**overrides) -> dict:
         "response_format": "pcm",
         "speed": None,
         "instructions": "",
+        "note": "",
         "validated": None,
     }
     entry.update(overrides)
@@ -50,12 +51,19 @@ def test_missing_or_invalid_file_reads_as_empty(tmp_data_dir):
 
 
 def test_empty_config_shape():
-    assert empty_tts_config() == {"active_id": None, "configs": []}
+    assert empty_tts_config() == {"active_id": None, "configs": [], "test_text": ""}
 
 
 def test_normalize_keeps_a_valid_entry_unchanged():
     entry = _entry()
-    assert normalize_tts_config({"active_id": "a", "configs": [entry]}) == {"active_id": "a", "configs": [entry]}
+    config = {"active_id": "a", "configs": [entry], "test_text": "Bonjour"}
+    assert normalize_tts_config(config) == config
+
+
+def test_normalize_keeps_only_a_string_test_text():
+    assert normalize_tts_config({"configs": []})["test_text"] == ""
+    assert normalize_tts_config({"configs": [], "test_text": 3})["test_text"] == ""
+    assert normalize_tts_config({"configs": [], "test_text": "Salut"})["test_text"] == "Salut"
 
 
 def test_normalize_repairs_fields():
@@ -74,8 +82,19 @@ def test_normalize_fills_defaults_for_a_bare_entry():
     out = normalize_tts_config({"configs": [{"id": "a"}]})
     assert out == {"active_id": None, "configs": [{
         "id": "a", "name": "", "model": "", "voice": "", "response_format": "mp3",
-        "speed": None, "instructions": "", "validated": None,
-    }]}
+        "speed": None, "instructions": "", "note": "", "validated": None,
+    }], "test_text": ""}
+
+
+def test_normalize_keeps_a_note_and_never_snapshots_it():
+    out = normalize_tts_config({"configs": [
+        _entry(note="Warm, a bit slow", validated={
+            "model": "m", "voice": "v", "response_format": "mp3", "speed": None, "instructions": "", "note": "x",
+        }),
+        _entry(id="b", note=42),
+    ]})
+    assert [c["note"] for c in out["configs"]] == ["Warm, a bit slow", ""]
+    assert "note" not in out["configs"][0]["validated"]
 
 
 @pytest.mark.parametrize("raw", [None, "junk", [], 3, {"configs": "junk"}])
@@ -139,7 +158,7 @@ def test_write_then_read_round_trips(tmp_data_dir):
     config = {"active_id": "a", "configs": [_entry(validated={
         "model": "google/gemini-3.8-flash-lite-tts", "voice": "Kore", "response_format": "pcm",
         "speed": None, "instructions": "",
-    })]}
+    })], "test_text": "A sentence of my own."}
     assert write_tts_config(config) == config
     assert read_tts_config() == config
     assert orjson.loads(get_tts_config_path().read_bytes()) == config

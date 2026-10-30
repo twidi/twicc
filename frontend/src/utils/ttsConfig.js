@@ -1,6 +1,6 @@
 // Pure rules for the text-to-speech configs (shape normalized by src/twicc/tts/config.py).
 
-/** The fields sent to the speech endpoint. `name` is not one of them. */
+/** The fields sent to the speech endpoint. `name` and `note` are not among them. */
 export const SPEECH_FIELDS = ['model', 'voice', 'response_format', 'speed', 'instructions']
 
 export const DEFAULT_TEST_TEXT = 'Hello! This is a TwiCC text-to-speech test.'
@@ -23,14 +23,101 @@ export function isConfigValidated(config) {
 export function createTtsConfig(id) {
     return {
         id,
-        name: 'New voice',
+        name: '',
         model: '',
         voice: '',
         response_format: 'mp3',
         speed: null,
         instructions: '',
+        note: '',
         validated: null,
     }
+}
+
+/** The name shown for a config: its own name, else built from its model's name and its voice. */
+export function ttsConfigDisplayName(config, models = []) {
+    const name = config.name?.trim()
+    if (name) return name
+    return ttsConfigAutoName(config, models)
+}
+
+export function ttsConfigAutoName(config, models = []) {
+    const model = config.model ? (models.find(entry => entry.id === config.model)?.name || config.model) : ''
+    return [model, config.voice].filter(Boolean).join(' · ') || 'Unnamed config'
+}
+
+// One listed unit price per million units, short: 0.62, 15, 2500.
+function perMillion(price) {
+    const value = price * 1e6
+    return value >= 100 ? value.toFixed(0) : String(Number(value.toPrecision(3)))
+}
+
+/**
+ * The OpenRouter list price of a model, for the model picker: "Free", "$0.62/M in · $6/M out",
+ * or '' when OpenRouter lists none. List prices only: the real cost can differ.
+ */
+export function formatTtsModelPrice(pricing) {
+    const prompt = pricing?.prompt ?? null
+    const completion = pricing?.completion ?? null
+    if (prompt === null && completion === null) return ''
+    // "Free" only when both prices are known zeros; a missing one is unknown, not free.
+    if (prompt === 0 && completion === 0) return 'Free'
+    const parts = []
+    if (prompt) parts.push(`$${perMillion(prompt)}/M in`)
+    if (completion) parts.push(`$${perMillion(completion)}/M out`)
+    return parts.join(' · ')
+}
+
+/**
+ * The model picker options, sorted by official name (case-insensitive), with the list price on
+ * a quiet line. A stored model missing from the list stays first, so the picker still shows it.
+ */
+export function ttsModelOptions(models, currentModel) {
+    const options = models.map(model => ({
+        value: model.id,
+        label: model.name,
+        description: formatTtsModelPrice(model.pricing) || 'No list price',
+        keywords: model.id,
+    })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+    if (!currentModel || models.some(model => model.id === currentModel)) return options
+    // Not loaded (or OpenRouter unreachable) says nothing about the model: no mention then.
+    const description = models.length ? 'Not in the OpenRouter list' : ''
+    return [{ value: currentModel, label: currentModel, description }, ...options]
+}
+
+/**
+ * The voice picker options of a model; a stored other voice stays first. `listed` says whether
+ * the model is in the loaded list: if not, its voices are unknown, so no claim about the voice.
+ */
+export function ttsVoiceOptions(voices, currentVoice, { listed = true } = {}) {
+    const options = voices.map(voice => ({ value: voice, label: voice }))
+    if (!currentVoice || voices.includes(currentVoice)) return options
+    const description = listed ? "Not in this model's list" : ''
+    return [{ value: currentVoice, label: currentVoice, description }, ...options]
+}
+
+/** The voice to keep when the model changes: only one the new model lists. */
+export function voiceAfterModelChange(voice, nextVoices) {
+    return voice && nextVoices.includes(voice) ? voice : ''
+}
+
+/** The OpenRouter page of a model (its id is the page path). */
+export function openRouterModelUrl(modelId) {
+    return `https://openrouter.ai/${encodeURI(modelId)}`
+}
+
+/** Where the settings test of a config stands: 'loading', 'playing' or 'idle'. */
+export function ttsTestState(playback, configId) {
+    if (playback?.source !== 'test' || playback.configId !== configId) return 'idle'
+    return playback.status === 'loading' || playback.status === 'playing' ? playback.status : 'idle'
+}
+
+/**
+ * After a successful test: ask "Did you hear it correctly?" only when the config still has the
+ * tested fields (no edit while loading) and they are not already the validated ones.
+ */
+export function shouldAskAfterTest(config, testedFields) {
+    return sameSpeechFields(speechFieldsOf(config), testedFields) && !sameSpeechFields(config.validated, testedFields)
 }
 
 /** A new config with the patch applied. A speech field change drops the validation. */
@@ -41,7 +128,9 @@ export function patchTtsConfig(config, patch) {
 }
 
 export function duplicateTtsConfig(config, id) {
-    return { ...config, id, name: `${config.name} (copy)`, validated: config.validated && { ...config.validated } }
+    // An unnamed config stays unnamed: its copy shows the same automatic name until edited.
+    const name = config.name ? `${config.name} (copy)` : ''
+    return { ...config, id, name, validated: config.validated && { ...config.validated } }
 }
 
 /** The message buttons show only with the key, an active config, and its validation. */

@@ -12,6 +12,7 @@ line or an error message.
 import asyncio
 import io
 import logging
+import math
 import time
 import wave
 from typing import NamedTuple
@@ -224,13 +225,32 @@ def _voices(entry: dict) -> list[str]:
     return [voice for voice in voices if isinstance(voice, str)]
 
 
+def _price(value: object) -> float | None:
+    """A listed unit price (OpenRouter sends decimal strings); ``None`` when unusable."""
+    if isinstance(value, bool):
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return price if math.isfinite(price) and price >= 0 else None
+
+
+def _pricing(entry: dict) -> dict:
+    """The listed ``prompt`` / ``completion`` unit prices, as floats or ``None``."""
+    pricing = entry.get("pricing")
+    if not isinstance(pricing, dict):
+        pricing = {}
+    return {"prompt": _price(pricing.get("prompt")), "completion": _price(pricing.get("completion"))}
+
+
 def _copy_models(models: list[dict]) -> list[dict]:
     """A copy a caller can mutate without reaching the cache."""
-    return [{**model, "voices": list(model["voices"])} for model in models]
+    return [{**model, "voices": list(model["voices"]), "pricing": dict(model["pricing"])} for model in models]
 
 
 async def fetch_speech_models() -> list[dict]:
-    """The speech models as ``[{"id", "name", "voices"}]``; ``[]`` on any failure.
+    """The speech models as ``[{"id", "name", "voices", "pricing"}]``; ``[]`` on any failure.
 
     A success is cached ``MODELS_CACHE_TTL`` seconds; a failure is not cached.
     """
@@ -243,10 +263,15 @@ async def fetch_speech_models() -> list[dict]:
         response.raise_for_status()
         entries = orjson.loads(response.content)["data"]
         models = [
-            {"id": entry["id"], "name": entry.get("name") or entry["id"], "voices": _voices(entry)}
+            {
+                "id": entry["id"],
+                "name": entry.get("name") or entry["id"],
+                "voices": _voices(entry),
+                "pricing": _pricing(entry),
+            }
             for entry in entries
         ]
-    except Exception:  # noqa: BLE001 - suggestions only: the fields stay free text
+    except Exception:  # noqa: BLE001 - an empty list: the settings show the list did not load
         logger.debug("TTS models list unavailable")
         return []
     _models_cache = (time.monotonic(), models)

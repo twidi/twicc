@@ -255,6 +255,21 @@ test('applyConfig fills the state from the payload', () => {
     assert.equal(store.available, true)
 })
 
+test('the test sentence comes from tts.json and is saved back', () => {
+    assert.equal(store.testText, '')
+    store.applyConfig({ ...payload(), config: { ...payload().config, test_text: 'Bonjour' } })
+    assert.equal(store.testText, 'Bonjour')
+    const sent = []
+    store._sendConfig = () => sent.push(store.testText)
+    store.setTestText('Bonjour')
+    assert.deepEqual(sent, [])
+    store.setTestText('Salut')
+    assert.equal(store.testText, 'Salut')
+    assert.deepEqual(sent, ['Salut'])
+    store.applyConfig({ ...payload(), config: { ...payload().config, test_text: 7 } })
+    assert.equal(store.testText, '')
+})
+
 test('mutations never touch the applied payload', () => {
     const received = payload({ configs: [makeConfig('c1'), makeConfig('c2')] })
     const snapshot = structuredClone(received)
@@ -321,8 +336,11 @@ test('duplicate, deactivate and delete send the config', () => {
 test('loadModels fills the models', async () => {
     const models = [{ id: 'm', name: 'Model', voices: ['alloy'] }]
     store._requestModels = async () => jsonResponse(200, { models })
-    await store.loadModels()
+    const pending = store.loadModels()
+    assert.equal(store.modelsStatus, 'loading')
+    await pending
     assert.deepEqual(store.models, models)
+    assert.equal(store.modelsStatus, 'loaded')
 })
 
 test('loadModels never rejects and leaves the models empty on failure', async () => {
@@ -341,6 +359,25 @@ test('loadModels never rejects and leaves the models empty on failure', async ()
     store._requestModels = async () => jsonResponse(200, { models: 'nope' })
     await store.loadModels()
     assert.deepEqual(store.models, [])
+    assert.equal(store.modelsStatus, 'failed')
+
+    // The backend answers an empty list when OpenRouter is unreachable.
+    store._requestModels = async () => jsonResponse(200, { models: [] })
+    await store.loadModels()
+    assert.equal(store.modelsStatus, 'failed')
+})
+
+test('only the latest model list load applies', async () => {
+    let finishFirst
+    store._requestModels = () => new Promise(resolve => { finishFirst = resolve })
+    const first = store.loadModels()
+    store._requestModels = async () => jsonResponse(200, { models: [{ id: 'm', name: 'M', voices: [] }] })
+    await store.loadModels()
+    assert.equal(store.modelsStatus, 'loaded')
+    finishFirst(new Response('down', { status: 502 }))
+    await first
+    assert.equal(store.modelsStatus, 'loaded')
+    assert.equal(store.models.length, 1)
 })
 
 test('stop() on a fresh store is a no-op', () => {

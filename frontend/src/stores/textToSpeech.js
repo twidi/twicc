@@ -26,6 +26,8 @@ let controller = null
 let player = null
 let generation = 0
 const cache = new SpeechCache()
+// The model list loads: only the latest call applies its result.
+let modelsGeneration = 0
 
 const ABORTED = Object.freeze({ ok: false, aborted: true })
 
@@ -37,6 +39,7 @@ export function _resetSpeechForTests() {
     cache.clear()
     // Never back to 0: a continuation left by a previous test must not match a new playback.
     generation += 1
+    modelsGeneration += 1
 }
 
 function isAbortError(error) {
@@ -57,17 +60,17 @@ async function errorMessageOf(response) {
  * Stop the current playback, then read `text` aloud with `fields`. Never rejects.
  * Every `await` is followed by a generation check: a newer play or a stop owns the state.
  */
-async function startPlayback(store, text, fields, { useCache, source }) {
+async function startPlayback(store, text, fields, { useCache, source, configId = null }) {
     store.stop()
     const mine = ++generation
     const backToIdle = () => {
-        if (generation === mine) store.playback = { text: null, status: 'idle', source: null }
+        if (generation === mine) store.playback = { text: null, status: 'idle', source: null, configId: null }
     }
 
     player ??= createSpeechPlayer()
     // Synchronous, inside the click: later playback on the element is user-activated.
     player.prime()
-    store.playback = { text, status: 'loading', source }
+    store.playback = { text, status: 'loading', source, configId }
 
     try {
         const key = speechCacheKey(text, fields)
@@ -88,7 +91,7 @@ async function startPlayback(store, text, fields, { useCache, source }) {
             if (useCache) cache.set(key, blob)
         }
 
-        store.playback = { text, status: 'playing', source }
+        store.playback = { text, status: 'playing', source, configId }
         try {
             await player.play(blob, backToIdle, backToIdle)
         } catch (error) {
@@ -111,8 +114,11 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         activeId: null,
         keyPresent: false,
         envPath: '',
-        models: [], // [{ id, name, voices: [string] }] suggestions from OpenRouter
-        playback: { text: null, status: 'idle', source: null }, // source: 'message' | 'test' | null
+        testText: '', // the settings test sentence; '' means the default one
+        models: [], // [{ id, name, voices: [string], pricing: { prompt, completion } }] from OpenRouter
+        modelsStatus: 'idle', // 'idle' | 'loading' | 'loaded' | 'failed'
+        // source: 'message' | 'test' | null; configId: the config a settings test is about, else null.
+        playback: { text: null, status: 'idle', source: null, configId: null },
     }),
 
     getters: {
@@ -133,13 +139,14 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
     actions: {
         /**
          * Apply the state received from the bootstrap or the WebSocket.
-         * @param {{ config: { active_id, configs }, key_present: boolean, env_path: string }} payload
+         * @param {{ config: { active_id, configs, test_text }, key_present: boolean, env_path: string }} payload
          */
         applyConfig(payload) {
             const config = payload?.config ?? {}
             // Copies: the mutations below never touch the payload received.
             this.configs = Array.isArray(config.configs) ? config.configs.map(entry => ({ ...entry })) : []
             this.activeId = config.active_id ?? null
+            this.testText = typeof config.test_text === 'string' ? config.test_text : ''
             this.keyPresent = Boolean(payload?.key_present)
             this.envPath = payload?.env_path ?? ''
             // Another device edited, deactivated or deleted the active config, or the key is gone.
@@ -152,7 +159,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
          */
         async _sendConfig() {
             const { sendTtsConfig } = await import('../composables/useWebSocket')
-            sendTtsConfig({ active_id: this.activeId, configs: this.configs })
+            sendTtsConfig({ active_id: this.activeId, configs: this.configs, test_text: this.testText })
         },
 
         // ── Config mutations ─────────────────────────────
@@ -204,6 +211,13 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this._sendConfig()
         },
 
+        /** Keep the settings test sentence ('' brings back the default one). */
+        setTestText(text) {
+            if (text === this.testText) return
+            this.testText = text
+            this._sendConfig()
+        },
+
         /** Mark a config validated, only when its speech fields are still the tested ones. */
         markValidated(id, testedFields) {
             const index = this.configs.findIndex(config => config.id === id)
@@ -215,21 +229,30 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             return true
         },
 
-        // ── Model suggestions ────────────────────────────
+        // ── Model list ───────────────────────────────────
 
-        /** Fetch the model suggestions. Never rejects: any failure leaves `models` empty. */
+        /**
+         * Fetch the OpenRouter speech models, the only choices of the model and voice pickers.
+         * Never rejects. `modelsStatus` ends 'loaded', or 'failed' on any failure or an empty
+         * list (the backend answers [] when OpenRouter is unreachable).
+         */
         async loadModels() {
+            // Only the latest call applies: a slow earlier one must not overwrite a newer result.
+            const mine = ++modelsGeneration
+            this.modelsStatus = 'loading'
+            let models = []
             try {
                 const response = await this._requestModels()
-                if (!response.ok) {
-                    this.models = []
-                    return
+                if (response.ok) {
+                    const data = await response.json()
+                    if (Array.isArray(data?.models)) models = data.models
                 }
-                const data = await response.json()
-                this.models = Array.isArray(data?.models) ? data.models : []
             } catch {
-                this.models = []
+                models = []
             }
+            if (mine !== modelsGeneration) return
+            this.models = models
+            this.modelsStatus = models.length ? 'loaded' : 'failed'
         },
 
         // ── Playback ─────────────────────────────────────
@@ -242,8 +265,8 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         },
 
         /** Read a text aloud with explicit speech fields (the settings test: no cache by default). */
-        playWith(text, fields, { useCache = false, source = 'test' } = {}) {
-            return startPlayback(this, text, speechFieldsOf(fields), { useCache, source })
+        playWith(text, fields, { useCache = false, source = 'test', configId = null } = {}) {
+            return startPlayback(this, text, speechFieldsOf(fields), { useCache, source, configId })
         },
 
         /** Abort the in-flight request or stop the audio. Safe on a cold app. */
@@ -252,7 +275,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             controller?.abort()
             controller = null
             player?.stop()
-            this.playback = { text: null, status: 'idle', source: null }
+            this.playback = { text: null, status: 'idle', source: null, configId: null }
         },
 
         // ── Network (lazy api.js import: node --test cannot resolve its imports) ──

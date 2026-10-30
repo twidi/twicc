@@ -1,4 +1,4 @@
-"""Text-to-speech REST endpoints: the speech proxy and the model suggestions.
+"""Text-to-speech REST endpoints: the speech proxy and the speech model list.
 
 Both views are async: on a client disconnect Django cancels the view task,
 and the awaited ``httpx`` call to OpenRouter is cancelled with it (a sync call
@@ -127,7 +127,7 @@ async def tts_speech(request):
 
 
 async def tts_models(request):
-    """GET /api/tts/models/ — the speech models as suggestions; an empty list when unavailable."""
+    """GET /api/tts/models/ — the speech models (the settings pickers' choices); an empty list when unavailable."""
     if request.method != "GET":
         return _method_not_allowed("GET")
     return JsonResponse({"models": await fetch_speech_models()})

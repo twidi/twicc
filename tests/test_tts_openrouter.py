@@ -377,8 +377,18 @@ def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
         ]
     }
     expected = [
-        {"id": "openai/gpt-4o-mini-tts", "name": "OpenAI: GPT-4o mini TTS", "voices": ["alloy", "nova"]},
-        {"id": "google/gemini-tts", "name": "google/gemini-tts", "voices": []},
+        {
+            "id": "openai/gpt-4o-mini-tts",
+            "name": "OpenAI: GPT-4o mini TTS",
+            "voices": ["alloy", "nova"],
+            "pricing": {"prompt": 0.0000006, "completion": None},
+        },
+        {
+            "id": "google/gemini-tts",
+            "name": "google/gemini-tts",
+            "voices": [],
+            "pricing": {"prompt": None, "completion": None},
+        },
     ]
 
     def ok_handler(request):
@@ -420,8 +430,37 @@ def test_models_callers_cannot_corrupt_the_cache(monkeypatch):
     first.append({"id": "extra"})
     second = asyncio.run(fetch_speech_models())
     second[0]["voices"].clear()
+    second[0]["pricing"]["prompt"] = 1.0
 
-    assert asyncio.run(fetch_speech_models()) == [{"id": "m", "name": "M", "voices": ["alloy"]}]
+    assert asyncio.run(fetch_speech_models()) == [
+        {"id": "m", "name": "M", "voices": ["alloy"], "pricing": {"prompt": None, "completion": None}},
+    ]
+
+
+def test_models_pricing_keeps_only_usable_prices(monkeypatch):
+    payload = {
+        "data": [
+            {"id": "a", "pricing": {"prompt": "0.00000062", "completion": "0"}},
+            {"id": "b", "pricing": {"prompt": 0.0025, "completion": "-1"}},
+            {"id": "c", "pricing": {"prompt": "nan", "completion": True}},
+            {"id": "d", "pricing": {"prompt": "free", "completion": None}},
+            {"id": "e", "pricing": "0.1"},
+            {"id": "f"},
+        ]
+    }
+
+    def handler(request):
+        return httpx.Response(200, content=orjson.dumps(payload))
+
+    _mock_transport(monkeypatch, handler)
+    assert [m["pricing"] for m in asyncio.run(fetch_speech_models())] == [
+        {"prompt": 0.00000062, "completion": 0.0},
+        {"prompt": 0.0025, "completion": None},
+        {"prompt": None, "completion": None},
+        {"prompt": None, "completion": None},
+        {"prompt": None, "completion": None},
+        {"prompt": None, "completion": None},
+    ]
 
 
 def test_models_voices_keep_only_a_list_of_strings(monkeypatch):

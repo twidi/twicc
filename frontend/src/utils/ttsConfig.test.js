@@ -11,6 +11,15 @@ import {
     duplicateTtsConfig,
     isTtsAvailable,
     speechCacheKey,
+    ttsConfigDisplayName,
+    ttsConfigAutoName,
+    formatTtsModelPrice,
+    ttsModelOptions,
+    ttsVoiceOptions,
+    voiceAfterModelChange,
+    openRouterModelUrl,
+    ttsTestState,
+    shouldAskAfterTest,
 } from './ttsConfig.js'
 
 const validatedConfig = (id = 'a') => {
@@ -26,12 +35,13 @@ test('constants', () => {
 test('a new config has the defaults and no validation', () => {
     assert.deepEqual(createTtsConfig('a'), {
         id: 'a',
-        name: 'New voice',
+        name: '',
         model: '',
         voice: '',
         response_format: 'mp3',
         speed: null,
         instructions: '',
+        note: '',
         validated: null,
     })
     assert.equal(isConfigValidated(createTtsConfig('a')), false)
@@ -69,7 +79,8 @@ test('patchTtsConfig returns a new object and keeps the validation on a same-val
     assert.equal(isConfigValidated(patched), true)
     const renamed = patchTtsConfig(config, { name: 'x' })
     assert.equal(renamed.name, 'x')
-    assert.equal(config.name, 'New voice')
+    assert.equal(config.name, '')
+    assert.equal(isConfigValidated(patchTtsConfig(config, { note: 'warm' })), true)
     assert.equal(patchTtsConfig(config, { speed: 1.2 }).speed, 1.2)
 })
 
@@ -90,6 +101,107 @@ test('availability needs the key, an active config, and its validation', () => {
     assert.equal(isTtsAvailable({ keyPresent: true, configs, activeId: 'missing' }), false)
     assert.equal(isTtsAvailable({ keyPresent: true, configs: [], activeId: 'a' }), false)
     assert.equal(isTtsAvailable({ keyPresent: true, configs: undefined, activeId: 'a' }), false)
+})
+
+test('an unnamed config is duplicated unnamed', () => {
+    const copy = duplicateTtsConfig({ ...validatedConfig('a'), name: '' }, 'b')
+    assert.equal(copy.name, '')
+})
+
+test('the display name falls back to the model name and the voice', () => {
+    const models = [{ id: 'hexgrad/kokoro-82m', name: 'Kokoro 82M', voices: ['af_bella'] }]
+    const base = { ...createTtsConfig('a'), model: 'hexgrad/kokoro-82m', voice: 'af_bella' }
+    assert.equal(ttsConfigDisplayName(base, models), 'Kokoro 82M · af_bella')
+    assert.equal(ttsConfigDisplayName({ ...base, name: '  Mine  ' }, models), 'Mine')
+    assert.equal(ttsConfigDisplayName({ ...base, name: '   ' }, models), 'Kokoro 82M · af_bella')
+    // An unknown model shows its id; a missing voice is left out.
+    assert.equal(ttsConfigDisplayName({ ...base, model: 'x/y', voice: '' }, models), 'x/y')
+    assert.equal(ttsConfigDisplayName(base), 'hexgrad/kokoro-82m · af_bella')
+    assert.equal(ttsConfigAutoName(createTtsConfig('a'), models), 'Unnamed config')
+})
+
+test('the list price reads per million units', () => {
+    assert.equal(formatTtsModelPrice({ prompt: 0.00000062, completion: 0 }), '$0.62/M in')
+    assert.equal(formatTtsModelPrice({ prompt: 0.0000005, completion: 0.000006 }), '$0.5/M in · $6/M out')
+    assert.equal(formatTtsModelPrice({ prompt: 0.000015, completion: null }), '$15/M in')
+    assert.equal(formatTtsModelPrice({ prompt: 0, completion: 0.0025 }), '$2500/M out')
+    assert.equal(formatTtsModelPrice({ prompt: 0, completion: 0 }), 'Free')
+    assert.equal(formatTtsModelPrice({ prompt: null, completion: null }), '')
+    assert.equal(formatTtsModelPrice(undefined), '')
+    // One known zero and one unknown price is not "Free".
+    assert.equal(formatTtsModelPrice({ prompt: 0, completion: null }), '')
+    assert.equal(formatTtsModelPrice({ prompt: null, completion: 0 }), '')
+})
+
+const MODELS = [
+    { id: 'hexgrad/kokoro-82m', name: 'Kokoro 82M', voices: ['af_bella'], pricing: { prompt: 0.00000062, completion: 0 } },
+    { id: 'fish/s1', name: 'Fish S1', voices: [], pricing: { prompt: null, completion: null } },
+]
+
+test('model options carry the official name, the price line and the id as keywords', () => {
+    assert.deepEqual(ttsModelOptions(MODELS, 'hexgrad/kokoro-82m'), [
+        { value: 'fish/s1', label: 'Fish S1', description: 'No list price', keywords: 'fish/s1' },
+        { value: 'hexgrad/kokoro-82m', label: 'Kokoro 82M', description: '$0.62/M in', keywords: 'hexgrad/kokoro-82m' },
+    ])
+    assert.equal(ttsModelOptions(MODELS, '').length, 2)
+})
+
+test('model options are sorted by official name, whatever the API order', () => {
+    const models = [
+        { id: 'z/one', name: 'kokoro 82M', voices: [], pricing: null },
+        { id: 'a/two', name: 'ElevenLabs: Eleven v3', voices: [], pricing: null },
+        { id: 'm/three', name: 'Google: Gemini TTS', voices: [], pricing: null },
+    ]
+    assert.deepEqual(ttsModelOptions(models, '').map(o => o.label), ['ElevenLabs: Eleven v3', 'Google: Gemini TTS', 'kokoro 82M'])
+    // A stored model missing from the list still comes first.
+    assert.equal(ttsModelOptions(models, 'gone/model')[0].value, 'gone/model')
+})
+
+test('a stored model missing from the list stays visible first', () => {
+    assert.deepEqual(ttsModelOptions(MODELS, 'acme/old')[0], { value: 'acme/old', label: 'acme/old', description: 'Not in the OpenRouter list' })
+    // An empty list (not loaded, or OpenRouter unreachable) makes no claim about the model.
+    assert.deepEqual(ttsModelOptions([], 'acme/old'), [{ value: 'acme/old', label: 'acme/old', description: '' }])
+})
+
+test('voice options keep a stored voice the model does not list', () => {
+    assert.deepEqual(ttsVoiceOptions(['a', 'b'], 'b'), [{ value: 'a', label: 'a' }, { value: 'b', label: 'b' }])
+    assert.deepEqual(ttsVoiceOptions(['a'], 'z')[0], { value: 'z', label: 'z', description: "Not in this model's list" })
+    assert.equal(ttsVoiceOptions(['a'], '').length, 1)
+    // A model missing from the loaded list: its voices are unknown, so no claim.
+    assert.deepEqual(ttsVoiceOptions([], 'z', { listed: false }), [{ value: 'z', label: 'z', description: '' }])
+})
+
+test('the test state of a config follows the playback of its own test only', () => {
+    assert.equal(ttsTestState({ source: 'test', configId: 'a', status: 'loading' }, 'a'), 'loading')
+    assert.equal(ttsTestState({ source: 'test', configId: 'a', status: 'playing' }, 'a'), 'playing')
+    assert.equal(ttsTestState({ source: 'test', configId: 'a', status: 'playing' }, 'b'), 'idle')
+    assert.equal(ttsTestState({ source: 'message', configId: null, status: 'playing' }, 'a'), 'idle')
+    assert.equal(ttsTestState({ source: null, configId: null, status: 'idle' }, 'a'), 'idle')
+    assert.equal(ttsTestState(undefined, 'a'), 'idle')
+})
+
+test('the question after a test is asked only for unchanged, not yet validated fields', () => {
+    const fresh = { ...createTtsConfig('a'), model: 'm', voice: 'v' }
+    const tested = speechFieldsOf(fresh)
+    assert.equal(shouldAskAfterTest(fresh, tested), true)
+    // Already validated with these fields: a quick re-listen, no question.
+    assert.equal(shouldAskAfterTest({ ...fresh, validated: tested }, tested), false)
+    // Validated with older fields: ask again.
+    assert.equal(shouldAskAfterTest({ ...fresh, validated: { ...tested, voice: 'old' } }, tested), true)
+    // A field edited while the test loaded: no question.
+    assert.equal(shouldAskAfterTest({ ...fresh, voice: 'w' }, tested), false)
+})
+
+test('a model change keeps only a voice the new model lists', () => {
+    assert.equal(voiceAfterModelChange('alloy', ['alloy', 'nova']), 'alloy')
+    assert.equal(voiceAfterModelChange('alloy', ['Kore']), '')
+    assert.equal(voiceAfterModelChange('alloy', []), '')
+    assert.equal(voiceAfterModelChange('', ['alloy']), '')
+})
+
+test('the OpenRouter page of a model is its id as a path', () => {
+    assert.equal(openRouterModelUrl('hexgrad/kokoro-82m'), 'https://openrouter.ai/hexgrad/kokoro-82m')
+    assert.equal(openRouterModelUrl('heygen/heygen-voice-1-turbo:free'), 'https://openrouter.ai/heygen/heygen-voice-1-turbo:free')
 })
 
 test('duplicate keeps the validation and is named "(copy)"', () => {

@@ -17,8 +17,8 @@ SPEECH_FIELDS = ("model", "voice", "response_format", "speed", "instructions")
 
 
 def empty_tts_config() -> dict:
-    """The config of a missing or invalid file."""
-    return {"active_id": None, "configs": []}
+    """The config of a missing or invalid file. An empty ``test_text`` means the default sentence."""
+    return {"active_id": None, "configs": [], "test_text": ""}
 
 
 def _string(value: object) -> str:
@@ -82,12 +82,13 @@ def normalize_tts_config(raw: object) -> dict:
             "id": entry_id,
             "name": _string(entry.get("name")),
             **_speech_fields(entry),
+            "note": _string(entry.get("note")),
             "validated": _validated(entry.get("validated")),
         })
     active_id = raw.get("active_id")
     if not isinstance(active_id, str) or active_id not in seen_ids:
         active_id = None
-    return {"active_id": active_id, "configs": configs}
+    return {"active_id": active_id, "configs": configs, "test_text": _string(raw.get("test_text"))}
 
 
 def read_tts_config() -> dict:
