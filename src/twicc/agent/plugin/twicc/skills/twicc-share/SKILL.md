@@ -192,6 +192,11 @@ Advance an in-scope frozen share to current content. `--timeout N` defaults to 3
 - `snapshot_failed` — the artifact snapshot could not be created or refreshed.
 - `session_not_ready` — root metadata computation is pending; retry after computation completes.
 - `not_snapshot` — `propagate` was used on a live session share.
+- `session_unavailable` — on create, propagate, or an update that changes the
+  options of a session link: the session's history is unavailable
+  (`unavailable_reason` set), so no link may serve it. Its existing links
+  serve nothing either, but their label, password and expiry can still be
+  updated, and they can be revoked or deleted. Final: never retry.
 
 ## Output format
 

@@ -113,6 +113,32 @@ def test_watcher_creates_root_anchor_and_routes_activity_and_items(provider_home
 
 
 @pytest.mark.django_db(transaction=True)
+def test_watcher_pushes_no_items_of_a_session_whose_history_is_unavailable(provider_home, monkeypatch):
+    """The parent's reason covers its subagent: its new lines are not pushed live."""
+    from twicc.providers import sessions_watcher
+    from twicc.agent.registry import get_agent_manager_registry
+
+    project = Project.objects.create(id="p", directory="/tmp/root-project")
+    root = Session.objects.create(
+        id="root", file_path="root.jsonl", project=project, provider="codex", unavailable_reason="any_reason",
+    )
+    child = "00000000-0000-4000-8000-000000000098"
+    path = rollout(provider_home, child, root.id)
+    watcher = CodexSessionsWatcher()
+    parsed = asyncio.run(watcher.parse_session_file(path))
+    parsed.project_id = project.id
+    messages = AsyncMock()
+    monkeypatch.setattr(sessions_watcher, "broadcast_message", messages)
+    monkeypatch.setattr(get_agent_manager_registry(), "touch_agent_activity", lambda session_id: None)
+    asyncio.run(watcher.sync_and_broadcast(path, parsed, Change.added, None))
+
+    assert SessionItem.objects.filter(session_id=child).exists()  # indexed, not pushed
+    types = [call.args[1]["type"] for call in messages.call_args_list]
+    assert "session_items_added" not in types
+    assert "session_updated" in types  # metadata still flows
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("cycle", [False, True])
 def test_watcher_defers_missing_or_cyclic_ancestry(provider_home, cycle):
     if cycle:

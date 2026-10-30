@@ -102,6 +102,7 @@ def _idle_manager(seen, *, start_raises=False, between=None, after=None):
     manager._pending_after_restart = {}
     manager._cron_restart_tasks = {}
     manager._check_ephemeral_readonly = lambda *a, **k: None
+    manager._check_session_writable = AsyncMock()  # no DB here: availability is tested elsewhere
     manager._cancel_cron_restart_task = lambda session_id: None
 
     async def broadcast(*args, **kwargs):
@@ -184,6 +185,7 @@ def test_the_pending_settings_restart_that_re_sends_a_parked_text_is_system(proj
     manager = ClaudeCodeAgentManager.__new__(ClaudeCodeAgentManager)
     manager._pending_after_restart = {"s1": {"text": "parked", "images": None, "documents": None}}
     manager._broadcast_agent_state = AsyncMock()
+    manager._check_session_writable = AsyncMock()  # no DB here: availability is tested elsewhere
     manager._parked_release_after_start = lambda session_id, pending: None
     seen = []
 

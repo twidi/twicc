@@ -738,6 +738,11 @@ class Session(models.Model):
             ),
             # Lists the few hidden sessions (WebSocket connect, `--only-hidden`).
             models.Index(fields=["hidden"], name="idx_session_hidden", condition=models.Q(hidden=True)),
+            # Lists the few sessions whose history is unavailable (every search excludes them).
+            models.Index(
+                fields=["unavailable_reason"], name="idx_session_unavailable",
+                condition=models.Q(unavailable_reason__isnull=False),
+            ),
         ]
 
     @property

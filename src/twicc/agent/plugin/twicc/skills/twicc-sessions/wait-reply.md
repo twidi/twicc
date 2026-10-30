@@ -40,6 +40,7 @@ Filters: `--project`, `--workspace`, `--provider`, `--state`, `--active`, `--onl
 `summary` + `results`, one `reply` block per id — the block the singular returns (Skill: `twicc-session`, file `wait-reply.md`).
 
 - A named id with neither a session nor a live process comes back as `outcome: unknown_session`, carrying only that and `session_id` — none of the four keys every other block has (nothing was waited on) — rather than being dropped.
+- A session whose history is unavailable (`unavailable_reason` set on its row, or on its parent's) is not waited on: its reply is its content. It comes back as `outcome: session_unavailable`, with `session_id`, `unavailable_reason` and an `error` message naming it. Final: do not retry.
 - `summary` — `total` (every id asked for, unknown ones included), `replied`, `awaiting_user_input`, `concluded`, `all_replied`. `replied` counts `outcome: replied` alone; `concluded` also counts the ones ended on a pending request, so `all_replied` can be `false` with nothing left to wait for.
 
 ### Exit codes
@@ -74,4 +75,4 @@ $TWICC sessions wait-reply --active --annotation role=implementer --since 2026-0
 
 1. Report `summary`: how many replied, how many are blocked on a human.
 2. Per session: `replied` — its `text` or a summary; `awaiting_user_input` — say it is blocked on a human; `pending` / `timeout` — still working (with `--wait-background`, give the last ignored answer, if any, and what still runs).
-3. Any other outcome (`unknown_session`, `ended`, `provider_error`, …) — name it and what it means.
+3. Any other outcome (`unknown_session`, `session_unavailable`, `ended`, `provider_error`, …) — name it and what it means.

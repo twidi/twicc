@@ -85,6 +85,7 @@ The message is delivered immediately. The recipient picks it up based on its cur
 - `provider_disabled`
 - `session_not_found`
 - `session_stale`
+- `session_unavailable` — the session's history is unavailable (its row's `unavailable_reason` is set, or its parent's): TwiCC can neither read nor continue it. The message names the reason. Final: do not retry.
 - `project_no_directory`
 - `manager_busy` — transient; retry.
 - `attachment_missing` / `attachment_not_ready` / `attachment_commit_failed` — a file could not be delivered; send again.

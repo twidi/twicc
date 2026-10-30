@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 
 from twicc.agent import SendDeliveryError
 from twicc.core.enums import Provider
+from twicc.core.session_availability import aensure_session_id_available
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.usage_task import broadcast_usage_updated, get_usage_message_for_connection
 
@@ -92,6 +93,8 @@ class CodexWSHandler:
             await send_error("Invalid async question dismissal", "async_questions_invalid")
             return
         try:
+            # Dismissing answers the question in the session: refused when its history is unavailable.
+            await aensure_session_id_available(session_id)
             ensure_provider_running(Provider.CODEX)
             manager = get_agent_manager_registry().get(Provider.CODEX)
             snapshot = await manager.dismiss_async_question(session_id, item_id, request_id=request_id)

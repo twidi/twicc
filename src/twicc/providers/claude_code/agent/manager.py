@@ -20,6 +20,7 @@ from twicc.agent import (
     BaseAgentManager,
     SendDeliveryError,
 )
+from twicc.agent.exceptions import SessionUnavailableError
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import system_marker
@@ -275,6 +276,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             )
                             has_crons = await self._session_has_crons(agent)
                             will_restart = has_content or has_crons
+                            if will_restart:
+                                # Before the kill and the STARTING broadcast: a
+                                # restart that would be refused changes nothing.
+                                await self._check_session_writable(session_id)
                             if has_content:
                                 # A newer parked send overwrites an older one, whose
                                 # entries are not released (the reaper removes them).
@@ -299,9 +304,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                 # is automatic, even inline in a user's send (design 2026-10-14, 5 and 7):
                                 # the marker covers this start only and is restored on return or raise.
                                 with system_marker():
-                                    await self._start_agent(
+                                    await self._restart_after_kill(
                                         session_id, project_id, cwd, pending["text"],
-                                        resume=True, settings=settings,
+                                        settings=settings,
                                         images=pending.get("images"),
                                         documents=pending.get("documents"),
                                         **_parked_start_kwargs(pending),
@@ -1294,6 +1299,19 @@ class ClaudeCodeAgentManager(BaseAgentManager):
     # Synthetic state broadcast (for restart "starting" notifications)
     # ------------------------------------------------------------------
 
+    async def _restart_after_kill(self, session_id: str, project_id: str, cwd: str, text: str, **start) -> str:
+        """Resume a session killed to apply startup settings, its STARTING already broadcast.
+
+        The availability check runs before the kill; the one inside
+        ``_start_agent`` is defence in depth. Should it ever refuse here, DEAD
+        is broadcast so the UI does not stay on STARTING with no process.
+        """
+        try:
+            return await self._start_agent(session_id, project_id, cwd, text, resume=True, **start)
+        except SessionUnavailableError:
+            await self._broadcast_agent_state(session_id, project_id, AgentState.DEAD)
+            raise
+
     async def _broadcast_agent_state(
         self,
         session_id: str,
@@ -1454,6 +1472,16 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             has_crons = await self._session_has_crons(agent)
             has_pending = agent.session_id in self._pending_after_restart
             will_restart = has_crons or has_pending
+            if will_restart:
+                # Before the kill and the STARTING broadcast: the session's history
+                # became unavailable, so the agent keeps running as it is and the
+                # parked send (its refs go to the reaper) is dropped.
+                try:
+                    await self._check_session_writable(agent.session_id)
+                except SessionUnavailableError as error:
+                    self._pending_after_restart.pop(agent.session_id, None)
+                    logger.info("Pending startup settings for session %s not applied: %s", agent.session_id, error)
+                    return
             await agent.interrupt_or_kill(reason="apply-settings")
             if will_restart:
                 await self._broadcast_agent_state(
@@ -1465,9 +1493,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 # Automatic even when it re-sends a parked user text; this path is also reached from
                 # tasks with a stale context (a shell ending), so the marker is explicit here too.
                 with system_marker():
-                    await self._start_agent(
+                    await self._restart_after_kill(
                         agent.session_id, agent.project_id, agent.cwd,
-                        pending["text"], resume=True, settings=requested_settings,
+                        pending["text"], settings=requested_settings,
                         images=pending.get("images"), documents=pending.get("documents"),
                         **_parked_start_kwargs(pending),
                     )

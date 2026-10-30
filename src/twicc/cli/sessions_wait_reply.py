@@ -72,6 +72,7 @@ def main(
     from twicc.cli.session import _cursor_at, _parse_instant
     from twicc.cli.sessions import build_filtered_queryset
     from twicc.core.models import Session
+    from twicc.core.session_availability import SESSION_UNAVAILABLE, session_unavailable_reason, unavailable_message
 
     # Every argument check before anything is read, so a bad flag is named as a
     # bad flag rather than pre-empted by a lookup or an empty selection.
@@ -154,9 +155,22 @@ def main(
         live_unindexed = live_session_ids(
             load_process_rows(missing, resolve_listing_twicc_pid())
         )
+    # A session whose history is unavailable is not waited on: its reply is its
+    # content. Reported, like an unknown id, so the result aligns with the ask.
+    refused = {}
+    for sid, session in list(rows.items()):
+        reason = session_unavailable_reason(session)
+        if reason is not None:
+            refused[sid] = {
+                "outcome": SESSION_UNAVAILABLE, "session_id": sid, "unavailable_reason": reason,
+                "error": unavailable_message(sid, reason),
+            }
+            del rows[sid]
     defaults = default_wait_cursors(rows.values()) if instant is None else {}
     cursors = {}
     for sid in targets:
+        if sid in refused:
+            continue
         session = rows.get(sid)
         if session is None:
             if sid in live_unindexed:
@@ -182,6 +196,7 @@ def main(
         # ``wait_for_reply_or_degrade``; this is its plural.
         waited = round(time.monotonic() - started, 1)
         replies = {sid: degraded_reply(cursor, waited, exc) for sid, cursor in cursors.items()}
+    replies.update(refused)
     for sid in targets:
         if sid not in replies:
             replies[sid] = {"outcome": "unknown_session", "session_id": sid}

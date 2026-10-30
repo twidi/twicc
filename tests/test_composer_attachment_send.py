@@ -837,6 +837,7 @@ def parked(monkeypatch, released):
     manager = ClaudeCodeAgentManager()
     manager._lock = Lock(events)
     manager._check_ephemeral_readonly = lambda *args: None
+    manager._check_session_writable = AsyncMock()  # no DB here: availability is tested elsewhere
     return SimpleNamespace(manager=manager, events=events, released=released)
 
 

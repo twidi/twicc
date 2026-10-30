@@ -27,6 +27,7 @@ from twicc.core.services.attachments import lifecycle as attachment_lifecycle
 from twicc.core.services.attachments import planner as attachment_planner
 from twicc.core.services.attachments import target as plan_target
 from twicc.core.services.attachments.staging import AttachmentError
+from twicc.core.session_availability import SESSION_UNAVAILABLE, asession_unavailable_reason, unavailable_message
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from twicc.providers.state import (
     ProviderDisabledError,
@@ -106,6 +107,8 @@ async def send_message_to_session_from_payload(
     - ``is_subagent``: the row exists but is a subagent. Subagents cannot be
       messaged directly; the parent session is the right target.
     - ``session_stale``: ``Session.stale=True`` (file gone from disk).
+    - ``session_unavailable``: the session's history is unavailable
+      (:mod:`twicc.core.session_availability`).
     - ``project_no_directory``: the owning project has no directory set.
     - ``provider_disabled``: the owning provider was disabled in settings.
     - ``awaiting_user_input``: a live ProcessRun for this session is blocked
@@ -165,6 +168,11 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
         return _rejected(
             "session_id", "session_stale",
             f"Session {session_id!r} is stale (its JSONL file no longer exists on disk)",
+        ), False
+    unavailable = await asession_unavailable_reason(session)
+    if unavailable is not None:
+        return _rejected(
+            "session_id", SESSION_UNAVAILABLE, unavailable_message(session_id, unavailable),
         ), False
 
     project = session.project

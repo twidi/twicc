@@ -40,6 +40,7 @@ from twicc.core.session_queries import (
     build_subagents_state,
     tool_results_payload,
 )
+from twicc.core.session_availability import all_unavailable_session_ids, arefuse_unavailable
 from twicc.core.text_filter import match_text_query
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services.session_timeline import record_title_change
@@ -266,6 +267,8 @@ async def session_plan_content(request, session_id):
         session = await Session.objects.aget(id=session_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     plan_path = get_provider_helpers(session.provider).resolve_plan_path(session)
     if plan_path is None:
@@ -996,6 +999,8 @@ async def user_messages(request, project_id, session_id):
         session = await Session.objects.aget(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     items = await sync_to_async(list)(
         SessionItem.objects
@@ -1143,6 +1148,8 @@ async def reconcile_session_async_questions(request, project_id, session_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     if session.provider != Provider.CODEX or session.type != SessionType.SESSION:
         raise Http404("Session not found")
     request_ids = _question_recovery_ids(request, "request_ids")
@@ -1165,6 +1172,8 @@ async def session_async_questions(request, project_id, session_id):
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
     session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     if session.type != SessionType.SESSION:
         raise Http404("Session not found")
     from twicc.core.services.async_questions import read_question_snapshot
@@ -1582,6 +1591,8 @@ async def session_items(request, project_id, session_id, parent_session_id=None)
         ?range=0:10&range=20:30&range=50:  -> multiple ranges combined
     """
     session = await _resolve_session_or_404(session_id, project_id, parent_session_id)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     # Filter by line_num ranges (required — refusing to serve the whole session).
     ranges = request.GET.getlist("range")
@@ -1656,6 +1667,8 @@ async def hybrid_attachment_image(request, project_id, session_id, line_num, ref
     the thumbnail comes from here. ``reference`` is the manifest entry's basename.
     """
     session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     if not _HYBRID_ATTACHMENT_REFERENCE_RE.fullmatch(reference):
         raise Http404("Attachment not found")
     found = await sync_to_async(_hybrid_attachment_image)(session, line_num, reference)
@@ -1684,6 +1697,8 @@ async def session_items_metadata(request, project_id, session_id, parent_session
     Used for initial session load to build the visual items list.
     """
     session = await _resolve_session_or_404(session_id, project_id, parent_session_id)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     queryset = session.items.exclude(display_level=ItemDisplayLevel.DEBUG_ONLY)
     data = await sync_to_async(serialize_session_items_metadata)(queryset)
@@ -1700,6 +1715,8 @@ async def tool_results(request, project_id, session_id, line_num, tool_id, paren
     Uses ToolResultLink to find related tool_result items.
     """
     session = await _resolve_session_or_404(session_id, project_id, parent_session_id)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     payload = await sync_to_async(tool_results_payload)(session, line_num, tool_id)
     return JsonResponse(payload)
 
@@ -1716,6 +1733,8 @@ async def subagents_state(request, project_id, session_id):
 
     if session.parent_session_id is not None:
         raise Http404("Session not found")
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     result = await sync_to_async(build_subagents_state)(session, include_metrics=True)
     return JsonResponse(result, safe=False)
@@ -1733,6 +1752,8 @@ async def tool_states(request, project_id, session_id):
         session = await Session.objects.aget(id=session_id, project_id=project_id)
     except Session.DoesNotExist:
         raise Http404("Session not found")
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     tools = await sync_to_async(aggregate_tool_states)(
         ToolResultLink.objects.filter(session=session)
@@ -1785,6 +1806,8 @@ async def session_workflows(request, project_id, session_id):
     so a finished run stays available after Claude Code sublimates its files.
     """
     session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
 
     data = await sync_to_async(_prepare_session_workflows)(session_id, session.cutoff)
     return JsonResponse(data, safe=False)
@@ -1858,7 +1881,9 @@ async def workflow_links(request, project_id, session_id):
     Workflow" without loading the full envelopes. Mirrors ``/subagents/`` for
     agent links; the live counterpart is the ``workflow_link_created`` WS event.
     """
-    await _resolve_session_or_404(session_id, project_id, None)
+    session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     links = await sync_to_async(_derive_workflow_links)(session_id)
     return JsonResponse(links, safe=False)
 
@@ -1909,6 +1934,8 @@ async def workflow_synthesis(request, project_id, session_id, run_id):
     back owns the string-matching detection.
     """
     session = await _resolve_session_or_404(session_id, project_id, None)
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
     try:
@@ -3549,6 +3576,7 @@ async def search_sessions(request):
         offset = 0
 
     try:
+        unavailable = await sync_to_async(all_unavailable_session_ids)()
         results = await asyncio.to_thread(
             search.search,
             q,
@@ -3562,6 +3590,7 @@ async def search_sessions(request):
             limit=limit,
             offset=offset,
             match_mode=match_mode,
+            unavailable_session_ids=unavailable,
         )
     except Exception as exc:
         return JsonResponse({"error": f"Search failed: {exc}"}, status=500)

@@ -43,7 +43,13 @@ from twicc.core.services.attachments.target import resolve_existing_session_plan
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
-from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.exceptions import SendDeliveryError, SessionUnavailableError
+from twicc.core.session_availability import (
+    SESSION_UNAVAILABLE,
+    aensure_session_id_available,
+    session_unavailable_reason,
+    unavailable_message,
+)
 from twicc.agent.send_lanes import send_lane, wait_for_send_barrier
 from twicc.share.consumer import ShareConsumer
 from twicc.paths import is_first_run
@@ -1220,6 +1226,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             if ephemeral_admission is not None:
                 ephemeral_runs.release(ephemeral_admission)
             try:
+                await aensure_session_id_available(session_id)
+            except SessionUnavailableError as e:
+                await send_error(str(e), code=e.code)
+                return
+            try:
                 provider = Provider(existing_provider)
             except ValueError:
                 logger.error(
@@ -1551,6 +1562,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({
                 "type": "error",
                 "message": "Hybrid mode is only available for visible top-level Claude Code sessions",
+            })
+            return
+        # A top-level row: the rule reads no other row.
+        if (reason := session_unavailable_reason(session)) is not None:
+            await self.send_json({
+                "type": "error", "code": SESSION_UNAVAILABLE, "message": unavailable_message(session_id, reason),
             })
             return
 
@@ -1948,6 +1965,19 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             try:
                 source_helpers = get_provider_helpers(provider)
                 source = await sync_to_async(source_helpers.get_title_source)(session_id)
+            except SessionUnavailableError:
+                # The session's history is unavailable: nothing may read it, so
+                # the model is not asked. Still one reply, as for every failure.
+                await self.send_json({
+                    "type": "title_suggested",
+                    "sessionId": session_id,
+                    "suggestion": None,
+                    "sourcePrompt": None,
+                    "requestedProvider": provider.value,
+                    "titleProvider": None,
+                    "error": SESSION_UNAVAILABLE,
+                })
+                return
             except Exception:
                 # Degrades to "no prompt available": there is nothing to
                 # summarize and nothing to retry with, which is exactly what

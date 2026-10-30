@@ -8,6 +8,8 @@ argument-hint: <query>
 
 Full-text search across all session history.
 
+Sessions whose history is unavailable (`unavailable_reason` set on the row, or on its parent's) never appear in the hits, whatever the filters. Their content can be read nowhere.
+
 ## When to use
 
 - You or the user want to find something from a past session or conversation.

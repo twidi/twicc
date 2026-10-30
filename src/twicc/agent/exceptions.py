@@ -1,5 +1,7 @@
 """Agent-related exception types shared across providers."""
 
+from twicc.core.session_availability import SESSION_UNAVAILABLE
+
 
 class SendDeliveryError(RuntimeError):
     """A message could not be delivered to the agent.
@@ -17,3 +19,17 @@ class SendDeliveryError(RuntimeError):
     def __init__(self, message: str, *, code: str = "send_failed") -> None:
         super().__init__(message)
         self.code = code
+
+
+class SessionUnavailableError(SendDeliveryError):
+    """The session's history is unavailable: TwiCC refuses to read or write it.
+
+    Raised through :mod:`twicc.core.session_availability`, which owns the rule
+    and the message. A ``SendDeliveryError``, so every send path reports it
+    with its ``code`` (``session_unavailable``).
+    """
+
+    def __init__(self, message: str, *, session_id: str, reason: str) -> None:
+        super().__init__(message, code=SESSION_UNAVAILABLE)
+        self.session_id = session_id
+        self.reason = reason

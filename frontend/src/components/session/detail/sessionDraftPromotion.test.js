@@ -21,7 +21,7 @@ test('a session opened empty keeps both turns through live item deliveries', asy
         addSessionItems: (_, items) => history.push(...items),
     }
     const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false, store,
-        beginRevealFlow: () => () => {}, sessionActive: ref(false), scrollerRef: ref(null),
+        beginRevealFlow: () => () => {}, sessionActive: ref(false), scrollerRef: ref(null), unavailableReason: ref(null),
         loadSessionData: async line => {
             fetched = true
             loads.push(line)
@@ -49,7 +49,7 @@ test('first lines start history loading after a ready session opens empty', asyn
     const props = reactive({ sessionId: 's', projectId: 'p', parentSessionId: 'parent' })
     const scope = effectScope(), loads = []
     let fetched = false
-    const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false,
+    const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false, unavailableReason: ref(null),
         store: { areSessionItemsFetched: () => fetched, fetchToolStates: async () => {} },
         beginRevealFlow: () => () => {}, loadSessionData: async line => { fetched = true; loads.push(line) },
         sessionActive: ref(false), scrollerRef: ref(null),
@@ -67,11 +67,32 @@ test('first lines start history loading after a ready session opens empty', asyn
     } finally { scope.stop() }
 })
 
+test('a session whose history is unavailable loads nothing until the reason clears', async () => {
+    const row = reactive({ id: 's', draft: false, last_line: 5, compute_version_up_to_date: true })
+    const props = reactive({ sessionId: 's', projectId: 'p', parentSessionId: 'parent' })
+    const scope = effectScope(), loads = [], unavailableReason = ref('any_reason')
+    let fetched = false
+    const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false, unavailableReason,
+        store: { areSessionItemsFetched: () => fetched, fetchToolStates: async () => {} },
+        beginRevealFlow: () => () => {}, loadSessionData: async line => { fetched = true; loads.push(line) },
+        sessionActive: ref(false), scrollerRef: ref(null),
+    }
+    try {
+        scope.run(() => new Function(...Object.keys(deps), source.slice(start, end))(...Object.values(deps)))
+        await nextTick()
+        assert.deepEqual(loads, [])
+        unavailableReason.value = null
+        await nextTick()
+        await nextTick()
+        assert.deepEqual(loads, [5])
+    } finally { scope.stop() }
+})
+
 test('promoting a stable draft record loads its real history without waiting for another session object', async () => {
     const row = reactive({ id: 's', draft: true, last_line: 4 })
     const props = reactive({ sessionId: 's', projectId: 'p', parentSessionId: 'parent' })
     const scope = effectScope(), loads = []
-    const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false,
+    const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false, unavailableReason: ref(null),
         store: { areSessionItemsFetched: () => false, fetchToolStates: async () => {} },
         beginRevealFlow: () => () => {}, loadSessionData: async line => loads.push(line),
         sessionActive: ref(false), scrollerRef: ref(null),
@@ -93,7 +114,7 @@ test('draft promotion and compute readiness share one history load', async () =>
         const props = reactive({ sessionId: 's', projectId: 'p', parentSessionId: 'parent' })
         const scope = effectScope(), loads = []
         let fetched = false
-        const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false,
+        const deps = { props, session: computed(() => row), watch, isLaunchedEphemeral: () => false, unavailableReason: ref(null),
             store: { areSessionItemsFetched: () => fetched, fetchToolStates: async () => {} },
             beginRevealFlow: () => () => {}, loadSessionData: async line => { fetched = true; loads.push(line) },
             sessionActive: ref(false), scrollerRef: ref(null),

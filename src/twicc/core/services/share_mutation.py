@@ -24,6 +24,7 @@ from channels.layers import get_channel_layer
 from twicc.auth.hashers import hash_password
 from twicc.core.services.public_origin import usable_public_origin
 from twicc.core.services.share_tokens import mint_share_id, mint_token
+from twicc.core.session_availability import SESSION_UNAVAILABLE, aunavailable_reason_by_id, unavailable_message
 from twicc.paths import get_share_snapshot_dir
 from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -290,6 +291,16 @@ def _inline_options_changed(before, after):
 
 # ── Core mutations ──────────────────────────────────────────────────────────
 
+async def _refuse_unavailable_session(session_id, share_id) -> ShareMutationResult | None:
+    """The rejection when the session's history is unavailable: a share would serve it."""
+    reason = await aunavailable_reason_by_id(session_id) if session_id else None
+    if reason is None:
+        return None
+    return ShareMutationResult(False, share_id, [
+        ShareError("session", SESSION_UNAVAILABLE, unavailable_message(session_id, reason)),
+    ])
+
+
 async def create_share(
     kind: str,
     *,
@@ -311,6 +322,8 @@ async def create_share(
     if kind == ShareKind.SESSION.value:
         if session is None:
             return ShareMutationResult(False, None, [ShareError("session", "missing", "session required")])
+        if (refused := await _refuse_unavailable_session(session.id, None)) is not None:
+            return refused
         opts, errors = _validate_session_options(options)
         if errors:
             return ShareMutationResult(False, None, errors)
@@ -368,6 +381,10 @@ async def patch_share(share, fields: dict) -> ShareMutationResult:
     A password change re-hashes (invalidating viewer grants via the new fingerprint)."""
     from twicc.core.enums import ShareKind
 
+    if "options" in fields and share.kind == ShareKind.SESSION.value:
+        # New options can re-freeze the session and re-export its inline artifacts.
+        if (refused := await _refuse_unavailable_session(share.session_id, share.id)) is not None:
+            return refused
     original = share
     share = copy(share)
     previous_options = dict(share.options or {})
@@ -441,6 +458,9 @@ async def propagate_share(share) -> ShareMutationResult:
         if share.options.get("mode") != "snapshot":
             return ShareMutationResult(False, share.id,
                                        [ShareError("mode", "not_snapshot", "only snapshot shares re-freeze")])
+        # Before the reservation: a refused re-freeze must not discard the exports in flight.
+        if (refused := await _refuse_unavailable_session(share.session_id, share.id)) is not None:
+            return refused
         from twicc.inline_artifacts.share_exports import reserve_inline_exports
         generation = reserve_inline_exports(share.id)
         share.session = await sync_to_async(lambda: share.session)()

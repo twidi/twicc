@@ -449,6 +449,16 @@ def reindex_session(session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _unavailable_exclusions(schema: tantivy.Schema, session_ids: set[str]) -> list[tuple[Occur, Query]]:
+    """``MustNot`` clauses for the sessions whose history is unavailable.
+
+    Applied at query time: their documents stay in the index, and come back the
+    moment the history does. The ids come from
+    :func:`twicc.core.session_availability.all_unavailable_session_ids`.
+    """
+    return [(Occur.MustNot, Query.term_query(schema, "session_id", sid)) for sid in sorted(session_ids)]
+
+
 def _format_datetime_for_query(dt: datetime) -> str:
     """Format a datetime as an ISO 8601 string suitable for Tantivy query parsing."""
     if dt.tzinfo is None:
@@ -475,6 +485,7 @@ def search(
     limit: int = 20,
     offset: int = 0,
     match_mode: str = MATCH_MODE_AUTO,
+    unavailable_session_ids: set[str] | frozenset[str] = frozenset(),
 ) -> SearchResults:
     """Execute a full-text search across indexed messages.
 
@@ -513,6 +524,9 @@ def search(
             included); ``MATCH_MODE_ANY`` skips the strict pass. Explicit
             operators (``AND``, ``+``, ``-``, quoted phrases) are unaffected by
             the mode; a term that carries none of them is what widens.
+        unavailable_session_ids: Sessions whose history is unavailable, left out
+            of every hit. The caller reads them (this function stays free of DB
+            access): ``twicc.core.session_availability.all_unavailable_session_ids``.
 
     Returns:
         SearchResults with grouped, scored, and snippet-annotated results.
@@ -595,6 +609,8 @@ def search(
         and siblings is None
     ):
         clauses.append((Occur.Must, Query.term_query(_schema, "hidden", False)))
+
+    clauses.extend(_unavailable_exclusions(_schema, unavailable_session_ids))
 
     if spawned_by is not None:
         clauses.append((Occur.Must, Query.term_query(_schema, "spawned_by", spawned_by)))
@@ -983,6 +999,10 @@ def raw_search(
         and siblings is None
     ):
         clauses.append((Occur.Must, Query.term_query(schema, "hidden", False)))
+
+    from twicc.core.session_availability import all_unavailable_session_ids
+
+    clauses.extend(_unavailable_exclusions(schema, all_unavailable_session_ids()))
 
     if spawned_by is not None:
         clauses.append((Occur.Must, Query.term_query(schema, "spawned_by", spawned_by)))

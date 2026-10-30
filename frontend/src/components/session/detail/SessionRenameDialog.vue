@@ -87,6 +87,7 @@ const suggestionErrorMessage = computed(() => {
     const error = suggestionEntry.value?.error
     if (error === 'no_provider_available') return 'No provider is available to generate a title.'
     if (error === 'generation_failed') return 'Could not generate a title suggestion.'
+    if (error === 'session_unavailable') return "This session's history is not available: no title can be suggested from it."
     return null
 })
 

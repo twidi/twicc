@@ -10,6 +10,7 @@ import { getSessionCutoffMs } from '../utils/sessions.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { withAutoDenyDeadlines } from '../utils/autoDeny.js'
 import { createVisualItemsViews } from '../utils/visualItemsViews.js'
+import { getSessionUnavailableReason } from '../utils/sessionAvailability.js'
 
 // The real store actions, sliced from data.js (node cannot import the store:
 // extensionless imports). A slice runs from the action name to the next JSDoc.
@@ -61,7 +62,7 @@ function makeStore({ fetches = [] } = {}) {
         isLaunchedEphemeral: () => false, destroyAllBuffers: () => {}, backgroundWorkStatusKey: () => null,
         sweepPendingRequestDrafts: async () => {}, liveDraftKey: (a, b) => `${a}:${b}`, getToolHelpers: () => null,
         withAutoDenyDeadlines, clearBlockInactivityTimer() {}, destroySessionBuffers() {}, debugAppendSafeSessions: new Set(),
-        visualItemsViews: createVisualItemsViews({ document: null }),
+        visualItemsViews: createVisualItemsViews({ document: null }), getSessionUnavailableReason,
     }
     const methods = new Function(...Object.keys(deps), `return { ${ACTIONS.map(action).join('')} }`)(...Object.values(deps))
     const store = Object.assign(methods, {
@@ -141,6 +142,13 @@ test('an agent_run_state message re-creates the synthetic state after a stop', (
     store.setAgentRunState(runMsg('child', { runStartedAt: T3 }))
     assert.ok(synthetic(store, 'child'))
     assert.equal(store.processStates.child.started_at, unix(T3))
+})
+test('A session whose history is unavailable reads no subagents snapshot, and its answer is known', async () => {
+    const store = makeStore({ fetches: [] })
+    store.sessions.root.unavailable_reason = 'any_reason'
+    await store.fetchSubagentsState('p', 'root')
+    assert.deepEqual(store.urls, [])
+    assert.equal(store.localState.agentLoaded.root, true)
 })
 test('Reconnect: run states require a live root before and after the subagents snapshot', async () => {
     const store = makeStore({ fetches: [okResponse([snapshotEntry('child'), snapshotEntry('real')])] })

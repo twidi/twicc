@@ -506,7 +506,10 @@ def test_asgi_uses_the_shared_plan_target_resolver():
 def _switch_consumer(monkeypatch):
     from twicc.core.models import SessionType
 
-    session = SimpleNamespace(hybrid=False, provider="claude_code", type=SessionType.SESSION, hidden=False)
+    session = SimpleNamespace(
+        hybrid=False, provider="claude_code", type=SessionType.SESSION, hidden=False,
+        unavailable_reason=None, parent_session_id=None,
+    )
     monkeypatch.setattr(asgi.settings, "CLAUDE_HYBRID_ENABLED", True, raising=False)
     monkeypatch.setattr(asgi, "sync_to_async", lambda fn: AsyncMock(return_value=session))
     lane_refs: list[tuple[str, int]] = []

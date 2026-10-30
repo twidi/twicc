@@ -341,6 +341,7 @@ def _manager(events: list) -> ClaudeCodeAgentManager:
     manager = ClaudeCodeAgentManager()
     manager._lock = RecordingLock(events)
     manager._check_ephemeral_readonly = lambda *args: None
+    manager._check_session_writable = AsyncMock()  # no DB here: availability is tested elsewhere
     return manager
 
 

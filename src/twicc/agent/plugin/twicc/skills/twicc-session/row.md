@@ -56,6 +56,7 @@ The default (reduced) projection is the row `sessions` returns (example in `list
 - `compacted` — compacted at least once.
 - `last_viewed_at` (`--full` only) — the user's last visit in TwiCC.
 - `hidden` — hidden from all listings and broadcasts.
+- `unavailable_reason` — why TwiCC cannot show this session's history, or `null`. When set, the session can be read nowhere and written nowhere (see `SKILL.md`), and the row empties what comes from its content: `tasks`, `goals`, `plan_paths`, `inline_artifacts`, and the `has_plan` / `has_tasks` / `has_goals` / `has_workflows` flags.
 - `last_new_content_at` — when the last item was appended.
 - `spawned_by` — the session that spawned it (through `create-session`), or `null` when no session did. Set at creation, never updated.
 - `spawn_root` — root of the spawned-session tree; `null` until the session joins one.

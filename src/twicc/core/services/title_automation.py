@@ -13,6 +13,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Session, SessionType
 from twicc.core.services.session_timeline import record_title_change
 from twicc.core.services.title_suggestion import suggest_title
+from twicc.core.session_availability import session_unavailable_reason
 from twicc.pending_titles import get_pending_title
 from twicc.providers.db_writer import broadcast_session_updated, run_under_db_write_lock
 from twicc.providers.helpers import get_provider_helpers
@@ -39,6 +40,8 @@ def _is_eligible(session: Session, *, closing: bool) -> bool:
         or (session.archived and not closing)
         or session.hidden
         or session.stale
+        # After the subagent test: for a session, the rule reads no row.
+        or session_unavailable_reason(session) is not None
         or (session.title_origin != "auto" and session.title is not None)
         or get_pending_title(session.id)
     ):

@@ -71,6 +71,7 @@ import {
     restoreStagedAsyncQuestionSend,
 } from '../utils/draftStorage'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
+import { getSessionUnavailableReason } from '../utils/sessionAvailability.js'
 import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
@@ -5276,6 +5277,12 @@ export const useDataStore = defineStore('data', {
          * @param {boolean} [options.reissued=false] - This call re-issues a discarded one
          */
         async fetchSubagentsState(projectId, sessionId, { reissued = false } = {}) {
+            // A session whose history is unavailable has no agents to read (the
+            // backend refuses): "known, none", so nothing waits on the answer.
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId)) {
+                this.localState.agentLoaded[sessionId] = true
+                return
+            }
             const token = beginAgentFetch(this.localState, sessionId)
             this.localState.agentFetchStarts[sessionId] = token.generation
             const rootRunIds = () => Object.entries(this.localState.agentRunStates)

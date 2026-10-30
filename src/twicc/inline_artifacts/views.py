@@ -18,6 +18,7 @@ from django.utils.cache import add_never_cache_headers
 from twicc.artifacts.broker_html import artifact_html_response, is_artifact_document_request
 from twicc.artifacts.data_store import validate_data_write
 from twicc.core.models import Session, SessionType
+from twicc.core.session_availability import arefuse_unavailable
 from twicc.inline_artifacts.files import (
     InlineArtifactUnavailable,
     _directory_at,
@@ -216,6 +217,8 @@ async def inline_artifact_asset(request, session_id: str, artifact_id: str, asse
         session = await Session.objects.aget(id=session_id, type=SessionType.SESSION)
     except Session.DoesNotExist:
         raise Http404("Inline artifact unavailable") from None
+    if (refused := await arefuse_unavailable(session)) is not None:
+        return refused
     publication = latest_publications(session.inline_artifacts).get(artifact_id)
     if publication is None:
         raise Http404("Inline artifact unavailable")

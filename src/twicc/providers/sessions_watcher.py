@@ -36,6 +36,7 @@ from twicc.core.agent_runs import late_tree_rule_payloads
 from twicc.core.enums import ItemKind
 from twicc.core.models import Project, Session, SessionItem, SessionType
 from twicc.core.session_queries import SpawnRef, spawn_display_names
+from twicc.core.session_availability import asession_unavailable_reason
 from twicc.core.serializers import (
     serialize_project,
     serialize_session,
@@ -1009,7 +1010,8 @@ class BaseSessionsWatcher:
                 })
 
             if session.user_message_count > 0 or is_subagent:
-                if not session.hidden:
+                # No push of the content of a session whose history is unavailable.
+                if not session.hidden and await asession_unavailable_reason(session, parent=parent_session) is None:
                     # Broadcast new items (with updated metadata of pre-existing items if any)
                     new_items = await get_session_items(session, new_line_nums)
                     if new_items:

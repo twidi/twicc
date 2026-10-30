@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from asgiref.sync import sync_to_async
 
+from twicc.core.session_availability import aensure_session_id_available
 from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -99,6 +100,10 @@ class BaseAgentManager:
 
     def _check_ephemeral_readonly(self, session_id: str, ephemeral_admission=None) -> None:
         ephemeral_runs.check_readonly(session_id, ephemeral_admission)
+
+    async def _check_session_writable(self, session_id: str) -> None:
+        """Raise ``SessionUnavailableError`` when the session's history is unavailable."""
+        await aensure_session_id_available(session_id)
 
     def set_broadcast_callback(self, callback: BroadcastCallback) -> None:
         """Register the callback used to broadcast agent state changes."""
@@ -449,6 +454,10 @@ class BaseAgentManager:
         **start_kwargs: Any,
     ) -> str:
         self._check_ephemeral_readonly(session_id, ephemeral_admission)
+        if resume:
+            # Last guard of every resume (sends, parked restarts, commands): the
+            # entry points refuse first; this catches the internal restarts.
+            await self._check_session_writable(session_id)
         if not resume and ephemeral_admission is None:
             ephemeral_admission = ephemeral_runs.reserve(session_id, self.provider.value, project_id, ephemeral=ephemeral)
         ids = [session_id]

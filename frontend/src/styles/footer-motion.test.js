@@ -227,8 +227,8 @@ test('5. SessionItemsList: Transition wrappers, explicit notice v-if, banners (ย
     const transitions = all.filter((n) => n.tag === 'Transition' && attrsOf(n)['@enter'] === 'footerEnter')
     assert.deepEqual(
         transitions.map((n) => n.children.filter((c) => c.type === 1).map((c) => c.tag)),
-        [['PendingRequestForm'], ['GoalBlock'], ['PendingRequestForm'], ['HybridTerminalBlock']],
-        'the four instances, each alone in its Transition',
+        [['PendingRequestForm'], ['PendingRequestForm'], ['GoalBlock'], ['PendingRequestForm'], ['HybridTerminalBlock']],
+        'the five instances, each alone in its Transition',
     )
     for (const t of transitions) {
         assert.deepEqual(attrsOf(t), { ':css': 'false', '@enter': 'footerEnter', '@leave': 'footerLeave' })
@@ -249,6 +249,9 @@ test('5. SessionItemsList: Transition wrappers, explicit notice v-if, banners (ย
         assert.ok('v-else-if' in banner, `${cls} keeps its v-else-if`)
         assert.ok('v-footer-enter' in banner, `${cls} carries v-footer-enter`)
     }
+    // The unavailable-history banner sits in its branch's template, after the pending form it keeps.
+    const unavailable = attrsOf(all.find((n) => attrsOf(n).class === 'stale-banner unavailable-banner'))
+    assert.ok('v-footer-enter' in unavailable, 'the unavailable banner carries v-footer-enter')
 })
 
 test('6. SessionItemsList: the switch gate, the controller, the mount-source capture (ยง4.3, ยง4.5)', () => {

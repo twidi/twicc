@@ -1169,6 +1169,22 @@ def test_deliver_to_existing_envelope_exact(transactional_db, broadcasts, status
     assert broadcasts[-1]["type"] == "peer_message_updated"
 
 
+def test_deliver_to_a_session_whose_history_is_unavailable_is_refused(transactional_db, status_callbacks):
+    """The UI would prefill a composer nothing may send from."""
+    peer = _active_peer()
+    message = _in_message(peer)
+    _, session = _make_target_session()
+    Session.objects.filter(id=session.id).update(unavailable_reason="any_reason")
+
+    success, envelope, errors = _run(peer_messages.mark_delivered(message, session_id=session.id))
+
+    assert not success and envelope is None
+    assert [e.code for e in errors] == ["session_unavailable"]
+    message.refresh_from_db()
+    assert message.status == PeerMessageStatus.PENDING
+    assert status_callbacks == []
+
+
 def test_deliver_envelope_without_note(transactional_db, status_callbacks):
     peer = _active_peer()
     # A pre-title row (title ""): the subject segment is omitted, never a

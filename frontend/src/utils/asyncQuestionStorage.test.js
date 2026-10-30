@@ -86,6 +86,17 @@ it('concurrent loads of one session share a single request, a later load fetches
     assert.equal(urls.length, 2)
 })
 
+it('a session whose history is unavailable reads no question and reconciles no send', async () => {
+    const urls = []
+    const { state } = harness({ fetch: url => { urls.push(url); return { ok: true, json: async () => snapshot() } },
+        pendingSends: () => ({ r1: { status: 'uncertain', asyncQuestions: { batch_ids: ['q1'] } } }) })
+    state.sessions.s.unavailable_reason = 'any_reason'
+    assert.equal(await state.loadAsyncQuestions('p', 's'), null)
+    await state.reconcileAsyncQuestionSends('p', 's')
+    await state.reconcileAllAsyncQuestionSends()
+    assert.deepEqual(urls, [])
+})
+
 it('lower fetched revisions cannot overwrite newer WS or widget state', async () => {
     const wait = deferred()
     const { state } = harness({ fetch: () => wait.promise })

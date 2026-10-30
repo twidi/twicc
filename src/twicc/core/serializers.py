@@ -9,6 +9,7 @@ the model instance was already fetched from the database.
 
 
 from twicc.core.content_storage.readers import effective_current
+from twicc.core.session_availability import row_unavailable_reason
 from twicc.inline_artifacts.publications import latest_publications
 from twicc.project_icons import project_own_icon_url, project_repo_icon_url
 from twicc.providers.helpers import AGENT_SETTINGS_HIDDEN_FROM_FRONTEND, AgentSettings, get_provider_helpers
@@ -195,6 +196,12 @@ def serialize_session(session):
 
     provider_helpers = get_provider_helpers(session.provider)
 
+    # A session whose history is unavailable keeps its metadata, not the blobs
+    # extracted from its content (tasks, goals, plans, inline artifacts, the
+    # workflow flag): see ``twicc.core.session_availability``. Emptied here, so
+    # every consumer of the payload (tabs, goal bar, CLI ``--full``) loses them.
+    content_hidden = row_unavailable_reason(session) is not None
+
     return {
         "id": session.id,
         "project_id": session.project_id,
@@ -240,15 +247,18 @@ def serialize_session(session):
         "tree_detached": session.tree_detached,  # Sidebar tree display only (spawn links unchanged)
         "layout": session.layout,  # Per-session dockable-layout intention (UI state; {} = single pane)
         "browser_url": session.browser_url,  # Browser-pane last URL (UI state; None = use the resolved default)
-        "inline_artifacts": latest_publications(session.inline_artifacts) if session.type == SessionType.SESSION else {},
-        "tasks": session.tasks,  # Latest task/todo/plan snapshot (common shape; {} = none). Not consumed by the UI yet
+        "inline_artifacts": (
+            latest_publications(session.inline_artifacts)
+            if session.type == SessionType.SESSION and not content_hidden else {}
+        ),
+        "tasks": {} if content_hidden else session.tasks,  # Latest task/todo/plan snapshot (common shape; {} = none). Not consumed by the UI yet
         # Plan-like documents touched by the session (list; [] = none) —
         # emitted verbatim, honoring this serializer's query-free contract:
         # relative entries are resolved client-side against the project
         # directory (with the ``worktree_of`` parent as fallback). Drives the
         # Plan tab; see ``Session.plan_paths``.
-        "plan_paths": session.plan_paths,
-        "goals": session.goals,  # Goal lifecycle history (list; [] = none). Last entry drives the footer goal bar
+        "plan_paths": [] if content_hidden else session.plan_paths,
+        "goals": [] if content_hidden else session.goals,  # Goal lifecycle history (list; [] = none). Last entry drives the footer goal bar
 
         "hybrid": session.hybrid,  # Hybrid CLI mode (one-way, see models.Session.hybrid)
         # Closed AgentSettings bundle (cross-provider). Fields listed in
@@ -265,14 +275,14 @@ def serialize_session(session):
         # (``wf_*.json`` in its ``<session_id>/workflows/`` folder). Monotonic /
         # one-way; latched live by the watcher and backfilled by the background
         # compute. See ``Session.has_workflows``.
-        "has_workflows": session.has_workflows,
+        "has_workflows": session.has_workflows and not content_hidden,
         # Companion flags to the ``tasks`` / ``goals`` blobs above, in the same
         # family as ``has_workflows`` / ``has_artifacts`` / ``has_plan``: they
         # say whether there is anything to fetch without carrying the payload,
         # which is what makes the slim listing projection usable — drop the blob,
         # keep the signal.
-        "has_tasks": bool(session.tasks),
-        "has_goals": bool(session.goals),
+        "has_tasks": bool(session.tasks) and not content_hidden,
+        "has_goals": bool(session.goals) and not content_hidden,
         # Per-session artifacts (files under <data_dir>/artifacts/<id>/). The
         # Artifacts tab is always present and mounts on ``artifacts_dir``, which
         # is therefore always sent — the folder may not exist on disk yet (the
@@ -289,7 +299,7 @@ def serialize_session(session):
         # falls back to an on-disk check so the flag stays accurate there too — a
         # read, within the serializer's no-write contract. NOT monotonic — flips
         # both ways live via the ``plan_available`` / ``plan_gone`` WS messages.
-        "has_plan": provider_helpers.session_has_plan(session),
+        "has_plan": not content_hidden and provider_helpers.session_has_plan(session),
         # Hidden + spawned tree links (cf. hidden-sessions design spec). The
         # frontend never sees a hidden session via REST (filtered server
         # side); the CLI uses these fields when it explicitly opts into

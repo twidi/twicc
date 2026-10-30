@@ -27,6 +27,7 @@ from twicc.agent import registry
 from twicc.agent.states import AgentState
 from twicc.cli.session import lookup_wait_session
 from twicc.core.models import McpEventSubscription, McpOperation, Session
+from twicc.core.session_availability import SESSION_UNAVAILABLE, session_unavailable_reason, unavailable_message
 from twicc.mcp.events import SYSTEM_CLOCK
 from twicc.mcp.events import catalog
 from twicc.mcp.events.delivery import VerificationError
@@ -158,6 +159,14 @@ def unknown_session():
     raise MCPError(catalog.NOT_FOUND, "Unknown session", {"reason": "unknown_session"})
 
 
+def refuse_unavailable_session(session):
+    """The session's history is unavailable: its replies are its content."""
+    reason = session_unavailable_reason(session) if session is not None else None
+    if reason is not None:
+        raise MCPError(catalog.UNSUPPORTED, unavailable_message(session.id, reason),
+                       {"reason": SESSION_UNAVAILABLE, "unavailable_reason": reason})
+
+
 class EventMethods:
     """Handlers with injected verification and synchronous runtime command sinks.
 
@@ -208,6 +217,7 @@ class EventMethods:
         identity = catalog.subscription_id(caller.connection_id, url, params.name, arguments)
 
         def precheck():
+            refuse_unavailable_session(session)
             row = McpEventSubscription.objects.filter(pk=identity).first()
             if not is_live(row, self.data_dir, arrival):
                 if not lookup.accepted:

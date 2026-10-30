@@ -197,10 +197,11 @@ def _collect_restart_data(session_id: str) -> dict | None:
     Returns a dict with keys matching send_to_session() kwargs (minus text)
     plus the two cron buckets used to build the message (see
     :class:`RestorableCrons`). Returns None if restart is not possible
-    (nothing left to restore, session not found, or cwd missing).
+    (nothing left to restore, session not found, history unavailable, or cwd missing).
     """
     from twicc.core.enums import Provider
     from twicc.core.models import Session
+    from twicc.core.session_availability import session_unavailable_reason
     from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
     crons = _split_restorable_crons(session_id)
@@ -211,6 +212,9 @@ def _collect_restart_data(session_id: str) -> dict | None:
         session = Session.objects.get(id=session_id)
     except Session.DoesNotExist:
         logger.warning("Cron restart for session %s: session not found in DB", session_id)
+        return None
+    if session_unavailable_reason(session) is not None:
+        logger.info("Cron restart for session %s: history unavailable, not restarting", session_id)
         return None
 
     cwd = session.cwd

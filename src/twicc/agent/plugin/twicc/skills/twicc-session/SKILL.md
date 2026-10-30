@@ -35,6 +35,7 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 
 - The first argument is `<SESSION_ID>`, and on most sub-commands `self` (your own session) or `parent` (the session that spawned you). Each file gives the exceptions.
 - You are in TwiCC — link to a session: `[link text](/project/{project_id}/session/{session_id})`.
+- **Unavailable history.** A session whose row has `unavailable_reason` set (or whose parent has, for a subagent) can be read nowhere and written nowhere. Only the row and `stop` work. Every other sub-command exits `3` with `session_unavailable` and the reason in the message. Final: do not retry.
 
 ## Sub-commands
 

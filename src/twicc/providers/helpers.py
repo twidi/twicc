@@ -806,9 +806,14 @@ class BaseProviderHelpers:
         (beginning and end of a long conversation, each message clipped), or
         ``None`` when the session has no user message with text. Sync method —
         wrap in :func:`sync_to_async` at the call site.
+
+        Raises ``SessionUnavailableError`` when the session's history is
+        unavailable: nothing may read it.
         """
+        from twicc.core.session_availability import ensure_session_id_available
         from twicc.title_transcript import build_title_source
 
+        ensure_session_id_available(session_id)
         return build_title_source(self.get_title_messages(session_id))
 
     def get_title_messages(self, session_id: str) -> list[str]:

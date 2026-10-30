@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 
 
 def _get_session(session_id: str):
-    """Fetch a valid session (created_at set, at least one user message) or exit."""
+    """Fetch a valid session (created_at set, at least one user message) or exit.
+
+    For the transcript readers only: a session whose history is unavailable is
+    refused (exit 3, ``session_unavailable``).
+    """
     from twicc.core.models import Session
 
     try:
@@ -28,7 +32,17 @@ def _get_session(session_id: str):
     except Session.DoesNotExist:
         emit_error(f"Error: session '{session_id}' not found.", code=1)
 
+    _refuse_unavailable(session)
     return session
+
+
+def _refuse_unavailable(session) -> None:
+    """Exit 3 when the session's history is unavailable: nothing may read it."""
+    from twicc.core.session_availability import CLI_EXIT_CODE, session_unavailable_reason, unavailable_message
+
+    reason = session_unavailable_reason(session)
+    if reason is not None:
+        emit_error(f"Error: {unavailable_message(session.id, reason)}", code=CLI_EXIT_CODE)
 
 
 def _parse_range_filter(range_str: str) -> dict:
@@ -647,6 +661,9 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
 
     lookup = lookup_wait_session(session_id)
     session = lookup.session
+    if session is not None:
+        # The reply is the session's content.
+        _refuse_unavailable(session)
     if not lookup.indexed:
         if not lookup.live:
             emit_error(f"Error: session '{session_id}' not found.", code=1)

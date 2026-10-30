@@ -45,6 +45,7 @@ from django.conf import settings
 from twicc.auth.access import scope_allowed
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
+from twicc.core.session_availability import aunavailable_reason_by_id, unavailable_message
 from twicc.paths import ENV_SECRET_KEYS, tmux_socket_suffix
 from twicc.provider_homes import provider_env_overlay
 from twicc.providers.helpers import get_provider_helpers_registry
@@ -980,6 +981,21 @@ async def terminal_application(scope, receive, send):
     # next send relaunches the CLI and the frontend reconnects.
     hybrid_attach = terminal_context.startswith("h:")
     if hybrid_attach:
+        # Typing into the TUI writes to the session: refused when its history
+        # is unavailable. The reason is printed as terminal output, then the
+        # same close as "no PTY".
+        unavailable = await aunavailable_reason_by_id(terminal_context[2:])
+        if unavailable is not None:
+            import orjson
+
+            await send({"type": "websocket.accept"})
+            await send({
+                "type": "websocket.send",
+                "text": f"\r\n{unavailable_message(terminal_context[2:], unavailable)}\r\n",
+            })
+            await send({"type": "websocket.send", "text": orjson.dumps({"type": "pty_exited"}).decode()})
+            await send({"type": "websocket.close", "code": 1000})
+            return
         exists = (
             get_tmux_path() is not None
             and await asyncio.to_thread(tmux_session_exists, terminal_context, terminal_index)

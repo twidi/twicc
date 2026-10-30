@@ -9,6 +9,7 @@ from django.http import Http404, HttpResponseRedirect, JsonResponse
 from urllib.parse import urlencode
 
 from twicc.core.services.share_tokens import aresolve_share, password_fingerprint
+from twicc.core.session_availability import asession_unavailable_reason
 
 SHARE_GRANTS_SESSION_KEY = "share_grants"
 
@@ -41,7 +42,7 @@ async def resolve_or_404(request, token: str) -> ShareContext:
     if share.kind == "session":
         session = await sync_to_async(lambda: share.session)()
         bookmark = None
-        if session is None or session.stale:
+        if session is None or session.stale or await asession_unavailable_reason(session) is not None:
             raise Http404("This link is not available.")
     else:
         session = None

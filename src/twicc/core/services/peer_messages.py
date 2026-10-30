@@ -32,6 +32,7 @@ from channels.layers import get_channel_layer
 from twicc.core.services.attachments import inline
 from twicc.core.services.peer_mutation import PeerError, mark_peer_broken
 from twicc.core.services.peer_tokens import mint_message_id, peer_credentials_are_active
+from twicc.core.session_availability import SESSION_UNAVAILABLE, aunavailable_reason_by_id, unavailable_message
 from twicc.providers.db_writer import run_under_db_write_lock
 
 logger = logging.getLogger(__name__)
@@ -1347,6 +1348,12 @@ async def mark_delivered(
             )()
             if not exists:
                 return False, None, [PeerError("session_id", "session_not_found", "Target session not found.")]
+            # The UI prefills that session's composer: refused when nothing may write to it.
+            unavailable = await aunavailable_reason_by_id(session_id)
+            if unavailable is not None:
+                return False, None, [PeerError(
+                    "session_id", SESSION_UNAVAILABLE, unavailable_message(session_id, unavailable),
+                )]
         peer = message.peer  # select_related — no query
         envelope = build_delivery_envelope(peer, message, note)
         await _mark_delivered(message, session_id=session_id, note=note)

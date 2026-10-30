@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
+from twicc.core.session_availability import SESSION_UNAVAILABLE, asession_unavailable_reason, unavailable_message
 from twicc.core.services.session_update import (
     UpdateSessionError,
     UpdateSessionResult,
@@ -59,6 +60,15 @@ def _reject(session_id, provider, project_id, field, code, message) -> UpdateSes
     ])
 
 
+async def _reject_unavailable(session, provider) -> UpdateSessionResult | None:
+    """The rejection when the session's history is unavailable: its questions are its content."""
+    reason = await asession_unavailable_reason(session)
+    if reason is None:
+        return None
+    return _reject(session.id, provider.value, session.project_id, "session_id",
+                   SESSION_UNAVAILABLE, unavailable_message(session.id, reason))
+
+
 def _agent_state(info) -> str:
     """The 5-value projection the ``process`` family publishes.
 
@@ -94,6 +104,8 @@ async def read_pending_requests_from_payload(payload: dict) -> ReadPendingReques
     session, project, provider, error = await _lookup_session_for_update(session_id)
     if error is not None:
         return error
+    if (refused := await _reject_unavailable(session, provider)) is not None:
+        return refused
 
     from twicc.agent.registry import get_agent_manager_registry
 
@@ -255,6 +267,8 @@ async def answer_pending_question_from_payload(payload: dict) -> UpdateSessionRe
     session, project, provider, error = await _lookup_session_for_update(session_id)
     if error is not None:
         return error
+    if (refused := await _reject_unavailable(session, provider)) is not None:
+        return refused
     project_id = session.project_id
     provider_value = provider.value
 

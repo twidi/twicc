@@ -388,8 +388,13 @@ async def update_session_settings_from_payload(payload: dict) -> UpdateSessionRe
             settings=effective, images=None, documents=None,
         )
     except RuntimeError as e:
+        # A startup change that needs a restart is refused for a session whose
+        # history is unavailable: report that, not a busy manager.
+        from twicc.agent.exceptions import SessionUnavailableError
+
+        code = e.code if isinstance(e, SessionUnavailableError) else "manager_busy"
         return UpdateSessionResult(False, None, None, None, [
-            UpdateSessionError("session", "manager_busy", str(e)),
+            UpdateSessionError("session", code, str(e)),
         ])
 
     return UpdateSessionResult(

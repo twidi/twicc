@@ -30,6 +30,7 @@ import { useSharesStore } from '../../../stores/shares'
 import { toggleSessionMute } from '../../../composables/useSessionMute'
 import { useActionsRowLabels } from '../../../composables/useActionsRowLabels'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
+import { getSessionUnavailableReason } from '../../../utils/sessionAvailability.js'
 
 const props = defineProps({
     sessionId: {
@@ -54,8 +55,12 @@ const codeCommentsStore = useCodeCommentsStore()
 // like the artifact entry points — rather than jumping straight to create.
 const sharingEnabled = computed(() => !!settingsStore.getUsableShareBaseUrl)
 const activeShareCount = computed(() => sharesStore.activeCountForSession(props.sessionId))
+// A session whose history is unavailable gets no new link (the backend refuses
+// it too). Its existing links stay reachable, to revoke or delete them.
+const shareBlocked = computed(() =>
+    !!getSessionUnavailableReason(id => store.getSession(id), props.sessionId) && activeShareCount.value === 0)
 function openShare() {
-    if (!sharingEnabled.value) return
+    if (!sharingEnabled.value || shareBlocked.value) return
     window.dispatchEvent(new CustomEvent('twicc:open-share-dialog', {
         detail: { sessionId: props.sessionId, title: session.value?.title || displayName.value },
     }))
@@ -836,16 +841,18 @@ defineExpose({
                     appearance="plain"
                     size="small"
                     :class="['share-button', 'reduced-height', { 'share-button--active': activeShareCount > 0 }]"
-                    :disabled="!sharingEnabled"
+                    :disabled="!sharingEnabled || shareBlocked"
                     @click="openShare"
                 >
                     <wa-icon auto-width name="share-nodes" label="Share"></wa-icon>
                     <span class="action-label">Share</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-share-button`">
-                    {{ sharingEnabled
-                        ? (activeShareCount > 0 ? `Share session (${activeShareCount} active link${activeShareCount > 1 ? 's' : ''})` : 'Share session')
-                        : 'Configure a share host in Settings → Sharing to create links' }}
+                    {{ !sharingEnabled
+                        ? 'Configure a share host in Settings → Sharing to create links'
+                        : shareBlocked
+                            ? "This session's history is not available: it cannot be shared"
+                            : (activeShareCount > 0 ? `Share session (${activeShareCount} active link${activeShareCount > 1 ? 's' : ''})` : 'Share session') }}
                 </AppTooltip>
 
                 <!-- Pending request indicator (shown when waiting for user response) -->

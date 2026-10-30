@@ -1,4 +1,5 @@
 import { reconcileSend, retainsAsyncQuestionSend, consumeAsyncQuestionSend, restoreAsyncQuestionSend } from './asyncQuestions.js'
+import { getSessionUnavailableReason } from './sessionAvailability.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const emptyDraft = () => ({ choices: {}, sourceBatches: {}, recoveredIds: [], pendingDismissals: {} })
@@ -187,6 +188,8 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
 
         reconcileAsyncQuestionSends(projectId, sessionId) {
             if (deletedSessions.has(sessionId)) return Promise.resolve()
+            // History unavailable: its questions are its content (the backend refuses).
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId)) return Promise.resolve()
             if (recoveryReads.has(sessionId)) return recoveryReads.get(sessionId)
             const entries = pendingSends(sessionId, this)
             const ids = [...(entries instanceof Map ? entries : Object.entries(entries))]
@@ -235,6 +238,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
         async loadAsyncQuestions(projectId, sessionId) {
             const session = this.sessions[sessionId]
             if (session && (session.provider !== 'codex' || session.type === 'subagent' || session.draft)) return null
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId)) return null
             // Opening a session asks from several places at once (the route, the chat
             // list, the connection refresh): concurrent callers share one request.
             const inFlight = questionLoads.get(sessionId)

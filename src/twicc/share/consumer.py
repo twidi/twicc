@@ -23,9 +23,13 @@ WS_CLOSE_SHARE_UNAVAILABLE = 4404
 def _session_is_ready(session_id: str) -> bool:
     from twicc.core.models import Session
     from twicc.core.serializers import session_compute_ready
+    from twicc.core.session_availability import session_unavailable_reason
 
     session = Session.objects.filter(id=session_id).first()
-    return session is not None and session_compute_ready(session)
+    return (
+        session is not None and session_compute_ready(session)
+        and session_unavailable_reason(session) is None
+    )
 
 
 class ShareConsumer(AsyncJsonWebsocketConsumer):

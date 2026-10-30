@@ -46,6 +46,7 @@ import { useListExit } from '../../../composables/useListExit.js'
 import { useChatReveal } from '../../../composables/useChatReveal.js'
 import { createSwitchGate, provideFooterMotion } from '../../../composables/useFooterMotion.js'
 import { isInTurnState, shouldNoteViewChange } from '../../../utils/chatEntrance.js'
+import { getSessionUnavailableReason } from '../../../utils/sessionAvailability.js'
 import { getProviderLabel, getProviderHelpers } from '../../../providers'
 
 // All states should animate for the bottom process indicator
@@ -248,8 +249,11 @@ const visualItems = computed(() => store.getSessionVisualItems(props.sessionId))
 
 // Why the history cannot be shown at all (Codex rollout gone from disk, or
 // refused by Codex's own rollout migration). Takes precedence over the
-// "being prepared" state: the metadata stays stale on purpose.
-const unavailableReason = computed(() => store.getSession(props.sessionId)?.unavailable_reason || null)
+// "being prepared" state: the metadata stays stale on purpose. A subagent
+// follows its parent. Such a session is read nowhere and written nowhere: no
+// items load, and the composer gives way to a banner.
+const unavailableReason = computed(() =>
+    getSessionUnavailableReason(id => store.getSession(id), props.sessionId, props.parentSessionId))
 
 // Check if session computation is pending
 const isComputePending = computed(() => {
@@ -887,7 +891,7 @@ async function loadSessionData(lastLine, options) {
 // One watcher owns promotion, compute readiness, and the arrival of the first
 // lines. Watching whether lines exist avoids waking it for every later append.
 watch([() => props.sessionId, session, () => session.value?.draft, () => session.value?.compute_version_up_to_date,
-    () => (session.value?.last_line || 0) > 0],
+    () => (session.value?.last_line || 0) > 0, unavailableReason],
     async ([newSessionId, newSession, , ready], [oldSessionId, , , oldReady] = []) => {
     if (!newSessionId) return
     const sessionChanged = newSessionId !== oldSessionId
@@ -912,6 +916,9 @@ watch([() => props.sessionId, session, () => session.value?.draft, () => session
     if (newSession.compute_version_up_to_date === false) {
         return
     }
+
+    // Nothing reads a session whose history is unavailable (the backend refuses too)
+    if (unavailableReason.value) return
 
     const lastLine = newSession.last_line
     if (!lastLine) return
@@ -2377,10 +2384,11 @@ defineExpose({
                         <span v-if="unavailableReason === 'rollout_missing'">
                             Its Codex rollout file is no longer on disk.
                         </span>
-                        <span v-else>
+                        <span v-else-if="unavailableReason.startsWith('codex_migration_failed')">
                             Codex could not convert its rollout to the current session format
                             ({{ unavailableReason }}).
                         </span>
+                        <span v-else>Reason: {{ unavailableReason }}.</span>
                     </div>
                 </wa-callout>
             </div>
@@ -2594,6 +2602,32 @@ defineExpose({
                     />
                 </Transition>
                 <EphemeralActionsBar :session-id="sessionId" />
+            </template>
+            <!-- Unavailable history: nothing may write to this session, so the banner replaces
+                 the message input and the hybrid terminal. One exception: a process that already
+                 runs and waits on an answerable request keeps its form above the banner, so the
+                 user can answer it (or stop the process) instead of leaving it blocked. -->
+            <template v-else-if="unavailableReason">
+                <Transition :css="false" @enter="footerEnter" @leave="footerLeave">
+                    <PendingRequestForm
+                        v-if="hasAnswerablePendingRequest"
+                        ref="pendingFormRef"
+                        :session-id="sessionId"
+                        :pending-request="pendingRequest"
+                        :pending-count="pendingRequests.length"
+                        @request-open="setOpenBlock('pending', { focus: true })"
+                        @request-collapse="collapsePendingRequest"
+                    />
+                </Transition>
+                <div v-footer-enter class="stale-banner unavailable-banner">
+                    <wa-callout variant="warning">
+                        <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+                        <div class="stale-banner-content">
+                            <strong>Read-only session</strong>
+                            <span>This session's history is not available, so it cannot be continued from TwiCC.</span>
+                        </div>
+                    </wa-callout>
+                </div>
             </template>
             <!-- Stale session banner (replaces message input for stale main sessions) -->
             <div v-else-if="isStale && !parentSessionId" v-footer-enter class="stale-banner">
