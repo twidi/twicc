@@ -273,16 +273,27 @@ async function testConfig(config) {
     const result = await store.playWith(testText.value, testedFields, { configId: id })
     const latest = store.configs.find(entry => entry.id === id)
     if (!latest) return
-    if (result.ok) {
-        // No question for a quick re-listen of validated fields, nor after an edit while loading.
-        if (shouldAskAfterTest(latest, testedFields)) {
-            prompts.value[id] = testedFields
-            openIds.value[id] = true // the question lives in the card
-        }
-    } else if (!result.aborted) {
-        testErrors.value[id] = result.error
-        openIds.value[id] = true // so is the error
+    if (!result.ok) {
+        if (!result.aborted) showTestError(id, result.error)
+        return
     }
+    // No question for a quick re-listen of validated fields, nor after an edit while loading.
+    if (shouldAskAfterTest(latest, testedFields)) {
+        prompts.value[id] = testedFields
+        openIds.value[id] = true // the question lives in the card
+    }
+    // An error can still come after the sound started: it replaces a pending question. A Yes
+    // given before it stands. A new test or a stop resolves this end ABORTED.
+    const end = await result.ended
+    if (end.ok || end.aborted) return
+    if (!store.configs.some(entry => entry.id === id)) return
+    delete prompts.value[id]
+    showTestError(id, end.error)
+}
+
+function showTestError(id, error) {
+    testErrors.value[id] = error
+    openIds.value[id] = true // the error lives in the card
 }
 
 function answerYes(id) {
@@ -344,7 +355,7 @@ function answerNo(id) {
                 <div slot="summary" class="tts-summary">
                     <span class="tts-summary-text">
                         <span class="tts-summary-name">{{ ttsConfigDisplayName(config, store.models) }}</span>
-                        <span v-if="ttsTestStats(config.last_test)" class="tts-summary-note" title="Last test run: cost per 1,000 characters, per minute of audio, and generation time per 1,000 characters">{{ ttsTestStats(config.last_test) }}</span>
+                        <span v-if="ttsTestStats(config.last_test)" class="tts-summary-note" title="Last test run: cost per 1,000 characters, per minute of audio, generation time per 1,000 characters, and time to the first audio">{{ ttsTestStats(config.last_test) }}</span>
                         <span v-if="config.note" class="tts-summary-note" :title="config.note">{{ config.note }}</span>
                     </span>
                     <wa-icon

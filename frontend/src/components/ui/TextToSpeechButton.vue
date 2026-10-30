@@ -36,6 +36,12 @@ async function onClick() {
     }
     const result = await store.play(props.text)
     if (!result.ok && !result.aborted) toast.error(result.error, { duration: 4000 })
+    if (!result.ok) return
+    // An error can still come after the sound started (the stream broke). The toast is an
+    // app-wide service: it shows even when this button is already unmounted.
+    result.ended.then(end => {
+        if (!end.ok && !end.aborted) toast.error(end.error, { duration: 4000 })
+    })
 }
 </script>
 
