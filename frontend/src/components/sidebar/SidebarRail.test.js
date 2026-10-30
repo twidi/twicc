@@ -208,3 +208,14 @@ test('rail rows and preview children render the unread eye through ProcessIndica
     assert.match(source, /<wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" \/>/)
     assert.equal((source.match(/name="eye"/g) ?? []).length, 1)
 })
+
+test('a playing speech shows a speaker whose waves light up in turn, with no movement', () => {
+    const source = read()
+    assert.match(source, /<svg\s+v-if="item.id === 'speech' && tts.status === 'playing'"\s+class="rail-speech-waves"[^>]*aria-hidden="true"/)
+    assert.equal((source.match(/class="rail-speech-wave"/g) ?? []).length, 3)
+    assert.match(source, /<wa-icon v-else :name="item.icon" \/>/)
+    const keyframes = source.match(/@keyframes rail-speech-wave \{[\s\S]*?\n\}/)?.[0] ?? ''
+    assert.match(keyframes, /opacity/)
+    // An opacity cascade only: it may keep running under reduced motion.
+    assert.doesNotMatch(keyframes, /transform|scale|translate/)
+})

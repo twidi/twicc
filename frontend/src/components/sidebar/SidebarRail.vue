@@ -345,7 +345,17 @@ async function stopSpeech() {
                         :aria-label="item.label" :aria-pressed="item.active" :disabled="item.disabled"
                         @click="activate(item)"
                     >
-                        <wa-icon :name="item.icon" />
+                        <!-- While reading: a speaker whose three waves light up in turn ("it is speaking"). -->
+                        <svg
+                            v-if="item.id === 'speech' && tts.status === 'playing'"
+                            class="rail-speech-waves" viewBox="0 0 24 24" aria-hidden="true"
+                        >
+                            <path class="rail-speech-speaker" d="M3 9h4l5-4v14l-5-4H3z" />
+                            <path class="rail-speech-wave" d="M15 9.5a3.5 3.5 0 0 1 0 5" />
+                            <path class="rail-speech-wave" d="M17.5 7a7 7 0 0 1 0 10" />
+                            <path class="rail-speech-wave" d="M20 4.5a10.5 10.5 0 0 1 0 15" />
+                        </svg>
+                        <wa-icon v-else :name="item.icon" />
                         <PeerInboxBadge v-if="item.id === 'inbox'" :count="item.badge" />
                         <wa-spinner v-if="item.id === 'speech' && tts.status === 'loading'" class="rail-speech-spinner" />
                     </button>
@@ -583,6 +593,40 @@ async function stopSpeech() {
 
 .rail-speech--playing {
     color: var(--wa-color-success-60);
+}
+
+/* An opacity cascade, no movement: it stays under reduced motion, like the other status
+   indicators (motion.css). */
+.rail-speech-waves {
+    width: 1.15em;
+    height: 1.15em;
+    overflow: visible;
+}
+
+.rail-speech-speaker {
+    fill: currentColor;
+}
+
+.rail-speech-wave {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    opacity: 0.2;
+    animation: rail-speech-wave 1.2s ease-in-out infinite;
+}
+
+.rail-speech-wave:nth-of-type(3) {
+    animation-delay: 0.2s;
+}
+
+.rail-speech-wave:nth-of-type(4) {
+    animation-delay: 0.4s;
+}
+
+@keyframes rail-speech-wave {
+    0%, 100% { opacity: 0.2; }
+    40% { opacity: 1; }
 }
 
 /* Out of the button's centred grid, like the inbox badge: a ring around the icon. */
