@@ -1,6 +1,7 @@
 """Async client for the OpenRouter text-to-speech API.
 
-Three calls: synthesize a text (``POST /audio/speech``), list the speech models
+Three calls: stream the speech of a text into an audio stream (``POST
+/audio/speech``, :func:`pump_speech`), list the speech models
 (``GET /models?output_modalities=speech``), and log the real cost of a
 generation (``GET /generation?id=…``) in the background.
 
@@ -15,10 +16,14 @@ import logging
 import math
 import time
 import wave
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import httpx
 import orjson
+
+if TYPE_CHECKING:
+    # streams.py imports SpeechError from here: the type only, at check time.
+    from twicc.tts.streams import AudioStream
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +221,44 @@ async def synthesize(request: SpeechRequest, api_key: str) -> SpeechAudio:
             generation_id,
             outcome,
         )
+
+
+async def pump_speech(request: SpeechRequest, api_key: str, stream: "AudioStream") -> None:
+    """Stream the speech of *request* into *stream*, chunk by chunk, as it arrives.
+
+    The upstream ``Content-Type`` decides, not the requested format. An upstream
+    error, or a success that is not audio, fails the stream before its headers.
+    A timeout or a network error fails it with a user-safe message, before or
+    after its headers. A cancellation (a release) propagates: the ``async with``
+    closes the upstream call.
+    """
+    try:
+        async with (
+            _make_client(SPEECH_TIMEOUT) as client,
+            client.stream("POST", SPEECH_URL, json=build_payload(request), headers=_auth_headers(api_key)) as response,
+        ):
+            status = response.status_code
+            content_type = response.headers.get("content-type", "")
+            media_type = content_type.split(";", 1)[0].strip().lower()
+            if not response.is_success or not media_type.startswith("audio/"):
+                # An error, or a success that is not audio (JSON, HTML, ...): its message, else its status.
+                body = await response.aread()
+                stream.fail(SpeechError(upstream_error_message(status, body), upstream_status=status))
+                return
+            if media_type == "audio/pcm":
+                content_type = pcm_content_type(content_type)
+            stream.set_headers(content_type, response.headers.get("x-generation-id") or None)
+            # aiter_bytes, not aiter_raw: httpx asks for gzip, and only aiter_bytes
+            # decodes it (without re-chunking).
+            async for chunk in response.aiter_bytes():
+                stream.append(chunk)
+    except httpx.TimeoutException:
+        stream.fail(SpeechError("OpenRouter did not answer in time"))
+        return
+    except httpx.HTTPError:
+        stream.fail(SpeechError("Could not reach OpenRouter"))
+        return
+    stream.finish()
 
 
 # (monotonic time of the fetch, models) of the last successful fetch.

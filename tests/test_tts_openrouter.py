@@ -2,9 +2,13 @@
 
 The network is always mocked: every client comes from ``_make_client``,
 monkeypatched to an ``httpx.MockTransport``.
+
+Every streaming test runs its whole scenario inside one ``asyncio.run(...)``:
+streams and their futures belong to the loop that created them.
 """
 
 import asyncio
+import gzip
 import io
 import logging
 import wave
@@ -13,12 +17,11 @@ import httpx
 import orjson
 import pytest
 
-from twicc.tts import openrouter
+from twicc.tts import openrouter, streams
 from twicc.tts.openrouter import (
     GENERATION_URL,
     MODELS_URL,
     SPEECH_URL,
-    SpeechAudio,
     SpeechError,
     SpeechRequest,
     _log_generation_cost,
@@ -26,13 +29,16 @@ from twicc.tts.openrouter import (
     fetch_speech_models,
     parse_pcm_format,
     pcm_content_type,
-    synthesize,
+    pump_speech,
     upstream_error_message,
     wrap_pcm_as_wav,
 )
+from twicc.tts.streams import AudioStream, start_stream
 
 LOGGER_NAME = "twicc.tts.openrouter"
-PCM_TYPE = "audio/pcm;rate=24000;channels=1"
+STREAMS_LOGGER_NAME = "twicc.tts.streams"
+LABEL = {"model": "openai/gpt-4o-mini-tts", "voice": "Kore", "format": "mp3", "chars": 11}
+HINTED_400 = "Provider returned 400. Check the model, the voice, the format and the text length."
 
 
 @pytest.fixture(autouse=True)
@@ -43,14 +49,22 @@ def _clean_models_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_streams():
+    streams._reset_for_tests()
+    yield
+    streams._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _capture_module_logger(caplog, monkeypatch):
-    # settings_test's ``disable_existing_loggers: True`` can disable this logger,
+    # settings_test's ``disable_existing_loggers: True`` can disable these loggers,
     # depending on the suite's import order (see test_compute_shutdown.py).
-    # Re-enable it and route it straight to caplog, whatever its ancestors do.
-    logger = logging.getLogger(LOGGER_NAME)
-    monkeypatch.setattr(logger, "disabled", False)
-    monkeypatch.setattr(logger, "propagate", False)
-    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    # Re-enable them and route them straight to caplog, whatever their ancestors do.
+    for name in (LOGGER_NAME, STREAMS_LOGGER_NAME):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "disabled", False)
+        monkeypatch.setattr(logger, "propagate", False)
+        monkeypatch.setattr(logger, "handlers", [caplog.handler])
 
 
 def _mock_transport(monkeypatch, handler):
@@ -114,65 +128,6 @@ def test_wrap_pcm_as_wav_header():
         assert (w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()) == (24000, 1, 2, 24000)
 
 
-def test_synthesize_sends_bearer_and_wraps_pcm(monkeypatch):
-    pcm = b"\x00\x01" * 2400
-
-    def handler(request):
-        assert request.method == "POST"
-        assert str(request.url) == SPEECH_URL
-        assert request.headers["authorization"] == "Bearer k"
-        assert orjson.loads(request.content) == {
-            "model": "openai/gpt-4o-mini-tts",
-            "input": "Hello there",
-            "response_format": "pcm",
-            "voice": "Kore",
-        }
-        return httpx.Response(200, content=pcm, headers={"content-type": PCM_TYPE, "x-generation-id": "gen-1"})
-
-    _mock_transport(monkeypatch, handler)
-    audio = asyncio.run(synthesize(_request("pcm"), "k"))
-
-    assert isinstance(audio, SpeechAudio)
-    assert audio.content_type == "audio/wav"
-    assert audio.generation_id == "gen-1"
-    with wave.open(io.BytesIO(audio.content)) as w:
-        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (24000, 1, 2)
-        assert w.readframes(w.getnframes()) == pcm
-
-
-def test_synthesize_passes_mp3_through(monkeypatch):
-    mp3 = b"ID3\x04fake-mp3-bytes"
-
-    def handler(request):
-        return httpx.Response(200, content=mp3, headers={"content-type": "audio/mpeg", "x-generation-id": "gen-2"})
-
-    _mock_transport(monkeypatch, handler)
-    audio = asyncio.run(synthesize(_request("mp3"), "k"))
-
-    assert audio == SpeechAudio(content=mp3, content_type="audio/mpeg", generation_id="gen-2")
-
-
-def test_synthesize_without_generation_id(monkeypatch):
-    def handler(request):
-        return httpx.Response(200, content=b"mp3", headers={"content-type": "audio/mpeg"})
-
-    _mock_transport(monkeypatch, handler)
-    assert asyncio.run(synthesize(_request(), "k")).generation_id is None
-
-
-def test_synthesize_decides_from_upstream_type_not_requested_format(monkeypatch):
-    mp3 = b"ID3\x04fake-mp3-bytes"
-
-    def handler(request):
-        return httpx.Response(200, content=mp3, headers={"content-type": "audio/mpeg"})
-
-    _mock_transport(monkeypatch, handler)
-    audio = asyncio.run(synthesize(_request("pcm"), "k"))
-
-    assert audio.content == mp3
-    assert audio.content_type == "audio/mpeg"
-
-
 def test_upstream_error_message_and_hint():
     body = orjson.dumps({"error": {"message": "Provider returned 400", "code": 400}})
     assert (
@@ -187,108 +142,26 @@ def test_upstream_error_message_and_hint():
     assert upstream_error_message(504, orjson.dumps([1, 2])) == "OpenRouter returned HTTP 504"
 
 
-def test_upstream_error_status_is_relayed(monkeypatch):
-    body = orjson.dumps({"error": {"message": "User not found.", "code": 401}})
+class _QueueBody(httpx.AsyncByteStream):
+    """A response body that yields the chunks of a queue as they come.
 
-    def handler(request):
-        return httpx.Response(401, content=body, headers={"content-type": "application/json"})
+    An exception item is raised, ``None`` ends the body.
+    """
 
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(SpeechError) as exc_info:
-        asyncio.run(synthesize(_request(), "k"))
+    def __init__(self, queue: asyncio.Queue):
+        self._queue = queue
 
-    assert exc_info.value.message == "User not found."
-    assert exc_info.value.upstream_status == 401
-
-
-def test_non_audio_success_is_an_error(monkeypatch):
-    def handler(request):
-        return httpx.Response(200, content=b'{"ok": true}', headers={"content-type": "application/json"})
-
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(SpeechError) as exc_info:
-        asyncio.run(synthesize(_request(), "k"))
-
-    assert exc_info.value.message == "OpenRouter returned HTTP 200"
-    assert exc_info.value.upstream_status == 200
+    async def __aiter__(self):
+        while (item := await self._queue.get()) is not None:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
-def test_non_audio_success_keeps_the_upstream_message(monkeypatch):
-    body = orjson.dumps({"error": {"message": "Model is overloaded"}})
-
-    def handler(request):
-        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
-
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(SpeechError) as exc_info:
-        asyncio.run(synthesize(_request(), "k"))
-
-    assert exc_info.value.message == "Model is overloaded"
-
-
-def test_network_error_message_hides_details(monkeypatch):
-    def handler(request):
-        raise httpx.ConnectError("secret-ish detail")
-
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(SpeechError) as exc_info:
-        asyncio.run(synthesize(_request(), "k"))
-
-    assert exc_info.value.message == "Could not reach OpenRouter"
-    assert exc_info.value.upstream_status is None
-    assert "secret-ish" not in str(exc_info.value)
-
-
-def test_timeout_message(monkeypatch):
-    def handler(request):
-        raise httpx.ReadTimeout("slow detail")
-
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(SpeechError) as exc_info:
-        asyncio.run(synthesize(_request(), "k"))
-
-    assert exc_info.value.message == "OpenRouter did not answer in time"
-    assert exc_info.value.upstream_status is None
-
-
-def test_synthesize_uses_the_speech_timeout(monkeypatch):
-    seen = []
-
-    def factory(timeout):
-        seen.append(timeout)
-        return httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x", headers={"content-type": "audio/mpeg"})),
-            timeout=timeout,
-        )
-
-    monkeypatch.setattr(openrouter, "_make_client", factory)
-    asyncio.run(synthesize(_request(), "k"))
-
-    assert seen == [openrouter.SPEECH_TIMEOUT]
-    assert openrouter.SPEECH_TIMEOUT.read == 180.0
-    assert openrouter.SPEECH_TIMEOUT.connect == 15.0
-
-
-def test_cancelled_request_is_logged_and_reraised(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    async def handler(request):
-        await asyncio.sleep(10)
-        return httpx.Response(200, content=b"x", headers={"content-type": "audio/mpeg"})
-
-    _mock_transport(monkeypatch, handler)
-
-    async def main():
-        task = asyncio.create_task(synthesize(_request(), "k"))
-        await asyncio.sleep(0.01)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    asyncio.run(main())
-    lines = [r.getMessage() for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.INFO]
-    assert len(lines) == 1
-    assert "cancelled" in lines[0]
+async def _within(awaitable, seconds: float = 1.0):
+    """Await *awaitable*, failing the test instead of hanging."""
+    async with asyncio.timeout(seconds):
+        return await awaitable
 
 
 def _capture_http_stack_logs(caplog, monkeypatch):
@@ -298,49 +171,281 @@ def _capture_http_stack_logs(caplog, monkeypatch):
         caplog.set_level(logging.DEBUG, logger=name)
 
 
-def test_logs_never_contain_the_key(monkeypatch, caplog):
+def test_pump_streams_chunks_as_they_arrive(monkeypatch):
+    async def scenario():
+        body = asyncio.Queue()
+        _mock_transport(
+            monkeypatch,
+            lambda request: httpx.Response(
+                200, headers={"content-type": "audio/mpeg", "x-generation-id": "gen-2"}, stream=_QueueBody(body)
+            ),
+        )
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_speech(_request(), "k", stream))
+
+        await _within(stream.ready)
+        assert (stream.state, stream.content_type, stream.generation_id) == ("running", "audio/mpeg", "gen-2")
+        assert bytes(stream.data) == b""
+
+        body.put_nowait(b"ID3first")
+        await _within(stream.wait_for_more(0))
+        assert bytes(stream.data) == b"ID3first"
+        assert stream.state == "running"
+
+        body.put_nowait(b"-second")
+        await _within(stream.wait_for_more(8))
+        assert bytes(stream.data) == b"ID3first-second"
+        assert stream.state == "running"
+
+        body.put_nowait(None)
+        await _within(pump)
+        assert stream.state == "complete"
+        assert bytes(stream.data) == b"ID3first-second"
+
+    asyncio.run(scenario())
+
+
+def test_pump_decodes_a_gzip_body(monkeypatch):
+    audio = b"ID3" + bytes(range(256)) * 64
+
+    def handler(request):
+        assert "gzip" in request.headers["accept-encoding"]
+        return httpx.Response(
+            200,
+            content=gzip.compress(audio),
+            headers={"content-type": "audio/mpeg", "content-encoding": "gzip"},
+        )
+
+    async def scenario():
+        _mock_transport(monkeypatch, handler)
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream))
+        assert stream.state == "complete"
+        assert bytes(stream.data) == audio
+
+    asyncio.run(scenario())
+
+
+def test_pump_sends_the_bearer_key_and_payload(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    caplog.set_level(logging.DEBUG, logger=STREAMS_LOGGER_NAME)
     _capture_http_stack_logs(caplog, monkeypatch)
     key = "sk-or-XYZ"
+    timeouts = []
     responses = iter(
         [
-            httpx.Response(200, content=b"mp3", headers={"content-type": "audio/mpeg", "x-generation-id": "gen-1"}),
+            httpx.Response(200, content=b"ID3mp3", headers={"content-type": "audio/mpeg", "x-generation-id": "gen-1"}),
             httpx.Response(400, content=orjson.dumps({"error": {"message": "Provider returned 400", "code": 400}})),
         ]
     )
 
     def handler(request):
+        assert request.method == "POST"
+        assert str(request.url) == SPEECH_URL
         assert request.headers["authorization"] == f"Bearer {key}"
+        assert orjson.loads(request.content) == {
+            "model": "openai/gpt-4o-mini-tts",
+            "input": "Hello there",
+            "response_format": "pcm",
+            "voice": "Kore",
+        }
         return next(responses)
 
-    _mock_transport(monkeypatch, handler)
-    asyncio.run(synthesize(_request(), key))
-    with pytest.raises(SpeechError):
-        asyncio.run(synthesize(_request(), key))
+    def factory(timeout):
+        timeouts.append(timeout)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=timeout)
 
-    lines = [r.getMessage() for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.INFO]
+    monkeypatch.setattr(openrouter, "_make_client", factory)
+
+    async def scenario():
+        ok = start_stream(lambda s: pump_speech(_request("pcm"), key, s), label=LABEL)
+        await _within(ok._task)
+        assert (ok.state, bytes(ok.data), ok.generation_id) == ("complete", b"ID3mp3", "gen-1")
+
+        failed = start_stream(lambda s: pump_speech(_request("pcm"), key, s), label=LABEL)
+        with pytest.raises(SpeechError):
+            await _within(failed.ready)
+        await _within(failed._task)
+
+    asyncio.run(scenario())
+
+    assert timeouts == [openrouter.SPEECH_TIMEOUT, openrouter.SPEECH_TIMEOUT]
+    assert openrouter.SPEECH_TIMEOUT.read == 180.0
+    assert openrouter.SPEECH_TIMEOUT.connect == 15.0
+    lines = [r.getMessage() for r in caplog.records if r.name == STREAMS_LOGGER_NAME and r.levelno == logging.INFO]
     assert len(lines) == 2
-    assert "gen-1" in lines[0] and "ok" in lines[0]
-    assert "openai/gpt-4o-mini-tts" in lines[0] and "Kore" in lines[0] and "mp3" in lines[0]
-    assert "upstream_error 400" in lines[1]
+    assert "generation=gen-1" in lines[0] and lines[0].endswith("outcome=ok")
+    assert lines[1].endswith("outcome=upstream_error 400")
     # The HTTP stack logs reached caplog too (httpx logs each request).
     assert any(r.name == "httpx" for r in caplog.records)
     assert key not in caplog.text
 
 
-def test_unexpected_error_is_logged_as_error(monkeypatch, caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+@pytest.mark.parametrize(
+    ("requested", "upstream_type", "expected_type"),
+    [
+        ("pcm", "audio/pcm;rate=44100", "audio/pcm;rate=44100;channels=1"),
+        ("pcm", "audio/pcm; rate=16000; channels=2", "audio/pcm;rate=16000;channels=2"),
+        ("pcm", "audio/pcm", "audio/pcm;rate=24000;channels=1"),
+        # The upstream type decides, not the requested format.
+        ("mp3", "audio/pcm;rate=24000;channels=1", "audio/pcm;rate=24000;channels=1"),
+        ("pcm", "audio/mpeg", "audio/mpeg"),
+        ("wav", "audio/wav", "audio/wav"),
+    ],
+)
+def test_pump_makes_pcm_types_explicit(monkeypatch, requested, upstream_type, expected_type):
+    pcm = b"\x00\x01" * 2400
 
+    async def scenario():
+        _mock_transport(monkeypatch, lambda request: httpx.Response(200, content=pcm, headers={"content-type": upstream_type}))
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(requested), "k", stream))
+        assert stream.state == "complete"
+        assert stream.content_type == expected_type
+        assert stream.generation_id is None
+        assert bytes(stream.data) == pcm  # never re-wrapped: the bytes stream as they come
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (400, {"error": {"message": "Provider returned 400", "code": 400}}, HINTED_400),
+        (401, {"error": {"message": "User not found.", "code": 401}}, "User not found."),
+        (500, None, "OpenRouter returned HTTP 500"),
+    ],
+)
+def test_pump_upstream_error_fails_before_ready(monkeypatch, status, body, message):
+    content = b"<html>" if body is None else orjson.dumps(body)
+
+    async def scenario():
+        _mock_transport(
+            monkeypatch,
+            lambda request: httpx.Response(status, content=content, headers={"content-type": "application/json"}),
+        )
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream))
+        with pytest.raises(SpeechError) as exc_info:
+            await stream.ready
+        assert (exc_info.value.message, exc_info.value.upstream_status) == (message, status)
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", message, status)
+        assert stream.content_type is None
+        assert bytes(stream.data) == b""
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("headers", "body", "message"),
+    [
+        ({"content-type": "application/json"}, b'{"ok": true}', "OpenRouter returned HTTP 200"),
+        ({"content-type": "application/json"}, orjson.dumps({"error": {"message": "Model is overloaded"}}), "Model is overloaded"),
+        ({"content-type": "text/html"}, b"<html>", "OpenRouter returned HTTP 200"),
+        ({}, b"ID3", "OpenRouter returned HTTP 200"),
+    ],
+)
+def test_pump_non_audio_success_is_an_error(monkeypatch, headers, body, message):
+    async def scenario():
+        _mock_transport(monkeypatch, lambda request: httpx.Response(200, content=body, headers=headers))
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream))
+        with pytest.raises(SpeechError) as exc_info:
+            await stream.ready
+        assert (exc_info.value.message, exc_info.value.upstream_status) == (message, 200)
+        assert (stream.state, stream.error) == ("failed", message)
+        assert bytes(stream.data) == b""
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (httpx.ConnectTimeout("secret-ish detail"), "OpenRouter did not answer in time"),
+        (httpx.ReadTimeout("secret-ish detail"), "OpenRouter did not answer in time"),
+        (httpx.ConnectError("secret-ish detail"), "Could not reach OpenRouter"),
+        (httpx.ReadError("secret-ish detail"), "Could not reach OpenRouter"),
+        (httpx.RemoteProtocolError("secret-ish detail"), "Could not reach OpenRouter"),
+    ],
+)
+@pytest.mark.parametrize("when", ["before_headers", "after_headers"])
+def test_pump_timeout_and_network_errors(monkeypatch, error, message, when):
+    async def scenario():
+        body = asyncio.Queue()
+
+        def handler(request):
+            if when == "before_headers":
+                raise error
+            return httpx.Response(200, headers={"content-type": "audio/mpeg"}, stream=_QueueBody(body))
+
+        _mock_transport(monkeypatch, handler)
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_speech(_request(), "k", stream))
+        if when == "after_headers":
+            await _within(stream.ready)
+            body.put_nowait(b"ID3a")
+            body.put_nowait(error)
+        await _within(pump)
+
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", message, None)
+        assert "secret-ish" not in stream.error
+        if when == "before_headers":
+            with pytest.raises(SpeechError) as exc_info:
+                await stream.ready
+            assert exc_info.value.message == message
+            assert exc_info.value.upstream_status is None
+            assert "secret-ish" not in str(exc_info.value)
+        else:
+            assert stream.ready.result() is None
+            assert bytes(stream.data) == b"ID3a"
+
+    asyncio.run(scenario())
+
+
+def test_pump_lets_an_unexpected_error_through(monkeypatch):
+    # Not an upstream failure: the stream task logs it with its traceback.
     def handler(request):
         raise RuntimeError("boom")
 
-    _mock_transport(monkeypatch, handler)
-    with pytest.raises(RuntimeError):
-        asyncio.run(synthesize(_request(), "k"))
+    async def scenario():
+        _mock_transport(monkeypatch, handler)
+        stream = AudioStream(LABEL)
+        with pytest.raises(RuntimeError):
+            await _within(pump_speech(_request(), "k", stream))
+        assert stream.state == "opening"
 
-    lines = [r.getMessage() for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.INFO]
-    assert len(lines) == 1
-    assert lines[0].endswith("outcome=error")
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("when", ["before_headers", "after_headers"])
+def test_pump_cancellation_propagates(monkeypatch, when):
+    async def scenario():
+        body = asyncio.Queue()
+
+        async def handler(request):
+            if when == "before_headers":
+                await asyncio.sleep(10)
+            return httpx.Response(200, headers={"content-type": "audio/mpeg"}, stream=_QueueBody(body))
+
+        _mock_transport(monkeypatch, handler)
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_speech(_request(), "k", stream))
+        if when == "after_headers":
+            await _within(stream.ready)
+            body.put_nowait(b"ID3a")
+            await _within(stream.wait_for_more(0))
+        else:
+            await asyncio.sleep(0.01)
+
+        pump.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pump
+        # The pump neither failed nor finished the stream: its owner decides.
+        assert stream.state == ("opening" if when == "before_headers" else "running")
+        assert stream.error is None
+
+    asyncio.run(scenario())
 
 
 def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
