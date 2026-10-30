@@ -478,18 +478,21 @@ def test_models_are_shaped_cached_and_failures_not_cached(monkeypatch):
             {"id": "google/gemini-tts", "name": "", "supported_voices": None},
         ]
     }
+    unknown = {"formats": None, "streams": None, "max_chars": 2000}
     expected = [
         {
             "id": "openai/gpt-4o-mini-tts",
             "name": "OpenAI: GPT-4o mini TTS",
             "voices": ["alloy", "nova"],
             "pricing": {"prompt": 0.0000006, "completion": None},
+            **unknown,
         },
         {
             "id": "google/gemini-tts",
             "name": "google/gemini-tts",
             "voices": [],
             "pricing": {"prompt": None, "completion": None},
+            **unknown,
         },
     ]
 
@@ -535,7 +538,10 @@ def test_models_callers_cannot_corrupt_the_cache(monkeypatch):
     second[0]["pricing"]["prompt"] = 1.0
 
     assert asyncio.run(fetch_speech_models()) == [
-        {"id": "m", "name": "M", "voices": ["alloy"], "pricing": {"prompt": None, "completion": None}},
+        {
+            "id": "m", "name": "M", "voices": ["alloy"], "pricing": {"prompt": None, "completion": None},
+            "formats": None, "streams": None, "max_chars": 2000,
+        },
     ]
 
 

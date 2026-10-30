@@ -68,15 +68,63 @@ export function formatTtsModelPrice(pricing) {
     return parts.join(' · ')
 }
 
+// ── Known model facts (backend model_catalog.py) ─────────────────
+//
+// Each listed model carries `formats` and `streams` (lists, or null when TwiCC knows nothing
+// about the model) and `max_chars`.
+
+const FORMAT_LABELS = { mp3: 'MP3', pcm: 'PCM' }
+
+/** The listed model `modelId`, or null when it is not in the loaded list. */
+export function ttsModelFacts(models, modelId) {
+    return models.find(model => model.id === modelId) ?? null
+}
+
+/** Whether the model streams: "Streaming", "Streaming in PCM", "No streaming", or '' when unknown. */
+export function ttsStreamingLabel(model) {
+    const streams = model?.streams
+    if (!Array.isArray(streams)) return ''
+    if (!streams.length) return 'No streaming'
+    const formats = Array.isArray(model.formats) ? model.formats : []
+    if (formats.every(format => streams.includes(format))) return 'Streaming'
+    return `Streaming in ${streams.map(format => FORMAT_LABELS[format] ?? format).join(' and ')}`
+}
+
+/** The format switch options: a format the model does not accept stays shown, disabled. */
+export function ttsFormatOptions(model) {
+    const formats = Array.isArray(model?.formats) ? model.formats : null
+    return Object.entries(FORMAT_LABELS).map(([value, label]) => (
+        !formats || formats.includes(value)
+            ? { value, label }
+            : { value, label, disabled: true, title: `${label}: not supported by this model` }
+    ))
+}
+
+/** The format to keep when the model changes: the current one, unless the new model refuses it. */
+export function formatAfterModelChange(format, model) {
+    const formats = Array.isArray(model?.formats) ? model.formats : null
+    return !formats || formats.includes(format) ? format : formats[0]
+}
+
+/** What the chosen format does for this model: '' when TwiCC knows nothing about the model. */
+export function ttsStreamingNote(model, format) {
+    if (!Array.isArray(model?.streams)) return ''
+    return model.streams.includes(format)
+        ? 'Streaming: the audio starts while it is generated.'
+        : 'No streaming: the audio starts once it is fully generated.'
+}
+
 /**
- * The model picker options, sorted by official name (case-insensitive), with the list price on
- * a quiet line. A stored model missing from the list stays first, so the picker still shows it.
+ * The model picker options, sorted by official name (case-insensitive), with the list price and
+ * the streaming support on a quiet line. A stored model missing from the list stays first, so
+ * the picker still shows it.
  */
 export function ttsModelOptions(models, currentModel) {
     const options = models.map(model => ({
         value: model.id,
         label: model.name,
-        description: formatTtsModelPrice(model.pricing) || 'No list price',
+        description: [formatTtsModelPrice(model.pricing) || 'No list price', ttsStreamingLabel(model)]
+            .filter(Boolean).join(' · '),
         keywords: model.id,
     })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
     if (!currentModel || models.some(model => model.id === currentModel)) return options

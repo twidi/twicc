@@ -21,6 +21,11 @@ import {
     shouldAskAfterTest,
     ttsTestStats,
     ttsLastTestFacts,
+    ttsModelFacts,
+    ttsStreamingLabel,
+    ttsFormatOptions,
+    formatAfterModelChange,
+    ttsStreamingNote,
 } from './ttsConfig.js'
 
 const validatedConfig = (id = 'a') => {
@@ -247,4 +252,56 @@ test('old records without first_audio_ms show no figure', () => {
     assert.equal(ttsLastTestFacts({ ...RUN, first_audio_ms: null }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
     assert.equal(ttsTestStats(RUN), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch')
     assert.equal(ttsLastTestFacts(RUN), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+})
+
+// ── Known model facts ────────────────────────────────────────────
+
+const HEYGEN = { id: 'heygen/v', name: 'HeyGen', formats: ['pcm'], streams: ['pcm'], max_chars: 5000, pricing: {}, voices: [] }
+const ELEVEN = { id: 'eleven/v', name: 'Eleven', formats: ['mp3', 'pcm'], streams: [], max_chars: 10000, pricing: {}, voices: [] }
+const GROK = { id: 'grok/v', name: 'Grok', formats: ['mp3', 'pcm'], streams: ['mp3', 'pcm'], max_chars: 15000, pricing: {}, voices: [] }
+const PARTIAL = { id: 'p/v', name: 'Partial', formats: ['mp3', 'pcm'], streams: ['pcm'], max_chars: 2000, pricing: {}, voices: [] }
+const UNKNOWN = { id: 'new/v', name: 'New', formats: null, streams: null, max_chars: 2000, pricing: {}, voices: [] }
+
+test('ttsModelFacts finds a listed model, else null', () => {
+    assert.equal(ttsModelFacts([HEYGEN, ELEVEN], 'eleven/v'), ELEVEN)
+    assert.equal(ttsModelFacts([HEYGEN], 'gone/v'), null)
+})
+
+test('ttsStreamingLabel says whether the model streams, nothing when unknown', () => {
+    assert.equal(ttsStreamingLabel(GROK), 'Streaming')
+    assert.equal(ttsStreamingLabel(HEYGEN), 'Streaming')
+    assert.equal(ttsStreamingLabel(ELEVEN), 'No streaming')
+    assert.equal(ttsStreamingLabel(PARTIAL), 'Streaming in PCM')
+    assert.equal(ttsStreamingLabel(UNKNOWN), '')
+    assert.equal(ttsStreamingLabel(null), '')
+})
+
+test('the model picker line carries the price and the streaming support', () => {
+    const priced = { ...ELEVEN, pricing: { prompt: 0.00004, completion: 0 } }
+    assert.equal(ttsModelOptions([priced], '')[0].description, '$40/M in · No streaming')
+    assert.equal(ttsModelOptions([UNKNOWN], '')[0].description, 'No list price')
+})
+
+test('ttsFormatOptions disables a format the model refuses, keeps both when unknown', () => {
+    assert.deepEqual(ttsFormatOptions(HEYGEN), [
+        { value: 'mp3', label: 'MP3', disabled: true, title: 'MP3: not supported by this model' },
+        { value: 'pcm', label: 'PCM' },
+    ])
+    assert.deepEqual(ttsFormatOptions(ELEVEN), [{ value: 'mp3', label: 'MP3' }, { value: 'pcm', label: 'PCM' }])
+    assert.deepEqual(ttsFormatOptions(UNKNOWN), [{ value: 'mp3', label: 'MP3' }, { value: 'pcm', label: 'PCM' }])
+    assert.deepEqual(ttsFormatOptions(null), [{ value: 'mp3', label: 'MP3' }, { value: 'pcm', label: 'PCM' }])
+})
+
+test('formatAfterModelChange switches to an accepted format only when needed', () => {
+    assert.equal(formatAfterModelChange('mp3', HEYGEN), 'pcm')
+    assert.equal(formatAfterModelChange('pcm', HEYGEN), 'pcm')
+    assert.equal(formatAfterModelChange('pcm', ELEVEN), 'pcm')
+    assert.equal(formatAfterModelChange('mp3', UNKNOWN), 'mp3')
+    assert.equal(formatAfterModelChange('mp3', null), 'mp3')
+})
+
+test('ttsStreamingNote describes the chosen format, nothing when unknown', () => {
+    assert.equal(ttsStreamingNote(PARTIAL, 'pcm'), 'Streaming: the audio starts while it is generated.')
+    assert.equal(ttsStreamingNote(PARTIAL, 'mp3'), 'No streaming: the audio starts once it is fully generated.')
+    assert.equal(ttsStreamingNote(UNKNOWN, 'mp3'), '')
 })

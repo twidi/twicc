@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, NamedTuple
 import httpx
 import orjson
 
+from twicc.tts.model_catalog import speech_model_facts
+
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
     from twicc.tts.streams import AudioStream
@@ -226,12 +228,22 @@ def _pricing(entry: dict) -> dict:
 
 
 def _copy_models(models: list[dict]) -> list[dict]:
-    """A copy a caller can mutate without reaching the cache."""
-    return [{**model, "voices": list(model["voices"]), "pricing": dict(model["pricing"])} for model in models]
+    """A copy a caller can mutate without reaching the cache, with TwiCC's known facts of each
+    model (``formats``, ``streams``, ``max_chars``: model_catalog.py)."""
+    return [
+        {
+            **model,
+            "voices": list(model["voices"]),
+            "pricing": dict(model["pricing"]),
+            **speech_model_facts(model["id"]),
+        }
+        for model in models
+    ]
 
 
 async def fetch_speech_models() -> list[dict]:
-    """The speech models as ``[{"id", "name", "voices", "pricing"}]``; ``[]`` on any failure.
+    """The speech models as ``[{"id", "name", "voices", "pricing", "formats", "streams",
+    "max_chars"}]``; ``[]`` on any failure.
 
     A success is cached ``MODELS_CACHE_TTL`` seconds; a failure is not cached.
     """

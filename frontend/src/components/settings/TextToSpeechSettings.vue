@@ -27,13 +27,15 @@ import {
     ttsTestState,
     ttsVoiceOptions,
     voiceAfterModelChange,
+    ttsModelFacts,
+    ttsFormatOptions,
+    formatAfterModelChange,
+    ttsStreamingNote,
 } from '../../utils/ttsConfig'
 import FilterableSelect from '../ui/FilterableSelect.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
 const store = useTextToSpeechStore()
-
-const FORMAT_OPTIONS = [{ value: 'mp3', label: 'MP3' }, { value: 'pcm', label: 'PCM' }]
 
 // The test sentence as typed; saved in tts.json on change ('' there means the default one).
 const testText = ref(store.testText || DEFAULT_TEST_TEXT)
@@ -136,10 +138,19 @@ function onNameChange(config, event) {
     if (name !== config.name) commit(config.id, { name })
 }
 
+// TwiCC's known facts of the config's model (formats, streaming, length), or null when the
+// model is not in the loaded list.
+function modelFactsOf(config) {
+    return ttsModelFacts(store.models, config.model)
+}
+
 function onModelSelect(config, model) {
     if (model === config.model) return
     const voice = voiceAfterModelChange(config.voice, voicesOf(model))
-    commit(config.id, { model, voice })
+    // A format the new model refuses would fail every test: switch to one it accepts.
+    const format = formatAfterModelChange(config.response_format, ttsModelFacts(store.models, model))
+    const patch = format === config.response_format ? { model, voice } : { model, voice, response_format: format }
+    commit(config.id, patch)
 }
 
 function onVoiceSelect(config, voice) {
@@ -150,47 +161,8 @@ function onFormatChange(config, format) {
     if (format !== config.response_format) commit(config.id, { response_format: format })
 }
 
-function speedText(config) {
-    return config.speed == null ? '' : String(config.speed)
-}
-
-function revertSpeed(config, field) {
-    const stored = speedText(config)
-    field.value = stored
-    // The host value can already equal `stored` (a bad input reports ''), so it would not
-    // re-render: reset the native input too.
-    if (field.input) field.input.value = stored
-}
-
-function onSpeedChange(config, event) {
-    const field = event.target
-    // Firefox lets letters into a number input, which then reports ''. Read the native input's
-    // validity (the host's mirrored `validity` updates after this event): a bad input is not
-    // an empty one, and must not clear the stored speed.
-    const validity = field.input?.validity ?? field.validity
-    if (validity?.badInput) {
-        revertSpeed(config, field)
-        return
-    }
-    const raw = field.value.trim()
-    if (raw === '') {
-        if (config.speed !== null) commit(config.id, { speed: null })
-        return
-    }
-    const speed = Number(raw)
-    if (!Number.isFinite(speed) || speed <= 0) {
-        // Not a usable speed: back to the stored value.
-        revertSpeed(config, field)
-        return
-    }
-    if (speed !== config.speed) commit(config.id, { speed })
-}
-
-function onInstructionsChange(config, event) {
-    const instructions = event.target.value.trim()
-    event.target.value = instructions
-    if (instructions !== config.instructions) commit(config.id, { instructions })
-}
+// Speed and instructions are not shown for now: a config keeps them (tts.json, speech
+// requests), they are just not editable here.
 
 function onNoteChange(config, event) {
     const note = event.target.value.trim()
@@ -486,41 +458,18 @@ function answerNo(id) {
                         </div>
                     </div>
 
-                    <div class="tts-config-row">
-                        <div class="tts-field">
-                            <span class="setting-group-label">Format</span>
+                    <div class="tts-field">
+                        <span class="setting-group-label">Format</span>
+                        <div class="tts-format-row">
                             <SegmentedControl
                                 label="Format"
                                 :model-value="config.response_format"
-                                :options="FORMAT_OPTIONS"
+                                :options="ttsFormatOptions(modelFactsOf(config))"
                                 @update:model-value="onFormatChange(config, $event)"
                             />
-                        </div>
-                        <div class="tts-field">
-                            <label class="setting-group-label" :for="`tts-${config.id}-speed`">Speed</label>
-                            <wa-input
-                                :id="`tts-${config.id}-speed`"
-                                class="tts-speed-input"
-                                type="number"
-                                step="0.1"
-                                min="0.1"
-                                size="small"
-                                placeholder="Default"
-                                :value.prop="speedText(config)"
-                                @change="onSpeedChange(config, $event)"
-                            ></wa-input>
-                        </div>
-                        <div class="tts-field tts-field-grow">
-                            <label class="setting-group-label" :for="`tts-${config.id}-instructions`">Instructions</label>
-                            <wa-textarea
-                                :id="`tts-${config.id}-instructions`"
-                                size="small"
-                                rows="1"
-                                resize="auto"
-                                placeholder="Optional delivery instructions"
-                                :value.prop="config.instructions"
-                                @change="onInstructionsChange(config, $event)"
-                            ></wa-textarea>
+                            <span v-if="ttsStreamingNote(modelFactsOf(config), config.response_format)" class="setting-group-hint">
+                                {{ ttsStreamingNote(modelFactsOf(config), config.response_format) }}
+                            </span>
                         </div>
                     </div>
 
@@ -723,8 +672,12 @@ function answerNo(id) {
     font-size: var(--wa-font-size-xs);
 }
 
-.tts-speed-input {
-    width: 6rem;
+.tts-format-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    column-gap: var(--wa-space-s);
+    row-gap: var(--wa-space-2xs);
 }
 
 .tts-test-row {

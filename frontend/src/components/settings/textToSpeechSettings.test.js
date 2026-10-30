@@ -37,3 +37,15 @@ test('showTestError keeps the error and opens the card', () => {
         /function showTestError\(id, error\) \{\s*testErrors\.value\[id\] = error\s*openIds\.value\[id\] = true/,
     )
 })
+
+test('the format switch follows the model facts and says whether the audio streams', () => {
+    assert.match(settingsSource, /:options="ttsFormatOptions\(modelFactsOf\(config\)\)"/)
+    assert.match(settingsSource, /ttsStreamingNote\(modelFactsOf\(config\), config\.response_format\)/)
+    // A model change switches away from a format the new model refuses.
+    assert.match(settingsSource, /formatAfterModelChange\(config\.response_format, ttsModelFacts\(store\.models, model\)\)/)
+})
+
+test('speed and instructions are not editable in the settings for now', () => {
+    assert.doesNotMatch(settingsSource, /tts-\$\{config\.id\}-speed|tts-\$\{config\.id\}-instructions/)
+    assert.doesNotMatch(settingsSource, />Speed<|>Instructions</)
+})

@@ -21,8 +21,9 @@ import { useGlideInk } from '../../composables/useGlideInk'
 
 const props = defineProps({
     modelValue: { type: String, required: true },
-    // [{ value: String, label: String, icon?: String, title?: String }]. `title`: the full name of an option whose
-    // label is shortened, its tooltip and its accessible name (the wa-radio host carries role="radio").
+    // [{ value: String, label: String, icon?: String, title?: String, disabled?: Boolean }]. `title`: the full name
+    // of an option whose label is shortened, its tooltip and its accessible name (the wa-radio host carries
+    // role="radio"). `disabled`: shown, not selectable.
     options: { type: Array, required: true },
     label: { type: String, required: true }, // accessible name of the radiogroup (not shown)
     size: { type: String, default: 'small' },
@@ -61,7 +62,7 @@ useGlideInk({
             :value.prop="modelValue"
             @change="onChange"
         >
-            <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value" :title="option.title ?? option.label" :aria-label="option.title ?? null">
+            <wa-radio v-for="option in options" :key="option.value" appearance="button" :value="option.value" :disabled="option.disabled || null" :title="option.title ?? option.label" :aria-label="option.title ?? null">
                 <slot :name="`option-start-${option.value}`" :option="option"></slot>
                 <wa-icon v-if="option.icon" :name="option.icon" class="segmented-icon"></wa-icon>
                 <span class="segmented-label">{{ option.label }}</span>
