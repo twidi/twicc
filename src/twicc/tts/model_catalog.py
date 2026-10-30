@@ -68,14 +68,25 @@ KNOWN_SPEECH_MODELS: dict[str, SpeechModelFacts] = {
     "x-ai/grok-voice-tts-1.0": SpeechModelFacts(_BOTH, _BOTH, 15000),
 }
 
+# The known models whose MP3 parts do not join into one playable file: their MP3 is sent whole,
+# in one request (their PCM is still split). Every model checked on 2026-10-30 joined cleanly.
+WHOLE_MP3_MODELS: frozenset[str] = frozenset()
+
 
 def speech_model_facts(model_id: str) -> dict:
     """The known facts of a model, for the browser: ``formats`` and ``streams`` are lists, or
-    None when the model is not in the table (nothing is known); ``max_chars`` is always set."""
+    None when the model is not in the table (nothing is known); ``max_chars`` is always set;
+    ``whole_formats`` lists the formats sent whole, never split (``[]`` for an unknown model)."""
+    whole_formats = ["mp3"] if model_id in WHOLE_MP3_MODELS else []
     facts = KNOWN_SPEECH_MODELS.get(model_id)
     if facts is None:
-        return {"formats": None, "streams": None, "max_chars": DEFAULT_MAX_CHARS}
-    return {"formats": list(facts.formats), "streams": list(facts.streams), "max_chars": facts.max_chars}
+        return {"formats": None, "streams": None, "max_chars": DEFAULT_MAX_CHARS, "whole_formats": whole_formats}
+    return {
+        "formats": list(facts.formats),
+        "streams": list(facts.streams),
+        "max_chars": facts.max_chars,
+        "whole_formats": whole_formats,
+    }
 
 
 def max_chars_of(model_id: str) -> int:

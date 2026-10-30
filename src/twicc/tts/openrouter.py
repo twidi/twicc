@@ -229,7 +229,7 @@ def _pricing(entry: dict) -> dict:
 
 def _copy_models(models: list[dict]) -> list[dict]:
     """A copy a caller can mutate without reaching the cache, with TwiCC's known facts of each
-    model (``formats``, ``streams``, ``max_chars``: model_catalog.py)."""
+    model (``formats``, ``streams``, ``max_chars``, ``whole_formats``: model_catalog.py)."""
     return [
         {
             **model,
@@ -243,7 +243,7 @@ def _copy_models(models: list[dict]) -> list[dict]:
 
 async def fetch_speech_models() -> list[dict]:
     """The speech models as ``[{"id", "name", "voices", "pricing", "formats", "streams",
-    "max_chars"}]``; ``[]`` on any failure.
+    "max_chars", "whole_formats"}]``; ``[]`` on any failure.
 
     A success is cached ``MODELS_CACHE_TTL`` seconds; a failure is not cached.
     """
