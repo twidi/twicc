@@ -1,198 +1,220 @@
 <script setup>
-// FilterableSelect.vue - Single-choice picker with type-to-filter, an
-// alternative to <wa-select> (which cannot filter). The input shows the
-// selected label while closed and becomes the filter field while open; the
-// option list is rendered inline below it, in the order given by `options`.
-import { ref, computed, watch, nextTick } from 'vue'
+// FilterableSelect.vue - Single-choice picker with type-to-filter, an alternative to
+// <wa-select> (which cannot filter). A <wa-dropdown> does the menu work: it opens over the
+// page (top layer, never clipped), sizes and flips itself, closes on Escape, a click outside
+// or a choice. A filter field heads the menu; the options follow in the order of `options`.
+import { ref, computed, nextTick } from 'vue'
+import { filterSelectOptions } from '../../utils/filterableSelect.js'
 
 const props = defineProps({
     modelValue: { type: String, default: '' },
-    // [{ value, label, tag?, disabled? }] — displayed in this order.
+    // [{ value, label, description?, keywords?, tag?, disabled? }] — displayed in this order.
+    // `description` is a quiet second line; `keywords` is extra text the filter matches.
     options: { type: Array, default: () => [] },
     placeholder: { type: String, default: '' },
     size: { type: String, default: 'medium' },
+    // The trigger's id, so a <label for> outside points at the field.
+    inputId: { type: String, default: null },
+    // The field's accessible name, read before the value (the caller shows its own label).
+    label: { type: String, default: '' },
+    // What the open menu says when it has no option to show.
+    emptyText: { type: String, default: 'No match' },
 })
 const emit = defineEmits(['update:modelValue'])
 
-const inputRef = ref(null)
-const listRef = ref(null)
-const isOpen = ref(false)
+const dropdownRef = ref(null)
+const triggerRef = ref(null)
+const filterRef = ref(null)
 const query = ref('')
-const activeIndex = ref(-1)
+const menuWidth = ref(null)
 
 const selectedOption = computed(() => props.options.find(o => o.value === props.modelValue) || null)
+const filtered = computed(() => filterSelectOptions(props.options, query.value))
 
-const filtered = computed(() => {
-    const q = query.value.trim().toLowerCase()
-    if (!q) return props.options
-    return props.options.filter(o => o.label.toLowerCase().includes(q))
-})
-
-// While open the input is the filter field; otherwise it shows the selection.
-const inputValue = computed(() => (isOpen.value ? query.value : selectedOption.value?.label || ''))
-
-function firstEnabledIndex() {
-    return filtered.value.findIndex(o => !o.disabled)
+// The dropdown's own events stay here: a surrounding dialog or card listens to wa-show /
+// wa-hide for itself (Web Awesome events bubble), and the choice leaves as update:modelValue.
+function onShow(event) {
+    if (event.target !== dropdownRef.value) return
+    // The menu at least as wide as the field.
+    menuWidth.value = triggerRef.value ? `${triggerRef.value.getBoundingClientRect().width}px` : null
 }
 
-function open() {
-    if (isOpen.value) return
-    isOpen.value = true
-    query.value = ''
-    activeIndex.value = Math.max(
-        filtered.value.findIndex(o => o.value === props.modelValue && !o.disabled),
-        firstEnabledIndex(),
-    )
-    nextTick(scrollActiveIntoView)
+function onAfterShow(event) {
+    if (event.target !== dropdownRef.value) return
+    // The dropdown focuses its first option on show: the filter takes the focus instead.
+    filterRef.value?.focus()
 }
 
-function close() {
-    isOpen.value = false
+function onAfterHide(event) {
+    if (event.target !== dropdownRef.value) return
     query.value = ''
 }
 
-function choose(option) {
-    if (!option || option.disabled) return
-    emit('update:modelValue', option.value)
-    close()
+function onSelect(event) {
+    const value = event.detail?.item?.value
+    if (value != null && value !== props.modelValue) emit('update:modelValue', value)
 }
 
-// The active row follows the filter: reset to the first enabled match.
-watch(query, () => {
-    activeIndex.value = firstEnabledIndex()
-    nextTick(scrollActiveIntoView)
-})
-
-function scrollActiveIntoView() {
-    listRef.value?.querySelector('.fs-option-active')?.scrollIntoView({ block: 'nearest' })
-}
-
-function move(step) {
-    const list = filtered.value
-    if (!list.some(o => !o.disabled)) return
-    let i = activeIndex.value
-    do {
-        i = (i + step + list.length) % list.length
-    } while (list[i].disabled)
-    activeIndex.value = i
-    nextTick(scrollActiveIntoView)
-}
-
-function onInput(event) {
-    if (event.target !== inputRef.value) return
-    if (!isOpen.value) isOpen.value = true
+function onFilterInput(event) {
     query.value = event.target.value
 }
 
-function onKeydown(event) {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+function enabledItems() {
+    return [...(dropdownRef.value?.querySelectorAll('wa-dropdown-item:not([disabled])') ?? [])]
+}
+
+// The dropdown listens to keys on the document for its own navigation and type-to-select:
+// keys typed in the filter stay in the filter. Escape and Tab go through (the dropdown closes).
+function onFilterKeydown(event) {
+    if (event.key === 'Escape' || event.key === 'Tab') return
+    event.stopPropagation()
+    if (event.key === 'ArrowDown') {
+        // Into the options: the dropdown's arrow keys take over from there.
         event.preventDefault()
-        if (!isOpen.value) open()
-        else move(event.key === 'ArrowDown' ? 1 : -1)
-    } else if (event.key === 'Enter' && isOpen.value) {
-        // Never submit the surrounding form while the list is open.
+        const [first] = enabledItems()
+        if (!first) return
+        enabledItems().forEach(item => { item.active = item === first })
+        first.focus()
+    } else if (event.key === 'Enter') {
+        // Never submit a surrounding form; pick the first match, like a combobox.
         event.preventDefault()
-        choose(filtered.value[activeIndex.value])
-    } else if (event.key === 'Escape' && isOpen.value) {
-        // Close the list only — not the surrounding dialog.
-        event.preventDefault()
-        event.stopPropagation()
-        close()
+        const option = filtered.value.find(o => !o.disabled)
+        if (!option) return
+        if (option.value !== props.modelValue) emit('update:modelValue', option.value)
+        dropdownRef.value.open = false
+        nextTick(() => triggerRef.value?.focus())
     }
 }
 </script>
 
 <template>
-    <div class="filterable-select">
-        <wa-input
-            ref="inputRef"
+    <wa-dropdown
+        ref="dropdownRef"
+        class="filterable-select"
+        placement="bottom-start"
+        :style="menuWidth ? { '--fs-menu-width': menuWidth } : null"
+        @wa-show.stop="onShow"
+        @wa-after-show.stop="onAfterShow"
+        @wa-hide.stop
+        @wa-after-hide.stop="onAfterHide"
+        @wa-select.stop="onSelect"
+    >
+        <wa-button
+            ref="triggerRef"
+            slot="trigger"
+            :id="inputId"
+            class="fs-trigger"
             :size="size"
-            :placeholder="selectedOption ? selectedOption.label : placeholder"
-            :value.prop="inputValue"
-            autocomplete="off"
-            @input="onInput"
-            @focus="open"
-            @click="open"
-            @blur="close"
-            @keydown="onKeydown"
+            appearance="outlined"
+            with-caret
         >
-            <wa-icon slot="end" :name="isOpen ? 'chevron-up' : 'chevron-down'" auto-width></wa-icon>
-        </wa-input>
-        <div v-if="isOpen" ref="listRef" class="fs-list" role="listbox">
-            <button
-                v-for="(option, index) in filtered"
-                :key="option.value"
-                type="button"
-                class="fs-option"
-                :class="{
-                    'fs-option-active': index === activeIndex,
-                    'fs-option-selected': option.value === modelValue,
-                }"
-                :disabled="option.disabled"
-                role="option"
-                :aria-selected="option.value === modelValue"
-                tabindex="-1"
-                @mousedown.prevent
-                @click="choose(option)"
-                @mouseenter="!option.disabled && (activeIndex = index)"
+            <span v-if="label" class="fs-visually-hidden">{{ label }}: </span>
+            <span class="fs-trigger-label" :class="{ 'fs-placeholder': !selectedOption }">
+                {{ selectedOption ? selectedOption.label : placeholder }}
+            </span>
+        </wa-button>
+
+        <div class="fs-filter">
+            <wa-input
+                ref="filterRef"
+                size="small"
+                placeholder="Filter..."
+                autocomplete="off"
+                :label="label ? `Filter ${label.toLowerCase()}` : 'Filter'"
+                class="fs-filter-input"
+                :value.prop="query"
+                @input="onFilterInput"
+                @keydown="onFilterKeydown"
             >
-                <span class="fs-option-label">{{ option.label }}</span>
-                <span v-if="option.tag" class="fs-option-tag">{{ option.tag }}</span>
-            </button>
-            <div v-if="filtered.length === 0" class="fs-empty">No match</div>
+                <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+            </wa-input>
         </div>
-    </div>
+
+        <wa-dropdown-item
+            v-for="option in filtered"
+            :key="option.value"
+            :value="option.value"
+            :disabled="option.disabled"
+        >
+            <wa-icon
+                slot="icon"
+                name="check"
+                :class="{ 'fs-check-hidden': option.value !== modelValue }"
+            ></wa-icon>
+            <span class="fs-option-label">{{ option.label }}</span>
+            <span v-if="option.description" class="fs-option-description">{{ option.description }}</span>
+            <span v-if="option.tag" slot="details" class="fs-option-tag">{{ option.tag }}</span>
+        </wa-dropdown-item>
+
+        <div v-if="filtered.length === 0" class="fs-empty">{{ emptyText }}</div>
+    </wa-dropdown>
 </template>
 
 <style scoped>
 .filterable-select {
-    display: flex;
-    flex-direction: column;
-    gap: var(--wa-space-3xs);
+    display: block;
 }
 
-.fs-list {
-    display: flex;
-    flex-direction: column;
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid var(--wa-color-surface-border);
-    border-radius: var(--wa-border-radius-m);
+.filterable-select::part(menu) {
+    min-width: var(--fs-menu-width, auto);
+    max-width: min(32rem, calc(100vw - 2rem));
 }
 
-.fs-option {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
-    padding: var(--wa-space-2xs) var(--wa-space-xs);
-    background: none;
-    border: none;
-    height: auto;
-    cursor: pointer;
-    font-size: var(--wa-font-size-s);
-    color: var(--wa-color-text-base);
-    text-align: left;
+.fs-trigger {
+    width: 100%;
 }
 
-.fs-option-active:not(:disabled) {
-    background: var(--wa-color-surface-alt);
+.fs-trigger::part(base) {
+    justify-content: space-between;
 }
 
-.fs-option-selected {
-    font-weight: var(--wa-font-weight-bold);
-}
-
-.fs-option:disabled {
-    cursor: not-allowed;
-    color: var(--wa-color-text-quiet);
-}
-
-.fs-option-label {
+.fs-trigger::part(label) {
     flex: 1;
     min-width: 0;
+    text-align: start;
+}
+
+.fs-trigger-label {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.fs-placeholder {
+    color: var(--wa-color-text-quiet);
+}
+
+.fs-filter {
+    padding: var(--wa-space-2xs);
+}
+
+/* The filter's accessible name stays off screen. */
+.fs-filter-input::part(form-control-label),
+.fs-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.fs-check-hidden {
+    visibility: hidden;
+}
+
+.fs-option-label,
+.fs-option-description {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fs-option-description {
+    font-size: var(--wa-font-size-xs);
+    color: var(--wa-color-text-quiet);
 }
 
 .fs-option-tag {
@@ -201,7 +223,7 @@ function onKeydown(event) {
 }
 
 .fs-empty {
-    padding: var(--wa-space-2xs) var(--wa-space-xs);
+    padding: var(--wa-space-2xs) var(--wa-space-s);
     font-size: var(--wa-font-size-s);
     color: var(--wa-color-text-quiet);
 }
