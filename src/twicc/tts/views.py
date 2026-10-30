@@ -160,8 +160,9 @@ async def tts_speech(request):
     Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
     A text without speech is a 400, without upstream call. A text longer than its
-    first part is sent in parts, into one audio; its reads are paced, unless
-    ``buffered: true`` (the browser buffers the whole audio before it plays).
+    first part is sent in parts, into one audio; its reads are paced when its byte
+    rate is known, unless ``buffered: true`` (the browser buffers the whole audio
+    before it plays).
 
     A settings test sends its ``config_id``: once the audio is complete, the run
     (characters, times, audio length, parts, then the cost once known) becomes that

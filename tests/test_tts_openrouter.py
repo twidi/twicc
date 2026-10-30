@@ -599,6 +599,21 @@ def test_a_later_part_error_fails_the_running_stream(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_a_later_part_that_is_not_audio_fails_the_running_stream(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(
+            monkeypatch,
+            [_audio(b"one"), httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"}), _audio(b"three")],
+        )
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, PARTS))
+        assert (stream.state, stream.error, stream.upstream_status) == ("failed", "OpenRouter returned HTTP 200", 200)
+        assert bytes(stream.data) == b"one"
+        assert inputs == PARTS[:2]
+
+    asyncio.run(scenario())
+
+
 def test_a_later_part_network_error_fails_with_its_message(monkeypatch):
     async def scenario():
         inputs = _parts_transport(
@@ -669,9 +684,18 @@ def test_a_xing_tagged_constant_bitrate_first_part_keeps_pacing(monkeypatch):
 
 def test_a_variable_bitrate_first_part_disables_pacing(monkeypatch):
     # Frames with different bitrates: the rate is unknown, the speech is neither paced nor held.
+    # No margin: a paced stream then delivers less than it received (the constant-rate control).
+    monkeypatch.setattr(streams, "PACE_MARGIN", 0.0)
     first = _frame() + _frame(bitrate_index=5) + _frame()
 
     async def scenario():
+        _parts_transport(monkeypatch, [_audio(_frame() * 3), _audio(_frame())])
+        constant = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", constant, PARTS[:2], paced=True))
+        assert constant.state == "complete"
+        assert constant.byte_rate() == 16000.0
+        assert constant.deliverable() < len(constant.data)
+
         _parts_transport(monkeypatch, [_audio(first), _audio(_frame())])
         stream = AudioStream(LABEL)
         await _within(pump_speech(_request(), "k", stream, PARTS[:2], paced=True))
@@ -682,7 +706,8 @@ def test_a_variable_bitrate_first_part_disables_pacing(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_pump_trims_split_pcm_parts_to_whole_frames(monkeypatch):
+def test_pump_trims_split_pcm_parts_to_whole_frames(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
     pcm_type = "audio/pcm;rate=24000;channels=2"  # 4-byte frames
 
     def chunked(*chunks: bytes) -> httpx.Response:
@@ -697,6 +722,8 @@ def test_pump_trims_split_pcm_parts_to_whole_frames(monkeypatch):
         await _within(pump_speech(_request("pcm"), "k", split, PARTS[:2]))
         assert split.state == "complete"
         assert bytes(split.data) == b"abcd" + b"12345678"
+        dropped = [r.getMessage() for r in caplog.records if "partial PCM frame" in r.getMessage()]
+        assert dropped == ["TTS part 1: 3 bytes of a partial PCM frame dropped"]  # none for part 2
 
         _parts_transport(monkeypatch, [chunked(b"abc", b"defg")])
         single = AudioStream(LABEL)

@@ -73,6 +73,8 @@ def mp3_frame(data: bytes | bytearray, offset: int = 0) -> Mp3Frame | None:
     padding = (b2 >> 1) & 0x01
     mono = (b3 >> 6) == _MP3_MONO
     length = (144 if mpeg1 else 72) * bitrate // sample_rate + padding
+    # A CRC-protected frame (protection bit 0) puts its side info 2 bytes later: not handled.
+    # No checked model sends a CRC (plan, Check decisions).
     if mpeg1:
         side_info_end = 21 if mono else 36
     else:
@@ -95,8 +97,6 @@ class Mp3HeadFilter:
     and its first frame (dropped when it is an info frame, else passed). It holds back only the
     head of the part, then passes every byte through. Bytes that do not start with a frame
     header where one must start pass through unchanged.
-
-    ``info_frame`` is the kind of the dropped info frame, else None.
     """
 
     _ID3 = "id3"  # deciding whether the part starts with an ID3 tag
@@ -109,7 +109,6 @@ class Mp3HeadFilter:
         self._state = self._ID3
         self._held = bytearray()
         self._remaining = 0
-        self.info_frame: bytes | None = None
 
     def feed(self, chunk: bytes) -> bytes:
         """The bytes to append now."""
@@ -168,9 +167,7 @@ class Mp3HeadFilter:
             return b""
         if len(held) < header.length:
             return b""
-        kind = info_frame_kind(held[: header.length], header)
-        if kind is not None:
-            self.info_frame = kind
+        if info_frame_kind(held[: header.length], header) is not None:
             del held[: header.length]
         self._pass_held(out)
         return b""

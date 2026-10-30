@@ -109,13 +109,17 @@ async function startPlaying(text = 'hello') {
     return pending
 }
 
-/** Run `fn` with the `navigator` of an iPhone (Node's own `navigator` is a getter-only global). */
-async function onIphone(fn) {
+const IPHONE = { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 }
+const DESKTOP_SAFARI = {
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+    platform: 'MacIntel',
+    maxTouchPoints: 0,
+}
+
+/** Run `fn` with `nav` as the `navigator` (Node's own `navigator` is a getter-only global). */
+async function onNavigator(nav, fn) {
     const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 },
-        configurable: true,
-    })
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true })
     try {
         return await fn()
     } finally {
@@ -325,7 +329,7 @@ test('a pcm type without a rate and channels is refused', async () => {
 })
 
 test('a buffered platform plays pcm as a wav blob', async () => {
-    await onIphone(async () => {
+    await onNavigator(IPHONE, async () => {
         const fetched = []
         store._openSpeech = async () => opened('a1', PCM_TYPE)
         store._fetchAudio = async (url, signal) => {
@@ -350,7 +354,7 @@ test('a buffered platform plays pcm as a wav blob', async () => {
 })
 
 test('a failed buffered download counts as a network error before the start', async () => {
-    await onIphone(async () => {
+    await onNavigator(IPHONE, async () => {
         store._openSpeech = async () => opened('a1', PCM_TYPE)
         store._fetchAudio = async () => new Response('gone', { status: 404 })
         ending = { state: 'unknown', error: null }
@@ -361,11 +365,11 @@ test('a failed buffered download counts as a network error before the start', as
 })
 
 test('a buffered platform asks for buffered sending', async () => {
-    await onIphone(async () => {
+    await onNavigator(IPHONE, async () => {
         let sent
         store._openSpeech = async (body) => {
             sent = body
-            return opened('a1', PCM_TYPE)
+            return opened('a1')
         }
         store._fetchAudio = async () => new Response(new Uint8Array([1, 2]), { status: 200 })
         const pending = store.play('hello')
@@ -376,8 +380,30 @@ test('a buffered platform asks for buffered sending', async () => {
     })
 })
 
+test('desktop safari asks for buffered sending for mp3 only', async () => {
+    await onNavigator(DESKTOP_SAFARI, async () => {
+        const pcmFields = { ...FIELDS, response_format: 'pcm' }
+        for (const [fields, expected] of [
+            [FIELDS, { text: 'hello', ...FIELDS, cache: true, buffered: true }],
+            [pcmFields, { text: 'hello', ...pcmFields, cache: true }],
+        ]) {
+            store.applyConfig(payload({ configs: [makeConfig('c1', { ...fields, validated: { ...fields } })] }))
+            let sent
+            store._openSpeech = (body, signal) => {
+                sent = body
+                return abortableRequest('open')(body, signal)
+            }
+            const pending = store.play('hello')
+            await until(() => sent)
+            assert.deepEqual(sent, expected)
+            store.stop()
+            assert.deepEqual(await pending, ABORTED)
+        }
+    })
+})
+
 test('stop aborts the buffered fetch', async () => {
-    await onIphone(async () => {
+    await onNavigator(IPHONE, async () => {
         let signal
         store._openSpeech = async () => opened('a1', PCM_TYPE)
         store._fetchAudio = (_url, fetchSignal) => {

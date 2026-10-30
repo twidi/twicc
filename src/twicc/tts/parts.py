@@ -57,6 +57,8 @@ def split_text(text: str, limit: int, first: int) -> list[str]:
     """The parts of ``text``: part *k* (from 0) holds at most ``min(limit, first * PART_GROWTH ** k)``
     characters. A text within ``first`` characters is returned unchanged, as one part. A longer
     one gives stripped parts; a part without speech is dropped."""
+    if limit < 1 or first < 1:
+        raise ValueError("limit and first must be positive")
     if len(text) <= first:
         return [text]
     parts: list[str] = []

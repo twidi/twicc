@@ -47,6 +47,12 @@ def test_a_text_within_the_first_part_is_one_raw_part():
     assert split_text("  Hello.  ", 2000, 2000) == ["  Hello.  "]
 
 
+def test_split_text_needs_positive_sizes():
+    for limit, first in ((0, 250), (2000, 0), (-1, 250), (2000, -1)):
+        with pytest.raises(ValueError):
+            split_text("Hello there.", limit, first)
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [

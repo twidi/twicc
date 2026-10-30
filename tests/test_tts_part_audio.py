@@ -88,17 +88,6 @@ def test_not_mp3_passes_through():
     assert _filtered(_id3(30) + data, drop_id3=False)[0] == _id3(30) + data
 
 
-def test_the_filter_reports_the_info_frame_kind():
-    for tag, offset in ((b"Xing", 21), (b"Info", 21), (b"VBRI", 36)):
-        head_filter = Mp3HeadFilter(drop_id3=True)
-        assert head_filter.info_frame is None
-        # Known as soon as feed returns the bytes that follow the dropped frame.
-        assert head_filter.feed(_frame(tag, tag_offset=offset) + b"\xff") == b"\xff"
-        assert head_filter.info_frame == tag
-    assert _filtered(_frame() + _frame(), drop_id3=True)[1].info_frame is None
-    assert _filtered(b"abcdefgh" * 100, drop_id3=True)[1].info_frame is None
-
-
 def test_pcm_trimmer_keeps_whole_frames_and_drops_the_tail():
     trimmer = PcmFrameTrimmer(4)
     assert trimmer.feed(b"abc") == b""

@@ -819,6 +819,18 @@ def test_parts_sum_their_generation_time():
     asyncio.run(scenario())
 
 
+def test_finish_counts_a_part_still_open():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.begin_part()
+        await asyncio.sleep(0.05)
+        stream.set_headers(PCM_TYPE, None)
+        stream.finish()  # no end_part: the open part counts up to now
+        assert stream.generation_ms >= 50
+
+    asyncio.run(scenario())
+
+
 def test_every_part_brings_its_generation_id():
     async def scenario():
         stream = AudioStream(LABEL)
@@ -910,7 +922,7 @@ def test_a_paced_reader_wakes_as_the_position_advances(fast_pacing):
     async def scenario():
         stream = _paced_stream(PCM_TYPE)
         stream.append(b"\x00" * 2000)
-        offset = stream.deliverable()
+        offset = stream.deliverable() + 100  # 50 ms ahead at 2,000 B/s: not reached while settling
         reader = asyncio.create_task(stream.wait_for_more(offset))
         await _settle()
         assert not reader.done()  # no new append: only the position wakes it
@@ -926,7 +938,7 @@ def test_a_finished_paced_stream_still_paces_then_ends(fast_pacing):
         stream.append(b"\x00" * 2000)
         stream.end_part()
         stream.finish()
-        offset = stream.deliverable()
+        offset = stream.deliverable() + 100  # 50 ms ahead at 2,000 B/s: not reached while settling
         assert offset < len(stream.data)
         reader = asyncio.create_task(stream.wait_for_more(offset))
         await _settle()
@@ -972,6 +984,8 @@ def test_an_unknown_byte_rate_disables_pacing_and_lookahead(fast_pacing):
     async def scenario():
         stream = _paced_stream("audio/mpeg")
         stream.append(b"xxxx" * 1000)
+        stream.end_part()
+        assert stream.byte_rate() is None
         assert stream.deliverable() == len(stream.data)
         await _returns_at_once(stream.wait_for_lookahead())
         await _returns_at_once(stream.wait_for_more(len(stream.data) - 1))
@@ -1003,16 +1017,9 @@ def test_an_unreadable_byte_rate_is_given_up_after_the_scan_size(monkeypatch, fa
     assert calls == [RATE_SCAN_BYTES]
 
 
-def test_a_variable_rate_stream_is_not_paced(fast_pacing):
+def test_a_constant_rate_stream_is_paced(fast_pacing):
     async def scenario():
         frames = _frame() * 160  # past RATE_SCAN_BYTES: the rate is decided on the bytes alone
-
-        variable = _paced_stream("audio/mpeg")
-        variable.mark_variable_rate()
-        variable.append(frames)
-        assert variable.byte_rate() is None
-        assert variable.deliverable() == len(variable.data)
-
         constant = _paced_stream("audio/mpeg")
         constant.append(frames)
         assert constant.byte_rate() == 16000.0

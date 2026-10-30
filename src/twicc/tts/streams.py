@@ -154,6 +154,9 @@ class AudioStream:
 
     def finish(self) -> None:
         self._expect("finish", "running")
+        if self._part_started is not None:  # a part still open counts up to now
+            self._parts_seconds += time.monotonic() - self._part_started
+            self._part_started = None
         # A pump that marks no part is one part, from the stream creation on.
         if self.parts_sent:
             self.generation_ms = round(self._parts_seconds * 1000)
@@ -164,11 +167,6 @@ class AudioStream:
     def pace(self) -> None:
         """Deliver the audio at the playback pace, and hold the next parts by the lookahead."""
         self.paced = True
-
-    def mark_variable_rate(self) -> None:
-        """The audio has a variable bitrate: the byte rate is unknown for good."""
-        self._rate, self._rate_decided = None, True
-        self._wake()  # a paced reader may now read everything received
 
     def fail(self, error: SpeechError) -> None:
         self._expect("fail", *_LIVE_STATES)

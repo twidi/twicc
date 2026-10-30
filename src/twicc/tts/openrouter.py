@@ -342,9 +342,9 @@ _cost_tasks: set[asyncio.Task] = set()
 
 
 def schedule_cost_log(generation_ids: list[str], api_key: str, on_cost=None) -> None:
-    """Log the real cost of each of *generation_ids* (the parts of one speech) in the
-    background, in parallel, one line each (fire-and-forget).
+    """Log the real cost of every part of one speech, in the background.
 
+    One lookup per id of *generation_ids*, in parallel, one line each (fire-and-forget).
     *on_cost*, an async callable, then receives the total cost, once, when every
     lookup found a cost.
     """
@@ -422,7 +422,10 @@ def _mp3_bitrate(content: bytes | bytearray, scan_bytes: int | None = None) -> i
 def mp3_frame_bitrates(head: bytes | bytearray) -> list[int]:
     """The bitrates (bit/s) of the consecutive MPEG Layer III frames from the first one, past an
     ID3v2 tag, within the first ``RATE_SCAN_BYTES`` bytes of ``head``. The walk stops at the end
-    of those bytes, at a truncated frame, or at bytes that are not a frame header."""
+    of those bytes, at a truncated frame, or at bytes that are not a frame header.
+
+    An info frame (Xing/Info/VBRI) is a frame too and is counted: call it on filtered audio (the
+    stream holds the parts without their info frames)."""
     size = min(len(head), RATE_SCAN_BYTES)
     position = id3_tag_size(head) or 0
     bitrates = []
