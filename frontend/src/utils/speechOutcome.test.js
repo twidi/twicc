@@ -78,12 +78,16 @@ test('error + no answer is unreachable', () => {
 })
 
 test('playbackMode follows the buffered table', () => {
-    assert.deepEqual(BUFFERED_FORMATS, { ios: ['pcm'] })
+    assert.deepEqual(BUFFERED_FORMATS, { ios: ['pcm', 'mp3'], safari: ['mp3'] })
     const pcm = 'audio/pcm;rate=24000;channels=1'
     assert.equal(playbackMode(pcm, 'ios'), 'buffered')
+    assert.equal(playbackMode(pcm, 'safari'), 'pcm-stream')
     assert.equal(playbackMode(pcm, 'android'), 'pcm-stream')
     assert.equal(playbackMode(pcm, 'desktop'), 'pcm-stream')
-    assert.equal(playbackMode('audio/mpeg', 'ios'), 'media')
+    // iOS/iPadOS and Safari are untested, and Safari needs byte ranges for media.
+    assert.equal(playbackMode('audio/mpeg', 'ios'), 'buffered')
+    assert.equal(playbackMode('audio/mpeg', 'safari'), 'buffered')
+    assert.equal(playbackMode('audio/mpeg', 'android'), 'media')
     assert.equal(playbackMode('audio/mpeg', 'desktop'), 'media')
     assert.equal(playbackMode('audio/wav', 'android'), 'media')
 })
@@ -102,4 +106,25 @@ test('currentPlatform detects iOS, iPadOS and Android', () => {
     assert.equal(currentPlatform(nav('Mozilla/5.0 (Linux; Android 15; Pixel 9)', 'Linux armv8l', 5)), 'android')
     assert.equal(currentPlatform(nav('Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0', 'Linux x86_64')), 'desktop')
     assert.equal(currentPlatform(undefined), 'desktop')
+})
+
+test('currentPlatform detects desktop Safari, not the other macOS browsers', () => {
+    const nav = (userAgent, maxTouchPoints = 0) => ({ userAgent, platform: 'MacIntel', maxTouchPoints })
+    const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'
+    assert.equal(currentPlatform(nav(`${mac} Version/19.0 Safari/605.1.15`)), 'safari')
+    // iPadOS shows the same user agent: the ios rule wins first.
+    assert.equal(currentPlatform(nav(`${mac} Version/19.0 Safari/605.1.15`, 5)), 'ios')
+    // Their user agents also contain "Safari/".
+    const blink = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)'
+    assert.equal(currentPlatform(nav(`${blink} Chrome/156.0.0.0 Safari/537.36`)), 'desktop')
+    assert.equal(currentPlatform(nav(`${blink} Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0`)), 'desktop')
+    assert.equal(currentPlatform(nav(`${blink} Chrome/156.0.0.0 Safari/537.36 OPR/120.0.0.0`)), 'desktop')
+    assert.equal(currentPlatform(nav(`${blink} Chromium/156.0.0.0 Safari/537.36`)), 'desktop')
+    assert.equal(currentPlatform(nav('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:160.0) Gecko/20100101 Firefox/160.0')), 'desktop')
+    // A user agent with "Version/" and "Safari/" plus another browser token is that browser.
+    for (const token of ['Chrome', 'Chromium', 'CriOS', 'FxiOS', 'Edg', 'OPR', 'Firefox']) {
+        assert.equal(currentPlatform(nav(`${mac} Version/19.0 ${token}/1.0 Safari/605.1.15`)), 'desktop', token)
+    }
+    // Without "Version/": not Safari.
+    assert.equal(currentPlatform(nav(`${mac} Safari/605.1.15`)), 'desktop')
 })

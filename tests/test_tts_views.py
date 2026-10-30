@@ -27,6 +27,7 @@ SPEECH_PATH = "/api/tts/speech/"
 MODELS_PATH = "/api/tts/models/"
 STREAMS_LOGGER_NAME = "twicc.tts.streams"
 GONE = {"error": "The audio is no longer available"}
+CUT = {"error": "The audio stopped before the end"}
 
 VALID_PAYLOAD = {
     "text": "Hello there",
@@ -107,6 +108,12 @@ def _reset_streams_and_cache():
     yield
     streams._reset_for_tests()
     speech_cache.clear()
+
+
+@pytest.fixture
+def partial_ranges(monkeypatch):
+    """Answer a ``Range`` read with a 206: the path kept selectable besides the shipped "full"."""
+    monkeypatch.setattr(views, "RANGE_ANSWER", "partial")
 
 
 @pytest.fixture
@@ -486,7 +493,7 @@ def test_read_streams_chunks_as_they_arrive(client, upstream):
         assert response.status_code == 200
         assert response["Content-Type"] == "audio/mpeg"
         assert response["Cache-Control"] == "no-store"
-        assert response["Accept-Ranges"] == "bytes"
+        assert not response.has_header("Accept-Ranges")
         assert not response.has_header("Content-Length")
         assert get_stream(audio_id).claimed
         chunks = aiter(response.streaming_content)
@@ -520,7 +527,7 @@ def test_read_after_complete_has_a_content_length(client, upstream):
     asyncio.run(scenario())
 
 
-def test_range_read_serves_received_bytes_from_the_offset(client, upstream):
+def test_range_read_serves_received_bytes_from_the_offset(client, upstream, partial_ranges):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"0123456789")
@@ -561,7 +568,7 @@ def test_range_read_serves_received_bytes_from_the_offset(client, upstream):
     asyncio.run(scenario())
 
 
-def test_range_beyond_a_complete_audio_is_416(client, upstream):
+def test_range_beyond_a_complete_audio_is_416(client, upstream, partial_ranges):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"0123456789")
@@ -575,9 +582,12 @@ def test_range_beyond_a_complete_audio_is_416(client, upstream):
     asyncio.run(scenario())
 
 
-def test_range_read_is_a_plain_read_with_a_full_range_answer(client, upstream, monkeypatch):
-    monkeypatch.setattr(views, "RANGE_ANSWER", "full")
+def test_range_answer_is_full():
+    # The spike's decision (plan, Task 1): the tests below run with this real value.
+    assert views.RANGE_ANSWER == "full"
 
+
+def test_range_read_is_a_plain_read(client, upstream):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"0123456789")
@@ -590,6 +600,33 @@ def test_range_read_is_a_plain_read_with_a_full_range_answer(client, upstream, m
         assert not response.has_header("Content-Range")
         assert response["Content-Length"] == "10"
         assert await _body(response) == b"0123456789"
+
+    asyncio.run(scenario())
+
+
+def test_range_read_of_a_running_stream_streams_from_the_start(client, upstream):
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("append", b"0123456789")
+        audio_id = await _open_id(client)
+        # The first read of Chrome on Android: a plain streamed 200, never a short 206.
+        response = await _read(client, audio_id, "bytes=0-")
+        assert response.status_code == 200
+        assert not response.has_header("Accept-Ranges")
+        assert not response.has_header("Content-Range")
+        assert not response.has_header("Content-Length")
+        chunks = aiter(response.streaming_content)
+        assert await _next(chunks) == b"0123456789"
+        upstream.pump.send("append", b"abc")
+        assert await _next(chunks) == b"abc"
+        upstream.pump.send("finish")
+        with pytest.raises(StopAsyncIteration):
+            await _next(chunks)
+        # A resumed read from an offset: the whole audio again, from its start.
+        response = await _read(client, audio_id, "bytes=5-")
+        assert response.status_code == 200
+        assert response["Content-Length"] == "13"
+        assert await _body(response) == b"0123456789abc"
 
     asyncio.run(scenario())
 
@@ -629,21 +666,50 @@ def test_upstream_failure_cuts_the_read(client, upstream):
     asyncio.run(scenario())
 
 
-def test_range_read_of_a_failed_stream_beyond_its_bytes_is_416(client, upstream):
+def test_read_of_a_failed_stream_is_410_json(client, upstream):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"abc")
         upstream.pump.send("fail", SpeechError("Could not reach OpenRouter"))
         audio_id = await _open_id(client)
         await _settle()
-        response = await _read(client, audio_id, "bytes=3-")
-        assert response.status_code == 416
-        assert response["Content-Range"] == "bytes */3"
-        # The received bytes before the failure are served whole: the body is never cut.
-        response = await _read(client, audio_id, "bytes=1-")
-        assert response.status_code == 206
-        assert response["Content-Range"] == "bytes 1-2/*"
-        assert await _body(response) == b"bc"
+        # A retried read after the cut: an error, never the same bytes then the same cut.
+        for range_header in (None, "bytes=0-", "bytes=1-"):
+            response = await _read(client, audio_id, range_header)
+            assert response.status_code == 410
+            assert response["Content-Type"] == "application/json"
+            assert response.json() == CUT
+        assert await _ending(client, audio_id) == {"state": "failed", "error": "Could not reach OpenRouter"}
+
+    asyncio.run(scenario())
+
+
+def test_range_read_of_a_failed_stream_is_410_json(client, upstream, partial_ranges):
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("append", b"abc")
+        audio_id = await _open_id(client)
+        stream = get_stream(audio_id)
+        # A range read that waits past the received bytes when the failure happens.
+        waiting = asyncio.create_task(_read(client, audio_id, "bytes=3-"))
+        # The view claims the stream, then waits on it in the same step.
+        await _within(_until(lambda: stream.claimed))
+        await _settle()
+        assert not waiting.done()
+        # A range answer given before the failure: its body holds received bytes only, never cut.
+        answered = await _read(client, audio_id, "bytes=1-")
+        assert answered.status_code == 206
+        upstream.pump.send("fail", SpeechError("Could not reach OpenRouter"))
+        response = await _within(waiting)
+        assert response.status_code == 410
+        assert response.json() == CUT
+        assert await _body(answered) == b"bc"
+        # Range reads after the failure, within and past the received bytes.
+        for range_header in ("bytes=1-", "bytes=3-"):
+            response = await _read(client, audio_id, range_header)
+            assert response.status_code == 410
+            assert response["Content-Type"] == "application/json"
+            assert response.json() == CUT
 
     asyncio.run(scenario())
 
@@ -787,7 +853,7 @@ def test_read_of_an_unknown_id_is_404_json(client, upstream):
         assert response.json() == GONE
 
 
-def test_range_read_released_while_it_waits_is_404(client, upstream):
+def test_range_read_released_while_it_waits_is_404(client, upstream, partial_ranges):
     async def scenario():
         upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
         upstream.pump.send("append", b"abc")

@@ -4,7 +4,8 @@ A speech goes through four steps (design: ``docs/plans/2026-10-30-tts-streaming-
 
 - open (``POST /api/tts/speech/``): start the upstream call in the background, and
   answer an audio id once its headers arrive;
-- read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive;
+- read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive (a 410
+  once the speech failed);
 - ending (``GET /api/tts/audio/<id>/ending/``): how the speech ended;
 - release (``DELETE /api/tts/audio/<id>/``): drop the audio id; a running upstream call stops.
 
@@ -57,13 +58,16 @@ logger = logging.getLogger(__name__)
 # How a read with a ``Range`` header is answered (the decision of the plan's spike, Task 1):
 # - "partial": a 206 with the received bytes from the offset, and ``Accept-Ranges: bytes``;
 # - "full": the ``Range`` header is ignored (a plain read), and no ``Accept-Ranges`` is sent.
-RANGE_ANSWER = "partial"
+# "full" is the decision: Chrome on Android takes the end of a short ``206 bytes 0-L/*``
+# answer to its first ``Range: bytes=0-`` as the end of the media.
+RANGE_ANSWER = "full"
 
 # The largest slice of audio that a read yields at once.
 READ_SLICE = 64 * 1024
 
 SPEECH_FAILED = "Text-to-speech failed"
 AUDIO_GONE = "The audio is no longer available"
+AUDIO_CUT = "The audio stopped before the end"
 
 _RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
@@ -280,6 +284,10 @@ def _gone() -> JsonResponse:
     return _error(AUDIO_GONE, 404)
 
 
+def _cut() -> JsonResponse:
+    return _error(AUDIO_CUT, 410)
+
+
 def _audio_headers(response: HttpResponse) -> HttpResponse:
     response["Cache-Control"] = "no-store"
     if RANGE_ANSWER == "partial":
@@ -319,6 +327,10 @@ async def tts_audio(request, audio_id: str):
     A plain read streams the audio from its start, as it arrives. A ``Range``
     read (with ``RANGE_ANSWER == "partial"``) answers the received bytes from its
     offset, after waiting for the first one.
+
+    A read of a failed speech is a 410: Chrome retries a cut read, and given the
+    same bytes then the same cut, it hangs without an ``error`` event. A read
+    already streaming when the speech fails ends abnormally instead.
     """
     if request.method == "DELETE":
         return _release(audio_id)
@@ -330,6 +342,8 @@ async def tts_audio(request, audio_id: str):
             return _gone()
         stream.claimed = True
         stream.touch()
+        if stream.state == "failed":
+            return _cut()
         requested = parse_range(request.headers.get("Range")) if RANGE_ANSWER == "partial" else None
         if requested is None:
             response = StreamingHttpResponse(_audio_body(stream, 0, None), content_type=stream.content_type)
@@ -341,6 +355,8 @@ async def tts_audio(request, audio_id: str):
         if stream.state == "released":
             return _gone()
         received = len(stream.data)
+        if received <= start and stream.state == "failed":
+            return _cut()
         if received > start:
             last = received - 1 if end is None else min(received - 1, end)
             total = received if stream.state == "complete" else "*"
@@ -350,7 +366,7 @@ async def tts_audio(request, audio_id: str):
             response["Content-Range"] = f"bytes {start}-{last}/{total}"
             response["Content-Length"] = str(last - start + 1)
             return _audio_headers(response)
-        # No byte from the offset: the speech ended before it (complete or failed).
+        # No byte from the offset: the speech completed before it.
         response = HttpResponse(status=416, content_type=stream.content_type)
         response["Content-Range"] = f"bytes */{received}"
         return _audio_headers(response)

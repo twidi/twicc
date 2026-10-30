@@ -25,8 +25,11 @@ export function speechEndResult(player, backend) {
     return { ok: false, error: player.started ? CUT : UNREACHABLE }
 }
 
-/** The formats each platform plays from the whole downloaded file instead of streaming. */
-export const BUFFERED_FORMATS = { ios: ['pcm'] }
+/**
+ * The formats each platform plays from the whole downloaded file instead of streaming.
+ * iOS/iPadOS and Safari are untested, and Safari needs byte ranges for media: they keep the full download.
+ */
+export const BUFFERED_FORMATS = { ios: ['pcm', 'mp3'], safari: ['mp3'] }
 
 /** 'buffered', 'pcm-stream' or 'media': the player for this audio type on this platform. */
 export function playbackMode(contentType, platform) {
@@ -35,10 +38,16 @@ export function playbackMode(contentType, platform) {
     return format === 'pcm' ? 'pcm-stream' : 'media'
 }
 
-/** 'ios', 'android' or 'desktop'. iPadOS shows a Mac user agent: its touch points tell it apart. */
+/**
+ * 'ios', 'android', 'safari' (desktop Safari on macOS) or 'desktop'.
+ * iPadOS shows a Mac user agent: its touch points tell it apart.
+ * The other browsers also put "Safari/" in their user agent: their own token tells them apart.
+ */
 export function currentPlatform(nav = globalThis.navigator) {
     const userAgent = nav?.userAgent ?? ''
     if (/iPhone|iPad|iPod/.test(userAgent) || (nav?.platform === 'MacIntel' && nav.maxTouchPoints > 1)) return 'ios'
     if (/Android/.test(userAgent)) return 'android'
+    if (/Safari\//.test(userAgent) && /Version\//.test(userAgent)
+        && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Firefox/.test(userAgent)) return 'safari'
     return 'desktop'
 }
