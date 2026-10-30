@@ -11,11 +11,9 @@ line or an error message.
 """
 
 import asyncio
-import io
 import logging
 import math
 import time
-import wave
 from typing import TYPE_CHECKING, NamedTuple
 
 import httpx
@@ -45,7 +43,7 @@ GENERIC_PROVIDER_HINT = ". Check the model, the voice, the format and the text l
 DEFAULT_PCM_RATE = 24000
 DEFAULT_PCM_CHANNELS = 1
 PCM_SAMPLE_WIDTH = 2  # 16-bit little-endian
-# Above these, the header is malformed (and ``wave`` cannot write it).
+# Above these, the PCM type is malformed.
 MAX_PCM_RATE = 384000
 MAX_PCM_CHANNELS = 8
 
@@ -57,12 +55,6 @@ class SpeechRequest(NamedTuple):
     response_format: str
     speed: float | None
     instructions: str
-
-
-class SpeechAudio(NamedTuple):
-    content: bytes
-    content_type: str
-    generation_id: str | None
 
 
 class SpeechError(Exception):
@@ -133,17 +125,6 @@ def pcm_content_type(content_type: str) -> str:
     return f"audio/pcm;rate={rate};channels={channels}"
 
 
-def wrap_pcm_as_wav(pcm: bytes, rate: int, channels: int) -> bytes:
-    """Raw 16-bit PCM samples wrapped in a WAV container."""
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav:
-        wav.setnchannels(channels)
-        wav.setsampwidth(PCM_SAMPLE_WIDTH)
-        wav.setframerate(rate)
-        wav.writeframes(pcm)
-    return buffer.getvalue()
-
-
 def upstream_error_message(status: int, body: bytes) -> str:
     """OpenRouter's ``error.message`` from *body*, else a message built from *status*."""
     message = None
@@ -160,67 +141,6 @@ def upstream_error_message(status: int, body: bytes) -> str:
     if message == GENERIC_PROVIDER_ERROR:
         return message + GENERIC_PROVIDER_HINT
     return message
-
-
-def _audio_from_response(response: httpx.Response) -> SpeechAudio:
-    """Decide from the upstream ``Content-Type`` (not the requested format)."""
-    status = response.status_code
-    if not response.is_success:
-        raise SpeechError(upstream_error_message(status, response.content), upstream_status=status)
-
-    content_type = response.headers.get("content-type", "")
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    generation_id = response.headers.get("x-generation-id") or None
-
-    if media_type == "audio/pcm":
-        rate, channels = _pcm_format_or_default(content_type)
-        return SpeechAudio(wrap_pcm_as_wav(response.content, rate, channels), "audio/wav", generation_id)
-
-    if media_type.startswith("audio/"):
-        return SpeechAudio(response.content, content_type, generation_id)
-
-    # A success that is not audio (JSON, HTML, ...): its message, else its status.
-    raise SpeechError(upstream_error_message(status, response.content), upstream_status=status)
-
-
-async def synthesize(request: SpeechRequest, api_key: str) -> SpeechAudio:
-    """Turn *request* into audio. Raises :class:`SpeechError` with a user-safe message."""
-    started = time.monotonic()
-    outcome = "error"
-    audio_size = 0
-    generation_id = None
-    try:
-        async with _make_client(SPEECH_TIMEOUT) as client:
-            response = await client.post(SPEECH_URL, json=build_payload(request), headers=_auth_headers(api_key))
-        generation_id = response.headers.get("x-generation-id") or None
-        audio = _audio_from_response(response)
-        audio_size = len(audio.content)
-        outcome = "ok"
-        return audio
-    except SpeechError as error:
-        outcome = f"upstream_error {error.upstream_status}"
-        raise
-    except httpx.TimeoutException:
-        outcome = "timeout"
-        raise SpeechError("OpenRouter did not answer in time") from None
-    except httpx.HTTPError:
-        outcome = "unreachable"
-        raise SpeechError("Could not reach OpenRouter") from None
-    except asyncio.CancelledError:
-        outcome = "cancelled"
-        raise
-    finally:
-        logger.info(
-            "TTS speech model=%s voice=%s format=%s chars=%d bytes=%d duration_ms=%d generation=%s outcome=%s",
-            request.model,
-            request.voice,
-            request.response_format,
-            len(request.text),
-            audio_size,
-            round((time.monotonic() - started) * 1000),
-            generation_id,
-            outcome,
-        )
 
 
 async def pump_speech(request: SpeechRequest, api_key: str, stream: "AudioStream") -> None:
@@ -425,8 +345,8 @@ def _mp3_bitrate(content: bytes) -> int | None:
 
 
 def audio_duration_seconds(content: bytes, content_type: str) -> float | None:
-    """The length of an audio body: exact for PCM (from the rate and channels of its type) and
-    WAV, from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). None for another
+    """The length of an audio body: exact for PCM (from the rate and channels of its type),
+    from the bitrate for MP3 (constant bitrate, as OpenRouter sends it). None for another
     type or an unreadable body."""
     media_type = content_type.split(";", 1)[0].strip().lower()
     if media_type == "audio/pcm":
@@ -435,13 +355,7 @@ def audio_duration_seconds(content: bytes, content_type: str) -> float | None:
             return None
         rate, channels = pcm_format
         return len(content) / (rate * channels * PCM_SAMPLE_WIDTH)
-    try:
-        if media_type == "audio/wav":
-            with wave.open(io.BytesIO(content)) as reader:
-                return reader.getnframes() / reader.getframerate()
-        if media_type == "audio/mpeg":
-            bitrate = _mp3_bitrate(content)
-            return len(content) * 8 / bitrate if bitrate else None
-    except (wave.Error, EOFError, ZeroDivisionError):
-        return None
+    if media_type == "audio/mpeg":
+        bitrate = _mp3_bitrate(content)
+        return len(content) * 8 / bitrate if bitrate else None
     return None

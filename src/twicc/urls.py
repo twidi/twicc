@@ -43,8 +43,10 @@ urlpatterns = [
     path("api/search/", views.search_sessions),
     path("api/usage-history/", views.usage_history),
     path("api/external-notifications/test/", views.external_notifications_test),
-    # Text to speech: the OpenRouter speech proxy and the model suggestions.
+    # Text to speech: open a speech, then read, end or release its audio by id; the model suggestions.
     path("api/tts/speech/", tts_views.tts_speech),
+    path("api/tts/audio/<str:audio_id>/", tts_views.tts_audio),
+    path("api/tts/audio/<str:audio_id>/ending/", tts_views.tts_audio_ending),
     path("api/tts/models/", tts_views.tts_models),
     # Standalone filesystem endpoints (for directory picker, no project required)
     path("api/directory-tree/", views.standalone_directory_tree),

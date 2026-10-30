@@ -9,9 +9,7 @@ streams and their futures belong to the loop that created them.
 
 import asyncio
 import gzip
-import io
 import logging
-import wave
 
 import httpx
 import orjson
@@ -31,7 +29,6 @@ from twicc.tts.openrouter import (
     pcm_content_type,
     pump_speech,
     upstream_error_message,
-    wrap_pcm_as_wav,
 )
 from twicc.tts.streams import AudioStream, start_stream
 
@@ -120,12 +117,6 @@ def test_pcm_content_type_falls_back_to_24k_mono(caplog, content_type):
     warnings = [r for r in caplog.records if r.name == LOGGER_NAME and r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert content_type in warnings[0].getMessage()
-
-
-def test_wrap_pcm_as_wav_header():
-    wav = wrap_pcm_as_wav(b"\x00\x01" * 24000, 24000, 1)
-    with wave.open(io.BytesIO(wav)) as w:
-        assert (w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()) == (24000, 1, 2, 24000)
 
 
 def test_upstream_error_message_and_hint():
@@ -690,10 +681,8 @@ def test_schedule_cost_log_runs_in_the_background(monkeypatch):
     assert not openrouter._cost_tasks
 
 
-def test_audio_duration_of_wav_and_mp3():
+def test_audio_duration_of_mp3():
     from twicc.tts.openrouter import audio_duration_seconds
-    wav = wrap_pcm_as_wav(b"\x00\x00" * 48000, 24000, 1)
-    assert audio_duration_seconds(wav, "audio/wav") == 2.0
     # MPEG-2 Layer III, 128 kbit/s (FF F3, bitrate index 12 = 128): 32 000 bytes = 2 s.
     mp3 = (b"\xff\xf3\xc4\x00" + b"\x00" * 412) * 77
     mp3 = mp3[:32000]
@@ -702,7 +691,6 @@ def test_audio_duration_of_wav_and_mp3():
     tagged = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + b"\x00" * 10 + mp3
     assert audio_duration_seconds(tagged, "audio/mpeg") == len(tagged) * 8 / 128000
     assert audio_duration_seconds(b"junk", "audio/mpeg") is None
-    assert audio_duration_seconds(b"junk", "audio/wav") is None
     assert audio_duration_seconds(b"x", "audio/ogg") is None
 
 

@@ -1,22 +1,33 @@
-"""Text-to-speech REST endpoints: the speech proxy and the speech model list.
+"""Text-to-speech REST endpoints: the speech audio by id, and the speech model list.
 
-Both views are async: on a client disconnect Django cancels the view task,
-and the awaited ``httpx`` call to OpenRouter is cancelled with it (a sync call
-would run to the end and may be billed).
+A speech goes through four steps (design: ``docs/plans/2026-10-30-tts-streaming-design.md``):
+
+- open (``POST /api/tts/speech/``): start the upstream call in the background, and
+  answer an audio id once its headers arrive;
+- read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive;
+- ending (``GET /api/tts/audio/<id>/ending/``): how the speech ended;
+- release (``DELETE /api/tts/audio/<id>/``): drop the audio id; a running upstream call stops.
+
+The streams live in :mod:`twicc.tts.streams`. Every view is async and runs on the
+one event loop of the ASGI server.
+
+Every error before a body byte is a JSON ``{"error": ...}`` of these views, never
+Django's error page (in DEBUG it shows frame locals, the key among them).
 """
 
+import asyncio
 import logging
-import time
+import re
 from datetime import UTC, datetime
 
 import orjson
-from django.core.exceptions import RequestDataTooBig
-from django.http import HttpResponse, JsonResponse
-
-from twicc.paths import get_env_path
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
+from django.core.exceptions import RequestDataTooBig
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 
+from twicc.paths import get_env_path
+from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.config import (
     TTS_RESPONSE_FORMATS,
     openrouter_api_key,
@@ -29,11 +40,32 @@ from twicc.tts.openrouter import (
     SpeechRequest,
     audio_duration_seconds,
     fetch_speech_models,
+    pump_speech,
     schedule_cost_log,
-    synthesize,
+)
+from twicc.tts.streams import (
+    AudioStream,
+    ending_of,
+    get_stream,
+    release_stream,
+    start_stream,
+    stream_from_bytes,
 )
 
 logger = logging.getLogger(__name__)
+
+# How a read with a ``Range`` header is answered (the decision of the plan's spike, Task 1):
+# - "partial": a 206 with the received bytes from the offset, and ``Accept-Ranges: bytes``;
+# - "full": the ``Range`` header is ignored (a plain read), and no ``Accept-Ranges`` is sent.
+RANGE_ANSWER = "partial"
+
+# The largest slice of audio that a read yields at once.
+READ_SLICE = 64 * 1024
+
+SPEECH_FAILED = "Text-to-speech failed"
+AUDIO_GONE = "The audio is no longer available"
+
+_RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
 
 def _error(message: str, status: int, **extra) -> JsonResponse:
@@ -90,16 +122,41 @@ def parse_speech_request(data: object) -> SpeechRequest:
     )
 
 
+def parse_range(header: str | None) -> tuple[int, int | None] | None:
+    """``(N, M)`` from ``bytes=N-M``, ``(N, None)`` from ``bytes=N-``.
+
+    None for anything else (another unit, a suffix range, several ranges, ``M < N``):
+    the read is then a plain read.
+    """
+    if not header:
+        return None
+    match = _RANGE_PATTERN.fullmatch(header.strip())
+    if match is None:
+        return None
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) else None
+    if end is not None and end < start:
+        return None
+    return start, end
+
+
+def _opened(stream: AudioStream) -> JsonResponse:
+    return JsonResponse({"audio_id": stream.id, "content_type": stream.content_type})
+
+
 async def tts_speech(request):
-    """POST /api/tts/speech/ — {text, model, voice, response_format, speed, instructions, config_id?} → audio.
+    """POST /api/tts/speech/ — open a speech.
 
-    A settings test sends its `config_id`: the run (characters, generation time, audio length,
-    then the cost once known) becomes that config's `last_test` in tts.json.
+    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?}``.
+    Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
-    Every error is a JSON ``{"error": ...}`` of this view, never Django's error
-    page (in DEBUG it shows frame locals, the key among them). An upstream
-    error is a 502, never a 401: the frontend reads any 401 as an expired
-    TwiCC session.
+    A settings test sends its ``config_id``: once the audio is complete, the run
+    (characters, times, audio length, then the cost once known) becomes that
+    config's ``last_test`` in tts.json. ``cache: true`` reads and fills the audio
+    cache, except for a settings test.
+
+    An upstream error is a 502, never a 401: the frontend reads any 401 as an
+    expired TwiCC session.
     """
     if request.method != "POST":
         return _method_not_allowed("POST")
@@ -121,47 +178,89 @@ async def tts_speech(request):
             return _error(
                 f"TWICC_OPENROUTER_API_KEY is not set. Add it to {get_env_path()} and restart TwiCC.", 503
             )
-        started = time.monotonic()
+        config_id = data.get("config_id")
+        if not isinstance(config_id, str) or not config_id:
+            config_id = None
+        # A settings test never reads nor fills the cache.
+        use_cache = data.get("cache") is True and config_id is None
+        label = {
+            "model": speech_request.model,
+            "voice": speech_request.voice,
+            "format": speech_request.response_format,
+            "chars": len(speech_request.text),
+        }
+        if use_cache:
+            cached = speech_cache.get(speech_request)
+            if cached is not None:
+                return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
+        stream = start_stream(
+            lambda sink: pump_speech(speech_request, api_key, sink),
+            label=label,
+            on_end=_end_steps(speech_request, api_key, config_id, use_cache),
+        )
         try:
-            audio = await synthesize(speech_request, api_key)
+            await stream.ready
         except SpeechError as error:
+            # The stream is failed, and logged, already: only drop its id.
+            release_stream(stream.id)
             extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
             return _error(error.message, 502, **extra)
-        generation_ms = round((time.monotonic() - started) * 1000)
-        response = HttpResponse(audio.content, content_type=audio.content_type)
-        response["Cache-Control"] = "no-store"
+        except asyncio.CancelledError:
+            # A client disconnect: stop the upstream call.
+            release_stream(stream.id, outcome="cancelled")
+            raise
+        except Exception:
+            release_stream(stream.id)
+            raise
+        return _opened(stream)
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
         logger.exception("TTS speech request failed")
-        return _error("Text-to-speech failed", 500)
-    # A settings test names its config: its last test run is kept in tts.json.
-    config_id = data.get("config_id") if isinstance(data.get("config_id"), str) else None
-    if config_id:
-        try:
-            await _record_last_test(config_id, {
-                "at": datetime.now(UTC).isoformat(timespec="seconds"),
-                "generation_id": audio.generation_id or "",
-                "chars": len(speech_request.text),
-                "generation_ms": generation_ms,
-                "audio_seconds": audio_duration_seconds(audio.content, audio.content_type),
-                "cost": None,
-            })
-        except Exception:
-            logger.exception("TTS last test of %s could not be recorded", config_id)
-    if audio.generation_id:
-        # The audio is billed already: a failed cost lookup must not cost the user the response.
-        on_cost = None
+        return _error(SPEECH_FAILED, 500)
+
+
+def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | None, use_cache: bool):
+    """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
+
+    Each step has its own guard: one failure never skips the others. A failed speech does nothing.
+    """
+
+    async def on_end(stream: AudioStream) -> None:
+        if stream.state != "complete":
+            return
+        if use_cache:
+            try:
+                speech_cache.set(speech_request, CachedAudio(bytes(stream.data), stream.content_type))
+            except Exception:
+                logger.exception("TTS audio could not be cached")
         if config_id:
-            generation_id = audio.generation_id
+            try:
+                await _record_last_test(config_id, {
+                    "at": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "generation_id": stream.generation_id or "",
+                    "chars": len(speech_request.text),
+                    "generation_ms": stream.generation_ms,
+                    "first_audio_ms": stream.first_audio_ms,
+                    "audio_seconds": audio_duration_seconds(bytes(stream.data), stream.content_type),
+                    "cost": None,
+                })
+            except Exception:
+                logger.exception("TTS last test of %s could not be recorded", config_id)
+        if stream.generation_id:
+            # The audio is billed already: a failed cost lookup must not cost the user anything else.
+            generation_id = stream.generation_id
+            on_cost = None
+            if config_id:
 
-            async def on_cost(cost):
-                await _record_last_test(config_id, {"generation_id": generation_id, "cost": cost})
+                async def on_cost(cost):
+                    await _record_last_test(config_id, {"generation_id": generation_id, "cost": cost})
 
-        try:
-            schedule_cost_log(audio.generation_id, api_key, on_cost)
-        except Exception:
-            logger.exception("TTS cost lookup for %s could not be scheduled", audio.generation_id)
-    return response
+            try:
+                schedule_cost_log(generation_id, api_key, on_cost)
+            except Exception:
+                logger.exception("TTS cost lookup for %s could not be scheduled", generation_id)
+
+    return on_end
 
 
 async def _record_last_test(config_id: str, update: dict) -> None:
@@ -173,6 +272,115 @@ async def _record_last_test(config_id: str, update: dict) -> None:
         "updates",
         {"type": "broadcast", "data": {"type": "tts_config_updated", **tts_client_payload(config)}},
     )
+
+
+def _gone() -> JsonResponse:
+    return _error(AUDIO_GONE, 404)
+
+
+def _audio_headers(response: HttpResponse) -> HttpResponse:
+    response["Cache-Control"] = "no-store"
+    if RANGE_ANSWER == "partial":
+        response["Accept-Ranges"] = "bytes"
+    return response
+
+
+async def _audio_body(stream: AudioStream, start: int, last: int | None):
+    """The audio bytes of *stream* from *start*, as they arrive, in slices of ``READ_SLICE`` at most.
+
+    *last* set: a range body, which ends after the byte *last*, already received.
+    *last* None: the body ends with the stream.
+    """
+    offset = start
+    while True:
+        limit = len(stream.data) if last is None else last + 1
+        if offset < limit:
+            end = min(limit, offset + READ_SLICE)
+            yield bytes(stream.data[offset:end])
+            offset = end
+            continue
+        # A released stream ends the body too: its reader is gone, or does not matter any more.
+        if last is not None or stream.state in ("complete", "released"):
+            return
+        if stream.state == "failed":
+            # The abnormal end: the ASGI server closes the connection without the final
+            # chunk, so the browser sees a cut audio, not a complete one. Uvicorn then logs
+            # "Exception in ASGI application" with a traceback, once per failed stream that
+            # still has a reader. This is expected, and rare.
+            raise ConnectionAbortedError("The speech failed")
+        await stream.wait_for_more(offset)
+
+
+async def tts_audio(request, audio_id: str):
+    """GET /api/tts/audio/<id>/ — read the audio. DELETE — release it.
+
+    A plain read streams the audio from its start, as it arrives. A ``Range``
+    read (with ``RANGE_ANSWER == "partial"``) answers the received bytes from its
+    offset, after waiting for the first one.
+    """
+    if request.method == "DELETE":
+        return _release(audio_id)
+    if request.method != "GET":
+        return _method_not_allowed("GET, DELETE")
+    try:
+        stream = get_stream(audio_id)
+        if stream is None:
+            return _gone()
+        stream.claimed = True
+        stream.touch()
+        requested = parse_range(request.headers.get("Range")) if RANGE_ANSWER == "partial" else None
+        if requested is None:
+            response = StreamingHttpResponse(_audio_body(stream, 0, None), content_type=stream.content_type)
+            if stream.state == "complete":
+                response["Content-Length"] = str(len(stream.data))
+            return _audio_headers(response)
+        start, end = requested
+        await stream.wait_for_more(start)
+        if stream.state == "released":
+            return _gone()
+        received = len(stream.data)
+        if received > start:
+            last = received - 1 if end is None else min(received - 1, end)
+            total = received if stream.state == "complete" else "*"
+            response = StreamingHttpResponse(
+                _audio_body(stream, start, last), status=206, content_type=stream.content_type
+            )
+            response["Content-Range"] = f"bytes {start}-{last}/{total}"
+            return _audio_headers(response)
+        # No byte from the offset: the speech ended before it (complete or failed).
+        response = HttpResponse(status=416, content_type=stream.content_type)
+        response["Content-Range"] = f"bytes */{received}"
+        return _audio_headers(response)
+    except Exception:
+        logger.exception("TTS audio read failed")
+        return _error(SPEECH_FAILED, 500)
+
+
+def _release(audio_id: str) -> HttpResponse:
+    """Drop the audio id; a running upstream call stops. A 204, also for an unknown id."""
+    try:
+        stream = get_stream(audio_id)
+        if stream is not None:
+            stream.touch()
+        release_stream(audio_id)
+        return HttpResponse(status=204)
+    except Exception:
+        logger.exception("TTS audio release failed")
+        return _error(SPEECH_FAILED, 500)
+
+
+async def tts_audio_ending(request, audio_id: str):
+    """GET /api/tts/audio/<id>/ending/ — ``{"state", "error"}``: how the speech ended, without waiting."""
+    if request.method != "GET":
+        return _method_not_allowed("GET")
+    try:
+        stream = get_stream(audio_id)
+        if stream is not None:
+            stream.touch()
+        return JsonResponse(ending_of(audio_id))
+    except Exception:
+        logger.exception("TTS audio ending failed")
+        return _error(SPEECH_FAILED, 500)
 
 
 async def tts_models(request):

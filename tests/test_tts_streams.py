@@ -12,6 +12,7 @@ import logging
 import pytest
 
 from twicc.tts import streams
+from twicc.tts.audio_cache import speech_cache
 from twicc.tts.openrouter import SpeechError
 from twicc.tts.streams import ending_of, get_stream, release_stream, start_stream, stream_from_bytes
 
@@ -21,10 +22,12 @@ HINTED_400 = "Provider returned 400. Check the model, the voice, the format and 
 
 
 @pytest.fixture(autouse=True)
-def _reset_streams():
+def _reset_streams_and_cache():
     streams._reset_for_tests()
+    speech_cache.clear()
     yield
     streams._reset_for_tests()
+    speech_cache.clear()
 
 
 @pytest.fixture
