@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { generateUUID } from '../utils/crypto.js'
 import { isPcmType, parsePcmType, pcmToWavBlob } from '../utils/pcmAudio.js'
 import { createPcmStreamPlayer } from '../utils/pcmStreamPlayer.js'
-import { currentPlatform, playbackMode, speechEndResult, UNREACHABLE } from '../utils/speechOutcome.js'
+import { buffersSending, currentPlatform, playbackMode, speechEndResult, UNREACHABLE } from '../utils/speechOutcome.js'
 import { createSpeechPlayer } from '../utils/speechPlayer.js'
 import {
     createTtsConfig,
@@ -141,7 +141,14 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     try {
         controller = new AbortController()
         // A settings test names its config: the backend keeps the run as its last test.
-        const body = { text, ...fields, cache: useCache, ...(configId ? { config_id: configId } : {}) }
+        // A platform that buffers the audio asks for it in one go: pacing would only delay it.
+        const body = {
+            text,
+            ...fields,
+            cache: useCache,
+            ...(configId ? { config_id: configId } : {}),
+            ...(buffersSending(fields.response_format, currentPlatform()) ? { buffered: true } : {}),
+        }
         const response = await store._openSpeech(body, controller.signal)
         if (!response.ok) {
             if (generation !== mine) return ABORTED

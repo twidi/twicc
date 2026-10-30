@@ -6,6 +6,8 @@ import {
     CUT,
     GONE,
     BUFFERED_FORMATS,
+    BUFFERED_SENDING,
+    buffersSending,
     speechEndResult,
     playbackMode,
     currentPlatform,
@@ -90,6 +92,23 @@ test('playbackMode follows the buffered table', () => {
     assert.equal(playbackMode('audio/mpeg', 'android'), 'media')
     assert.equal(playbackMode('audio/mpeg', 'desktop'), 'media')
     assert.equal(playbackMode('audio/wav', 'android'), 'media')
+})
+
+test('buffersSending follows both tables', () => {
+    assert.deepEqual(BUFFERED_SENDING, {})
+    assert.equal(buffersSending('pcm', 'ios'), true)
+    assert.equal(buffersSending('mp3', 'safari'), true)
+    assert.equal(buffersSending('pcm', 'safari'), false)
+    assert.equal(buffersSending('mp3', 'android'), false)
+    assert.equal(buffersSending('pcm', 'desktop'), false)
+    BUFFERED_SENDING.android = ['mp3']
+    try {
+        assert.equal(buffersSending('mp3', 'android'), true)
+        // Buffered sending only: the platform keeps its streaming player.
+        assert.equal(playbackMode('audio/mpeg', 'android'), 'media')
+    } finally {
+        delete BUFFERED_SENDING.android
+    }
 })
 
 test('currentPlatform detects iOS, iPadOS and Android', () => {

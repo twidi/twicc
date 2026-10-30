@@ -360,6 +360,22 @@ test('a failed buffered download counts as a network error before the start', as
     })
 })
 
+test('a buffered platform asks for buffered sending', async () => {
+    await onIphone(async () => {
+        let sent
+        store._openSpeech = async (body) => {
+            sent = body
+            return opened('a1', PCM_TYPE)
+        }
+        store._fetchAudio = async () => new Response(new Uint8Array([1, 2]), { status: 200 })
+        const pending = store.play('hello')
+        await until(() => fakePlayer.handlers)
+        assert.deepEqual(sent, { text: 'hello', ...FIELDS, cache: true, buffered: true })
+        fakePlayer.handlers.onPlaying()
+        assert.equal((await pending).ok, true)
+    })
+})
+
 test('stop aborts the buffered fetch', async () => {
     await onIphone(async () => {
         let signal

@@ -106,12 +106,16 @@ export function formatAfterModelChange(format, model) {
     return !formats || formats.includes(format) ? format : formats[0]
 }
 
-/** What the chosen format does for this model: '' when TwiCC knows nothing about the model. */
+/**
+ * What the chosen format does for this model: '' when TwiCC knows nothing about the model.
+ * A long text goes out in parts: the audio starts with the first one, unless the format is sent whole.
+ */
 export function ttsStreamingNote(model, format) {
     if (!Array.isArray(model?.streams)) return ''
-    return model.streams.includes(format)
-        ? 'Streaming: the audio starts while it is generated.'
-        : 'No streaming: the audio starts once it is fully generated.'
+    if (model.streams.includes(format)) return 'Streaming: the audio starts while it is generated.'
+    return Array.isArray(model.whole_formats) && model.whole_formats.includes(format)
+        ? 'No streaming: the audio starts once it is fully generated.'
+        : 'No streaming: the audio starts once its first part is generated.'
 }
 
 /**
@@ -225,10 +229,14 @@ function audioLength(seconds) {
     return `${minutes} min ${Math.round(seconds - minutes * 60)} s`
 }
 
-/** The exact figures of the last test run: "2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080". */
+/**
+ * The exact figures of the last test run: "2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080".
+ * A text sent in several parts adds "· 4 parts" after the characters.
+ */
 export function ttsLastTestFacts(lastTest) {
     if (!lastTest?.chars) return ''
     const parts = [`${lastTest.chars.toLocaleString('en')} chars`]
+    if (lastTest.parts > 1) parts.push(`${lastTest.parts} parts`)
     if (lastTest.audio_seconds) parts.push(`${audioLength(lastTest.audio_seconds)} of audio`)
     parts.push(`generated in ${shortNumber(lastTest.generation_ms / 1000)} s`)
     if (lastTest.first_audio_ms != null) parts.push(`first audio after ${shortNumber(lastTest.first_audio_ms / 1000)} s`)

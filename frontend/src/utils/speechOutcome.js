@@ -31,6 +31,20 @@ export function speechEndResult(player, backend) {
  */
 export const BUFFERED_FORMATS = { ios: ['pcm', 'mp3'], safari: ['mp3'] }
 
+/**
+ * The formats each platform asks the backend to send in one go (no pacing), while it keeps its
+ * streaming player. Filled only if a platform cuts paced audio (the Android check).
+ */
+export const BUFFERED_SENDING = {}
+
+/**
+ * Whether the speech open step asks for buffered sending: the platform buffers this format or asks for it.
+ * It reads the requested format: the open step asks before it knows the audio type.
+ */
+export function buffersSending(responseFormat, platform) {
+    return Boolean(BUFFERED_FORMATS[platform]?.includes(responseFormat) || BUFFERED_SENDING[platform]?.includes(responseFormat))
+}
+
 /** 'buffered', 'pcm-stream' or 'media': the player for this audio type on this platform. */
 export function playbackMode(contentType, platform) {
     const format = isPcmType(contentType) ? 'pcm' : 'mp3'

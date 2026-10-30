@@ -241,6 +241,12 @@ test('the last test facts give the exact figures', () => {
     assert.equal(ttsLastTestFacts(undefined), '')
 })
 
+test('the last test facts show the parts of a split run', () => {
+    assert.equal(ttsLastTestFacts({ ...RUN, parts: 4 }), '2,000 chars · 4 parts · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+    assert.equal(ttsLastTestFacts({ ...RUN, parts: 1 }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+    assert.equal(ttsLastTestFacts({ ...RUN, parts: null }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+})
+
 test('stats and facts show the first audio', () => {
     const run = { ...RUN, first_audio_ms: 1160 }
     assert.equal(ttsTestStats(run), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch · 1st audio 1.2 s')
@@ -302,6 +308,9 @@ test('formatAfterModelChange switches to an accepted format only when needed', (
 
 test('ttsStreamingNote describes the chosen format, nothing when unknown', () => {
     assert.equal(ttsStreamingNote(PARTIAL, 'pcm'), 'Streaming: the audio starts while it is generated.')
-    assert.equal(ttsStreamingNote(PARTIAL, 'mp3'), 'No streaming: the audio starts once it is fully generated.')
+    assert.equal(ttsStreamingNote(PARTIAL, 'mp3'), 'No streaming: the audio starts once its first part is generated.')
+    const whole = { ...ELEVEN, whole_formats: ['mp3'] }
+    assert.equal(ttsStreamingNote(whole, 'mp3'), 'No streaming: the audio starts once it is fully generated.')
+    assert.equal(ttsStreamingNote(whole, 'pcm'), 'No streaming: the audio starts once its first part is generated.')
     assert.equal(ttsStreamingNote(UNKNOWN, 'mp3'), '')
 })
