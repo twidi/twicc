@@ -41,11 +41,18 @@ export function setSpeechPlayerFactory(factory) {
  *
  * - `prime()` runs synchronously inside the user's click. It plays a silent sound on the
  *   element, so a `play()` that follows a long request still counts as user-activated.
+ * - `playUrl(url, handlers)` plays the audio at `url` while it downloads.
+ * - `playBlob(blob, handlers)` plays an audio held in memory.
+ *
+ *   `handlers` is `{ onPlaying(), onEnded(), onError(reason) }`. Each handler fires at most once,
+ *   and only one of `onEnded` and `onError` fires. The reason is `'refused'` when the browser
+ *   cannot or will not play the audio, `'network'` when the download fails.
  * - `play(blob, onEnded, onError)` plays the blob and resolves when the audio starts. It
  *   rejects like `HTMLMediaElement.play()` (an `AbortError` when `stop()` interrupts it).
- * - `stop()` pauses the audio and releases it.
+ *   Legacy: the store moves to `playUrl` and `playBlob`, then this method goes away.
+ * - `stop()` pauses the audio and releases it. No handler fires after it.
  *
- * The player owns every object URL it creates and revokes it on the next `play()` or `stop()`.
+ * The player owns every object URL it creates and revokes it on the next playback or `stop()`.
  */
 export function createSpeechPlayer() {
     return playerFactory ? playerFactory() : createAudioElementPlayer()
@@ -54,8 +61,12 @@ export function createSpeechPlayer() {
 function createAudioElementPlayer() {
     const audio = new Audio()
     let objectUrl = null
+    // A token of the playback in progress (`playUrl` or `playBlob`), or null.
+    let current = null
 
     function detach() {
+        current = null
+        audio.onplaying = null
         audio.onended = null
         audio.onerror = null
     }
@@ -67,12 +78,58 @@ function createAudioElementPlayer() {
         }
     }
 
+    function start(src, handlers) {
+        detach()
+        const playback = {}
+        current = playback
+        let playing = false
+        // `onEnded` or `onError`: the last call for this playback.
+        const finish = callback => {
+            if (current !== playback) return
+            detach()
+            callback()
+        }
+        audio.onplaying = () => {
+            // `playing` fires again after each stall: only the first one counts.
+            if (current !== playback || playing) return
+            playing = true
+            handlers.onPlaying()
+        }
+        audio.onended = () => finish(() => handlers.onEnded())
+        audio.onerror = () => {
+            const code = audio.error?.code
+            const refused = code === MediaError.MEDIA_ERR_DECODE || code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+            finish(() => handlers.onError(refused ? 'refused' : 'network'))
+        }
+        audio.src = src
+        audio.play()?.catch(error => {
+            // `stop()` or a newer playback interrupted this one: nothing to report.
+            if (error?.name === 'AbortError') return
+            // `NotAllowedError` (no user activation), `NotSupportedError` (no usable source).
+            finish(() => handlers.onError('refused'))
+        })
+    }
+
     return {
         prime() {
             detach()
             silentWav ??= silentWavDataUri()
             audio.src = silentWav
             audio.play()?.catch(() => {})
+        },
+
+        playUrl(url, handlers) {
+            const previousUrl = objectUrl
+            objectUrl = null
+            start(url, handlers)
+            if (previousUrl) URL.revokeObjectURL(previousUrl)
+        },
+
+        playBlob(blob, handlers) {
+            const previousUrl = objectUrl
+            objectUrl = URL.createObjectURL(blob)
+            start(objectUrl, handlers)
+            if (previousUrl) URL.revokeObjectURL(previousUrl)
         },
 
         async play(blob, onEnded, onError) {
