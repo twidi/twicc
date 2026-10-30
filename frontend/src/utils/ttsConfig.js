@@ -171,6 +171,7 @@ export function ttsTestStats(lastTest) {
         if (lastTest.audio_seconds) parts.push(`${shortNumber((lastTest.cost / lastTest.audio_seconds) * 60 * 100)}¢ / mn`)
     }
     parts.push(`${shortNumber(lastTest.generation_ms / lastTest.chars)} s / 1k ch`)
+    if (lastTest.first_audio_ms != null) parts.push(`1st audio ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
     return parts.join(' · ')
 }
 
@@ -186,6 +187,7 @@ export function ttsLastTestFacts(lastTest) {
     const parts = [`${lastTest.chars.toLocaleString('en')} chars`]
     if (lastTest.audio_seconds) parts.push(`${audioLength(lastTest.audio_seconds)} of audio`)
     parts.push(`generated in ${shortNumber(lastTest.generation_ms / 1000)} s`)
+    if (lastTest.first_audio_ms != null) parts.push(`first audio after ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
     parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
     return parts.join(' · ')
 }

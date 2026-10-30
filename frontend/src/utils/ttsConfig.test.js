@@ -247,3 +247,16 @@ test('the last test facts give the exact figures', () => {
     assert.equal(ttsLastTestFacts({ ...RUN, chars: 35, audio_seconds: 3.24, generation_ms: 1760, cost: null }), '35 chars · 3.2 s of audio · generated in 1.8 s · price pending…')
     assert.equal(ttsLastTestFacts(undefined), '')
 })
+
+test('stats and facts show the first audio', () => {
+    const run = { ...RUN, first_audio_ms: 1160 }
+    assert.equal(ttsTestStats(run), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch · 1st audio 1.2 s')
+    assert.equal(ttsLastTestFacts(run), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · first audio after 1.2 s · $0.0080')
+})
+
+test('old records without first_audio_ms show no figure', () => {
+    assert.equal(ttsTestStats({ ...RUN, first_audio_ms: null }), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch')
+    assert.equal(ttsLastTestFacts({ ...RUN, first_audio_ms: null }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+    assert.equal(ttsTestStats(RUN), '0.4¢ / 1k ch · 0.34¢ / mn · 1.1 s / 1k ch')
+    assert.equal(ttsLastTestFacts(RUN), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080')
+})
