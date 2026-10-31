@@ -140,3 +140,21 @@ test('the last test of a script config shows no price', () => {
     assert.match(settingsSource, /function isPriced\(config\) \{\s*return kindOf\(config\) !== 'script'/)
     assert.ok(settingsSource.includes("'Last test run: generation time per 1,000 characters, and time to the first audio'"))
 })
+
+test('an icon before the name tells an OpenRouter config from a script config', () => {
+    assert.match(settingsSource, /openrouter: \{ name: 'globe', label: 'OpenRouter config' \}/)
+    assert.match(settingsSource, /script: \{ name: 'terminal', label: 'Script config' \}/)
+    assert.match(settingsSource, /<span class="tts-summary-name"><wa-icon\s+class="tts-kind-icon"\s+:name="kindIconOf\(config\)\.name"/)
+})
+
+test('the new-config buttons carry the icon of their kind', () => {
+    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.openrouter\.name"><\/wa-icon> New OpenRouter config/)
+    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.script\.name"><\/wa-icon> New script config/)
+})
+
+test('a segmented control keeps its content width and one row of segments', () => {
+    assert.match(settingsSource, /\.tts-format-row > \.segmented-control \{\s*flex: none;/)
+    assert.match(settingsSource, /:deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: nowrap;/)
+    // Every segmented control of a card sits in a format row.
+    assert.equal(settingsSource.match(/<SegmentedControl/g).length, settingsSource.match(/<div class="tts-format-row">\s*<SegmentedControl/g).length)
+})

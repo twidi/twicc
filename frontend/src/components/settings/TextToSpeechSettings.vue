@@ -141,6 +141,16 @@ function canTest(config) {
     return ready && !!testText.value.trim() && !testLoading()
 }
 
+// The icon before a config's name tells its kind apart.
+const KIND_ICONS = {
+    openrouter: { name: 'globe', label: 'OpenRouter config' },
+    script: { name: 'terminal', label: 'Script config' },
+}
+
+function kindIconOf(config) {
+    return KIND_ICONS[kindOf(config)]
+}
+
 // A script config has no price: its last test shows no cost.
 function isPriced(config) {
     return kindOf(config) !== 'script'
@@ -400,7 +410,12 @@ function answerNo(id) {
             >
                 <div slot="summary" class="tts-summary">
                     <span class="tts-summary-text">
-                        <span class="tts-summary-name">{{ ttsConfigDisplayName(config, store.models) }}</span>
+                        <span class="tts-summary-name"><wa-icon
+                            class="tts-kind-icon"
+                            :name="kindIconOf(config).name"
+                            :label="kindIconOf(config).label"
+                            :title="kindIconOf(config).label"
+                        ></wa-icon>{{ ttsConfigDisplayName(config, store.models) }}</span>
                         <span v-if="lastTestTexts[config.id]?.stats" class="tts-summary-note" :title="testStatsTitle(config)">{{ lastTestTexts[config.id].stats }}</span>
                         <span v-if="config.note" class="tts-summary-note" :title="config.note">{{ config.note }}</span>
                     </span>
@@ -525,12 +540,14 @@ function answerNo(id) {
 
                         <div class="tts-field">
                             <span class="setting-group-label">Format</span>
-                            <SegmentedControl
-                                label="Format"
-                                :model-value="config.audio_format"
-                                :options="SCRIPT_FORMAT_OPTIONS"
-                                @update:model-value="onScriptChoice(config, 'audio_format', $event)"
-                            />
+                            <div class="tts-format-row">
+                                <SegmentedControl
+                                    label="Format"
+                                    :model-value="config.audio_format"
+                                    :options="SCRIPT_FORMAT_OPTIONS"
+                                    @update:model-value="onScriptChoice(config, 'audio_format', $event)"
+                                />
+                            </div>
                         </div>
 
                         <!-- Raw PCM has no header: its sample rate and channels come from here. -->
@@ -697,10 +714,10 @@ function answerNo(id) {
 
         <div class="tts-new-configs">
             <wa-button size="small" appearance="outlined" @click="addConfig('openrouter')">
-                <wa-icon slot="start" name="plus"></wa-icon> New OpenRouter config
+                <wa-icon slot="start" :name="KIND_ICONS.openrouter.name"></wa-icon> New OpenRouter config
             </wa-button>
             <wa-button size="small" appearance="outlined" @click="addConfig('script')">
-                <wa-icon slot="start" name="plus"></wa-icon> New script config
+                <wa-icon slot="start" :name="KIND_ICONS.script.name"></wa-icon> New script config
             </wa-button>
         </div>
     </section>
@@ -770,6 +787,12 @@ function answerNo(id) {
     color: var(--wa-color-text-quiet);
 }
 
+.tts-kind-icon {
+    color: var(--wa-color-text-quiet);
+    margin-inline-end: var(--wa-space-xs);
+    vertical-align: -0.125em;
+}
+
 .tts-mark-validated {
     color: var(--wa-color-success-60);
 }
@@ -797,6 +820,8 @@ function answerNo(id) {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-s);
+    /* A narrow card (a phone) tightens its segmented controls, see .tts-format-row. */
+    container-type: inline-size;
 }
 
 .tts-config-row {
@@ -852,6 +877,23 @@ function answerNo(id) {
     flex-wrap: wrap;
     column-gap: var(--wa-space-s);
     row-gap: var(--wa-space-2xs);
+}
+
+/* A segmented control keeps its content width and its one row of segments: the note wraps
+   under it instead. */
+.tts-format-row > .segmented-control {
+    flex: none;
+    max-width: 100%;
+}
+
+.tts-format-row :deep(wa-radio-group::part(form-control-input)) {
+    flex-wrap: nowrap;
+}
+
+@container (max-width: 26rem) {
+    .tts-format-row > .segmented-control {
+        --wa-form-control-padding-inline: 0.5em;
+    }
 }
 
 .tts-test-row {
