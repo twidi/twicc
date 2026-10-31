@@ -146,16 +146,42 @@ def test_a_non_wav_output_is_refused(data):
         _fed(OutputCheck("wav", None, 1), data, 64)
 
 
-def test_a_wav_with_no_data_chunk_in_its_first_bytes_is_refused():
-    junk = _chunk(b"JUNK", bytes(WAV_HEADER_MAX_BYTES))
+# RIFF/WAVE (12), ``fmt `` (8 + 16), a ``JUNK`` chunk header (8), then the ``data`` header (8).
+_JUNK_FOR_A_FULL_HEADER = WAV_HEADER_MAX_BYTES - 12 - 24 - 8 - 8
+
+
+@pytest.mark.parametrize("step", [1, 4096, None])
+def test_a_wav_whose_data_header_ends_past_the_limit_is_refused(step):
+    junk = _chunk(b"JUNK", bytes(_JUNK_FOR_A_FULL_HEADER + 2))
     wav = _wav(b"\x00" * 8, extra_chunk=junk)
-    check = OutputCheck("wav", None, 1)
     with pytest.raises(SpeechError, match=f"^{NOT_WAV}$"):
-        check.feed(wav[:100])
-    check = OutputCheck("wav", None, 1)
+        _fed(OutputCheck("wav", None, 1), wav, step or len(wav))
+
+
+@pytest.mark.parametrize("step", [1, 4096, None])
+def test_a_wav_whose_data_header_ends_at_the_limit_is_accepted(step):
+    junk = _chunk(b"JUNK", bytes(_JUNK_FOR_A_FULL_HEADER))
+    wav = _wav(b"\x07\x08" * 4, extra_chunk=junk)
+    assert _fed(OutputCheck("wav", None, 1), wav, step or len(wav)) == b"\x07\x08" * 4
+
+
+@pytest.mark.parametrize("step", [1, 4096, None])
+def test_a_wav_whose_fmt_chunk_ends_past_the_limit_is_refused(step):
+    wav = _wav(b"\x00" * 8)
+    fmt_at = wav.index(b"fmt ")
+    big_fmt = _chunk(b"fmt ", wav[fmt_at + 8 : fmt_at + 24] + bytes(WAV_HEADER_MAX_BYTES))
+    wav = wav[:fmt_at] + big_fmt + wav[fmt_at + 24 :]
     with pytest.raises(SpeechError, match=f"^{NOT_WAV}$"):
-        for start in range(0, len(wav), 4096):
-            check.feed(wav[start : start + 4096])
+        _fed(OutputCheck("wav", None, 1), wav, step or len(wav))
+
+
+@pytest.mark.parametrize("step", [1, 5, None])
+def test_a_header_of_many_small_chunks_is_read_across_feeds(step):
+    small_chunks = b"".join(_chunk(b"JUNK", bytes(index % 3)) for index in range(500))
+    wav = _wav(b"\x09\x0a" * 6, extra_chunk=small_chunks)
+    check = OutputCheck("wav", None, 1)
+    assert _fed(check, wav, step or len(wav)) == b"\x09\x0a" * 6
+    assert check.content_type == "audio/pcm;rate=8000;channels=1"
 
 
 def test_pcm_needs_a_rate():

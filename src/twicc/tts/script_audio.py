@@ -96,6 +96,9 @@ class _WavCheck:
         self._held = bytearray()
         self._in_data = False
         self._remaining: int | None = None  # sample bytes still to give; None: every byte
+        # The header walk, kept across chunks: the next chunk header, and the read ``fmt ``.
+        self._position = 12
+        self._format: tuple[int, int] | None = None
 
     def feed(self, chunk: bytes) -> bytes:
         if self._in_data:
@@ -123,31 +126,31 @@ class _WavCheck:
 
     def _read_header(self) -> int | None:
         """The offset of the first sample in the held bytes, or None while the header is not
-        whole. Re-read from the start at each chunk: it skips chunk payloads by their size."""
+        whole. The walk resumes at the chunk header where the previous feed stopped, and skips
+        chunk payloads by their size."""
         held = self._held
         if held[:4] != b"RIFF"[: len(held)] or held[8:12] != b"WAVE"[: max(len(held) - 8, 0)]:
             raise SpeechError(NOT_WAV)
-        position = 12
-        wav_format = None
         while True:
-            if len(held) < position + 8:
-                self._check_header_room(position + 8)
+            position = self._position
+            payload = position + 8
+            self._check_header_room(payload)
+            if len(held) < payload:
                 return None
             chunk_id = bytes(held[position : position + 4])
-            size = int.from_bytes(held[position + 4 : position + 8], "little")
-            payload = position + 8
+            size = int.from_bytes(held[position + 4 : payload], "little")
             if chunk_id == b"data":
-                if wav_format is None:
+                if self._format is None:
                     raise SpeechError(NOT_WAV)  # no rate nor channels for the samples
                 self._remaining = None if size in _WAV_UNKNOWN_SIZES else size
-                self.content_type = _pcm_type(*wav_format)
+                self.content_type = _pcm_type(*self._format)
                 return payload
             if chunk_id == b"fmt ":
+                self._check_header_room(payload + size)
                 if len(held) < payload + size:
-                    self._check_header_room(payload + size)
                     return None
-                wav_format = self._read_fmt(bytes(held[payload : payload + size]))
-            position = payload + size + (size & 1)  # a pad byte after an odd size
+                self._format = self._read_fmt(bytes(held[payload : payload + size]))
+            self._position = payload + size + (size & 1)  # a pad byte after an odd size
 
     @staticmethod
     def _check_header_room(length: int) -> None:
