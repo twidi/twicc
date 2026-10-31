@@ -595,6 +595,11 @@ Task 1 ran on 2026-10-30: one French text of 972 characters, cut into parts of 2
 - Joined files in the browsers (Task 1 Step 3): all four joined files OK in Chrome and Firefox, desktop and Android. Files in the controller session's Artifacts tab, folder `tts-chunking-spike/`: `elevenlabs-joined.mp3`, `minimax-joined.mp3`, `seed-joined.mp3` (with `seed-raw.mp3` to compare), `heygen-joined.wav`.
 - ElevenLabs v3, 250 characters, time to the first byte: 4.62 s (headers and first byte together, last byte at 4.65 s). 467 characters: 7.83 s. Other models, first byte of the 252-character part: MiniMax 0.77 s, Seed 15.04 s, HeyGen 1.00 s.
 - Task 1 spend: $0.2688 (OpenRouter generation lookups, 12 parts, 3,880 characters): ElevenLabs $0.0776, MiniMax $0.0582, Seed $0.1330, HeyGen $0.
-- `PACE_MARGIN`:
-- `BUFFERED_SENDING`:
-- Cells not tested:
+- Task 8 live checks (Firefox Android, 3,714 characters, after the backend restart):
+  - HeyGen turbo free, PCM: `parts=3`, first audio 1.4 s, parts sent at t = 0, 60 and 182 s, playback 254 s = audio length, normal end; seams not audible.
+  - Grok Voice, MP3: `parts=3`, first audio 0.6 s, parts sent at t = 0, 61 and 186 s, playback 261 s = audio length, normal end; cost $0.0557 over 3 cost lines.
+  - Stop at 16 s (HeyGen PCM): `parts=1`, `outcome=released`; the second part never went out.
+  - Locked screen, HeyGen PCM: the sound stops about 10 s after the lock (the browser freezes the page, so the PCM player gets no more chunks; the audio already scheduled plays out). The owner accepts it as expected browser behaviour: no decision rule applied, no further check.
+- `PACE_MARGIN`: unchanged (10 s). A larger margin only delays the cut on a locked screen.
+- `BUFFERED_SENDING`: unchanged (`{}`).
+- Cells not tested: Chrome and Firefox desktop, Chrome Android, the locked screen in MP3, the Vite proxy and the Cloudflare tunnel, ElevenLabs v3 on 6,000 characters.
