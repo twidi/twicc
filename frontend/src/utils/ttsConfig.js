@@ -1,6 +1,6 @@
 // Pure rules for the text-to-speech configs (shape normalized by src/twicc/tts/config.py).
 
-/** The fields sent to the speech endpoint. `name` and `note` are not among them. */
+/** The speech fields of an OpenRouter config. */
 export const SPEECH_FIELDS = ['model', 'voice', 'response_format', 'speed', 'instructions']
 
 /** The speech fields of a script config (a user shell command gives the audio). */
@@ -41,10 +41,11 @@ export function speechFieldsOf(config) {
 
 /**
  * Whether two configs or snapshots have the same speech fields. The kind comes from whichever
- * one carries it: a stored snapshot has none.
+ * one carries it: a stored snapshot has none. Two different kinds are never the same.
  */
 export function sameSpeechFields(a, b) {
     if (!a || !b) return false
+    if (a.kind && b.kind && kindOf(a) !== kindOf(b)) return false
     return fieldsOfKind(kindOf({ kind: a.kind ?? b.kind })).every(field => a[field] === b[field])
 }
 
@@ -84,7 +85,7 @@ export function createScriptConfig(id) {
     }
 }
 
-/** The name shown for a config: its own name, else built from its model's name and its voice. */
+/** The name shown for a config: its own name, else its automatic name (see `ttsConfigAutoName`). */
 export function ttsConfigDisplayName(config, models = []) {
     const name = config.name?.trim()
     if (name) return name

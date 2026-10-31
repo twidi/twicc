@@ -405,6 +405,16 @@ test('sameSpeechFields compares the fields of the kind of either argument', () =
     assert.equal(sameSpeechFields(undefined, script), false)
 })
 
+test('sameSpeechFields: a script config and an OpenRouter config are never the same', () => {
+    const script = scriptConfig('s')
+    const openrouter = validatedConfig('a')
+    assert.equal(sameSpeechFields(script, openrouter), false)
+    assert.equal(sameSpeechFields(openrouter, script), false)
+    // Same field values, different kinds: still not the same.
+    assert.equal(sameSpeechFields(speechFieldsOf(script), { ...speechFieldsOf(script), kind: 'openrouter' }), false)
+    assert.equal(sameSpeechFields({ ...speechFieldsOf(openrouter), kind: 'script' }, speechFieldsOf(openrouter)), false)
+})
+
 test('the question after a script test follows the script fields', () => {
     const script = validatedScript('s')
     const tested = speechFieldsOf(script)
