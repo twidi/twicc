@@ -498,6 +498,15 @@ class _ScriptRun:
         for task in (self._read_task, *self._side_tasks):
             if task is not None:
                 task.cancel()
-        # The only close asyncio offers for the pipes; it does not signal an exited process.
-        self._proc._transport.close()
-        await asyncio.sleep(0)
+        try:
+            if self._stopped:
+                # The close polls the process: after a SIGKILL it could reap the shell before
+                # asyncio's child watcher, which then logs a warning. Let the watcher read it first.
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + STOP_GRACE_SECONDS
+                while self._proc.returncode is None and loop.time() < deadline:
+                    await asyncio.sleep(EXIT_POLL_SECONDS)
+        finally:
+            # The only close asyncio offers for the pipes; it does not signal an exited process.
+            self._proc._transport.close()
+            await asyncio.sleep(0)

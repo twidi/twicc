@@ -521,6 +521,49 @@ def test_a_release_forces_a_child_that_ignores_sigterm(groups, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_a_forced_shell_is_reaped_by_asyncio(groups, monkeypatch, caplog):
+    """The shell itself ignores SIGTERM: after its SIGKILL, asyncio's child watcher reads its
+    exit status (no "exit status already read" warning)."""
+    monkeypatch.setattr(script, "STOP_GRACE_SECONDS", 0.2)
+    logger = logging.getLogger("asyncio")
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.setattr(logger, "propagate", False)
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    caplog.set_level(logging.WARNING, logger="asyncio")
+    stop_process_group = script._stop_process_group
+
+    def wait_for_zombie(pid):
+        """Block (the loop runs nothing) until *pid* exited, without reaping it."""
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                return
+            time.sleep(0.01)
+
+    async def stop_then_die(pgid):
+        await stop_process_group(pgid)
+        # The killed shell turns zombie before ``_close()`` runs, as on a busy machine.
+        wait_for_zombie(pgid)
+
+    monkeypatch.setattr(script, "_stop_process_group", stop_then_die)
+    pgid_file = groups()
+
+    async def scenario():
+        stream = AudioStream(LABEL)
+        command = f"echo $$ > {pgid_file}; trap '' TERM; sleep 30"
+        pump = asyncio.create_task(pump_script_speech(_request(command), stream))
+        pgid = await _read_pgid(pgid_file)
+        await asyncio.sleep(0.1)  # the shell sets its trap
+        pump.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await _within(pump, 1)
+        await _until(lambda: _group_gone(pgid), 1)
+        await asyncio.sleep(0.1)  # the child watcher reports the exit
+
+    asyncio.run(scenario())
+    assert [r.getMessage() for r in caplog.records if r.name == "asyncio" and r.levelno >= logging.WARNING] == []
+
+
 def test_a_header_only_wav_fails_the_open(tmp_path):
     async def scenario():
         stream = await _pump(_request(f"cat {_file(tmp_path, 'empty.wav', _wav(b''))}", audio_format="wav"))
