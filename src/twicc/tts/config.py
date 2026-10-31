@@ -1,6 +1,8 @@
 """Read/write the text-to-speech configs.
 
 File: <data_dir>/tts.json — whole-file atomic overwrite, like message-snippets.json.
+A config has a ``kind``: ``openrouter`` (the default) or ``script`` (a user shell command
+gives the audio). Each kind has its own fields.
 The OpenRouter key is never stored here: it lives in <data_dir>/.env, and only
 its presence reaches the browser (:func:`tts_client_payload`).
 """
@@ -11,9 +13,14 @@ import orjson
 
 from twicc.atomic_json import atomic_write_json
 from twicc.paths import OPENROUTER_API_KEY_ENV, get_env_path, get_env_secret, get_tts_config_path
+from twicc.tts.openrouter import MAX_PCM_CHANNELS, MAX_PCM_RATE
 
+CONFIG_KINDS = ("openrouter", "script")
 TTS_RESPONSE_FORMATS = ("mp3", "pcm")
 SPEECH_FIELDS = ("model", "voice", "response_format", "speed", "instructions")
+SCRIPT_FIELDS = ("command", "output", "audio_format", "pcm_rate", "pcm_channels", "max_chars")
+SCRIPT_OUTPUTS = ("stream", "whole", "path")
+SCRIPT_FORMATS = ("mp3", "wav", "pcm")
 
 
 def empty_tts_config() -> dict:
@@ -51,11 +58,47 @@ def _speech_fields(raw: dict) -> dict:
     }
 
 
-def _validated(value: object) -> dict | None:
-    """The speech-field snapshot of the last confirmation, or None when absent or incomplete."""
-    if not isinstance(value, dict) or any(field not in value for field in SPEECH_FIELDS):
+def _int_in(value: object, low: int, high: int | None = None) -> int | None:
+    """*value* when it is an int (not a ``bool``) with ``low <= value <= high``, else None."""
+    if isinstance(value, bool) or not isinstance(value, int):
         return None
-    return _speech_fields(value)
+    if value < low or (high is not None and value > high):
+        return None
+    return value
+
+
+def script_fields(raw: dict) -> dict:
+    """The six fields of a script config in *raw*, each normalized."""
+    output = raw.get("output")
+    audio_format = raw.get("audio_format")
+    pcm_channels = _int_in(raw.get("pcm_channels"), 1, MAX_PCM_CHANNELS)
+    return {
+        "command": _string(raw.get("command")),
+        "output": output if output in SCRIPT_OUTPUTS else "stream",
+        "audio_format": audio_format if audio_format in SCRIPT_FORMATS else "mp3",
+        "pcm_rate": _int_in(raw.get("pcm_rate"), 1, MAX_PCM_RATE),
+        "pcm_channels": 1 if pcm_channels is None else pcm_channels,
+        "max_chars": _int_in(raw.get("max_chars"), 1),
+    }
+
+
+_KIND_FIELDS = {
+    "openrouter": (SPEECH_FIELDS, _speech_fields),
+    "script": (SCRIPT_FIELDS, script_fields),
+}
+
+
+def _kind(value: object) -> str:
+    return value if value in CONFIG_KINDS else "openrouter"
+
+
+def _validated(value: object, kind: str) -> dict | None:
+    """The snapshot of the fields of *kind* at the last confirmation, or None when absent or
+    incomplete. Other keys of the snapshot (a ``kind``, a ``note``) are dropped."""
+    fields, normalize = _KIND_FIELDS[kind]
+    if not isinstance(value, dict) or any(field not in value for field in fields):
+        return None
+    return normalize(value)
 
 
 def _non_negative(value: object, kind: type) -> int | float | None:
@@ -112,12 +155,15 @@ def normalize_tts_config(raw: object) -> dict:
         if not isinstance(entry_id, str) or not entry_id or entry_id in seen_ids:
             continue
         seen_ids.add(entry_id)
+        kind = _kind(entry.get("kind"))
+        _fields, normalize_fields = _KIND_FIELDS[kind]
         configs.append({
             "id": entry_id,
             "name": _string(entry.get("name")),
-            **_speech_fields(entry),
+            "kind": kind,
+            **normalize_fields(entry),
             "note": _string(entry.get("note")),
-            "validated": _validated(entry.get("validated")),
+            "validated": _validated(entry.get("validated"), kind),
             "last_test": _last_test(entry.get("last_test")),
         })
     active_id = raw.get("active_id")
@@ -140,6 +186,20 @@ def write_tts_config(config: object) -> dict:
     normalized = normalize_tts_config(config)
     atomic_write_json(get_tts_config_path(), normalized)
     return normalized
+
+
+def stored_script_config(config_id: str) -> dict | None:
+    """The normalized entry of *config_id* in tts.json when it is a script config, else None.
+
+    The command that runs is always this stored one, never one from a request.
+    """
+    entry = next((item for item in read_tts_config()["configs"] if item["id"] == config_id), None)
+    return entry if entry is not None and entry["kind"] == "script" else None
+
+
+def script_config_validated(entry: dict) -> bool:
+    """Whether the ``validated`` snapshot of the script config *entry* matches its fields."""
+    return entry.get("validated") == script_fields(entry)
 
 
 def openrouter_api_key() -> str | None:

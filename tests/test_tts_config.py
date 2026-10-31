@@ -10,10 +10,14 @@ from django.test import AsyncClient
 from tests.test_hidden_sessions_snapshot import _close, _communicator, _connect_frames
 from twicc.paths import get_env_path, get_tts_config_path
 from twicc.tts.config import (
+    SPEECH_FIELDS,
     empty_tts_config,
     normalize_tts_config,
     positive_speed,
     read_tts_config,
+    script_config_validated,
+    script_fields,
+    stored_script_config,
     tts_client_payload,
     write_tts_config,
 )
@@ -56,7 +60,7 @@ def test_empty_config_shape():
 
 
 def test_normalize_keeps_a_valid_entry_unchanged():
-    entry = _entry()
+    entry = _entry(kind="openrouter")
     config = {"active_id": "a", "configs": [entry], "test_text": "Bonjour"}
     assert normalize_tts_config(config) == config
 
@@ -82,7 +86,7 @@ def test_normalize_repairs_fields():
 def test_normalize_fills_defaults_for_a_bare_entry():
     out = normalize_tts_config({"configs": [{"id": "a"}]})
     assert out == {"active_id": None, "configs": [{
-        "id": "a", "name": "", "model": "", "voice": "", "response_format": "mp3",
+        "id": "a", "name": "", "kind": "openrouter", "model": "", "voice": "", "response_format": "mp3",
         "speed": None, "instructions": "", "note": "", "validated": None, "last_test": None,
     }], "test_text": ""}
 
@@ -156,7 +160,7 @@ def test_validated_snapshot_is_normalized_or_dropped():
 
 
 def test_write_then_read_round_trips(tmp_data_dir):
-    config = {"active_id": "a", "configs": [_entry(validated={
+    config = {"active_id": "a", "configs": [_entry(kind="openrouter", validated={
         "model": "google/gemini-3.8-flash-lite-tts", "voice": "Kore", "response_format": "pcm",
         "speed": None, "instructions": "",
     })], "test_text": "A sentence of my own."}
@@ -346,3 +350,79 @@ def test_record_last_test_and_its_cost(tmp_data_dir):
     out = record_last_test("a", {"generation_id": "gen-1", "cost": 0.008})
     assert out["configs"][0]["last_test"] == {**LAST_TEST, "cost": 0.008}
     assert read_tts_config()["configs"][0]["last_test"]["cost"] == 0.008
+
+
+# --- script configs -------------------------------------------------------------
+
+
+def test_an_entry_without_kind_is_openrouter():
+    assert normalize_tts_config({"configs": [_entry()]})["configs"][0]["kind"] == "openrouter"
+
+
+def test_an_unknown_kind_is_openrouter():
+    assert normalize_tts_config({"configs": [_entry(kind="other")]})["configs"][0]["kind"] == "openrouter"
+
+
+def test_a_script_entry_keeps_only_its_fields():
+    raw = {"id": "s", "kind": "script", "name": "Piper", "command": "piper -q", "output": "path",
+           "audio_format": "pcm", "pcm_rate": 22050, "pcm_channels": 1, "max_chars": 800,
+           "model": "x", "voice": "y", "note": "n", "validated": None}
+    entry = normalize_tts_config({"configs": [raw]})["configs"][0]
+    assert entry == {"id": "s", "name": "Piper", "kind": "script", "command": "piper -q", "output": "path",
+                     "audio_format": "pcm", "pcm_rate": 22050, "pcm_channels": 1, "max_chars": 800,
+                     "note": "n", "validated": None, "last_test": None}
+
+
+def test_a_bare_script_entry_gets_the_defaults():
+    entry = normalize_tts_config({"configs": [{"id": "s", "kind": "script"}]})["configs"][0]
+    assert entry == {"id": "s", "name": "", "kind": "script", "command": "", "output": "stream",
+                     "audio_format": "mp3", "pcm_rate": None, "pcm_channels": 1, "max_chars": None,
+                     "note": "", "validated": None, "last_test": None}
+
+
+@pytest.mark.parametrize("field, value, expected", [
+    ("output", "other", "stream"), ("audio_format", "ogg", "mp3"), ("pcm_rate", 0, None),
+    ("pcm_rate", 384001, None), ("pcm_rate", True, None), ("pcm_channels", 9, 1), ("pcm_channels", 0, 1),
+    ("max_chars", 0, None), ("max_chars", 1.5, None), ("command", 3, ""),
+])
+def test_script_fields_are_normalized(field, value, expected):
+    assert script_fields({field: value})[field] == expected
+
+
+@pytest.mark.parametrize("field, value", [
+    ("output", "whole"), ("audio_format", "wav"), ("pcm_rate", 384000), ("pcm_channels", 8), ("max_chars", 1),
+])
+def test_script_fields_keep_a_valid_value(field, value):
+    assert script_fields({field: value})[field] == value
+
+
+def test_a_script_validation_snapshot_holds_the_script_fields():
+    fields = script_fields({"command": "say", "audio_format": "wav"})
+    raw = {"id": "s", "kind": "script", **fields, "validated": {**fields, "kind": "script"}}
+    entry = normalize_tts_config({"configs": [raw]})["configs"][0]
+    assert entry["validated"] == fields
+    assert script_config_validated(entry)
+    assert not script_config_validated({**entry, "command": "other"})
+
+
+def test_an_incomplete_script_snapshot_is_dropped():
+    fields = script_fields({"command": "say"})
+    missing = {key: value for key, value in fields.items() if key != "max_chars"}
+    raw = {"id": "s", "kind": "script", **fields, "validated": missing}
+    entry = normalize_tts_config({"configs": [raw]})["configs"][0]
+    assert entry["validated"] is None
+    assert not script_config_validated(entry)
+
+
+def test_an_openrouter_snapshot_without_kind_stays_valid():
+    # A snapshot written before this change: no kind, the five fields.
+    speech = {key: _entry()[key] for key in SPEECH_FIELDS}
+    entry = normalize_tts_config({"configs": [_entry(validated=speech)]})["configs"][0]
+    assert entry["validated"] == speech
+
+
+def test_stored_script_config(tmp_data_dir):
+    write_tts_config({"configs": [_entry(id="o"), {"id": "s", "kind": "script", "command": "say"}]})
+    assert stored_script_config("s")["command"] == "say"
+    assert stored_script_config("o") is None
+    assert stored_script_config("missing") is None
