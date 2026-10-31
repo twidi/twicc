@@ -536,8 +536,11 @@ def test_a_forced_shell_is_reaped_by_asyncio(groups, monkeypatch, caplog):
         """Block (the loop runs nothing) until *pid* exited, without reaping it."""
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
-            if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
-                return
+            try:
+                if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                    return
+            except ChildProcessError:
+                return  # a threaded child watcher (macOS, Linux without pidfd) already reaped it
             time.sleep(0.01)
 
     async def stop_then_die(pgid):

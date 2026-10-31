@@ -491,7 +491,8 @@ class _ScriptRun:
 
     async def _close(self) -> None:
         """Cancel the readers and the writer, close the pipes, and let their close callbacks run
-        (no descriptor leaks). Idempotent."""
+        (no descriptor leaks). After a stop, first wait (at most ``STOP_GRACE_SECONDS``) for
+        asyncio to read the exit status. Idempotent."""
         if self._closed:
             return
         self._closed = True
