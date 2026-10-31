@@ -5,6 +5,9 @@
  * collapsible card whose summary line shows its name, its marks, a quick Test (play / stop)
  * and the Activate button. The test sentence is saved in tts.json too.
  *
+ * A config has a kind: an OpenRouter config (model, voice, format) or a script config (a shell
+ * command of the user gives the audio; it needs no key and has no price).
+ *
  * A config is validated by ear: Test reads the test text aloud with the config's current
  * speech fields, then asks "Did you hear it correctly?" (not when those fields are already
  * the validated ones). Yes validates exactly the tested fields; any later speech field
@@ -14,7 +17,15 @@ import { onMounted, ref, watch } from 'vue'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import {
     DEFAULT_TEST_TEXT,
+    MAX_PCM_CHANNELS,
+    MAX_PCM_RATE,
+    SCRIPT_FORMAT_OPTIONS,
+    SCRIPT_OUTPUT_OPTIONS,
+    canTestScript,
     isConfigValidated,
+    kindOf,
+    positiveIntegerInput,
+    scriptStreamingNote,
     openRouterModelUrl,
     sameSpeechFields,
     speechFieldsOf,
@@ -124,8 +135,21 @@ function noVoiceHint(config) {
     return 'This model is not in the OpenRouter list.'
 }
 
+// A script config tests without the OpenRouter key.
 function canTest(config) {
-    return store.keyPresent && !!config.model && !!testText.value.trim() && !testLoading()
+    const ready = kindOf(config) === 'script' ? canTestScript(config) : store.keyPresent && !!config.model
+    return ready && !!testText.value.trim() && !testLoading()
+}
+
+// A script config has no price: its last test shows no cost.
+function isPriced(config) {
+    return kindOf(config) !== 'script'
+}
+
+function testStatsTitle(config) {
+    return isPriced(config)
+        ? 'Last test run: cost per 1,000 characters, per minute of audio, generation time per 1,000 characters, and time to the first audio'
+        : 'Last test run: generation time per 1,000 characters, and time to the first audio'
 }
 
 function commit(id, patch) {
@@ -159,6 +183,39 @@ function onVoiceSelect(config, voice) {
 
 function onFormatChange(config, format) {
     if (format !== config.response_format) commit(config.id, { response_format: format })
+}
+
+function onCommandChange(config, event) {
+    const command = event.target.value.trim()
+    event.target.value = command
+    if (command !== config.command) commit(config.id, { command })
+}
+
+// Output and format of a script config.
+function onScriptChoice(config, field, value) {
+    if (value !== config[field]) commit(config.id, { [field]: value })
+}
+
+function integerText(value) {
+    return value == null ? '' : String(value)
+}
+
+// A whole number within 1..max; empty clears it (the channels then go back to 1). Anything else
+// keeps the stored value, and the input shows it again.
+function onIntegerChange(config, field, max, event) {
+    const input = event.target
+    const parsed = positiveIntegerInput(input.value, max)
+    const value = parsed === null && field === 'pcm_channels' ? 1 : parsed
+    if (value === undefined || value === config[field]) {
+        const stored = integerText(config[field])
+        input.value = stored
+        // The host value can already equal `stored`, so it would not re-render: reset the
+        // native input too.
+        if (input.input) input.input.value = stored
+        return
+    }
+    input.value = integerText(value)
+    commit(config.id, { [field]: value })
 }
 
 // Speed and instructions are not shown for now: a config keeps them (tts.json, speech
@@ -204,6 +261,7 @@ function testButtonTitle(config) {
     if (isTestBusy(config)) return 'Stop the test'
     if (canTest(config)) return 'Test this config'
     if (testLoading()) return 'Another test is loading'
+    if (kindOf(config) === 'script') return 'Test: needs a command, a sample rate for PCM, and a test text'
     return 'Test: needs the key, a model and a test text'
 }
 
@@ -219,8 +277,8 @@ function onCardToggle(id, open, event) {
     else delete openIds.value[id]
 }
 
-function addConfig() {
-    openIds.value[store.addConfig()] = true
+function addConfig(kind) {
+    openIds.value[store.addConfig(kind)] = true
 }
 
 function duplicateConfig(config) {
@@ -283,7 +341,7 @@ function answerNo(id) {
         <h3 class="settings-section-title">Text to Speech <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
 
         <p class="setting-group-hint">
-            Read the chat messages aloud with OpenRouter. See the
+            Read the chat messages aloud with OpenRouter, or with your own script. See the
             <a href="https://openrouter.ai/docs/guides/overview/multimodal/tts" target="_blank" rel="noopener">OpenRouter TTS guide</a>
             and the <a href="https://openrouter.ai/models?output_modalities=speech" target="_blank" rel="noopener">speech models</a>.
             Prices are OpenRouter's list prices: the real cost can differ.
@@ -297,7 +355,7 @@ function answerNo(id) {
         <wa-callout v-else variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>,
-            then restart TwiCC. Testing is disabled until then.
+            then restart TwiCC. Testing OpenRouter configs is disabled until then.
         </wa-callout>
 
         <div class="setting-group">
@@ -327,7 +385,7 @@ function answerNo(id) {
                 <div slot="summary" class="tts-summary">
                     <span class="tts-summary-text">
                         <span class="tts-summary-name">{{ ttsConfigDisplayName(config, store.models) }}</span>
-                        <span v-if="ttsTestStats(config.last_test)" class="tts-summary-note" title="Last test run: cost per 1,000 characters, per minute of audio, generation time per 1,000 characters, and time to the first audio">{{ ttsTestStats(config.last_test) }}</span>
+                        <span v-if="ttsTestStats(config.last_test, { priced: isPriced(config) })" class="tts-summary-note" :title="testStatsTitle(config)">{{ ttsTestStats(config.last_test, { priced: isPriced(config) }) }}</span>
                         <span v-if="config.note" class="tts-summary-note" :title="config.note">{{ config.note }}</span>
                     </span>
                     <wa-icon
@@ -398,9 +456,9 @@ function answerNo(id) {
                 </div>
 
                 <div class="tts-config-body">
-                    <div v-if="ttsLastTestFacts(config.last_test)" class="tts-last-test">
+                    <div v-if="ttsLastTestFacts(config.last_test, { priced: isPriced(config) })" class="tts-last-test">
                         <span class="setting-group-label">Last test run · {{ lastTestWhen(config.last_test) }}</span>
-                        <span class="setting-group-hint">{{ ttsLastTestFacts(config.last_test) }}</span>
+                        <span class="setting-group-hint">{{ ttsLastTestFacts(config.last_test, { priced: isPriced(config) }) }}</span>
                     </div>
                     <div class="tts-field">
                         <label class="setting-group-label" :for="`tts-${config.id}-name`">Name</label>
@@ -413,65 +471,151 @@ function answerNo(id) {
                         ></wa-input>
                     </div>
 
-                    <!-- Top-aligned: only the model label line carries the OpenRouter link. -->
-                    <div class="tts-config-row tts-pickers">
-                        <div class="tts-field tts-field-grow">
-                            <div class="tts-label-row">
-                                <label class="setting-group-label" :for="`tts-${config.id}-model`">Model</label>
-                                <a
-                                    v-if="config.model"
-                                    class="tts-model-link"
-                                    :href="openRouterModelUrl(config.model)"
-                                    target="_blank"
-                                    rel="noopener"
-                                >View on OpenRouter <wa-icon name="arrow-up-right-from-square"></wa-icon></a>
-                            </div>
-                            <FilterableSelect
-                                :input-id="`tts-${config.id}-model`"
-                                label="Model"
+                    <template v-if="kindOf(config) === 'script'">
+                        <div class="tts-field">
+                            <label class="setting-group-label" :for="`tts-${config.id}-command`">Command</label>
+                            <wa-textarea
+                                :id="`tts-${config.id}-command`"
+                                class="tts-command"
                                 size="small"
-                                :placeholder="store.modelsStatus === 'loading' ? 'Loading the models...' : 'Choose a model'"
-                                :empty-text="modelsEmptyText()"
-                                :model-value="config.model"
-                                :options="modelOptionsFor(config)"
-                                @update:model-value="onModelSelect(config, $event)"
-                            />
-                            <!-- One link through the retry: it keeps the keyboard focus. -->
-                            <span v-if="store.modelsStatus === 'failed' || retryingModels" class="setting-group-hint">
-                                {{ retryingModels ? 'Loading the OpenRouter model list...' : 'The OpenRouter model list did not load.' }}
-                                <a href="#" :aria-disabled="retryingModels" @click.prevent="retryModels">{{ retryingModels ? 'Retrying...' : 'Retry' }}</a>
-                            </span>
+                                rows="2"
+                                resize="auto"
+                                :spellcheck="false"
+                                :value.prop="config.command"
+                                @change="onCommandChange(config, $event)"
+                            ></wa-textarea>
                         </div>
-                        <div class="tts-field tts-field-grow">
-                            <label class="setting-group-label" :for="`tts-${config.id}-voice`">Voice</label>
-                            <FilterableSelect
-                                v-if="hasVoiceChoice(config)"
-                                :input-id="`tts-${config.id}-voice`"
-                                label="Voice"
-                                size="small"
-                                placeholder="Choose a voice"
-                                :model-value="config.voice"
-                                :options="voiceOptionsFor(config)"
-                                @update:model-value="onVoiceSelect(config, $event)"
-                            />
-                            <span v-else class="setting-group-hint">{{ noVoiceHint(config) }}</span>
-                        </div>
-                    </div>
 
-                    <div class="tts-field">
-                        <span class="setting-group-label">Format</span>
-                        <div class="tts-format-row">
+                        <div class="tts-field">
+                            <span class="setting-group-label">Output</span>
+                            <div class="tts-format-row">
+                                <SegmentedControl
+                                    label="Output"
+                                    :model-value="config.output"
+                                    :options="SCRIPT_OUTPUT_OPTIONS"
+                                    @update:model-value="onScriptChoice(config, 'output', $event)"
+                                />
+                                <span class="setting-group-hint">{{ scriptStreamingNote(config) }}</span>
+                            </div>
+                        </div>
+
+                        <div class="tts-field">
+                            <span class="setting-group-label">Format</span>
                             <SegmentedControl
                                 label="Format"
-                                :model-value="config.response_format"
-                                :options="ttsFormatOptions(modelFactsOf(config))"
-                                @update:model-value="onFormatChange(config, $event)"
+                                :model-value="config.audio_format"
+                                :options="SCRIPT_FORMAT_OPTIONS"
+                                @update:model-value="onScriptChoice(config, 'audio_format', $event)"
                             />
-                            <span v-if="ttsStreamingNote(modelFactsOf(config), config.response_format)" class="setting-group-hint">
-                                {{ ttsStreamingNote(modelFactsOf(config), config.response_format) }}
-                            </span>
                         </div>
-                    </div>
+
+                        <!-- Raw PCM has no header: its sample rate and channels come from here. -->
+                        <div v-if="config.audio_format === 'pcm'" class="tts-config-row">
+                            <div class="tts-field tts-field-grow">
+                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-rate`">Sample rate (Hz)</label>
+                                <wa-input
+                                    :id="`tts-${config.id}-pcm-rate`"
+                                    size="small"
+                                    inputmode="numeric"
+                                    :value.prop="integerText(config.pcm_rate)"
+                                    @change="onIntegerChange(config, 'pcm_rate', MAX_PCM_RATE, $event)"
+                                ></wa-input>
+                            </div>
+                            <div class="tts-field tts-field-grow">
+                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-channels`">Channels</label>
+                                <wa-input
+                                    :id="`tts-${config.id}-pcm-channels`"
+                                    size="small"
+                                    inputmode="numeric"
+                                    :value.prop="integerText(config.pcm_channels)"
+                                    @change="onIntegerChange(config, 'pcm_channels', MAX_PCM_CHANNELS, $event)"
+                                ></wa-input>
+                            </div>
+                        </div>
+
+                        <div class="tts-field">
+                            <label class="setting-group-label" :for="`tts-${config.id}-max-chars`">Max characters per run</label>
+                            <wa-input
+                                :id="`tts-${config.id}-max-chars`"
+                                size="small"
+                                inputmode="numeric"
+                                placeholder="Whole text in one run"
+                                :value.prop="integerText(config.max_chars)"
+                                @change="onIntegerChange(config, 'max_chars', Number.MAX_SAFE_INTEGER, $event)"
+                            ></wa-input>
+                        </div>
+
+                        <p class="setting-group-hint tts-script-help">
+                            TwiCC runs this command in your shell, as a non-interactive login shell in your home
+                            directory, and writes the text to its standard input. The command writes the audio to its
+                            standard output (for File path: one absolute path, to a new file at each run) and exits
+                            with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or
+                            ~/.zshrc sets is usually missing, and nothing else may print to the standard output.
+                            Several readings can run the command at the same time. With Whole audio or File path, set
+                            a max characters per run: the audio then starts after the first part.
+                        </p>
+                    </template>
+                    <template v-else>
+                        <!-- Top-aligned: only the model label line carries the OpenRouter link. -->
+                        <div class="tts-config-row tts-pickers">
+                            <div class="tts-field tts-field-grow">
+                                <div class="tts-label-row">
+                                    <label class="setting-group-label" :for="`tts-${config.id}-model`">Model</label>
+                                    <a
+                                        v-if="config.model"
+                                        class="tts-model-link"
+                                        :href="openRouterModelUrl(config.model)"
+                                        target="_blank"
+                                        rel="noopener"
+                                    >View on OpenRouter <wa-icon name="arrow-up-right-from-square"></wa-icon></a>
+                                </div>
+                                <FilterableSelect
+                                    :input-id="`tts-${config.id}-model`"
+                                    label="Model"
+                                    size="small"
+                                    :placeholder="store.modelsStatus === 'loading' ? 'Loading the models...' : 'Choose a model'"
+                                    :empty-text="modelsEmptyText()"
+                                    :model-value="config.model"
+                                    :options="modelOptionsFor(config)"
+                                    @update:model-value="onModelSelect(config, $event)"
+                                />
+                                <!-- One link through the retry: it keeps the keyboard focus. -->
+                                <span v-if="store.modelsStatus === 'failed' || retryingModels" class="setting-group-hint">
+                                    {{ retryingModels ? 'Loading the OpenRouter model list...' : 'The OpenRouter model list did not load.' }}
+                                    <a href="#" :aria-disabled="retryingModels" @click.prevent="retryModels">{{ retryingModels ? 'Retrying...' : 'Retry' }}</a>
+                                </span>
+                            </div>
+                            <div class="tts-field tts-field-grow">
+                                <label class="setting-group-label" :for="`tts-${config.id}-voice`">Voice</label>
+                                <FilterableSelect
+                                    v-if="hasVoiceChoice(config)"
+                                    :input-id="`tts-${config.id}-voice`"
+                                    label="Voice"
+                                    size="small"
+                                    placeholder="Choose a voice"
+                                    :model-value="config.voice"
+                                    :options="voiceOptionsFor(config)"
+                                    @update:model-value="onVoiceSelect(config, $event)"
+                                />
+                                <span v-else class="setting-group-hint">{{ noVoiceHint(config) }}</span>
+                            </div>
+                        </div>
+
+                        <div class="tts-field">
+                            <span class="setting-group-label">Format</span>
+                            <div class="tts-format-row">
+                                <SegmentedControl
+                                    label="Format"
+                                    :model-value="config.response_format"
+                                    :options="ttsFormatOptions(modelFactsOf(config))"
+                                    @update:model-value="onFormatChange(config, $event)"
+                                />
+                                <span v-if="ttsStreamingNote(modelFactsOf(config), config.response_format)" class="setting-group-hint">
+                                    {{ ttsStreamingNote(modelFactsOf(config), config.response_format) }}
+                                </span>
+                            </div>
+                        </div>
+                    </template>
 
                     <div class="tts-field">
                         <label class="setting-group-label" :for="`tts-${config.id}-note`">Personal note</label>
@@ -526,9 +670,14 @@ function answerNo(id) {
             </wa-details>
         </div>
 
-        <wa-button class="tts-new-config" size="small" appearance="outlined" @click="addConfig">
-            <wa-icon slot="start" name="plus"></wa-icon> New config
-        </wa-button>
+        <div class="tts-new-configs">
+            <wa-button size="small" appearance="outlined" @click="addConfig('openrouter')">
+                <wa-icon slot="start" name="plus"></wa-icon> New OpenRouter config
+            </wa-button>
+            <wa-button size="small" appearance="outlined" @click="addConfig('script')">
+                <wa-icon slot="start" name="plus"></wa-icon> New script config
+            </wa-button>
+        </div>
     </section>
 </template>
 
@@ -697,7 +846,17 @@ function answerNo(id) {
     color: var(--wa-color-danger-60);
 }
 
-.tts-new-config {
-    align-self: flex-start;
+.tts-new-configs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-xs);
+}
+
+.tts-command::part(textarea) {
+    font-family: var(--wa-font-family-code);
+}
+
+.tts-script-help {
+    margin: 0;
 }
 </style>

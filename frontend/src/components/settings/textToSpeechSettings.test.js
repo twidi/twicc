@@ -49,3 +49,77 @@ test('speed and instructions are not editable in the settings for now', () => {
     assert.doesNotMatch(settingsSource, /tts-\$\{config\.id\}-speed|tts-\$\{config\.id\}-instructions/)
     assert.doesNotMatch(settingsSource, />Speed<|>Instructions</)
 })
+
+// The source with its whitespace runs folded to one space: a copy can wrap in the template.
+const flatSource = settingsSource.replace(/\s+/g, ' ')
+
+/** The script branch of a card body, up to its `v-else` (the OpenRouter branch). */
+function scriptBranchSource() {
+    const start = settingsSource.indexOf(`<template v-if="kindOf(config) === 'script'">`)
+    assert.ok(start !== -1, 'the card body branches on the script kind')
+    const end = settingsSource.indexOf('<template v-else>', start)
+    assert.ok(end !== -1, 'the OpenRouter branch follows')
+    return settingsSource.slice(start, end)
+}
+
+/** The body of `function canTest(config)`, up to the next top-level function. */
+function canTestSource() {
+    const start = settingsSource.indexOf('function canTest(config)')
+    assert.ok(start !== -1, 'canTest exists')
+    const end = settingsSource.indexOf('\nfunction ', start)
+    return settingsSource.slice(start, end === -1 ? undefined : end)
+}
+
+test('a script card shows its own fields, without model, voice or OpenRouter link', () => {
+    const body = scriptBranchSource()
+    assert.doesNotMatch(body, /FilterableSelect/)
+    assert.doesNotMatch(body, /openRouterModelUrl/)
+    assert.match(body, /:options="SCRIPT_OUTPUT_OPTIONS"/)
+    assert.match(body, /:options="SCRIPT_FORMAT_OPTIONS"/)
+    assert.match(body, /scriptStreamingNote\(config\)/)
+    assert.match(body, /v-if="config\.audio_format === 'pcm'"/)
+    assert.match(body, />Sample rate \(Hz\)</)
+    assert.match(body, />Channels</)
+    assert.match(body, />Max characters per run</)
+    assert.match(body, /placeholder="Whole text in one run"/)
+})
+
+test('the script number inputs go through positiveIntegerInput with their bounds', () => {
+    assert.match(settingsSource, /positiveIntegerInput\(input\.value, max\)/)
+    assert.match(settingsSource, /'pcm_rate', MAX_PCM_RATE/)
+    assert.match(settingsSource, /'pcm_channels', MAX_PCM_CHANNELS/)
+    assert.match(settingsSource, /'max_chars', Number\.MAX_SAFE_INTEGER/)
+})
+
+test('the script help states the command contract', () => {
+    const help = 'TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.'
+    assert.ok(scriptBranchSource().replace(/\s+/g, ' ').includes(help), 'the help copy is verbatim')
+})
+
+test('the intro names both kinds and the key callout speaks of OpenRouter configs only', () => {
+    assert.ok(flatSource.includes('Read the chat messages aloud with OpenRouter, or with your own script. See the'))
+    assert.ok(flatSource.includes(
+        'Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>, then restart TwiCC. Testing OpenRouter configs is disabled until then.',
+    ))
+})
+
+test('two new-config buttons add an OpenRouter config and a script config', () => {
+    assert.match(settingsSource, /@click="addConfig\('openrouter'\)"[\s\S]*?New OpenRouter config/)
+    assert.match(settingsSource, /@click="addConfig\('script'\)"[\s\S]*?New script config/)
+    assert.match(settingsSource, /function addConfig\(kind\) \{\s*openIds\.value\[store\.addConfig\(kind\)\] = true/)
+})
+
+test('a script config tests without the key, with its own rule and title', () => {
+    const body = canTestSource()
+    assert.match(body, /kindOf\(config\) === 'script'/)
+    assert.match(body, /canTestScript\(config\)/)
+    assert.ok(settingsSource.includes("'Test: needs a command, a sample rate for PCM, and a test text'"))
+})
+
+test('the last test of a script config shows no price', () => {
+    assert.match(settingsSource, /ttsTestStats\(config\.last_test, \{ priced: isPriced\(config\) \}\)/)
+    assert.match(settingsSource, /ttsLastTestFacts\(config\.last_test, \{ priced: isPriced\(config\) \}\)/)
+    assert.doesNotMatch(settingsSource, /ttsTestStats\(config\.last_test\)|ttsLastTestFacts\(config\.last_test\)/)
+    assert.match(settingsSource, /function isPriced\(config\) \{\s*return kindOf\(config\) !== 'script'/)
+    assert.ok(settingsSource.includes("'Last test run: generation time per 1,000 characters, and time to the first audio'"))
+})
