@@ -43,6 +43,7 @@ import {
     formatAfterModelChange,
     ttsStreamingNote,
 } from '../../utils/ttsConfig'
+import { showHelp } from '../help/showHelp'
 import FilterableSelect from '../ui/FilterableSelect.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
@@ -365,6 +366,12 @@ function answerNo(id) {
 <template>
     <section class="settings-section">
         <h3 class="settings-section-title">Text to Speech <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+        <div class="setting-group">
+            <wa-button size="small" appearance="plain" class="tts-help-link" @click="showHelp('text-to-speech', { showDontShowAgain: false })">
+                <wa-icon name="circle-question" slot="start"></wa-icon>
+                View help
+            </wa-button>
+        </div>
 
         <p class="setting-group-hint">
             Read the chat messages aloud with OpenRouter, or with your own script. See the
@@ -587,14 +594,8 @@ function answerNo(id) {
                         </div>
 
                         <p class="setting-group-hint tts-script-help">
-                            TwiCC runs this command in your shell, as a non-interactive login shell in your home
-                            directory, and writes the text to its standard input. The command writes the audio to its
-                            standard output (for File path: one absolute path, to a new file at each run, which TwiCC
-                            deletes after reading unless Delete the file after reading is off) and exits with
-                            status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or
-                            ~/.zshrc sets is usually missing, and nothing else may print to the standard output.
-                            Several readings can run the command at the same time. With Whole audio or File path, set
-                            a max characters per run: the audio then starts after the first part.
+                            The text goes to the command's standard input; the audio (or a file path) comes back on
+                            its standard output. The help at the top of this section tells the rest.
                         </p>
                     </template>
                     <template v-else>
@@ -911,6 +912,11 @@ function answerNo(id) {
 .tts-test-error {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-danger-60);
+}
+
+/* Like the other sections' help link: the button keeps its own width. */
+.tts-help-link {
+    align-self: flex-start;
 }
 
 .tts-new-configs {

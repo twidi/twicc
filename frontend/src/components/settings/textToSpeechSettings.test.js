@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 const settingsSource = readFileSync(new URL('./TextToSpeechSettings.vue', import.meta.url), 'utf8')
 
@@ -92,7 +92,7 @@ test('the script number inputs go through positiveIntegerInput with their bounds
 })
 
 test('the script help states the command contract', () => {
-    const help = 'TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run, which TwiCC deletes after reading unless Delete the file after reading is off) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.'
+    const help = "The text goes to the command's standard input; the audio (or a file path) comes back on its standard output. The help at the top of this section tells the rest."
     assert.ok(scriptBranchSource().replace(/\s+/g, ' ').includes(help), 'the help copy is verbatim')
 })
 
@@ -157,4 +157,11 @@ test('a segmented control keeps its content width and one row of segments', () =
     assert.match(settingsSource, /:deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: nowrap;/)
     // Every segmented control of a card sits in a format row.
     assert.equal(settingsSource.match(/<SegmentedControl/g).length, settingsSource.match(/<div class="tts-format-row">\s*<SegmentedControl/g).length)
+})
+
+test('the section opens its help page from the top, like the other sections', () => {
+    assert.match(settingsSource, /showHelp\('text-to-speech', \{ showDontShowAgain: false \}\)/)
+    const top = settingsSource.slice(settingsSource.indexOf('settings-section-title">Text to Speech'))
+    assert.ok(top.indexOf('View help') < top.indexOf('Read the chat messages aloud'), 'the link comes first')
+    assert.ok(existsSync(new URL('../../../public/help/text-to-speech.md', import.meta.url)), 'the help page exists')
 })
