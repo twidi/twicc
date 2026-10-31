@@ -185,13 +185,15 @@ def test_shell_argv(monkeypatch):
 
 
 def test_terminal_environment_is_a_cleaned_copy(monkeypatch):
-    monkeypatch.setattr(terminal, "provider_env_overlay", lambda: {"CODEX_HOME": "/instance/codex"})
+    # Keys that the purge and the sanitizing remove: they survive only when the overlay comes last.
+    overlay = {"CODEX_HOME": "/instance/codex", "CLAUDE_CODE_OVERLAID": "kept", "GIT_PAGER": "kept"}
+    monkeypatch.setattr(terminal, "provider_env_overlay", lambda: overlay)
     base = {"PATH": "/usr/bin", "GIT_EDITOR": "true", "CLAUDECODE": "1", "CODEX_HOME": "/other"}
     env = terminal.terminal_environment(base)
     assert env["PATH"] == "/usr/bin"
     assert "GIT_EDITOR" not in env  # the terminal sanitizing
     assert "CLAUDECODE" not in env  # the provider purge
-    assert env["CODEX_HOME"] == "/instance/codex"  # the provider homes, applied last
+    assert {key: env[key] for key in overlay} == overlay  # the provider homes, applied last
     assert base["GIT_EDITOR"] == "true"  # the base is not changed
 
 
@@ -313,6 +315,45 @@ def test_a_command_that_cannot_start(monkeypatch):
     async def scenario():
         stream = await _pump(_request("cat"))
         assert await _failed_open(stream) == COULD_NOT_START
+
+    asyncio.run(scenario())
+
+
+def test_a_command_with_a_nul_byte_cannot_start():
+    async def scenario():
+        stream = await _pump(_request("echo a\x00b"))
+        assert await _failed_open(stream) == COULD_NOT_START
+
+    asyncio.run(scenario())
+
+
+def test_a_release_while_the_command_starts_stops_its_group(groups, monkeypatch):
+    # The start of the command is held after its spawn: a release then comes while the shell
+    # already runs its pipeline, inside the awaited start.
+    pgid_file = groups()
+    real_start = asyncio.create_subprocess_exec
+    connected = None
+
+    async def slow_start(*args, **kwargs):
+        proc = await real_start(*args, **kwargs)
+        await connected.wait()
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", slow_start)
+
+    async def scenario():
+        nonlocal connected
+        connected = asyncio.Event()
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_script_speech(_request(f"echo $$ > {pgid_file}; sleep 30 | sleep 30"), stream))
+        pgid = await _read_pgid(pgid_file)
+        assert not _group_gone(pgid)
+        pump.cancel()
+        await asyncio.sleep(0.05)
+        connected.set()
+        with pytest.raises(asyncio.CancelledError):
+            await _within(pump, 3)
+        await _until(lambda: _group_gone(pgid), 3)
 
     asyncio.run(scenario())
 

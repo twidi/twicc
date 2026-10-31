@@ -236,8 +236,8 @@ class _ScriptRun:
     async def run(self, text: str) -> bool:
         """Run the command on *text*. False when the run failed the stream."""
         self._stream.begin_part()
-        try:
-            self._proc = await asyncio.create_subprocess_exec(
+        start = asyncio.ensure_future(
+            asyncio.create_subprocess_exec(
                 *shell_argv(self._request.command),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -246,7 +246,14 @@ class _ScriptRun:
                 env=terminal_environment(os.environ),
                 start_new_session=True,  # its own process group: a stop reaches every process
             )
-        except OSError:
+        )
+        try:
+            # Shielded: a cancelled start lets asyncio kill the shell only, not its children.
+            self._proc = await asyncio.shield(start)
+        except asyncio.CancelledError:
+            await self._stop_cancelled_start(start)
+            raise
+        except (OSError, ValueError):  # ValueError: a NUL byte in the command
             self._stream.fail(SpeechError(COULD_NOT_START))
             return False
         try:
@@ -258,6 +265,17 @@ class _ScriptRun:
                     await self._stop()
             finally:
                 await self._close()
+
+    async def _stop_cancelled_start(self, start: asyncio.Future) -> None:
+        """A cancellation came while the command started: once it runs, stop its whole group."""
+        try:
+            self._proc = await start
+        except (OSError, ValueError):
+            return  # it never started
+        try:
+            await self._stop()
+        finally:
+            await self._close()
 
     async def _follow(self, text: str) -> bool:
         proc = self._proc
@@ -277,12 +295,19 @@ class _ScriptRun:
                     self._take(chunk)
             else:
                 await asyncio.sleep(EXIT_POLL_SECONDS)
-            if self._stop_error is None and self._stalled(loop.time()):
+            # The command can exit in this same pass: an exited command is never signalled.
+            running = proc.returncode is None
+            if running and self._stop_error is None and self._stalled(loop.time()):
                 self._stop_error = SpeechError(STALLED)
-            if self._stop_error is not None or self._stream_failed:
+            if self._stream_failed:
+                if running:
+                    await self._stop()
+                return False
+            if self._stop_error is not None:
+                if not running:
+                    break  # the exit decides, then this message
                 await self._stop()
-                if not self._stream_failed:
-                    self._stream.fail(self._stop_error)
+                self._stream.fail(self._stop_error)
                 return False
 
         # The command exited: what is left in the pipes, one deadline for both.
