@@ -17,14 +17,15 @@ import orjson
 import pytest
 from django.test import AsyncClient, AsyncRequestFactory
 
+from twicc.paths import get_tts_config_path
 from twicc.tts import streams, views
 from twicc.tts.audio_cache import CachedAudio, speech_cache
-from twicc.paths import get_tts_config_path
 from twicc.tts.config import write_tts_config
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
 from twicc.tts.script import ScriptSpeechRequest, script_parts
 from twicc.tts.streams import get_stream
 from twicc.tts.views import (
+    NO_COMMAND,
     NO_PCM_RATE,
     NO_SUCH_SCRIPT,
     NOT_SAVED,
@@ -1605,6 +1606,16 @@ def test_a_pcm_script_without_a_rate_is_400(client, script_upstream, body):
     response = _post_json(client, {**body, **fields})
     assert response.status_code == 400
     assert response.json() == {"error": NO_PCM_RATE}
+    assert script_upstream.script_runs == []
+
+
+@pytest.mark.parametrize("body", [SCRIPT_READ, SCRIPT_TEST])
+@pytest.mark.parametrize("command", ["", "   "])
+def test_a_script_without_a_command_is_400(client, script_upstream, body, command):
+    fields = _store_script(command=command)
+    response = _post_json(client, {**body, **fields})
+    assert response.status_code == 400
+    assert response.json() == {"error": NO_COMMAND}
     assert script_upstream.script_runs == []
 
 

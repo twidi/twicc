@@ -80,6 +80,7 @@ NOT_SAVED = "This config is not saved yet: try again"
 NOT_VALIDATED = "This script config is not validated: test it again in the settings"
 NO_SUCH_SCRIPT = "This script config does not exist"
 NO_PCM_RATE = "This script config needs a sample rate for PCM"
+NO_COMMAND = "This script config has no command"
 
 _RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
@@ -263,6 +264,8 @@ async def _open_script_speech(data: dict) -> JsonResponse:
     elif not script_config_validated(entry):
         return _error(NOT_VALIDATED, 409)
     # The settings never test nor validate such a config: only a stale tab or a direct request sends one.
+    if not fields["command"].strip():
+        return _error(NO_COMMAND, 400)
     if fields["audio_format"] == "pcm" and fields["pcm_rate"] is None:
         return _error(NO_PCM_RATE, 400)
     speech_request = ScriptSpeechRequest(text, **fields)
@@ -289,7 +292,7 @@ async def _open_speech(
     data: dict,
     config_id: str | None,
     label: dict,
-    split: Callable[[SpeechRequest | ScriptSpeechRequest], list[str]],
+    split: Callable[..., list[str]],
     pump: Callable[[AudioStream, list[str], bool], Awaitable[None]],
     api_key: str | None,
 ) -> JsonResponse:
