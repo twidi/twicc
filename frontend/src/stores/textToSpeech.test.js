@@ -172,7 +172,7 @@ test('sends the text, the active speech fields and cache: true', async () => {
         return opened()
     }
     await startPlaying()
-    assert.deepEqual(sent, { text: 'hello', ...FIELDS, cache: true })
+    assert.deepEqual(sent, { text: 'hello', kind: 'openrouter', ...FIELDS, cache: true })
 })
 
 test('a settings test sends its config id and cache: false, a message read does not send a config id', async () => {
@@ -374,7 +374,7 @@ test('a buffered platform asks for buffered sending', async () => {
         store._fetchAudio = async () => new Response(new Uint8Array([1, 2]), { status: 200 })
         const pending = store.play('hello')
         await until(() => fakePlayer.handlers)
-        assert.deepEqual(sent, { text: 'hello', ...FIELDS, cache: true, buffered: true })
+        assert.deepEqual(sent, { text: 'hello', kind: 'openrouter', ...FIELDS, cache: true, buffered: true })
         fakePlayer.handlers.onPlaying()
         assert.equal((await pending).ok, true)
     })
@@ -384,8 +384,8 @@ test('desktop safari asks for buffered sending for mp3 only', async () => {
     await onNavigator(DESKTOP_SAFARI, async () => {
         const pcmFields = { ...FIELDS, response_format: 'pcm' }
         for (const [fields, expected] of [
-            [FIELDS, { text: 'hello', ...FIELDS, cache: true, buffered: true }],
-            [pcmFields, { text: 'hello', ...pcmFields, cache: true }],
+            [FIELDS, { text: 'hello', kind: 'openrouter', ...FIELDS, cache: true, buffered: true }],
+            [pcmFields, { text: 'hello', kind: 'openrouter', ...pcmFields, cache: true }],
         ]) {
             store.applyConfig(payload({ configs: [makeConfig('c1', { ...fields, validated: { ...fields } })] }))
             let sent
@@ -776,7 +776,7 @@ test('activate refuses an unvalidated config; markValidated checks the tested fi
     assert.equal(store.markValidated(id, { ...tested, voice: 'other' }), false)
     assert.equal(store.configs[0].validated, null)
     assert.equal(store.markValidated(id, tested), true)
-    assert.deepEqual(store.configs[0].validated, tested)
+    assert.deepEqual(store.configs[0].validated, { kind: 'openrouter', ...tested })
 
     assert.equal(store.activateConfig(id), true)
     assert.equal(store.activeId, id)

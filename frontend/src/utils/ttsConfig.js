@@ -3,16 +3,49 @@
 /** The fields sent to the speech endpoint. `name` and `note` are not among them. */
 export const SPEECH_FIELDS = ['model', 'voice', 'response_format', 'speed', 'instructions']
 
+/** The speech fields of a script config (a user shell command gives the audio). */
+export const SCRIPT_FIELDS = ['command', 'output', 'audio_format', 'pcm_rate', 'pcm_channels', 'max_chars']
+
+// The PCM bounds of the backend (openrouter.MAX_PCM_RATE, openrouter.MAX_PCM_CHANNELS).
+export const MAX_PCM_RATE = 384000
+export const MAX_PCM_CHANNELS = 8
+
+export const SCRIPT_OUTPUT_OPTIONS = [
+    { value: 'stream', label: 'Audio stream' },
+    { value: 'whole', label: 'Whole audio' },
+    { value: 'path', label: 'File path' },
+]
+
+export const SCRIPT_FORMAT_OPTIONS = [
+    { value: 'mp3', label: 'MP3' },
+    { value: 'wav', label: 'WAV' },
+    { value: 'pcm', label: 'PCM' },
+]
+
 export const DEFAULT_TEST_TEXT = 'Hello! This is a TwiCC text-to-speech test.'
 
-/** The speech fields of a config (also the validation snapshot). */
-export function speechFieldsOf(config) {
-    return Object.fromEntries(SPEECH_FIELDS.map(field => [field, config[field]]))
+/** The kind of a config: 'script' for a script config, else 'openrouter' (the default). */
+export function kindOf(config) {
+    return config?.kind === 'script' ? 'script' : 'openrouter'
 }
 
+function fieldsOfKind(kind) {
+    return kind === 'script' ? SCRIPT_FIELDS : SPEECH_FIELDS
+}
+
+/** The kind and the speech fields of a config (also the validation snapshot). */
+export function speechFieldsOf(config) {
+    const kind = kindOf(config)
+    return { kind, ...Object.fromEntries(fieldsOfKind(kind).map(field => [field, config[field]])) }
+}
+
+/**
+ * Whether two configs or snapshots have the same speech fields. The kind comes from whichever
+ * one carries it: a stored snapshot has none.
+ */
 export function sameSpeechFields(a, b) {
     if (!a || !b) return false
-    return SPEECH_FIELDS.every(field => a[field] === b[field])
+    return fieldsOfKind(kindOf({ kind: a.kind ?? b.kind })).every(field => a[field] === b[field])
 }
 
 /** True when the current speech fields are the ones the user confirmed. */
@@ -23,12 +56,29 @@ export function isConfigValidated(config) {
 export function createTtsConfig(id) {
     return {
         id,
+        kind: 'openrouter',
         name: '',
         model: '',
         voice: '',
         response_format: 'mp3',
         speed: null,
         instructions: '',
+        note: '',
+        validated: null,
+    }
+}
+
+export function createScriptConfig(id) {
+    return {
+        id,
+        kind: 'script',
+        name: '',
+        command: '',
+        output: 'stream',
+        audio_format: 'mp3',
+        pcm_rate: null,
+        pcm_channels: 1,
+        max_chars: null,
         note: '',
         validated: null,
     }
@@ -42,6 +92,11 @@ export function ttsConfigDisplayName(config, models = []) {
 }
 
 export function ttsConfigAutoName(config, models = []) {
+    if (kindOf(config) === 'script') {
+        // The base name of the command's first word.
+        const program = (config.command ?? '').trim().split(/\s+/)[0].split('/').pop()
+        return program ? `Script · ${program}` : 'Unnamed script'
+    }
     const model = config.model ? (models.find(entry => entry.id === config.model)?.name || config.model) : ''
     return [model, config.voice].filter(Boolean).join(' · ') || 'Unnamed config'
 }
@@ -118,6 +173,37 @@ export function ttsStreamingNote(model, format) {
         : 'No streaming: the audio starts once its first part is generated.'
 }
 
+/** What the output kind of a script config does: a whole audio or a file path starts after its first part. */
+export function scriptStreamingNote(config) {
+    if (config.output === 'stream') return 'Streaming: the audio starts while it is generated.'
+    return config.max_chars
+        ? 'No streaming: the audio starts once its first part is generated.'
+        : 'No streaming: the audio starts once it is fully generated.'
+}
+
+/** The audio format the browser receives: a script's WAV and PCM both reach it as PCM. */
+export function requestedFormat(fields) {
+    if (kindOf(fields) === 'script') return fields.audio_format === 'mp3' ? 'mp3' : 'pcm'
+    return fields.response_format
+}
+
+/** A script config can run a test with a command, and with a sample rate for PCM. */
+export function canTestScript(config) {
+    return Boolean(config.command?.trim()) && (config.audio_format !== 'pcm' || Boolean(config.pcm_rate))
+}
+
+/**
+ * A positive integer input: '' gives null, an integer within 1..max gives that number, anything
+ * else gives undefined (the caller keeps the stored value).
+ */
+export function positiveIntegerInput(text, max) {
+    const value = String(text ?? '').trim()
+    if (!value) return null
+    if (!/^\d+$/.test(value)) return undefined
+    const number = Number(value)
+    return number >= 1 && number <= max ? number : undefined
+}
+
 /**
  * The model picker options, sorted by official name (case-insensitive), with the list price and
  * the streaming support on a quiet line. A stored model missing from the list stays first, so
@@ -185,11 +271,11 @@ export function duplicateTtsConfig(config, id) {
     return { ...config, id, name, validated: config.validated && { ...config.validated } }
 }
 
-/** The message buttons show only with the key, an active config, and its validation. */
+/** The message buttons show only with an active config, its validation, and the key (not needed by a script). */
 export function isTtsAvailable({ keyPresent, configs, activeId }) {
-    if (!keyPresent || activeId == null) return false
+    if (activeId == null) return false
     const active = (configs ?? []).find(config => config.id === activeId)
-    return isConfigValidated(active)
+    return isConfigValidated(active) && (keyPresent || kindOf(active) === 'script')
 }
 
 // ── Last test run ────────────────────────────────────────────────
@@ -207,14 +293,15 @@ function pendingPrice(lastTest) {
 /**
  * The compact stats of a config's last test run, comparable across texts of any length:
  * "0.4¢ / 1k ch · 0.3¢ / mn · 1.1 s / 1k ch" (cost per 1,000 characters, per minute of audio,
- * generation time per 1,000 characters). '' without a usable run.
+ * generation time per 1,000 characters). '' without a usable run. With `priced: false` (a
+ * script config), no cost part.
  */
-export function ttsTestStats(lastTest) {
+export function ttsTestStats(lastTest, { priced = true } = {}) {
     if (!lastTest?.chars) return ''
     const parts = []
-    if (lastTest.cost == null) {
+    if (priced && lastTest.cost == null) {
         parts.push(pendingPrice(lastTest))
-    } else {
+    } else if (priced) {
         parts.push(`${shortNumber((lastTest.cost / lastTest.chars) * 1000 * 100)}¢ / 1k ch`)
         if (lastTest.audio_seconds) parts.push(`${shortNumber((lastTest.cost / lastTest.audio_seconds) * 60 * 100)}¢ / mn`)
     }
@@ -231,15 +318,16 @@ function audioLength(seconds) {
 
 /**
  * The exact figures of the last test run: "2,000 chars · 2 min 23 s of audio · generated in 2.2 s · $0.0080".
- * A text sent in several parts adds "· 4 parts" after the characters.
+ * A text sent in several parts adds "· 4 parts" after the characters. With `priced: false` (a
+ * script config), no cost part.
  */
-export function ttsLastTestFacts(lastTest) {
+export function ttsLastTestFacts(lastTest, { priced = true } = {}) {
     if (!lastTest?.chars) return ''
     const parts = [`${lastTest.chars.toLocaleString('en')} chars`]
     if (lastTest.parts > 1) parts.push(`${lastTest.parts} parts`)
     if (lastTest.audio_seconds) parts.push(`${audioLength(lastTest.audio_seconds)} of audio`)
     parts.push(`generated in ${shortNumber(lastTest.generation_ms / 1000)} s`)
     if (lastTest.first_audio_ms != null) parts.push(`first audio after ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
-    parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
+    if (priced) parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
     return parts.join(' · ')
 }

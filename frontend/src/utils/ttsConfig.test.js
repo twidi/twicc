@@ -2,7 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
     SPEECH_FIELDS,
+    SCRIPT_FIELDS,
+    MAX_PCM_RATE,
+    MAX_PCM_CHANNELS,
+    SCRIPT_OUTPUT_OPTIONS,
+    SCRIPT_FORMAT_OPTIONS,
     DEFAULT_TEST_TEXT,
+    kindOf,
+    createScriptConfig,
+    scriptStreamingNote,
+    requestedFormat,
+    canTestScript,
+    positiveIntegerInput,
     speechFieldsOf,
     sameSpeechFields,
     isConfigValidated,
@@ -41,6 +52,7 @@ test('constants', () => {
 test('a new config has the defaults and no validation', () => {
     assert.deepEqual(createTtsConfig('a'), {
         id: 'a',
+        kind: 'openrouter',
         name: '',
         model: '',
         voice: '',
@@ -56,7 +68,7 @@ test('a new config has the defaults and no validation', () => {
 test('speechFieldsOf keeps only the speech fields', () => {
     const config = { ...createTtsConfig('a'), model: 'm', voice: 'v', speed: 1.5, instructions: 'calm' }
     assert.deepEqual(speechFieldsOf(config), {
-        model: 'm', voice: 'v', response_format: 'mp3', speed: 1.5, instructions: 'calm',
+        kind: 'openrouter', model: 'm', voice: 'v', response_format: 'mp3', speed: 1.5, instructions: 'calm',
     })
 })
 
@@ -313,4 +325,179 @@ test('ttsStreamingNote describes the chosen format, nothing when unknown', () =>
     assert.equal(ttsStreamingNote(whole, 'mp3'), 'No streaming: the audio starts once it is fully generated.')
     assert.equal(ttsStreamingNote(whole, 'pcm'), 'No streaming: the audio starts once its first part is generated.')
     assert.equal(ttsStreamingNote(UNKNOWN, 'mp3'), '')
+})
+
+// ── Script configs ───────────────────────────────────────────────
+
+const scriptConfig = (id = 's', overrides = {}) => ({ ...createScriptConfig(id), command: 'piper --model x', ...overrides })
+
+const validatedScript = (id = 's', overrides = {}) => {
+    const config = scriptConfig(id, overrides)
+    // The backend stores the snapshot without its kind.
+    const { kind: _kind, ...snapshot } = speechFieldsOf(config)
+    return { ...config, validated: snapshot }
+}
+
+test('script constants', () => {
+    assert.deepEqual(SCRIPT_FIELDS, ['command', 'output', 'audio_format', 'pcm_rate', 'pcm_channels', 'max_chars'])
+    assert.equal(MAX_PCM_RATE, 384000)
+    assert.equal(MAX_PCM_CHANNELS, 8)
+    assert.deepEqual(SCRIPT_OUTPUT_OPTIONS, [
+        { value: 'stream', label: 'Audio stream' },
+        { value: 'whole', label: 'Whole audio' },
+        { value: 'path', label: 'File path' },
+    ])
+    assert.deepEqual(SCRIPT_FORMAT_OPTIONS, [
+        { value: 'mp3', label: 'MP3' },
+        { value: 'wav', label: 'WAV' },
+        { value: 'pcm', label: 'PCM' },
+    ])
+})
+
+test('kindOf is script only for a script kind', () => {
+    assert.equal(kindOf({ kind: 'script' }), 'script')
+    assert.equal(kindOf({ kind: 'openrouter' }), 'openrouter')
+    assert.equal(kindOf({}), 'openrouter')
+    assert.equal(kindOf({ kind: 'other' }), 'openrouter')
+})
+
+test('a new script config has the defaults and no validation', () => {
+    assert.deepEqual(createScriptConfig('s'), {
+        id: 's',
+        kind: 'script',
+        name: '',
+        command: '',
+        output: 'stream',
+        audio_format: 'mp3',
+        pcm_rate: null,
+        pcm_channels: 1,
+        max_chars: null,
+        note: '',
+        validated: null,
+    })
+    assert.equal(isConfigValidated(createScriptConfig('s')), false)
+})
+
+test('speechFieldsOf keeps the kind and the fields of that kind', () => {
+    const config = scriptConfig('s', { audio_format: 'pcm', pcm_rate: 22050, max_chars: 500, name: 'n', note: 'x' })
+    assert.deepEqual(speechFieldsOf(config), {
+        kind: 'script', command: 'piper --model x', output: 'stream', audio_format: 'pcm', pcm_rate: 22050, pcm_channels: 1, max_chars: 500,
+    })
+    // A stored OpenRouter config without a kind is an OpenRouter config.
+    const { kind: _kind, ...legacy } = createTtsConfig('a')
+    assert.equal(speechFieldsOf(legacy).kind, 'openrouter')
+})
+
+test('sameSpeechFields compares the fields of the kind of either argument', () => {
+    // An OpenRouter snapshot without kind still validates.
+    const openrouter = validatedConfig('a')
+    const { kind: _kind, ...snapshot } = openrouter.validated
+    assert.equal(isConfigValidated({ ...openrouter, validated: snapshot }), true)
+    // A script snapshot without kind passed first (as shouldAskAfterTest does): compared on the script fields.
+    const script = validatedScript('s')
+    assert.equal(sameSpeechFields(script.validated, speechFieldsOf(script)), true)
+    assert.equal(sameSpeechFields(script.validated, speechFieldsOf({ ...script, command: 'say' })), false)
+    assert.equal(isConfigValidated(script), true)
+    for (const field of SCRIPT_FIELDS) {
+        assert.equal(sameSpeechFields(script, { ...script, [field]: 'changed' }), false, field)
+    }
+    assert.equal(sameSpeechFields(script, null), false)
+    assert.equal(sameSpeechFields(undefined, script), false)
+})
+
+test('the question after a script test follows the script fields', () => {
+    const script = validatedScript('s')
+    const tested = speechFieldsOf(script)
+    assert.equal(shouldAskAfterTest(script, tested), false)
+    const edited = { ...script, command: 'say' }
+    assert.equal(shouldAskAfterTest(edited, speechFieldsOf(edited)), true)
+})
+
+test('a script field edit drops the validation, a rename keeps it', () => {
+    const script = validatedScript('s')
+    assert.equal(patchTtsConfig(script, { command: 'say' }).validated, null)
+    assert.equal(patchTtsConfig(script, { pcm_channels: 2 }).validated, null)
+    assert.equal(isConfigValidated(patchTtsConfig(script, { name: 'Piper' })), true)
+    assert.equal(isConfigValidated(patchTtsConfig(script, { note: 'calm' })), true)
+})
+
+test('a duplicate keeps the kind and the script fields', () => {
+    const script = validatedScript('s', { audio_format: 'wav', max_chars: 400, name: 'Piper' })
+    const copy = duplicateTtsConfig(script, 't')
+    assert.equal(copy.kind, 'script')
+    assert.equal(copy.name, 'Piper (copy)')
+    assert.deepEqual(speechFieldsOf(copy), speechFieldsOf(script))
+    assert.equal(isConfigValidated(copy), true)
+})
+
+test('a validated script config is available without the key', () => {
+    const configs = [validatedScript('s'), scriptConfig('u'), validatedConfig('a')]
+    assert.equal(isTtsAvailable({ keyPresent: false, configs, activeId: 's' }), true)
+    assert.equal(isTtsAvailable({ keyPresent: true, configs, activeId: 's' }), true)
+    assert.equal(isTtsAvailable({ keyPresent: false, configs, activeId: 'u' }), false)
+    assert.equal(isTtsAvailable({ keyPresent: false, configs, activeId: 'a' }), false)
+    assert.equal(isTtsAvailable({ keyPresent: false, configs, activeId: null }), false)
+})
+
+test('the script auto name is built from the program', () => {
+    assert.equal(ttsConfigAutoName(scriptConfig('s', { command: 'piper --model x' })), 'Script · piper')
+    assert.equal(ttsConfigAutoName(scriptConfig('s', { command: '/usr/local/bin/say -v x' })), 'Script · say')
+    assert.equal(ttsConfigAutoName(scriptConfig('s', { command: '' })), 'Unnamed script')
+    assert.equal(ttsConfigAutoName(scriptConfig('s', { command: '   ' })), 'Unnamed script')
+    assert.equal(ttsConfigDisplayName(scriptConfig('s', { name: 'Mine' })), 'Mine')
+    assert.equal(ttsConfigDisplayName(scriptConfig('s', { command: '  espeak-ng\t-v fr' })), 'Script · espeak-ng')
+})
+
+test('the script streaming note follows the output kind and the max characters', () => {
+    const streaming = 'Streaming: the audio starts while it is generated.'
+    const firstPart = 'No streaming: the audio starts once its first part is generated.'
+    const whole = 'No streaming: the audio starts once it is fully generated.'
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'stream' })), streaming)
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'stream', max_chars: 500 })), streaming)
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'whole', max_chars: 500 })), firstPart)
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'path', max_chars: 500 })), firstPart)
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'whole' })), whole)
+    assert.equal(scriptStreamingNote(scriptConfig('s', { output: 'path' })), whole)
+})
+
+test('the requested format: MP3 stays MP3, WAV and PCM reach the browser as PCM', () => {
+    assert.equal(requestedFormat(speechFieldsOf(scriptConfig('s', { audio_format: 'mp3' }))), 'mp3')
+    assert.equal(requestedFormat(speechFieldsOf(scriptConfig('s', { audio_format: 'wav' }))), 'pcm')
+    assert.equal(requestedFormat(speechFieldsOf(scriptConfig('s', { audio_format: 'pcm', pcm_rate: 22050 }))), 'pcm')
+    assert.equal(requestedFormat(speechFieldsOf({ ...createTtsConfig('a'), response_format: 'pcm' })), 'pcm')
+    assert.equal(requestedFormat({ ...createTtsConfig('a'), response_format: 'mp3' }), 'mp3')
+})
+
+test('a script can be tested with a command, and a sample rate for PCM', () => {
+    assert.equal(canTestScript(scriptConfig('s')), true)
+    assert.equal(canTestScript(scriptConfig('s', { command: '' })), false)
+    assert.equal(canTestScript(scriptConfig('s', { command: '   ' })), false)
+    assert.equal(canTestScript(scriptConfig('s', { audio_format: 'pcm' })), false)
+    assert.equal(canTestScript(scriptConfig('s', { audio_format: 'pcm', pcm_rate: 22050 })), true)
+    assert.equal(canTestScript(scriptConfig('s', { audio_format: 'wav' })), true)
+})
+
+test('positiveIntegerInput: empty is null, a bounded integer is kept, the rest is refused', () => {
+    assert.equal(positiveIntegerInput('', MAX_PCM_RATE), null)
+    assert.equal(positiveIntegerInput('  ', MAX_PCM_RATE), null)
+    assert.equal(positiveIntegerInput('22050', MAX_PCM_RATE), 22050)
+    assert.equal(positiveIntegerInput(' 22050 ', MAX_PCM_RATE), 22050)
+    assert.equal(positiveIntegerInput('384000', MAX_PCM_RATE), 384000)
+    assert.equal(positiveIntegerInput('0', MAX_PCM_RATE), undefined)
+    assert.equal(positiveIntegerInput('-3', MAX_PCM_RATE), undefined)
+    assert.equal(positiveIntegerInput('1.5', MAX_PCM_RATE), undefined)
+    assert.equal(positiveIntegerInput('abc', MAX_PCM_RATE), undefined)
+    assert.equal(positiveIntegerInput('384001', MAX_PCM_RATE), undefined)
+    assert.equal(positiveIntegerInput('9', MAX_PCM_CHANNELS), undefined)
+})
+
+test('stats and facts of an unpriced run have no cost part', () => {
+    const run = { at: '2026-10-31T10:00:00+00:00', generation_id: '', chars: 2000, generation_ms: 2200, audio_seconds: 143, cost: null, first_audio_ms: 1160 }
+    assert.equal(ttsTestStats(run, { priced: false }), '1.1 s / 1k ch · 1st audio 1.2 s')
+    assert.equal(ttsLastTestFacts(run, { priced: false }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · first audio after 1.2 s')
+    // Even a recorded cost is not shown.
+    assert.equal(ttsTestStats({ ...run, cost: 0.008 }, { priced: false }), '1.1 s / 1k ch · 1st audio 1.2 s')
+    assert.equal(ttsLastTestFacts({ ...run, cost: 0.008 }, { priced: false }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · first audio after 1.2 s')
+    // Priced stays the default.
+    assert.equal(ttsTestStats(run), 'price unknown · 1.1 s / 1k ch · 1st audio 1.2 s')
 })
