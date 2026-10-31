@@ -415,6 +415,22 @@ def test_safety_expiry_counts_from_the_last_touch(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_the_log_line_writes_the_log_message(streams_log):
+    async def scenario():
+        pump = FakePump()
+        stream = start_stream(pump, label=LABEL)
+        pump.send("fail", SpeechError("shown", log_message="logged"))
+        with pytest.raises(SpeechError):
+            await _within(stream.ready)
+        await _within(stream._task)
+        assert ending_of(stream.id) == {"state": "failed", "error": "shown"}
+
+    asyncio.run(scenario())
+    [line] = _speech_lines(streams_log)
+    assert line.endswith("error='logged' outcome=failed")
+    assert "shown" not in line
+
+
 def test_unexpected_pump_error_fails_ready_and_logs(streams_log):
     async def scenario():
         calls, on_end = _on_end_recorder()

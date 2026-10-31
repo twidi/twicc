@@ -81,6 +81,7 @@ class AudioStream:
         self.paced = False
         self.state = "opening"
         self.error: str | None = None
+        self.log_message: str | None = None  # what the log line writes instead of ``error``
         self.upstream_status: int | None = None
         self.data = bytearray()
         self.first_audio_ms: int | None = None
@@ -171,6 +172,7 @@ class AudioStream:
     def fail(self, error: SpeechError) -> None:
         self._expect("fail", *_LIVE_STATES)
         self.error = error.message
+        self.log_message = error.log_message
         self.upstream_status = error.upstream_status
         self._settle_ready(error)
         self._end("failed", "failed" if error.upstream_status is None else f"upstream_error {error.upstream_status}")
@@ -290,7 +292,8 @@ class AudioStream:
         self._log(outcome)
 
     def _log(self, outcome: str) -> None:
-        # ``error`` is the user-safe message of the speech (never the key), or None.
+        # ``error`` is the user-safe message of the speech (never the key), or None. A failure's
+        # log message replaces it (a script's exit status, never its stderr line).
         logger.info(
             "TTS speech %s parts=%d bytes=%d first_audio_ms=%s generation_ms=%s duration_ms=%d generation=%s "
             "error=%r outcome=%s",
@@ -301,7 +304,7 @@ class AudioStream:
             self.generation_ms,
             _elapsed_ms(self._started),
             ",".join(self.generation_ids) or None,
-            self.error,
+            self.error if self.log_message is None else self.log_message,
             outcome,
         )
 

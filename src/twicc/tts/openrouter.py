@@ -64,12 +64,17 @@ class SpeechRequest(NamedTuple):
 
 
 class SpeechError(Exception):
-    """A speech request failed. ``message`` is safe to show to the user."""
+    """A speech request failed. ``message`` is safe to show to the user.
 
-    def __init__(self, message: str, upstream_status: int | None = None):
+    ``log_message`` (default: ``message``) is what the TTS log line writes: a script failure
+    shows its stderr line to the user, but logs its exit status only.
+    """
+
+    def __init__(self, message: str, upstream_status: int | None = None, *, log_message: str | None = None):
         super().__init__(message)
         self.message = message
         self.upstream_status = upstream_status
+        self.log_message = message if log_message is None else log_message
 
 
 def _make_client(timeout: httpx.Timeout) -> httpx.AsyncClient:

@@ -36,6 +36,7 @@ import signal
 import struct
 import subprocess
 import termios
+from collections.abc import Mapping
 from typing import NamedTuple
 from urllib.parse import parse_qs
 
@@ -323,6 +324,20 @@ def sanitize_terminal_env(env) -> None:
     """
     for key in _terminal_env_keys_to_strip(list(env)):
         del env[key]
+
+
+def terminal_environment(base: Mapping[str, str]) -> dict[str, str]:
+    """A copy of ``base`` cleaned as the environment of a terminal's shell.
+
+    The steps of the PTY children, in their order: the provider purge, the
+    agent/CI sanitizing, then the configured provider homes. For a process
+    TwiCC starts outside a PTY (a text-to-speech script).
+    """
+    env = dict(base)
+    get_provider_helpers_registry().purge_env_vars(env)
+    sanitize_terminal_env(env)
+    env.update(provider_env_overlay())
+    return env
 
 
 def purge_tmux_global_env(socket: str) -> None:
