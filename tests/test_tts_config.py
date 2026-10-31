@@ -382,11 +382,13 @@ def test_a_bare_script_entry_gets_the_defaults():
 
 @pytest.mark.parametrize("field, value, expected", [
     ("output", "other", "stream"), ("audio_format", "ogg", "mp3"), ("pcm_rate", 0, None),
-    ("pcm_rate", 384001, None), ("pcm_rate", True, None), ("pcm_channels", 9, 1), ("pcm_channels", 0, 1),
-    ("max_chars", 0, None), ("max_chars", 1.5, None), ("command", 3, ""),
+    ("pcm_rate", 384001, None), ("pcm_rate", True, None), ("pcm_rate", 22050.0, None), ("pcm_channels", 9, 1),
+    ("pcm_channels", 0, 1), ("pcm_channels", True, 1), ("max_chars", 0, None), ("max_chars", 1.5, None),
+    ("max_chars", True, None), ("command", 3, ""),
 ])
 def test_script_fields_are_normalized(field, value, expected):
-    assert script_fields({field: value})[field] == expected
+    result = script_fields({field: value})[field]
+    assert result == expected and type(result) is type(expected)
 
 
 @pytest.mark.parametrize("field, value", [
