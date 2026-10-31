@@ -809,6 +809,30 @@ def test_a_failed_deletion_is_not_an_error(tmp_path, monkeypatch, error):
     assert unlinked == [str(path)]
 
 
+def test_a_file_already_gone_before_its_deletion_is_not_an_error(tmp_path, monkeypatch):
+    # A file gone before the deletion fails its lstat first; the read itself uses no lstat.
+    path = tmp_path / "speech.mp3"
+    path.write_bytes(MP3)
+    original_lstat = os.lstat
+    looked_up = []
+
+    def gone_lstat(target, *args, **kwargs):
+        if os.fspath(target) == str(path):
+            looked_up.append(target)
+            raise FileNotFoundError(target)
+        return original_lstat(target, *args, **kwargs)
+
+    monkeypatch.setattr(script.os, "lstat", gone_lstat)
+
+    async def scenario():
+        stream = await _pump(_request(f"echo {shlex.quote(str(path))}", output="path", audio_format="mp3"))
+        assert (stream.state, bytes(stream.data)) == ("complete", MP3)
+
+    asyncio.run(scenario())
+    assert looked_up == [str(path)]
+    assert path.read_bytes() == MP3  # never unlinked: the lstat failed first
+
+
 def test_the_parts_run_one_after_the_other_into_one_stream(tmp_path):
     texts = tmp_path / "texts"
     command = f"cat >> {texts}; echo >> {texts}; cat {_file(tmp_path, 'a.mp3', MP3)}"
