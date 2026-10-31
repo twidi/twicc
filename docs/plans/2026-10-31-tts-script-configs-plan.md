@@ -33,7 +33,7 @@
   - New-config buttons: `New OpenRouter config`, `New script config`.
   - Script field labels: `Command`, `Output`, `Format`, `Sample rate (Hz)`, `Channels`, `Max characters per run` (placeholder `Whole text in one run`).
   - Output options: `Audio stream`, `Whole audio`, `File path`. Format options: `MP3`, `WAV`, `PCM`.
-  - Help: `TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.`
+  - Help: `TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run, which TwiCC deletes after reading unless Delete the file after reading is off) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.`
   - Script Test-button title when it cannot test: `Test: needs a command, a sample rate for PCM, and a test text`.
   - Script auto name: `Script · <program>` (`<program>`: the base name of the command's first word), else `Unnamed script`.
 
@@ -407,3 +407,29 @@ After the user restarts the backend (`cd /home/twidi/dev/twicc-poc && uv run ./d
 | Errors | a typo in the program name; a banner on stdout | the stderr line; the format message |
 
 A check that fails is a bug: fix it with a test, then recheck. Nothing to commit when all pass.
+
+### Task 9: Delete the returned file after reading (amendment of 2026-10-31)
+
+The owner chose to let TwiCC delete a returned file (spec, *File path rules*, "Deletion"). One option per script config, on by default, with no check of where the file is.
+
+**Files:**
+- Modify: `src/twicc/tts/config.py`, `src/twicc/tts/script.py`, `src/twicc/tts/views.py`, `frontend/src/utils/ttsConfig.js`, `frontend/src/components/settings/TextToSpeechSettings.vue`
+- Test: `tests/test_tts_config.py`, `tests/test_tts_script.py`, `tests/test_tts_views.py`, `frontend/src/utils/ttsConfig.test.js`, `frontend/src/components/settings/textToSpeechSettings.test.js`
+
+**Interfaces:**
+- `config.py`: a script entry gains `delete_file`. Normalize it in `normalize_tts_config`, for the `script` kind only: `"delete_file": value if isinstance(value, bool) else True`. `script_fields` and `SCRIPT_FIELDS` stay unchanged: it is not a speech field, not in the validation snapshot, not compared by the "not saved yet" check. An OpenRouter entry has no `delete_file`.
+- `script.py`: `ScriptSpeechRequest` does **not** change (it is the cache key, which holds the speech fields only: a toggle must not miss the cache). `pump_script_speech(request, stream, parts=None, *, paced=False, delete_file=True)` passes it to the run. `_returned_file` keeps the path in an attribute (e.g. `self._returned_path`). In `_conclude`, after `self._stream.end_part()` and before `return True` (the only success path: every `return False` keeps the file), when `delete_file` is true and a path was returned (a stream or whole-audio run has none): `os.lstat(path)`; only when it is a regular file (`stat.S_ISREG`, so never a symbolic link or a directory), `os.unlink(path)`, off the event loop. An `OSError` (permissions, already gone) is ignored, with at most a debug log line that holds neither the path nor the command. A failed run never deletes its file.
+- `views.py`: the pump lambda passes `delete_file=entry["delete_file"]` to `pump_script_speech`; the request (and the cache key) is unchanged.
+- `ttsConfig.js`: `createScriptConfig(id)` gains `delete_file: true` (not in `SCRIPT_FIELDS`: a change never drops the validation).
+- Settings: in a script card, a `wa-checkbox` `Delete the file after reading`, shown only when `output === 'path'`, checked from `config.delete_file`, saved with `store.updateConfig(config.id, { delete_file })`. The help copy's "(for File path: one absolute path, to a new file at each run)" becomes `(for File path: one absolute path, to a new file at each run, which TwiCC deletes after reading unless Delete the file after reading is off)`; update the copy in *Global Constraints* of this plan the same way.
+
+- [ ] **Step 1: Write the failing tests**
+  - `test_tts_config.py`: a script entry without `delete_file` gets `True`; `False` is kept; `"no"` → `True`; `delete_file` is not in `validated` and `script_config_validated` ignores it.
+  - `test_tts_script.py`: `test_a_returned_file_is_deleted_after_a_successful_read` (the file is gone, the audio is complete); `test_a_returned_file_is_kept_when_the_option_is_off`; `test_a_failed_run_keeps_its_file` (a format mismatch, the file stays); `test_a_symbolic_link_is_never_deleted` (the path is a link to an MP3 file: the audio plays, the link and its target both stay); `test_a_failed_deletion_is_not_an_error` (parametrized: `os.unlink`, as seen from `twicc.tts.script`, monkeypatched to raise `PermissionError`, then `FileNotFoundError`: the speech still completes with its whole audio).
+  - `test_tts_views.py`: the stored `delete_file` reaches the pump (keyword); a toggle of `delete_file` does not miss the cache; a test whose body differs only in `delete_file` is not a 409.
+  - `ttsConfig.test.js`: the new `createScriptConfig` shape; `patchTtsConfig` with `{ delete_file: false }` keeps `validated`.
+  - `textToSpeechSettings.test.js`: the checkbox label, its `v-if` on `output === 'path'`, its `updateConfig` with `delete_file`, the new help copy verbatim.
+- [ ] **Step 2: Run them, expect FAIL.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run the TTS suite, ruff, `npm test` and `npm run build`, expect PASS.**
+- [ ] **Step 5: Commit** — the files above by name, `feat(tts): delete a script's returned file after reading it`.

@@ -50,7 +50,7 @@ and knows nothing about voices or models: the command holds all of that.
 - No audio conversion: no other formats than MP3, WAV (16-bit PCM) and raw 16-bit PCM; no
   resampling; no 24-bit or float WAV.
 - No cost figures for a script config: TwiCC cannot know them.
-- No deletion of the files a command returns: they belong to the command.
+- No check of where a returned file is before its deletion (see *File path rules*).
 - No secret handling for the command: it is stored and shown like the other config fields.
 - No CLI or MCP command to create or edit a config (none exists today; none is added).
 - No CHANGELOG entry (on explicit request only).
@@ -67,10 +67,12 @@ config has the common fields (name, note, validation, last test run) and these:
 | Format | **MP3** · **WAV** · **PCM** | The encoding of the audio, on the standard output or in the file. |
 | Sample rate, channels | Integers within the bounds the existing PCM pipeline accepts (the same as for OpenRouter PCM) | PCM only, required (channels default to 1). Raw PCM has no header. The settings refuse other values. |
 | Max characters per run | Empty, or a positive integer | Empty: the whole text in one run. Otherwise: the size limit of the parts. See *Splitting*. |
+| Delete the file after reading | On (default) · off | File path only. See *File path rules*. |
 
 The kind is fixed when the config is created; a duplicate keeps it.
 
-Every one of these fields is a speech field: changing any of them drops the config's validation,
+Every one of these fields, except *Delete the file after reading*, is a speech field: changing any
+of them drops the config's validation,
 as a model or voice change does for an OpenRouter config. The rest of the validation flow (Test,
 "I heard it", activation only when validated) is unchanged.
 
@@ -166,6 +168,14 @@ File path rules:
   path already returned earlier in the same speech. The settings help says it.
 - A missing, unreadable or non-regular file fails the run. A file that does not match the declared
   format fails the run (see *Formats* for what "matches" means).
+- **Deletion**: with *Delete the file after reading* on (the default), TwiCC deletes the file once
+  it has read it whole and the run succeeded: its audio is then in memory, and the file has no
+  other use. TwiCC checks only that the path is still a regular file (a symbolic link or a
+  directory is never deleted), not where it is: the path is the command's responsibility. A failed
+  run keeps its file, so the user can see what the command wrote. A failed deletion (permissions,
+  a file already gone) is not an error. With the option off, TwiCC never deletes the file: the
+  command cleans up itself. A bug in a command that returns the path of a file the user keeps would
+  delete that file with the option on: the help says that TwiCC deletes the returned file.
 - The format check guards against mistakes; it is not a security boundary. The file goes only to
   the authenticated browser, which can already read the user's files through TwiCC's file viewer
   (`/api/file-content/`).
@@ -217,7 +227,8 @@ File path rules:
   "testing is disabled until then") speaks of OpenRouter configs only: a script config tests and
   plays without the key.
 - A short help under the fields states the contract: the text on standard input; the audio (or one
-  path) on standard output; the exit status; stderr as the error message; a new path for each run;
+  path) on standard output; the exit status; stderr as the error message; a new path for each run,
+  deleted by TwiCC after reading unless the option is off;
   the command runs in a non-interactive login shell (what `~/.bashrc` or `~/.zshrc` sets is usually
   absent, and nothing may print on the standard output but the audio or the path); a max characters per
   run is advised for whole audio and file path.
