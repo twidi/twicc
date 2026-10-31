@@ -431,7 +431,7 @@ def test_oversized_body_returns_413_json(client, upstream, settings):
 def test_upstream_401_is_not_relayed_as_401(client, upstream):
     upstream.pump.send("fail", SpeechError("No auth credentials found", upstream_status=401))
     response = _post_json(client, VALID_PAYLOAD)
-    assert response.status_code == 502
+    assert response.status_code == 424
     assert response.json() == {"error": "No auth credentials found", "upstream_status": 401}
     assert upstream.cost == []
     assert streams._streams == {}
@@ -440,7 +440,7 @@ def test_upstream_401_is_not_relayed_as_401(client, upstream):
 def test_upstream_error_without_status_has_no_upstream_status(client, upstream):
     upstream.pump.send("fail", SpeechError("Could not reach OpenRouter"))
     response = _post_json(client, VALID_PAYLOAD)
-    assert response.status_code == 502
+    assert response.status_code == 424
     assert response.json() == {"error": "Could not reach OpenRouter"}
     assert streams._streams == {}
 
@@ -1650,12 +1650,12 @@ def test_script_parts_and_pacing_reach_the_pump(client, script_upstream):
     ]
 
 
-def test_a_script_failure_before_audio_is_502(client, script_upstream):
+def test_a_script_failure_before_audio_is_a_424(client, script_upstream):
     _store_script()
     failure = SpeechError("sh: say: not found", log_message="The script failed (exit status 127)")
     script_upstream.pump.send("fail", failure)
     response = _post_json(client, SCRIPT_READ)
-    assert response.status_code == 502
+    assert response.status_code == 424
     assert response.json() == {"error": "sh: say: not found"}
     assert streams._streams == {}
 

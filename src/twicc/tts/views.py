@@ -76,6 +76,11 @@ SPEECH_FAILED = "Text-to-speech failed"
 AUDIO_GONE = "The audio is no longer available"
 AUDIO_CUT = "The audio stopped before the end"
 NOTHING_TO_SAY = "There is nothing to read aloud in this text"
+
+# The status of a speech that failed upstream (OpenRouter) or in its script: "Failed
+# Dependency". Not 502: Cloudflare (a tunnel in front of TwiCC) replaces an origin's 502
+# and 504 bodies with its own page, and the browser would lose the error message.
+SPEECH_ERROR_STATUS = 424
 NOT_SAVED = "This config is not saved yet: try again"
 NOT_VALIDATED = "This script config is not validated: test it again in the settings"
 NO_SUCH_SCRIPT = "This script config does not exist"
@@ -187,8 +192,9 @@ async def tts_speech(request):
     config's ``last_test`` in tts.json. ``cache: true`` reads and fills the audio
     cache, except for a settings test.
 
-    An upstream error is a 502, never a 401: the frontend reads any 401 as an
-    expired TwiCC session.
+    An upstream or script error is a ``SPEECH_ERROR_STATUS`` (424), never a 401 (the
+    frontend reads any 401 as an expired TwiCC session) nor a 502 or 504 (a proxy such
+    as Cloudflare replaces those bodies with its own error page: the message is lost).
     """
     if request.method != "POST":
         return _method_not_allowed("POST")
@@ -321,7 +327,7 @@ async def _open_speech(
         # The stream is failed, and logged, already: only drop its id.
         release_stream(stream.id)
         extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
-        return _error(error.message, 502, **extra)
+        return _error(error.message, SPEECH_ERROR_STATUS, **extra)
     except asyncio.CancelledError:
         # A client disconnect: stop the upstream call.
         release_stream(stream.id, outcome="cancelled")
