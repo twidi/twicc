@@ -327,33 +327,89 @@ def test_a_command_with_a_nul_byte_cannot_start():
     asyncio.run(scenario())
 
 
-def test_a_release_while_the_command_starts_stops_its_group(groups, monkeypatch):
-    # The start of the command is held after its spawn: a release then comes while the shell
-    # already runs its pipeline, inside the awaited start.
+class _HeldStart:
+    """Holds the start of the command after its spawn, until :meth:`release` (the shell already
+    runs, inside the awaited start). Create it inside the scenario's loop."""
+
+    def __init__(self, monkeypatch):
+        real_start = asyncio.create_subprocess_exec
+        self.procs = []
+        self._released = asyncio.Event()
+
+        async def held_start(*args, **kwargs):
+            proc = await real_start(*args, **kwargs)
+            self.procs.append(proc)
+            await self._released.wait()
+            return proc
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", held_start)
+
+    def release(self) -> None:
+        self._released.set()
+
+
+@pytest.mark.parametrize("cancels", [1, 2])  # 2: a release, then a shutdown cancel
+def test_a_release_while_the_command_starts_stops_its_group(groups, monkeypatch, cancels):
     pgid_file = groups()
-    real_start = asyncio.create_subprocess_exec
-    connected = None
-
-    async def slow_start(*args, **kwargs):
-        proc = await real_start(*args, **kwargs)
-        await connected.wait()
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", slow_start)
 
     async def scenario():
-        nonlocal connected
-        connected = asyncio.Event()
+        held = _HeldStart(monkeypatch)
         stream = AudioStream(LABEL)
         pump = asyncio.create_task(pump_script_speech(_request(f"echo $$ > {pgid_file}; sleep 30 | sleep 30"), stream))
         pgid = await _read_pgid(pgid_file)
         assert not _group_gone(pgid)
-        pump.cancel()
-        await asyncio.sleep(0.05)
-        connected.set()
+        for _ in range(cancels):
+            pump.cancel()
+            await asyncio.sleep(0.05)
+        held.release()
         with pytest.raises(asyncio.CancelledError):
             await _within(pump, 3)
         await _until(lambda: _group_gone(pgid), 3)
+
+    asyncio.run(scenario())
+
+
+def test_a_command_that_exits_while_it_starts_is_not_signalled(groups, monkeypatch):
+    pgid_file = groups()
+
+    async def scenario():
+        held = _HeldStart(monkeypatch)
+        stream = AudioStream(LABEL)
+        command = f"echo $$ > {pgid_file}; sleep 30 </dev/null >/dev/null 2>&1 &"
+        pump = asyncio.create_task(pump_script_speech(_request(command), stream))
+        pgid = await _read_pgid(pgid_file)
+        await _until(lambda: held.procs and held.procs[0].returncode is not None)  # the shell exited
+        pump.cancel()
+        await asyncio.sleep(0.05)
+        held.release()
+        with pytest.raises(asyncio.CancelledError):
+            await _within(pump, 3)
+        await asyncio.sleep(0.2)
+        assert not _group_gone(pgid)  # its leftover still runs: never signalled
+
+    asyncio.run(scenario())
+
+
+def test_a_command_that_exits_in_the_pass_of_a_stop_reason_is_not_signalled(groups, monkeypatch):
+    # The read gives its chunk only once the command exited: the cap is found in the same pass.
+    monkeypatch.setattr(script, "SCRIPT_MAX_BYTES", 1000)
+    real_read = script._ScriptRun._read_stdout
+
+    async def read_after_the_exit(self, timeout):
+        chunk = await real_read(self, timeout)
+        if chunk:
+            await _until(lambda: self._proc.returncode is not None)
+        return chunk
+
+    monkeypatch.setattr(script._ScriptRun, "_read_stdout", read_after_the_exit)
+    pgid_file = groups()
+
+    async def scenario():
+        command = f"echo $$ > {pgid_file}; sleep 30 </dev/null >/dev/null 2>&1 & head -c 5000 /dev/zero"
+        stream = await _pump(_request(command))
+        assert (stream.state, stream.error) == ("failed", TOO_LARGE)
+        await asyncio.sleep(0.2)
+        assert not _group_gone(int(pgid_file.read_text()))  # its leftover still runs: never signalled
 
     asyncio.run(scenario())
 

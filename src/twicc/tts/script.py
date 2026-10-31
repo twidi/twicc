@@ -267,13 +267,23 @@ class _ScriptRun:
                 await self._close()
 
     async def _stop_cancelled_start(self, start: asyncio.Future) -> None:
-        """A cancellation came while the command started: once it runs, stop its whole group."""
-        try:
-            self._proc = await start
-        except (OSError, ValueError):
+        """A cancellation came while the command started: once it runs, stop its whole group.
+
+        The start stays shielded until it ends: a further cancellation (a release, then a
+        shutdown) would let asyncio kill the shell alone. The caller re-raises the cancellation.
+        """
+        while not start.done():
+            try:
+                await asyncio.shield(start)
+            except (asyncio.CancelledError, Exception):
+                pass  # a further cancellation, or a failed start: read below
+        if start.cancelled() or start.exception() is not None:
             return  # it never started
+        self._proc = start.result()
         try:
-            await self._stop()
+            # A command that exited while it started is never signalled, as in ``run()``.
+            if self._proc.returncode is None:
+                await self._stop()
         finally:
             await self._close()
 
