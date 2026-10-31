@@ -6,6 +6,7 @@ import { audioUrl, installPageHideRelease, useTextToSpeechStore, _resetSpeechFor
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { CUT, GONE, REFUSED, UNREACHABLE } from '../utils/speechOutcome.js'
+import { createScriptConfig, createTtsConfig } from '../utils/ttsConfig.js'
 
 const FIELDS = {
     model: 'openai/gpt-4o-mini-tts',
@@ -18,8 +19,22 @@ const FIELDS = {
 const ABORTED = { ok: false, aborted: true }
 const PCM_TYPE = 'audio/pcm;rate=24000;channels=1'
 
+const SCRIPT_FIELDS = {
+    command: 'say -o -',
+    output: 'stream',
+    audio_format: 'mp3',
+    pcm_rate: null,
+    pcm_channels: 1,
+    max_chars: null,
+}
+
 function makeConfig(id = 'c1', overrides = {}) {
     return { id, name: 'Voice', ...FIELDS, validated: { ...FIELDS }, ...overrides }
+}
+
+function makeScriptConfig(id = 's1', overrides = {}) {
+    const fields = { ...SCRIPT_FIELDS, ...overrides }
+    return { id, kind: 'script', name: 'Local', ...fields, note: '', validated: { kind: 'script', ...fields } }
 }
 
 function payload({ activeId = 'c1', configs = [makeConfig()], keyPresent = true } = {}) {
@@ -400,6 +415,86 @@ test('desktop safari asks for buffered sending for mp3 only', async () => {
             assert.deepEqual(await pending, ABORTED)
         }
     })
+})
+
+// ── Script configs ───────────────────────────────────────
+
+/** Apply `configs` with `activeId`, start `play('hello')` and return the body it sends (then stop). */
+async function sentForPlay(configs, activeId, { keyPresent = true } = {}) {
+    store.applyConfig(payload({ activeId, configs, keyPresent }))
+    let sent
+    store._openSpeech = (body, signal) => {
+        sent = body
+        return abortableRequest('open')(body, signal)
+    }
+    const pending = store.play('hello')
+    await until(() => sent)
+    store.stop()
+    assert.deepEqual(await pending, ABORTED)
+    return sent
+}
+
+test('a script message read sends its kind, its fields, its script id and cache: true, no config id', async () => {
+    const sent = await sentForPlay([makeScriptConfig('s1')], 's1', { keyPresent: false })
+    assert.deepEqual(sent, { text: 'hello', kind: 'script', ...SCRIPT_FIELDS, cache: true, script_id: 's1' })
+})
+
+test('a script settings test sends its config id and its script id, equal, and cache: false', async () => {
+    let sent
+    store._openSpeech = (body, signal) => {
+        sent = body
+        return abortableRequest('open')(body, signal)
+    }
+    const pending = store.playWith('hello', makeScriptConfig('s1'), { configId: 's1' })
+    await until(() => sent)
+    store.stop()
+    assert.deepEqual(await pending, ABORTED)
+    assert.deepEqual(sent, { text: 'hello', kind: 'script', ...SCRIPT_FIELDS, cache: false, config_id: 's1', script_id: 's1' })
+})
+
+test('an openrouter settings test sends no script id', async () => {
+    let sent
+    store._openSpeech = (body, signal) => {
+        sent = body
+        return abortableRequest('open')(body, signal)
+    }
+    const pending = store.playWith('hello', FIELDS, { configId: 'c1' })
+    await until(() => sent)
+    store.stop()
+    assert.deepEqual(await pending, ABORTED)
+    assert.equal('script_id' in sent, false)
+})
+
+test('a wav script on an iphone asks for buffered sending, like pcm', async () => {
+    await onNavigator(IPHONE, async () => {
+        const sent = await sentForPlay([makeScriptConfig('s1', { audio_format: 'wav' })], 's1')
+        assert.equal(sent.buffered, true)
+    })
+})
+
+test('desktop safari asks for buffered sending for an mp3 script only', async () => {
+    await onNavigator(DESKTOP_SAFARI, async () => {
+        assert.equal((await sentForPlay([makeScriptConfig('s1')], 's1')).buffered, true)
+        assert.equal('buffered' in await sentForPlay([makeScriptConfig('s1', { audio_format: 'wav' })], 's1'), false)
+    })
+})
+
+test('a validated script active config is available without the key', () => {
+    store.applyConfig(payload({ activeId: 's1', configs: [makeScriptConfig('s1')], keyPresent: false }))
+    assert.equal(store.available, true)
+    store.applyConfig(payload({ activeId: 'c1', configs: [makeConfig('c1')], keyPresent: false }))
+    assert.equal(store.available, false)
+})
+
+test('addConfig takes a kind: openrouter by default, or script', () => {
+    store.applyConfig(payload({ activeId: null, configs: [] }))
+    const sent = []
+    store._sendConfig = () => sent.push(store.configs.map(c => c.kind))
+    const openRouterId = store.addConfig()
+    const scriptId = store.addConfig('script')
+    assert.deepEqual(store.configs[0], createTtsConfig(openRouterId))
+    assert.deepEqual(store.configs[1], createScriptConfig(scriptId))
+    assert.deepEqual(sent, [['openrouter'], ['openrouter', 'script']])
 })
 
 test('stop aborts the buffered fetch', async () => {

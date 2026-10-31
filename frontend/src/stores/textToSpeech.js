@@ -5,11 +5,14 @@ import { createPcmStreamPlayer } from '../utils/pcmStreamPlayer.js'
 import { buffersSending, currentPlatform, playbackMode, speechEndResult, UNREACHABLE } from '../utils/speechOutcome.js'
 import { createSpeechPlayer } from '../utils/speechPlayer.js'
 import {
+    createScriptConfig,
     createTtsConfig,
     duplicateTtsConfig,
     isConfigValidated,
     isTtsAvailable,
+    kindOf,
     patchTtsConfig,
+    requestedFormat,
     sameSpeechFields,
     speechFieldsOf,
 } from '../utils/ttsConfig.js'
@@ -124,7 +127,7 @@ async function readEnding(store, audioId) {
  * Resolves `{ ok: true, ended }` when the sound starts (`ended` resolves the end result),
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
-async function startPlayback(store, text, fields, { useCache, source, configId = null }) {
+async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null }) {
     store.stop()
     const mine = ++generation
 
@@ -141,13 +144,15 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     try {
         controller = new AbortController()
         // A settings test names its config: the backend keeps the run as its last test.
+        // A script config names itself: the backend runs the command stored for it.
         // A platform that buffers the audio asks for it in one go: pacing would only delay it.
         const body = {
             text,
             ...fields,
             cache: useCache,
             ...(configId ? { config_id: configId } : {}),
-            ...(buffersSending(fields.response_format, currentPlatform()) ? { buffered: true } : {}),
+            ...(scriptId ? { script_id: scriptId } : {}),
+            ...(buffersSending(requestedFormat(fields), currentPlatform()) ? { buffered: true } : {}),
         }
         const response = await store._openSpeech(body, controller.signal)
         if (!response.ok) {
@@ -279,7 +284,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
     getters: {
         activeConfig: (state) => state.configs.find(config => config.id === state.activeId) ?? null,
 
-        /** True when the key is present and the active config is validated. */
+        /** True when the active config is validated, and the key is present (a script config needs none). */
         available: (state) => isTtsAvailable({ keyPresent: state.keyPresent, configs: state.configs, activeId: state.activeId }),
 
         /** The global playback state: 'idle' | 'loading' | 'playing'. */
@@ -319,9 +324,10 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
 
         // ── Config mutations ─────────────────────────────
 
-        addConfig() {
+        /** Add a new config of this kind: 'openrouter' or 'script'. */
+        addConfig(kind = 'openrouter') {
             const id = generateUUID()
-            this.configs.push(createTtsConfig(id))
+            this.configs.push(kind === 'script' ? createScriptConfig(id) : createTtsConfig(id))
             this._sendConfig()
             return id
         },
@@ -416,12 +422,18 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         play(text) {
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
-            return startPlayback(this, text, speechFieldsOf(config), { useCache: true, source: 'message' })
+            const fields = speechFieldsOf(config)
+            const scriptId = fields.kind === 'script' ? config.id : null
+            return startPlayback(this, text, fields, { useCache: true, source: 'message', scriptId })
         },
 
-        /** Read a text aloud with explicit speech fields (the settings test: no cache by default). */
+        /**
+         * Read a text aloud with explicit speech fields (the settings test: no cache by default).
+         * A script config's `configId` also names the script to run.
+         */
         playWith(text, fields, { useCache = false, source = 'test', configId = null } = {}) {
-            return startPlayback(this, text, speechFieldsOf(fields), { useCache, source, configId })
+            const scriptId = kindOf(fields) === 'script' ? configId : null
+            return startPlayback(this, text, speechFieldsOf(fields), { useCache, source, configId, scriptId })
         },
 
         /**
