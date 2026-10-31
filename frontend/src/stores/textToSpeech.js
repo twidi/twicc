@@ -423,13 +423,13 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
             const fields = speechFieldsOf(config)
-            const scriptId = fields.kind === 'script' ? config.id : null
+            const scriptId = kindOf(fields) === 'script' ? config.id : null
             return startPlayback(this, text, fields, { useCache: true, source: 'message', scriptId })
         },
 
         /**
          * Read a text aloud with explicit speech fields (the settings test: no cache by default).
-         * A script config's `configId` also names the script to run.
+         * A script config's `configId` also names the script to run: a script config needs its `configId`.
          */
         playWith(text, fields, { useCache = false, source = 'test', configId = null } = {}) {
             const scriptId = kindOf(fields) === 'script' ? configId : null

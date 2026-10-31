@@ -472,6 +472,13 @@ test('a wav script on an iphone asks for buffered sending, like pcm', async () =
     })
 })
 
+test('a pcm script on an iphone asks for buffered sending', async () => {
+    await onNavigator(IPHONE, async () => {
+        const sent = await sentForPlay([makeScriptConfig('s1', { audio_format: 'pcm', pcm_rate: 24000 })], 's1')
+        assert.equal(sent.buffered, true)
+    })
+})
+
 test('desktop safari asks for buffered sending for an mp3 script only', async () => {
     await onNavigator(DESKTOP_SAFARI, async () => {
         assert.equal((await sentForPlay([makeScriptConfig('s1')], 's1')).buffered, true)
