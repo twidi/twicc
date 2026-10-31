@@ -184,6 +184,19 @@ def test_a_header_of_many_small_chunks_is_read_across_feeds(step):
     assert check.content_type == "audio/pcm;rate=8000;channels=1"
 
 
+def test_a_header_past_the_limit_is_refused_from_its_first_bytes():
+    # The declared chunk size is enough: nothing near 64 KiB is held before the refusal.
+    junk = _chunk(b"JUNK", bytes(_JUNK_FOR_A_FULL_HEADER + 2))
+    past_data = _wav(b"\x00" * 8, extra_chunk=junk)
+    wav = _wav(b"\x00" * 8)
+    fmt_at = wav.index(b"fmt ")
+    big_fmt = _chunk(b"fmt ", wav[fmt_at + 8 : fmt_at + 24] + bytes(WAV_HEADER_MAX_BYTES))
+    past_fmt = wav[:fmt_at] + big_fmt + wav[fmt_at + 24 :]
+    for data in (past_data, past_fmt):
+        with pytest.raises(SpeechError, match=f"^{NOT_WAV}$"):
+            OutputCheck("wav", None, 1).feed(data[:100])
+
+
 def test_pcm_needs_a_rate():
     with pytest.raises(ValueError):
         OutputCheck("pcm", None, 1)
