@@ -117,9 +117,15 @@ test('a script config tests without the key, with its own rule and title', () =>
 })
 
 test('the last test of a script config shows no price', () => {
-    assert.match(settingsSource, /ttsTestStats\(config\.last_test, \{ priced: isPriced\(config\) \}\)/)
-    assert.match(settingsSource, /ttsLastTestFacts\(config\.last_test, \{ priced: isPriced\(config\) \}\)/)
-    assert.doesNotMatch(settingsSource, /ttsTestStats\(config\.last_test\)|ttsLastTestFacts\(config\.last_test\)/)
+    // Computed once per config, with the price rule of its kind.
+    assert.match(settingsSource, /const priced = isPriced\(config\)/)
+    assert.match(settingsSource, /stats: ttsTestStats\(config\.last_test, \{ priced \}\)/)
+    assert.match(settingsSource, /facts: ttsLastTestFacts\(config\.last_test, \{ priced \}\)/)
+    // The template reads the computed texts: it calls neither helper itself.
+    const template = settingsSource.slice(settingsSource.indexOf('<template>'))
+    assert.doesNotMatch(template, /ttsTestStats\(|ttsLastTestFacts\(/)
+    assert.match(template, /lastTestTexts\[config\.id\]\.stats/)
+    assert.match(template, /lastTestTexts\[config\.id\]\.facts/)
     assert.match(settingsSource, /function isPriced\(config\) \{\s*return kindOf\(config\) !== 'script'/)
     assert.ok(settingsSource.includes("'Last test run: generation time per 1,000 characters, and time to the first audio'"))
 })

@@ -5,15 +5,15 @@
  * collapsible card whose summary line shows its name, its marks, a quick Test (play / stop)
  * and the Activate button. The test sentence is saved in tts.json too.
  *
- * A config has a kind: an OpenRouter config (model, voice, format) or a script config (a shell
- * command of the user gives the audio; it needs no key and has no price).
+ * A config has a kind: an OpenRouter config (model, voice, format) or a script config (the
+ * user's shell command gives the audio; it needs no key and has no price).
  *
  * A config is validated by ear: Test reads the test text aloud with the config's current
  * speech fields, then asks "Did you hear it correctly?" (not when those fields are already
  * the validated ones). Yes validates exactly the tested fields; any later speech field
  * change drops the validation (store `updateConfig`). A question or an error opens the card.
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import {
     DEFAULT_TEST_TEXT,
@@ -145,6 +145,15 @@ function canTest(config) {
 function isPriced(config) {
     return kindOf(config) !== 'script'
 }
+
+// The last test texts of each config, computed once per change (not twice per render).
+const lastTestTexts = computed(() => Object.fromEntries(store.configs.map((config) => {
+    const priced = isPriced(config)
+    return [config.id, {
+        stats: ttsTestStats(config.last_test, { priced }),
+        facts: ttsLastTestFacts(config.last_test, { priced }),
+    }]
+})))
 
 function testStatsTitle(config) {
     return isPriced(config)
@@ -385,7 +394,7 @@ function answerNo(id) {
                 <div slot="summary" class="tts-summary">
                     <span class="tts-summary-text">
                         <span class="tts-summary-name">{{ ttsConfigDisplayName(config, store.models) }}</span>
-                        <span v-if="ttsTestStats(config.last_test, { priced: isPriced(config) })" class="tts-summary-note" :title="testStatsTitle(config)">{{ ttsTestStats(config.last_test, { priced: isPriced(config) }) }}</span>
+                        <span v-if="lastTestTexts[config.id]?.stats" class="tts-summary-note" :title="testStatsTitle(config)">{{ lastTestTexts[config.id].stats }}</span>
                         <span v-if="config.note" class="tts-summary-note" :title="config.note">{{ config.note }}</span>
                     </span>
                     <wa-icon
@@ -456,9 +465,9 @@ function answerNo(id) {
                 </div>
 
                 <div class="tts-config-body">
-                    <div v-if="ttsLastTestFacts(config.last_test, { priced: isPriced(config) })" class="tts-last-test">
+                    <div v-if="lastTestTexts[config.id]?.facts" class="tts-last-test">
                         <span class="setting-group-label">Last test run · {{ lastTestWhen(config.last_test) }}</span>
-                        <span class="setting-group-hint">{{ ttsLastTestFacts(config.last_test, { priced: isPriced(config) }) }}</span>
+                        <span class="setting-group-hint">{{ lastTestTexts[config.id].facts }}</span>
                     </div>
                     <div class="tts-field">
                         <label class="setting-group-label" :for="`tts-${config.id}-name`">Name</label>
