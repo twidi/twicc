@@ -80,6 +80,8 @@ export function createScriptConfig(id) {
         pcm_rate: null,
         pcm_channels: 1,
         max_chars: null,
+        // Not in SCRIPT_FIELDS: a change keeps the validation.
+        delete_file: true,
         note: '',
         validated: null,
     }

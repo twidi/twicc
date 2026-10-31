@@ -372,10 +372,21 @@ test('a new script config has the defaults and no validation', () => {
         pcm_rate: null,
         pcm_channels: 1,
         max_chars: null,
+        delete_file: true,
         note: '',
         validated: null,
     })
     assert.equal(isConfigValidated(createScriptConfig('s')), false)
+})
+
+test('delete_file is not a speech field: a change keeps the validation', () => {
+    const script = validatedScript('s', { output: 'path' })
+    assert.equal(SCRIPT_FIELDS.includes('delete_file'), false)
+    assert.equal('delete_file' in speechFieldsOf(script), false)
+    const patched = patchTtsConfig(script, { delete_file: false })
+    assert.equal(patched.delete_file, false)
+    assert.deepEqual(patched.validated, script.validated)
+    assert.equal(isConfigValidated(patched), true)
 })
 
 test('speechFieldsOf keeps the kind and the fields of that kind', () => {

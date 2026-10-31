@@ -116,9 +116,9 @@ async def _until(predicate, seconds: float = 5.0) -> None:
             await asyncio.sleep(0.01)
 
 
-async def _pump(request, parts=None, *, seconds: float = 5.0, paced=False) -> AudioStream:
+async def _pump(request, parts=None, *, seconds: float = 5.0, paced=False, delete_file=True) -> AudioStream:
     stream = AudioStream(LABEL)
-    await _within(pump_script_speech(request, stream, parts, paced=paced), seconds)
+    await _within(pump_script_speech(request, stream, parts, paced=paced, delete_file=delete_file), seconds)
     return stream
 
 
@@ -735,6 +735,78 @@ def test_an_endless_path_output_is_stopped(monkeypatch, groups):
         assert _group_gone(int(pgid_file.read_text()))
 
     asyncio.run(scenario())
+
+
+def test_a_returned_file_is_deleted_after_a_successful_read(tmp_path):
+    path = tmp_path / "speech.mp3"
+    path.write_bytes(MP3)
+
+    async def scenario():
+        stream = await _pump(_request(f"echo {shlex.quote(str(path))}", output="path", audio_format="mp3"))
+        assert (stream.state, bytes(stream.data)) == ("complete", MP3)
+
+    asyncio.run(scenario())
+    assert not path.exists()
+
+
+def test_a_returned_file_is_kept_when_the_option_is_off(tmp_path):
+    path = tmp_path / "speech.mp3"
+    path.write_bytes(MP3)
+    request = _request(f"echo {shlex.quote(str(path))}", output="path", audio_format="mp3")
+
+    async def scenario():
+        stream = await _pump(request, delete_file=False)
+        assert (stream.state, bytes(stream.data)) == ("complete", MP3)
+
+    asyncio.run(scenario())
+    assert path.read_bytes() == MP3
+
+
+def test_a_failed_run_keeps_its_file(tmp_path):
+    path = tmp_path / "speech.mp3"
+    path.write_bytes(b"not an mp3 file at all")
+
+    async def scenario():
+        stream = await _pump(_request(f"echo {shlex.quote(str(path))}", output="path", audio_format="mp3"))
+        assert await _failed_open(stream) == NOT_MP3
+
+    asyncio.run(scenario())
+    assert path.read_bytes() == b"not an mp3 file at all"
+
+
+def test_a_symbolic_link_is_never_deleted(tmp_path):
+    target = tmp_path / "target.mp3"
+    target.write_bytes(MP3)
+    link = tmp_path / "link.mp3"
+    link.symlink_to(target)
+
+    async def scenario():
+        stream = await _pump(_request(f"echo {shlex.quote(str(link))}", output="path", audio_format="mp3"))
+        assert (stream.state, bytes(stream.data)) == ("complete", MP3)
+
+    asyncio.run(scenario())
+    assert link.is_symlink()
+    assert target.read_bytes() == MP3
+
+
+@pytest.mark.parametrize("error", [PermissionError, FileNotFoundError])
+def test_a_failed_deletion_is_not_an_error(tmp_path, monkeypatch, error):
+    path = tmp_path / "speech.mp3"
+    path.write_bytes(MP3)
+    unlinked = []
+
+    def failing_unlink(target):
+        unlinked.append(target)
+        raise error(target)
+
+    monkeypatch.setattr(script.os, "unlink", failing_unlink)
+
+    async def scenario():
+        stream = await _pump(_request(f"echo {shlex.quote(str(path))}", output="path", audio_format="mp3"))
+        assert (stream.state, bytes(stream.data)) == ("complete", MP3)
+
+    asyncio.run(scenario())
+    assert unlinked == [str(path)]
 
 
 def test_the_parts_run_one_after_the_other_into_one_stream(tmp_path):

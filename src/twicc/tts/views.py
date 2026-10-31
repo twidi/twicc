@@ -282,7 +282,10 @@ async def _open_script_speech(data: dict) -> JsonResponse:
         config_id,
         label,
         script_parts,
-        lambda sink, parts, paced: pump_script_speech(speech_request, sink, parts, paced=paced),
+        # The stored option, never one from the body; not in the request: a toggle keeps the cache.
+        lambda sink, parts, paced: pump_script_speech(
+            speech_request, sink, parts, paced=paced, delete_file=entry["delete_file"]
+        ),
         None,
     )
 

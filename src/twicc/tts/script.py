@@ -93,12 +93,15 @@ async def pump_script_speech(
     parts: Sequence[str] | None = None,
     *,
     paced: bool = False,
+    delete_file: bool = True,
 ) -> None:
     """Run the command of *request* once per text part, and stream its audio into *stream*.
 
     *parts* are the texts of the runs, in order, into the same stream (None: the request's text,
     in one run). A run starts once the previous one ended and the stream's lookahead allows it.
-    With *paced*, the stream delivers its audio at the playback pace.
+    With *paced*, the stream delivers its audio at the playback pace. With *delete_file*, the file
+    a successful File path run returned is deleted once read (not a speech field: the cache key,
+    *request*, does not hold it).
 
     A failed run fails the stream (before its headers on the first part) and starts no next run.
     A later part of another type fails it too. A cancellation (a release, a shutdown) stops the
@@ -110,7 +113,7 @@ async def pump_script_speech(
     for index, text in enumerate(texts):
         if index:
             await stream.wait_for_lookahead()
-        run = _ScriptRun(request, stream, index, split=split, paced=paced, paths=paths)
+        run = _ScriptRun(request, stream, index, split=split, paced=paced, paths=paths, delete_file=delete_file)
         if not await run.run(text):
             return
     stream.finish()
@@ -176,6 +179,20 @@ def _read_returned_file(path: str, limit: int) -> bytes:
     return data
 
 
+def _delete_returned_file(path: str) -> None:
+    """Delete the file at *path* when it is still a regular file (runs in a thread).
+
+    A symbolic link or a directory is never deleted. A failure (permissions, a file already gone)
+    is not an error: the audio is already read.
+    """
+    try:
+        if stat.S_ISREG(os.lstat(path).st_mode):
+            os.unlink(path)
+    except OSError as error:
+        # Never the path: it comes from the command, which can hold a key.
+        logger.debug("TTS script: the returned file was not deleted (%s)", type(error).__name__)
+
+
 def _last_error_line(tail: bytes) -> str | None:
     """The last non-empty line of the stderr tail, stripped and cut, or None."""
     for line in reversed(tail.decode("utf-8", errors="replace").splitlines()):
@@ -205,6 +222,7 @@ class _ScriptRun:
         split: bool,
         paced: bool,
         paths: set[str],
+        delete_file: bool,
     ):
         self._request = request
         self._stream = stream
@@ -212,6 +230,8 @@ class _ScriptRun:
         self._split = split
         self._paced = paced
         self._paths = paths
+        self._delete_file = delete_file
+        self._returned_path: str | None = None  # the path a File path run printed, once checked
         self._check = OutputCheck(request.audio_format, request.pcm_rate, request.pcm_channels)
         self._kept_before = len(stream.data)  # the bytes of the previous parts, for the cap
         self._read = 0  # the stdout bytes of this run: appended, held or dropped
@@ -373,6 +393,9 @@ class _ScriptRun:
         elif self._trimmer is not None and (dropped := self._trimmer.end()):
             logger.debug("TTS script part %d: %d bytes of a partial PCM frame dropped", self._index + 1, dropped)
         self._stream.end_part()
+        if self._delete_file and self._returned_path is not None:
+            # Only a successful run: a failed one keeps its file, for the user to see.
+            await asyncio.to_thread(_delete_returned_file, self._returned_path)
         return True
 
     async def _returned_file(self) -> bytes:
@@ -387,6 +410,7 @@ class _ScriptRun:
         if path in self._paths:
             raise SpeechError(PATH_REUSED)
         self._paths.add(path)
+        self._returned_path = path
         # Read off the event loop: a file can be large, or on a slow disk.
         return await asyncio.to_thread(_read_returned_file, path, SCRIPT_MAX_BYTES - self._kept_before)
 

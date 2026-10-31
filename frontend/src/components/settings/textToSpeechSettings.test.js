@@ -92,8 +92,19 @@ test('the script number inputs go through positiveIntegerInput with their bounds
 })
 
 test('the script help states the command contract', () => {
-    const help = 'TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.'
+    const help = 'TwiCC runs this command in your shell, as a non-interactive login shell in your home directory, and writes the text to its standard input. The command writes the audio to its standard output (for File path: one absolute path, to a new file at each run, which TwiCC deletes after reading unless Delete the file after reading is off) and exits with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or ~/.zshrc sets is usually missing, and nothing else may print to the standard output. Several readings can run the command at the same time. With Whole audio or File path, set a max characters per run: the audio then starts after the first part.'
     assert.ok(scriptBranchSource().replace(/\s+/g, ' ').includes(help), 'the help copy is verbatim')
+})
+
+test('a File path script card offers to delete the returned file', () => {
+    const body = scriptBranchSource()
+    const flat = body.replace(/\s+/g, ' ')
+    assert.match(flat, /<wa-checkbox v-if="config\.output === 'path'"[^>]*:checked="config\.delete_file"[^>]*@change="onDeleteFileChange\(config, \$event\)"[^>]*> Delete the file after reading <\/wa-checkbox>/)
+    // Scoped to its own element: a bubbling change of a nested element is ignored.
+    assert.match(
+        settingsSource,
+        /function onDeleteFileChange\(config, event\) \{\s*if \(event\.target !== event\.currentTarget\) return\s*const deleteFile = event\.target\.checked\s*if \(deleteFile !== config\.delete_file\) commit\(config\.id, \{ delete_file: deleteFile \}\)/,
+    )
 })
 
 test('the intro names both kinds and the key callout speaks of OpenRouter configs only', () => {

@@ -1394,12 +1394,15 @@ def tts_json():
 @pytest.fixture
 def script_upstream(monkeypatch, tts_json):
     """The script pump, the last-test record and the cost lookup are fakes. The pump runs
-    ``fake.pump`` (with no key) and records ``(request, parts, paced)`` in ``fake.script_runs``."""
+    ``fake.pump`` (with no key), records ``(request, parts, paced)`` in ``fake.script_runs`` and
+    the ``delete_file`` keyword (required: the view must pass it) in ``fake.delete_files``."""
     fake = Upstream()
     fake.script_runs = []
+    fake.delete_files = []
 
-    def pump_script_speech(request, stream, parts=None, *, paced=False):
+    def pump_script_speech(request, stream, parts=None, *, paced=False, delete_file):
         fake.script_runs.append((request, parts, paced))
+        fake.delete_files.append(delete_file)
         return fake.pump(request, None, stream)
 
     monkeypatch.setattr(views, "pump_script_speech", pump_script_speech)
@@ -1408,12 +1411,14 @@ def script_upstream(monkeypatch, tts_json):
     return fake
 
 
-def _store_script(config_id: str = SCRIPT_ID, validated: object = True, **overrides) -> dict:
-    """Write one script config to tts.json; *validated* True: its snapshot is its fields."""
+def _store_script(config_id: str = SCRIPT_ID, validated: object = True, delete_file: object = None, **overrides) -> dict:
+    """Write one script config to tts.json; *validated* True: its snapshot is its fields.
+    *delete_file* None: the entry has none (the default applies)."""
     fields = {**SCRIPT_FIELDS, **overrides}
     snapshot = fields if validated is True else validated
+    extra = {} if delete_file is None else {"delete_file": delete_file}
     write_tts_config({
-        "configs": [{"id": config_id, "name": "Script", "kind": "script", **fields, "validated": snapshot}]
+        "configs": [{"id": config_id, "name": "Script", "kind": "script", **fields, **extra, "validated": snapshot}]
     })
     return fields
 
@@ -1701,3 +1706,46 @@ def test_models_rejects_other_methods(client):
     response = asyncio.run(_within(client.post(MODELS_PATH)))
     assert response.status_code == 405
     assert response["Allow"] == "GET"
+
+
+@pytest.mark.parametrize("delete_file, expected", [(None, True), (True, True), (False, False)])
+def test_the_stored_delete_file_reaches_the_pump(client, script_upstream, delete_file, expected):
+    _store_script(delete_file=delete_file)
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        await _open_id(client, SCRIPT_READ)
+        await _settle()
+
+    asyncio.run(scenario())
+    assert script_upstream.delete_files == [expected]
+    [(request, _parts, _paced)] = script_upstream.script_runs
+    assert request == ScriptSpeechRequest(text="Hello there", **SCRIPT_FIELDS)  # not in the request
+
+
+def test_a_toggled_delete_file_does_not_miss_the_cache(client, script_upstream):
+    _store_script(delete_file=True)
+
+    async def scenario():
+        _send_audio(script_upstream.pump, b"abc")
+        await _open_id(client, SCRIPT_CACHED_READ)
+        await _settle()
+        _store_script(delete_file=False)
+        audio_id = await _open_id(client, SCRIPT_CACHED_READ)
+        assert await _body(await _read(client, audio_id)) == b"abc"
+
+    asyncio.run(scenario())
+    assert len(script_upstream.script_runs) == 1
+
+
+def test_a_test_that_differs_only_in_delete_file_runs(client, script_upstream):
+    _store_script(delete_file=True)
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        response = await _open(client, {**SCRIPT_TEST, "delete_file": False})
+        assert response.status_code == 200, response.content
+        await _settle()
+
+    asyncio.run(scenario())
+    assert script_upstream.delete_files == [True]  # the stored value, never the body's

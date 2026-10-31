@@ -205,6 +205,13 @@ function onScriptChoice(config, field, value) {
     if (value !== config[field]) commit(config.id, { [field]: value })
 }
 
+// File path only: whether TwiCC deletes the returned file after reading it.
+function onDeleteFileChange(config, event) {
+    if (event.target !== event.currentTarget) return
+    const deleteFile = event.target.checked
+    if (deleteFile !== config.delete_file) commit(config.id, { delete_file: deleteFile })
+}
+
 function integerText(value) {
     return value == null ? '' : String(value)
 }
@@ -506,6 +513,14 @@ function answerNo(id) {
                                 />
                                 <span class="setting-group-hint">{{ scriptStreamingNote(config) }}</span>
                             </div>
+                            <wa-checkbox
+                                v-if="config.output === 'path'"
+                                size="small"
+                                :checked="config.delete_file"
+                                @change="onDeleteFileChange(config, $event)"
+                            >
+                                Delete the file after reading
+                            </wa-checkbox>
                         </div>
 
                         <div class="tts-field">
@@ -557,8 +572,9 @@ function answerNo(id) {
                         <p class="setting-group-hint tts-script-help">
                             TwiCC runs this command in your shell, as a non-interactive login shell in your home
                             directory, and writes the text to its standard input. The command writes the audio to its
-                            standard output (for File path: one absolute path, to a new file at each run) and exits
-                            with status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or
+                            standard output (for File path: one absolute path, to a new file at each run, which TwiCC
+                            deletes after reading unless Delete the file after reading is off) and exits with
+                            status 0. If it fails, the last line of its error output is shown. What ~/.bashrc or
                             ~/.zshrc sets is usually missing, and nothing else may print to the standard output.
                             Several readings can run the command at the same time. With Whole audio or File path, set
                             a max characters per run: the audio then starts after the first part.

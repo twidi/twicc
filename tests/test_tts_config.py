@@ -370,14 +370,14 @@ def test_a_script_entry_keeps_only_its_fields():
     entry = normalize_tts_config({"configs": [raw]})["configs"][0]
     assert entry == {"id": "s", "name": "Piper", "kind": "script", "command": "piper -q", "output": "path",
                      "audio_format": "pcm", "pcm_rate": 22050, "pcm_channels": 1, "max_chars": 800,
-                     "note": "n", "validated": None, "last_test": None}
+                     "delete_file": True, "note": "n", "validated": None, "last_test": None}
 
 
 def test_a_bare_script_entry_gets_the_defaults():
     entry = normalize_tts_config({"configs": [{"id": "s", "kind": "script"}]})["configs"][0]
     assert entry == {"id": "s", "name": "", "kind": "script", "command": "", "output": "stream",
                      "audio_format": "mp3", "pcm_rate": None, "pcm_channels": 1, "max_chars": None,
-                     "note": "", "validated": None, "last_test": None}
+                     "delete_file": True, "note": "", "validated": None, "last_test": None}
 
 
 @pytest.mark.parametrize("field, value, expected", [
@@ -414,6 +414,27 @@ def test_an_incomplete_script_snapshot_is_dropped():
     entry = normalize_tts_config({"configs": [raw]})["configs"][0]
     assert entry["validated"] is None
     assert not script_config_validated(entry)
+
+
+@pytest.mark.parametrize("value, expected", [(None, True), (True, True), (False, False), ("no", True), (0, True)])
+def test_delete_file_is_a_bool_on_by_default(value, expected):
+    raw = {"id": "s", "kind": "script"} if value is None else {"id": "s", "kind": "script", "delete_file": value}
+    assert normalize_tts_config({"configs": [raw]})["configs"][0]["delete_file"] is expected
+
+
+def test_delete_file_is_not_a_speech_field():
+    fields = script_fields({"command": "say", "output": "path"})
+    raw = {"id": "s", "kind": "script", **fields, "delete_file": False, "validated": {**fields, "delete_file": True}}
+    entry = normalize_tts_config({"configs": [raw]})["configs"][0]
+    assert entry["validated"] == fields  # the snapshot never holds it
+    assert "delete_file" not in script_fields(raw)
+    assert script_config_validated(entry)
+    assert script_config_validated({**entry, "delete_file": True})
+
+
+def test_an_openrouter_entry_has_no_delete_file():
+    entry = normalize_tts_config({"configs": [_entry(delete_file=False)]})["configs"][0]
+    assert "delete_file" not in entry
 
 
 def test_an_openrouter_snapshot_without_kind_stays_valid():

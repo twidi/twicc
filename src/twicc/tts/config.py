@@ -157,11 +157,15 @@ def normalize_tts_config(raw: object) -> dict:
         seen_ids.add(entry_id)
         kind = _kind(entry.get("kind"))
         _fields, normalize_fields = _KIND_FIELDS[kind]
+        # Not a speech field: no part of the audio, nor of the validation snapshot.
+        delete_file = entry.get("delete_file")
+        options = {"delete_file": delete_file if isinstance(delete_file, bool) else True} if kind == "script" else {}
         configs.append({
             "id": entry_id,
             "name": _string(entry.get("name")),
             "kind": kind,
             **normalize_fields(entry),
+            **options,
             "note": _string(entry.get("note")),
             "validated": _validated(entry.get("validated"), kind),
             "last_test": _last_test(entry.get("last_test")),
