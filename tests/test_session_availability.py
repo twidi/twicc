@@ -161,6 +161,17 @@ def test_content_endpoints_refuse_with_the_reason(sessions, client, url):
     assert body["code"] == SESSION_UNAVAILABLE
     assert body["unavailable_reason"] == REASON
     assert REASON in body["error"]
+    # The session that carries the reason: the subagent follows its parent.
+    assert body["unavailable_session_id"] == "blocked"
+
+
+def test_a_subagent_with_its_own_reason_is_named_as_the_carrier(sessions, client):
+    make_session("own-child", reason="own_reason", parent=sessions.open)
+    url = f"/api/projects/{PROJECT_ID}/sessions/open/subagent/own-child/items/metadata/"
+    body = orjson.loads(asyncio.run(client.get(url)).content)
+
+    assert body["unavailable_reason"] == "own_reason"
+    assert body["unavailable_session_id"] == "own-child"
 
 
 def test_content_endpoints_still_serve_an_available_session(sessions, client):

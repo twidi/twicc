@@ -151,15 +151,20 @@ async def aensure_session_id_available(session_id: str) -> None:
 async def arefuse_unavailable(session: Session) -> JsonResponse | None:
     """For a REST view that serves content: the refusal when the rule covers ``session``, else ``None``.
 
-    Body: ``{"error": <message>, "code": "session_unavailable", "unavailable_reason": <reason>}``.
+    Body: ``{"error": <message>, "code": "session_unavailable", "unavailable_reason": <reason>,
+    "unavailable_session_id": <id>}``. The id names the session that carries the
+    reason: ``session`` itself, or the parent a subagent follows. The frontend
+    stores the reason on that row.
     """
     from django.http import JsonResponse
 
     reason = await asession_unavailable_reason(session)
     if reason is None:
         return None
+    carrier = session.id if session.unavailable_reason is not None else session.parent_session_id
     return JsonResponse({
         "error": unavailable_message(session.id, reason),
         "code": SESSION_UNAVAILABLE,
         "unavailable_reason": reason,
+        "unavailable_session_id": carrier,
     }, status=HTTP_STATUS)

@@ -11,6 +11,7 @@ import { matchesStreamingBlock as claudeMatch } from '../providers/claude_code/s
 import { SYNTHETIC_ITEM } from '../constants.js'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState.js'
 import { projectEventSegments } from '../utils/chatEvents/segments.js'
+import { applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason } from '../utils/sessionAvailability.js'
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 function action(name) {
     const starts = [`        ${name}(`, `        async ${name}(`].map(prefix => source.indexOf(prefix)).filter(index => index >= 0)
@@ -27,7 +28,7 @@ function makeRetirementFixture({ provider = 'codex', fetches = [] } = {}) {
         destroySessionBuffers, isBufferActive, createStreamPublicationIdentity, SYNTHETIC_ITEM, STREAM_BLOCK_INACTIVITY_MS: 1000,
         getProviderHelpers: provider => ({ codex: { matchesStreamingBlock: codexMatch }, claude_code: { matchesStreamingBlock: claudeMatch } })[provider],
         clearBlockInactivityTimer(block) { clearTimeout(block._inactivityTimer); block._inactivityTimer = null },
-        isLaunchedEphemeral: () => false,
+        isLaunchedEphemeral: () => false, applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason,
         apiFetch: () => fetches.length ? Promise.resolve(fetches.shift()) : new Promise((resolve, reject) => deferred.push({ resolve, reject })) }
     const names = ['_onBufferDrain', '_retireStreamingBlocks', 'streamBlockStart', 'streamBlockDelta', 'streamBlockStop', 'streamBlockEnd',
         'updateSessionItemsContent', 'addSessionItems', 'loadSessionItemsRanges', '_dropOrphanedStreamingBlocks']

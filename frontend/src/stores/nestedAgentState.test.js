@@ -10,7 +10,9 @@ import { getSessionCutoffMs } from '../utils/sessions.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { withAutoDenyDeadlines } from '../utils/autoDeny.js'
 import { createVisualItemsViews } from '../utils/visualItemsViews.js'
-import { getSessionUnavailableReason } from '../utils/sessionAvailability.js'
+import {
+    applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason, noteUnavailableReasonUpdate,
+} from '../utils/sessionAvailability.js'
 
 // The real store actions, sliced from data.js (node cannot import the store:
 // extensionless imports). A slice runs from the action name to the next JSDoc.
@@ -63,6 +65,7 @@ function makeStore({ fetches = [] } = {}) {
         sweepPendingRequestDrafts: async () => {}, liveDraftKey: (a, b) => `${a}:${b}`, getToolHelpers: () => null,
         withAutoDenyDeadlines, clearBlockInactivityTimer() {}, destroySessionBuffers() {}, debugAppendSafeSessions: new Set(),
         visualItemsViews: createVisualItemsViews({ document: null }), getSessionUnavailableReason,
+        applyUnavailableRefusal, captureRefusalTarget, noteUnavailableReasonUpdate,
     }
     const methods = new Function(...Object.keys(deps), `return { ${ACTIONS.map(action).join('')} }`)(...Object.values(deps))
     const store = Object.assign(methods, {

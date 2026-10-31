@@ -71,7 +71,9 @@ import {
     restoreStagedAsyncQuestionSend,
 } from '../utils/draftStorage'
 import { createAsyncQuestionActions } from '../utils/asyncQuestionState'
-import { getSessionUnavailableReason } from '../utils/sessionAvailability.js'
+import {
+    applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason, noteUnavailableReasonUpdate,
+} from '../utils/sessionAvailability.js'
 import { retainsAsyncQuestionSend } from '../utils/asyncQuestions'
 import { saveInflightSend, deleteInflightSend, getAllInflightSends } from '../utils/inflightStorage'
 import { liveDraftKey, sweepPendingRequestDrafts } from '../utils/pendingRequestDraftStorage'
@@ -1836,6 +1838,8 @@ export const useDataStore = defineStore('data', {
                     if (!jsonValuesEqual(current[key], value)) current[key] = value
                 }
             })
+            // A refusal read in flight is older than this reason: it must not overwrite it.
+            if (Object.hasOwn(session, 'unavailable_reason')) noteUnavailableReasonUpdate(this.sessions[session.id])
             if (session.hidden && this.localState.sessionEventHistory?.[session.id]) this.clearSessionEventHistory(session.id)
             // A root cutoff change re-applies its agents' run states. After the
             // patch: ``applyAgentRunState`` reads the cutoff from ``sessions[root]``.
@@ -2964,11 +2968,16 @@ export const useDataStore = defineStore('data', {
          * Subagents open at the top; parent sessions open at the bottom.
          * `force` (user retry) supersedes a load already in flight: the old one is
          * aborted and its outcome discarded, so a stalled request can never block a retry.
-         * @returns {Promise<boolean>} false when either request failed.
+         * An unavailable session loads nothing and reports no error, including
+         * when the backend refusal is how the store learns of it.
+         * @returns {Promise<boolean>} false when either request failed, or the session is unavailable.
          */
         async loadSessionHistory(projectId, sessionId, lastLine, parentSessionId = null, { force = false } = {}) {
             const existing = sessionHistoryInFlight.get(sessionId)
             if (existing && !force) return existing
+            // Before any abort: a forced retry of an unavailable session leaves the load in flight alone.
+            const isUnavailable = () => !!getSessionUnavailableReason(id => this.sessions?.[id], sessionId, parentSessionId)
+            if (isUnavailable()) return false
             if (existing) sessionHistoryControllers.get(sessionId)?.abort()
             if (!lastLine || isLaunchedEphemeral(this.sessions[sessionId])) return true
 
@@ -3001,14 +3010,18 @@ export const useDataStore = defineStore('data', {
                     ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
                     : `/api/projects/${projectId}/sessions/${sessionId}`
                 let metadataFailure = null
+                const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
                 try {
                     const [metadata, items] = await Promise.all([
                         this.loadSessionMetadata(projectId, sessionId, parentSessionId,
                             { signal, onBytes, onFailure: error => { metadataFailure = error } }),
                         apiFetch(`${baseUrl}/items/?range=${first}:${last}`, { signal })
-                            .then(res => {
+                            .then(async res => {
                                 onBytes(0)
-                                if (!res.ok) throw new Error(`Server error (${res.status})`)
+                                if (!res.ok) {
+                                    await applyUnavailableRefusal(res, refusal)
+                                    throw new Error(`Server error (${res.status})`)
+                                }
                                 return readJsonWithProgress(res, onBytes)
                             }),
                     ])
@@ -3031,6 +3044,14 @@ export const useDataStore = defineStore('data', {
                     this.auditInflightSends(sessionId)
                     return true
                 } catch (error) {
+                    // Refused as unavailable: the reason is now on the session and
+                    // shows the unavailable view, not the error panel.
+                    if (isUnavailable()) {
+                        if (!controller.signal.aborted && this.localState.sessions[sessionId] === local) {
+                            local.itemsFetched = wasFetched
+                        }
+                        return false
+                    }
                     console.error('Failed to load session history:', error)
                     if (controller.signal.aborted) return false
                     if (this.localState.sessions[sessionId] === local && local.itemsFetched) {
@@ -3074,6 +3095,8 @@ export const useDataStore = defineStore('data', {
         async loadSessionItemsRanges(projectId, sessionId, ranges, parentSessionId = null) {
             if (isLaunchedEphemeral(this.sessions[sessionId])) return
             if (!ranges?.length) return true
+            // The backend refuses the content of an unavailable session.
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId, parentSessionId)) return false
 
             // Initialize localState for this session if needed
             if (!this.localState.sessions[sessionId]) {
@@ -3122,10 +3145,13 @@ export const useDataStore = defineStore('data', {
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
                 : `/api/projects/${projectId}/sessions/${sessionId}`
 
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             try {
                 const res = await apiFetch(`${baseUrl}/items/?${params}`)
                 if (!res.ok) {
-                    console.error('Failed to load session items ranges:', res.status, res.statusText)
+                    if (!await applyUnavailableRefusal(res, refusal)) {
+                        console.error('Failed to load session items ranges:', res.status, res.statusText)
+                    }
                     return false
                 }
                 const items = await res.json()
@@ -3175,7 +3201,11 @@ export const useDataStore = defineStore('data', {
                 return this.ensureSessionItemsCoverage(sessionId, { loadUnfetched })
             }
             const session = this.sessions[sessionId]
-            if (!session || isLaunchedEphemeral(session)) return true
+            // An unavailable session has nothing to cover. A refusal met on the way
+            // stores its reason: that ending is not a failure either.
+            const isUnavailable = () => !!getSessionUnavailableReason(id => this.sessions?.[id], sessionId,
+                session?.parent_session_id || null)
+            if (!session || isLaunchedEphemeral(session) || isUnavailable()) return true
 
             const pending = Promise.resolve().then(async () => {
                 const opening = sessionHistoryInFlight.get(sessionId)
@@ -3229,7 +3259,7 @@ export const useDataStore = defineStore('data', {
                     }
                 }
                 return ok
-            })
+            }).then(ok => ok || isUnavailable())
             itemsCoverageInFlight.set(sessionId, pending)
             try {
                 return await pending
@@ -4634,11 +4664,14 @@ export const useDataStore = defineStore('data', {
                 ? `/api/projects/${projectId}/sessions/${parentSessionId}/subagent/${sessionId}`
                 : `/api/projects/${projectId}/sessions/${sessionId}`
 
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             try {
                 const res = await apiFetch(`${baseUrl}/items/metadata/`, { signal })
                 onBytes?.(0)
                 if (!res.ok) {
-                    console.error('Failed to load session metadata:', res.status, res.statusText)
+                    if (!await applyUnavailableRefusal(res, refusal)) {
+                        console.error('Failed to load session metadata:', res.status, res.statusText)
+                    }
                     onFailure?.(new Error(`Server error (${res.status})`))
                     return null
                 }
@@ -5110,10 +5143,17 @@ export const useDataStore = defineStore('data', {
          * @param {string} sessionId - The session ID
          */
         async fetchToolStates(projectId, sessionId) {
+            // The backend refuses the content of an unavailable session.
+            const parentSessionId = this.sessions[sessionId]?.parent_session_id || null
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId, parentSessionId)) return
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             try {
                 const url = `/api/projects/${projectId}/sessions/${sessionId}/tool-states/`
                 const response = await apiFetch(url)
-                if (!response.ok) return
+                if (!response.ok) {
+                    await applyUnavailableRefusal(response, refusal)
+                    return
+                }
 
                 const data = await response.json()
                 if (data.tools && Object.keys(data.tools).length > 0) {
@@ -5245,10 +5285,16 @@ export const useDataStore = defineStore('data', {
             // Couples {tool_use_id, run_id} for Workflow tool_uses, so the chat
             // can show "View Workflow". Best-effort: a failure just defers the
             // button to the next load / the workflow_link_created WS event.
+            const parentSessionId = this.sessions[sessionId]?.parent_session_id || null
+            if (getSessionUnavailableReason(id => this.sessions?.[id], sessionId, parentSessionId)) return
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             try {
                 const url = `/api/projects/${projectId}/sessions/${sessionId}/workflow-links/`
                 const response = await apiFetch(url)
-                if (!response.ok) return
+                if (!response.ok) {
+                    await applyUnavailableRefusal(response, refusal)
+                    return
+                }
                 const links = await response.json()
                 for (const link of links) {
                     this.setWorkflowLink(sessionId, link.tool_use_id, link.run_id)
@@ -5289,6 +5335,7 @@ export const useDataStore = defineStore('data', {
                 .filter(([, entry]) => entry.rootSessionId === sessionId).map(([agentId]) => agentId)
             const previous = rootRunIds()
             let outcome = 'failed'
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             try {
                 const response = await apiFetch(`/api/projects/${projectId}/sessions/${sessionId}/subagents/`)
                 if (response.ok) {
@@ -5301,6 +5348,8 @@ export const useDataStore = defineStore('data', {
                         applyAgentSnapshot(this.localState, sessionId, agents, token)
                         outcome = 'applied'
                     }
+                } else {
+                    await applyUnavailableRefusal(response, refusal)
                 }
             } catch (error) {
                 console.error('Failed to fetch subagents state:', error)

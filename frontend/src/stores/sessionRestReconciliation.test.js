@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { getSessionCutoffMs } from '../utils/sessions.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
+import { applyUnavailableRefusal, captureRefusalTarget, noteUnavailableReasonUpdate } from '../utils/sessionAvailability.js'
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 const action = name => {
@@ -19,7 +20,7 @@ const base = { id: 's', project_id: 'p', mtime: 10, title: 'Session', last_line:
 function fixture({ projectState = { sessionsFetched: true, hasMoreSessions: true }, fetchPage = null } = {}) {
     let result = copy(base), ok = true
     const response = async () => ({ ok, status: ok ? 200 : 500, json: async () => copy(result) })
-    const deps = { getSessionCutoffMs, markAgentIdle: () => {}, jsonValuesEqual,
+    const deps = { getSessionCutoffMs, markAgentIdle: () => {}, jsonValuesEqual, noteUnavailableReasonUpdate,
         apiFetch: response, fetch: response, sessionsLoadInFlight: new Map(),
         syncBaseline: { sessionMtime: (_, local) => local }, isWorkspaceProjectId: () => false,
         FIRST_SESSIONS_PAGE_SIZE: 30 }
@@ -202,4 +203,19 @@ test('a failed small first page is a failed initial load', async () => {
     }
     assert.equal(state.sessionsLoadingError, true)
     assert.equal(state.sessionsFetched, false)
+})
+
+test('a server row that carries the reason supersedes a refusal read in flight; a partial local update does not', async () => {
+    const { store } = fixture()
+    const getSession = id => store.sessions[id]
+    const refused = () => new Response(JSON.stringify({ code: 'session_unavailable', unavailable_reason: 'rollout_missing' }),
+        { status: 409 })
+    const local = captureRefusalTarget(getSession, 's')
+    store.updateSession({ id: 's', title: 'Renamed' })
+    assert.equal(await applyUnavailableRefusal(refused(), local), 'rollout_missing')
+    store.sessions.s.unavailable_reason = null
+    const server = captureRefusalTarget(getSession, 's')
+    store.updateSession({ ...copy(base), unavailable_reason: null })
+    assert.equal(await applyUnavailableRefusal(refused(), server), null)
+    assert.equal(store.sessions.s.unavailable_reason, null)
 })

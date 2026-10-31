@@ -1,5 +1,5 @@
 import { reconcileSend, retainsAsyncQuestionSend, consumeAsyncQuestionSend, restoreAsyncQuestionSend } from './asyncQuestions.js'
-import { getSessionUnavailableReason } from './sessionAvailability.js'
+import { applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason } from './sessionAvailability.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const emptyDraft = () => ({ choices: {}, sourceBatches: {}, recoveredIds: [], pendingDismissals: {} })
@@ -197,13 +197,17 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                     && ['staged', 'dispatched', 'uncertain'].includes(entry.status))
                 .map(([id]) => id)
             if (!ids.length) return Promise.resolve()
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             const recovery = (async () => {
                 for (let offset = 0; offset < ids.length; offset += 100) {
                     const response = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/async-questions/reconcile/`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ request_ids: ids.slice(offset, offset + 100) }),
                     })
-                    if (!response.ok) throw new Error(`Failed to reconcile question sends: ${response.status}`)
+                    if (!response.ok) {
+                        if (await applyUnavailableRefusal(response, refusal)) return
+                        throw new Error(`Failed to reconcile question sends: ${response.status}`)
+                    }
                     const result = await response.json()
                     for (const [id, status] of Object.entries(result.requests || {})) {
                         const entry = getSends(sessionId, this).get(id)
@@ -243,9 +247,14 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             // list, the connection refresh): concurrent callers share one request.
             const inFlight = questionLoads.get(sessionId)
             if (inFlight) return inFlight
+            const refusal = captureRefusalTarget(id => this.sessions?.[id], sessionId)
             const load = (async () => {
                 const response = await fetch(`/api/projects/${projectId}/sessions/${sessionId}/async-questions/`)
-                if (!response.ok) throw new Error(`Failed to load async questions: ${response.status}`)
+                if (!response.ok) {
+                    // Refused as unavailable: the reason is now on the session, like the guard above.
+                    if (await applyUnavailableRefusal(response, refusal)) return null
+                    throw new Error(`Failed to load async questions: ${response.status}`)
+                }
                 const snapshot = await response.json()
                 await this.reconcileAsyncQuestionSends(projectId, sessionId)
                 await this.applyAsyncQuestionSnapshot(sessionId, snapshot)

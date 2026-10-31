@@ -8,6 +8,9 @@ import { DISPLAY_LEVEL, INITIAL_ITEMS_COUNT } from '../constants.js'
 import { userMessageText, userMessageAttachmentCount } from '../providers/codex/canonical.js'
 import { attachmentMatchKey, attachmentCountForMessage, matchableUserMessage } from '../utils/attachmentStrip.js'
 import { sweepLoadedSessions } from '../composables/reconcileSweep.js'
+import {
+    applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason, noteUnavailableReasonUpdate,
+} from '../utils/sessionAvailability.js'
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 function action(name) {
@@ -34,7 +37,7 @@ const transcript = [
 ]
 const metadata = transcript.map(({ content, ...item }) => item)
 const copy = value => JSON.parse(JSON.stringify(value))
-function fixture({ fetched = false, lastLine = 2, stallMs = 30000 } = {}) {
+function fixture({ fetched = false, lastLine = 2, stallMs = 30000, logger = quiet } = {}) {
     const requests = []
     let respond = async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) })
     const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT, DISPLAY_LEVEL, toRaw,
@@ -44,9 +47,10 @@ function fixture({ fetched = false, lastLine = 2, stallMs = 30000 } = {}) {
         describeFetchFailure: new Function(`return ${source.match(/function describeFetchFailure[\s\S]*?\n}\n/)[0]}`)(),
         sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_STALL_TIMEOUT_MS: stallMs,
         lineNumsToRanges: lines => lines.map(line => [line, line]),
-        apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: quiet,
+        apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: logger,
         getProviderHelpers: () => ({ extractUserMessageText: userMessageText, extractUserMessageAttachmentCount: userMessageAttachmentCount }),
         attachmentMatchKey, attachmentCountForMessage, matchableUserMessage,
+        applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason,
     }
     const names = ['async loadSessionHistory', 'async ensureSessionItemsCoverage', 'async loadSessionItemsRanges',
         'async loadSessionMetadata', 'initSessionItemsFromMetadata', 'updateSessionItemsContent', 'clearOptimisticMessageIfMatched',
@@ -358,4 +362,131 @@ test('a forced load supersedes a stalled one, so a retry always runs', async () 
     assert.equal(store.localState.sessions.s.itemsLoadingError, false)
     assert.equal(store.localState.sessions.s.itemsLoading, false)
     assert.equal(store.sessionItems.s[1].kind, 'assistant_message')
+})
+
+// The backend's refusal of a content read (``arefuse_unavailable``).
+const refusal = (code = 'session_unavailable', carrier = 's') => new Response(JSON.stringify({
+    error: 'Session is unavailable', code, unavailable_reason: 'history:claude-rewind', unavailable_session_id: carrier }),
+    { status: 409 })
+function recordingConsole() {
+    const errors = []
+    return { errors, logger: { ...quiet, error: (...args) => errors.push(args) } }
+}
+
+test('a history load refused as unavailable stores the reason, logs nothing and publishes no error', async () => {
+    const { errors, logger } = recordingConsole()
+    const { store, requests, respond } = fixture({ logger })
+    delete store.localState.sessions.s
+    respond(async () => refusal())
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.sessions.s.unavailable_reason, 'history:claude-rewind')
+    assert.deepEqual(errors, [])
+    const local = store.localState.sessions.s
+    assert.equal(local.itemsLoading, false)
+    assert.equal(local.itemsFetched, false)
+    assert.ok(!local.itemsLoadingError, 'the unavailable view shows, not the error panel')
+    requests.length = 0
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.deepEqual(requests, [], 'a known reason stops the load before any request')
+})
+
+test('reconnect coverage of a session refused as unavailable is not a failure', async () => {
+    const { errors, logger } = recordingConsole()
+    const { store, requests, respond } = fixture({ logger })
+    respond(async () => refusal())
+    assert.equal(await store.ensureSessionItemsCoverage('s', { loadUnfetched: true }), true)
+    assert.equal(store.sessions.s.unavailable_reason, 'history:claude-rewind')
+    assert.deepEqual(errors, [])
+    requests.length = 0
+    assert.equal(await store.ensureSessionItemsCoverage('s', { loadUnfetched: true }), true)
+    assert.equal(await store.loadSessionItemsRanges('p', 's', [[1, 2]]), false)
+    assert.deepEqual(requests, [], 'a known reason stops every read before any request')
+})
+
+test('a range read refused as unavailable stores the reason and logs nothing', async () => {
+    const { errors, logger } = recordingConsole()
+    const { store, respond } = fixture({ fetched: true, logger })
+    respond(async () => refusal())
+    assert.equal(await store.loadSessionItemsRanges('p', 's', [[1, 2]]), false)
+    assert.equal(store.sessions.s.unavailable_reason, 'history:claude-rewind')
+    assert.deepEqual(errors, [])
+})
+
+test('a 409 with another code still fails the history load as before', async () => {
+    const { errors, logger } = recordingConsole()
+    const { store, respond } = fixture({ logger })
+    delete store.localState.sessions.s
+    respond(async () => refusal('something_else'))
+    assert.equal(await store.loadSessionHistory('p', 's', 2), false)
+    assert.equal(store.sessions.s.unavailable_reason, undefined)
+    assert.equal(store.localState.sessions.s.itemsLoadingError, true)
+    assert.equal(store.localState.sessions.s.itemsLoadingErrorReason, 'Server error (409)')
+    assert.ok(errors.some(([message]) => message === 'Failed to load session metadata:'))
+    assert.ok(errors.some(([message]) => message === 'Failed to load session history:'))
+})
+
+test('a refused subagent history puts the reason on the row the backend names', async () => {
+    for (const [carrier, blocked, spared] of [['root', 'root', 's'], ['s', 's', 'root']]) {
+        const { errors, logger } = recordingConsole()
+        const { store, respond } = fixture({ logger })
+        store.sessions.root = { id: 'root', project_id: 'p', unavailable_reason: null }
+        respond(async () => refusal('session_unavailable', carrier))
+        assert.equal(await store.loadSessionHistory('p', 's', 2, 'root'), false)
+        assert.equal(store.sessions[blocked].unavailable_reason, 'history:claude-rewind')
+        assert.equal(store.sessions[spared].unavailable_reason ?? null, null, `${spared} stays available`)
+        assert.ok(!store.localState.sessions.s.itemsLoadingError)
+        assert.deepEqual(errors, [])
+    }
+})
+
+test('a reason that lands during the read keeps the row value and still shows the unavailable view', async () => {
+    const { errors, logger } = recordingConsole()
+    const { store, respond } = fixture({ logger })
+    delete store.localState.sessions.s
+    const gate = deferred()
+    respond(async () => { await gate.promise; return refusal() })
+    const pending = store.loadSessionHistory('p', 's', 2)
+    await Promise.resolve()
+    // The session_updated carrying the reason arrives before the 409 body is read.
+    store.sessions.s.unavailable_reason = 'rollout_missing'
+    noteUnavailableReasonUpdate(store.sessions.s)
+    gate.resolve()
+    assert.equal(await pending, false)
+    assert.equal(store.sessions.s.unavailable_reason, 'rollout_missing')
+    assert.ok(!store.localState.sessions.s.itemsLoadingError)
+    assert.deepEqual(errors, [])
+})
+
+test('a reason update that lands during the read wins: the late refusal is a plain failure', async () => {
+    const { store, respond } = fixture()
+    delete store.localState.sessions.s
+    const gate = deferred()
+    respond(async () => { await gate.promise; return refusal() })
+    const pending = store.loadSessionHistory('p', 's', 2)
+    await Promise.resolve()
+    // The session_updated that cleared the reason arrives before the 409 body is read.
+    noteUnavailableReasonUpdate(store.sessions.s)
+    gate.resolve()
+    assert.equal(await pending, false)
+    assert.equal(store.sessions.s.unavailable_reason, undefined)
+    assert.equal(store.localState.sessions.s.itemsLoadingError, true)
+})
+
+test('a forced retry of a session known unavailable leaves the load in flight alone', async () => {
+    const { store, respond } = fixture()
+    delete store.localState.sessions.s
+    const gate = deferred()
+    const signals = []
+    respond(async (url, options) => { signals.push(options?.signal); await gate.promise; return refusal() })
+    const inFlight = store.loadSessionHistory('p', 's', 2)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    store.sessions.s.unavailable_reason = 'rollout_missing'
+    assert.equal(await store.loadSessionHistory('p', 's', 2, null, { force: true }), false)
+    assert.ok(signals.length && signals.every(signal => !signal.aborted), 'no abort of the load in flight')
+    gate.resolve()
+    assert.equal(await inFlight, false)
+    const local = store.localState.sessions.s
+    assert.equal(local.itemsLoading, false)
+    assert.equal(local.itemsFetched, false)
+    assert.ok(!local.itemsLoadingError)
 })

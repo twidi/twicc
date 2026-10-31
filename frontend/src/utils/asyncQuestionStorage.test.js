@@ -97,6 +97,23 @@ it('a session whose history is unavailable reads no question and reconciles no s
     assert.deepEqual(urls, [])
 })
 
+it('a question load refused as unavailable stores the reason and resolves, a later load reads nothing', async () => {
+    const urls = []
+    const refused = () => new Response(JSON.stringify({ error: 'unavailable', code: 'session_unavailable',
+        unavailable_reason: 'rollout_missing' }), { status: 409 })
+    const { state } = harness({ fetch: url => { urls.push(url); return refused() } })
+    assert.equal(await state.loadAsyncQuestions('p', 's'), null)
+    assert.equal(state.sessions.s.unavailable_reason, 'rollout_missing')
+    assert.equal(await state.loadAsyncQuestions('p', 's'), null)
+    assert.equal(urls.length, 1)
+})
+
+it('a question load refused with another 409 still rejects as before', async () => {
+    const { state } = harness({ fetch: async () => new Response(JSON.stringify({ code: 'conflict' }), { status: 409 }) })
+    await assert.rejects(state.loadAsyncQuestions('p', 's'), /Failed to load async questions: 409/)
+    assert.equal(state.sessions.s.unavailable_reason, undefined)
+})
+
 it('lower fetched revisions cannot overwrite newer WS or widget state', async () => {
     const wait = deferred()
     const { state } = harness({ fetch: () => wait.promise })
