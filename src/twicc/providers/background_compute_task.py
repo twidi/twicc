@@ -61,6 +61,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A malformed member tree beneath a current root is retried this many times,
+# then dropped until the next coordinator start so the provider can go idle.
+MEMBER_ROOT_ATTEMPTS = 3
+
 # Use "spawn" start method to avoid fork-safety issues.
 # The default "fork" method on Linux can deadlock when the parent process has
 # multiple threads (event loop, sync_to_async thread pool, etc.) because the
@@ -587,7 +591,8 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
 
     from django.db.models import Q
     from twicc.providers.compute_tree import (
-        NativeTreeError, next_root_eligibility, resolve_native_roots, select_outdated_root,
+        NativeTreeError, next_root_eligibility, resolve_native_roots, select_outdated_member_roots,
+        select_outdated_root,
     )
     from twicc.providers.compute_selection import select_tree_source, tree_completion_context
 
@@ -598,6 +603,11 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
         )
 
     initial = await query(lambda: list(outdated().values_list("id", "mtime")))
+    if ctx.stop_event.is_set():
+        return True
+    # Offline lines can leave an outdated member beneath a current root. Its
+    # root is admitted once here; members keep their own source-age gating.
+    member_roots = await query(lambda: select_outdated_member_roots(ctx.provider, ctx.compute_version))
     if ctx.stop_event.is_set():
         return True
     display_ids = {sid for sid, _ in initial}
@@ -617,6 +627,9 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
     retry_delays: dict[str, float] = {}
     # Only blocked roots persist outside the currently admitted tree.
     deferred: dict[str, float] = {}
+    member_root_failures: dict[str, int] = {}
+    # Dropped member roots return on a source change: discovery can repair them.
+    dropped_member_roots: set[str] = set()
     active_root = None
     applied: asyncio.Queue = asyncio.Queue()
     completion: asyncio.Future | None = None
@@ -761,6 +774,10 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                         roots.update(resolved.values())
                     for root in roots:
                         deferred.pop(root, None)
+                        if root in dropped_member_roots:
+                            dropped_member_roots.discard(root)
+                            member_root_failures.pop(root, None)
+                            member_roots.add(root)
                     current = {}
                     root_ids = list(roots)
                     for offset in range(0, len(root_ids), 200):
@@ -788,6 +805,8 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                                 ctx.provider, ctx.compute_version, cutoff=cutoff, excluded_root_ids=deferred,
                             ))
                             if active_root is None:
+                                active_root = min(member_roots - deferred.keys(), default=None)
+                            if active_root is None:
                                 break
                         cooling = {sid for sid, deadline in retry_at.items() if deadline > now}
                         if outstanding - retry_delays.keys():
@@ -812,6 +831,15 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                             if outstanding:
                                 raise
                             classify(active_root)
+                            if active_root in member_roots:
+                                member_root_failures[active_root] = member_root_failures.get(active_root, 0) + 1
+                                if member_root_failures[active_root] >= MEMBER_ROOT_ATTEMPTS:
+                                    logger.warning(
+                                        "Dropping malformed native tree %s after %d attempts until the next start",
+                                        active_root, MEMBER_ROOT_ATTEMPTS,
+                                    )
+                                    member_roots.discard(active_root)
+                                    dropped_member_roots.add(active_root)
                             deferred[active_root] = now + 60
                             active_root = None
                             continue
@@ -821,6 +849,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                             candidates = [selection.source_id]
                             break
                         if not selection.required_pending:
+                            member_roots.discard(active_root)
                             classify(active_root)
                             await progress({active_root})
                             active_root = None
@@ -871,7 +900,7 @@ async def _run_background_compute(ctx, initial_done, selection_changed, notified
                     context = await query(lambda sid=sid: tree_completion_context(sid, ctx.compute_version))
                     ctx.command_queue.put_nowait({"session_id": sid, "tree_completion": context})
                     continue
-                if not outstanding and not await query(outdated().exists):
+                if not outstanding and not member_roots and not await query(outdated().exists):
                     if completion is not None:
                         # Acknowledgments precede notifications and project work.
                         # Only the terminal writer future confirms their full drain.

@@ -136,6 +136,21 @@ def select_outdated_root(
     ).order_by('-mtime').values_list('id', flat=True).first()
 
 
+def select_outdated_member_roots(provider: str, compute_version: int, *, batch_size: int = 200) -> set[str]:
+    """Return the native roots of outdated members, whatever the roots' own version.
+
+    A version bump makes every member outdated: resolve them in bounded batches.
+    """
+    member_ids = list(Session.objects.filter(
+        Q(compute_version__isnull=True) | Q(compute_version__lt=compute_version),
+        provider=provider, parent_session__isnull=False,
+    ).values_list('id', flat=True))
+    roots = set()
+    for offset in range(0, len(member_ids), batch_size):
+        roots.update(resolve_native_roots(member_ids[offset:offset + batch_size]).values())
+    return roots
+
+
 def next_root_eligibility(
     provider: str, compute_version: int, *, cutoff: float, excluded_root_ids=(),
 ) -> float | None:
