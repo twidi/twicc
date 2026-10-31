@@ -1,7 +1,9 @@
 """In-memory cache of generated speech audio, capped by total size and by age.
 
-The key is the :class:`~twicc.tts.openrouter.SpeechRequest` itself: the text and
-the speech fields. One process-wide instance: :data:`speech_cache`.
+The key is the speech request itself, the text and the speech fields: a
+:class:`~twicc.tts.openrouter.SpeechRequest`, or a :class:`~twicc.tts.script.ScriptSpeechRequest`
+(its command among them: a changed command misses the cache). One process-wide instance:
+:data:`speech_cache`.
 """
 
 import time
@@ -10,6 +12,9 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from twicc.tts.openrouter import SpeechRequest
+from twicc.tts.script import ScriptSpeechRequest
+
+type SpeechKey = SpeechRequest | ScriptSpeechRequest
 
 
 class CachedAudio(NamedTuple):
@@ -39,14 +44,14 @@ class AudioCache:
         self._max_bytes = max_bytes
         self._ttl = ttl
         self._now = now
-        self._entries: OrderedDict[SpeechRequest, _Entry] = OrderedDict()
+        self._entries: OrderedDict[SpeechKey, _Entry] = OrderedDict()
         self._total_bytes = 0
 
     @property
     def total_bytes(self) -> int:
         return self._total_bytes
 
-    def get(self, key: SpeechRequest) -> CachedAudio | None:
+    def get(self, key: SpeechKey) -> CachedAudio | None:
         """The cached audio, or None when absent or expired."""
         self._drop_expired()
         entry = self._entries.get(key)
@@ -55,7 +60,7 @@ class AudioCache:
         self._entries.move_to_end(key)
         return entry.audio
 
-    def set(self, key: SpeechRequest, audio: CachedAudio) -> bool:
+    def set(self, key: SpeechKey, audio: CachedAudio) -> bool:
         """Store *audio*. Returns False, storing nothing, when it alone exceeds the cap."""
         size = len(audio.content)
         if size > self._max_bytes:
@@ -72,7 +77,7 @@ class AudioCache:
         self._entries.clear()
         self._total_bytes = 0
 
-    def _remove(self, key: SpeechRequest) -> None:
+    def _remove(self, key: SpeechKey) -> None:
         entry = self._entries.pop(key, None)
         if entry is not None:
             self._total_bytes -= len(entry.audio.content)

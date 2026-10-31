@@ -19,9 +19,20 @@ from django.test import AsyncClient, AsyncRequestFactory
 
 from twicc.tts import streams, views
 from twicc.tts.audio_cache import CachedAudio, speech_cache
+from twicc.paths import get_tts_config_path
+from twicc.tts.config import write_tts_config
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
+from twicc.tts.script import ScriptSpeechRequest, script_parts
 from twicc.tts.streams import get_stream
-from twicc.tts.views import NOTHING_TO_SAY, parse_range, parse_speech_request
+from twicc.tts.views import (
+    NO_PCM_RATE,
+    NO_SUCH_SCRIPT,
+    NOT_SAVED,
+    NOT_VALIDATED,
+    NOTHING_TO_SAY,
+    parse_range,
+    parse_speech_request,
+)
 
 SPEECH_PATH = "/api/tts/speech/"
 MODELS_PATH = "/api/tts/models/"
@@ -1350,6 +1361,314 @@ def test_on_end_steps_fail_independently(client, upstream, monkeypatch, views_lo
         "TTS last test of cfg-1 could not be recorded",
         "TTS cost lookup for gen-3 could not be scheduled",
     ]
+
+
+# --- Script configs: the open step ----------------------------------------------
+
+SCRIPT_ID = "scr-1"
+SCRIPT_FIELDS = {
+    "command": "say",
+    "output": "stream",
+    "audio_format": "mp3",
+    "pcm_rate": None,
+    "pcm_channels": 1,
+    "max_chars": None,
+}
+SCRIPT_READ = {"kind": "script", "text": "Hello there", "script_id": SCRIPT_ID, **SCRIPT_FIELDS}
+SCRIPT_CACHED_READ = {**SCRIPT_READ, "cache": True}
+SCRIPT_TEST = {**SCRIPT_READ, "config_id": SCRIPT_ID}
+CONFIG_ID_ERROR = "'config_id' must equal 'script_id'"
+SCRIPT_ID_ERROR = "'script_id' must be a non-empty string"
+
+
+@pytest.fixture
+def tts_json():
+    """The isolated test data dir, without a ``tts.json`` before and after the test."""
+    path = get_tts_config_path()
+    path.unlink(missing_ok=True)
+    yield path
+    path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def script_upstream(monkeypatch, tts_json):
+    """The script pump, the last-test record and the cost lookup are fakes. The pump runs
+    ``fake.pump`` (with no key) and records ``(request, parts, paced)`` in ``fake.script_runs``."""
+    fake = Upstream()
+    fake.script_runs = []
+
+    def pump_script_speech(request, stream, parts=None, *, paced=False):
+        fake.script_runs.append((request, parts, paced))
+        return fake.pump(request, None, stream)
+
+    monkeypatch.setattr(views, "pump_script_speech", pump_script_speech)
+    monkeypatch.setattr(views, "_record_last_test", fake.record_last_test)
+    monkeypatch.setattr(views, "schedule_cost_log", fake.schedule_cost_log)
+    return fake
+
+
+def _store_script(config_id: str = SCRIPT_ID, validated: object = True, **overrides) -> dict:
+    """Write one script config to tts.json; *validated* True: its snapshot is its fields."""
+    fields = {**SCRIPT_FIELDS, **overrides}
+    snapshot = fields if validated is True else validated
+    write_tts_config({
+        "configs": [{"id": config_id, "name": "Script", "kind": "script", **fields, "validated": snapshot}]
+    })
+    return fields
+
+
+def _send_audio(pump, content: bytes = b"ID3audio") -> None:
+    pump.send("set_headers", "audio/mpeg", None)
+    pump.send("append", content)
+    pump.send("finish")
+
+
+def test_a_script_speech_runs_the_stored_command(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        audio_id = await _open_id(client, {**SCRIPT_READ, "command": "evil"})
+        assert await _body(await _read(client, audio_id)) == b"ID3audio"
+
+    asyncio.run(scenario())
+    [(request, _parts, _paced)] = script_upstream.script_runs
+    assert request == ScriptSpeechRequest(text="Hello there", **SCRIPT_FIELDS)
+    assert request.command == "say"
+
+
+def test_a_script_speech_needs_no_key(client, script_upstream, monkeypatch):
+    monkeypatch.setattr(views, "openrouter_api_key", lambda: None)
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        response = await _open(client, SCRIPT_READ)
+        assert response.status_code == 200, response.content
+        assert response.json()["content_type"] == "audio/mpeg"
+        await _settle()
+
+    asyncio.run(scenario())
+
+
+def test_an_unknown_script_is_404(client, script_upstream):
+    # No such config, then an OpenRouter config of that id: neither is a script config.
+    response = _post_json(client, SCRIPT_READ)
+    assert response.status_code == 404
+    assert response.json() == {"error": NO_SUCH_SCRIPT}
+    write_tts_config({"configs": [{"id": SCRIPT_ID, "kind": "openrouter", "model": "m"}]})
+    response = _post_json(client, SCRIPT_TEST)
+    assert response.status_code == 404
+    assert response.json() == {"error": NO_SUCH_SCRIPT}
+    assert script_upstream.script_runs == []
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({key: value for key, value in SCRIPT_READ.items() if key != "text"}, TEXT_ERROR),
+        ({**SCRIPT_READ, "text": "…"}, NOTHING_TO_SAY),
+        ({key: value for key, value in SCRIPT_READ.items() if key != "script_id"}, SCRIPT_ID_ERROR),
+        ({**SCRIPT_READ, "script_id": ""}, SCRIPT_ID_ERROR),
+        ({**SCRIPT_READ, "script_id": 3}, SCRIPT_ID_ERROR),
+    ],
+)
+def test_rejects_invalid_script_payloads(client, script_upstream, body, message):
+    _store_script()
+    response = _post_json(client, body)
+    assert response.status_code == 400
+    assert response.json() == {"error": message}
+    assert script_upstream.script_runs == []
+
+
+def test_a_test_with_unsaved_fields_is_409_and_runs_nothing(client, script_upstream):
+    _store_script()
+    response = _post_json(client, {**SCRIPT_TEST, "command": "say --fast"})
+    assert response.status_code == 409
+    assert response.json() == {"error": NOT_SAVED}
+    assert script_upstream.script_runs == []
+    assert script_upstream.records == []
+
+
+def test_a_test_of_unvalidated_saved_fields_runs(client, script_upstream):
+    _store_script(validated=None)
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        await _open_id(client, SCRIPT_TEST)
+        await _settle()
+
+    asyncio.run(scenario())
+    assert len(script_upstream.script_runs) == 1
+
+
+@pytest.mark.parametrize("snapshot", [None, {**SCRIPT_FIELDS, "command": "say --old"}])
+def test_a_message_read_of_an_unvalidated_script_is_409(client, script_upstream, snapshot):
+    # Never validated, or edited after its validation.
+    _store_script(validated=snapshot)
+    response = _post_json(client, SCRIPT_READ)
+    assert response.status_code == 409
+    assert response.json() == {"error": NOT_VALIDATED}
+    assert script_upstream.script_runs == []
+
+
+@pytest.mark.parametrize("config_id", ["other", "", 3])
+def test_a_config_id_other_than_the_script_id_is_400(client, script_upstream, config_id):
+    _store_script()
+    response = _post_json(client, {**SCRIPT_READ, "config_id": config_id})
+    assert response.status_code == 400
+    assert response.json() == {"error": CONFIG_ID_ERROR}
+    assert script_upstream.script_runs == []
+
+
+def test_a_script_test_records_its_run_without_cost(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        await _open_id(client, SCRIPT_TEST)
+        await _settle()
+
+    asyncio.run(scenario())
+    [(config_id, run)] = script_upstream.records
+    assert config_id == SCRIPT_ID
+    assert run["generation_id"] == ""
+    assert run["cost"] is None
+    assert run["parts"] == 1
+    assert run["chars"] == len(SCRIPT_READ["text"])
+    assert script_upstream.cost == []  # no cost lookup
+
+
+def test_a_script_message_read_records_no_run(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        await _open_id(client, SCRIPT_READ)
+        await _settle()
+
+    asyncio.run(scenario())
+    assert script_upstream.records == []
+    assert script_upstream.cost == []
+
+
+def test_a_script_message_read_uses_the_cache(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump, b"abc")
+        await _open_id(client, SCRIPT_CACHED_READ)
+        await _settle()
+        audio_id = await _open_id(client, SCRIPT_CACHED_READ)
+        assert await _body(await _read(client, audio_id)) == b"abc"
+
+    asyncio.run(scenario())
+    assert len(script_upstream.script_runs) == 1
+
+
+def test_a_script_test_never_reads_the_cache(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump, b"cached")
+        await _open_id(client, SCRIPT_CACHED_READ)
+        await _settle()
+        _send_audio(script_upstream.pump, b"fresh")
+        audio_id = await _open_id(client, {**SCRIPT_TEST, "cache": True})
+        assert await _body(await _read(client, audio_id)) == b"fresh"
+
+    asyncio.run(scenario())
+    assert len(script_upstream.script_runs) == 2
+
+
+def test_a_changed_command_misses_the_cache(client, script_upstream):
+    _store_script()
+
+    async def scenario():
+        _send_audio(script_upstream.pump, b"first")
+        await _open_id(client, SCRIPT_CACHED_READ)
+        await _settle()
+        _store_script(command="say --voice=other")
+        _send_audio(script_upstream.pump, b"second")
+        audio_id = await _open_id(client, SCRIPT_CACHED_READ)
+        assert await _body(await _read(client, audio_id)) == b"second"
+
+    asyncio.run(scenario())
+    assert [request.command for request, _parts, _paced in script_upstream.script_runs] == [
+        "say", "say --voice=other"
+    ]
+
+
+@pytest.mark.parametrize("body", [SCRIPT_READ, SCRIPT_TEST])
+def test_a_pcm_script_without_a_rate_is_400(client, script_upstream, body):
+    fields = _store_script(audio_format="pcm")
+    response = _post_json(client, {**body, **fields})
+    assert response.status_code == 400
+    assert response.json() == {"error": NO_PCM_RATE}
+    assert script_upstream.script_runs == []
+
+
+def test_script_parts_and_pacing_reach_the_pump(client, script_upstream):
+    text = "word " * 180  # 900 characters
+    body = {**SCRIPT_READ, "text": text}
+
+    async def run(request_body):
+        _send_audio(script_upstream.pump)
+        await _open_id(client, request_body)
+        await _settle()
+
+    async def scenario():
+        await run(body)
+        _store_script(max_chars=300)
+        await run(body)
+        await run({**body, "buffered": True})
+
+    _store_script()
+    asyncio.run(scenario())
+    parts = script_parts(ScriptSpeechRequest(text=text, **{**SCRIPT_FIELDS, "max_chars": 300}))
+    assert len(parts) > 1
+    assert [(run_parts, paced) for _request, run_parts, paced in script_upstream.script_runs] == [
+        ([text], False),
+        (parts, True),
+        (parts, False),
+    ]
+
+
+def test_a_script_failure_before_audio_is_502(client, script_upstream):
+    _store_script()
+    failure = SpeechError("sh: say: not found", log_message="The script failed (exit status 127)")
+    script_upstream.pump.send("fail", failure)
+    response = _post_json(client, SCRIPT_READ)
+    assert response.status_code == 502
+    assert response.json() == {"error": "sh: say: not found"}
+    assert streams._streams == {}
+
+
+def test_the_log_label_has_no_command(client, script_upstream, streams_log):
+    _store_script(command="say --token=secret-value")
+
+    async def scenario():
+        _send_audio(script_upstream.pump)
+        await _open_id(client, {**SCRIPT_READ, "command": "say --token=secret-value"})
+        await _settle()
+
+    asyncio.run(scenario())
+    [line] = _speech_lines(streams_log)
+    assert line.startswith(f"TTS speech kind=script output=stream format=mp3 chars={len(SCRIPT_READ['text'])} ")
+    assert "secret-value" not in line
+    assert "say" not in line
+
+
+def test_an_openrouter_body_with_kind_openrouter_is_unchanged(client, upstream):
+    async def scenario():
+        upstream.pump.send("set_headers", "audio/mpeg", "gen-1")
+        upstream.pump.send("finish")
+        await _open_id(client, {**VALID_PAYLOAD, "kind": "openrouter"})
+        await _settle()
+
+    asyncio.run(scenario())
+    assert upstream.pump.calls == [(parse_speech_request(VALID_PAYLOAD), "k")]
+    assert upstream.cost == [(("gen-1",), "k")]
 
 
 # --- GET /api/tts/models/ -------------------------------------------------------

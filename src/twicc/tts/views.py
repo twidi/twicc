@@ -2,9 +2,9 @@
 
 A speech goes through four steps (design: ``docs/plans/2026-10-30-tts-streaming-design.md``):
 
-- open (``POST /api/tts/speech/``): start the upstream call in the background, and
-  answer an audio id once its headers arrive; a long text is sent in parts
-  (:mod:`twicc.tts.parts`);
+- open (``POST /api/tts/speech/``): start the upstream call (OpenRouter, or the stored
+  command of a script config) in the background, and answer an audio id once its headers
+  arrive; a long text is sent in parts (:mod:`twicc.tts.parts`);
 - read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive, at the
   playback pace for a paced stream (a 410 once the speech failed);
 - ending (``GET /api/tts/audio/<id>/ending/``): how the speech ended;
@@ -20,6 +20,7 @@ Django's error page (in DEBUG it shows frame locals, the key among them).
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 import orjson
@@ -35,6 +36,9 @@ from twicc.tts.config import (
     openrouter_api_key,
     positive_speed,
     record_last_test,
+    script_config_validated,
+    script_fields,
+    stored_script_config,
     tts_client_payload,
 )
 from twicc.tts.openrouter import (
@@ -46,6 +50,7 @@ from twicc.tts.openrouter import (
     schedule_cost_log,
 )
 from twicc.tts.parts import has_speech, speech_parts
+from twicc.tts.script import ScriptSpeechRequest, pump_script_speech, script_parts
 from twicc.tts.streams import (
     AudioStream,
     ending_of,
@@ -71,6 +76,10 @@ SPEECH_FAILED = "Text-to-speech failed"
 AUDIO_GONE = "The audio is no longer available"
 AUDIO_CUT = "The audio stopped before the end"
 NOTHING_TO_SAY = "There is nothing to read aloud in this text"
+NOT_SAVED = "This config is not saved yet: try again"
+NOT_VALIDATED = "This script config is not validated: test it again in the settings"
+NO_SUCH_SCRIPT = "This script config does not exist"
+NO_PCM_RATE = "This script config needs a sample rate for PCM"
 
 _RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
@@ -102,6 +111,16 @@ def _speed(value: object) -> float | None:
     return speed
 
 
+def _speech_text(data: dict) -> str:
+    """The ``text`` of *data*, kept as is. Raises ``ValueError`` without something to read aloud."""
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("'text' must be a non-empty string")
+    if not has_speech(text):
+        raise ValueError(NOTHING_TO_SAY)
+    return text
+
+
 def parse_speech_request(data: object) -> SpeechRequest:
     """Validate the speech payload into a :class:`SpeechRequest`. Raises ``ValueError``.
 
@@ -110,11 +129,7 @@ def parse_speech_request(data: object) -> SpeechRequest:
     """
     if not isinstance(data, dict):
         raise ValueError("The body must be a JSON object")  # noqa: TRY004 - the view maps ValueError to 400
-    text = data.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("'text' must be a non-empty string")
-    if not has_speech(text):
-        raise ValueError(NOTHING_TO_SAY)
+    text = _speech_text(data)
     model = data.get("model")
     if not isinstance(model, str) or not model.strip():
         raise ValueError("'model' must be a non-empty string")
@@ -156,7 +171,9 @@ def _opened(stream: AudioStream) -> JsonResponse:
 async def tts_speech(request):
     """POST /api/tts/speech/ — open a speech.
 
-    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?}``.
+    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?}``,
+    or for a script config ``{kind: "script", text, script_id, <its six fields>, config_id?, cache?, buffered?}``
+    (:func:`_open_script_speech`).
     Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
     A text without speech is a 400, without upstream call. A text longer than its
@@ -183,6 +200,8 @@ async def tts_speech(request):
             data = orjson.loads(body)
         except orjson.JSONDecodeError:
             return _error("Invalid JSON", 400)
+        if isinstance(data, dict) and data.get("kind") == "script":
+            return await _open_script_speech(data)
         try:
             speech_request = parse_speech_request(data)
         except ValueError as error:
@@ -195,54 +214,127 @@ async def tts_speech(request):
         config_id = data.get("config_id")
         if not isinstance(config_id, str) or not config_id:
             config_id = None
-        # A settings test never reads nor fills the cache.
-        use_cache = data.get("cache") is True and config_id is None
         label = {
             "model": speech_request.model,
             "voice": speech_request.voice,
             "format": speech_request.response_format,
             "chars": len(speech_request.text),
         }
-        if use_cache:
-            cached = speech_cache.get(speech_request)
-            if cached is not None:
-                return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
-        buffered = data.get("buffered") is True
-        parts = speech_parts(speech_request)
-        paced = len(parts) > 1 and not buffered
-        stream = start_stream(
-            lambda sink: pump_speech(speech_request, api_key, sink, parts, paced=paced),
-            label=label,
-            on_end=_end_steps(speech_request, api_key, config_id, use_cache),
+        return await _open_speech(
+            speech_request,
+            data,
+            config_id,
+            label,
+            speech_parts,
+            lambda sink, parts, paced: pump_speech(speech_request, api_key, sink, parts, paced=paced),
+            api_key,
         )
-        try:
-            await stream.ready
-        except SpeechError as error:
-            # The stream is failed, and logged, already: only drop its id.
-            release_stream(stream.id)
-            extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
-            return _error(error.message, 502, **extra)
-        except asyncio.CancelledError:
-            # A client disconnect: stop the upstream call.
-            release_stream(stream.id, outcome="cancelled")
-            raise
-        except Exception:
-            # The pump's own error: its task logged it with its traceback already.
-            release_stream(stream.id)
-            return _error(SPEECH_FAILED, 500)
-        return _opened(stream)
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
         logger.exception("TTS speech request failed")
         return _error(SPEECH_FAILED, 500)
 
 
-def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | None, use_cache: bool):
+async def _open_script_speech(data: dict) -> JsonResponse:
+    """The open step of a script config: it runs the command stored in tts.json for ``script_id``.
+
+    The six script fields of the body serve only a settings test (``config_id`` equal to
+    ``script_id``): they must equal the stored ones (else a 409, an edit not saved yet). A message
+    read runs only a validated config (else a 409). Nothing runs in either case. No OpenRouter key
+    is needed.
+    """
+    try:
+        text = _speech_text(data)
+    except ValueError as error:
+        return _error(str(error), 400)
+    script_id = data.get("script_id")
+    if not isinstance(script_id, str) or not script_id:
+        return _error("'script_id' must be a non-empty string", 400)
+    config_id = data.get("config_id")
+    if config_id is not None and config_id != script_id:
+        return _error("'config_id' must equal 'script_id'", 400)
+    entry = await sync_to_async(stored_script_config)(script_id)
+    if entry is None:
+        return _error(NO_SUCH_SCRIPT, 404)
+    fields = script_fields(entry)
+    if config_id is not None:
+        if script_fields(data) != fields:
+            return _error(NOT_SAVED, 409)
+    elif not script_config_validated(entry):
+        return _error(NOT_VALIDATED, 409)
+    # The settings never test nor validate such a config: only a stale tab or a direct request sends one.
+    if fields["audio_format"] == "pcm" and fields["pcm_rate"] is None:
+        return _error(NO_PCM_RATE, 400)
+    speech_request = ScriptSpeechRequest(text, **fields)
+    # Never the command: it can hold a key.
+    label = {
+        "kind": "script",
+        "output": speech_request.output,
+        "format": speech_request.audio_format,
+        "chars": len(text),
+    }
+    return await _open_speech(
+        speech_request,
+        data,
+        config_id,
+        label,
+        script_parts,
+        lambda sink, parts, paced: pump_script_speech(speech_request, sink, parts, paced=paced),
+        None,
+    )
+
+
+async def _open_speech(
+    speech_request: SpeechRequest | ScriptSpeechRequest,
+    data: dict,
+    config_id: str | None,
+    label: dict,
+    split: Callable[[SpeechRequest | ScriptSpeechRequest], list[str]],
+    pump: Callable[[AudioStream, list[str], bool], Awaitable[None]],
+    api_key: str | None,
+) -> JsonResponse:
+    """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*,
+    with the parts of *split*), awaited until its headers arrive."""
+    # A settings test never reads nor fills the cache.
+    use_cache = data.get("cache") is True and config_id is None
+    if use_cache:
+        cached = speech_cache.get(speech_request)
+        if cached is not None:
+            return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
+    buffered = data.get("buffered") is True
+    parts = split(speech_request)
+    paced = len(parts) > 1 and not buffered
+    stream = start_stream(
+        lambda sink: pump(sink, parts, paced),
+        label=label,
+        on_end=_end_steps(speech_request, api_key, config_id, use_cache),
+    )
+    try:
+        await stream.ready
+    except SpeechError as error:
+        # The stream is failed, and logged, already: only drop its id.
+        release_stream(stream.id)
+        extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
+        return _error(error.message, 502, **extra)
+    except asyncio.CancelledError:
+        # A client disconnect: stop the upstream call.
+        release_stream(stream.id, outcome="cancelled")
+        raise
+    except Exception:
+        # The pump's own error: its task logged it with its traceback already.
+        release_stream(stream.id)
+        return _error(SPEECH_FAILED, 500)
+    return _opened(stream)
+
+
+def _end_steps(
+    speech_request: SpeechRequest | ScriptSpeechRequest, api_key: str | None, config_id: str | None, use_cache: bool
+):
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
     Each step has its own guard: one failure never skips the others. A failed speech does nothing.
     The cost of a split speech is the sum of its parts' costs: it is recorded only when every part
-    has a generation id.
+    has a generation id. A script speech (no *api_key*) has no cost lookup.
     """
 
     async def on_end(stream: AudioStream) -> None:
@@ -270,7 +362,7 @@ def _end_steps(speech_request: SpeechRequest, api_key: str, config_id: str | Non
                 })
             except Exception:
                 logger.exception("TTS last test of %s could not be recorded", config_id)
-        if stream.generation_ids:
+        if stream.generation_ids and api_key is not None:
             # The audio is billed already: a failed cost lookup must not cost the user anything else.
             generation_ids = list(stream.generation_ids)
             on_cost = None
