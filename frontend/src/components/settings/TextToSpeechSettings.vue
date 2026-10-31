@@ -43,7 +43,7 @@ import {
     formatAfterModelChange,
     ttsStreamingNote,
 } from '../../utils/ttsConfig'
-import { showHelp } from '../help/showHelp'
+import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 import FilterableSelect from '../ui/FilterableSelect.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
@@ -365,12 +365,9 @@ function answerNo(id) {
 
 <template>
     <section class="settings-section">
-        <h3 class="settings-section-title">Text to Speech <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
-        <div class="setting-group">
-            <wa-button size="small" appearance="plain" class="tts-help-link" @click="showHelp('text-to-speech', { showDontShowAgain: false })">
-                <wa-icon name="circle-question" slot="start"></wa-icon>
-                View help
-            </wa-button>
+        <div class="settings-section-heading">
+            <h3 class="settings-section-title">Text to Speech <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+            <HelpFeatureLink help-key="text-to-speech" label="How does text to speech work?" />
         </div>
 
         <p class="setting-group-hint">
@@ -912,11 +909,6 @@ function answerNo(id) {
 .tts-test-error {
     font-size: var(--wa-font-size-xs);
     color: var(--wa-color-danger-60);
-}
-
-/* Like the other sections' help link: the button keeps its own width. */
-.tts-help-link {
-    align-self: flex-start;
 }
 
 .tts-new-configs {

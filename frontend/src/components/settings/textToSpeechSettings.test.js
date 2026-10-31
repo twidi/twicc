@@ -160,8 +160,8 @@ test('a segmented control keeps its content width and one row of segments', () =
 })
 
 test('the section opens its help page from the top, like the other sections', () => {
-    assert.match(settingsSource, /showHelp\('text-to-speech', \{ showDontShowAgain: false \}\)/)
-    const top = settingsSource.slice(settingsSource.indexOf('settings-section-title">Text to Speech'))
-    assert.ok(top.indexOf('View help') < top.indexOf('Read the chat messages aloud'), 'the link comes first')
+    assert.match(settingsSource, /<div class="settings-section-heading">\s*<h3 class="settings-section-title">Text to Speech[\s\S]*?<\/h3>\s*<HelpFeatureLink help-key="text-to-speech" label="How does text to speech work\?" \/>/)
+    const top = settingsSource.slice(settingsSource.indexOf('settings-section-heading'))
+    assert.ok(top.indexOf('HelpFeatureLink') < top.indexOf('Read the chat messages aloud'), 'the link comes first')
     assert.ok(existsSync(new URL('../../../public/help/text-to-speech.md', import.meta.url)), 'the help page exists')
 })

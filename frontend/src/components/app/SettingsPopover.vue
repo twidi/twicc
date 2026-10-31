@@ -33,7 +33,7 @@ import TextToSpeechSettings from '../settings/TextToSpeechSettings.vue'
 import HelpIconButton from '../help/HelpIconButton.vue'
 import PeerHelpLink from '../peer/PeerHelpLink.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
-import { showHelp } from '../help/showHelp'
+import HelpFeatureLink from '../help/HelpFeatureLink.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import BrandLogo from '../ui/BrandLogo.vue'
 import ChangelogDialog from './ChangelogDialog.vue'
@@ -1635,12 +1635,9 @@ function onChangelogClose() {
                     <McpSettings v-if="activeSection === 'mcp'" />
                     <!-- Sharing Section -->
                     <section v-if="activeSection === 'sharing'" class="settings-section">
-                        <h3 class="settings-section-title">Sharing</h3>
-                        <div class="setting-group">
-                            <wa-button size="small" appearance="plain" class="sharing-help-link" @click="showHelp('sharing', { showDontShowAgain: false })">
-                                <wa-icon name="circle-question" slot="start"></wa-icon>
-                                View help
-                            </wa-button>
+                        <div class="settings-section-heading">
+                            <h3 class="settings-section-title">Sharing</h3>
+                            <HelpFeatureLink help-key="sharing" label="What is sharing?" />
                         </div>
                         <div class="setting-group">
                             <label class="setting-group-label">Share host <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
@@ -1706,7 +1703,7 @@ function onChangelogClose() {
 
                     <!-- Peers Section -->
                     <section v-if="activeSection === 'peers'" class="settings-section">
-                        <div class="peer-help-heading">
+                        <div class="settings-section-heading">
                             <h3 class="settings-section-title">Peers</h3>
                             <PeerHelpLink />
                         </div>
@@ -3007,12 +3004,6 @@ wa-popover > wa-divider {
     }
 }
 
-/* The "View help" link in the Sharing section hugs its content, pinned to
-   the left edge of the section. */
-.settings-sections .sharing-help-link {
-    align-self: flex-start;
-}
-
 /* A native <button> that reads as a link, for an ACTION offered in a hint-sized
    line under a field — a wa-button of any appearance reads as a form control
    there, and stretches to the group's full width. Colours and decoration are
@@ -3052,7 +3043,9 @@ wa-popover > wa-divider {
     gap: var(--wa-space-s);
 }
 
-.settings-sections .peer-help-heading {
+/* A section title with its help link under it (Sharing, Peers, Text to Speech): on a
+   phone the title hides, the link stays. */
+.settings-sections .settings-section-heading {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
