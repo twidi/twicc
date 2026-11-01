@@ -9,7 +9,12 @@ from typing import NamedTuple
 
 from claude_agent_sdk import ClaudeAgentOptions, PermissionResultDeny
 
-from twicc.providers.hermetic import HermeticGuardViolation, HermeticStreamError, hermetic_cwd
+from twicc.providers.hermetic import (
+    HermeticGuardViolation,
+    HermeticStreamError,
+    hermetic_cwd,
+    interrupt_abandoned_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +118,6 @@ from claude_agent_sdk import (
 # Replaced by the unit tests.
 _client_factory = ClaudeSDKClient
 
-# Bound of the interrupt sent when the consumer abandons a stream (the disconnect that follows stops the CLI anyway).
-_ABANDON_INTERRUPT_SECONDS = 5.0
-
-
 def _count_tool_blocks(message) -> int:
     content = getattr(message, "content", None)
     if not isinstance(content, list):
@@ -217,11 +218,7 @@ async def _turn(prompt, *, model, cwd, options_override, stream, outcome: _Outco
     except (GeneratorExit, asyncio.CancelledError):
         # The consumer abandoned the stream mid-turn: stop the generation before the disconnect.
         if stream:
-            try:
-                async with asyncio.timeout(_ABANDON_INTERRUPT_SECONDS):
-                    await client.interrupt()
-            except Exception:
-                logger.debug("interrupt failed after an abandoned stream", exc_info=True)
+            await interrupt_abandoned_stream(client)
         raise
     finally:
         try:

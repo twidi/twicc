@@ -1,8 +1,9 @@
 """
 Manual diagnostic of the hermetic LLM calls (docs/plans/2026-10-03-hermetic-llm-calls-design.md §9).
 
-It checks that the title, probe and refresh calls still run with no tool, no
-instruction file, no skill, no MCP server and no user interaction. Run it:
+It checks that the title, probe and refresh calls, and the streaming mode of the
+speech adaptation, still run with no tool, no instruction file, no skill, no MCP
+server and no user interaction. Run it:
 
 1. after changing any hermetic module (``twicc/providers/hermetic.py``,
    ``claude_code/hermetic.py``, ``codex/hermetic.py``, ``codex/hermetic_catalog.py``);

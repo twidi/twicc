@@ -3,8 +3,9 @@ Shared pieces of the hermetic LLM calls (see docs/plans/2026-10-03-hermetic-llm-
 
 A hermetic call is a short, non-session model call: one prompt in, one text out,
 no tool, no user interaction. This module holds what both providers share: the
-error types and the neutral working directory.
+error types, the neutral working directory and the interrupt of an abandoned stream.
 """
+import asyncio
 import logging
 import os
 import stat
@@ -51,6 +52,20 @@ class HermeticStreamError(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         logger.warning("hermetic call failed: stream (%s)", message)
+
+
+# Bound of the interrupt sent when the consumer abandons a stream (the disconnect or close that follows
+# stops the provider anyway; the SDKs' control requests can wait much longer).
+ABANDON_INTERRUPT_SECONDS = 5.0
+
+
+async def interrupt_abandoned_stream(target) -> None:
+    """Interrupt the turn of a stream the consumer abandoned (``target.interrupt()``), bounded; never raises."""
+    try:
+        async with asyncio.timeout(ABANDON_INTERRUPT_SECONDS):
+            await target.interrupt()
+    except Exception:
+        logger.debug("interrupt failed after an abandoned stream", exc_info=True)
 
 
 _logged_directories: set[str] = set()

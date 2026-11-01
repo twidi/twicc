@@ -30,6 +30,7 @@ from twicc.providers.hermetic import (
     HermeticGuardViolation,
     HermeticStreamError,
     hermetic_cwd,
+    interrupt_abandoned_stream,
 )
 
 logger = logging.getLogger(__name__)
@@ -267,10 +268,6 @@ async def _interrupt(handle) -> None:
         logger.debug("interrupt failed after a guard violation", exc_info=True)
 
 
-# Bound of the interrupt sent when the consumer abandons a stream (closing the app-server stops the turn anyway).
-_ABANDON_INTERRUPT_SECONDS = 5.0
-
-
 def _terminal_error_text(error) -> str:
     """A user-safe text for a terminal ``ErrorNotification`` (the provider's message, never the prompt)."""
     message = getattr(getattr(error, "error", None), "message", None)
@@ -284,10 +281,12 @@ class _TurnOutcome:
         self.text: list[str] = []
         self.terminal_error = None
         self.tokens: int | None = None
+        self.status: str | None = None   # the ``turn/completed`` status (``completed``, ``interrupted``, ``failed``)
 
 
 class HermeticCodexThread:
-    """An open hermetic thread: the verified ``thread/start`` response, the guard state and ``run_turn``."""
+    """An open hermetic thread: the verified ``thread/start`` response, the guard state, ``run_turn`` and
+    ``stream_turn``."""
 
     def __init__(self, thread, start: dict, handler: RefusingApprovalHandler, disabled_mcp_servers: tuple[str, ...]):
         self._thread = thread
@@ -305,7 +304,8 @@ class HermeticCodexThread:
             raise HermeticGuardViolation(f"refused request: {self.handler.method}")
 
     async def _turn(self, prompt: str, *, effort, stream: bool, outcome: _TurnOutcome) -> AsyncIterator[str]:
-        """The turn loop of ``run_turn`` and ``stream_turn``: every guard, the completed text, the token usage.
+        """The turn loop of ``run_turn`` and ``stream_turn``: every guard, the completed text, the token usage,
+        the turn status.
 
         With ``stream`` it yields the agent-message deltas (it yields nothing otherwise).
         """
@@ -318,6 +318,9 @@ class HermeticCodexThread:
                     await self._check_flag(handle)
                     if event.method == "thread/tokenUsage/updated":
                         outcome.tokens = _last_input_tokens(event.payload)
+                    elif event.method == "turn/completed":
+                        status = getattr(getattr(event.payload, "turn", None), "status", None)
+                        outcome.status = getattr(status, "value", status)
                     elif event.method in ("item/started", "item/completed"):
                         type_name = _item_type(event)
                         try:
@@ -346,11 +349,7 @@ class HermeticCodexThread:
         except (GeneratorExit, asyncio.CancelledError):
             # The consumer abandoned the stream mid-turn: stop the generation.
             if stream:
-                try:
-                    async with asyncio.timeout(_ABANDON_INTERRUPT_SECONDS):
-                        await handle.interrupt()
-                except Exception:
-                    logger.debug("interrupt failed after an abandoned stream", exc_info=True)
+                await interrupt_abandoned_stream(handle)
             raise
         await self._check_flag(handle)
 
@@ -365,8 +364,9 @@ class HermeticCodexThread:
         """One turn whose answer text is yielded as it is generated (the agent-message deltas).
 
         Keeps every guard of ``run_turn``: raises ``HermeticGuardViolation``, possibly after some yields.
-        Raises ``HermeticStreamError`` on a terminal error (at the end) and on a retry after a yielded delta
-        (at once). Closing the generator early interrupts the turn.
+        Raises ``HermeticStreamError`` on a terminal error or a turn that ended with a status other than
+        ``completed`` (at the end), and on a retry after a yielded delta (at once). Closing the generator early
+        interrupts the turn.
         """
         outcome = _TurnOutcome()
         async with aclosing(self._turn(prompt, effort=effort, stream=True, outcome=outcome)) as deltas:
@@ -374,6 +374,8 @@ class HermeticCodexThread:
                 yield delta
         if outcome.terminal_error is not None:
             raise HermeticStreamError(_terminal_error_text(outcome.terminal_error))
+        if outcome.status is not None and outcome.status != "completed":
+            raise HermeticStreamError(f"The turn ended with the status {outcome.status}")
 
 
 @asynccontextmanager

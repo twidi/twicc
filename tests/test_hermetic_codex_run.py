@@ -382,3 +382,75 @@ def test_stream_aclose_interrupts_the_turn_and_closes_the_app_server(fake):
 
     assert asyncio.run(go()) == "a"
     assert fake.last.handle.interrupted and fake.last.closed
+
+
+def turn_completed_event(status):
+    return SimpleNamespace(method="turn/completed", payload=SimpleNamespace(turn=SimpleNamespace(id="t", status=status)))
+
+
+@pytest.mark.parametrize("status", ["interrupted", "failed"])
+def test_stream_a_turn_that_did_not_complete_raises(fake, status):
+    from openai_codex.generated.v2_all import TurnStatus
+
+    from twicc.providers.hermetic import HermeticStreamError
+
+    fake.events = [delta_event("a"), turn_completed_event(TurnStatus(status))]
+    out: list[str] = []
+    with pytest.raises(HermeticStreamError) as info:
+        stream(out)
+    assert out == ["a"] and status in str(info.value)
+
+
+def test_stream_a_completed_turn_returns(fake):
+    from openai_codex.generated.v2_all import TurnStatus
+
+    fake.events = [delta_event("a"), item_event("item/completed", "agentMessage", "a"),
+                   turn_completed_event(TurnStatus.completed)]
+    out: list[str] = []
+    stream(out)
+    assert out == ["a"]
+
+
+def test_run_turn_ignores_the_turn_status(fake):
+    from openai_codex.generated.v2_all import TurnStatus
+
+    fake.events = [item_event("item/completed", "agentMessage", "OK"), turn_completed_event(TurnStatus.interrupted)]
+    assert run().text == "OK"
+
+
+def test_stream_cancellation_interrupts_the_turn_and_closes_the_app_server(fake):
+    import asyncio
+
+    started = asyncio.Event()
+
+    class Hanging(FakeStream):
+        async def stream(self):
+            yield delta_event("a")
+            started.set()
+            await asyncio.Event().wait()   # never set: the consumer cancels
+
+    original = FakeCodex._turn
+
+    async def _turn(self, *_a, **_k):
+        self.handle = Hanging([])
+        return self.handle
+
+    async def consume():
+        plan = await mod.prepare_hermetic_codex(MODEL)
+        async for _ in mod.stream_hermetic_codex(plan, "hi", effort="low"):
+            pass
+
+    async def go():
+        async with asyncio.timeout(5):
+            task = asyncio.create_task(consume())
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    FakeCodex._turn = _turn
+    try:
+        asyncio.run(go())
+    finally:
+        FakeCodex._turn = original
+    assert fake.last.handle.interrupted and fake.last.closed
