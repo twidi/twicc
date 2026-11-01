@@ -136,7 +136,7 @@ class TitleSyncCoordinator:
     @contextmanager
     def staged_state(self):
         existing = self._stage.get()
-        if existing is not None:
+        if existing is not None and not existing._closed:
             checkpoint = existing.checkpoint()
             try:
                 yield existing
@@ -163,7 +163,7 @@ class TitleSyncCoordinator:
 
     def _read(self, session_id):
         stage = self._stage.get()
-        states = stage._states if stage is not None else self._states
+        states = stage._states if stage is not None and not stage._closed else self._states
         return states.get(session_id, _Session())
 
     def current_decision(self, session_id: str) -> TitleDecision | None:
@@ -187,6 +187,51 @@ class TitleSyncCoordinator:
                 process_token=process_token, hybrid=hybrid, dispatch=None,
                 hazard=False, inflight=None, evidence=(), commands=(), replay=None,
                 phase="failed" if state.dispatch else state.phase,
+            )
+
+    def manages(self, session_id: str) -> bool:
+        """Return whether a live process owns the canonical title source."""
+        with self._lock:
+            return self._read(session_id).process_token is not None
+
+    def process_token(self, session_id: str) -> str | None:
+        with self._lock:
+            return self._read(session_id).process_token
+
+    def fresh_observation(self, record: TitleObservation) -> bool:
+        """Fence stale waiter evidence before observe advances the committed upper."""
+        with self._lock:
+            state = self._read(record.target_session_id)
+            if record.cursor.source_session_id != record.target_session_id:
+                return False
+            source = _source(record.cursor)
+            if source in state.retired_sources:
+                return False
+            if state.source == source:
+                return record.cursor.line_num > max(state.floor, state.upper)
+            return state.source is None or source[:2] != state.source[:2] or source[2] > state.source[2]
+
+    def protect_acceptance_boundary(self, cursor: SourceCursor, *, baseline: TitleObservation | None = None) -> None:
+        """Fence complete records already present before a new decision.
+
+        The caller captures the complete-file boundary outside its DB lane,
+        then validates the source identity inside that lane before calling.
+        This does not claim ingestion or provider acknowledgement.
+        """
+        with self._lock:
+            states = self._states_for_write()
+            sid = cursor.source_session_id
+            state = self._set_source(states.get(sid, _Session()), cursor)
+            if state.source != _source(cursor):
+                return
+            effective = None if cursor.line_num > state.upper else state.effective
+            if (baseline is not None and baseline.kind == 'title' and baseline.target_session_id == sid
+                    and _source(baseline.cursor) == _source(cursor)
+                    and baseline.cursor.line_num <= cursor.line_num):
+                effective = baseline
+            states[sid] = state._replace(
+                floor=max(state.floor, cursor.line_num), upper=max(state.upper, cursor.line_num),
+                effective=effective,
             )
 
     def accept_decision(self, session_id: str, title: str) -> TitleDecision:

@@ -16,12 +16,12 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from threading import Lock
 from typing import Any, NamedTuple
 
 from .title_control import TitleControlError, rename_running_session
-from .title_sync import SourceCursor, TitleDecision, TitleSyncCoordinator
+from .title_sync import ObservationResult, SourceCursor, TitleDecision, TitleObservation, TitleSyncCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -343,3 +343,222 @@ async def close_publications() -> None:
 
 def process_publication_reservation(session_id: str):
     return get_publications().process_publication_reservation(session_id)
+
+
+_coordinator = TitleSyncCoordinator()
+
+
+def get_title_coordinator() -> TitleSyncCoordinator:
+    """Shared main-process coordinator for compute, writers, and publication."""
+    return _coordinator
+
+
+@contextmanager
+def title_state_transaction(*, durable=False):
+    """Stage title state in the caller's serialized root DB transaction.
+
+    Nested uses share the overlay and restore it on savepoint rollback.
+    Register publication before notifications, including inherited contexts.
+    """
+    from django.db import transaction
+
+    coordinator = get_title_coordinator()
+    existing = coordinator._stage.get()
+    root = existing is None or existing._closed
+    with coordinator.staged_state() as stage, transaction.atomic(durable=durable):
+        if root:
+            transaction.on_commit(stage.commit)
+        yield stage
+
+
+def protect_claude_acceptance_boundary_locked(
+    cursor: SourceCursor, *, baseline: TitleObservation | None = None,
+) -> bool:
+    """Validate an externally captured complete-record boundary before acceptance.
+
+    Capture outside the DB lane. Call inside title_state_transaction, before
+    accept_decision. A mismatched source must be rescanned, never accepted.
+    """
+    from twicc.core.models import Session
+
+    if not Session.objects.filter(id=cursor.source_session_id,
+                                  storage_incarnation=cursor.storage_incarnation,
+                                  history_epoch=cursor.history_epoch).exists():
+        return False
+    get_title_coordinator().protect_acceptance_boundary(cursor, baseline=baseline)
+    return True
+
+
+def attach_claude_process_locked(
+    session_id: str, process_token: str, *, hybrid: bool, baseline: TitleObservation | None = None,
+) -> None:
+    """Attach only after draining the existing complete transcript, before acceptance."""
+    from twicc.core.models import Session
+
+    session = Session.objects.get(pk=session_id)
+    if session.storage_incarnation is None:
+        from twicc.core.content_storage.extraction import initialize_compute_session
+        initialize_compute_session(session_id)
+        session.refresh_from_db()
+    coordinator = get_title_coordinator()
+    if coordinator.process_token(session_id) != process_token:
+        coordinator.protect_acceptance_boundary(SourceCursor(
+            session.id, session.storage_incarnation, session.history_epoch, session.last_line,
+        ), baseline=baseline)
+    coordinator.attach_process(session_id, process_token, hybrid=hybrid)
+
+
+def _restore_observations(records):
+    return tuple(TitleObservation(SourceCursor(*record[0]), *record[1:]) for record in records)
+
+
+def _current_observations(records):
+    from twicc.core.models import Session
+    identities = {
+        row['id']: (row['storage_incarnation'], row['history_epoch'])
+        for row in Session.objects.filter(id__in={r.cursor.source_session_id for r in records}).values(
+            'id', 'storage_incarnation', 'history_epoch',
+        )
+    }
+    return tuple(r for r in records if identities.get(r.cursor.source_session_id) == r.cursor[1:3])
+
+
+def apply_claude_observations_locked(records: tuple[TitleObservation, ...]) -> tuple[str, ...]:
+    """Apply validated ordered observations; never perform provider I/O.
+
+    The caller owns the DB write lane and title_state_transaction.
+    Unmanaged imports retain last-title-per-target semantics.
+    """
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    records = _current_observations(_restore_observations(records))
+    coordinator = get_title_coordinator()
+    managed = tuple(r for r in records if coordinator.manages(r.target_session_id))
+    unmanaged = {}
+    for record in records:
+        if not coordinator.manages(record.target_session_id) and record.kind == 'title':
+            unmanaged[record.target_session_id] = record.title
+    changed = []
+    for sid, title in unmanaged.items():
+        if not BaseSessionCompute._should_skip_title_echo(sid, title):
+            if BaseSessionCompute._write_provider_title(sid, title):
+                changed.append(sid)
+    for record in managed:
+        decision = coordinator.current_decision(record.target_session_id)
+        if decision is not None:
+            coordinator.bind_initial_source(decision, record.cursor)
+    fresh = tuple(r for r in managed if coordinator.fresh_observation(r))
+    result = coordinator.observe(managed) if managed else ObservationResult()
+    changed.extend(apply_claude_observation_result_locked(result))
+    _notify_title_evidence_after_commit(fresh)
+    return tuple(dict.fromkeys(changed))
+
+
+def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[str, ...]:
+    """Apply observer/ACK output and bounded stored replay in the same transaction."""
+    from twicc.providers.compute_base import BaseSessionCompute
+    from twicc.core.content_storage.readers import effective_current, iter_current_items
+    from twicc.core.models import Session, SessionItem
+    from .compute import get_compute
+    import orjson
+
+    changed = []
+    pending = deque([result])
+    replayed = {}
+    def write_applied(current):
+        for record in current.apply:
+            if record.title is not None and BaseSessionCompute._write_provider_title(record.target_session_id, record.title):
+                changed.append(record.target_session_id)
+    while pending:
+        current = pending.popleft()
+        write_applied(current)
+        for span in current.replay:
+            source = span.start[:3]
+            if replayed.get(source) == span:
+                continue
+            replayed[source] = span
+            session = Session.objects.filter(id=span.start.source_session_id,
+                storage_incarnation=span.start.storage_incarnation, history_epoch=span.start.history_epoch).first()
+            if session is None:
+                continue
+            rows = SessionItem.objects.filter(session_id=session.id, line_num__gte=span.start.line_num,
+                                              line_num__lte=span.upper.line_num).order_by('line_num')
+            parents, batch, latest = {}, [], None
+            for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                try:
+                    parsed = orjson.loads(effective_current(item))
+                except orjson.JSONDecodeError:
+                    continue
+                batch.extend(get_compute().extract_provider_title_observations(parsed, session, item.line_num, parents))
+                if len(batch) >= 128:
+                    latest = get_title_coordinator().observe(tuple(batch))
+                    write_applied(latest)
+                    batch.clear()
+            if batch:
+                latest = get_title_coordinator().observe(tuple(batch))
+                write_applied(latest)
+            if latest is not None and latest.replay:
+                pending.append(ObservationResult(replay=latest.replay))
+    return tuple(dict.fromkeys(changed))
+
+
+def acknowledge_claude_title_locked(decision, success: bool, boundary: SourceCursor | None) -> tuple[str, ...]:
+    from twicc.core.models import Session
+    if boundary is not None and not Session.objects.filter(
+        id=decision.session_id, storage_incarnation=boundary.storage_incarnation,
+        history_epoch=boundary.history_epoch,
+    ).exists():
+        return ()
+    changed = apply_claude_observation_result_locked(get_title_coordinator().acknowledge(
+        decision, success=success, boundary=boundary,
+    ))
+    _wake_title_process_after_commit(decision.session_id, decision.process_token)
+    return changed
+
+
+def cancel_claude_dispatch_locked(decision) -> tuple[str, ...]:
+    changed = apply_claude_observation_result_locked(get_title_coordinator().cancel_dispatch_before_delivery(decision))
+    _wake_title_process_after_commit(decision.session_id, decision.process_token)
+    return changed
+
+
+def _wake_title_process_after_commit(session_id, process_token):
+    from django.db import transaction
+    worker = _worker
+    if worker is None:
+        return
+    def wake():
+        process = worker.hooks.resolve_process(session_id)
+        if worker._closed or process is None or process.process_token != process_token:
+            return
+        event = worker._wakes.get(session_id)
+        if event is not None:
+            event.set()
+    transaction.on_commit(lambda: worker._loop.call_soon_threadsafe(wake))
+
+
+def _notify_title_evidence_after_commit(records):
+    """Deliver validated evidence on the configured manager loop after commit."""
+    from django.db import transaction
+    if not records or _worker is None or _worker._closed:
+        return
+    worker = _worker
+    groups = {}
+    for record in records:
+        process = worker.hooks.resolve_process(record.target_session_id)
+        if process is not None:
+            groups.setdefault((record.target_session_id, process.process_token), []).append(record)
+    def deliver():
+        def on_loop():
+            if worker._closed:
+                return
+            for (sid, token), evidence in groups.items():
+                process = worker.hooks.resolve_process(sid)
+                if process is not None and process.process_token == token:
+                    wake = getattr(worker, '_wakes', {}).get(sid)
+                    if wake is not None:
+                        wake.set()
+                    if process.hybrid:
+                        process.agent.on_title_evidence(tuple(evidence))
+        worker._loop.call_soon_threadsafe(on_loop)
+    transaction.on_commit(deliver)

@@ -626,6 +626,10 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
     ) -> None:
         """JSONL → state bridge for hybrid sessions.
 
+        Ordered title evidence already commits through title_publication's
+        shared live/full application path. Keep this boolean bridge separate:
+        title confirmations must not change turns or permission requests.
+
         Derives the batch's :class:`HybridJsonlSignals` from the freshly
         computed items and hands them to the agent manager. Fire-and-forget:
         the derivation (a DB read) and the agent transitions run in a task

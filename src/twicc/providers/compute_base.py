@@ -34,7 +34,7 @@ import os
 import re
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, UTC
 from pathlib import Path
 from time import perf_counter
@@ -937,6 +937,17 @@ class GroupState:
 # =============================================================================
 
 
+def _with_title_state(method):
+    """Cover direct final-apply calls from the bounded DB writer too."""
+    from functools import wraps
+    @wraps(method)
+    def apply(msg):
+        from twicc.providers.claude_code.title_publication import title_state_transaction
+        with title_state_transaction() if 'title_observations' in msg else nullcontext():
+            return method(msg)
+    return apply
+
+
 class BaseSessionCompute:
     """
     Abstract per-provider session compute.
@@ -990,7 +1001,7 @@ class BaseSessionCompute:
         try:
             # Returning a broadcast result from inside a caller's transaction could
             # report success before an outer rollback discards all durable evidence.
-            with transaction.atomic(durable=True):
+            with self.provider_title_state_transaction(durable=True):
                 yield
                 if transaction.get_rollback():
                     raise transaction.TransactionManagementError("Live transaction requires rollback")
@@ -1942,6 +1953,18 @@ class BaseSessionCompute:
         ``last_stopped_at`` to the stop step.
         """
         return None
+
+    def provider_title_state_transaction(self, *, durable=False):
+        if self.provider == Provider.CLAUDE_CODE:
+            from twicc.providers.claude_code.title_publication import title_state_transaction
+            return title_state_transaction(durable=durable)
+        return transaction.atomic(durable=durable)
+
+    def extract_provider_title_observations(self, parsed, session, line_num, parents):
+        return ()
+
+    def apply_provider_title_observations(self, records: tuple) -> tuple[str, ...]:
+        return ()
 
     def extract_custom_title(self, parsed_json: dict) -> tuple[str, str] | None:
         """
@@ -3086,6 +3109,8 @@ class BaseSessionCompute:
         initial_title_set = session.title is not None
         placeholder_titles: dict[str, str] = {}
         provider_titles: dict[str, str] = {}
+        title_observations = []
+        title_parents = {}
         user_message_count = 0
         affected_days: set[str] = set()
         seen_message_ids: set[str] = set()
@@ -3182,6 +3207,10 @@ class BaseSessionCompute:
             except orjson.JSONDecodeError:
                 logger.warning(f"Invalid JSON in item {item.session_id}:{item.line_num}")
                 parsed = {}
+
+            title_observations.extend(self.extract_provider_title_observations(
+                parsed, session, item.line_num, title_parents,
+            ))
 
             # Provider rewrites + the generic context-tag strip, both applied
             # in place; see :meth:`transform_inline`. Returns the new content
@@ -3697,6 +3726,8 @@ class BaseSessionCompute:
             },
             'placeholder_titles': placeholder_titles,
             'provider_titles': provider_titles,
+            **({'title_observations': [(tuple(r.cursor), *r[1:]) for r in title_observations]}
+               if self.provider == Provider.CLAUDE_CODE else {}),
             'project_directory': project_directory,
             'affected_days': sorted(affected_days) if affected_days else None,
             'agent_links_backfill': agent_links_backfill or None,
@@ -3853,6 +3884,7 @@ class BaseSessionCompute:
             return ComputeApplyResult(str(error))
 
     @staticmethod
+    @_with_title_state
     @transaction.atomic
     def _apply_session_complete_final(msg: dict) -> ComputeApplyResult:
         """
@@ -4208,14 +4240,30 @@ class BaseSessionCompute:
         with timed_sync_phase('compute_final_titles'):
             # 8. Update session titles
             def apply_provider_title(target_id: str, title: str) -> bool:
-                # Full compute retains its existing lack of Claude protection corrections.
+                # Legacy payloads have no source evidence for managed Claude titles.
+                from twicc.providers.claude_code.title_publication import get_title_coordinator
+                if get_title_coordinator().manages(target_id):
+                    return False
                 if BaseSessionCompute._should_skip_title_echo(target_id, title):
                     return False
                 return BaseSessionCompute._write_provider_title(target_id, title)
 
             title_updated_session_ids = BaseSessionCompute._apply_title_maps(
-                msg.get('placeholder_titles', {}), msg.get('provider_titles', {}), apply_provider_title,
+                msg.get('placeholder_titles', {}),
+                {} if 'title_observations' in msg else msg.get('provider_titles', {}), apply_provider_title,
             )
+            if 'title_observations' in msg:
+                from twicc.providers.claude_code.title_publication import apply_claude_observations_locked
+                from twicc.providers.claude_code.title_publication import get_title_coordinator
+                # Legacy unmanaged rows gain their identity during guarded storage preparation.
+                observations = tuple(
+                    ((r[0][0], session.storage_incarnation, *r[0][2:]), *r[1:])
+                    if r[0][1] is None and not get_title_coordinator().manages(r[1]) else r
+                    for r in msg['title_observations']
+                )
+                title_updated_session_ids = tuple(dict.fromkeys((
+                    *title_updated_session_ids, *apply_claude_observations_locked(observations),
+                )))
 
         with timed_sync_phase('compute_final_timeline'):
             # 8bis. Write the timeline ``session.created`` row of a session the timeline does not
@@ -4349,6 +4397,8 @@ class BaseSessionCompute:
         # Track title updates (session_id -> title)
         placeholder_titles: dict[str, str] = {}
         provider_titles: dict[str, str] = {}
+        title_observations = []
+        title_parents = {}
         # Track if we've already set initial title for this session (from first user message ever)
         initial_title_needs_set = session.title is None
 
@@ -4751,12 +4801,26 @@ class BaseSessionCompute:
         if any(item.git_directory for item, _ in items_to_create) and get_project_git_root(session.project_id) is None:
             ensure_project_git_root(session.project_id)
 
-        # Apply title updates through the provider's hook (which can refuse the
-        # update and re-write a correction in the underlying storage).
+        # Raw source texts survive display rewrites. Delay ancestry resolution until
+        # insertion, so a parent evicted from the 128-entry cache is readable in DB.
+        for line_num, source_text in source_texts.items():
+            try:
+                parsed = orjson.loads(source_text)
+            except orjson.JSONDecodeError:
+                continue
+            title_observations.extend(self.extract_provider_title_observations(
+                parsed, session, line_num, title_parents,
+            ))
+
+        # Claude accepts ordered evidence. Other providers retain title maps.
         title_updated_session_ids = self._apply_title_maps(
-            placeholder_titles, provider_titles, self.apply_session_title,
+            placeholder_titles, {} if self.provider == Provider.CLAUDE_CODE else provider_titles,
+            self.apply_session_title,
         )
-        if session.id in placeholder_titles or session.id in provider_titles:
+        title_updated_session_ids = tuple(dict.fromkeys((
+            *title_updated_session_ids, *self.apply_provider_title_observations(tuple(title_observations)),
+        )))
+        if session.id in placeholder_titles or session.id in provider_titles or session.id in title_updated_session_ids:
             session.refresh_from_db(fields=['title', 'title_origin'])
 
         # Update session tracking fields

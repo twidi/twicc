@@ -312,3 +312,119 @@ def test_live_merged_slices_broadcast_changed_target_once(source, tmp_path, monk
     target_updates = [session for session in updates if session["id"] == target.id]
     assert len(target_updates) == 1
     assert (target_updates[0]["title"], target_updates[0]["title_origin"]) == ("Provider", "user")
+
+
+@pytest.fixture
+def ordered_coordinator(monkeypatch):
+    from twicc.providers.claude_code import title_publication
+    from twicc.providers.claude_code.title_sync import TitleSyncCoordinator
+
+    coordinator = TitleSyncCoordinator()
+    monkeypatch.setattr(title_publication, '_coordinator', coordinator)
+    return coordinator
+
+
+def attach_ordered(source, coordinator, *, hybrid=False):
+    from twicc.providers.claude_code.title_publication import attach_claude_process_locked, title_state_transaction
+    with title_state_transaction():
+        attach_claude_process_locked(source.id, 'process', hybrid=hybrid)
+    source.refresh_from_db()
+
+
+def rename_lines(title='A'):
+    return [
+        {'type': 'user', 'uuid': 'manual', 'message': {'role': 'user', 'content':
+            f'<command-name>/rename</command-name><command-args>{title}</command-args>'}},
+        {'type': 'user', 'uuid': 'success', 'parentUuid': 'manual', 'message': {'role': 'user', 'content':
+            f'<local-command-stdout>Session renamed to: {title}</local-command-stdout>'}},
+        provider_line(title=title),
+    ]
+
+
+@pytest.mark.parametrize('mode', ['live', 'full'])
+def test_predecision_observation_cannot_restore_title(source, tmp_path, ordered_coordinator, mode):
+    from twicc.providers.claude_code.title_publication import title_state_transaction
+    from twicc.providers.claude_code.title_sync import SourceCursor, TitleObservation
+    attach_ordered(source, ordered_coordinator)
+    if mode == 'full':
+        prepared = full_message(source, [provider_line(title='A')])
+    with title_state_transaction():
+        Session.objects.filter(pk=source.id).update(title='B', title_origin='auto')
+        decision = ordered_coordinator.accept_decision(source.id, 'B')
+        assert ordered_coordinator.start_dispatch(decision, SourceCursor(
+            source.id, source.storage_incarnation, source.history_epoch, 1))
+        ordered_coordinator.observe((TitleObservation(SourceCursor(source.id, source.storage_incarnation, source.history_epoch, 2),
+                           source.id, 'title', 'B', None, None),))
+        ordered_coordinator.acknowledge(decision, success=True, boundary=SourceCursor(
+            source.id, source.storage_incarnation, source.history_epoch, 2))
+    result = BaseSessionCompute.apply_session_complete(prepared) if mode == 'full' else live_apply(
+        source, [provider_line(title='A')], tmp_path)
+    source.refresh_from_db()
+    assert (source.title, source.title_origin) == ('B', 'auto')
+    assert result.title_updated_session_ids == ()
+
+
+@pytest.mark.parametrize('mode', ['live', 'full'])
+def test_manual_old_title_after_own_echo_is_preserved(source, tmp_path, ordered_coordinator, monkeypatch, mode):
+    from twicc.providers.claude_code.title_publication import title_state_transaction
+    from twicc.providers.claude_code.title_sync import SourceCursor
+    attach_ordered(source, ordered_coordinator, hybrid=True)
+    Session.objects.filter(pk=source.id).update(title='B', title_origin='user')
+    correction = Mock()
+    monkeypatch.setattr(titles, 'rename_session_in_jsonl', correction)
+    with title_state_transaction():
+        decision = ordered_coordinator.accept_decision(source.id, 'B')
+        assert ordered_coordinator.start_dispatch(decision, SourceCursor(
+            source.id, source.storage_incarnation, source.history_epoch, 0))
+    lines = [provider_line(title='B'), *rename_lines()]
+    result = BaseSessionCompute.apply_session_complete(full_message(source, lines)) if mode == 'full' else live_apply(
+        source, lines, tmp_path)
+    source.refresh_from_db()
+    assert (source.title, source.title_origin) == ('A', 'user')
+    assert ordered_coordinator.current_decision(source.id) is None
+    assert result.title_updated_session_ids == (source.id,)
+    correction.assert_not_called()
+
+
+@pytest.mark.parametrize('mode', ['live', 'full'])
+def test_apply_rollback_replays_manual_title_once(source, tmp_path, ordered_coordinator, monkeypatch, mode):
+    from django.db import DatabaseError
+    from twicc.core.models import TimelineEvent
+    from tests.timeline_helpers import mark_known
+    attach_ordered(source, ordered_coordinator)
+    Session.objects.filter(pk=source.id).update(title='B', title_origin='user')
+    mark_known(source.id, source.project_id)
+    lines = rename_lines()
+    message = full_message(source, lines) if mode == 'full' else None
+    original = BaseSessionCompute._write_provider_title
+    def fail_after_write(sid, title):
+        original(sid, title)
+        raise DatabaseError('Injected SQL phase failure')
+    with monkeypatch.context() as patch:
+        patch.setattr(BaseSessionCompute, '_write_provider_title', staticmethod(fail_after_write))
+        with pytest.raises(DatabaseError):
+            if mode == 'full':
+                BaseSessionCompute.apply_session_complete(message)
+            else:
+                live_apply(source, lines, tmp_path)
+    assert Session.objects.get(pk=source.id).title == 'B'
+    assert not TimelineEvent.objects.filter(session_id=source.id, kind='title.changed').exists()
+    if mode == 'full':
+        BaseSessionCompute.apply_session_complete(message)
+    else:
+        source.refresh_from_db()
+        live_apply(source, lines, tmp_path)
+    assert Session.objects.get(pk=source.id).title == 'A'
+    events = list(TimelineEvent.objects.filter(session_id=source.id, kind='title.changed'))
+    assert len(events) == 1
+    assert events[0].data['new'] == 'A'
+
+
+def test_live_overflow_parent_is_recovered_after_storage_insert(source, tmp_path, ordered_coordinator):
+    attach_ordered(source, ordered_coordinator)
+    Session.objects.filter(pk=source.id).update(title='B', title_origin='user')
+    lines = [rename_lines()[0] | {'uuid': f'command-{n}'} for n in range(130)]
+    lines.append(rename_lines()[1] | {'parentUuid': 'command-0'})
+    live_apply(source, lines, tmp_path)
+    source.refresh_from_db()
+    assert source.title == 'A'

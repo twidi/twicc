@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import ClassVar, NamedTuple
 
 
-from twicc.core.content_storage.readers import load_current, effective_current, iter_matching_items
+from twicc.core.content_storage.readers import load_current, effective_current, iter_matching_items, iter_current_items
 from twicc.context_injection import ATTACHMENTS_KEY, GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
 from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.enums import ItemKind, Provider
@@ -261,6 +261,53 @@ def extract_command(text: str) -> ParsedCommand | None:
         message=message_match.group(1) if message_match else None,
         args=args_match.group(1) if args_match else None,
     )
+
+
+def extract_title_observations(parsed: dict, cursor, *, parent: dict | None = None) -> tuple:
+    """Extract raw ordered evidence before display transformations hide commands."""
+    from .title_control import canonicalize_claude_title
+    from .title_sync import TitleObservation
+
+    def canonical(value):
+        if not isinstance(value, str):
+            return None
+        result = canonicalize_claude_title(value)
+        return result.title if not result.error else None
+
+    message = parsed.get('uuid')
+    parent_id = parsed.get('parentUuid')
+    message = message if isinstance(message, str) else None
+    parent_id = parent_id if isinstance(parent_id, str) else None
+    if parsed.get('type') == 'custom-title':
+        value = canonical(parsed.get('customTitle'))
+        target = parsed.get('sessionId') or cursor.source_session_id
+        if value is not None and isinstance(target, str):
+            return (TitleObservation(cursor, target, 'title', value, message, parent_id),)
+        return ()
+    text = extract_text_from_content(get_message_content(parsed))
+    if not text:
+        return ()
+    command = extract_command(text)
+    if command and command.name == '/rename' and message:
+        value = canonical(command.args)
+        return (TitleObservation(cursor, cursor.source_session_id, 'rename_command', value, message, parent_id),)
+    if parent is None or not parent_id or parent.get('uuid') != parent_id:
+        return ()
+    parent_text = extract_text_from_content(get_message_content(parent))
+    command = extract_command(parent_text) if parent_text else None
+    if not command or command.name != '/rename':
+        return ()
+    output = _extract_local_command_text(text)
+    if output is None:
+        return ()
+    output = _ANSI_RE.sub('', output).strip()
+    if '<local-command-stderr>' in text:
+        return (TitleObservation(cursor, cursor.source_session_id, 'command_error', None, message, parent_id),)
+    match = re.fullmatch(r'Session renamed to:?\s+(.+)', output, re.DOTALL)
+    value = canonical(match.group(1)) if match else None
+    if value is None:
+        return ()
+    return (TitleObservation(cursor, cursor.source_session_id, 'command_success', value, message, parent_id),)
 
 
 def is_command_message(content: str) -> bool:
@@ -2703,6 +2750,36 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                 return False
         return None
 
+    def extract_provider_title_observations(self, parsed, session, line_num, parents):
+        from .title_sync import SourceCursor
+
+        parent_id = parsed.get('parentUuid')
+        parent = parents.get(parent_id) if isinstance(parent_id, str) else None
+        text = extract_text_from_content(get_message_content(parsed))
+        if parent is None and parent_id and text and _extract_local_command_text(text) is not None:
+            rows = SessionItem.objects.filter(session_id=session.id, line_num__lt=line_num).order_by('-line_num')
+            for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                try:
+                    candidate = orjson.loads(effective_current(item))
+                except orjson.JSONDecodeError:
+                    continue
+                if candidate.get('uuid') == parent_id:
+                    parent = candidate
+                    break
+        cursor = SourceCursor(session.id, session.storage_incarnation, session.history_epoch, line_num)
+        records = extract_title_observations(parsed, cursor, parent=parent)
+        if any(record.kind == 'rename_command' for record in records):
+            parents[parsed['uuid']] = {
+                'uuid': parsed['uuid'], 'message': {'content': '<command-name>/rename</command-name>'},
+            }
+            while len(parents) > 128:
+                parents.pop(next(iter(parents)))
+        return records
+
+    def apply_provider_title_observations(self, records):
+        from .title_publication import apply_claude_observations_locked
+        return apply_claude_observations_locked(records)
+
     def extract_custom_title(self, parsed_json: dict) -> tuple[str, str] | None:
         if parsed_json.get('type') != 'custom-title':
             return None
@@ -2758,6 +2835,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         return agent_id if isinstance(agent_id, str) and agent_id else None
 
     def apply_session_title(self, target_session_id: str, title: str) -> bool:
+        from .title_publication import get_title_coordinator
+        # Cursorless legacy callers cannot bypass ordered managed acceptance.
+        if get_title_coordinator().manages(target_session_id):
+            return False
         # Claude Code title persistence is gated by anti-stale-write
         # protection: the CLI may re-append the previous title from its
         # tail-scan after we updated it, and we must refuse those.
