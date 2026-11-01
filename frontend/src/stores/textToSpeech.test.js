@@ -851,6 +851,37 @@ test('the test sentence comes from tts.json and is saved back', () => {
     assert.equal(store.testText, '')
 })
 
+test('the adaptation choice comes from tts.json and is saved back with the configs', () => {
+    assert.equal(store.adapt, null)
+    store.applyConfig({ ...payload(), config: { ...payload().config, adapt: 'luna' } })
+    assert.equal(store.adapt, 'luna')
+    assert.equal(store._configPayload().adapt, 'luna')
+    const sent = []
+    store._sendConfig = () => sent.push(store._configPayload())
+    assert.equal(store.setAdapt('luna'), true)
+    assert.deepEqual(sent, [])
+    assert.equal(store.setAdapt('off'), true)
+    assert.equal(store.adapt, 'off')
+    assert.deepEqual(sent, [{ active_id: 'c1', configs: store.configs, test_text: '', adapt: 'off' }])
+    // An unknown choice is refused; null brings back the default.
+    assert.equal(store.setAdapt('opus'), false)
+    assert.equal(store.adapt, 'off')
+    assert.equal(store.setAdapt(null), true)
+    assert.equal(store.adapt, null)
+    assert.equal(sent.length, 2)
+    assert.equal(sent[1].adapt, null)
+    // Any config write carries the stored choice: it never resets it.
+    store.setAdapt('haiku')
+    store.setTestText('Salut')
+    assert.equal(sent.at(-1).adapt, 'haiku')
+    assert.equal(sent.at(-1).test_text, 'Salut')
+    // Missing or unknown in the payload: no stored choice.
+    store.applyConfig({ ...payload(), config: { ...payload().config, adapt: 'opus' } })
+    assert.equal(store.adapt, null)
+    store.applyConfig(payload())
+    assert.equal(store.adapt, null)
+})
+
 test('mutations never touch the applied payload', () => {
     const received = payload({ configs: [makeConfig('c1'), makeConfig('c2')] })
     const snapshot = structuredClone(received)

@@ -11,6 +11,7 @@ import {
     isConfigValidated,
     isTtsAvailable,
     kindOf,
+    normalizeAdapt,
     patchTtsConfig,
     requestedFormat,
     sameSpeechFields,
@@ -275,6 +276,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         keyPresent: false,
         envPath: '',
         testText: '', // the settings test sentence; '' means the default one
+        adapt: null, // the text adaptation choice: null (on, first enabled provider), 'haiku', 'luna' or 'off'
         models: [], // [{ id, name, voices: [string], pricing: { prompt, completion } }] from OpenRouter
         modelsStatus: 'idle', // 'idle' | 'loading' | 'loaded' | 'failed'
         // source: 'message' | 'test' | null; configId: the config a settings test is about, else null.
@@ -299,7 +301,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
     actions: {
         /**
          * Apply the state received from the bootstrap or the WebSocket.
-         * @param {{ config: { active_id, configs, test_text }, key_present: boolean, env_path: string }} payload
+         * @param {{ config: { active_id, configs, test_text, adapt }, key_present: boolean, env_path: string }} payload
          */
         applyConfig(payload) {
             const config = payload?.config ?? {}
@@ -307,10 +309,16 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this.configs = Array.isArray(config.configs) ? config.configs.map(entry => ({ ...entry })) : []
             this.activeId = config.active_id ?? null
             this.testText = typeof config.test_text === 'string' ? config.test_text : ''
+            this.adapt = normalizeAdapt(config.adapt)
             this.keyPresent = Boolean(payload?.key_present)
             this.envPath = payload?.env_path ?? ''
             // Another device edited, deactivated or deleted the active config, or the key is gone.
             if (this.playback.source === 'message' && !this.available) this.stop()
+        },
+
+        /** The full config the backend stores: every write carries all of it (a missing key resets it). */
+        _configPayload() {
+            return { active_id: this.activeId, configs: this.configs, test_text: this.testText, adapt: this.adapt }
         },
 
         /**
@@ -319,7 +327,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
          */
         async _sendConfig() {
             const { sendTtsConfig } = await import('../composables/useWebSocket')
-            sendTtsConfig({ active_id: this.activeId, configs: this.configs, test_text: this.testText })
+            sendTtsConfig(this._configPayload())
         },
 
         // ── Config mutations ─────────────────────────────
@@ -377,6 +385,18 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             if (text === this.testText) return
             this.testText = text
             this._sendConfig()
+        },
+
+        /**
+         * Keep the text adaptation choice: 'haiku', 'luna', 'off', or null (back to the default).
+         * Refuses any other value.
+         */
+        setAdapt(choice) {
+            if (choice !== null && normalizeAdapt(choice) === null) return false
+            if (choice === this.adapt) return true
+            this.adapt = choice
+            this._sendConfig()
+            return true
         },
 
         /** Mark a config validated, only when its speech fields are still the tested ones. */

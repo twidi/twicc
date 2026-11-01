@@ -37,6 +37,10 @@ import {
     ttsFormatOptions,
     formatAfterModelChange,
     ttsStreamingNote,
+    ADAPT_PROVIDERS,
+    effectiveAdapt,
+    adaptOptions,
+    ttsAdaptationFacts,
 } from './ttsConfig.js'
 
 const validatedConfig = (id = 'a') => {
@@ -521,4 +525,79 @@ test('stats and facts of an unpriced run have no cost part', () => {
     assert.equal(ttsLastTestFacts({ ...run, cost: 0.008 }, { priced: false }), '2,000 chars · 2 min 23 s of audio · generated in 2.2 s · first audio after 1.2 s')
     // Priced stays the default.
     assert.equal(ttsTestStats(run), 'price unknown · 1.1 s / 1k ch · 1st audio 1.2 s')
+})
+
+// ── Text adaptation ──────────────────────────────────────────────
+
+test('each adaptation engine runs on its provider', () => {
+    assert.deepEqual(ADAPT_PROVIDERS, { haiku: 'claude_code', luna: 'codex' })
+})
+
+test('effectiveAdapt: no stored choice takes the first enabled provider, Claude then Codex', () => {
+    assert.equal(effectiveAdapt(null, ['claude_code', 'codex']), 'haiku')
+    assert.equal(effectiveAdapt(null, ['codex', 'claude_code']), 'haiku')
+    assert.equal(effectiveAdapt(null, ['codex']), 'luna')
+    assert.equal(effectiveAdapt(null, new Set(['codex'])), 'luna')
+    assert.equal(effectiveAdapt(null, []), 'off')
+    assert.equal(effectiveAdapt(undefined, undefined), 'off')
+    // An unknown stored value is no stored choice (as the backend normalizes it).
+    assert.equal(effectiveAdapt('opus', ['claude_code']), 'haiku')
+})
+
+test('effectiveAdapt: off stays off; a forced choice falls back to the other enabled provider', () => {
+    assert.equal(effectiveAdapt('off', ['claude_code', 'codex']), 'off')
+    assert.equal(effectiveAdapt('luna', ['claude_code', 'codex']), 'luna')
+    assert.equal(effectiveAdapt('haiku', ['codex']), 'luna')
+    assert.equal(effectiveAdapt('luna', new Set(['claude_code'])), 'haiku')
+    assert.equal(effectiveAdapt('haiku', []), 'off')
+    assert.equal(effectiveAdapt('luna', []), 'off')
+})
+
+test('adaptOptions: both models then Off, a model of a disabled provider stays shown, disabled', () => {
+    assert.deepEqual(adaptOptions(['claude_code', 'codex']), [
+        { value: 'haiku', label: 'Claude Haiku 5.5' },
+        { value: 'luna', label: 'GPT-6 Luna' },
+        { value: 'off', label: 'Off' },
+    ])
+    assert.deepEqual(adaptOptions(new Set(['codex'])), [
+        { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
+        { value: 'luna', label: 'GPT-6 Luna' },
+        { value: 'off', label: 'Off' },
+    ])
+    assert.deepEqual(adaptOptions([]), [
+        { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
+        { value: 'luna', label: 'GPT-6 Luna', disabled: true, title: 'GPT-6 Luna: Codex is disabled' },
+        { value: 'off', label: 'Off' },
+    ])
+})
+
+test('ttsAdaptationFacts: the engine and the wait for the first text', () => {
+    const run = { chars: 2000, adapted_by: 'haiku', adapt_reason: null, adapt_first_ms: 2140, adapted_text: 'Hi' }
+    assert.equal(ttsAdaptationFacts(run), 'Adapted by Claude Haiku 5.5 · first text 2.1 s')
+    assert.equal(ttsAdaptationFacts({ ...run, adapted_by: 'luna', adapt_first_ms: 12400 }), 'Adapted by GPT-6 Luna · first text 12 s')
+    // Served from the cache: no wait to show.
+    assert.equal(ttsAdaptationFacts({ ...run, adapt_first_ms: null }), 'Adapted by Claude Haiku 5.5')
+})
+
+test('ttsAdaptationFacts: why the text was not adapted', () => {
+    const reasons = {
+        off: 'the option is off',
+        no_provider: 'no Claude or Codex provider is running',
+        too_long: 'the text is too long',
+        failed: 'the model failed',
+        stalled: 'the model did not answer in time',
+        empty: 'the model gave no text',
+    }
+    for (const [reason, text] of Object.entries(reasons)) {
+        const run = { chars: 35, adapted_by: null, adapt_reason: reason, adapt_first_ms: null, adapted_text: null }
+        assert.equal(ttsAdaptationFacts(run), `Not adapted: ${text}`)
+    }
+})
+
+test('ttsAdaptationFacts: nothing for a record without adaptation fields', () => {
+    assert.equal(ttsAdaptationFacts(null), '')
+    assert.equal(ttsAdaptationFacts(undefined), '')
+    assert.equal(ttsAdaptationFacts({ chars: 35, generation_ms: 900 }), '')
+    assert.equal(ttsAdaptationFacts({ chars: 35, adapted_by: null, adapt_reason: null, adapt_first_ms: null, adapted_text: null }), '')
+    assert.equal(ttsAdaptationFacts({ chars: 35, adapted_by: null, adapt_reason: 'unknown' }), '')
 })

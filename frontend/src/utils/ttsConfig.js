@@ -1,5 +1,7 @@
 // Pure rules for the text-to-speech configs (shape normalized by src/twicc/tts/config.py).
 
+import { PROVIDER, TITLE_SUGGESTION_MODEL_LABELS } from '../constants.js'
+
 /** The speech fields of an OpenRouter config. */
 export const SPEECH_FIELDS = ['model', 'voice', 'response_format', 'speed', 'instructions']
 
@@ -333,4 +335,77 @@ export function ttsLastTestFacts(lastTest, { priced = true } = {}) {
     if (lastTest.first_audio_ms != null) parts.push(`first audio after ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
     if (priced) parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
     return parts.join(' · ')
+}
+
+// ── Text adaptation ──────────────────────────────────────────────
+//
+// The global `adapt` setting of tts.json: null (no stored choice: on, with the first enabled
+// provider), 'haiku', 'luna' or 'off'.
+
+/** The provider each adaptation engine runs on, in the default order: Claude, then Codex. */
+export const ADAPT_PROVIDERS = Object.freeze({ haiku: PROVIDER.CLAUDE_CODE, luna: PROVIDER.CODEX })
+
+const ADAPT_CHOICES = new Set(['haiku', 'luna', 'off'])
+
+// The provider labels of the disabled-option titles (providers/*/helpers.js `static label`).
+const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
+
+const ADAPT_REASON_TEXTS = {
+    off: 'the option is off',
+    no_provider: 'no Claude or Codex provider is running',
+    too_long: 'the text is too long',
+    failed: 'the model failed',
+    stalled: 'the model did not answer in time',
+    empty: 'the model gave no text',
+}
+
+/** A stored `adapt` value, or null (no stored choice) for anything else, as the backend reads it. */
+export function normalizeAdapt(value) {
+    return ADAPT_CHOICES.has(value) ? value : null
+}
+
+function enabledSet(enabledProviders) {
+    return enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
+}
+
+/**
+ * The adaptation that really runs, given which providers are enabled: 'haiku', 'luna' or 'off'.
+ * Display only: the stored choice is never rewritten, so enabling its provider again restores it.
+ * 'off' stays off. No stored choice takes the first enabled engine; a forced one whose provider is
+ * disabled takes the other enabled one. No enabled provider gives 'off'.
+ */
+export function effectiveAdapt(stored, enabledProviders) {
+    const choice = normalizeAdapt(stored)
+    if (choice === 'off') return 'off'
+    const enabled = enabledSet(enabledProviders)
+    if (choice && enabled.has(ADAPT_PROVIDERS[choice])) return choice
+    return Object.keys(ADAPT_PROVIDERS).find(engine => enabled.has(ADAPT_PROVIDERS[engine])) ?? 'off'
+}
+
+/** The adaptation switch options: an engine whose provider is disabled stays shown, disabled. */
+export function adaptOptions(enabledProviders) {
+    const enabled = enabledSet(enabledProviders)
+    const engines = Object.entries(ADAPT_PROVIDERS).map(([value, provider]) => {
+        const label = TITLE_SUGGESTION_MODEL_LABELS[value]
+        return enabled.has(provider)
+            ? { value, label }
+            : { value, label, disabled: true, title: `${label}: ${ADAPT_PROVIDER_LABELS[provider]} is disabled` }
+    })
+    return [...engines, { value: 'off', label: 'Off' }]
+}
+
+/**
+ * The adaptation of the last test run: "Adapted by Claude Haiku 5.5 · first text 2.1 s", or
+ * "Not adapted: the option is off". '' for a record written before the text adaptation.
+ */
+export function ttsAdaptationFacts(lastTest) {
+    const engine = lastTest?.adapted_by
+    if (engine && TITLE_SUGGESTION_MODEL_LABELS[engine]) {
+        const parts = [`Adapted by ${TITLE_SUGGESTION_MODEL_LABELS[engine]}`]
+        // No wait for an adaptation served from the cache.
+        if (lastTest.adapt_first_ms != null) parts.push(`first text ${shortNumber(lastTest.adapt_first_ms / 1000)} s`)
+        return parts.join(' · ')
+    }
+    const reason = ADAPT_REASON_TEXTS[lastTest?.adapt_reason]
+    return reason ? `Not adapted: ${reason}` : ''
 }
