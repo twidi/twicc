@@ -56,12 +56,12 @@ def test_missing_or_invalid_file_reads_as_empty(tmp_data_dir):
 
 
 def test_empty_config_shape():
-    assert empty_tts_config() == {"active_id": None, "configs": [], "test_text": ""}
+    assert empty_tts_config() == {"active_id": None, "configs": [], "test_text": "", "adapt": None}
 
 
 def test_normalize_keeps_a_valid_entry_unchanged():
     entry = _entry(kind="openrouter")
-    config = {"active_id": "a", "configs": [entry], "test_text": "Bonjour"}
+    config = {"active_id": "a", "configs": [entry], "test_text": "Bonjour", "adapt": "luna"}
     assert normalize_tts_config(config) == config
 
 
@@ -69,6 +69,20 @@ def test_normalize_keeps_only_a_string_test_text():
     assert normalize_tts_config({"configs": []})["test_text"] == ""
     assert normalize_tts_config({"configs": [], "test_text": 3})["test_text"] == ""
     assert normalize_tts_config({"configs": [], "test_text": "Salut"})["test_text"] == "Salut"
+
+
+@pytest.mark.parametrize("adapt", [None, "haiku", "luna", "off"])
+def test_normalize_keeps_a_known_adapt(adapt):
+    assert normalize_tts_config({"configs": [], "adapt": adapt})["adapt"] == adapt
+
+
+@pytest.mark.parametrize("adapt", ["on", "", "Haiku", True, 1, ["haiku"]])
+def test_normalize_drops_an_unknown_adapt(adapt):
+    assert normalize_tts_config({"configs": [], "adapt": adapt})["adapt"] is None
+
+
+def test_normalize_without_adapt_is_none():
+    assert normalize_tts_config({"configs": []})["adapt"] is None
 
 
 def test_normalize_repairs_fields():
@@ -88,7 +102,7 @@ def test_normalize_fills_defaults_for_a_bare_entry():
     assert out == {"active_id": None, "configs": [{
         "id": "a", "name": "", "kind": "openrouter", "model": "", "voice": "", "response_format": "mp3",
         "speed": None, "instructions": "", "note": "", "validated": None, "last_test": None,
-    }], "test_text": ""}
+    }], "test_text": "", "adapt": None}
 
 
 def test_normalize_keeps_a_note_and_never_snapshots_it():
@@ -163,7 +177,7 @@ def test_write_then_read_round_trips(tmp_data_dir):
     config = {"active_id": "a", "configs": [_entry(kind="openrouter", validated={
         "model": "google/gemini-3.8-flash-lite-tts", "voice": "Kore", "response_format": "pcm",
         "speed": None, "instructions": "",
-    })], "test_text": "A sentence of my own."}
+    })], "test_text": "A sentence of my own.", "adapt": "off"}
     assert write_tts_config(config) == config
     assert read_tts_config() == config
     assert orjson.loads(get_tts_config_path().read_bytes()) == config
@@ -293,7 +307,9 @@ def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transacti
 LAST_TEST = {
     "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
     "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None, "parts": 3,
+    "adapted_by": "haiku", "adapt_reason": None, "adapt_first_ms": 640, "adapted_text": "Hello, said aloud.",
 }
+ADAPT_FIELDS = ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")
 
 
 def test_last_test_is_normalized_or_dropped():
@@ -328,6 +344,58 @@ def test_last_test_keeps_parts():
     # A record written before split texts: still valid, without a part count.
     old_record = {key: value for key, value in LAST_TEST.items() if key != "parts"}
     assert last_test(old_record) == {**LAST_TEST, "parts": None}
+
+
+def _normalized_last_test(record):
+    return normalize_tts_config({"configs": [_entry(last_test=record)]})["configs"][0]["last_test"]
+
+
+def test_last_test_keeps_the_adaptation_fields():
+    assert _normalized_last_test(LAST_TEST) == LAST_TEST
+    not_adapted = {**LAST_TEST, "adapted_by": None, "adapt_reason": "stalled", "adapt_first_ms": None,
+                   "adapted_text": None}
+    assert _normalized_last_test(not_adapted) == not_adapted
+
+
+@pytest.mark.parametrize("reason", ["off", "no_provider", "too_long", "failed", "stalled", "empty"])
+def test_last_test_keeps_every_adapt_reason(reason):
+    assert _normalized_last_test({**LAST_TEST, "adapt_reason": reason})["adapt_reason"] == reason
+
+
+@pytest.mark.parametrize("field, value", [
+    ("adapted_by", "off"), ("adapted_by", "claude"), ("adapted_by", True),
+    ("adapt_reason", "other"), ("adapt_reason", ""), ("adapt_reason", 3),
+    ("adapt_first_ms", -1), ("adapt_first_ms", "x"), ("adapt_first_ms", True), ("adapt_first_ms", float("inf")),
+    ("adapted_text", 3), ("adapted_text", ["a"]),
+])
+def test_last_test_drops_a_bad_adaptation_field(field, value):
+    out = _normalized_last_test({**LAST_TEST, field: value})
+    assert out == {**LAST_TEST, field: None}
+
+
+def test_last_test_keeps_an_int_adapt_first_ms():
+    out = _normalized_last_test({**LAST_TEST, "adapt_first_ms": 640.0})
+    assert out["adapt_first_ms"] == 640
+    assert isinstance(out["adapt_first_ms"], int)
+
+
+def test_last_test_keeps_an_empty_adapted_text():
+    assert _normalized_last_test({**LAST_TEST, "adapted_text": ""})["adapted_text"] == ""
+
+
+def test_last_test_without_adaptation_fields_stays_valid():
+    # A record written before the adaptation existed.
+    old_record = {key: value for key, value in LAST_TEST.items() if key not in ADAPT_FIELDS}
+    assert _normalized_last_test(old_record) == {**old_record, **dict.fromkeys(ADAPT_FIELDS)}
+
+
+def test_a_client_write_keeps_the_adapt_setting(tmp_data_dir):
+    from twicc.tts.config import write_client_tts_config
+    write_tts_config({"configs": [_entry()]})
+    assert write_client_tts_config({"configs": [_entry()], "adapt": "luna"})["adapt"] == "luna"
+    assert read_tts_config()["adapt"] == "luna"
+    assert write_client_tts_config({"configs": [_entry()], "adapt": "junk"})["adapt"] is None
+    assert read_tts_config()["adapt"] is None
 
 
 def test_a_client_write_keeps_the_recorded_last_test(tmp_data_dir):

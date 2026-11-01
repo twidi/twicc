@@ -3,6 +3,7 @@
 File: <data_dir>/tts.json — whole-file atomic overwrite, like message-snippets.json.
 A config has a ``kind``: ``openrouter`` (the default) or ``script`` (a user shell command
 gives the audio). Each kind has its own fields.
+The top-level ``adapt`` is the global text adaptation choice (see :data:`ADAPT_CHOICES`).
 The OpenRouter key is never stored here: it lives in <data_dir>/.env, and only
 its presence reaches the browser (:func:`tts_client_payload`).
 """
@@ -21,15 +22,25 @@ SPEECH_FIELDS = ("model", "voice", "response_format", "speed", "instructions")
 SCRIPT_FIELDS = ("command", "output", "audio_format", "pcm_rate", "pcm_channels", "max_chars")
 SCRIPT_OUTPUTS = ("stream", "whole", "path")
 SCRIPT_FORMATS = ("mp3", "wav", "pcm")
+# The small models that adapt a text for speech.
+ADAPT_ENGINES = ("haiku", "luna")
+# The stored ``adapt`` values; None (no stored choice) means on, with the first running provider.
+ADAPT_CHOICES = (*ADAPT_ENGINES, "off")
+# Why a reading was not adapted (in the log line and the last test).
+ADAPT_REASONS = ("off", "no_provider", "too_long", "failed", "stalled", "empty")
 
 
 def empty_tts_config() -> dict:
     """The config of a missing or invalid file. An empty ``test_text`` means the default sentence."""
-    return {"active_id": None, "configs": [], "test_text": ""}
+    return {"active_id": None, "configs": [], "test_text": "", "adapt": None}
 
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _one_of(value: object, choices: tuple[str, ...]) -> str | None:
+    return value if isinstance(value, str) and value in choices else None
 
 
 def positive_speed(value: object) -> float | None:
@@ -116,6 +127,9 @@ def _last_test(value: object) -> dict | None:
 
     ``cost`` (USD) comes some seconds after the run, through the generation lookup.
     ``parts`` is the number of requests of the text; None in a record written before split texts.
+    The adaptation fields are None in a record written before the text adaptation: ``adapted_by``
+    (the engine, None when not adapted), ``adapt_reason`` (why not), ``adapt_first_ms`` (the wait for
+    the first adapted text) and ``adapted_text``.
     """
     if not isinstance(value, dict) or not isinstance(value.get("at"), str):
         return None
@@ -132,6 +146,10 @@ def _last_test(value: object) -> dict | None:
         "audio_seconds": _non_negative(value.get("audio_seconds"), float),
         "cost": _non_negative(value.get("cost"), float),
         "parts": _non_negative(value.get("parts"), int),
+        "adapted_by": _one_of(value.get("adapted_by"), ADAPT_ENGINES),
+        "adapt_reason": _one_of(value.get("adapt_reason"), ADAPT_REASONS),
+        "adapt_first_ms": _non_negative(value.get("adapt_first_ms"), int),
+        "adapted_text": value["adapted_text"] if isinstance(value.get("adapted_text"), str) else None,
     }
 
 
@@ -139,7 +157,8 @@ def normalize_tts_config(raw: object) -> dict:
     """Repair *raw* into the stored shape.
 
     Drops the entries that are not dicts, have no non-empty string ``id``, or
-    repeat an earlier ``id``. An ``active_id`` that matches no entry becomes None.
+    repeat an earlier ``id``. An ``active_id`` that matches no entry becomes None, and so
+    does an unknown ``adapt``.
     The backend does not require the active config to be validated: the
     frontend availability rule checks it.
     """
@@ -173,7 +192,12 @@ def normalize_tts_config(raw: object) -> dict:
     active_id = raw.get("active_id")
     if not isinstance(active_id, str) or active_id not in seen_ids:
         active_id = None
-    return {"active_id": active_id, "configs": configs, "test_text": _string(raw.get("test_text"))}
+    return {
+        "active_id": active_id,
+        "configs": configs,
+        "test_text": _string(raw.get("test_text")),
+        "adapt": _one_of(raw.get("adapt"), ADAPT_CHOICES),
+    }
 
 
 def read_tts_config() -> dict:
