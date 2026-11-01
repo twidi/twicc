@@ -20,7 +20,7 @@ import logging
 
 from openai_codex.generated.v2_all import ReasoningEffort
 
-from twicc.title_transcript import build_title_prompt, title_rejection_reasons
+from twicc.title_transcript import build_title_prompt, title_rejection_reasons, unwrap_title_suggestion
 
 from .hermetic import prepare_hermetic_codex, run_hermetic_codex
 
@@ -109,7 +109,7 @@ async def _call_codex(
         return result.text
 
     try:
-        suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
+        suggestion = unwrap_title_suggestion(await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS))
 
         if reasons := title_rejection_reasons(suggestion):
             logger.warning(

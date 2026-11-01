@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from twicc.providers.claude_code.hermetic import run_hermetic_claude
-from twicc.title_transcript import build_title_prompt, title_rejection_reasons
+from twicc.title_transcript import build_title_prompt, title_rejection_reasons, unwrap_title_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def _call_haiku(
         return result.text
 
     try:
-        suggestion = await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS)
+        suggestion = unwrap_title_suggestion(await asyncio.wait_for(_execute(), timeout=SUGGESTION_TIMEOUT_SECONDS))
 
         if reasons := title_rejection_reasons(suggestion):
             logger.warning(

@@ -108,6 +108,15 @@ MAX_TITLE_CHARS = 100
 _SENTENCE_BREAK = re.compile(r"[.!]\s+[A-ZÀ-Ý]")
 
 
+def unwrap_title_suggestion(title: str) -> str:
+    """Remove the comparison envelope when the model copies it into its answer."""
+    stripped = title.strip()
+    opening, closing = "<current_title>", "</current_title>"
+    if stripped.startswith(opening) and stripped.endswith(closing):
+        return stripped[len(opening):-len(closing)].strip()
+    return title
+
+
 def title_rejection_reasons(title: str) -> list[str]:
     """Return why ``title`` (model output) cannot be a session title, or ``[]``.
 
@@ -118,6 +127,8 @@ def title_rejection_reasons(title: str) -> list[str]:
     if not title:
         return ["empty response"]
     reasons = []
+    if "<current_title>" in title or "</current_title>" in title:
+        reasons.append("comparison title delimiter")
     if "\n" in title:
         reasons.append("line break")
     words = len(title.split())

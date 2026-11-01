@@ -121,6 +121,37 @@ def test_codex_gives_up_after_every_attempt_is_rejected(codex_client):
     assert codex_client.calls == codex_title_suggest.MAX_RETRIES
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("title", [
+    "Text-to-speech OpenRouter et script : settings, reformulation",
+    "x" * 100,
+])
+def test_generated_title_removes_comparison_wrapper_before_validation(
+    provider, title, claude_client, codex_client,
+):
+    module, client = ((claude_title_suggest, claude_client) if provider == "claude"
+                      else (codex_title_suggest, codex_client))
+    client.answers = [f"  <current_title>{title}</current_title>  "]
+    assert _generate(module) == title
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("answer", [
+    "<current_title></current_title>",
+    "<current_title>" + "x" * 101 + "</current_title>",
+    "<current_title>Title",
+    "Title</current_title>",
+    "Explanation <current_title>Title</current_title>",
+])
+def test_invalid_comparison_wrapper_output_retries(
+    provider, answer, claude_client, codex_client,
+):
+    module, client = ((claude_title_suggest, claude_client) if provider == "claude"
+                      else (codex_title_suggest, codex_client))
+    client.answers = [answer, "Valid title"]
+    assert _generate(module) == "Valid title"
+
+
 @pytest.mark.parametrize("provider", ["claude_code", "codex"])
 @pytest.mark.parametrize("current_title", [None, "Session titles"])
 def test_helper_forwards_current_title_to_final_hermetic_prompt(monkeypatch, provider, current_title):
