@@ -15,6 +15,7 @@ from watchfiles import Change
 
 from twicc import search, title_auto_task
 from twicc.agent.base_agent import BaseAgent
+from twicc.agent.base_manager import BaseAgentManager
 from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Project, Session, SessionItem, SessionType
@@ -36,7 +37,7 @@ def write_lock_held():
 def requests(monkeypatch):
     recorded = []
 
-    def record(session_id, *, closing=False):
+    def record(session_id, *, closing=False, run=None):
         assert not write_lock_held()
         recorded.append((session_id, closing))
 
@@ -154,11 +155,35 @@ def manager_agent(provider, session, *, ephemeral=False):
 
 
 @pytest.mark.parametrize("provider", list(Provider))
+def test_real_resume_registration_permanently_revokes_previous_final_check(monkeypatch, provider):
+    from twicc.title_ownership import authorize_final_title_check, title_run_is_current
+
+    session = Session.objects.create(id="resume-final", project=Project.objects.create(id="resume-project"),
+                                     provider=provider)
+    manager, old = manager_agent(provider, session)
+    old._set_state(AgentState.DEAD)
+    final = authorize_final_title_check(manager, old)
+    manager._agents.pop(session.id)
+    assert title_run_is_current(final)
+    agent = type(old)(session.id, session.project_id, "/tmp/title-project", AgentSettings())
+    monkeypatch.setattr(agent, "start", AsyncMock())
+    monkeypatch.setattr(manager, "_broadcast_session_updated", AsyncMock())
+    monkeypatch.setattr(manager, "_on_state_change", AsyncMock())
+    monkeypatch.setattr(manager, "_ensure_timeout_monitor_running", lambda: None)
+    run_with_direct_writes(lambda: BaseAgentManager._register_and_start(manager, agent, "Resume", resume=True))
+    assert manager._agents[session.id] is agent
+    assert not title_run_is_current(final)
+    # Even after the replacement ends, the old final authorization stays revoked.
+    manager._agents.pop(session.id)
+    assert not title_run_is_current(final)
+
+
+@pytest.mark.parametrize("provider", list(Provider))
 @pytest.mark.parametrize("reason", [
     "manual", "force", "archived", "shutdown", "startup-failed", "apply-settings", "switch-hybrid",
     "cron_restart_timeout", "timeout_starting", "timeout_user_turn", "timeout_assistant_turn", "cli-exit", None,
 ])
-def test_dead_requests_only_manual_or_force_after_real_manager_cleanup(monkeypatch, requests, provider, reason):
+def test_dead_requests_only_deliberate_stop_after_real_manager_cleanup(monkeypatch, requests, provider, reason):
     session = Session.objects.create(id="closing", project=Project.objects.create(id="close-project"), provider=provider)
     manager, agent = manager_agent(provider, session)
     now = timezone.now()
@@ -170,10 +195,11 @@ def test_dead_requests_only_manual_or_force_after_real_manager_cleanup(monkeypat
     agent.kill_reason = reason
     recorded = []
 
-    def record(session_id, *, closing=False):
+    def record(session_id, *, closing=False, run=None):
         assert not write_lock_held()
         assert session_id not in manager._agents
         assert agent.process_run is None
+        assert run is not None and run.agent is agent and run.final
         recorded.append((session_id, closing))
 
     monkeypatch.setattr(title_auto_task, "request_title_check", record)
@@ -182,7 +208,7 @@ def test_dead_requests_only_manual_or_force_after_real_manager_cleanup(monkeypat
     session.refresh_from_db()
     assert session.last_stopped_at is not None
     assert not ProcessRun.objects.filter(session_id=session.id).exists()
-    assert recorded == ([(session.id, True)] if reason in {"manual", "force"} else [])
+    assert recorded == ([(session.id, True)] if reason in {"manual", "force", "archived"} else [])
 
 
 @pytest.mark.parametrize("provider", list(Provider))

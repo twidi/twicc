@@ -5,6 +5,7 @@ identity restarts capture instead of accepting an incomparable boundary.
 """
 import os
 
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Literal, NamedTuple
 
@@ -28,6 +29,10 @@ class AcceptedTitle(NamedTuple):
 
 class BoundaryChanged(Exception):
     """Retry preparation outside the admitted write lane."""
+
+
+class TitleAcceptanceRejected(Exception):
+    """The caller's authorization expires before the synchronous commit starts."""
 
 
 _unprepared = object()
@@ -93,6 +98,7 @@ async def capture_title_boundary(session_id):
 async def accept_title_locked(
     session_id: str, title: str, *, source: Literal['auto', 'user'],
     origin: RequestOrigin | None = None, extra_updates: dict | None = None,
+    acceptance_guard: Callable[[], bool] | None = None,
 ) -> AcceptedTitle:
     """Accept within the caller's lane, using its externally captured boundary."""
     updates = dict(extra_updates or {})
@@ -111,6 +117,8 @@ async def accept_title_locked(
             if validation.error:
                 raise ValueError(validation.error)
             canonical = validation.title
+        if acceptance_guard is not None and not acceptance_guard():
+            raise TitleAcceptanceRejected
         with title_publication.title_state_transaction():
             decision = None
             if claude and not session.stale:

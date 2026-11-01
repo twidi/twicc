@@ -38,6 +38,7 @@ from .states import AgentInfo, AgentState
 if TYPE_CHECKING:
     from twicc.core.enums import Provider
     from twicc.core.services.attachments.types import AttachmentContent, AttachmentPlan, PreparedAttachments
+    from twicc.title_ownership import TitleCheckRun
     from twicc.providers.helpers import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class BaseAgentManager:
 
     def __init__(self) -> None:
         self._agents: dict[str, BaseAgent] = {}
+        self._final_title_checks: dict[str, TitleCheckRun] = {}
         self._ephemeral_cleanup_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
         self._broadcast_callback: BroadcastCallback | None = None
@@ -682,6 +684,7 @@ class BaseAgentManager:
         admission = contextlib.nullcontext() if getattr(agent, "ephemeral", False) else storage_admission()
         async with admission:
             self._agents[session_id] = agent
+            self._final_title_checks.pop(session_id, None)
             agent._background_work_callback = self._persist_background_work
             ephemeral_runs.mark_registered(session_id)
             try:
@@ -727,6 +730,13 @@ class BaseAgentManager:
         share the same draft-title bridge (:mod:`twicc.pending_titles`).
         """
         info = agent.get_info()
+        final_title_run = None
+        if (info.state == AgentState.DEAD and not getattr(agent, "ephemeral", False)
+                and agent.kill_reason in {"manual", "force", "archived"}):
+            from twicc.title_ownership import authorize_final_title_check
+
+            # Reserve before the first await. A newer registration revokes it.
+            final_title_run = authorize_final_title_check(self, agent)
         if not getattr(agent, "ephemeral", False):
             await self._persist_process_run_transition(agent, info.state)
         await self._broadcast_info(info)
@@ -748,10 +758,14 @@ class BaseAgentManager:
             if not getattr(agent, "ephemeral", False):
                 await self._update_session_stopped_at(agent)
             self._cleanup_dead(agent)
-            if not getattr(agent, "ephemeral", False) and agent.kill_reason in {"manual", "force"}:
+            if final_title_run is not None:
                 from twicc.title_auto_task import request_title_check
+                from twicc.title_ownership import release_final_title_check, title_run_is_current
 
-                request_title_check(agent.session_id, closing=True)
+                if title_run_is_current(final_title_run):
+                    request_title_check(agent.session_id, closing=True, run=final_title_run)
+                else:
+                    release_final_title_check(final_title_run)
         elif info.state == AgentState.ASSISTANT_TURN:
             # Wake the paused usage sync loops: an agent starting real work may
             # want fresh quota data (e.g. an orchestrator checking usage) even

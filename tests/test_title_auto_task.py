@@ -10,6 +10,9 @@ import pytest
 from tests.test_title_automation import OLD, env, session  # noqa: F401
 from twicc.core.models import Session
 from twicc.providers.compute_work import ComputeWorkState
+from twicc.agent.states import AgentState
+from twicc.core.enums import Provider
+from twicc.title_ownership import authorize_final_title_check
 
 
 @pytest.fixture
@@ -46,6 +49,76 @@ async def stop(task, shutdown=None):
     except asyncio.CancelledError:
         if shutdown is not None:
             raise
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("original_local", [False, True])
+def test_queued_check_cannot_adopt_a_later_agent(runner, env, session, monkeypatch, original_local):
+    if not original_local:
+        env.agents.clear()
+    runner.request_title_check(session.id)
+    env.agents[session.id] = SimpleNamespace(state=AgentState.USER_TURN, ephemeral=False)
+
+    async def scenario():
+        done = asyncio.Event()
+        original = runner.check_session_title
+
+        async def check(*args, **kwargs):
+            await original(*args, **kwargs)
+            done.set()
+
+        monkeypatch.setattr(runner, "check_session_title", check)
+        task = asyncio.create_task(runner.start_title_auto_task(asyncio.Event()))
+        try:
+            await wait(done)
+        finally:
+            await stop(task)
+
+    asyncio.run(scenario())
+    session.refresh_from_db()
+    assert env.calls == env.effects == []
+    assert session.title_check_count == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("provider", list(Provider))
+def test_final_check_runs_once_after_cleanup_and_ignores_external_requests(
+    runner, env, session, monkeypatch, provider,
+):
+    Session.objects.filter(pk=session.pk).update(provider=provider, archived=True)
+    agent = env.agents[session.id]
+    agent.state, agent.session_id, agent.provider = AgentState.DEAD, session.id, provider
+    final = authorize_final_title_check(env.manager, agent)
+    env.agents.pop(session.id)
+    runner.request_title_check(session.id, closing=True, run=final)
+    runner.request_title_check(session.id)  # A late watcher event must not erase the final check.
+    runner.request_title_check(session.id, closing=True)  # Nor may archive teardown erase it.
+
+    async def scenario():
+        done = asyncio.Event()
+        original = runner.check_session_title
+
+        async def check(*args, **kwargs):
+            await original(*args, **kwargs)
+            done.set()
+
+        monkeypatch.setattr(runner, "check_session_title", check)
+        task = asyncio.create_task(runner.start_title_auto_task(asyncio.Event()))
+        try:
+            await wait(done)
+            await turn()
+            assert not env.manager._final_title_checks
+            # Even an explicit replay of the consumed authorization cannot run.
+            done.clear()
+            runner.request_title_check(session.id, closing=True, run=final)
+            await wait(done)
+        finally:
+            await stop(task)
+
+    asyncio.run(scenario())
+    session.refresh_from_db()
+    assert len(env.calls) == 1
+    assert session.title == env.output
 
 
 def test_queued_requests_coalesce_and_survive_prestart(runner, monkeypatch):

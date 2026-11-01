@@ -136,6 +136,10 @@ def test_every_writer_fences_complete_uningested_old_commands(row, monkeypatch, 
             set_pending_title(row.id, 'Chosen')
             await manager._try_flush_pending_title(SimpleNamespace(session_id=row.id, provider=Provider.CLAUDE_CODE), 'Chosen')
         else:
+            from twicc.agent.states import AgentState
+            manager._agents[row.id] = SimpleNamespace(state=AgentState.USER_TURN, ephemeral=False)
+            monkeypatch.setattr('twicc.agent.registry.get_agent_manager_registry',
+                                lambda: SimpleNamespace(get=lambda provider: manager))
             snapshot = await Session.objects.aget(pk=row.id)
             result = await title_automation._apply_check(snapshot, TitleCheckState(1, timezone.now()), title='Chosen',
                                                       now=timezone.now(), closing=False, succeeded=True)

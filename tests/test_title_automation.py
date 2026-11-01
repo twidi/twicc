@@ -80,9 +80,11 @@ def env(monkeypatch):
     # Exercise the real suggestion router, replacing only its provider boundaries.
     monkeypatch.setattr("twicc.core.services.title_suggestion.get_provider_helpers", lambda provider: state.helpers)
     monkeypatch.setattr("twicc.core.services.title_suggestion.is_provider_running", lambda provider: state.running)
-    manager = SimpleNamespace(_agents=state.agents)
+    manager = SimpleNamespace(_agents=state.agents, _final_title_checks={})
+    state.manager = manager
     registry = SimpleNamespace(get=lambda provider: manager)
     monkeypatch.setattr(module, "get_agent_manager_registry", lambda: registry)
+    monkeypatch.setattr("twicc.agent.registry.get_agent_manager_registry", lambda: registry)
     monkeypatch.setattr(module, "read_synced_settings", lambda: settings)
     monkeypatch.setattr(module.timezone, "now", lambda: state.clock)
 
@@ -99,12 +101,14 @@ def env(monkeypatch):
 
 
 @pytest.fixture
-def session():
-    return Session.objects.create(
+def session(env):
+    session = Session.objects.create(
         id="automatic-title", project=Project.objects.create(id="automation-project"),
         provider="claude_code", title="Current", title_origin="auto",
         user_message_count=7, title_check_count=1, title_checked_at=OLD,
     )
+    env.agents[session.id] = SimpleNamespace(state=AgentState.USER_TURN, ephemeral=False)
+    return session
 
 
 def run(env, session, **kwargs):
@@ -117,6 +121,60 @@ def assert_untouched(env, session, count=1, at=OLD):
     assert session.title_checked_at == at
     assert env.effects == []
     assert env.pushes == []
+
+
+@pytest.mark.parametrize("provider", list(Provider))
+def test_external_session_never_generates_or_changes_cadence(env, session, provider):
+    Session.objects.filter(pk=session.pk).update(provider=provider)
+    env.agents.clear()
+    run(env, session)
+    assert_untouched(env, session)
+    env.read.assert_not_called()
+    assert env.calls == []
+
+
+@pytest.mark.parametrize("provider", list(Provider))
+@pytest.mark.parametrize("change", ["stop", "dead", "resume"])
+def test_generation_result_from_previous_agent_is_discarded(env, session, provider, change):
+    Session.objects.filter(pk=session.pk).update(provider=provider)
+    env.agents[session.id] = SimpleNamespace(state=AgentState.USER_TURN, ephemeral=False)
+
+    async def replace_agent():
+        if change == "dead":
+            env.agents[session.id].state = AgentState.DEAD
+            return
+        env.agents.pop(session.id)
+        if change == "resume":
+            env.agents[session.id] = SimpleNamespace(state=AgentState.USER_TURN, ephemeral=False)
+
+    env.generation_hook = replace_agent
+    run(env, session)
+    assert env.calls
+    assert_untouched(env, session)
+
+
+@pytest.mark.parametrize("provider", list(Provider))
+@pytest.mark.parametrize("outcome", ["changed", "kept", "failure", "rebase"])
+def test_agent_stopped_between_snapshot_and_sql_does_not_write(env, session, monkeypatch, provider, outcome):
+    Session.objects.filter(pk=session.pk).update(provider=provider)
+    if outcome == "kept":
+        env.output = "Current"
+    elif outcome == "failure":
+        env.output = None
+    elif outcome == "rebase":
+        Session.objects.filter(pk=session.pk).update(user_message_count=3, title_check_count=8)
+        env.messages = ["Subject"] * 3
+    original = env.module._matching_session
+
+    async def stop_after_snapshot(*args, **kwargs):
+        current = await original(*args, **kwargs)
+        env.agents[session.id].state = AgentState.DEAD
+        return current
+
+    monkeypatch.setattr(env.module, "_matching_session", stop_after_snapshot)
+    run(env, session)
+    assert_untouched(env, session, count=8 if outcome == "rebase" else 1)
+    assert session.title == "Current"
 
 
 @pytest.mark.parametrize("fields", [
@@ -183,10 +241,10 @@ def test_live_hybrid_only_allows_first_check(env, session, agent_state, first):
     Session.objects.filter(pk=session.pk).update(hybrid=True, title_check_count=None if first else 1)
     env.agents[session.id] = SimpleNamespace(is_hybrid=True, state=agent_state)
     run(env, session)
-    allowed = first or agent_state == AgentState.DEAD
+    allowed = first and agent_state != AgentState.DEAD
     assert bool(env.calls) is allowed
     if not allowed:
-        assert_untouched(env, session)
+        assert_untouched(env, session, count=None if first else 1)
         env.read.assert_not_called()
 
 
@@ -371,11 +429,11 @@ def test_conditional_update_zero_rows_is_discarded(env, session, monkeypatch, op
     session.refresh_from_db()
     from django.db.models.query import QuerySet
 
-    async def no_match(self, **kwargs):
+    def no_match(self, **kwargs):
         assert db_writer.get_db_write_lock().locked()
         return 0
 
-    monkeypatch.setattr(QuerySet, "aupdate", no_match)
+    monkeypatch.setattr(QuerySet, "update", no_match)
     if operation == "rebase":
         result = async_to_sync(env.module._apply_rebase)(session, TitleCheckState(0, OLD), closing=False)
         assert result is False

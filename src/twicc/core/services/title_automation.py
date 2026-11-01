@@ -29,6 +29,7 @@ from twicc.title_cadence import (
 )
 from twicc.title_echo import record_automatic_title_push
 from twicc.title_transcript import build_title_source, title_rejection_reasons
+from twicc.title_ownership import run_for_check, title_check_scope, title_run_is_current
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ async def _matching_session(snapshot: Session, *, closing: bool) -> Session | No
     """Recheck under the caller's shared write lock, for every kind of write."""
     current = await Session.objects.filter(pk=snapshot.pk).afirst()
     if (
-        current is None
+        not title_run_is_current(run_for_check(snapshot.id, Provider(snapshot.provider)))
+        or current is None
         or current.title != snapshot.title
         or current.title_origin != snapshot.title_origin
         or not _is_eligible(current, closing=closing)
@@ -82,12 +84,22 @@ def _snapshot_rows(snapshot: Session):
     return Session.objects.filter(pk=snapshot.pk, title=snapshot.title, title_origin=snapshot.title_origin)
 
 
+async def _update_owned_rows(snapshot: Session, **updates) -> int:
+    def persist():
+        # Check in the SQL callback, after dispatch to the database thread.
+        if not title_run_is_current(run_for_check(snapshot.id, Provider(snapshot.provider))):
+            return 0
+        return _snapshot_rows(snapshot).update(**updates)
+
+    return await sync_to_async(persist)()
+
+
 async def _apply_rebase(snapshot: Session, state: TitleCheckState, *, closing: bool) -> bool:
     """Persist only a lower count, without consuming an attempt or a user choice."""
     async def apply():
         if await _matching_session(snapshot, closing=closing) is None:
             return False
-        return bool(await _snapshot_rows(snapshot).aupdate(title_check_count=state.count))
+        return bool(await _update_owned_rows(snapshot, title_check_count=state.count))
 
     return await run_under_db_write_lock(apply)
 
@@ -115,12 +127,15 @@ async def _apply_check(
                 updates.update(title=title, title_origin="auto")
                 result = "changed"
         if succeeded and result == "changed" and snapshot.provider == Provider.CLAUDE_CODE:
-            from twicc.core.services.session_titles import accept_title_locked
-            accepted = await accept_title_locked(snapshot.id, title, source="auto", extra_updates={
-                key: value for key, value in updates.items() if key in {"title_check_count", "title_checked_at"}
-            })
+            from twicc.core.services.session_titles import accept_title_locked, TitleAcceptanceRejected
+            try:
+                accepted = await accept_title_locked(snapshot.id, title, source="auto", extra_updates={
+                    key: value for key, value in updates.items() if key in {"title_check_count", "title_checked_at"}
+                }, acceptance_guard=lambda: title_run_is_current(run_for_check(snapshot.id)))
+            except TitleAcceptanceRejected:
+                return "discarded"
             return "changed" if accepted.changed else "kept"
-        if not await _snapshot_rows(snapshot).aupdate(**updates):
+        if not await _update_owned_rows(snapshot, **updates):
             return "discarded"
         if result == "changed":
             await asyncio.to_thread(record_title_change, snapshot.id, title, source="auto", old=snapshot.title)
@@ -152,13 +167,16 @@ async def _publish_change(session: Session, title: str) -> None:
         return
     try:
         helpers = get_provider_helpers(Provider(session.provider))
+        if not title_run_is_current(run_for_check(session.id, Provider(session.provider))):
+            return
         await helpers.rename_session(session.id, title)
     except Exception:
         logger.exception("Automatic title rename failed for %s", session.id)
         return
     try:
         current = await Session.objects.filter(pk=session.pk).afirst()
-        if current is not None and current.title is not None and current.title != title:
+        if (current is not None and current.title is not None and current.title != title
+                and title_run_is_current(run_for_check(session.id, Provider(session.provider)))):
             # One corrective push only. Further user writeback races remain the
             # existing provider contract; this is not a new writeback queue.
             await helpers.rename_session(session.id, current.title)
@@ -168,6 +186,14 @@ async def _publish_change(session: Session, title: str) -> None:
 
 async def check_session_title(session_id: str, *, closing: bool = False) -> None:
     """Evaluate one request at execution time, without scheduling a retry timer."""
+    run = run_for_check(session_id)
+    if not title_run_is_current(run) or run.session_id != session_id or (run.final and not closing):
+        return
+    with title_check_scope(run):
+        await _check_owned_session_title(session_id, closing=closing)
+
+
+async def _check_owned_session_title(session_id: str, *, closing: bool) -> None:
     settings = read_synced_settings()
     if not settings["titleGenerationEnabled"] or not settings["titleAutoApply"]:
         return
@@ -197,6 +223,8 @@ async def check_session_title(session_id: str, *, closing: bool = False) -> None
         return
 
     title = None
+    if not title_run_is_current(run_for_check(session_id)):
+        return
     try:
         suggestion = await suggest_title(
             build_title_source(relevant_messages), system_prompt, provider,
