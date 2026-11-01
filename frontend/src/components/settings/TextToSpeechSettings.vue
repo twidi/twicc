@@ -405,7 +405,7 @@ function answerNo(id) {
             then restart TwiCC. Testing OpenRouter configs is disabled until then.
         </wa-callout>
 
-        <div class="setting-group">
+        <div class="setting-group tts-adapt-group">
             <span class="setting-group-label">Adapt the text for speech</span>
             <div class="tts-format-row">
                 <SegmentedControl
@@ -854,7 +854,13 @@ function answerNo(id) {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-s);
-    /* A narrow card (a phone) tightens its segmented controls, see .tts-format-row. */
+    /* A narrow card (a phone) tightens its segmented controls, see .tts-format-row. The
+       adaptation group is the other container (.tts-adapt-group). */
+    container-type: inline-size;
+}
+
+/* Its own container: on a phone the adaptation segments tighten as a card's do. */
+.tts-adapt-group {
     container-type: inline-size;
 }
 

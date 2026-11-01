@@ -173,6 +173,10 @@ test('the text adaptation choice sits after the introduction, before the test te
     assert.ok(intro !== -1 && adapt > intro, 'the control follows the introduction')
     assert.ok(adapt < template.indexOf('for="tts-test-text"'), 'the control comes before the test text')
     assert.ok(adapt < template.indexOf('<div class="tts-configs">'), 'the control comes before the configs')
+    // Its own container: the narrow-width rule of the segmented controls applies to it too.
+    assert.match(flatSource, /<div class="setting-group tts-adapt-group"> <span class="setting-group-label">Adapt the text for speech<\/span>/)
+    assert.match(settingsSource, /\.tts-adapt-group \{\s*container-type: inline-size;\s*\}/)
+    assert.match(settingsSource, /@container \(max-width: 26rem\) \{\s*\.tts-format-row > \.segmented-control \{/)
     assert.match(
         flatSource,
         /<div class="tts-format-row"> <SegmentedControl label="Adapt the text for speech" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
