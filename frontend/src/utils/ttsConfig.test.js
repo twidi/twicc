@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
     SPEECH_FIELDS,
     SCRIPT_FIELDS,
@@ -38,6 +39,7 @@ import {
     formatAfterModelChange,
     ttsStreamingNote,
     ADAPT_PROVIDERS,
+    ADAPT_PROVIDER_LABELS,
     effectiveAdapt,
     adaptOptions,
     ttsAdaptationFacts,
@@ -531,6 +533,16 @@ test('stats and facts of an unpriced run have no cost part', () => {
 
 test('each adaptation engine runs on its provider', () => {
     assert.deepEqual(ADAPT_PROVIDERS, { haiku: 'claude_code', luna: 'codex' })
+})
+
+test('the provider labels of the disabled options match the providers own labels', () => {
+    // Read as text: the providers' helpers do not load under node --test.
+    for (const provider of Object.values(ADAPT_PROVIDERS)) {
+        const source = readFileSync(new URL(`../providers/${provider}/helpers.js`, import.meta.url), 'utf8')
+        const label = source.match(/static label = '([^']+)'/)?.[1]
+        assert.ok(label, `${provider} declares a static label`)
+        assert.equal(ADAPT_PROVIDER_LABELS[provider], label)
+    }
 })
 
 test('effectiveAdapt: no stored choice takes the first enabled provider, Claude then Codex', () => {

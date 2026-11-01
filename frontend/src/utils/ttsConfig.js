@@ -348,7 +348,7 @@ export const ADAPT_PROVIDERS = Object.freeze({ haiku: PROVIDER.CLAUDE_CODE, luna
 const ADAPT_CHOICES = new Set(['haiku', 'luna', 'off'])
 
 // The provider labels of the disabled-option titles (providers/*/helpers.js `static label`).
-const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
+export const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
 
 const ADAPT_REASON_TEXTS = {
     off: 'the option is off',
