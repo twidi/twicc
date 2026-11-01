@@ -235,6 +235,28 @@ class TitleSyncCoordinator:
             )
             return True
 
+    def cancel_dispatch_before_delivery(self, decision: TitleDecision) -> ObservationResult:
+        """Release an exact dispatch only when its caller proves no I/O attempt.
+
+        This is not a failed ACK. The publication worker must call it only
+        before permitting a hybrid paste or attempting an SDK control request.
+        Once delivery is possible, use acknowledge instead and retain hazards.
+        """
+        with self._lock:
+            states = self._states_for_write()
+            state = states.get(decision.session_id, _Session())
+            if state.process_token != decision.process_token or state.inflight != decision:
+                return ObservationResult()
+            if state.dispatch is not None and (
+                state.dispatch.decision != decision or state.dispatch.acknowledged
+            ):
+                return ObservationResult()
+            states[decision.session_id] = state._replace(
+                dispatch=None, inflight=None, hazard=False, evidence=(),
+                phase="queued" if state.decision else "superseded",
+            )
+            return ObservationResult(replay=(state.replay,) if state.replay else ())
+
     def bind_initial_source(self, decision: TitleDecision, first_cursor: SourceCursor) -> bool:
         with self._lock:
             states = self._states_for_write()

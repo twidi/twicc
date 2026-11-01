@@ -4,6 +4,8 @@ The hooks are the integration boundary with the database application lane.
 ``prepare_dispatch`` scans/ingests the complete transcript outside that lane,
 then revalidates both identities and stages ``start_dispatch`` inside it.
 ``acknowledge`` applies the coordinator result in that same transactional lane.
+``cancel_dispatch_before_delivery`` releases a prepared dispatch in that lane
+only when the worker prevents every transport attempt.
 ``finish_process`` drains the final transcript before staged process retirement.
 None of these hooks may retain a database lock when they return.
 """
@@ -34,6 +36,7 @@ class PublicationHooks(NamedTuple):
     prepare_dispatch: Callable[[TitleDecision, ActiveTitleProcess], Awaitable[bool]]
     ingest_available: Callable[[str], Awaitable[SourceCursor | None]]
     acknowledge: Callable[[TitleDecision, bool, SourceCursor | None], Awaitable[None]]
+    cancel_dispatch_before_delivery: Callable[[TitleDecision], Awaitable[None]]
     finish_process: Callable[[str, str], Awaitable[None]]
     reconcile_inactive: Callable[[str], Awaitable[None]]
 
@@ -132,11 +135,17 @@ class TitlePublicationWorker:
                     continue
                 self._queued.pop(sid, None)
                 if process is None:
-                    async with self.process_publication_reservation(sid):
-                        if self.hooks.resolve_process(sid) is None:
-                            await self.hooks.reconcile_inactive(sid)
-                            if self._queued.get(sid) == decision:
-                                self._queued.pop(sid, None)
+                    try:
+                        async with self.process_publication_reservation(sid):
+                            if self.hooks.resolve_process(sid) is None:
+                                await self.hooks.reconcile_inactive(sid)
+                    except Exception:
+                        logger.exception("Inactive Claude title publication failed for %s", sid)
+                    finally:
+                        # A duplicate notification cannot retry this write. A
+                        # newer decision keeps its own queued publication.
+                        if self._queued.get(sid) == decision:
+                            self._queued.pop(sid, None)
                     continue
                 if not self._current(decision, process):
                     continue
@@ -158,13 +167,15 @@ class TitlePublicationWorker:
         sid = decision.session_id
         if process.hybrid:
             started = False
+            paste_permitted = False
 
             async def before_paste():
-                nonlocal started
+                nonlocal started, paste_permitted
                 if not self._current(decision, process):
                     return False
                 started = await self.hooks.prepare_dispatch(decision, process)
-                return started and self._current(decision, process)
+                paste_permitted = started and self._current(decision, process)
+                return paste_permitted
 
             success = False
             try:
@@ -174,8 +185,11 @@ class TitlePublicationWorker:
                 pass
             finally:
                 if started and not self._closed:
-                    boundary = await self.hooks.ingest_available(sid)
-                    await self.hooks.acknowledge(decision, success, boundary)
+                    if not paste_permitted:
+                        await self.hooks.cancel_dispatch_before_delivery(decision)
+                    else:
+                        boundary = await self.hooks.ingest_available(sid)
+                        await self.hooks.acknowledge(decision, success, boundary)
             return
 
         budget = self._sdk_budgets.get(sid)
@@ -190,6 +204,7 @@ class TitlePublicationWorker:
             if remaining <= 0 or not await self.hooks.prepare_dispatch(decision, process):
                 return
             success = False
+            attempted = False
             try:
                 remaining = budget.deadline - self._loop.time()
                 if remaining <= 0 or not self._current(decision, process):
@@ -198,14 +213,18 @@ class TitlePublicationWorker:
                 self._sdk_budgets[sid] = budget
                 timeout = min(self.SDK_REQUEST_TIMEOUT, remaining)
                 async with asyncio.timeout(timeout):
+                    attempted = True
                     await rename_running_session(process.agent._client, sid, decision.title, timeout=timeout)
                 success = True
             except (TitleControlError, TimeoutError):
                 pass
             finally:
                 if not self._closed:
-                    boundary = await self.hooks.ingest_available(sid)
-                    await self.hooks.acknowledge(decision, success, boundary)
+                    if not attempted:
+                        await self.hooks.cancel_dispatch_before_delivery(decision)
+                    else:
+                        boundary = await self.hooks.ingest_available(sid)
+                        await self.hooks.acknowledge(decision, success, boundary)
             if success:
                 # A successful control ACK is never retried because ingestion
                 # can lag. Task4 confirms only on admissible transcript evidence.

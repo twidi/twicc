@@ -32,6 +32,7 @@ class Harness:
             prepare_dispatch=self.prepare,
             ingest_available=self.ingest,
             acknowledge=self.acknowledge,
+            cancel_dispatch_before_delivery=self.cancel_dispatch_before_delivery,
             finish_process=self.finish,
             reconcile_inactive=self.inactive,
         ))
@@ -55,6 +56,11 @@ class Harness:
     async def acknowledge(self, decision, success, boundary):
         with self.coordinator.staged_state() as stage:
             self.coordinator.acknowledge(decision, success=success, boundary=boundary)
+            stage.commit()
+
+    async def cancel_dispatch_before_delivery(self, decision):
+        with self.coordinator.staged_state() as stage:
+            self.coordinator.cancel_dispatch_before_delivery(decision)
             stage.commit()
 
     async def finish(self, sid, token):
@@ -333,3 +339,53 @@ async def test_module_wrappers_use_one_configured_worker(monkeypatch):
     await title_publication.finish_process("session", "process")
     await title_publication.close_publications()
     assert h.finished == ["process"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_successor_after_committed_preparation_does_not_inherit_unsent_hazard(monkeypatch):
+    from tests.test_hybrid_title_confirmation import make_agent
+
+    h = Harness(hybrid=True)
+    agent, pasted, sent = make_agent(monkeypatch)
+    agent.TITLE_CONFIRMATION_TIMEOUT = 0
+    h.process = h.process._replace(agent=agent)
+    original = h.worker.hooks.prepare_dispatch
+
+    async def prepare(decision, process):
+        accepted = await original(decision, process)
+        if decision.title == "obsolete":
+            h.worker.request_publication(h.decision("successor"))
+        return accepted
+
+    h.worker.hooks = h.worker.hooks._replace(prepare_dispatch=prepare)
+    h.worker.request_publication(h.decision("obsolete"))
+    assert await h.worker.flush_publications("session", timeout=1)
+    assert sent == ["/rename successor"]
+    assert h.coordinator.current_decision("session").title == "successor"
+    await h.worker.close_publications()
+
+
+@pytest.mark.asyncio
+async def test_inactive_failure_continues_newer_queued_work_without_retrying_old_decision():
+    h = Harness()
+    h.process = None
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    writes = []
+
+    async def reconcile(sid):
+        value = h.coordinator.current_decision(sid).title
+        writes.append(value)
+        if value == "first":
+            entered.set()
+            await release.wait()
+            raise OSError("inactive file write failed")
+
+    h.worker.hooks = h.worker.hooks._replace(reconcile_inactive=reconcile)
+    h.worker.request_publication(h.decision("first"))
+    await entered.wait()
+    h.worker.request_publication(h.decision("latest"))
+    release.set()
+    assert await h.worker.flush_publications("session", timeout=1)
+    assert writes == ["first", "latest"]
+    await h.worker.close_publications()

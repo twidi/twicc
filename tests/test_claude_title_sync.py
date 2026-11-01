@@ -389,3 +389,50 @@ def test_noop_ack_rejects_late_ingested_conflict_before_dispatch_boundary(sync, 
         assert sync.current_decision("s") == decision
         assert sync.observe((title(11, "B"),)).confirmed == (decision.token,)
         stage.commit()
+
+
+def test_certain_non_delivery_releases_only_exact_process_and_dispatch(sync):
+    with sync.staged_state() as stage:
+        first = setup(sync, hybrid=True)
+        successor = sync.accept_decision("s", "successor")
+        sync.cancel_dispatch_before_delivery(first)
+        assert sync.start_dispatch(successor, c(10))
+        # Repeating the old cancellation cannot release the successor hazard.
+        sync.cancel_dispatch_before_delivery(first)
+        next_decision = sync.accept_decision("s", "next")
+        assert not sync.start_dispatch(next_decision, c(10))
+        # A replacement process also rejects cancellation from its predecessor.
+        sync.attach_process("s", "replacement", hybrid=True)
+        replacement = sync.accept_decision("s", "replacement")
+        assert sync.start_dispatch(replacement, c(10))
+        sync.cancel_dispatch_before_delivery(successor)
+        next_replacement = sync.accept_decision("s", "newest")
+        assert not sync.start_dispatch(next_replacement, c(10))
+        stage.commit()
+
+
+def test_certain_non_delivery_is_transactional(sync):
+    with sync.staged_state() as stage:
+        first = setup(sync, hybrid=True)
+        successor = sync.accept_decision("s", "successor")
+        stage.commit()
+    with pytest.raises(RuntimeError, match="rollback"), sync.staged_state():
+        sync.cancel_dispatch_before_delivery(first)
+        assert sync.start_dispatch(successor, c(10))
+        raise RuntimeError("rollback")
+    with sync.staged_state() as stage:
+        assert not sync.start_dispatch(successor, c(10))
+        sync.cancel_dispatch_before_delivery(first)
+        assert sync.start_dispatch(successor, c(10))
+        stage.commit()
+
+
+@pytest.mark.parametrize("success", [False, True])
+def test_certain_non_delivery_cannot_cancel_an_already_acknowledged_hybrid_attempt(sync, success):
+    with sync.staged_state() as stage:
+        first = setup(sync, hybrid=True)
+        sync.acknowledge(first, success=success, boundary=c(10))
+        sync.cancel_dispatch_before_delivery(first)
+        successor = sync.accept_decision("s", "successor")
+        assert not sync.start_dispatch(successor, c(10))
+        stage.commit()
