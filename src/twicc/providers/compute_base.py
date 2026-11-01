@@ -2021,7 +2021,9 @@ class BaseSessionCompute:
     def _should_skip_title_echo(target_session_id: str, title: str) -> bool:
         from twicc.title_echo import should_skip_automatic_title_echo
 
-        current = Session.objects.filter(id=target_session_id).values('title', 'title_origin').first()
+        current = Session.objects.filter(id=target_session_id).values('title', 'title_origin', 'provider').first()
+        if current and current.pop('provider') == 'claude_code':
+            return False
         return bool(current and should_skip_automatic_title_echo(target_session_id, title, **current))
 
     @staticmethod

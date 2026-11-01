@@ -17,6 +17,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import Context
 from threading import Lock
 from typing import Any, NamedTuple
 
@@ -73,6 +74,7 @@ class TitlePublicationWorker:
         self._wakes: dict[str, asyncio.Event] = {}
         self._reservations: dict[str, asyncio.Lock] = {}
         self._closed = False
+        self._retiring: set[str] = set()
         self._ingress_lock = Lock()
         self._ingress: deque[tuple[Callable, tuple]] = deque()
 
@@ -112,7 +114,7 @@ class TitlePublicationWorker:
         if not self._on_owner_loop():
             self._enqueue_ingress(self.request_publication, decision)
             return
-        if self._closed:
+        if self._closed or decision.session_id in self._retiring:
             return
         sid = decision.session_id
         if self.coordinator.current_decision(sid) != decision:
@@ -120,7 +122,7 @@ class TitlePublicationWorker:
         self._queued[sid] = decision
         self._wakes.setdefault(sid, asyncio.Event()).set()
         if sid not in self._tasks:
-            self._tasks[sid] = asyncio.create_task(self._run(sid), name=f"claude-title-{sid}")
+            self._tasks[sid] = asyncio.create_task(self._run(sid), name=f"claude-title-{sid}", context=Context())
 
     def notify_process_ready(self, session_id: str, process_token: str) -> None:
         if not self._on_owner_loop():
@@ -281,7 +283,17 @@ class TitlePublicationWorker:
     async def finish_process(self, session_id: str, process_token: str) -> None:
         # The manager calls this only after confirmed process death. The hook
         # drains the complete suffix and retires this exact process token.
+        if self.coordinator.process_token(session_id) != process_token:
+            return
+        self._retiring.add(session_id)
+        self._queued.pop(session_id, None)
+        task = self._tasks.get(session_id)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        # The transport no longer executes provider I/O before the final drain.
         await self.hooks.finish_process(session_id, process_token)
+        self._retiring.discard(session_id)
         self._wakes.setdefault(session_id, asyncio.Event()).set()
         decision = self.coordinator.current_decision(session_id)
         if decision is not None:
@@ -310,7 +322,11 @@ def configure_publications(coordinator: TitleSyncCoordinator, hooks: Publication
     global _worker
     if _worker is not None and not _worker._closed:
         raise RuntimeError("Claude title publications are already configured")
+    previous = _worker
     _worker = TitlePublicationWorker(coordinator, hooks)
+    if previous is not None and previous._loop is _worker._loop:
+        # Hot provider restart cannot bypass an older inactive I/O reservation.
+        _worker._reservations = previous._reservations
     return _worker
 
 
@@ -399,10 +415,14 @@ def protect_claude_acceptance_boundary_locked(
 
 def attach_claude_process_locked(
     session_id: str, process_token: str, *, hybrid: bool, baseline: TitleObservation | None = None,
+    initial_transcript_absent: bool = False,
 ) -> None:
     """Attach only after draining the existing complete transcript, before acceptance."""
     from twicc.core.models import Session
 
+    if initial_transcript_absent:
+        get_title_coordinator().attach_process(session_id, process_token, hybrid=hybrid)
+        return
     session = Session.objects.get(pk=session_id)
     if session.storage_incarnation is None:
         from twicc.core.content_storage.extraction import initialize_compute_session
@@ -441,16 +461,15 @@ def apply_claude_observations_locked(records: tuple[TitleObservation, ...]) -> t
 
     records = _current_observations(_restore_observations(records))
     coordinator = get_title_coordinator()
-    managed = tuple(r for r in records if coordinator.manages(r.target_session_id))
+    managed = tuple(r for r in records if coordinator.tracks_observations(r.target_session_id) and r.cursor.source_session_id == r.target_session_id)
     unmanaged = {}
     for record in records:
-        if not coordinator.manages(record.target_session_id) and record.kind == 'title':
+        if record not in managed and not coordinator.manages(record.target_session_id) and record.kind == 'title':
             unmanaged[record.target_session_id] = record.title
     changed = []
     for sid, title in unmanaged.items():
-        if not BaseSessionCompute._should_skip_title_echo(sid, title):
-            if BaseSessionCompute._write_provider_title(sid, title):
-                changed.append(sid)
+        if BaseSessionCompute._write_provider_title(sid, title):
+            changed.append(sid)
     for record in managed:
         decision = coordinator.current_decision(record.target_session_id)
         if decision is not None:
@@ -475,8 +494,12 @@ def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[s
     replayed = {}
     def write_applied(current):
         for record in current.apply:
-            if record.title is not None and BaseSessionCompute._write_provider_title(record.target_session_id, record.title):
-                changed[record.target_session_id] = None
+            if record.title is not None:
+                from django.db import transaction
+                from twicc.pending_titles import pop_pending_title
+                transaction.on_commit(lambda sid=record.target_session_id: pop_pending_title(sid))
+                if BaseSessionCompute._write_provider_title(record.target_session_id, record.title):
+                    changed[record.target_session_id] = None
     while pending:
         current = pending.popleft()
         write_applied(current)

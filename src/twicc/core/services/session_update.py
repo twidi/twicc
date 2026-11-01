@@ -68,7 +68,7 @@ from django.utils import timezone
 from twicc.core.enums import Provider
 from twicc.core.models import TimelineKind
 from twicc.core.services.session_timeline import (
-    EventSpec, project_id_of, record_event_sync, record_events_bulk_sync, record_title_change,
+    EventSpec, project_id_of, record_event_sync, record_events_bulk_sync,
 )
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
@@ -442,20 +442,10 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
         ])
     title = validation.title
 
-    # --- DB write under the write lock ---------------------------------
-    # Confirming unchanged text also validates the title as a user choice.
-    old_title, old_origin = session.title, session.title_origin
-    session.title = title
+    from twicc.core.services.session_titles import accept_explicit_title
+    accepted = await accept_explicit_title(session_id, title)
+    session.title = accepted.title
     session.title_origin = "user"
-
-    async def _save_title() -> None:
-        await session.asave(update_fields=["title", "title_origin"])
-        if title != old_title:
-            await asyncio.to_thread(
-                record_title_change, session.id, title, source="user", old=old_title, old_origin=old_origin,
-            )
-
-    await run_under_db_write_lock(_save_title)
 
     # --- search reindex (non-critical) ---------------------------------
     # The title is part of the full-text search document; if reindex fails,
@@ -471,12 +461,10 @@ async def update_session_title_from_payload(payload: dict) -> UpdateSessionResul
             )
 
     # --- provider rename (non-critical) --------------------------------
-    # Claude Code appends a ``custom-title`` JSONL entry and protects it
-    # against stale CLI re-appends; Codex calls ``thread/name/set``. The
-    # DB is already updated, so a transient failure here is logged and
-    # the watcher / next resume reconciles.
+    # Claude queues publication during acceptance. Codex retains its
+    # thread/name/set call after the database write.
     # A stale session has no conversation file left: the title stays local.
-    if not session.stale:
+    if not session.stale and provider != Provider.CLAUDE_CODE:
         try:
             await helpers.rename_session(session_id, title)
         except Exception:

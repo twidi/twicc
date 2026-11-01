@@ -114,12 +114,21 @@ async def _apply_check(
             else:
                 updates.update(title=title, title_origin="auto")
                 result = "changed"
+        if succeeded and result == "changed" and snapshot.provider == Provider.CLAUDE_CODE:
+            from twicc.core.services.session_titles import accept_title_locked
+            accepted = await accept_title_locked(snapshot.id, title, source="auto", extra_updates={
+                key: value for key, value in updates.items() if key in {"title_check_count", "title_checked_at"}
+            })
+            return "changed" if accepted.changed else "kept"
         if not await _snapshot_rows(snapshot).aupdate(**updates):
             return "discarded"
         if result == "changed":
             await asyncio.to_thread(record_title_change, snapshot.id, title, source="auto", old=snapshot.title)
         return result
 
+    if snapshot.provider == Provider.CLAUDE_CODE:
+        from twicc.core.services.session_titles import with_title_boundary
+        return await with_title_boundary(snapshot.id, lambda: run_under_db_write_lock(apply))
     return await run_under_db_write_lock(apply)
 
 
@@ -127,7 +136,8 @@ async def _publish_change(session: Session, title: str) -> None:
     """Complete all post-commit work before releasing the runner's session slot."""
     # The provider may write successfully before raising. Keep this record even
     # on failure, and never replace it with the corrective (user) title below.
-    record_automatic_title_push(session.id, title)
+    if session.provider != Provider.CLAUDE_CODE:
+        record_automatic_title_push(session.id, title)
     try:
         await broadcast_session_updated(session.id)
     except Exception:
@@ -138,6 +148,8 @@ async def _publish_change(session: Session, title: str) -> None:
             await task
     except Exception:
         logger.exception("Automatic title reindex failed for %s", session.id)
+    if session.provider == Provider.CLAUDE_CODE:
+        return
     try:
         helpers = get_provider_helpers(Provider(session.provider))
         await helpers.rename_session(session.id, title)

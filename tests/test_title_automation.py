@@ -67,6 +67,15 @@ def env(monkeypatch):
         assert isinstance(provider, Provider)
         return state.helpers
 
+    from twicc.providers.claude_code import title_publication
+    from twicc.providers.claude_code.title_sync import TitleSyncCoordinator
+    monkeypatch.setattr(title_publication, '_coordinator', TitleSyncCoordinator())
+    monkeypatch.setattr(title_publication, '_worker', None)
+    def publication(decision):
+        assert title_publication.get_title_coordinator().current_decision(decision.session_id) == decision
+        state.pushes.append((decision.session_id, decision.title))
+        state.effects.append("publication")
+    monkeypatch.setattr(title_publication, 'request_publication', publication)
     monkeypatch.setattr(module, "get_provider_helpers", session_helpers)
     # Exercise the real suggestion router, replacing only its provider boundaries.
     monkeypatch.setattr("twicc.core.services.title_suggestion.get_provider_helpers", lambda provider: state.helpers)
@@ -198,7 +207,7 @@ def test_eligible_special_cases(env, session, case):
     assert session.title == "Session titles and provider sync"
     assert session.title_origin == "auto"
     assert session.title_check_count == 7
-    assert env.effects == ["broadcast", "reindex", "rename"]
+    assert env.effects == ["publication", "broadcast", "reindex"]
 
 
 @pytest.mark.parametrize("first", [True, False])
@@ -223,7 +232,7 @@ def test_kept_is_trimmed_exact_comparison(env, session, output, changed):
     assert session.title_check_count == 7
     assert session.title_checked_at == NOW
     assert len(env.pushes) == int(changed)
-    assert env.effects == (["broadcast", "reindex", "rename"] if changed else [])
+    assert env.effects == (["publication", "broadcast", "reindex"] if changed else [])
 
 
 @pytest.mark.parametrize("failure", ["none", "exception", "timeout", "guard", "rejected", "provider-validation",
@@ -358,6 +367,8 @@ def test_concurrent_changes_discard_all_writes(env, session, monkeypatch, outcom
 
 @pytest.mark.parametrize("operation", ["success", "failure", "rebase"])
 def test_conditional_update_zero_rows_is_discarded(env, session, monkeypatch, operation):
+    Session.objects.filter(pk=session.pk).update(provider=Provider.CODEX)
+    session.refresh_from_db()
     from django.db.models.query import QuerySet
 
     async def no_match(self, **kwargs):
@@ -380,6 +391,8 @@ def test_conditional_update_zero_rows_is_discarded(env, session, monkeypatch, op
 @pytest.mark.parametrize("rename_fails", [True, False])
 @pytest.mark.parametrize("changed_during_push", [True, False])
 def test_echo_and_corrective_push(env, session, rename_fails, changed_during_push, caplog):
+    # Generic Codex echo and corrective-push behavior stays unchanged.
+    Session.objects.filter(pk=session.pk).update(provider=Provider.CODEX)
     async def scenario():
         entered, release, correction_entered, correction_release = (asyncio.Event() for _ in range(4))
 
@@ -435,6 +448,7 @@ def test_effect_failure_is_logged_without_rolling_back(env, session, monkeypatch
     elif effect == "reindex-task":
         monkeypatch.setattr(env.module, "request_session_reindex", lambda sid: asyncio.create_task(fail()))
     else:
+        Session.objects.filter(pk=session.pk).update(provider=Provider.CODEX)
         async def rename_hook(number):
             if number == 1:
                 await db_writer.run_under_db_write_lock(

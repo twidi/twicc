@@ -1340,6 +1340,9 @@ class ClaudeCodeAgent(BaseAgent):
             # always uses streaming mode for the control protocol. We must connect()
             # first, then query() to send messages.
             await self._client.connect()
+            callback = getattr(self, '_on_title_ready', None)
+            if callback is not None:
+                await callback(self)
 
             # Route MCP elicitations (control requests the Python SDK does not
             # know) to our pending-request pipeline. Must come after connect()

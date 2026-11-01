@@ -243,7 +243,6 @@ def test_legacy_cursorless_entry_cannot_bypass_managed_observer(managed, monkeyp
     from twicc.providers.claude_code.compute import get_compute
     correction = []
     monkeypatch.setattr(titles, 'rename_session_in_jsonl', lambda *args: correction.append(args))
-    titles.protect_title('s', 'B')
     assert get_compute().apply_session_title('s', 'A') is False
     assert Session.objects.get(pk='s').title == 'B'
     assert correction == []

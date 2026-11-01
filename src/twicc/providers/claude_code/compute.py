@@ -2839,26 +2839,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         # Cursorless legacy callers cannot bypass ordered managed acceptance.
         if get_title_coordinator().manages(target_session_id):
             return False
-        # Claude Code title persistence is gated by anti-stale-write
-        # protection: the CLI may re-append the previous title from its
-        # tail-scan after we updated it, and we must refuse those.
-        from .titles import check_protected_title, rename_session_in_jsonl
-
-        # Consume automatic echoes before protection can append a correction.
-        if self._should_skip_title_echo(target_session_id, title):
-            return False
-        result = check_protected_title(target_session_id, title)
-        if result.should_apply:
-            return self._write_provider_title(target_session_id, title)
-        if result.correction:
-            # CLI wrote a stale title — re-write the correct one.
-            # This places the correct title at the end of the JSONL,
-            # so the CLI's next tail-scan will absorb it.
-            try:
-                rename_session_in_jsonl(target_session_id, result.correction)
-            except Exception:
-                pass  # Will retry on next stale entry
-        return False
+        return self._write_provider_title(target_session_id, title)
 
     # ------------------------------------------------------------------
     # Live (watcher) machinery

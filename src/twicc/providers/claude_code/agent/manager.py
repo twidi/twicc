@@ -146,6 +146,235 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # ends (see ``_after_background_work_change``); cancelled at shutdown.
         self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
 
+    def _ensure_title_publications(self):
+        """Configure the shared worker on the manager event loop."""
+        from twicc.providers.claude_code import title_publication
+        worker = title_publication._worker
+        if worker is not None and not worker._closed:
+            return worker
+        return title_publication.configure_publications(
+            title_publication.get_title_coordinator(), title_publication.PublicationHooks(
+                self._resolve_title_process, self._prepare_title_dispatch, self._ingest_title_available,
+                self._acknowledge_title, self._cancel_title_dispatch,
+                self._finish_title_process, self._reconcile_inactive_title,
+            ),
+        )
+
+    def _resolve_title_process(self, session_id):
+        from twicc.providers.claude_code.title_publication import ActiveTitleProcess
+        agent = getattr(self, '_title_processes', {}).get(session_id)
+        if agent is None:
+            return None
+        return ActiveTitleProcess(agent._title_process_token, agent, agent._title_ready,
+                                  getattr(agent, 'is_hybrid', False))
+
+    async def _title_lane(self, operation):
+        from asgiref.sync import sync_to_async
+        from twicc.providers.claude_code.title_publication import title_state_transaction
+        def mutate():
+            with title_state_transaction():
+                return operation()
+        return await run_under_db_write_lock(lambda: sync_to_async(mutate)())
+
+    async def _ingest_title_available(self, session_id):
+        from twicc.core.models import Session
+        from twicc.core.services.session_titles import capture_title_boundary
+        from twicc.provider_homes import claude_projects_dir
+        from twicc.providers.claude_code.sessions_watcher import get_watcher
+        row = await Session.objects.filter(pk=session_id).values('file_path', 'stale').afirst()
+        if row is None or row['stale']:
+            return None
+        path = claude_projects_dir() / row['file_path']
+        if not await asyncio.to_thread(path.is_file):
+            return None
+        # The watcher's finite drain waits outside the DB lane and applies
+        # through the same ordered live path as ordinary file notifications.
+        await get_watcher().process_path(path)
+        boundary = await capture_title_boundary(session_id)
+        if boundary is not None:
+            current = await Session.objects.filter(pk=session_id).values('last_line', 'storage_incarnation', 'history_epoch').aget()
+            if (current['storage_incarnation'], current['history_epoch']) != boundary[1:3]:
+                raise RuntimeError('Claude source changes during title drain')
+            # A newer suffix can arrive after the finite drain. Fence that
+            # suffix for dispatch; final-stop draining requires full ingestion.
+        return boundary
+
+    async def _prepare_title_dispatch(self, decision, process):
+        from twicc.providers.claude_code.title_publication import get_title_coordinator
+        boundary = await self._ingest_title_available(decision.session_id)
+        def prepare():
+            current = self._resolve_title_process(decision.session_id)
+            if (current is None or current.process_token != process.process_token
+                    or current.agent is not process.agent or not current.ready):
+                return False
+            return get_title_coordinator().start_dispatch(decision, boundary)
+        return await self._title_lane(prepare)
+
+    async def _acknowledge_title(self, decision, success, boundary):
+        from twicc.providers.claude_code.title_publication import acknowledge_claude_title_locked
+        changed = await self._title_lane(lambda: acknowledge_claude_title_locked(decision, success, boundary))
+        for session_id in changed:
+            await self._broadcast_session_updated(session_id)
+
+    async def _cancel_title_dispatch(self, decision):
+        from twicc.providers.claude_code.title_publication import cancel_claude_dispatch_locked
+        changed = await self._title_lane(lambda: cancel_claude_dispatch_locked(decision))
+        for session_id in changed:
+            await self._broadcast_session_updated(session_id)
+
+    async def _attach_title_process(self, agent):
+        from twicc.providers.claude_code.title_publication import attach_claude_process_locked
+        # Seed actual history through the observer before choosing the launch
+        # synchronization value. The DB accepted title is never baseline evidence.
+        boundary = await self._ingest_title_available(agent.session_id)
+        baseline = None
+        if boundary is not None:
+            from asgiref.sync import sync_to_async
+            from twicc.core.content_storage.readers import effective_current, iter_current_items
+            from twicc.core.models import SessionItem
+            import orjson
+            def actual_baseline():
+                from twicc.providers.claude_code.compute import extract_title_observations
+                from twicc.providers.claude_code.title_sync import SourceCursor
+                latest = None
+                rows = SessionItem.objects.filter(session_id=agent.session_id, line_num__lte=boundary.line_num).order_by('line_num')
+                for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                    try:
+                        parsed = orjson.loads(effective_current(item))
+                    except (orjson.JSONDecodeError, TypeError):
+                        continue
+                    for record in extract_title_observations(parsed, SourceCursor(*boundary[:3], item.line_num)):
+                        if record.kind == 'title' and record.target_session_id == agent.session_id:
+                            latest = record
+                return latest
+            baseline = await sync_to_async(actual_baseline)()
+        await self._title_lane(lambda: attach_claude_process_locked(
+            agent.session_id, agent._title_process_token, hybrid=getattr(agent, 'is_hybrid', False),
+            baseline=baseline, initial_transcript_absent=boundary is None,
+        ))
+        if not hasattr(self, '_title_processes'):
+            self._title_processes = {}
+        self._title_processes[agent.session_id] = agent
+
+    async def _title_process_ready(self, agent):
+        from twicc.providers.claude_code.title_publication import get_title_coordinator
+        from twicc.core.models import Session
+        from twicc.core.services.session_titles import accept_explicit_title
+        from twicc.pending_titles import get_pending_title, get_pending_title_origin, pop_pending_title
+        worker = self._ensure_title_publications()
+        current = self._resolve_title_process(agent.session_id)
+        if current is None or current.agent is not agent:
+            return
+        agent._title_ready = True
+        decision = get_title_coordinator().current_decision(agent.session_id)
+        pending = get_pending_title(agent.session_id)
+        if decision is None or decision.process_token != agent._title_process_token:
+            row = await Session.objects.filter(pk=agent.session_id).afirst()
+            title = pending or (row.title if row is not None else None)
+            if title:
+                if row is not None:
+                    # Resume preserves title origin and creates a fresh decision.
+                    if pending:
+                        await accept_explicit_title(agent.session_id, title, origin=get_pending_title_origin(agent.session_id))
+                        pop_pending_title(agent.session_id)
+                    else:
+                        from twicc.core.services.session_titles import accept_title_locked, with_title_boundary
+                        async def accept_launch_title():
+                            current_row = await Session.objects.aget(pk=agent.session_id)
+                            if current_row.title:
+                                return await accept_title_locked(
+                                    agent.session_id, current_row.title,
+                                    source='auto' if current_row.title_origin == 'auto' else 'user')
+                        await with_title_boundary(agent.session_id, lambda: run_under_db_write_lock(accept_launch_title))
+                else:
+                    # Initial storage does not exist. Publish the draft choice
+                    # now; the pending bridge persists it after row creation.
+                    decision = await self._title_lane(lambda: get_title_coordinator().accept_decision(agent.session_id, title))
+                    worker.request_publication(decision)
+        worker.notify_process_ready(agent.session_id, agent._title_process_token)
+        # ACK waits only for transport, never for a future transcript record.
+        await worker.flush_publications(agent.session_id, timeout=worker.SDK_TOTAL_BUDGET if not current.hybrid else 0)
+
+    async def _register_and_start(self, agent, text, resume, **start_kwargs):
+        if getattr(agent, 'ephemeral', False):
+            return await super()._register_and_start(agent, text, resume, **start_kwargs)
+        from uuid import uuid4
+        worker = self._ensure_title_publications()
+        # Launch and adoption cannot overtake an inactive transcript write.
+        async with worker.process_publication_reservation(agent.session_id):
+            if self._resolve_title_process(agent.session_id) is not None:
+                raise RuntimeError('Prior Claude process final drain is incomplete')
+            agent._title_process_token = str(uuid4())
+            agent._title_ready = False
+            agent._on_title_ready = self._title_process_ready
+            await self._attach_title_process(agent)
+        await super()._register_and_start(agent, text, resume, **start_kwargs)
+
+    async def _finish_title_process(self, session_id, process_token):
+        from twicc.core.models import Session
+        from twicc.providers.claude_code.title_publication import get_title_coordinator
+        from twicc.providers.claude_code.title_publication import get_publications
+        worker = get_publications()
+        async with worker.process_publication_reservation(session_id):
+            try:
+                boundary = await self._ingest_title_available(session_id)
+                def retire():
+                    coordinator = get_title_coordinator()
+                    if coordinator.process_token(session_id) != process_token:
+                        return False
+                    if boundary is not None:
+                        row = Session.objects.filter(pk=session_id).first()
+                        if (row is None or (row.storage_incarnation, row.history_epoch) != boundary[1:3]
+                                or row.last_line < boundary.line_num):
+                            raise RuntimeError('Final Claude title drain is incomplete')
+                    coordinator.retire_process(session_id, process_token)
+                    return True
+                if await self._title_lane(retire):
+                    agent = getattr(self, '_title_processes', {}).get(session_id)
+                    if agent is not None and agent._title_process_token == process_token:
+                        self._title_processes.pop(session_id, None)
+            except Exception:
+                # Keep the retiring route. A failed final drain cannot append
+                # an old decision or permit a successor publication.
+                logger.exception('Final Claude title drain failed for %s', session_id)
+                raise
+
+    async def _reconcile_inactive_title(self, session_id):
+        from twicc.providers.claude_code.title_publication import get_title_coordinator
+        from twicc.providers.claude_code.titles import rename_session_in_jsonl
+        coordinator = get_title_coordinator()
+        decision = coordinator.current_decision(session_id)
+        if decision is None or coordinator.manages(session_id):
+            return
+        # Reservation is held by the worker. Drain before selecting the exact
+        # decision so a final external command can supersede pending work.
+        try:
+            await self._ingest_title_available(session_id)
+            if coordinator.current_decision(session_id) != decision or self._resolve_title_process(session_id) is not None:
+                return
+            write = asyncio.create_task(asyncio.to_thread(rename_session_in_jsonl, session_id, decision.title))
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                # Cancellation cannot stop a running executor/subprocess.
+                # Retain the reservation until bounded file I/O terminates.
+                while not write.done():
+                    try:
+                        await asyncio.shield(write)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if write.done() and not write.cancelled():
+                    write.exception()
+                await self._title_lane(lambda: coordinator.complete_inactive(decision, None))
+                raise
+            boundary = await self._ingest_title_available(session_id)
+        except Exception:
+            await self._title_lane(lambda: coordinator.complete_inactive(decision, None))
+            raise
+        await self._title_lane(lambda: coordinator.complete_inactive(decision, boundary))
+
     # ------------------------------------------------------------------
     # Public API (Claude Code–specific signatures)
     # ------------------------------------------------------------------
@@ -614,35 +843,6 @@ class ClaudeCodeAgentManager(BaseAgentManager):
     # Hybrid title application
     # ------------------------------------------------------------------
 
-    async def rename_hybrid_if_live(self, session_id: str, title: str) -> bool:
-        """Paste ``/rename <title>`` into a live hybrid TUI. Returns whether it was issued.
-
-        ``False`` (no live hybrid agent, agent still STARTING — the booting
-        TUI would swallow the paste — or paste failure) tells the caller to
-        fall back to the direct JSONL write.
-        """
-        agent = self._agents.get(session_id)
-        if (
-            agent is None
-            or not getattr(agent, "is_hybrid", False)
-            or agent.state not in (AgentState.ASSISTANT_TURN, AgentState.USER_TURN)
-        ):
-            return False
-        try:
-            await agent.rename(title)
-            logger.info("Pasted /rename into hybrid session %s", session_id)
-            return True
-        except Exception:
-            logger.warning(
-                "Hybrid /rename failed for session %s; falling back to the "
-                "JSONL write", session_id, exc_info=True,
-            )
-            return False
-
-    # ------------------------------------------------------------------
-    # Hybrid signal routing (hooks drop watcher + JSONL bridge)
-    # ------------------------------------------------------------------
-
     async def handle_hybrid_hook(
         self, session_id: str, event: str, payload: dict, nonce: str,
     ) -> HybridHookOutcome:
@@ -809,6 +1009,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         ProcessRuns stay in the DB so ``restart_all_session_crons`` can pick
         them up on the next TwiCC startup.
         """
+        from twicc.providers.claude_code.title_publication import close_publications
+        await close_publications()
         if self._cron_restart_tasks:
             logger.info("Cancelling %d cron restart task(s)", len(self._cron_restart_tasks))
             for session_id in list(self._cron_restart_tasks):
@@ -925,7 +1127,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         Flow: this override sandwiches :meth:`BaseAgentManager._on_state_change`
         between pre-broadcast cron-specific work (old run dedup) and
         post-broadcast / post-DEAD provider hooks (settings hot-reload, title
-        flush, title protection rewrite, cron auto-restart). The base call
+        flush, final title draining, cron auto-restart). The base call
         handles persisting ``state`` + ``last_state_change_at`` on the
         :class:`ProcessRun` row, broadcasting the state change, running
         :meth:`_update_session_stopped_at` on DEAD (overridden above to
@@ -990,6 +1192,20 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             except Exception as e:
                 logger.error("Error purging old process runs for session %s: %s", agent.session_id, e)
 
+        if state == AgentState.DEAD and getattr(agent, '_title_process_token', None):
+            agent._title_ready = False
+            if not getattr(agent, 'is_hybrid', False):
+                # Some SDK error paths report DEAD before transport cleanup.
+                # Confirm process shutdown before taking the final boundary.
+                await agent._shutdown_sdk_client()
+            from twicc.providers.claude_code.title_publication import get_publications
+            worker = get_publications()
+            try:
+                await worker.finish_process(agent.session_id, agent._title_process_token)
+            except Exception:
+                # Retiring ownership remains until a valid final drain exists.
+                pass
+
         # Base: persist ProcessRun state → broadcast → on DEAD: update_session_stopped_at
         # (overridden above) + helper-driven keep-or-delete + _cleanup_dead.
         await super()._on_state_change(agent)
@@ -1004,27 +1220,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             except Exception as e:
                 logger.error("Error applying pending settings for session %s: %s", agent.session_id, e)
 
-        # Pending-title flush on ASSISTANT_TURN is handled by
-        # :meth:`BaseAgentManager._flush_pending_title` (provider-agnostic;
-        # delegates the provider-specific write to
-        # :meth:`ClaudeCodeHelpers.rename_session`, which appends the
-        # custom-title JSONL entry and registers ``protect_title``).
-
-        # Post-DEAD provider hooks: title protection rewrite + cron auto-restart.
+        # The base class flushes pending choices through atomic acceptance.
+        # Final title draining completes above, before registry removal.
+        # Post-DEAD provider hook: cron auto-restart.
         if state == AgentState.DEAD:
-            from twicc.providers.claude_code.titles import clear_protected_title, get_protected_title, rename_session_in_jsonl
-
-            # Re-write the user-set title at the end of the JSONL so the CLI's
-            # tail-scan finds it on the next resume (survives server restarts).
-            protected = get_protected_title(agent.session_id)
-            if protected:
-                try:
-                    await asyncio.to_thread(rename_session_in_jsonl, agent.session_id, protected)
-                except Exception as e:
-                    logger.warning("Failed to re-write title on DEAD for session %s: %s", agent.session_id, e)
-
-            clear_protected_title(agent.session_id)
-
             # Auto-restart crons for deaths nobody asked for.
             # ``agent.process_run is not None`` ⟹ the helper kept the row,
             # which for Claude Code means "this run still has active crons

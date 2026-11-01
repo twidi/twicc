@@ -209,7 +209,7 @@ def build_argv(
     if addendum_path is not None:
         argv += ["--append-system-prompt-file", str(addendum_path)]
     if temp_title:
-        argv += ["-n", temp_title[:100]]
+        argv += ["-n", temp_title]
     return argv
 
 

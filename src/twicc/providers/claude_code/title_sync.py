@@ -194,6 +194,12 @@ class TitleSyncCoordinator:
         with self._lock:
             return self._read(session_id).process_token is not None
 
+    def tracks_observations(self, session_id: str) -> bool:
+        """Keep positional floors without giving inactive sessions blanket protection."""
+        with self._lock:
+            state = self._read(session_id)
+            return state.source is not None or state.decision is not None or state.process_token is not None
+
     def process_token(self, session_id: str) -> str | None:
         with self._lock:
             return self._read(session_id).process_token
@@ -512,3 +518,24 @@ class TitleSyncCoordinator:
                 process_token=None, dispatch=None, inflight=None, hazard=False, evidence=(), commands=(),
             )
             return state.decision
+
+    def complete_inactive(self, decision: TitleDecision, boundary: SourceCursor | None) -> bool:
+        """Clear only this inactive decision; failed writes use the same abandonment.
+
+        The caller holds the process reservation across the write and this
+        transaction. A failed write passes no new boundary, so later provider
+        imports remain authoritative without claiming a publication floor.
+        """
+        with self._lock:
+            states = self._states_for_write()
+            state = states.get(decision.session_id, _Session())
+            if state.process_token is not None or state.decision != decision:
+                return False
+            if boundary is not None and state.source != _source(boundary):
+                return False
+            states[decision.session_id] = state._replace(
+                decision=None, protection=None, dispatch=None, inflight=None,
+                hazard=False, phase="confirmed" if boundary is not None else "failed",
+                floor=max(state.floor, boundary.line_num) if boundary is not None else state.floor,
+            )
+            return True

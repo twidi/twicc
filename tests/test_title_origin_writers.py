@@ -34,6 +34,10 @@ def broadcasts(monkeypatch):
     from twicc import views
     from twicc.providers.claude_code.helpers import ClaudeCodeHelpers
 
+    from twicc.providers.claude_code import title_publication
+    from twicc.providers.claude_code.title_sync import TitleSyncCoordinator
+    monkeypatch.setattr(title_publication, '_coordinator', TitleSyncCoordinator())
+    monkeypatch.setattr(title_publication, '_worker', None)
     channel = SimpleNamespace(group_send=AsyncMock())
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda: channel)
     monkeypatch.setattr(views, "get_channel_layer", lambda: channel)
@@ -80,9 +84,11 @@ def test_pending_flush_validates_title(session, broadcasts):
     manager = SimpleNamespace(
         _broadcast_session_updated=lambda sid: BaseAgentManager._broadcast_session_updated(None, sid),
     )
+    from twicc.pending_titles import set_pending_title
+    set_pending_title(session.id, "Chosen")
     result = run_with_direct_writes(lambda: BaseAgentManager._try_flush_pending_title(
         manager, SimpleNamespace(session_id=session.id, provider=session.provider), "Chosen"))
-    assert result is False  # Provider writeback fails; persistence and notification still succeed.
+    assert result is True  # Claude accepts the DB choice and queues publication independently.
     assert_user_choice(session, broadcasts, "Chosen")
 
 

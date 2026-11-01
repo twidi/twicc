@@ -47,7 +47,6 @@ from .constants import (
     ClaudeCodeModelExtra,
 )
 from .pricing import CLAUDE_FAMILIES, extract_model_info
-from .titles import clear_protected_title, protect_title, rename_session_in_jsonl
 
 # Re-export for callers that historically imported these from
 # ``providers.claude_code.helpers``. The canonical home is now
@@ -848,40 +847,9 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         return canonicalize_claude_title(title)
 
     async def rename_session(self, session_id: str, title: str) -> None:
-        """Append the title to the JSONL and mark it protected against CLI stale re-appends.
-
-        ``protect_title`` runs in a ``finally`` so the protection is
-        registered for a live agent even when the JSONL write fails — the
-        DB row already holds the new title and we still want to block any
-        out-of-date title the CLI might re-append. The current manager entry
-        decides protection after the write; DEAD or missing entries clear
-        older protection before the DEAD handler can read it.
-        ``rename_session_in_jsonl`` does
-        FS I/O (SDK kernel-level atomic append), so it hops to a worker
-        thread; ``protect_title`` is a dict mutation, safe inline.
-
-        Hybrid sessions with a LIVE claude TUI take a different route: a
-        pasted ``/rename`` (the CLI applies it instantly and writes the
-        custom-title lines itself). Writing the JSONL line directly under
-        a live claude would be clobbered by its own state re-appends on
-        exit. Dead/non-hybrid sessions keep the direct write (the CLI
-        reads the line on its next ``--resume`` tail-scan).
-        """
-        import asyncio
-
-        from twicc.agent import AgentState
-        from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
-
-        try:
-            if await get_claude_code_agent_manager().rename_hybrid_if_live(session_id, title):
-                return
-            await asyncio.to_thread(rename_session_in_jsonl, session_id, title)
-        finally:
-            agent = get_claude_code_agent_manager()._agents.get(session_id)
-            if agent is not None and agent.state != AgentState.DEAD:
-                protect_title(session_id, title)
-            else:
-                clear_protected_title(session_id)
+        """Delegate explicit choices to atomic acceptance and queued publication."""
+        from twicc.core.services.session_titles import accept_explicit_title
+        await accept_explicit_title(session_id, title)
 
     # Env vars set by Claude Code (CLI / SDK) that, when inherited by
     # a subprocess, make a fresh ``claude`` invocation think it's

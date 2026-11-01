@@ -25,7 +25,6 @@ SESSION_ID = "00000000-0000-4000-8000-000000000001"
 def no_file_fallback(monkeypatch):
     writer = Mock(side_effect=AssertionError("Active rename must not mutate the transcript"))
     monkeypatch.setattr("twicc.providers.claude_code.titles.rename_session_in_jsonl", writer)
-    monkeypatch.setattr("twicc.providers.claude_code.helpers.rename_session_in_jsonl", writer)
     yield
     writer.assert_not_called()
 

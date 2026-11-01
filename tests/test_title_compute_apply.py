@@ -24,7 +24,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture(autouse=True)
 def clean_guards(monkeypatch):
     monkeypatch.setattr(title_echo, "_automatic_title_echoes", {})
-    monkeypatch.setattr(titles, "_protected_titles", {})
 
 
 @pytest.fixture
@@ -83,35 +82,16 @@ def test_stale_placeholder_cannot_replace_user_title(source, tmp_path, path):
 
 
 @pytest.mark.parametrize("path", ["base", "claude", "full"])
-def test_automatic_echo_consumes_guard_before_protection(source, monkeypatch, path):
+def test_claude_manual_old_title_bypasses_legacy_text_echo_guard(source, path):
     Session.objects.filter(id=source.id).update(title="User choice", title_origin="user")
     title_echo.record_automatic_title_push(source.id, "Automatic")
-    protection = Mock(wraps=titles.check_protected_title)
-    correction = Mock()
-    monkeypatch.setattr(titles, "check_protected_title", protection)
-    monkeypatch.setattr(titles, "rename_session_in_jsonl", correction)
-    titles.protect_title(source.id, "User choice")
-
-    def apply():
-        if path == "full":
-            return BaseSessionCompute.apply_session_complete({"session_id": source.id, "history_facts": [],
-                                                              "provider_titles": {source.id: "Automatic"}})
-        if path == "base":
-            return BaseSessionCompute.apply_session_title(get_compute(), source.id, "Automatic")
-        return get_compute().apply_session_title(source.id, "Automatic")
-
-    result = apply()
-    source.refresh_from_db()
-    assert (source.title, source.title_origin) == ("User choice", "user")
     if path == "full":
-        assert result.title_updated_session_ids == ()
+        BaseSessionCompute.apply_session_complete({"session_id": source.id, "history_facts": [],
+                                                   "provider_titles": {source.id: "Automatic"}})
+    elif path == "base":
+        BaseSessionCompute.apply_session_title(get_compute(), source.id, "Automatic")
     else:
-        assert result is False
-    protection.assert_not_called()
-    correction.assert_not_called()
-    # A later external rename applies once the first matching echo has been consumed.
-    titles._protected_titles.clear()
-    apply()
+        get_compute().apply_session_title(source.id, "Automatic")
     source.refresh_from_db()
     assert (source.title, source.title_origin) == ("Automatic", "user")
 
@@ -212,30 +192,13 @@ def test_other_target_broadcasts_follow_target_visibility(
 
     asyncio.run(scenario())
     target.refresh_from_db()
-    assert (target.title, target.title_origin) == (
-        "Before" if target_state == "echo" else "Provider", "user",
-    )
+    assert (target.title, target.title_origin) == ("Provider", "user")
     updates = [event["session"] for event in events if event["type"] == "session_updated"]
     assert [s["id"] for s in updates].count(source.id) == (0 if source_hidden else 1)
     target_updates = [s for s in updates if s["id"] == target.id]
-    assert len(target_updates) == (1 if target_state == "changed" else 0)
+    assert len(target_updates) == (1 if target_state in {"changed", "echo"} else 0)
     if target_updates:
         assert (target_updates[0]["title"], target_updates[0]["title_origin"]) == ("Provider", "user")
-
-
-def test_protection_rejection_still_consumes_automatic_echo(source, monkeypatch):
-    Session.objects.filter(id=source.id).update(title="Protected", title_origin="auto")
-    title_echo.record_automatic_title_push(source.id, "Automatic")
-    titles.protect_title(source.id, "Protected")
-    correction = Mock()
-    monkeypatch.setattr(titles, "rename_session_in_jsonl", correction)
-    assert get_compute().apply_session_title(source.id, "Automatic") is False
-    source.refresh_from_db()
-    assert (source.title, source.title_origin) == ("Protected", "auto")
-    correction.assert_called_once_with(source.id, "Protected")
-    assert not title_echo.should_skip_automatic_title_echo(
-        source.id, "Automatic", title="Protected", title_origin="user",
-    )
 
 
 def test_full_broadcast_deduplicates_source_ancestor_and_targets(monkeypatch):

@@ -172,6 +172,7 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         / ``asyncio.to_thread`` calls they spawn) are tagged with this
         provider — no per-task ``current_provider.set()`` needed.
         """
+        get_claude_code_agent_manager()._ensure_title_publications()
         self._shutdown_event = shutdown_event
         self.search_index_ready = search_index_ready
 

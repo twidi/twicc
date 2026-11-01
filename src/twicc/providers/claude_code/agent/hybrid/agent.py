@@ -228,6 +228,9 @@ class HybridClaudeAgent(BaseAgent):
                             "home until it exits",
                             self.session_id, self.agent_pid, key, env.get(key), overlay.get(key),
                         )
+            callback = getattr(self, '_on_title_ready', None)
+            if callback is not None:
+                await callback(self)
             self._set_state(AgentState.USER_TURN)
             await self._notify_state_change()
             self._start_liveness_monitor()
@@ -300,6 +303,10 @@ class HybridClaudeAgent(BaseAgent):
             "Hybrid CLI launched for session %s (pid=%s, resume=%s)",
             self.session_id, self.agent_pid, resume,
         )
+        callback = getattr(self, '_on_title_ready', None)
+        if callback is not None:
+            # rename() owns the guarded paste and preserves onboarding waits.
+            await callback(self)
         self._on_delivered = on_delivered
         self._first_paste_task = asyncio.create_task(
             self._first_paste(text, images, documents, content),
@@ -1412,4 +1419,5 @@ class HybridClaudeAgent(BaseAgent):
             )()
         if not title:
             title = " ".join(text.split())
-        return title[:100]
+        validation = canonicalize_claude_title(title[:200])
+        return validation.title or "Session"

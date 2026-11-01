@@ -1,89 +1,29 @@
-"""
-Claude Code title management.
+"""Inactive Claude transcript mutation, owned by the publication worker."""
+import os
+import subprocess
+import sys
 
-Provides a thin wrapper around the Claude Agent SDK's
-``rename_session()`` for writing custom-title entries to JSONL files,
-and the protected-title machinery that blocks stale CLI re-appends
-after a user rename. The cross-provider pending-title buffer lives in
-:mod:`twicc.pending_titles`; the provider-agnostic title validation
-sits on :class:`BaseProviderHelpers`.
-"""
-
-import logging
-from typing import NamedTuple
-
-from claude_agent_sdk import rename_session
-
-logger = logging.getLogger(__name__)
+from .title_control import canonicalize_claude_title
 
 
-class TitleCheck(NamedTuple):
-    """Result of checking a title against protection."""
-    should_apply: bool
-    correction: str | None = None
-
-
-# Titles protected from CLI stale re-appends.
-# Set when the user renames via the API; cleared when the CLI absorbs the
-# correct value or when the process dies.
-_protected_titles: dict[str, str] = {}
+# Keep SDK append/UUID semantics while isolating the runtime provider home.
+_RENAME_SCRIPT = 'from claude_agent_sdk import rename_session; import sys; rename_session(sys.argv[1], sys.argv[2])'
 
 
 def rename_session_in_jsonl(session_id: str, title: str) -> None:
-    """Write a custom-title entry to the session's JSONL file via the SDK.
+    """Run the SDK file helper with the runtime provider's environment.
 
-    Uses the SDK's rename_session() which performs a kernel-level atomic
-    append (O_APPEND + os.write). Safe to call at any time, even while
-    a Claude CLI process is actively writing to the file.
-
-    Silently logs and returns on failure (file not found, etc.) —
-    the DB title is already updated by the caller, and the watcher
-    will eventually sync if the entry is missing.
+    The caller holds the process reservation and verifies process absence.
+    This launches Python only. It does not launch Claude or change the parent
+    process environment. Failures propagate to token-checked abandonment.
     """
-    try:
-        rename_session(session_id, title)
-    except Exception as e:
-        logger.warning("rename_session failed for %s: %s", session_id, e)
-        raise
+    from twicc.provider_homes import provider_env_overlay
 
-
-def protect_title(session_id: str, title: str) -> None:
-    """Mark a title as protected from CLI stale re-appends."""
-    _protected_titles[session_id] = title
-    logger.debug("Protected title for session %s: %s", session_id, title[:50])
-
-
-def get_protected_title(session_id: str) -> str | None:
-    """Get the protected title for a session without removing it."""
-    return _protected_titles.get(session_id)
-
-
-def check_protected_title(session_id: str, incoming_title: str) -> TitleCheck:
-    """Check an incoming custom-title from JSONL against protection.
-
-    Returns:
-        TitleCheck with should_apply=True if the title should be applied to DB,
-        or should_apply=False with correction set to the correct title to re-write.
-    """
-    protected = get_protected_title(session_id)
-    if protected is None:
-        return TitleCheck(should_apply=True)
-
-    if incoming_title == protected:
-        # Correct title — apply it. Don't clear protection: we can't distinguish
-        # our own SDK write from the CLI absorbing the value. Protection is only
-        # cleared on process DEAD (via clear_protected_title).
-        return TitleCheck(should_apply=True)
-
-    # Stale title from CLI — block and return correction
-    logger.info(
-        "Blocked stale title for session %s: %r -> keeping %r",
-        session_id, incoming_title, protected,
+    validation = canonicalize_claude_title(title)
+    if validation.error:
+        raise ValueError(validation.error)
+    subprocess.run(
+        [sys.executable, '-c', _RENAME_SCRIPT, session_id, validation.title],
+        env={**os.environ, **provider_env_overlay()},
+        timeout=10, check=True, capture_output=True,
     )
-    return TitleCheck(should_apply=False, correction=protected)
-
-
-def clear_protected_title(session_id: str) -> None:
-    """Remove title protection for a session (e.g. when the process dies)."""
-    if _protected_titles.pop(session_id, None):
-        logger.debug("Cleared title protection for session %s (process died)", session_id)

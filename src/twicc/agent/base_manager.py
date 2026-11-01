@@ -88,7 +88,7 @@ class BaseAgentManager:
         # threads row from a derived name). Default no-op for providers
         # whose helper :meth:`BaseProviderHelpers.verify_session_title`
         # is not overridden — Claude Code is already covered by its
-        # in-memory ``protect_title`` machinery.
+        # decision publication worker.
         self._pending_title_verify_tasks: dict[str, asyncio.Task[None]] = {}
 
     # ------------------------------------------------------------------
@@ -848,37 +848,43 @@ class BaseAgentManager:
         self._pending_title_retry_tasks[session_id] = task
 
     async def _try_flush_pending_title(self, agent: BaseAgent, pending: str) -> bool:
-        """Single attempt at the two-step pending title flush.
+        """Accept a pending title once its session row exists.
 
-        Returns ``True`` only when **both** steps succeed:
-
-        1. ``Session.title`` in the DB — what
-           :func:`twicc.core.serializers.serialize_session` falls back to once
-           the pending entry is gone, and what ``twicc session <id>`` reads
-           on the CLI. The ``.update()`` return value is checked: ``0`` rows
-           updated means the Session row does not exist yet (typical race for
-           Codex, whose ASSISTANT_TURN fires before the DropRequestsWatcher
-           has created the row) and is reported as failure.
-        2. The provider's own store via
-           :meth:`BaseProviderHelpers.rename_session` — for Claude Code, a
-           ``custom-title`` JSONL entry plus :func:`protect_title` against
-           CLI re-appends; for Codex, a ``thread/name/set`` call to the app
-           server. May fail transiently: Claude Code's JSONL may not yet
-           exist (SDK emits ASSISTANT_TURN before writing the file), or the
-           Codex app server may be momentarily unreachable.
-
-        Idempotent — re-tries of this method either succeed cleanly (UPDATE
-        with the same value is a no-op for the DB; the provider rename APIs
-        accept repeated calls). ``protect_title`` (Claude Code) is registered
-        on every call thanks to the ``finally`` inside
-        :meth:`ClaudeCodeHelpers.rename_session`, so even failing attempts
-        leave the in-memory protection in place.
+        Claude accepts a transactional decision and queues provider publication.
+        Publication failures never reaccept an old draft string. Codex retains
+        its two-step DB/provider retry and delayed verification behavior.
         """
         from twicc.core.models import Session
         from twicc.core.services.session_timeline import record_title_change
         from twicc.providers.helpers import get_provider_helpers
 
         session_id = agent.session_id
+        if agent.provider == "claude_code":
+            from twicc.core.services.session_titles import accept_title_locked, with_title_boundary
+            from twicc.pending_titles import get_pending_title, get_pending_title_origin, pop_pending_title
+            from twicc.providers.claude_code.title_publication import get_title_coordinator
+            from twicc.request_origin import DEFAULT_ORIGIN
+
+            # Claude retries publication by decision identity. Never reaccept
+            # an obsolete draft string after any newer accepted decision.
+            if get_pending_title(session_id) != pending:
+                return True
+            existing = get_title_coordinator().current_decision(session_id)
+            row = await Session.objects.filter(pk=session_id).afirst()
+            if row is None:
+                return False
+            if ((existing is not None and existing.title != pending)
+                    or (existing is None and row.title_origin == "user")):
+                pop_pending_title(session_id)
+                return True
+            origin = get_pending_title_origin(session_id) or DEFAULT_ORIGIN
+            async def accept_pending():
+                if get_pending_title(session_id) != pending:
+                    return
+                await accept_title_locked(session_id, pending, source="user", origin=origin)
+            await with_title_boundary(session_id, lambda: run_under_db_write_lock(accept_pending))
+            await self._broadcast_session_updated(session_id)
+            return True
         # A deferred writer never reads the carrier: it runs inside the state-change funnel (system
         # marker) or in a retry task with a stale context. Use the origin captured when the title was
         # stored, else the explicit default (design 2026-10-14, section 6.5).
@@ -942,14 +948,15 @@ class BaseAgentManager:
         delayed :meth:`_verify_pending_title_after_delay` task to guard
         against silent background overwrites — useful for providers whose
         process can re-flush its own row after our explicit set (Codex).
-        For providers that don't need it (Claude Code: ``protect_title``
-        covers the equivalent), the helper's ``verify_session_title`` is a
-        no-op and the task exits cheaply.
+        Claude returns after the pop because its decision worker owns provider
+        confirmation. Codex retains the delayed verification task.
         """
         from twicc.pending_titles import pop_pending_title
 
         session_id = agent.session_id
         pop_pending_title(session_id)
+        if agent.provider == "claude_code":
+            return
 
         # Replace any in-flight verify task so the new delay window starts
         # from this success (in particular when a retry succeeded after an
