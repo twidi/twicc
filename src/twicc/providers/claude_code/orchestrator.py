@@ -261,6 +261,11 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
                 )
                 await done_future
 
+        # Stop the startup producer before the manager snapshots its agents.
+        # Cron restart (may still be retrying)
+        if self._cron_restart_task is not None:
+            await _cancel_task(self._cron_restart_task, "Cron restart")
+
         # DEAD callbacks drain transcripts and reconcile pending title choices.
         # Keep the watcher queue open until all manager publication work ends.
         # Claude Code agent manager (Claude Agent SDK)
@@ -328,10 +333,6 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
             logger.info("Stopping model retirement task...")
             stop_model_retirement_task(self.provider)
             await _cancel_task(self._retirement_task, "Model retirement task")
-
-        # Cron restart (may still be retrying)
-        if self._cron_restart_task is not None:
-            await _cancel_task(self._cron_restart_task, "Cron restart")
 
 
     # ------------------------------------------------------------------

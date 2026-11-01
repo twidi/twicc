@@ -411,3 +411,19 @@ def test_historical_provider_title_retains_exact_representation(source, value, e
     assert source.title_origin == ''
     if existing:
         assert not TimelineEvent.objects.filter(session_id=source.id, kind='title.changed').exists()
+
+
+@pytest.mark.parametrize('mode', ['full', 'live'])
+def test_empty_provider_title_cannot_clear_existing_title(source, mode, tmp_path):
+    from tests.timeline_helpers import mark_known
+    from twicc.core.models import TimelineEvent
+    mark_known(source.id, source.project_id)
+    Session.objects.filter(pk=source.id).update(title='Kept', title_origin='user')
+    if mode == 'full':
+        message = full_message(source, [provider_line(title='')])
+        BaseSessionCompute.apply_session_complete(message)
+    else:
+        live_apply(source, [provider_line(title='')], tmp_path)
+    source.refresh_from_db()
+    assert (source.title, source.title_origin) == ('Kept', 'user')
+    assert not TimelineEvent.objects.filter(session_id=source.id, kind='title.changed').exists()

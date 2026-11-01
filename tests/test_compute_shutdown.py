@@ -243,3 +243,58 @@ def test_ordinary_result_broken_pipe_keeps_worker_error_diagnostic(worker_setup,
     assert writer.closed
     assert any('Error computing session ordinary' in record.message for record in caplog.records)
     assert any('Unexpected error in compute worker' in record.message for record in caplog.records)
+
+
+def test_claude_startup_cron_producer_is_cancelled_before_manager_shutdown(monkeypatch, settings):
+    from unittest.mock import AsyncMock
+    from twicc.agent import AgentState
+    from twicc.providers.claude_code import cron_restart, orchestrator
+    from twicc.providers.claude_code.agent import manager as manager_module
+    settings.CRON_AUTO_RESTART = True
+
+    async def scenario():
+        owner = orchestrator.ClaudeCodeOrchestrator()
+        preparing = asyncio.Event()
+        release, collected = threading.Event(), threading.Event()
+        loop = asyncio.get_running_loop()
+        sent, boundary = [], []
+        manager = SimpleNamespace(_agents={}, _session_is_hybrid=AsyncMock(return_value=False))
+        def collect(sid):
+            loop.call_soon_threadsafe(preparing.set)
+            assert release.wait(timeout=5), 'controlled cron collection release'
+            collected.set()
+            return {'session_id': sid, 'project_id': 'project', 'cwd': '/isolated',
+                    'restored_crons': [], 'crons_to_recreate': []}
+        async def send(**kwargs):
+            sent.append(kwargs['session_id'])
+            ready = asyncio.Event()
+            ready.set()
+            manager._agents[kwargs['session_id']] = SimpleNamespace(state=AgentState.USER_TURN,
+                _first_turn_done_event=ready, _first_user_turn_reached=True)
+        async def shutdown():
+            # This models the real manager snapshot and the final title drain.
+            boundary.append((owner._cron_restart_task.done(), owner._cron_restart_task.cancelled()))
+            manager._agents.clear()
+            release.set()
+            assert await asyncio.to_thread(collected.wait, 5)
+            await asyncio.gather(owner._cron_restart_task, return_exceptions=True)
+        manager.send_to_session = send
+        manager.shutdown = shutdown
+        monkeypatch.setattr(cron_restart, '_collect_restart_data', collect)
+        monkeypatch.setattr(db_writer, 'submit_async_job', AsyncMock(return_value=['session']))
+        monkeypatch.setattr(manager_module, 'get_claude_code_agent_manager', lambda: manager)
+        monkeypatch.setattr(orchestrator, 'get_claude_code_agent_manager', lambda: manager)
+        stop = asyncio.Event()
+        owner._cron_restart_task = asyncio.create_task(cron_restart.restart_all_session_crons(stop))
+        try:
+            await asyncio.wait_for(preparing.wait(), timeout=5)
+            stop.set()
+            await owner.shutdown()
+            assert boundary == [(True, True)]
+            assert sent == []
+            assert manager._agents == {}
+        finally:
+            release.set()
+            owner._cron_restart_task.cancel()
+            await asyncio.gather(owner._cron_restart_task, return_exceptions=True)
+    asyncio.run(scenario())
