@@ -375,3 +375,17 @@ def test_sdk_retry_can_confirm_noop_after_uncertain_first_write(sync):
         assert sync.start_dispatch(decision, c(11))
         assert sync.acknowledge(decision, success=True, boundary=c(11)).confirmed == (decision.token,)
         stage.commit()
+
+
+@pytest.mark.parametrize("conflict_line", [8, 10])
+def test_noop_ack_rejects_late_ingested_conflict_before_dispatch_boundary(sync, conflict_line):
+    with sync.staged_state() as stage:
+        sync.attach_process("s", "p", hybrid=False)
+        sync.observe((title(5, "B"),))
+        decision = sync.accept_decision("s", "B")
+        assert sync.start_dispatch(decision, c(10))
+        assert sync.observe((title(conflict_line, "A"),)).apply == ()
+        assert sync.acknowledge(decision, success=True, boundary=c(10)).confirmed == ()
+        assert sync.current_decision("s") == decision
+        assert sync.observe((title(11, "B"),)).confirmed == (decision.token,)
+        stage.commit()

@@ -341,6 +341,13 @@ class TitleSyncCoordinator:
             # Provider state is separate from accepted database state. Preserve
             # it so a safe SDK retry can recognize a real equal-title no-op.
             state = state._replace(effective=record)
+            if (dispatch is not None and dispatch.boundary is not None
+                    and record.cursor.line_num <= dispatch.boundary.line_num
+                    and record.title != dispatch.decision.title):
+                # Capturing a file boundary does not ingest its complete suffix.
+                # Late ingestion can invalidate the earlier equal-title baseline.
+                dispatch = dispatch._replace(baseline_equal=False)
+                state = state._replace(dispatch=dispatch)
             if dispatch is None and state.decision is None:
                 return state._replace(
                     floor=record.cursor.line_num, effective=record,
