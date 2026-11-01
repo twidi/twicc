@@ -235,35 +235,54 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             await self._broadcast_session_updated(session_id)
 
     async def _attach_title_process(self, agent):
+        from twicc.core.content_storage.readers import effective_current, iter_current_items
+        from twicc.core.models import Session, SessionItem
         from twicc.providers.claude_code.title_publication import attach_claude_process_locked
-        # Seed actual history through the observer before choosing the launch
-        # synchronization value. The DB accepted title is never baseline evidence.
-        boundary = await self._ingest_title_available(agent.session_id)
-        baseline = None
-        if boundary is not None:
-            from asgiref.sync import sync_to_async
-            from twicc.core.content_storage.readers import effective_current, iter_current_items
-            from twicc.core.models import SessionItem
-            import orjson
-            def actual_baseline():
-                from twicc.providers.claude_code.compute import extract_title_observations
-                from twicc.providers.claude_code.title_sync import SourceCursor
-                latest = None
-                rows = SessionItem.objects.filter(session_id=agent.session_id, line_num__lte=boundary.line_num).order_by('line_num')
-                for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
-                    try:
-                        parsed = orjson.loads(effective_current(item))
-                    except (orjson.JSONDecodeError, TypeError):
-                        continue
-                    for record in extract_title_observations(parsed, SourceCursor(*boundary[:3], item.line_num)):
-                        if record.kind == 'title' and record.target_session_id == agent.session_id:
-                            latest = record
-                return latest
-            baseline = await sync_to_async(actual_baseline)()
-        await self._title_lane(lambda: attach_claude_process_locked(
-            agent.session_id, agent._title_process_token, hybrid=getattr(agent, 'is_hybrid', False),
-            baseline=baseline, initial_transcript_absent=boundary is None,
-        ))
+        import orjson
+
+        def actual_baseline():
+            from twicc.providers.claude_code.compute import extract_title_observations
+            from twicc.providers.claude_code.title_sync import SourceCursor
+            row = Session.objects.values('storage_incarnation', 'history_epoch', 'last_line').get(pk=agent.session_id)
+            committed = SourceCursor(agent.session_id, row['storage_incarnation'], row['history_epoch'], row['last_line'])
+            latest = None
+            rows = SessionItem.objects.filter(session_id=agent.session_id, line_num__lte=committed.line_num).order_by('line_num')
+            for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                try:
+                    parsed = orjson.loads(effective_current(item))
+                except (orjson.JSONDecodeError, TypeError):
+                    continue
+                for record in extract_title_observations(parsed, committed._replace(line_num=item.line_num)):
+                    if record.kind == 'title' and record.target_session_id == agent.session_id:
+                        latest = record
+            return committed, latest
+
+        while True:
+            # The finite drain target proves ingestion succeeded. Attachment
+            # separately selects all history committed by the completed drain.
+            boundary = await self._ingest_title_available(agent.session_id)
+            baseline = None
+            if boundary is not None:
+                # Stored content uses SQL and decoding only. Admit metadata
+                # and baseline together so watcher writes cannot split them.
+                boundary, baseline = await self._title_lane(actual_baseline)
+
+            def attach(boundary=boundary, baseline=baseline):
+                # Do not seed the admitted snapshot at a newer or
+                # incomparable attachment floor after releasing its lane.
+                if boundary is not None and not Session.objects.filter(
+                    pk=agent.session_id, storage_incarnation=boundary.storage_incarnation,
+                    history_epoch=boundary.history_epoch, last_line=boundary.line_num,
+                ).exists():
+                    return False
+                attach_claude_process_locked(
+                    agent.session_id, agent._title_process_token, hybrid=getattr(agent, 'is_hybrid', False),
+                    baseline=baseline, initial_transcript_absent=boundary is None,
+                )
+                return True
+
+            if await self._title_lane(attach):
+                break
         if not hasattr(self, '_title_processes'):
             self._title_processes = {}
         self._title_processes[agent.session_id] = agent

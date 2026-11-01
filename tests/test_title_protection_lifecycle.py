@@ -375,6 +375,9 @@ def test_active_acceptance_and_dispatch_allow_suffix_appended_after_finite_drain
     append_after_drain = False
     async def drain_then_append(current):
         await original_process(current)
+        # An already-committed target can return before its enqueued no-op
+        # consumer turn ends. Finish that turn before the controlled append.
+        await watcher._drain_changes()
         if append_after_drain:
             # This complete record is later than the admitted finite target.
             # It exists before the caller's next capture, but does not belong
@@ -404,6 +407,63 @@ def test_active_acceptance_and_dispatch_allow_suffix_appended_after_finite_drain
             assert path.read_bytes().count(b'custom-title') == 3
             assert worker.coordinator.current_decision(row.id) == accepted.decision
             await manager._cancel_title_dispatch(accepted.decision)
+        finally:
+            await worker.close_publications()
+            await watcher._drain_changes()
+    run_with_writer(scenario)
+
+
+def test_attachment_baseline_includes_newer_title_committed_during_finite_drain(context, monkeypatch):
+    row, path = context
+    from twicc.core.content_storage import readers
+    from twicc.providers import db_writer
+    original_items = readers.iter_current_items
+    snapshots = []
+    def admitted_items(*args, **kwargs):
+        lease = db_writer._db_write_lock_lease.get()
+        assert lease is not None and lease.active
+        snapshots.append(True)
+        yield from original_items(*args, **kwargs)
+    monkeypatch.setattr(readers, 'iter_current_items', admitted_items)
+    from twicc.providers.claude_code import sessions_watcher
+    from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
+    watcher = ClaudeCodeSessionsWatcher()
+    watcher.projects_dir = path.parent.parent
+    monkeypatch.setattr(sessions_watcher, 'get_watcher', lambda: watcher)
+    first = {'type': 'custom-title', 'sessionId': row.id, 'customTitle': 'Old'}
+    imported = first | {'customTitle': 'Imported during drain'}
+    path.write_bytes(orjson.dumps(first) + b'\n')
+    original_process = watcher.process_path
+    appended = False
+    async def append_before_admission(current):
+        nonlocal appended
+        if not appended:
+            appended = True
+            # The caller captures one complete record. Watcher admission then
+            # includes a newer real provider title and commits both records.
+            with path.open('ab') as stream:
+                stream.write(orjson.dumps(imported) + b'\n')
+        await original_process(current)
+    monkeypatch.setattr(watcher, 'process_path', append_before_admission)
+    sent = []
+    async def acknowledged_noop(client, sid, title, **kwargs):
+        sent.append(title)
+        # The CLI already has this value. A real no-op adds no title record.
+    monkeypatch.setattr(title_publication, 'rename_running_session', acknowledged_noop)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        agent = SimpleNamespace(session_id=row.id, _title_process_token='p', _title_ready=False,
+                                state=AgentState.STARTING, _client=object())
+        try:
+            await manager._attach_title_process(agent)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.last_line, stored.title) == (2, 'Imported during drain')
+            assert snapshots
+            await manager._title_process_ready(agent)
+            assert sent == ['Imported during drain']
+            assert worker.coordinator.current_decision(row.id) is None
+            assert path.read_bytes().count(b'custom-title') == 2
         finally:
             await worker.close_publications()
             await watcher._drain_changes()
