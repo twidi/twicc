@@ -389,3 +389,55 @@ async def test_inactive_failure_continues_newer_queued_work_without_retrying_old
     assert await h.worker.flush_publications("session", timeout=1)
     assert writes == ["first", "latest"]
     await h.worker.close_publications()
+
+
+@pytest.mark.asyncio
+async def test_flush_consumes_prior_thread_ingress_even_when_its_notification_callback_is_pending(monkeypatch):
+    h = Harness()
+    h.release.set()
+    loop = asyncio.get_running_loop()
+    original = loop.call_soon_threadsafe
+    held = []
+
+    def hold_notification(callback, *args, **kwargs):
+        if getattr(callback, "__self__", None) is h.worker and getattr(callback, "__name__", "") in (
+            "request_publication", "_drain_ingress",
+        ):
+            held.append((callback, args))
+            return None
+        return original(callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", hold_notification)
+    await asyncio.to_thread(h.worker.request_publication, h.decision("title"))
+    assert len(held) == 1
+    assert h.sent == []
+    # The original notification remains pending. Flush must consume the
+    # earlier ingress itself before deciding whether the session has work.
+    assert await h.worker.flush_publications("session", timeout=1)
+    assert h.sent == ["title"]
+    await h.worker.close_publications()
+
+
+@pytest.mark.asyncio
+async def test_flush_timeout_includes_ingress_barrier_and_preserves_publication(monkeypatch):
+    h = Harness(ready=False)
+    h.worker.request_publication(h.decision("title"))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = h.worker._ingress_barrier
+
+    async def blocked_barrier():
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(h.worker, "_ingress_barrier", blocked_barrier)
+    assert not await asyncio.wait_for(h.worker.flush_publications("session", timeout=0), timeout=1)
+    assert entered.is_set()
+    assert not h.worker._tasks["session"].cancelled()
+    monkeypatch.setattr(h.worker, "_ingress_barrier", original)
+    h.release.set()
+    h.process = h.process._replace(ready=True)
+    h.worker.notify_process_ready("session", "process")
+    assert await h.worker.flush_publications("session", timeout=1)
+    assert h.sent == ["title"]
+    await h.worker.close_publications()

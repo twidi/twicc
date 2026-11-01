@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from threading import Lock
 from typing import Any, NamedTuple
 
 from .title_control import TitleControlError, rename_running_session
@@ -71,6 +73,34 @@ class TitlePublicationWorker:
         self._wakes: dict[str, asyncio.Event] = {}
         self._reservations: dict[str, asyncio.Lock] = {}
         self._closed = False
+        self._ingress_lock = Lock()
+        self._ingress: deque[tuple[Callable, tuple]] = deque()
+
+    def _enqueue_ingress(self, callback, *args):
+        # Record receipt before scheduling its notification. Flush can consume
+        # this queue even if that notification has not reached the owner loop.
+        with self._ingress_lock:
+            self._ingress.append((callback, args))
+        self._loop.call_soon_threadsafe(self._drain_ingress)
+
+    def _drain_ingress(self):
+        with self._ingress_lock:
+            pending = tuple(self._ingress)
+            self._ingress.clear()
+        for callback, args in pending:
+            callback(*args)
+
+    @staticmethod
+    def _complete_ingress_barrier(future):
+        if not future.done():
+            future.set_result(None)
+
+    async def _ingress_barrier(self):
+        future = self._loop.create_future()
+        with self._ingress_lock:
+            self._ingress.append((self._complete_ingress_barrier, (future,)))
+        self._loop.call_soon(self._drain_ingress)
+        await future
 
     def _on_owner_loop(self) -> bool:
         try:
@@ -80,7 +110,7 @@ class TitlePublicationWorker:
 
     def request_publication(self, decision: TitleDecision) -> None:
         if not self._on_owner_loop():
-            self._loop.call_soon_threadsafe(self.request_publication, decision)
+            self._enqueue_ingress(self.request_publication, decision)
             return
         if self._closed:
             return
@@ -94,7 +124,7 @@ class TitlePublicationWorker:
 
     def notify_process_ready(self, session_id: str, process_token: str) -> None:
         if not self._on_owner_loop():
-            self._loop.call_soon_threadsafe(self.notify_process_ready, session_id, process_token)
+            self._enqueue_ingress(self.notify_process_ready, session_id, process_token)
             return
         process = self.hooks.resolve_process(session_id)
         if process is None or process.process_token != process_token:
@@ -231,11 +261,19 @@ class TitlePublicationWorker:
                 return
 
     async def flush_publications(self, session_id: str, *, timeout: float) -> bool:
-        task = self._tasks.get(session_id)
-        if task is None:
+        deadline = self._loop.time() + timeout
+        with self._ingress_lock:
+            pending_ingress = bool(self._ingress)
+        if not pending_ingress and session_id not in self._tasks:
             return True
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            # One deadline covers ingress and provider work. The FIFO marker
+            # consumes every notification recorded before this flush barrier.
+            async with asyncio.timeout_at(deadline):
+                await self._ingress_barrier()
+                task = self._tasks.get(session_id)
+                if task is not None:
+                    await asyncio.shield(task)
         except TimeoutError:
             return False
         return True
