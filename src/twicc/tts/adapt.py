@@ -22,6 +22,7 @@ from twicc.core.enums import Provider
 from twicc.providers.claude_code.hermetic import stream_hermetic_claude
 from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex
 from twicc.providers.codex.title_suggest import TITLE_MODEL
+from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.providers.state import is_provider_running
 from twicc.tts.openrouter import SpeechError
 from twicc.tts.parts import PartSplitter, has_speech
@@ -165,6 +166,10 @@ class AdaptedParts:
 
     async def next_part(self) -> str | None:
         while not self._closed:
+            if self._task is not None and self._task.done() and not self._ended and self._failure is None:
+                # The task ended with neither an end nor a failure: it was cancelled from outside
+                # (a server shutdown), maybe before its first step. The reader must not wait forever.
+                self._fail("failed")
             if self._fallen_back:
                 return self._fallback.popleft() if self._fallback else None
             if self._failure is not None and not self._returned:
@@ -187,6 +192,7 @@ class AdaptedParts:
                 self._task = asyncio.get_running_loop().create_task(self._run(), name="tts-adaptation")
                 _tasks.add(self._task)
                 self._task.add_done_callback(_tasks.discard)
+                self._task.add_done_callback(lambda _task: self._wakeup.set())
             self._wakeup.clear()
             await self._wakeup.wait()
         return None
@@ -216,9 +222,11 @@ class AdaptedParts:
             await self._stream()
         except _Stalled:
             self._fail("stalled")
+        except (HermeticConfigError, HermeticGuardViolation, HermeticStreamError):
+            # Each of them logged its own line when it was created.
+            self._fail("failed")
         except Exception as error:
-            # The hermetic errors log their own line; the type alone tells any other one (its
-            # message is not known to be free of the text).
+            # Only the type tells it: its message is not known to be free of the text.
             logger.warning("TTS text adaptation failed (%s): %s", self._engine.name, type(error).__name__)
             self._fail("failed")
         else:
@@ -230,11 +238,7 @@ class AdaptedParts:
                 self._first_from_feed = False
             self._parts.extend(parts)
             self._ended = True
-        finally:
-            if not self._ended and self._failure is None and not self._closed:
-                # Cancelled by something else than ``aclose()``: a waiting reader must not wait forever.
-                self._fail("failed")
-            self._wakeup.set()
+        # The task's done callback wakes the reader.
 
     async def _stream(self) -> None:
         async with aclosing(_open_stream(self._engine, self._prompt)) as deltas:

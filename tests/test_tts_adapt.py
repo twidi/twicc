@@ -5,11 +5,12 @@ Every scenario runs inside one ``asyncio.run(...)``, bounded by ``asyncio.timeou
 """
 
 import asyncio
+import logging
 
 import pytest
 
 from twicc.core.enums import Provider
-from twicc.providers.hermetic import HermeticGuardViolation
+from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.tts import adapt
 from twicc.tts.adapt import (
     ADAPT_MAX_CHARS,
@@ -134,6 +135,7 @@ def test_engine_resolution(monkeypatch):
     assert resolve_engine("haiku", text) == (HAIKU, None)
     assert resolve_engine("luna", text) == (LUNA, None)
     assert resolve_engine("off", text) == (None, "off")
+    assert resolve_engine("bogus", text) == (HAIKU, None)  # an unknown choice takes the default order
 
     running = {Provider.CODEX}
     assert resolve_engine(None, text) == (LUNA, None)
@@ -142,6 +144,7 @@ def test_engine_resolution(monkeypatch):
 
     running = {Provider.CLAUDE_CODE}
     assert resolve_engine(None, text) == (HAIKU, None)
+    assert resolve_engine("bogus", text) == (HAIKU, None)
     assert resolve_engine("luna", text) == (HAIKU, None)
 
     running = set()
@@ -273,6 +276,35 @@ def test_a_failure_before_the_first_part_reads_the_original(fake_call):
     source, parts = asyncio.run(one_part_fallback())
     assert parts == ["The whole original."]
     assert source.split is False
+
+
+def test_a_failure_logs_one_line_without_the_text(fake_call, caplog, monkeypatch):
+    async def read():
+        async with asyncio.timeout(5):
+            return await _rest(_source(text="The secret original."))
+
+    # Routed straight to caplog: settings_test's ``disable_existing_loggers: True`` can disable this
+    # logger, depending on the suite's import order (as in tests/test_tts_streams.py).
+    logger = logging.getLogger(adapt.__name__)
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.setattr(logger, "propagate", False)
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    caplog.set_level(logging.DEBUG, logger=adapt.__name__)
+    for error in (
+        HermeticConfigError("start", "thread/start failed"),
+        HermeticGuardViolation("a tool was used"),
+        HermeticStreamError("The call ended without a result"),
+    ):
+        caplog.clear()
+        fake_call("The secret adapted text.", error)
+        assert asyncio.run(read()) == FALLBACK
+        # The hermetic error logged its own line at its creation (another logger): no second one here.
+        assert caplog.records == []
+
+    caplog.clear()
+    fake_call("The secret adapted text.", RuntimeError("The secret adapted text."))
+    assert asyncio.run(read()) == FALLBACK
+    assert [record.getMessage() for record in caplog.records] == ["TTS text adaptation failed (haiku): RuntimeError"]
 
 
 def test_a_stall_before_the_first_text_reads_the_original(fake_call, monkeypatch):
@@ -445,6 +477,37 @@ def test_aclose_cancels_the_call(fake_call):
     source, parts = asyncio.run(cancelled_call())
     assert parts == FALLBACK
     assert source.adapt_reason == "failed"
+
+    # The call's task cancelled before its first step: no call ran, the reader reads the original.
+    fake = fake_call("Some adapted text.")
+
+    async def cancelled_before_its_first_step():
+        async with asyncio.timeout(5):
+            source = _source()
+            pump = asyncio.create_task(_rest(source))
+            await asyncio.sleep(0)  # the pump creates the task, which has not run yet
+            assert source._task is not None and fake.calls == []
+            source._task.cancel()
+            return source, await pump
+
+    source, parts = asyncio.run(cancelled_before_its_first_step())
+    assert fake.calls == []
+    assert parts == FALLBACK
+    assert source.adapt_reason == "failed"
+
+    # The same after the first part: the reading stops.
+    fake = fake_call(_sentences(600), HANG)
+
+    async def cancelled_after_the_first_part():
+        async with asyncio.timeout(5):
+            source = _source()
+            assert await source.next_part()
+            source._task.cancel()
+            with pytest.raises(SpeechError) as raised:
+                await _rest(source)
+            return raised.value
+
+    assert asyncio.run(cancelled_after_the_first_part()).log_message == "adaptation failed after the first part"
 
 
 def test_a_reading_cancelled_before_its_first_part_starts_no_call(fake_call):
