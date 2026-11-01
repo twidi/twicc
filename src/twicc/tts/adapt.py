@@ -12,6 +12,7 @@ Neither the original text nor the adapted one ever reaches a log line.
 
 import asyncio
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Sequence
@@ -113,6 +114,9 @@ class Engine(NamedTuple):
 ENGINES = (Engine("haiku", Provider.CLAUDE_CODE), Engine("luna", Provider.CODEX))
 _ENGINES_BY_NAME = {engine.name: engine for engine in ENGINES}
 
+# A Markdown heading mark at a line start: a model sometimes keeps one despite the prompt.
+_HEADING_MARK = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
+
 # Strong references to the running adaptation tasks (asyncio keeps only weak ones).
 _tasks: set[asyncio.Task] = set()
 
@@ -152,6 +156,12 @@ class _Stalled(Exception):
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
+
+
+def _spoken(parts: Sequence[str]) -> list[str]:
+    """The adapted parts without their heading marks, minus a part left with nothing to read."""
+    parts = [_HEADING_MARK.sub("", part) for part in parts]
+    return [part for part in parts if has_speech(part)]
 
 
 class AdaptedParts:
@@ -277,7 +287,7 @@ class AdaptedParts:
             logger.warning("TTS text adaptation failed (%s): %s", self._engine.name, type(error).__name__)
             self._fail("failed")
         else:
-            parts = self._splitter.end()
+            parts = _spoken(self._splitter.end())
             if self._first_from_feed is None:
                 if not parts:
                     self._fail("empty")
@@ -310,7 +320,7 @@ class AdaptedParts:
             self._label["adapted"] = self._engine.name
             self._label["adapt_first_ms"] = self.adapt_first_ms
         self._received.append(delta)
-        parts = self._splitter.feed(delta)
+        parts = _spoken(self._splitter.feed(delta))
         if parts:
             if self._first_from_feed is None:
                 self._first_from_feed = True
@@ -320,5 +330,5 @@ class AdaptedParts:
     def _fail(self, reason: str) -> None:
         self._failure = reason
         self.adapt_reason = reason
-        tail = self._splitter.tail()
-        self._tail = tail if has_speech(tail) else None
+        tail = _spoken([self._splitter.tail()])
+        self._tail = tail[0] if tail else None

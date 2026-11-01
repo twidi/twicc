@@ -6,6 +6,7 @@ Every scenario runs inside one ``asyncio.run(...)``, bounded by ``asyncio.timeou
 
 import asyncio
 import logging
+import re
 
 import pytest
 
@@ -280,6 +281,37 @@ def test_a_short_adaptation_is_one_part(fake_call):
     assert source.split is False
     assert source.adapted_by == "haiku"
     assert source.adapt_reason is None
+
+
+def test_heading_marks_left_by_the_model_are_not_read(fake_call):
+    adapted = "## Status\n\nAll eight tasks are done. " + _sentences(300) + "\n\n  ### Next steps\n\nC# and #tags stay.\n"
+    fake_call(adapted[:20], adapted[20:])
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            source = _source()
+            return source, await _rest(source)
+
+    source, parts = asyncio.run(scenario())
+    assert parts[0].startswith("Status")
+    assert any(re.search(r"(^|\n)Next steps\n", part) for part in parts)
+    assert any("C# and #tags stay." in part for part in parts)
+    assert not any(re.search(r"(^|\n)\s*#", part) for part in parts)
+    # The settings show what the model really wrote.
+    assert source.adapted_text == adapted
+
+
+def test_an_adaptation_with_only_heading_marks_reads_the_original(fake_call):
+    fake_call("## \n", "#\n")
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            source = _source()
+            return source, await _rest(source)
+
+    source, parts = asyncio.run(scenario())
+    assert parts == FALLBACK
+    assert source.adapt_reason == "empty"
 
 
 def test_a_failure_before_the_first_part_reads_the_original(fake_call):
