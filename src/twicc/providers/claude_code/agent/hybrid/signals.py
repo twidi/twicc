@@ -11,6 +11,11 @@ to the hooks watcher for each event file.
 from enum import StrEnum
 from typing import NamedTuple
 
+from twicc.providers.claude_code.title_sync import TitleObservation
+
+# Ordered title command evidence has a separate channel from boolean turn signals.
+HybridRenameEvidence = TitleObservation
+
 
 class HybridHookOutcome(StrEnum):
     """What the hooks watcher should do with an event file after routing.

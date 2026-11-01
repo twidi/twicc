@@ -20,7 +20,7 @@ import mimetypes
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime, UTC
 from pathlib import Path
@@ -38,6 +38,7 @@ from twicc.core.services.attachments.planner import ERROR_WITH_COMMAND, is_hybri
 from twicc.core.services.attachments.staging import ERROR_COMMIT_FAILED
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.paths import get_session_hybrid_dir
+from twicc.providers.claude_code.title_control import TitleControlError, canonicalize_claude_title
 from twicc.providers.claude_code.agent.permissions import (
     extract_claude_tool_paths,
     maybe_update_plan_file,
@@ -46,6 +47,7 @@ from twicc.providers.claude_code.agent.permissions import (
 )
 
 from . import tmux as hybrid_tmux
+from .signals import HybridRenameEvidence
 from .launch import HYBRID_HOOK_TIMEOUT_SECONDS, build_argv, chrome_onboarding_completed, write_addendum_file
 from .responses import (
     DUMMY_REAP_STATUS,
@@ -106,14 +108,16 @@ class HybridClaudeAgent(BaseAgent):
         # refused before that has no CLI to ask for a graceful ``/exit``.
         self._cli_launched = False
         self._liveness_task: asyncio.Task[None] | None = None
-        # Background retry tasks for auto-pasted slash commands, keyed by
-        # purpose ("rename", "settings") — a new task replaces (cancels) the
-        # previous one of the same purpose, so only the latest title/settings
-        # value is ever pasted.
+        # Background retry tasks for settings. Title publication has its own
+        # single worker and never uses these independent auto-paste tasks.
         self._auto_paste_tasks: dict[str, asyncio.Task[None]] = {}
         # Serializes ready-check + paste pairs: two concurrent pastes would
         # race on the shared tmux buffer and on the composer-free check.
         self._paste_lock = asyncio.Lock()
+        self._title_rename_future: asyncio.Future | None = None
+        self._title_rename_title: str | None = None
+        self._title_rename_armed = False
+        self._title_rename_commands: list[str] = []
         # GUI-answer expiry timers, one per registered pending request
         # (keyed by hook nonce): when the CLI-side hook timeout reaps the
         # polling hook, the widget degrades to the badge-only marker.
@@ -463,7 +467,9 @@ class HybridClaudeAgent(BaseAgent):
         self.last_activity = time.time()
         return True
 
-    async def _checked_paste(self, text: str) -> bool:
+    async def _checked_paste(
+        self, text: str, *, before_paste: Callable[[], Awaitable[bool]] | None = None,
+    ) -> bool:
         """Atomically verify the composer is free, then paste.
 
         The lock serializes user sends and auto-pasted commands, so two
@@ -475,6 +481,8 @@ class HybridClaudeAgent(BaseAgent):
                 hybrid_tmux.composer_ready, self.session_id,
             )
             if ready:
+                if before_paste is not None and not await before_paste():
+                    raise TitleControlError("rejected", "Claude title decision is obsolete")
                 await asyncio.to_thread(
                     hybrid_tmux.paste_text, self.session_id, text,
                 )
@@ -1239,13 +1247,83 @@ class HybridClaudeAgent(BaseAgent):
         )
         return False
 
-    async def rename(self, title: str) -> None:
-        """Queue ``/rename <title>`` (verified: instant, no dialog, writes
-        custom-title JSONL lines). Pasted when the TUI composer is free."""
-        clean = " ".join(title.split())
-        if not clean:
+    TITLE_CONFIRMATION_TIMEOUT = 10.0
+
+    def on_title_evidence(self, records: tuple[HybridRenameEvidence, ...]) -> None:
+        """Receive committed, ancestry-validated command evidence from Task4.
+
+        This channel never changes turn or permission-prompt state. A success
+        proves effective command convergence only. It cannot attribute input
+        to our paste token or release the coordinator's delivery hazard.
+        ``command_success.title`` must contain the CLI's validated effective
+        title, not title text inferred from an arbitrary screen acknowledgement.
+        """
+        future = self._title_rename_future
+        if future is None or future.done() or not self._title_rename_armed:
             return
-        self._spawn_auto_paste("rename", [f"/rename {clean}"])
+        for record in records:
+            if record.target_session_id != self.session_id or record.cursor.source_session_id != self.session_id:
+                continue
+            if record.kind == "rename_command" and record.message_id:
+                self._title_rename_commands.append(record.message_id)
+                del self._title_rename_commands[:-128]
+            elif record.kind == "command_success" and record.parent_message_id and record.title is not None:
+                if record.title == self._title_rename_title:
+                    future.set_result(None)
+                else:
+                    future.set_result(TitleControlError("rejected", "Claude rename returned a different effective title"))
+                return
+            elif record.kind == "command_error" and record.parent_message_id in self._title_rename_commands:
+                future.set_result(TitleControlError("rejected", "Claude rename command failed"))
+                return
+
+    async def rename(
+        self, title: str, *, token: str,
+        before_paste: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
+        """Paste once and await explicit command convergence, never ownership.
+
+        The worker owns this coroutine. It revalidates the token and captures
+        the transcript boundary through ``before_paste`` immediately before
+        delivery, while the existing paste lock excludes other TwiCC pastes.
+        Raw terminal input remains outside that lock. A potentially delivered
+        command therefore keeps its coordinator hazard until process death.
+        """
+        validation = canonicalize_claude_title(title)
+        if validation.error or not validation.title:
+            raise TitleControlError("rejected", validation.error or "Empty Claude title")
+        if self._title_rename_future is not None:
+            raise TitleControlError("rejected", "Another Claude rename is outstanding")
+        future = asyncio.get_running_loop().create_future()
+        self._title_rename_future = future
+        self._title_rename_title = validation.title
+        self._title_rename_commands = []
+
+        async def prepare():
+            if before_paste is not None and not await before_paste():
+                return False
+            self._title_rename_armed = True
+            return True
+
+        try:
+            deadline = time.monotonic() + self.AUTO_PASTE_RETRY_TIMEOUT
+            while self.state != AgentState.DEAD:
+                if await self._checked_paste(f"/rename {validation.title}", before_paste=prepare):
+                    result = await asyncio.wait_for(future, timeout=self.TITLE_CONFIRMATION_TIMEOUT)
+                    if isinstance(result, TitleControlError):
+                        raise result
+                    return
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(self.AUTO_PASTE_RETRY_INTERVAL)
+            raise TitleControlError("unavailable", "Claude rename composer is unavailable")
+        finally:
+            if not future.done():
+                future.cancel()
+            self._title_rename_future = None
+            self._title_rename_title = None
+            self._title_rename_armed = False
+            self._title_rename_commands = []
 
     async def apply_live_settings(self, settings: Any) -> None:
         """IDLE application via pasted slash commands.
