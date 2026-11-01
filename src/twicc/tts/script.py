@@ -25,8 +25,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from twicc.terminal import terminal_environment
-from twicc.tts.openrouter import PCM_SAMPLE_WIDTH, SpeechError, parse_pcm_format
+from twicc.tts.openrouter import PCM_SAMPLE_WIDTH, SpeechError, parse_pcm_format, part_source, timed_next_part
 from twicc.tts.part_audio import Mp3HeadFilter, PcmFrameTrimmer
+from twicc.tts.part_source import PartSource
 from twicc.tts.parts import FIRST_PART_CHARS, split_text
 from twicc.tts.script_audio import OutputCheck
 
@@ -90,7 +91,7 @@ def shell_argv(command: str) -> list[str]:
 async def pump_script_speech(
     request: ScriptSpeechRequest,
     stream: "AudioStream",
-    parts: Sequence[str] | None = None,
+    parts: Sequence[str] | PartSource | None = None,
     *,
     paced: bool = False,
     delete_file: bool = True,
@@ -98,24 +99,44 @@ async def pump_script_speech(
     """Run the command of *request* once per text part, and stream its audio into *stream*.
 
     *parts* are the texts of the runs, in order, into the same stream (None: the request's text,
-    in one run). A run starts once the previous one ended and the stream's lookahead allows it.
-    With *paced*, the stream delivers its audio at the playback pace. With *delete_file*, the file
+    in one run): a sequence, or a source the pump pulls them from (:mod:`twicc.tts.part_source`),
+    always closed at the end. A run starts once the previous one ended and the stream's lookahead
+    allows it. The source tells, with its first part, whether the reading is split; with *paced*,
+    a split reading's stream delivers its audio at the playback pace. With *delete_file*, the file
     a successful File path run returned is deleted once read (not a speech field: the cache key,
     *request*, does not hold it).
 
     A failed run fails the stream (before its headers on the first part) and starts no next run.
-    A later part of another type fails it too. A cancellation (a release, a shutdown) stops the
-    running command, then propagates.
+    A later part of another type fails it too, and so does an error of the source. A cancellation
+    (a release, a shutdown) stops the running command, then propagates.
     """
-    texts = [request.text] if parts is None else list(parts)
-    split = len(texts) > 1
+    source = part_source(request.text, parts)
     paths: set[str] = set()  # the file paths returned in this speech
-    for index, text in enumerate(texts):
-        if index:
-            await stream.wait_for_lookahead()
-        run = _ScriptRun(request, stream, index, split=split, paced=paced, paths=paths, delete_file=delete_file)
-        if not await run.run(text):
-            return
+    try:
+        index = 0
+        split = False
+        while True:
+            try:
+                text = await timed_next_part(source, stream)
+            except SpeechError as error:
+                # The audio received still plays, then the reading stops.
+                stream.fail(error)
+                return
+            if text is None:
+                break
+            if index:
+                # Pulled first: the last part ends the speech without a lookahead wait.
+                await stream.wait_for_lookahead()
+            else:
+                split = bool(source.split)  # known once the first part was returned
+            run = _ScriptRun(
+                request, stream, index, split=split, paced=paced and split, paths=paths, delete_file=delete_file
+            )
+            if not await run.run(text):
+                return
+            index += 1
+    finally:
+        await source.aclose()
     stream.finish()
 
 

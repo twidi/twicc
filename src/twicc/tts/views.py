@@ -306,7 +306,8 @@ async def _open_speech(
     api_key: str | None,
 ) -> JsonResponse:
     """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*,
-    with the parts of *split*), awaited until its headers arrive."""
+    with the parts of *split*; the pump paces a split reading only), awaited until its headers
+    arrive."""
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
     if use_cache:
@@ -315,7 +316,7 @@ async def _open_speech(
             return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
     parts = split(speech_request)
-    paced = len(parts) > 1 and not buffered
+    paced = not buffered
     stream = start_stream(
         lambda sink: pump(sink, parts, paced),
         label=label,

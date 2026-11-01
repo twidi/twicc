@@ -519,10 +519,11 @@ def test_open_passes_the_parts_and_pacing_to_the_pump(client, upstream, monkeypa
         await run(VALID_PAYLOAD)
 
     asyncio.run(scenario())
+    # The pump paces a split reading only: a one-part reading is asked to pace too.
     assert upstream.pump_args == [
         (["a", "b"], True),
         (["a", "b"], False),
-        ([VALID_PAYLOAD["text"]], False),
+        ([VALID_PAYLOAD["text"]], True),
     ]
 
 
@@ -1644,7 +1645,7 @@ def test_script_parts_and_pacing_reach_the_pump(client, script_upstream):
     parts = script_parts(ScriptSpeechRequest(text=text, **{**SCRIPT_FIELDS, "max_chars": 300}))
     assert len(parts) > 1
     assert [(run_parts, paced) for _request, run_parts, paced in script_upstream.script_runs] == [
-        ([text], False),
+        ([text], True),
         (parts, True),
         (parts, False),
     ]

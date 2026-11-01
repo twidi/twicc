@@ -835,6 +835,21 @@ def test_parts_sum_their_generation_time():
     asyncio.run(scenario())
 
 
+def test_added_generation_seconds_count_in_the_generation_time():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.add_generation_seconds(1.5)  # the wait for the first part's text, before its request
+        stream.begin_part()
+        stream.set_headers(PCM_TYPE, None)
+        stream.append(b"ab")
+        stream.end_part()
+        stream.add_generation_seconds(0.25)
+        stream.finish()
+        assert 1750 <= stream.generation_ms < 1850
+
+    asyncio.run(scenario())
+
+
 def test_finish_counts_a_part_still_open():
     async def scenario():
         stream = AudioStream(LABEL)

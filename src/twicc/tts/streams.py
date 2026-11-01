@@ -123,6 +123,11 @@ class AudioStream:
             self._rate_scan_due = True
             self.byte_rate()  # decide it on this part's bytes, before the next part grows them
 
+    def add_generation_seconds(self, seconds: float) -> None:
+        """Time the pump waited for a part's text (its adaptation): it counts as generation time."""
+        self._expect("add_generation_seconds", *_LIVE_STATES)
+        self._parts_seconds += seconds
+
     def set_headers(self, content_type: str, generation_id: str | None) -> None:
         self._expect("set_headers", "opening")
         self.content_type = content_type

@@ -33,6 +33,7 @@ from twicc.tts.openrouter import (
     pump_speech,
     upstream_error_message,
 )
+from twicc.tts.part_source import StaticParts
 from twicc.tts.streams import AudioStream, start_stream
 
 from tests.test_tts_part_audio import _frame, _id3
@@ -554,6 +555,135 @@ def test_pump_paces_only_when_asked(monkeypatch, paced):
         await _within(pump_speech(_request(), "k", stream, PARTS[:2], paced=paced))
         assert stream.state == "complete"
         assert stream.paced is paced
+
+    asyncio.run(scenario())
+
+
+class FakeSource:
+    """A part source over *parts*: an item is a text, a ``SpeechError`` to raise, or a float, the
+    seconds to wait before the next item (``None``: wait forever). Records its ``aclose()``."""
+
+    def __init__(self, items, *, split: bool):
+        self._items = list(items)
+        self._split = split
+        self.split: bool | None = None
+        self.closed = 0
+
+    async def next_part(self) -> str | None:
+        while self._items:
+            item = self._items.pop(0)
+            if isinstance(item, SpeechError):
+                raise item
+            if isinstance(item, float):
+                await asyncio.sleep(item)
+            elif item is None:
+                await asyncio.Event().wait()  # never set
+            else:
+                self.split = self._split
+                return item
+        return None
+
+    async def aclose(self) -> None:
+        self.closed += 1
+
+
+def test_pacing_follows_the_source_split(monkeypatch):
+    part = _id3(30) + _frame(b"Info") + _frame()
+
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(part)])
+        single = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", single, StaticParts(PARTS[:1]), paced=True))
+        assert (single.state, single.paced) == ("complete", False)
+        assert bytes(single.data) == part  # a one-part reading is never filtered
+
+        _parts_transport(monkeypatch, [_audio(part), _audio(part)])
+        split = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", split, StaticParts(PARTS[:2]), paced=True))
+        assert (split.state, split.paced) == ("complete", True)
+        assert bytes(split.data) == _id3(30) + _frame() + _frame()
+
+    asyncio.run(scenario())
+
+
+def test_the_split_comes_from_the_source_not_from_the_part_count(monkeypatch):
+    # A source cut its first part before its text ended: split, though it gives one part.
+    part = _id3(30) + _frame(b"Info") + _frame()
+
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(part)])
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, FakeSource(["one"], split=True), paced=True))
+        assert (stream.state, stream.paced) == ("complete", True)
+        assert bytes(stream.data) == _id3(30) + _frame()
+
+    asyncio.run(scenario())
+
+
+def test_a_source_error_on_a_later_part_fails_the_stream_after_its_audio(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(monkeypatch, [_audio(b"one"), _audio(b"two")])
+        source = FakeSource(["Part one.", SpeechError("The text adaptation stopped before the end")], split=True)
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, source, paced=True))
+        assert (stream.state, stream.error) == ("failed", "The text adaptation stopped before the end")
+        assert stream.ready.result() is None  # the first part's headers had arrived
+        assert bytes(stream.data) == b"one"
+        assert inputs == ["Part one."]
+        assert source.closed == 1
+
+    asyncio.run(scenario())
+
+
+def test_a_source_error_on_the_first_part_fails_the_stream_before_its_headers(monkeypatch):
+    async def scenario():
+        inputs = _parts_transport(monkeypatch, [_audio(b"one")])
+        source = FakeSource([SpeechError("no text")], split=False)
+        stream = AudioStream(LABEL)
+        await _within(pump_speech(_request(), "k", stream, source))
+        assert (stream.state, stream.error) == ("failed", "no text")
+        with pytest.raises(SpeechError):
+            stream.ready.result()
+        assert inputs == []
+        assert source.closed == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["complete", "failed", "cancelled"])
+def test_the_pump_always_closes_its_source(monkeypatch, ending):
+    error = httpx.Response(429, content=b"{}", headers={"content-type": "application/json"})
+    _parts_transport(monkeypatch, [_audio(b"one"), error if ending == "failed" else _audio(b"two")])
+    # Cancelled: the second part never comes.
+    source = FakeSource(["Part one.", None if ending == "cancelled" else "Part two."], split=True)
+
+    async def scenario():
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_speech(_request(), "k", stream, source))
+        if ending == "cancelled":
+            await _until(lambda: stream.parts_sent == 1 and stream._part_started is None)
+            await asyncio.sleep(0.01)
+            assert source.closed == 0
+            pump.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await _within(pump)
+        else:
+            await _within(pump)
+        # Cancelled: the pump neither failed nor finished the stream (its owner decides).
+        assert stream.state == ("running" if ending == "cancelled" else ending)
+
+    asyncio.run(scenario())
+    assert source.closed == 1
+
+
+def test_the_wait_for_a_part_counts_as_generation_time(monkeypatch):
+    async def scenario():
+        _parts_transport(monkeypatch, [_audio(b"one"), _audio(b"two")])
+        stream = AudioStream(LABEL)
+        source = FakeSource(["Part one.", 0.2, "Part two."], split=True)
+        await _within(pump_speech(_request(), "k", stream, source))
+        assert stream.state == "complete"
+        assert 200 <= stream.generation_ms < 400
 
     asyncio.run(scenario())
 

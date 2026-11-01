@@ -18,11 +18,13 @@ import time
 
 import pytest
 
+from tests.test_tts_openrouter import FakeSource
 from tests.test_tts_part_audio import _frame, _id3
 from tests.test_tts_script_audio import _wav
 from twicc import terminal
 from twicc.tts import script, streams
 from twicc.tts.openrouter import SpeechError
+from twicc.tts.part_source import StaticParts
 from twicc.tts.parts import split_text
 from twicc.tts.script import (
     COULD_NOT_START,
@@ -855,6 +857,100 @@ def test_the_parts_run_one_after_the_other_into_one_stream(tmp_path):
 
     asyncio.run(scenario())
     assert texts.read_text() == "Part one.\nPart two.\nPart three.\n"
+
+
+def test_pacing_follows_the_source_split(tmp_path):
+    command = f"cat {_file(tmp_path, 'a.mp3', MP3)}"
+
+    async def scenario():
+        single = await _pump(_request(command, audio_format="mp3"), StaticParts(["one"]), paced=True)
+        assert (single.state, single.paced) == ("complete", False)
+        assert bytes(single.data) == MP3  # a one-part reading is never filtered
+
+        split = await _pump(_request(command, audio_format="mp3"), StaticParts(["one", "two"]), paced=True)
+        assert (split.state, split.paced) == ("complete", True)
+        assert bytes(split.data) == _id3(20) + MP3_FRAMES * 2
+
+    asyncio.run(scenario())
+
+
+def test_the_split_comes_from_the_source_not_from_the_part_count(tmp_path):
+    # A source cut its first part before its text ended: split, though it gives one part.
+    command = f"cat {_file(tmp_path, 'a.mp3', MP3)}"
+
+    async def scenario():
+        source = FakeSource(["one"], split=True)
+        stream = await _pump(_request(command, audio_format="mp3"), source, paced=True)
+        assert (stream.state, stream.paced) == ("complete", True)
+        assert bytes(stream.data) == _id3(20) + MP3_FRAMES
+
+    asyncio.run(scenario())
+
+
+def test_a_source_error_on_a_later_part_fails_the_stream_after_its_audio(tmp_path):
+    texts = tmp_path / "texts"
+    command = f"cat >> {texts}; echo >> {texts}; cat {_file(tmp_path, 'a.pcm', PCM)}"
+
+    async def scenario():
+        source = FakeSource(["one", SpeechError("The text adaptation stopped before the end")], split=True)
+        stream = await _pump(_request(command), source, paced=True)
+        assert (stream.state, stream.error) == ("failed", "The text adaptation stopped before the end")
+        assert stream.ready.result() is None  # the first part's headers had arrived
+        assert bytes(stream.data) == PCM
+        assert source.closed == 1
+
+    asyncio.run(scenario())
+    assert texts.read_text() == "one\n"
+
+
+def test_a_source_error_on_the_first_part_fails_the_stream_before_its_headers(tmp_path):
+    ran = tmp_path / "ran"
+
+    async def scenario():
+        source = FakeSource([SpeechError("no text")], split=False)
+        stream = await _pump(_request(f"touch {ran}"), source)
+        assert await _failed_open(stream) == "no text"
+        assert source.closed == 1
+
+    asyncio.run(scenario())
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize("ending", ["complete", "failed", "cancelled"])
+def test_the_pump_always_closes_its_source(tmp_path, ending):
+    command = "exit 3" if ending == "failed" else f"cat {_file(tmp_path, 'a.pcm', PCM)}"
+    # Cancelled: the second part never comes.
+    source = FakeSource(["one", None if ending == "cancelled" else "two"], split=True)
+
+    async def scenario():
+        stream = AudioStream(LABEL)
+        pump = asyncio.create_task(pump_script_speech(_request(command), stream, source))
+        if ending == "cancelled":
+            await _until(lambda: stream.parts_sent == 1 and stream._part_started is None)
+            await asyncio.sleep(0.05)
+            assert source.closed == 0
+            pump.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await _within(pump)
+        else:
+            await _within(pump)
+        # Cancelled: the pump neither failed nor finished the stream (its owner decides).
+        assert stream.state == ("running" if ending == "cancelled" else ending)
+
+    asyncio.run(scenario())
+    assert source.closed == 1
+
+
+def test_the_wait_for_a_part_counts_as_generation_time(tmp_path):
+    command = f"cat {_file(tmp_path, 'a.pcm', PCM)}"
+
+    async def scenario():
+        source = FakeSource(["one", 0.5, "two"], split=True)
+        stream = await _pump(_request(command), source)
+        assert stream.state == "complete"
+        assert stream.generation_ms >= 500  # the two runs alone take far less
+
+    asyncio.run(scenario())
 
 
 def test_a_split_pcm_speech_drops_partial_frames(tmp_path):

@@ -22,6 +22,7 @@ import orjson
 
 from twicc.tts.model_catalog import speech_model_facts
 from twicc.tts.part_audio import MP3_HEADER_SIZE, Mp3HeadFilter, PcmFrameTrimmer, id3_tag_size, mp3_frame
+from twicc.tts.part_source import PartSource, StaticParts
 
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
@@ -154,44 +155,80 @@ def upstream_error_message(status: int, body: bytes) -> str:
     return message
 
 
+def part_source(text: str, parts: Sequence[str] | PartSource | None) -> PartSource:
+    """The source a pump pulls its parts from: *parts* itself, or a static source of the parts
+    (None: *text* alone, in one part)."""
+    if parts is None:
+        return StaticParts([text])
+    if isinstance(parts, PartSource):
+        return parts
+    return StaticParts(parts)
+
+
+async def timed_next_part(source: PartSource, stream: "AudioStream") -> str | None:
+    """The next part of *source*; the wait for it counts as generation time of *stream* (the
+    test times then include the adaptation of the text). May raise ``SpeechError``."""
+    started = time.monotonic()
+    text = await source.next_part()
+    stream.add_generation_seconds(time.monotonic() - started)
+    return text
+
+
 async def pump_speech(
     request: SpeechRequest,
     api_key: str,
     stream: "AudioStream",
-    parts: Sequence[str] | None = None,
+    parts: Sequence[str] | PartSource | None = None,
     *,
     paced: bool = False,
 ) -> None:
     """Stream the speech of *request* into *stream*, chunk by chunk, as it arrives.
 
     *parts* are the texts to speak, one request each, in order, into the same
-    stream (None: the request's text, in one request). A part is requested once
-    the previous part's audio has fully arrived and the stream's lookahead
-    allows it. With *paced*, the stream delivers its audio at the playback pace.
+    stream (None: the request's text, in one request): a sequence, or a source
+    the pump pulls them from (:mod:`twicc.tts.part_source`), always closed at
+    the end. A part is requested once the previous part's audio has fully
+    arrived and the stream's lookahead allows it. The source tells, with its
+    first part, whether the reading is split; with *paced*, a split reading's
+    stream delivers its audio at the playback pace.
 
     The upstream ``Content-Type`` decides, not the requested format. An upstream
     error, or a success that is not audio, fails the stream (before its headers
     on the first part) and sends no next part. A later part of another type
-    fails it too. A timeout or a network error fails it with a user-safe
-    message, before or after its headers. A cancellation (a release) propagates:
-    the ``async with`` closes the upstream call.
+    fails it too, and so does an error of the source. A timeout or a network
+    error fails it with a user-safe message, before or after its headers. A
+    cancellation (a release) propagates: the ``async with`` closes the upstream
+    call.
     """
-    texts = [request.text] if parts is None else list(parts)
-    split = len(texts) > 1
+    source = part_source(request.text, parts)
     try:
         async with _make_client(SPEECH_TIMEOUT) as client:
-            for index, text in enumerate(texts):
+            index = 0
+            split = False
+            while (text := await timed_next_part(source, stream)) is not None:
                 if index:
+                    # Pulled first: the last part ends the speech without a lookahead wait.
                     await stream.wait_for_lookahead()
+                else:
+                    split = bool(source.split)  # known once the first part was returned
                 part_request = request._replace(text=text)
-                if not await _pump_part(client, part_request, api_key, stream, index, split=split, paced=paced):
+                if not await _pump_part(
+                    client, part_request, api_key, stream, index, split=split, paced=paced and split
+                ):
                     return
+                index += 1
+    except SpeechError as error:
+        # The source's error: the audio received still plays, then the reading stops.
+        _fail_if_live(stream, error)
+        return
     except httpx.TimeoutException:
         _fail_if_live(stream, SpeechError("OpenRouter did not answer in time"))
         return
     except httpx.HTTPError:
         _fail_if_live(stream, SpeechError("Could not reach OpenRouter"))
         return
+    finally:
+        await source.aclose()
     stream.finish()
 
 
