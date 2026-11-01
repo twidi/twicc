@@ -181,7 +181,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         from twicc.core.services.session_titles import capture_title_boundary
         from twicc.provider_homes import claude_projects_dir
         from twicc.providers.claude_code.sessions_watcher import get_watcher
-        row = await Session.objects.filter(pk=session_id).values('file_path', 'stale').afirst()
+        row = await self._title_lane(lambda: Session.objects.filter(pk=session_id).values('file_path', 'stale').first())
         if row is None or row['stale']:
             return None
         path = claude_projects_dir() / row['file_path']
@@ -194,7 +194,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # through the same ordered live path as ordinary file notifications.
         await get_watcher().process_path(path)
         if boundary is not None:
-            current = await Session.objects.filter(pk=session_id).values('last_line', 'storage_incarnation', 'history_epoch').aget()
+            current = await self._title_lane(lambda: Session.objects.filter(pk=session_id).values(
+                'last_line', 'storage_incarnation', 'history_epoch',
+            ).get())
             if (current['storage_incarnation'], current['history_epoch']) != boundary[1:3]:
                 raise RuntimeError('Claude source changes during title drain')
             if current['last_line'] < boundary.line_num:
@@ -331,6 +333,11 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             return await super()._register_and_start(agent, text, resume, **start_kwargs)
         from uuid import uuid4
         worker = self._ensure_title_publications()
+        # A confirmed dead process can retain its route after failed ingestion.
+        # Offer one fresh final drain on normal launch, outside its reservation.
+        prior = self._resolve_title_process(agent.session_id)
+        if prior is not None and agent.session_id in worker._retiring:
+            await worker.finish_process(agent.session_id, prior.process_token)
         # Launch and adoption cannot overtake an inactive transcript write.
         async with worker.process_publication_reservation(agent.session_id):
             if self._resolve_title_process(agent.session_id) is not None:

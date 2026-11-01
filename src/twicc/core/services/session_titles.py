@@ -39,9 +39,13 @@ async def capture_title_boundary(session_id):
     import asyncio
     from twicc.provider_homes import claude_projects_dir
 
-    row = await Session.objects.filter(pk=session_id).values(
-        'file_path', 'storage_incarnation', 'history_epoch', 'last_line', 'last_offset', 'stale',
-    ).afirst()
+    # Watcher ingestion uses its own executor transaction. Admit the SQL
+    # snapshot, then release the lane before scanning the transcript.
+    def snapshot():
+        return Session.objects.filter(pk=session_id).values(
+            'file_path', 'storage_incarnation', 'history_epoch', 'last_line', 'last_offset', 'stale',
+        ).first()
+    row = await run_under_db_write_lock(lambda: sync_to_async(snapshot)())
     if row is None or row['stale']:
         return None
     if row['storage_incarnation'] is None:

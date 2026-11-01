@@ -326,7 +326,10 @@ def test_fresh_event_loop_discards_old_running_and_queued_state(runner, monkeypa
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("phase", ["generation", "push", "correction"])
-def test_cancellation_owns_entire_real_check(runner, env, session, phase, monkeypatch):
+def test_cancellation_owns_entire_codex_check(runner, env, session, phase, monkeypatch):
+    # Codex retains synchronous provider push/correction ownership. Claude
+    # now transfers publication ownership to its independent session worker.
+    Session.objects.filter(pk=session.pk).update(provider="codex")
     async def scenario():
         entered = asyncio.Event()
         canceled = asyncio.Event()
@@ -377,7 +380,8 @@ def test_cancellation_owns_entire_real_check(runner, env, session, phase, monkey
 
 
 @pytest.mark.django_db(transaction=True)
-def test_same_session_waits_for_real_corrective_push(runner, env, session, monkeypatch):
+def test_same_session_waits_for_codex_corrective_push(runner, env, session, monkeypatch):
+    Session.objects.filter(pk=session.pk).update(provider="codex")
     async def scenario():
         push_entered, push_release, correction_entered, correction_release, later = (
             asyncio.Event() for _ in range(5))
