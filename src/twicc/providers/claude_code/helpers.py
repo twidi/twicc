@@ -27,6 +27,7 @@ from twicc.providers.helpers import (
     BaseProviderHelpers,
     ModelVersion,
     StatuspageConfig,
+    TitleValidationResult,
     humanize_identifier,
 )
 
@@ -839,6 +840,12 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
         from .auth import probe_auth_via_sdk
 
         return await probe_auth_via_sdk()
+
+    def validate_title(self, title: str | None) -> TitleValidationResult:
+        """Validate the canonical title shared by Claude publication routes."""
+        from .title_control import canonicalize_claude_title
+
+        return canonicalize_claude_title(title)
 
     async def rename_session(self, session_id: str, title: str) -> None:
         """Append the title to the JSONL and mark it protected against CLI stale re-appends.
