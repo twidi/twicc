@@ -5,7 +5,7 @@ that leave the model no tool, plus a runtime guard (design §5.4, §5.5).
 import asyncio
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -25,7 +25,12 @@ from twicc.providers.codex import hermetic_catalog
 from twicc.providers.codex.bin import make_codex_config
 from twicc.providers.codex.runtime import codex_binary_path, ensure_codex_runtime
 from twicc.providers.codex.sdk_wrappers import TwiccAsyncCodex
-from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, hermetic_cwd
+from twicc.providers.hermetic import (
+    HermeticConfigError,
+    HermeticGuardViolation,
+    HermeticStreamError,
+    hermetic_cwd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +267,25 @@ async def _interrupt(handle) -> None:
         logger.debug("interrupt failed after a guard violation", exc_info=True)
 
 
+# Bound of the interrupt sent when the consumer abandons a stream (closing the app-server stops the turn anyway).
+_ABANDON_INTERRUPT_SECONDS = 5.0
+
+
+def _terminal_error_text(error) -> str:
+    """A user-safe text for a terminal ``ErrorNotification`` (the provider's message, never the prompt)."""
+    message = getattr(getattr(error, "error", None), "message", None)
+    return f"The model returned an error: {message}" if message else "The model returned an error"
+
+
+class _TurnOutcome:
+    """What the shared turn loop collected once the stream ended normally."""
+
+    def __init__(self) -> None:
+        self.text: list[str] = []
+        self.terminal_error = None
+        self.tokens: int | None = None
+
+
 class HermeticCodexThread:
     """An open hermetic thread: the verified ``thread/start`` response, the guard state and ``run_turn``."""
 
@@ -280,33 +304,76 @@ class HermeticCodexThread:
             await _interrupt(handle)
             raise HermeticGuardViolation(f"refused request: {self.handler.method}")
 
-    async def run_turn(self, prompt: str, *, effort) -> HermeticCodexResult:
-        """One turn. Raises ``HermeticGuardViolation`` on a forbidden item or a refused request."""
+    async def _turn(self, prompt: str, *, effort, stream: bool, outcome: _TurnOutcome) -> AsyncIterator[str]:
+        """The turn loop of ``run_turn`` and ``stream_turn``: every guard, the completed text, the token usage.
+
+        With ``stream`` it yields the agent-message deltas (it yields nothing otherwise).
+        """
         effort = ReasoningEffort(effort) if isinstance(effort, str) else effort
         handle = await self._thread.turn_with_policy(TextInput(prompt), effort=effort)
-        text: list[str] = []
-        terminal_error = None
-        tokens = None
-        async with aclosing(handle.stream()) as stream:
-            async for event in stream:
-                await self._check_flag(handle)
-                if event.method == "thread/tokenUsage/updated":
-                    tokens = _last_input_tokens(event.payload)
-                elif event.method in ("item/started", "item/completed"):
-                    type_name = _item_type(event)
-                    try:
-                        classify_codex_item(type_name)
-                    except HermeticGuardViolation:
-                        await _interrupt(handle)
-                        raise
-                    if event.method == "item/completed" and type_name == "agentMessage":
-                        text.append(_item_text(event))
-                elif event.method == "error":
-                    payload = getattr(event, "payload", None)
-                    if isinstance(payload, ErrorNotification) and not payload.will_retry:
-                        terminal_error = payload
+        yielded = False
+        try:
+            async with aclosing(handle.stream()) as events:
+                async for event in events:
+                    await self._check_flag(handle)
+                    if event.method == "thread/tokenUsage/updated":
+                        outcome.tokens = _last_input_tokens(event.payload)
+                    elif event.method in ("item/started", "item/completed"):
+                        type_name = _item_type(event)
+                        try:
+                            classify_codex_item(type_name)
+                        except HermeticGuardViolation:
+                            await _interrupt(handle)
+                            raise
+                        if event.method == "item/completed" and type_name == "agentMessage":
+                            outcome.text.append(_item_text(event))
+                    elif stream and event.method == "item/agentMessage/delta":
+                        delta = getattr(event.payload, "delta", None)
+                        if isinstance(delta, str) and delta:
+                            yielded = True
+                            yield delta
+                    elif event.method == "error":
+                        payload = getattr(event, "payload", None)
+                        if not isinstance(payload, ErrorNotification):
+                            continue
+                        if not payload.will_retry:
+                            outcome.terminal_error = payload
+                        elif stream and yielded:
+                            # The retried attempt would stream the answer again; ``run_turn`` joins only
+                            # completed items, so it can ignore the retry.
+                            await _interrupt(handle)
+                            raise HermeticStreamError("The model restarted its answer")
+        except (GeneratorExit, asyncio.CancelledError):
+            # The consumer abandoned the stream mid-turn: stop the generation.
+            if stream:
+                try:
+                    async with asyncio.timeout(_ABANDON_INTERRUPT_SECONDS):
+                        await handle.interrupt()
+                except Exception:
+                    logger.debug("interrupt failed after an abandoned stream", exc_info=True)
+            raise
         await self._check_flag(handle)
-        return HermeticCodexResult("".join(text).strip(), terminal_error, tokens, self.start)
+
+    async def run_turn(self, prompt: str, *, effort) -> HermeticCodexResult:
+        """One turn. Raises ``HermeticGuardViolation`` on a forbidden item or a refused request."""
+        outcome = _TurnOutcome()
+        async for _ in self._turn(prompt, effort=effort, stream=False, outcome=outcome):
+            pass   # nothing is yielded without ``stream``
+        return HermeticCodexResult("".join(outcome.text).strip(), outcome.terminal_error, outcome.tokens, self.start)
+
+    async def stream_turn(self, prompt: str, *, effort) -> AsyncIterator[str]:
+        """One turn whose answer text is yielded as it is generated (the agent-message deltas).
+
+        Keeps every guard of ``run_turn``: raises ``HermeticGuardViolation``, possibly after some yields.
+        Raises ``HermeticStreamError`` on a terminal error (at the end) and on a retry after a yielded delta
+        (at once). Closing the generator early interrupts the turn.
+        """
+        outcome = _TurnOutcome()
+        async with aclosing(self._turn(prompt, effort=effort, stream=True, outcome=outcome)) as deltas:
+            async for delta in deltas:
+                yield delta
+        if outcome.terminal_error is not None:
+            raise HermeticStreamError(_terminal_error_text(outcome.terminal_error))
 
 
 @asynccontextmanager
@@ -352,3 +419,10 @@ async def hermetic_codex(plan: HermeticCodexPlan):
 async def run_hermetic_codex(plan: HermeticCodexPlan, prompt: str, *, effort) -> HermeticCodexResult:
     async with hermetic_codex(plan) as thread:
         return await thread.run_turn(prompt, effort=effort)
+
+
+async def stream_hermetic_codex(plan: HermeticCodexPlan, prompt: str, *, effort) -> AsyncIterator[str]:
+    """``run_hermetic_codex`` in streaming mode: yields the answer's text deltas (see ``stream_turn``)."""
+    async with hermetic_codex(plan) as thread, aclosing(thread.stream_turn(prompt, effort=effort)) as deltas:
+        async for delta in deltas:
+            yield delta

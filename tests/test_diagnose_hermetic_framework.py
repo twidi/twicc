@@ -128,9 +128,9 @@ def test_guarded_does_nothing_more_on_success():
 
 
 def test_planned_live_calls():
-    assert diag.planned_live_calls(True, False) == 13
-    assert diag.planned_live_calls(False, True) == 17
-    assert diag.planned_live_calls(True, True) == 30
+    assert diag.planned_live_calls(True, False) == 14
+    assert diag.planned_live_calls(False, True) == 18
+    assert diag.planned_live_calls(True, True) == 32
 
 
 def test_live_gate():
@@ -149,7 +149,7 @@ def test_main_live_without_yes_and_without_tty_aborts_with_exit_2(monkeypatch, c
     monkeypatch.setattr(diag, "_run_all", lambda *a: ran.append(a))
     assert diag.main(["--provider", "codex", "--live"]) == 2
     out = capsys.readouterr().out
-    assert ran == [] and "13 provider calls planned" in out and "--yes" in out
+    assert ran == [] and "14 provider calls planned" in out and "--yes" in out
 
 
 def test_leak_line_selection(tmp_path):
@@ -402,8 +402,80 @@ def test_codex_live_skips_everything_after_a_failed_d1(monkeypatch):
     asyncio.run(diag.run_codex_live(r))
     resolved = {c.id: c.status for c in r.resolved()}
     assert resolved.pop("D1") == diag.FAIL
-    assert set(resolved) == {"D2", "D3", "D4", "D5", "D6a", "D6b", "D7", "D8"}
+    assert set(resolved) == {"D2", "D2-stream", "D3", "D4", "D5", "D6a", "D6b", "D7", "D8"}
     assert set(resolved.values()) == {diag.SKIP}
+
+
+def test_codex_live_runs_the_stream_check_after_d1(monkeypatch):
+    prompts = []
+
+    async def passed_d1(report):
+        report.add("D1", diag.PASS, "started")
+
+    async def no_servers():
+        return ()
+
+    async def stream(prompt):
+        prompts.append(prompt)
+        return diag.StreamRun(deltas=20, text="One is the first number. " * 20)
+
+    async def nothing(report, *args):
+        pass
+
+    monkeypatch.setattr(diag, "check_d1_d2", passed_d1)
+    monkeypatch.setattr(diag, "user_mcp_server_names", no_servers)
+    monkeypatch.setattr(diag, "_codex_stream", stream)
+    for name in ("check_d3", "check_d4", "check_d5", "check_d6a", "check_d6b", "check_d7", "check_d8"):
+        monkeypatch.setattr(diag, name, nothing)
+    r = diag.Report()
+    asyncio.run(diag.run_codex_live(r))
+    assert [(c.id, c.status, c.depends_on) for c in r.checks] == [
+        ("D1", diag.PASS, None), ("D2-stream", diag.PASS, "D1")]
+    assert prompts == [diag.PROMPTS["STREAM"]]
+
+
+def test_stream_verdict():
+    text = "One is first. Two is second."
+    assert diag.stream_verdict(diag.StreamRun(deltas=5, text=text))[0] == diag.PASS
+    assert diag.stream_verdict(diag.StreamRun(deltas=1, text=text)) == (
+        diag.FAIL, "the answer came in 1 delta: the call does not stream")
+    assert diag.stream_verdict(diag.StreamRun(deltas=0))[0] == diag.FAIL
+    assert diag.stream_verdict(diag.StreamRun(deltas=3, text="  \n"))[0] == diag.FAIL
+    violated = diag.StreamRun(deltas=5, text=text, violation="tool activity: 1 tool block(s), 0 permission request(s)")
+    assert diag.stream_verdict(violated) == (diag.FAIL, "guard violation: " + violated.violation)
+    status, reason = diag.stream_verdict(diag.StreamRun(deltas=2, text=text, stream_error="The model returned an error"))
+    assert status == diag.INCONCLUSIVE and "The model returned an error" in reason
+    assert diag.stream_verdict(diag.StreamRun(timed_out=True))[0] == diag.INCONCLUSIVE
+    assert diag.stream_verdict(diag.StreamRun(error="RuntimeError('boom')"))[0] == diag.FAIL
+
+
+@pytest.mark.parametrize(("raised", "field"), [
+    (None, None), ("guard", "violation"), ("stream", "stream_error"), ("timeout", "timed_out"), ("other", "error"),
+])
+def test_collect_stream_keeps_the_deltas_and_maps_every_outcome(raised, field):
+    from twicc.providers.hermetic import HermeticGuardViolation, HermeticStreamError
+
+    errors = {"guard": HermeticGuardViolation("refused request: x"), "stream": HermeticStreamError("restarted"),
+              "timeout": TimeoutError(), "other": RuntimeError("boom")}
+    closed = []
+
+    async def open_stream():
+        try:
+            yield "One. "
+            yield "Two."
+            if raised is not None:
+                raise errors[raised]
+        finally:
+            closed.append(True)
+
+    async def go():
+        async with asyncio.timeout(5):
+            return await diag.collect_stream(open_stream)
+
+    run = asyncio.run(go())
+    assert run.deltas == 2 and run.text == "One. Two." and closed == [True]
+    set_fields = {name for name in ("violation", "stream_error", "timed_out", "error") if getattr(run, name)}
+    assert set_fields == ({field} if field else set())
 
 
 def test_d4_wiring_with_fakes_removes_the_file(monkeypatch, tmp_path):
@@ -757,7 +829,7 @@ def test_d14(monkeypatch, tmp_path):
     assert r.checks[0].status == diag.FAIL and ".claude" in r.checks[0].reason
 
 
-CLAUDE_IDS = {"D10", "D11a", "D11b-write", "D11b-read", "D11b-interact", "D11c-mcp", "D11c-skill", "D11c-web", "D12"}
+CLAUDE_IDS = {"D10", "D10-stream", "D11a", "D11b-write", "D11b-read", "D11b-interact", "D11c-mcp", "D11c-skill", "D11c-web", "D12"}
 
 
 def test_claude_live_skips_everything_after_a_failed_d9(monkeypatch):
@@ -772,6 +844,7 @@ def test_claude_live_skips_everything_after_a_failed_d9(monkeypatch):
     monkeypatch.setattr(diag, "_claude_production", violated)
     monkeypatch.setattr(diag, "_claude_control", never)
     monkeypatch.setattr(diag, "_claude_hermetic", never)
+    monkeypatch.setattr(diag, "_claude_stream", never)
     r = diag.Report()
     asyncio.run(diag.run_claude_live(r))
     resolved = {c.id: c for c in r.resolved()}
@@ -821,9 +894,14 @@ def _fake_claude(monkeypatch, tmp_path, hermetic_results=None, interact_tool="As
         result = _claude_result(text="NONE" if "tool or function" in prompt or "verbatim" in prompt else "I cannot.")
         return diag.claude_hermetic_run(result), result
 
+    async def streamed(prompt):
+        calls.append(("stream", prompt))
+        return diag.StreamRun(deltas=20, text="One is the first number. " * 20)
+
     monkeypatch.setattr(diag, "_claude_production", production)
     monkeypatch.setattr(diag, "_claude_control", control)
     monkeypatch.setattr(diag, "_claude_hermetic", hermetic)
+    monkeypatch.setattr(diag, "_claude_stream", streamed)
     return calls
 
 
@@ -837,7 +915,8 @@ def test_claude_live_wiring_with_fakes(monkeypatch, tmp_path, capsys):
     assert statuses == {"D9": diag.PASS, **{check_id: diag.PASS for check_id in CLAUDE_IDS}}, r.render()
     assert "tokens=410" in next(c.reason for c in r.checks if c.id == "D10")
     assert all(c.depends_on == "D9" for c in r.checks if c.id != "D9")
-    assert len(calls) == 16 <= diag.PLANNED_LIVE_CALLS["claude"]
+    assert len(calls) == 17 <= diag.PLANNED_LIVE_CALLS["claude"]
+    assert ("stream", diag.PROMPTS["STREAM"]) in calls
     d11c = [call for call in calls if call[0] == "hermetic" and call[2] is not None]
     assert len(d11c) == 3   # the D11c hermetic runs use the fixture as cwd, the others the neutral directory
     cwd_call = next(call for call in calls if call[0] == "hermetic" and "working directory" in call[1])

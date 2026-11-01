@@ -9,7 +9,7 @@ from typing import NamedTuple
 
 from claude_agent_sdk import ClaudeAgentOptions, PermissionResultDeny
 
-from twicc.providers.hermetic import HermeticGuardViolation, hermetic_cwd
+from twicc.providers.hermetic import HermeticGuardViolation, HermeticStreamError, hermetic_cwd
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,9 @@ class HermeticClaudeResult(NamedTuple):
     violation: str | None = None   # always None on the public path; set by the diagnostic seam
 
 
-def _build_options(*, model: str, effort: str, cwd: Path, permission_calls: list[str]) -> ClaudeAgentOptions:
+def _build_options(
+    *, model: str, effort: str, cwd: Path, permission_calls: list[str], include_partial_messages: bool = False,
+) -> ClaudeAgentOptions:
     from twicc.provider_homes import provider_env_overlay
 
     async def deny_all(tool_name, tool_input, context):
@@ -54,6 +56,7 @@ def _build_options(*, model: str, effort: str, cwd: Path, permission_calls: list
         extra_args={"no-session-persistence": None, "disable-slash-commands": None},
         # Configured provider homes, explicit (see the SDK agent's env_option), plus no automatic memory.
         env={**provider_env_overlay(), "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
+        include_partial_messages=include_partial_messages,   # the text deltas, for the streaming mode only
     )
 
 
@@ -94,18 +97,24 @@ def check_claude_result(result: HermeticClaudeResult) -> None:
         raise HermeticGuardViolation(f"expected one turn, got {result.num_turns!r}")
 
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
     ResultMessage,
+    StreamEvent,
     SystemMessage,
     TextBlock,
 )
 
 # Replaced by the unit tests.
 _client_factory = ClaudeSDKClient
+
+# Bound of the interrupt sent when the consumer abandons a stream (the disconnect that follows stops the CLI anyway).
+_ABANDON_INTERRUPT_SECONDS = 5.0
 
 
 def _count_tool_blocks(message) -> int:
@@ -115,10 +124,38 @@ def _count_tool_blocks(message) -> int:
     return sum(1 for block in content if type(block).__name__ in _TOOL_BLOCK_NAMES)
 
 
-async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> HermeticClaudeResult:
+def _text_delta(event) -> str | None:
+    """The text of a ``content_block_delta`` stream event carrying a ``text_delta``, else ``None``."""
+    if not isinstance(event, dict) or event.get("type") != "content_block_delta":
+        return None
+    delta = event.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return None
+    text = delta.get("text")
+    return text if isinstance(text, str) else None
+
+
+class _Outcome:
+    """What the shared loop leaves once the turn ended normally (the stream was not abandoned)."""
+
+    def __init__(self) -> None:
+        self.result: HermeticClaudeResult | None = None
+        self.violation: HermeticGuardViolation | None = None
+        self.restarted = False   # a second ``message_start``: the answer would be streamed again
+
+
+async def _turn(prompt, *, model, cwd, options_override, stream, outcome: _Outcome) -> AsyncIterator[str]:
+    """The loop of every hermetic Claude call: connect, query, guard, collect, disconnect.
+
+    With ``stream`` it asks for partial messages and yields their text deltas (it yields nothing otherwise),
+    after the ``init`` check. ``outcome`` is filled once the client is disconnected.
+    """
     expected_cwd = Path(cwd) if cwd is not None else hermetic_cwd()
     permission_calls: list[str] = []
-    options = _build_options(model=model, effort="low", cwd=expected_cwd, permission_calls=permission_calls)
+    options = _build_options(
+        model=model, effort="low", cwd=expected_cwd, permission_calls=permission_calls,
+        include_partial_messages=stream,
+    )
     guarded = options_override is None
     if options_override is not None:
         options = options_override(options)
@@ -131,6 +168,7 @@ async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> H
     is_error = False
     num_turns = None
     tool_blocks = 0
+    message_starts = 0
     violation: HermeticGuardViolation | None = None   # constructing it logs the single warning line
     try:
         await client.connect()
@@ -144,6 +182,20 @@ async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> H
                     except HermeticGuardViolation as exc:
                         violation = exc
                         break
+            elif stream and isinstance(message, StreamEvent):
+                event = message.event if isinstance(message.event, dict) else {}
+                if event.get("type") == "message_start":
+                    message_starts += 1
+                    if message_starts > 1:
+                        outcome.restarted = True
+                        break
+                    continue
+                chunk = _text_delta(event)
+                if chunk:
+                    if guarded and not init:
+                        violation = HermeticGuardViolation("no init message received before the text")
+                        break
+                    yield chunk
             elif isinstance(message, AssistantMessage):
                 tool_blocks += _count_tool_blocks(message)
                 if message.error:
@@ -157,11 +209,20 @@ async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> H
                 tool_blocks += _count_tool_blocks(message)
         if violation is None and guarded and not init:
             violation = HermeticGuardViolation("no init message received")
-        if violation is not None:
+        if violation is not None or outcome.restarted:
             try:
                 await client.interrupt()
             except Exception:
                 logger.debug("interrupt failed after a guard violation", exc_info=True)
+    except (GeneratorExit, asyncio.CancelledError):
+        # The consumer abandoned the stream mid-turn: stop the generation before the disconnect.
+        if stream:
+            try:
+                async with asyncio.timeout(_ABANDON_INTERRUPT_SECONDS):
+                    await client.interrupt()
+            except Exception:
+                logger.debug("interrupt failed after an abandoned stream", exc_info=True)
+        raise
     finally:
         try:
             await client.disconnect()
@@ -177,11 +238,34 @@ async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> H
             check_claude_result(result)   # tool activity counts even when no ResultMessage arrived
         except HermeticGuardViolation as exc:
             violation = exc
+    outcome.result, outcome.violation = result, violation
+
+
+async def _run(prompt, *, model, cwd, options_override, raise_on_violation) -> HermeticClaudeResult:
+    outcome = _Outcome()
+    async for _ in _turn(prompt, model=model, cwd=cwd, options_override=options_override, stream=False,
+                         outcome=outcome):
+        pass   # nothing is yielded without ``stream``
+    result, violation = outcome.result, outcome.violation
     if violation is not None:
         if raise_on_violation:
             raise violation
         return result._replace(violation=violation.reason)
     return result
+
+
+def _stream_failure(outcome: _Outcome) -> str | None:
+    """Why a streamed answer is not complete (user-safe, without the prompt), ``None`` when it is."""
+    result = outcome.result
+    if outcome.restarted:
+        return "The model restarted its answer"
+    if result.assistant_error:
+        return f"The model returned an error ({result.assistant_error})"
+    if result.is_error:
+        return "The model returned an error result"
+    if result.num_turns is None:
+        return "The call ended without a result"
+    return None
 
 
 async def run_hermetic_claude(prompt: str, *, model: str) -> HermeticClaudeResult:
@@ -190,6 +274,26 @@ async def run_hermetic_claude(prompt: str, *, model: str) -> HermeticClaudeResul
     Callers wrap it in their own ``asyncio.wait_for`` and retry loop.
     """
     return await _run(prompt, model=model, cwd=None, options_override=None, raise_on_violation=True)
+
+
+async def stream_hermetic_claude(prompt: str, *, model: str) -> AsyncIterator[str]:
+    """One hermetic Claude turn whose answer text is yielded as it is generated (the text deltas).
+
+    The ``init`` check runs before the first yield, the result check at the end. Raises
+    ``HermeticGuardViolation`` on a guard failure, possibly after some yields, and ``HermeticStreamError``
+    when the turn did not end with a success result: unlike the title call, an error result is a failure here.
+    Closing the generator early interrupts the turn and disconnects. Callers bound it with their own time limits.
+    """
+    outcome = _Outcome()
+    async with aclosing(_turn(prompt, model=model, cwd=None, options_override=None, stream=True,
+                              outcome=outcome)) as deltas:
+        async for chunk in deltas:
+            yield chunk
+    if outcome.violation is not None:
+        raise outcome.violation
+    failure = _stream_failure(outcome)
+    if failure is not None:
+        raise HermeticStreamError(failure)
 
 
 async def _run_hermetic_claude_for_diagnostic(

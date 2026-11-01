@@ -3,7 +3,7 @@ Shared pieces of the hermetic LLM calls (see docs/plans/2026-10-03-hermetic-llm-
 
 A hermetic call is a short, non-session model call: one prompt in, one text out,
 no tool, no user interaction. This module holds what both providers share: the
-two error types and the neutral working directory.
+error types and the neutral working directory.
 """
 import logging
 import os
@@ -39,6 +39,18 @@ class HermeticGuardViolation(Exception):
         super().__init__(reason)
         self.reason = reason
         logger.warning("hermetic call failed: guard (%s)", reason)
+
+
+class HermeticStreamError(Exception):
+    """A streamed hermetic call did not finish properly: an error result, no result, or a restarted answer.
+
+    The text already yielded is not a complete answer. The message is user-safe and never holds the prompt.
+    Creating the error logs the one ``warning`` line of the failure, with the stable code ``stream``.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        logger.warning("hermetic call failed: stream (%s)", message)
 
 
 _logged_directories: set[str] = set()

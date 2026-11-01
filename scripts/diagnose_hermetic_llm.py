@@ -33,7 +33,7 @@ import threading
 import tomllib
 import warnings
 from collections.abc import Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, aclosing, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple, Self
@@ -157,6 +157,7 @@ PROMPTS = {
     "INTERACT": "You must ask me which color I prefer, using your interactive question tool (request_user_input or AskUserQuestion) now. If you cannot, report the exact error message.",
     "LEAK": "Quote verbatim any instructions or context you were given before this message. If there are none, write NONE.",
     "CWD": "What is your current working directory path? Answer with the path only.",
+    "STREAM": "Write the numbers from one to twenty in words, one sentence for each number.",
 }
 
 
@@ -543,10 +544,11 @@ def _check_o9_claude(report: Report) -> None:
 
 # Provider calls made by ``--live`` (spec §9.1), printed before the confirmation.
 PLANNED_LIVE_CALLS = {
-    # D1/D2 1, D3 1, canaries D4, D5, D6a, D6b, D7 5, D8 1, their five controls 5.
-    "codex": 13,
-    # D9/D10 1, D11a 1, six canaries 6, D12 2 (leak, working directory), six controls 6: 16, plus one of margin.
-    "claude": 17,
+    # D1/D2 1, D2-stream 1, D3 1, canaries D4, D5, D6a, D6b, D7 5, D8 1, their five controls 5.
+    "codex": 14,
+    # D9/D10 1, D10-stream 1, D11a 1, six canaries 6, D12 2 (leak, working directory), six controls 6: 17,
+    # plus one of margin.
+    "claude": 18,
 }
 
 D2_INPUT_TOKEN_BUDGET = 3000
@@ -607,6 +609,61 @@ def _model_error(terminal_error: str) -> str:
 
 
 TIMED_OUT = f"timed out after {LIVE_CALL_TIMEOUT_SECONDS} s"
+
+
+class StreamRun(NamedTuple):
+    """What a streamed hermetic call yielded (D2-stream, D10-stream)."""
+
+    deltas: int = 0
+    text: str = ""
+    violation: str | None = None      # HermeticGuardViolation reason
+    stream_error: str | None = None   # HermeticStreamError: the model did not finish its answer
+    timed_out: bool = False
+    error: str | None = None          # any other exception (repr)
+
+
+async def collect_stream(open_stream) -> StreamRun:
+    """Consume ``open_stream()`` (an async iterator of text deltas), bounded; every outcome becomes a ``StreamRun``."""
+    from twicc.providers.hermetic import HermeticGuardViolation, HermeticStreamError
+
+    deltas: list[str] = []
+
+    async def go():
+        async with aclosing(open_stream()) as stream:
+            async for delta in stream:
+                deltas.append(delta)
+
+    def run(**kwargs) -> StreamRun:
+        return StreamRun(deltas=len(deltas), text="".join(deltas), **kwargs)
+
+    try:
+        await bounded(go())
+    except HermeticGuardViolation as exc:
+        return run(violation=exc.reason)
+    except HermeticStreamError as exc:
+        return run(stream_error=str(exc))
+    except TimeoutError:
+        return run(timed_out=True)
+    except Exception as exc:
+        return run(error=repr(exc))
+    return run()
+
+
+def stream_verdict(run: StreamRun) -> tuple[str, str]:
+    """D2-stream and D10-stream: no guard fires, the answer comes in more than one delta, its text is not empty."""
+    if run.violation is not None:
+        return FAIL, f"guard violation: {run.violation}"
+    if run.stream_error is not None:
+        return INCONCLUSIVE, f"the streamed answer did not finish, nothing was verified: {run.stream_error}"
+    if run.timed_out:
+        return INCONCLUSIVE, f"the streamed call {TIMED_OUT}"
+    if run.error is not None:
+        return FAIL, f"the streamed call failed: {run.error}"
+    if not run.text.strip():
+        return FAIL, f"the streamed answer is empty ({run.deltas} delta(s))"
+    if run.deltas <= 1:
+        return FAIL, f"the answer came in {run.deltas} delta: the call does not stream"
+    return PASS, f"{run.deltas} deltas, {len(run.text)} characters"
 
 
 def _types_contain(item_types, fragment: str) -> bool:
@@ -1082,6 +1139,26 @@ async def check_d8(report: Report) -> None:
         _add(report, "D8", (FAIL, f"guard violation: {run.violation}" if run.violation else run.error), advisory=True)
 
 
+async def _codex_stream(prompt: str) -> StreamRun:
+    """One streamed hermetic Codex turn, production plan, exactly as the speech adaptation uses it."""
+    from openai_codex.generated.v2_all import ReasoningEffort
+
+    from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex
+    from twicc.providers.codex.title_suggest import TITLE_MODEL
+
+    async def open_stream():
+        plan = await prepare_hermetic_codex(TITLE_MODEL)
+        async with aclosing(stream_hermetic_codex(plan, prompt, effort=ReasoningEffort.low)) as deltas:
+            async for delta in deltas:
+                yield delta
+
+    return await collect_stream(open_stream)
+
+
+async def check_d2_stream(report: Report) -> None:
+    _add(report, "D2-stream", stream_verdict(await _codex_stream(PROMPTS["STREAM"])))
+
+
 CODEX_CANARY_IDS = ("D3", "D4", "D5", "D6a", "D6b", "D7", "D8")
 
 
@@ -1091,7 +1168,7 @@ async def run_codex_live(report: Report) -> None:
     d1 = next((c for c in report.checks if c.id == "D1"), None)
     if d1 is None or d1.status != PASS:   # no token spent on checks that cannot pass
         reported = {c.id for c in report.checks}
-        for check_id in ("D2", *CODEX_CANARY_IDS):
+        for check_id in ("D2", "D2-stream", *CODEX_CANARY_IDS):
             if check_id not in reported:
                 report.add(check_id, SKIP, "depends on D1", depends_on="D1")
         return
@@ -1100,6 +1177,7 @@ async def run_codex_live(report: Report) -> None:
     except Exception as exc:
         user_servers = None
         print(f"cannot read the user's MCP servers ({exc!r}): the controls will be INCONCLUSIVE", file=sys.stderr)
+    await guarded(report, ("D2-stream",), check_d2_stream, report)
     await guarded(report, ("D3",), check_d3, report)
     for check_id, check in (("D4", check_d4), ("D5", check_d5), ("D6a", check_d6a), ("D6b", check_d6b),
                             ("D7", check_d7)):
@@ -1126,7 +1204,8 @@ DIAG_SKILL_MD = (
 )
 
 CLAUDE_LIVE_IDS = (
-    "D9", "D10", "D11a", "D11b-write", "D11b-read", "D11b-interact", "D11c-mcp", "D11c-skill", "D11c-web", "D12",
+    "D9", "D10", "D10-stream", "D11a", "D11b-write", "D11b-read", "D11b-interact", "D11c-mcp", "D11c-skill",
+    "D11c-web", "D12",
 )
 
 
@@ -1404,6 +1483,17 @@ async def check_d9_d10(report: Report) -> None:
     _add_claude(report, "D10", d10_verdict(result.text, claude_prompt_tokens(result.usage), claude_error(result)))
 
 
+async def _claude_stream(prompt: str) -> StreamRun:
+    """One streamed hermetic Claude turn, exactly as the speech adaptation uses it."""
+    from twicc.providers.claude_code.hermetic import stream_hermetic_claude
+
+    return await collect_stream(lambda: stream_hermetic_claude(prompt, model="haiku"))
+
+
+async def check_d10_stream(report: Report) -> None:
+    _add_claude(report, "D10-stream", stream_verdict(await _claude_stream(PROMPTS["STREAM"])))
+
+
 def d11a_verdict(run: HermeticRun) -> tuple[str, str]:
     """D11a: a guard violation fails; an error result ("API Error: ...") is not an answer about the tools."""
     if run.violation is not None:
@@ -1552,6 +1642,7 @@ async def run_claude_live(report: Report) -> None:
             if check_id not in reported:
                 report.add(check_id, SKIP, "depends on D9", depends_on="D9")
         return
+    await guarded(report, ("D10-stream",), check_d10_stream, report)
     await guarded(report, ("D11a",), check_d11a, report)
     for check_id, check in (("D11b-write", check_d11b_write), ("D11b-read", check_d11b_read),
                             ("D11b-interact", check_d11b_interact)):

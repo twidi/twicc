@@ -12,6 +12,10 @@ MODEL = "gpt-6-luna"
 class FakeStream:
     def __init__(self, events, after=None):
         self.events, self.after = events, after
+        self.interrupted = False
+
+    async def interrupt(self):
+        self.interrupted = True
 
     async def stream(self):
         for e in self.events:
@@ -61,7 +65,8 @@ class FakeCodex:
         return thread
 
     async def _turn(self, *_a, **_k):
-        return FakeStream(type(self).events, type(self).after)
+        self.handle = FakeStream(type(self).events, type(self).after)
+        return self.handle
 
     async def close(self): self.closed = True
 
@@ -272,3 +277,108 @@ def test_the_stream_is_closed_when_the_turn_raises(fake):
     finally:
         FakeCodex._turn = original
     assert closed == [True]
+
+
+# --------------------------------------------------------------------------------------
+# Streaming mode
+# --------------------------------------------------------------------------------------
+
+def delta_event(text):
+    return SimpleNamespace(method="item/agentMessage/delta", payload=SimpleNamespace(item_id="i", delta=text))
+
+
+def error_event(*, will_retry):
+    from openai_codex.generated.v2_all import ErrorNotification
+
+    error = SimpleNamespace(message="usage limit reached")
+    return SimpleNamespace(method="error", payload=ErrorNotification.model_construct(will_retry=will_retry, error=error))
+
+
+def stream(out: list, prompt="hi"):
+    """Collect the yielded deltas into ``out`` (kept when the stream raises)."""
+    import asyncio
+
+    async def go():
+        async with asyncio.timeout(5):
+            plan = await mod.prepare_hermetic_codex(MODEL)
+            async for chunk in mod.stream_hermetic_codex(plan, prompt, effort="low"):
+                out.append(chunk)
+
+    asyncio.run(go())
+
+
+def test_stream_yields_the_deltas_in_order_and_not_the_completed_text(fake):
+    fake.events = [item_event("item/started", "agentMessage"), delta_event("One. "), delta_event("Two."),
+                   item_event("item/completed", "agentMessage", "One. Two."), token_event(12)]
+    out: list[str] = []
+    stream(out)
+    assert out == ["One. ", "Two."] and fake.last.closed and not fake.last.handle.interrupted
+
+
+def test_run_turn_ignores_the_deltas(fake):
+    fake.events = [delta_event("O"), delta_event("K"), item_event("item/completed", "agentMessage", "OK")]
+    assert run().text == "OK"
+
+
+def test_stream_a_forbidden_item_type_raises(fake):
+    fake.events = [delta_event("a"), item_event("item/started", "commandExecution"), delta_event("b")]
+    out: list[str] = []
+    with pytest.raises(HermeticGuardViolation):
+        stream(out)
+    assert out == ["a"] and fake.last.handle.interrupted and fake.last.closed
+
+
+def test_stream_a_refused_request_raises(fake):
+    def refuse():
+        fake.last._client._sync._approval_handler("item/commandExecution/requestApproval", {})
+    fake.events = [delta_event("a"), item_event("item/completed", "agentMessage", "a")]
+    fake.after = refuse
+    out: list[str] = []
+    with pytest.raises(HermeticGuardViolation) as info:
+        stream(out)
+    assert out == ["a"] and "item/commandExecution/requestApproval" in info.value.reason
+
+
+def test_stream_a_terminal_error_raises_at_the_end(fake):
+    from twicc.providers.hermetic import HermeticStreamError
+
+    fake.events = [delta_event("a"), error_event(will_retry=False)]
+    out: list[str] = []
+    with pytest.raises(HermeticStreamError) as info:
+        stream(out, prompt="secret prompt")
+    assert out == ["a"] and "usage limit reached" in str(info.value) and "secret" not in str(info.value)
+
+
+def test_a_codex_retry_after_some_text_raises(fake):
+    from twicc.providers.hermetic import HermeticStreamError
+
+    fake.events = [delta_event("a"), error_event(will_retry=True), delta_event("a"),
+                   item_event("item/completed", "agentMessage", "a")]
+    out: list[str] = []
+    with pytest.raises(HermeticStreamError):
+        stream(out)
+    assert out == ["a"] and fake.last.handle.interrupted and fake.last.closed
+
+
+def test_a_codex_retry_before_any_text_is_ignored(fake):
+    fake.events = [error_event(will_retry=True), delta_event("a"), item_event("item/completed", "agentMessage", "a")]
+    out: list[str] = []
+    stream(out)
+    assert out == ["a"]
+
+
+def test_stream_aclose_interrupts_the_turn_and_closes_the_app_server(fake):
+    import asyncio
+
+    fake.events = [delta_event("a"), delta_event("b"), item_event("item/completed", "agentMessage", "ab")]
+
+    async def go():
+        async with asyncio.timeout(5):
+            plan = await mod.prepare_hermetic_codex(MODEL)
+            gen = mod.stream_hermetic_codex(plan, "hi", effort="low")
+            first = await gen.__anext__()
+            await gen.aclose()
+            return first
+
+    assert asyncio.run(go()) == "a"
+    assert fake.last.handle.interrupted and fake.last.closed
