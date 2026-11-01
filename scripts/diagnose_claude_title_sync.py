@@ -213,6 +213,21 @@ def verify_hybrid_evidence(rows, session_id):
             'own_delivery_confirmed': False}
 
 
+def cleanup_hybrid_server(tmux, report):
+    """Clean only the diagnostic's private socket and report bounded failures."""
+    try:
+        result = tmux('kill-server', check=False)
+        absent = ('no server running on ' in result.stderr
+                  or (result.stderr.startswith('error connecting to ')
+                      and '(No such file or directory)' in result.stderr))
+        success = result.returncode == 0 or absent
+        detail = 'Diagnostic tmux server stopped or already absent.' if success else 'Diagnostic tmux cleanup rejected.'
+    except (OSError, subprocess.TimeoutExpired) as error:
+        success = False
+        detail = 'Diagnostic tmux cleanup failed: ' + type(error).__name__
+    report['checks'].append({'name': 'hybrid_cleanup', 'status': 'PASS' if success else 'FAIL', 'detail': detail})
+
+
 async def hybrid_probe(root, env, report):
     """Run the actual interactive CLI, never infer own-paste attribution."""
     session = 'title-probe-' + uuid.uuid4().hex
@@ -254,7 +269,7 @@ async def hybrid_probe(root, env, report):
         report['checks'].append({'name': 'hybrid_command_evidence', 'status': 'PASS',
             'detail': 'Real CLI echo, result ancestry, title order, and strict hazard verified.', 'evidence': evidence})
     finally:
-        tmux('kill-server', check=False)
+        cleanup_hybrid_server(tmux, report)
 
 
 async def live_report(report, *, hybrid=False):

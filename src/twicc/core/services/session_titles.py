@@ -131,6 +131,29 @@ async def accept_title_locked(
     return await sync_to_async(persist)()
 
 
+async def publish_existing_title_locked(session_id: str) -> TitleDecision | None:
+    """Stage resume publication without changing existing text, origin, or events.
+
+    The caller owns the write lane and captures its boundary outside that lane.
+    New title requests must continue through accept_title_locked.
+    """
+    def prepare():
+        with title_publication.title_state_transaction():
+            session = Session.objects.get(pk=session_id)
+            from twicc.providers.claude_code.title_control import can_publish_existing_title
+            if session.stale or not can_publish_existing_title(session.title):
+                return None
+            boundary = _boundary.get()
+            if boundary is _unprepared:
+                raise RuntimeError('Capture a Claude title boundary before entering the write lane')
+            if boundary is not None and not title_publication.protect_claude_acceptance_boundary_locked(boundary):
+                raise BoundaryChanged
+            decision = title_publication.get_title_coordinator().accept_decision(session_id, session.title)
+            transaction.on_commit(lambda: _publish_committed(decision))
+            return decision
+    return await sync_to_async(prepare)()
+
+
 def _publish_committed(decision):
     from twicc.pending_titles import pop_pending_title
     pop_pending_title(decision.session_id)

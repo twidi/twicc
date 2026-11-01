@@ -74,6 +74,7 @@ class TitlePublicationWorker:
         self._wakes: dict[str, asyncio.Event] = {}
         self._reservations: dict[str, asyncio.Lock] = {}
         self._closed = False
+        self._quiescing = False
         self._retiring: set[str] = set()
         self._ingress_lock = Lock()
         self._ingress: deque[tuple[Callable, tuple]] = deque()
@@ -117,6 +118,8 @@ class TitlePublicationWorker:
         if self._closed or decision.session_id in self._retiring:
             return
         sid = decision.session_id
+        if self._quiescing and self.hooks.resolve_process(sid) is not None:
+            return
         if self.coordinator.current_decision(sid) != decision:
             return
         self._queued[sid] = decision
@@ -179,7 +182,7 @@ class TitlePublicationWorker:
                         if self._queued.get(sid) == decision:
                             self._queued.pop(sid, None)
                     continue
-                if not self._current(decision, process):
+                if self._quiescing or not self._current(decision, process):
                     continue
                 try:
                     await self._publish(decision, process)
@@ -203,18 +206,19 @@ class TitlePublicationWorker:
 
             async def before_paste():
                 nonlocal started, paste_permitted
-                if not self._current(decision, process):
+                if self._quiescing or not self._current(decision, process):
                     return False
                 started = await self.hooks.prepare_dispatch(decision, process)
-                paste_permitted = started and self._current(decision, process)
+                paste_permitted = started and not self._quiescing and self._current(decision, process)
                 return paste_permitted
 
             success = False
             try:
                 await process.agent.rename(decision.title, token=decision.token, before_paste=before_paste)
                 success = True
-            except (TimeoutError, TitleControlError):
-                pass
+            except (TimeoutError, TitleControlError) as error:
+                self._log_failure(decision, 'hybrid', error.reason if isinstance(error, TitleControlError) else 'timeout',
+                                  1, 'uncertain_delivery' if paste_permitted else 'pending')
             finally:
                 if started and not self._closed:
                     if not paste_permitted:
@@ -230,16 +234,22 @@ class TitlePublicationWorker:
             self._sdk_budgets[sid] = budget
         while budget.attempts < self.SDK_MAX_ATTEMPTS:
             await self.hooks.ingest_available(sid)
-            if not self._current(decision, process):
+            if self._quiescing or not self._current(decision, process):
                 return
             remaining = budget.deadline - self._loop.time()
-            if remaining <= 0 or not await self.hooks.prepare_dispatch(decision, process):
+            if remaining <= 0:
+                self._log_failure(decision, 'sdk', 'budget_exhausted', budget.attempts, 'pending')
+                return
+            if not await self.hooks.prepare_dispatch(decision, process):
                 return
             success = False
             attempted = False
             try:
                 remaining = budget.deadline - self._loop.time()
-                if remaining <= 0 or not self._current(decision, process):
+                if remaining <= 0:
+                    self._log_failure(decision, 'sdk', 'budget_exhausted', budget.attempts, 'pending')
+                    return
+                if self._quiescing or not self._current(decision, process):
                     return
                 budget = budget._replace(attempts=budget.attempts + 1)
                 self._sdk_budgets[sid] = budget
@@ -248,8 +258,9 @@ class TitlePublicationWorker:
                     attempted = True
                     await rename_running_session(process.agent._client, sid, decision.title, timeout=timeout)
                 success = True
-            except (TitleControlError, TimeoutError):
-                pass
+            except (TitleControlError, TimeoutError) as error:
+                self._log_failure(decision, 'sdk', error.reason if isinstance(error, TitleControlError) else 'timeout',
+                                  budget.attempts, 'pending')
             finally:
                 if not self._closed:
                     if not attempted:
@@ -261,6 +272,29 @@ class TitlePublicationWorker:
                 # A successful control ACK is never retried because ingestion
                 # can lag. Task4 confirms only on admissible transcript evidence.
                 return
+        if self.coordinator.current_decision(sid) == decision:
+            self._log_failure(decision, 'sdk', 'budget_exhausted', budget.attempts, 'pending')
+
+    @staticmethod
+    def _log_failure(decision, route, reason, attempt, state):
+        # Error messages can include title text or credentials. Log stable reasons only.
+        logger.warning('Claude title publication session=%s route=%s token=%s reason=%s attempt=%d state=%s',
+                       decision.session_id, route, decision.token, reason, attempt, state)
+
+    async def quiesce_active_publications(self) -> None:
+        """Stop active dispatch while retaining final ingestion and inactive writes."""
+        self._quiescing = True
+        self._drain_ingress()
+        tasks = tuple(task for sid, task in self._tasks.items() if self.hooks.resolve_process(sid) is not None)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=self.CLOSE_TIMEOUT)
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
+            if pending:
+                logger.warning('Claude title quiescence deadline reached for %d workers', len(pending))
 
     async def flush_publications(self, session_id: str, *, timeout: float) -> bool:
         deadline = self._loop.time() + timeout

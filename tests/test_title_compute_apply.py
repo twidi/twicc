@@ -391,3 +391,23 @@ def test_live_overflow_parent_is_recovered_after_storage_insert(source, tmp_path
     live_apply(source, lines, tmp_path)
     source.refresh_from_db()
     assert source.title == 'A'
+
+
+@pytest.mark.parametrize('value', ['Legacy   title', 'L' * 201, 'L' * 250])
+@pytest.mark.parametrize('existing', [False, True])
+@pytest.mark.parametrize('mode', ['full', 'live'])
+def test_historical_provider_title_retains_exact_representation(source, value, existing, mode, tmp_path):
+    from tests.timeline_helpers import mark_known
+    from twicc.core.models import TimelineEvent
+    mark_known(source.id, source.project_id)
+    Session.objects.filter(pk=source.id).update(title=value if existing else '', title_origin='')
+    if mode == 'full':
+        message = full_message(source, [provider_line(title=value)])
+        BaseSessionCompute.apply_session_complete(message)
+    else:
+        live_apply(source, [provider_line(title=value)], tmp_path)
+    source.refresh_from_db()
+    assert source.title == value
+    assert source.title_origin == ''
+    if existing:
+        assert not TimelineEvent.objects.filter(session_id=source.id, kind='title.changed').exists()

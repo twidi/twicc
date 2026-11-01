@@ -441,3 +441,41 @@ async def test_flush_timeout_includes_ingress_barrier_and_preserves_publication(
     assert await h.worker.flush_publications("session", timeout=1)
     assert h.sent == ["title"]
     await h.worker.close_publications()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('route,reason', [('sdk', 'rejected'), ('sdk', 'timeout'),
+                                         ('hybrid', 'unavailable'), ('hybrid', 'timeout')])
+async def test_expected_failure_logs_have_context_without_sensitive_text(caplog, monkeypatch, route, reason):
+    from twicc.providers.claude_code.title_control import TitleControlError
+    from twicc.providers.claude_code import title_publication
+    # ASGI initialization reapplies settings_test's disable_existing_loggers.
+    # Capture this logger directly so the test is independent of import order.
+    monkeypatch.setattr(title_publication.logger, 'disabled', False)
+    monkeypatch.setattr(title_publication.logger, 'propagate', False)
+    monkeypatch.setattr(title_publication.logger, 'handlers', [caplog.handler])
+    h = Harness(hybrid=route == 'hybrid')
+    decision = h.decision('sensitive title credential')
+    async def fail(*args, **kwargs):
+        if 'before_paste' in kwargs:
+            if reason == 'timeout':
+                assert await kwargs['before_paste']()
+        if route == 'sdk' and reason == 'timeout':
+            raise TimeoutError('sensitive title credential')
+        raise TitleControlError(reason, 'sensitive title credential')
+    if route == 'hybrid':
+        h.process.agent.rename = fail
+    else:
+        h._send_control_request = fail
+    h.worker.request_publication(decision)
+    assert await h.worker.flush_publications('session', timeout=1)
+    assert f'session=session route={route} token={decision.token}' in caplog.text
+    assert f'reason={reason}' in caplog.text
+    assert 'attempt=1' in caplog.text
+    assert 'state=' in caplog.text
+    if route == 'sdk':
+        assert 'reason=budget_exhausted attempt=3 state=pending' in caplog.text
+    elif reason == 'timeout':
+        assert 'state=uncertain_delivery' in caplog.text
+    assert 'sensitive title credential' not in caplog.text
+    await h.worker.close_publications()

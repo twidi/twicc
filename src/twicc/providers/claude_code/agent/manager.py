@@ -306,19 +306,14 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             title = pending or (row.title if row is not None else None)
             if title:
                 if row is not None:
-                    # Resume preserves title origin and creates a fresh decision.
+                    # Draft choices are new decisions; stored titles only need publication.
                     if pending:
                         await accept_explicit_title(agent.session_id, title, origin=get_pending_title_origin(agent.session_id))
                         pop_pending_title(agent.session_id)
                     else:
-                        from twicc.core.services.session_titles import accept_title_locked, with_title_boundary
-                        async def accept_launch_title():
-                            current_row = await Session.objects.aget(pk=agent.session_id)
-                            if current_row.title:
-                                return await accept_title_locked(
-                                    agent.session_id, current_row.title,
-                                    source='auto' if current_row.title_origin == 'auto' else 'user')
-                        await with_title_boundary(agent.session_id, lambda: run_under_db_write_lock(accept_launch_title))
+                        from twicc.core.services.session_titles import publish_existing_title_locked, with_title_boundary
+                        await with_title_boundary(agent.session_id, lambda: run_under_db_write_lock(
+                            lambda: publish_existing_title_locked(agent.session_id)))
                 else:
                     # Initial storage does not exist. Publish the draft choice
                     # now; the pending bridge persists it after row creation.
@@ -1060,14 +1055,50 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 pass
             self._cron_expiry_monitor_task = None
 
+    async def shutdown(self, timeout: float = 5.0) -> None:
+        """Drain DEAD callbacks and inactive title writes before closing publication.
+
+        The orchestrator keeps watcher ingestion available throughout this call.
+        A single bounded deadline covers final callback and publication draining.
+        """
+        from twicc.providers.claude_code import title_publication
+        agents = tuple(self._agents.values())
+        await super().shutdown(timeout=timeout)
+        worker = title_publication._worker
+        if worker is None or worker._closed:
+            return
+        deadline = asyncio.get_running_loop().time() + worker.SDK_TOTAL_BUDGET
+        try:
+            async with asyncio.timeout_at(deadline):
+                results = await asyncio.gather(*(agent.wait_for_dead(
+                    timeout=max(0, deadline - asyncio.get_running_loop().time())) for agent in agents),
+                    return_exceptions=True)
+                for agent, result in zip(agents, results):
+                    if result is not True:
+                        logger.error('Claude title shutdown callback incomplete session=%s state=pending', agent.session_id)
+                # Include inactive work accepted before shutdown, even when no
+                # managed agent existed. Callback retirement enqueues its write.
+                await worker._ingress_barrier()
+                sessions = tuple(worker._tasks)
+                for session_id in sessions:
+                    if not await worker.flush_publications(session_id,
+                            timeout=max(0, deadline - asyncio.get_running_loop().time())):
+                        raise TimeoutError
+        except TimeoutError:
+            logger.error('Claude title shutdown reconciliation deadline reached state=pending')
+        finally:
+            await worker.close_publications()
+
     async def _pre_shutdown_extra(self) -> None:
         """Cancel runtime cron restart tasks before agents are interrupted.
 
         ProcessRuns stay in the DB so ``restart_all_session_crons`` can pick
         them up on the next TwiCC startup.
         """
-        from twicc.providers.claude_code.title_publication import close_publications
-        await close_publications()
+        from twicc.providers.claude_code import title_publication
+        worker = title_publication._worker
+        if worker is not None and not worker._closed:
+            await worker.quiesce_active_publications()
         if self._cron_restart_tasks:
             logger.info("Cancelling %d cron restart task(s)", len(self._cron_restart_tasks))
             for session_id in list(self._cron_restart_tasks):

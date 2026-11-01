@@ -72,7 +72,7 @@ def test_timeout_is_uncertain_failure(monkeypatch, wrapped):
     error = TimeoutError("rename wait expired")
     if wrapped:
         try:
-            raise Exception("Control request timeout: rename_session") from error
+            raise Exception("Control request timeout: rename_session") from error  # noqa: TRY002 - SDK wraps its timeout in plain Exception.
         except Exception as sdk_error:
             error = sdk_error
     client, _ = connected_client(monkeypatch, error=error)

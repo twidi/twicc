@@ -57,6 +57,17 @@ async def rename_running_session(
         raise TitleControlError(reason, str(exc)) from exc
 
 
+def can_publish_existing_title(title: str) -> bool:
+    """Conservatively allow only legacy text the CLI retains exactly.
+
+    Bundled CLI 2.1.314 trims, replaces control/format characters, and caps
+    titles at 200 Unicode code points. Ordinary repeated spaces survive.
+    Unsupported legacy values remain importable; resume must not rewrite them.
+    This check never validates or canonicalizes a new title request.
+    """
+    return bool(title) and len(title) <= BaseProviderHelpers.MAX_TITLE_LENGTH and title == title.strip() and title.isprintable()
+
+
 def canonicalize_claude_title(title: str | None) -> TitleValidationResult:
     """Collapse whitespace and reject characters the CLI cannot retain."""
     if title is not None:

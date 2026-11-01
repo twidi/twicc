@@ -681,3 +681,152 @@ def test_sql_rollback_replays_manual_title_event_exactly_once(setup, rollback_at
         finally:
             await close(worker, watcher)
     run_with_writer(scenario)
+
+
+@pytest.mark.parametrize('manual', [False, True])
+@pytest.mark.parametrize('active', [False, True])
+def test_actual_orchestrator_shutdown_drains_final_history_and_reconciles_pending(setup, monkeypatch, manual, active):
+    from unittest.mock import AsyncMock
+    from twicc.providers.claude_code import orchestrator
+    from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent
+    from twicc.providers.helpers import AgentSettings
+    row, path, watcher = setup
+    append(path, title('B'))
+    persisted, dispatched = [], []
+    write_entered, write_release = None, None
+    def persist(sid, value):
+        worker_loop.call_soon_threadsafe(write_entered.set)
+        asyncio.run_coroutine_threadsafe(write_release.wait(), worker_loop).result(timeout=5)
+        persisted.append(value)
+        append(path, title(value))
+    monkeypatch.setattr(titles, 'rename_session_in_jsonl', persist)
+    entered, cancelled, worker_loop = None, None, None
+    async def control(*args, **kwargs):
+        dispatched.append(args)
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+    monkeypatch.setattr(publication, 'rename_running_session', control)
+    async def scenario():
+        nonlocal entered, cancelled, write_entered, write_release, worker_loop
+        worker_loop = asyncio.get_running_loop()
+        entered, cancelled = asyncio.Event(), asyncio.Event()
+        write_entered, write_release = asyncio.Event(), asyncio.Event()
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        current = ClaudeCodeAgent(row.id, row.project_id, str(path.parent), AgentSettings(),
+            get_session_slug=AsyncMock(), on_cron_created=AsyncMock(), on_cron_deleted=AsyncMock())
+        current._title_process_token = 'process'
+        current._title_ready = active
+        current._state_change_callback = manager._on_state_change
+        current._shutdown_sdk_client = AsyncMock()
+        current._client = object()
+        current.state = AgentState.USER_TURN
+        await manager._attach_title_process(current)
+        manager._agents[row.id] = current
+        await accept_explicit_title(row.id, 'D')
+        if active:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+        async def stop(reason):
+            assert not worker._closed
+            assert worker._quiescing
+            assert not active or cancelled.is_set()
+            if manual:
+                append(path, *rename('Final manual'))
+            current.kill_reason = reason
+            await current._transition_to_dead()
+        current.interrupt_or_kill = stop
+        monkeypatch.setattr(orchestrator, 'get_claude_code_agent_manager', lambda: manager)
+        monkeypatch.setattr(orchestrator, 'get_watcher', lambda: watcher)
+        owner = orchestrator.ClaudeCodeOrchestrator()
+        watching = asyncio.Event()
+        async def watcher_lifetime():
+            watching.set()
+            await asyncio.Event().wait()
+        owner._watcher_task = asyncio.create_task(watcher_lifetime())
+        await watching.wait()
+        stopping = asyncio.create_task(owner.shutdown())
+        try:
+            if not manual:
+                await asyncio.wait_for(write_entered.wait(), timeout=5)
+                assert not stopping.done()
+                assert not worker._closed
+                # The real ingestion lane stays available while the file write waits.
+                await manager._ingest_title_available(row.id)
+                write_release.set()
+            await stopping
+            expected = 'Final manual' if manual else 'D'
+            assert persisted == ([] if manual else ['D'])
+            assert len(dispatched) == int(active)
+            assert (await Session.objects.aget(pk=row.id)).title == expected
+            assert worker.coordinator.current_decision(row.id) is None
+            assert worker._closed
+            # Fresh import has no process-local protection to hide a lost write.
+            monkeypatch.setattr(publication, '_coordinator', TitleSyncCoordinator())
+            from twicc.providers.compute_base import BaseSessionCompute
+            from twicc.providers.compute_executor import run_compute_sync
+            import queue
+            results = queue.Queue()
+            await run_compute_sync(get_compute().compute_session_metadata, row.id, results, run_id=0)
+            payload = next(orjson.loads(raw) for raw in list(results.queue)
+                if orjson.loads(raw)['type'] == 'session_complete')
+            await manager._title_lane(lambda: BaseSessionCompute.apply_session_complete(payload))
+            assert (await Session.objects.aget(pk=row.id)).title == expected
+        finally:
+            write_release.set()
+            await asyncio.gather(stopping, return_exceptions=True)
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+@pytest.mark.parametrize('legacy', ['Legacy   title', 'L' * 201, 'L' * 250, ' Legacy title ', 'Legacy\ttitle'])
+@pytest.mark.parametrize('origin', ['', 'auto', 'user'])
+def test_resume_publishes_exact_existing_title_without_reclassification(setup, monkeypatch, legacy, origin):
+    from unittest.mock import AsyncMock
+    from twicc.providers.claude_code.agent import agent as sdk_agent
+    from twicc.providers.helpers import AgentSettings
+    from twicc.core.services import trust
+    row, path, watcher = setup
+    Session.objects.filter(pk=row.id).update(title=legacy, title_origin=origin)
+    append(path, title(legacy))
+    sent, prompts = [], []
+    async def control(client, sid, value, **kwargs):
+        sent.append(value)
+    monkeypatch.setattr(publication, 'rename_running_session', control)
+    async def query(prompt):
+        prompts.append(prompt)
+    client = SimpleNamespace(connect=AsyncMock(), query=query)
+    monkeypatch.setattr(sdk_agent, 'ClaudeSDKClient', lambda **kwargs: client)
+    monkeypatch.setattr(sdk_agent, 'patch_client_for_logging', lambda *args: None)
+    monkeypatch.setattr(sdk_agent, 'attach_elicitation_handler', lambda *args: None)
+    monkeypatch.setattr(trust, 'project_is_untrusted', lambda project: False)
+    monkeypatch.setattr('twicc.mcp.mcp_enabled', lambda: False)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        current = sdk_agent.ClaudeCodeAgent(row.id, row.project_id, str(path.parent), AgentSettings(),
+            AsyncMock(), AsyncMock(), AsyncMock())
+        current._title_process_token = 'p'
+        current._title_ready = False
+        current._on_title_ready = manager._title_process_ready
+        current._resolve_and_create_work_dirs = AsyncMock(return_value=[])
+        current._build_query_prompt = AsyncMock(return_value='first prompt')
+        current._run_message_loop = AsyncMock()
+        try:
+            await manager._attach_title_process(current)
+            before = await manager._title_lane(lambda: TimelineEvent.objects.filter(session_id=row.id, kind='title.changed').count())
+            await current.start('first prompt', AsyncMock(), resume=True)
+            if current._message_loop_task is not None:
+                await current._message_loop_task
+            assert current.error is None
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == (legacy, origin)
+            assert sent == ([legacy] if legacy == 'Legacy   title' else [])
+            assert worker.coordinator.current_decision(row.id) is None
+            assert prompts == ['first prompt']
+            assert await manager._title_lane(lambda: TimelineEvent.objects.filter(session_id=row.id, kind='title.changed').count()) == before
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)

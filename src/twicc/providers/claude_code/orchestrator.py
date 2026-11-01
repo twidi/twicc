@@ -261,6 +261,13 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
                 )
                 await done_future
 
+        # DEAD callbacks drain transcripts and reconcile pending title choices.
+        # Keep the watcher queue open until all manager publication work ends.
+        # Claude Code agent manager (Claude Agent SDK)
+        logger.info("Stopping Claude Code agent manager...")
+        await get_claude_code_agent_manager().shutdown()
+        logger.info("Claude Code agent manager stopped")
+
         # Watcher (may not have started yet)
         if self._watcher_task is not None:
             logger.info("Stopping watcher...")
@@ -326,10 +333,6 @@ class ClaudeCodeOrchestrator(BaseOrchestrator):
         if self._cron_restart_task is not None:
             await _cancel_task(self._cron_restart_task, "Cron restart")
 
-        # Claude Code agent manager (Claude Agent SDK)
-        logger.info("Stopping Claude Code agent manager...")
-        await get_claude_code_agent_manager().shutdown()
-        logger.info("Claude Code agent manager stopped")
 
     # ------------------------------------------------------------------
     # Internal task coroutines

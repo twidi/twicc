@@ -117,3 +117,41 @@ def test_title_reader_ignores_incomplete_append(diagnostic, tmp_path):
     path = tmp_path / 'session.jsonl'
     path.write_bytes(b'{"type":"custom-title","sessionId":"s","customTitle":"complete"}\n{"type":')
     assert [row['customTitle'] for row in diagnostic.title_rows(path, 's')] == ['complete']
+
+
+@pytest.mark.parametrize('failure,expected', [('absent', 'PASS'), ('rejected', 'FAIL'), ('timeout', 'FAIL')])
+def test_owned_tmux_cleanup_reports_unexpected_failure(diagnostic, failure, expected):
+    import subprocess
+    calls = []
+    def tmux(*args, **kwargs):
+        calls.append((args, kwargs))
+        if failure == 'timeout':
+            raise subprocess.TimeoutExpired('tmux', 10)
+        return subprocess.CompletedProcess('tmux', 1, '',
+            'no server running on /isolated/tmux.sock' if failure == 'absent' else 'permission denied secret')
+    report = {'checks': []}
+    diagnostic.cleanup_hybrid_server(tmux, report)
+    assert calls == [(('kill-server',), {'check': False})]
+    assert report['checks'][-1]['name'] == 'hybrid_cleanup'
+    assert report['checks'][-1]['status'] == expected
+    assert 'secret' not in diagnostic.render_report(report)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_probe_cleanup_uses_only_its_private_socket(diagnostic, monkeypatch, tmp_path):
+    import subprocess
+    monkeypatch.setattr(diagnostic, 'bundled_cli', lambda: '/isolated/claude')
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        assert args[:3] == ['tmux', '-S', str(tmp_path / 'tmux.sock')]
+        assert kwargs['timeout'] == 10
+        if args[3] == 'new-session':
+            raise subprocess.CalledProcessError(1, args)
+        return subprocess.CompletedProcess(args, 1, '', 'unexpected cleanup failure')
+    monkeypatch.setattr(diagnostic.subprocess, 'run', run)
+    report = {'checks': []}
+    with pytest.raises(subprocess.CalledProcessError):
+        await diagnostic.hybrid_probe(tmp_path, {}, report)
+    assert [args[3] for args in calls] == ['new-session', 'kill-server']
+    assert report['checks'][-1]['status'] == 'FAIL'

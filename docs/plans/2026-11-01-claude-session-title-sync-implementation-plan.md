@@ -12,7 +12,7 @@ All title writers establish that protection under the existing database write lo
 
 **Spec:** [Claude session title synchronization](2026-11-01-claude-session-title-sync-spec.md), revision 3.
 
-**Status:** User approved after technical review, including the strict hybrid limitation. Implementation is not authorized.
+**Status:** User authorized implementation after technical review, including the strict hybrid limitation. Tasks 1–7 are complete. Final review corrections are implemented; independent re-review is pending.
 **Revision:** 4.
 
 ## Accepted limitation: hybrid delivery attribution

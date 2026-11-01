@@ -991,10 +991,11 @@ class BaseProviderHelpers:
     async def rename_session(self, session_id: str, title: str) -> None:
         """Persist a new title in the provider's session storage.
 
-        Writes to the provider-specific backing store (e.g. JSONL for
-        Claude Code) and applies any provider-specific anti-stale-write
-        protection so a CLI reappend cannot overwrite the user's choice.
-        The DB row is handled by the caller.
+        The provider owns publication and its ordering guarantees. Callers
+        normally update the database row. Claude instead accepts the title
+        atomically with observation protection, then schedules its decision
+        publication worker. Active Claude processes use their control route;
+        inactive sessions use best-effort transcript persistence.
         """
         raise NotImplementedError
 
@@ -1007,9 +1008,9 @@ class BaseProviderHelpers:
 
         The default implementation is a no-op: most providers either
         accept ``thread/name/set``-style writes atomically and never
-        revisit them, or have an in-process anti-stale mechanism (Claude
-        Code: :func:`protect_title` registered inside
-        :meth:`ClaudeCodeHelpers.rename_session`). Codex needs a real
+        revisit them, or use a decision publication worker (Claude Code)
+        that handles acknowledgement, ordered observations, and reconciliation.
+        Codex needs a real
         implementation because its app-server can re-flush the
         ``threads.title`` row from an in-memory value derived from
         ``first_user_message`` shortly after our explicit set.

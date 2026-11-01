@@ -279,9 +279,10 @@ def extract_title_observations(parsed: dict, cursor, *, parent: dict | None = No
     message = message if isinstance(message, str) else None
     parent_id = parent_id if isinstance(parent_id, str) else None
     if parsed.get('type') == 'custom-title':
-        value = canonical(parsed.get('customTitle'))
+        # Provider metadata predates new-input validation. Preserve its representation.
+        value = parsed.get('customTitle')
         target = parsed.get('sessionId') or cursor.source_session_id
-        if value is not None and isinstance(target, str):
+        if isinstance(value, str) and isinstance(target, str):
             return (TitleObservation(cursor, target, 'title', value, message, parent_id),)
         return ()
     text = extract_text_from_content(get_message_content(parsed))
