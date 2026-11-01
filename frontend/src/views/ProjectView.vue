@@ -237,7 +237,7 @@ const quotaComputed = computed(() => quotaData.value?.computed ?? null)
 // availability by sending usage data (raw=null when no source).
 const quotaHasUsage = computed(() => !!quotaData.value?.raw)
 
-const quotaFiveHour = computed(() => quotaComputed.value?.fiveHour ?? null)
+const quotaFiveHour = computed(() => settingsStore.isFiveHourUsageHidden ? null : quotaComputed.value?.fiveHour ?? null)
 const quotaSevenDay = computed(() => quotaComputed.value?.sevenDay ?? null)
 
 const quotaExtraUsage = computed(() => {

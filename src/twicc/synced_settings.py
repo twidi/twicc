@@ -148,6 +148,8 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     # ``extra_usage_started`` WS event (in-app toast/sound/browser) and Apprise
     # push (twicc.external_notifications.notify_extra_usage_started).
     "notifyOnExtraUsageStart": True,
+    # Hide the 5-hour quota bar: some plans have no 5-hour usage window.
+    "hideFiveHourUsage": False,
     # Anonymous usage telemetry (no content, ever) — see
     # docs/plans/2026-07-18-telemetry-design.md. `telemetryEnabled` is the
     # user-facing opt-out; `telemetryNoticeSeen` tracks whether the one-time

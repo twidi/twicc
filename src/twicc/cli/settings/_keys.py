@@ -39,6 +39,7 @@ GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "mcpBaseUrl": "Dedicated MCP host — an HTTPS hostname distinct from this app and from the other base URLs — where external MCP clients connect (empty = external MCP disabled).",
     "externalMcpEnabled": "Open the MCP server to external clients; also needs mcpBaseUrl and a password set.",
     "notifyOnExtraUsageStart": "Master switch for the 'extra usage started' alert (in-app + external push).",
+    "hideFiveHourUsage": "Hide the 5-hour usage quota (some plans have no 5-hour window).",
     "telemetryEnabled": "Send anonymous usage statistics (no content, ever).",
     "telemetryNoticeSeen": "One-time telemetry notice acknowledged.",
     "allowAgentSessionShares": "Let agents create session shares in their own spawn subtree, revoke any session share, and read every session share URL.",

@@ -499,6 +499,7 @@ const extraUsageOnlyWhenNeeded = computed(() => store.isExtraUsageOnlyWhenNeeded
 // Same synced setting as the one in the Notifications section — mirrored here
 // so a user browsing the Usage section doesn't miss the feature.
 const notifyOnExtraUsageStart = computed(() => store.shouldNotifyOnExtraUsageStart)
+const hideFiveHourUsage = computed(() => store.isFiveHourUsageHidden)
 const maxCachedSessions = computed(() => store.getMaxCachedSessions)
 const autoUnpinOnArchive = computed(() => store.isAutoUnpinOnArchive)
 const allowAgentSessionShares = computed(() => store.isAllowAgentSessionShares)
@@ -935,6 +936,13 @@ async function resetTelemetryInstanceId() {
  */
 function onExtraUsageOnlyWhenNeededChange(event) {
     store.setExtraUsageOnlyWhenNeeded(event.target.checked)
+}
+
+/**
+ * Toggle the 5-hour usage quota display.
+ */
+function onHideFiveHourUsageChange(event) {
+    store.setHideFiveHourUsage(event.target.checked)
 }
 
 /**
@@ -2131,6 +2139,18 @@ function onChangelogClose() {
                                 @change="onExtraUsageOnlyWhenNeededChange"
                                 size="small"
                             >Only when needed</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">5-hour usage quota <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <wa-switch
+                                :checked="hideFiveHourUsage"
+                                @change="onHideFiveHourUsageChange"
+                                size="small"
+                            >Hide</wa-switch>
+                            <span class="setting-group-hint">
+                                Depending on {{ enabledProviders.size > 1 ? 'your plans' : 'your plan' }}, the 5-hour usage quota does not exist. If that applies
+                                to you, you can hide it.
+                            </span>
                         </div>
                         <div class="setting-group">
                             <label class="setting-group-label">When extra usage starts</label>

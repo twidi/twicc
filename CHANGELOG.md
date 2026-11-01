@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Text to speech** — Have messages read aloud. Pick an OpenRouter voice, or plug in any engine with your own command: local, free, or another provider.
 - **Simple model picker** — A lighter way to choose the provider, model and effort, without the score matrix. The score matrix is one click away when you want the scores.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
+- **5-hour usage** — Some plans have no 5-hour usage quota. A new setting in the Usage section hides it, on all your devices.
 - **Browser tab** — New button to clear the embedded page and free the resources it uses.
 - **Scrollable titles** — On touch screens, swipe a truncated session title or artifact name to read the rest.
 - **Orchestration** — A new “Show inactive” switch in the Orchestration tab hides inactive sessions and subagents, to focus on what is running.

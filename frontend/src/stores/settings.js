@@ -107,6 +107,7 @@ export const SETTINGS_SCHEMA = {
     peerBaseUrl: null,
     peerDisplayName: null,
     notifyOnExtraUsageStart: null,
+    hideFiveHourUsage: null,
     // Agent-created shares (design 2026-08-10): opt-in gates, default off.
     allowAgentSessionShares: null,
     allowAgentArtifactShares: null,
@@ -159,6 +160,7 @@ const SETTINGS_VALIDATORS = {
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
     notifyOnExtraUsageStart: (v) => typeof v === 'boolean',
+    hideFiveHourUsage: (v) => typeof v === 'boolean',
     allowAgentSessionShares: (v) => typeof v === 'boolean',
     allowAgentArtifactShares: (v) => typeof v === 'boolean',
     maxCachedSessions: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 50,
@@ -373,6 +375,7 @@ export const useSettingsStore = defineStore('settings', {
         areCostsShown: (state) => state.showCosts,
         isExtraUsageOnlyWhenNeeded: (state) => state.extraUsageOnlyWhenNeeded,
         shouldNotifyOnExtraUsageStart: (state) => state.notifyOnExtraUsageStart,
+        isFiveHourUsageHidden: (state) => state.hideFiveHourUsage === true,
         getMaxCachedSessions: (state) => state.maxCachedSessions,
         isAutoUnpinOnArchive: (state) => state.autoUnpinOnArchive,
         isAllowAgentSessionShares: (state) => state.allowAgentSessionShares === true,
@@ -595,6 +598,16 @@ export const useSettingsStore = defineStore('settings', {
         setExtraUsageOnlyWhenNeeded(enabled) {
             if (SETTINGS_VALIDATORS.extraUsageOnlyWhenNeeded(enabled)) {
                 this.extraUsageOnlyWhenNeeded = enabled
+            }
+        },
+
+        /**
+         * Hide the 5-hour usage quota (some plans have no 5-hour window).
+         * @param {boolean} hidden
+         */
+        setHideFiveHourUsage(hidden) {
+            if (SETTINGS_VALIDATORS.hideFiveHourUsage(hidden)) {
+                this.hideFiveHourUsage = hidden
             }
         },
 
@@ -1317,6 +1330,7 @@ export function initSettings() {
             externalNotificationTargets: store.externalNotificationTargets,
             publicBaseUrl: store.publicBaseUrl,
             shareBaseUrl: store.shareBaseUrl,
+            hideFiveHourUsage: store.hideFiveHourUsage,
             allowAgentSessionShares: store.allowAgentSessionShares,
             allowAgentArtifactShares: store.allowAgentArtifactShares,
             peerBaseUrl: store.peerBaseUrl,
