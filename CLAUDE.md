@@ -11,6 +11,7 @@ This file is shared by Claude (`CLAUDE.md`) and Codex (`AGENTS.md`). Lines marke
 - **Preserve user changes.** The checkout can contain uncommitted changes you did not make. Do not revert, overwrite, move or clean them.
 - **Rebase:** never on a remote branch (`origin/main`, …) unless asked. Rebase on the local branch.
 - **Language:** write all artifacts in English: code, UI strings, comments, names, docs (incl. `docs/plans/`). French is for live chat only.
+- **Plans and specs location:** write every spec, design and implementation plan in `docs/plans/`, whatever skill produces it (Superpowers or other). Never write in `docs/superpowers/`. This overrides the skill's default path.
 - **Local instructions:** **Claude:** `CLAUDE.local.md` loads automatically. **Codex:** if `AGENTS.local.md` exists at the repo root, read it after this file. It extends this file and wins on conflict. Direct system, developer and user instructions win over both.
 
 ## Commits and CHANGELOG
