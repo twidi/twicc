@@ -12,11 +12,18 @@
  * speech fields, then asks "Did you hear it correctly?" (not when those fields are already
  * the validated ones). Yes validates exactly the tested fields; any later speech field
  * change drops the validation (store `updateConfig`). A question or an error opens the card.
+ *
+ * Above the configs, the global "Adapt the text for speech" choice (tts.json `adapt`) shows the
+ * adaptation that really runs, given the enabled providers, as the Titles setting does.
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import {
+    ADAPT_PROVIDERS,
     DEFAULT_TEST_TEXT,
+    adaptOptions,
+    effectiveAdapt,
     MAX_PCM_CHANNELS,
     MAX_PCM_RATE,
     SCRIPT_FORMAT_OPTIONS,
@@ -31,6 +38,7 @@ import {
     speechFieldsOf,
     ttsConfigAutoName,
     ttsConfigDisplayName,
+    ttsAdaptationFacts,
     ttsLastTestFacts,
     ttsTestStats,
     shouldAskAfterTest,
@@ -48,6 +56,14 @@ import FilterableSelect from '../ui/FilterableSelect.vue'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
 const store = useTextToSpeechStore()
+const settingsStore = useSettingsStore()
+
+// The text adaptation shows the choice that really runs: an engine whose provider is disabled
+// shows disabled, with the effective one selected. The stored choice is never rewritten here.
+const enabledProviders = computed(() => new Set(settingsStore.enabledProviders))
+const adaptChoice = computed(() => effectiveAdapt(store.adapt, enabledProviders.value))
+const adaptChoices = computed(() => adaptOptions(enabledProviders.value))
+const noAdaptProvider = computed(() => !Object.values(ADAPT_PROVIDERS).some(provider => enabledProviders.value.has(provider)))
 
 // The test sentence as typed; saved in tts.json on change ('' there means the default one).
 const testText = ref(store.testText || DEFAULT_TEST_TEXT)
@@ -163,6 +179,7 @@ const lastTestTexts = computed(() => Object.fromEntries(store.configs.map((confi
     return [config.id, {
         stats: ttsTestStats(config.last_test, { priced }),
         facts: ttsLastTestFacts(config.last_test, { priced }),
+        adaptation: ttsAdaptationFacts(config.last_test),
     }]
 })))
 
@@ -389,6 +406,20 @@ function answerNo(id) {
         </wa-callout>
 
         <div class="setting-group">
+            <span class="setting-group-label">Adapt the text for speech</span>
+            <div class="tts-format-row">
+                <SegmentedControl
+                    label="Adapt the text for speech"
+                    :model-value="adaptChoice"
+                    :options="adaptChoices"
+                    @update:model-value="store.setAdapt($event)"
+                />
+            </div>
+            <span v-if="noAdaptProvider" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
+            <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
+        </div>
+
+        <div class="setting-group">
             <label class="setting-group-label" for="tts-test-text">Test text</label>
             <wa-textarea
                 id="tts-test-text"
@@ -494,6 +525,11 @@ function answerNo(id) {
                     <div v-if="lastTestTexts[config.id]?.facts" class="tts-last-test">
                         <span class="setting-group-label">Last test run · {{ lastTestWhen(config.last_test) }}</span>
                         <span class="setting-group-hint">{{ lastTestTexts[config.id].facts }}</span>
+                        <span v-if="lastTestTexts[config.id].adaptation" class="setting-group-hint">{{ lastTestTexts[config.id].adaptation }}</span>
+                        <details v-if="config.last_test.adapted_text" class="tts-adapted-text">
+                            <summary>Adapted text</summary>
+                            <div class="tts-adapted-text-body">{{ config.last_test.adapted_text }}</div>
+                        </details>
                     </div>
                     <div class="tts-field">
                         <label class="setting-group-label" :for="`tts-${config.id}-name`">Name</label>
@@ -863,6 +899,27 @@ function answerNo(id) {
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-3xs);
+}
+
+.tts-adapted-text {
+    font-size: var(--wa-font-size-s);
+}
+
+.tts-adapted-text > summary {
+    cursor: pointer;
+    color: var(--wa-color-text-quiet);
+}
+
+/* The model's plain text, with its own line breaks; a long one scrolls inside the card. */
+.tts-adapted-text-body {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 12rem;
+    overflow-y: auto;
+    margin-top: var(--wa-space-2xs);
+    padding: var(--wa-space-xs);
+    border-radius: var(--wa-border-radius-s);
+    background: var(--wa-color-surface-lowered);
 }
 
 .tts-model-link {

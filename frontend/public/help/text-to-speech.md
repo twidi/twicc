@@ -36,6 +36,25 @@ part is generated when the playback needs it, about a minute ahead: the sound
 starts quickly, and a stop does not generate (nor pay for) the rest. The seams
 between parts can be audible.
 
+## Adapting the text
+
+Before a message is read, a small model can **rewrite it for the ear**: a
+table becomes sentences, a list a spoken enumeration, a code block a short
+description; hashes, long paths and the Markdown syntax go away. The content
+and the language stay the same. The test of a config is adapted too, and its
+last test run shows the adapted text.
+
+Choose the model in **Adapt the text for speech**, at the top of **Settings →
+Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, or **Off**. With no
+choice, TwiCC takes Claude, else Codex. A model whose provider is disabled is
+replaced by the other one, and your choice comes back when you enable its
+provider again.
+
+The adaptation runs on your Claude or Codex subscription. If no provider runs,
+if the message is too long, or if the model fails before the reading starts, the
+message is read **as written**. If the model fails later, the reading stops
+with an error.
+
 ## Script configs
 
 TwiCC runs the **Command** in your shell, as a non-interactive login shell in

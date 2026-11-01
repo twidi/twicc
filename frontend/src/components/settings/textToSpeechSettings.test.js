@@ -165,3 +165,43 @@ test('the section opens its help page from the top, like the other sections', ()
     assert.ok(top.indexOf('HelpFeatureLink') < top.indexOf('Read the chat messages aloud'), 'the link comes first')
     assert.ok(existsSync(new URL('../../../public/help/text-to-speech.md', import.meta.url)), 'the help page exists')
 })
+
+test('the text adaptation choice sits after the introduction, before the test text and the configs', () => {
+    const template = settingsSource.slice(settingsSource.indexOf('<template>'))
+    const intro = template.indexOf('Read the chat messages aloud')
+    const adapt = template.indexOf('>Adapt the text for speech<')
+    assert.ok(intro !== -1 && adapt > intro, 'the control follows the introduction')
+    assert.ok(adapt < template.indexOf('for="tts-test-text"'), 'the control comes before the test text')
+    assert.ok(adapt < template.indexOf('<div class="tts-configs">'), 'the control comes before the configs')
+    assert.match(
+        flatSource,
+        /<div class="tts-format-row"> <SegmentedControl label="Adapt the text for speech" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
+    )
+})
+
+test('the adaptation control shows what really runs, from the enabled providers of the settings', () => {
+    assert.match(settingsSource, /const enabledProviders = computed\(\(\) => new Set\(settingsStore\.enabledProviders\)\)/)
+    assert.match(settingsSource, /const adaptChoice = computed\(\(\) => effectiveAdapt\(store\.adapt, enabledProviders\.value\)\)/)
+    assert.match(settingsSource, /const adaptChoices = computed\(\(\) => adaptOptions\(enabledProviders\.value\)\)/)
+    assert.match(settingsSource, /const noAdaptProvider = computed\(\(\) => !Object\.values\(ADAPT_PROVIDERS\)\.some\(provider => enabledProviders\.value\.has\(provider\)\)\)/)
+})
+
+test('the adaptation hint, or the no-provider hint instead', () => {
+    assert.match(flatSource, /<span v-if="noAdaptProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span>/)
+    assert.match(flatSource, /<span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span>/)
+})
+
+test('the last test run shows the adaptation facts and the folded adapted text', () => {
+    assert.match(settingsSource, /adaptation: ttsAdaptationFacts\(config\.last_test\)/)
+    const block = settingsSource.slice(settingsSource.indexOf('<div v-if="lastTestTexts[config.id]?.facts" class="tts-last-test">'))
+    const end = block.indexOf('<div class="tts-field">')
+    const lastTest = block.slice(0, end).replace(/\s+/g, ' ')
+    assert.match(lastTest, /<span v-if="lastTestTexts\[config\.id\]\.adaptation" class="setting-group-hint">\{\{ lastTestTexts\[config\.id\]\.adaptation \}\}<\/span>/)
+    assert.match(lastTest, /<details v-if="config\.last_test\.adapted_text" class="tts-adapted-text"> <summary>Adapted text<\/summary> <div class="tts-adapted-text-body">\{\{ config\.last_test\.adapted_text \}\}<\/div> <\/details>/)
+    assert.match(settingsSource, /\.tts-adapted-text-body \{[^}]*white-space: pre-wrap;/)
+})
+
+test('the help page explains the text adaptation', () => {
+    const help = readFileSync(new URL('../../../public/help/text-to-speech.md', import.meta.url), 'utf8')
+    assert.match(help, /^## Adapting the text$/m)
+})
