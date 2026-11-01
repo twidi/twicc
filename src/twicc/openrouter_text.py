@@ -83,7 +83,8 @@ class _CallLog:
                 self.cost = cost
 
     def write(self) -> None:
-        log = logger.info if self.outcome == "ok" else logger.warning
+        # A stop is the caller's choice, not a failure.
+        log = logger.info if self.outcome in ("ok", "cancelled") else logger.warning
         log(
             "OpenRouter text call: model=%s provider=%s mode=%s outcome=%s first_ms=%s total_ms=%s cost=%s",
             self.model.model,
@@ -184,11 +185,15 @@ async def stream_openrouter_text(
             ):
                 if response.status_code != 200:
                     raise OpenRouterTextError("http", response.status_code)
+                # Set by ``[DONE]`` or a ``finish_reason``: a stream that stops before is partial.
+                finished = False
                 async for line in response.aiter_lines():
-                    if not line or line.startswith(":") or not line.startswith("data:"):
+                    # Blank lines, ``:`` comments and other SSE fields carry no data.
+                    if not line.startswith("data:"):
                         continue
                     data = line.removeprefix("data:").strip()
                     if data == "[DONE]":
+                        finished = True
                         break
                     chunk = _parse_json(data)
                     if "error" in chunk:
@@ -202,10 +207,14 @@ async def stream_openrouter_text(
                     if not isinstance(delta, dict):
                         delta = {}
                     _check_finish(choice, delta.get("refusal"))
+                    if choice.get("finish_reason") is not None:
+                        finished = True
                     content = delta.get("content")
                     if isinstance(content, str) and content:
                         call_log.mark_first()
                         yield content
+                if not finished:
+                    raise OpenRouterTextError("stream_error")
         except httpx.HTTPError:
             raise OpenRouterTextError("network") from None
         call_log.outcome = "ok"

@@ -56,8 +56,8 @@ def records(caplog, monkeypatch):
     return lambda: [record for record in caplog.records if record.name == LOGGER_NAME]
 
 
-def _sse(*chunks) -> bytes:
-    """An SSE body: a processing comment, one ``data:`` line per chunk, then ``[DONE]``.
+def _sse(*chunks, done=True) -> bytes:
+    """An SSE body: a processing comment, one ``data:`` line per chunk, then ``[DONE]`` (if *done*).
 
     A chunk is a dict (sent as JSON) or a str (sent as is).
     """
@@ -65,12 +65,13 @@ def _sse(*chunks) -> bytes:
     for chunk in chunks:
         payload = chunk.encode() if isinstance(chunk, str) else orjson.dumps(chunk)
         lines.append(b"data: " + payload + b"\n\n")
-    lines.append(b"data: [DONE]\n\n")
+    if done:
+        lines.append(b"data: [DONE]\n\n")
     return b"".join(lines)
 
 
-def _sse_response(*chunks) -> httpx.Response:
-    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(*chunks))
+def _sse_response(*chunks, done=True) -> httpx.Response:
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=_sse(*chunks, done=done))
 
 
 def _answer(mode, *, provider="Cerebras", content="x", finish_reason="stop", refusal=None, cost=None):
@@ -274,15 +275,15 @@ def test_complete_times_out(mock_openrouter, records):
 
 
 class _HangingStream(httpx.AsyncByteStream):
-    """One SSE chunk, then waits forever; records its ``aclose()``."""
+    """One SSE chunk, then waits forever (``waiting`` is set); records its ``aclose()``."""
 
     def __init__(self):
         self.closed = False
+        self.waiting = asyncio.Event()
 
     async def __aiter__(self):
-        yield _sse({"provider": "Cerebras", "choices": [{"delta": {"content": "first"}}]}).removesuffix(
-            b"data: [DONE]\n\n"
-        )
+        yield _sse({"provider": "Cerebras", "choices": [{"delta": {"content": "first"}}]}, done=False)
+        self.waiting.set()
         await asyncio.Event().wait()
 
     async def aclose(self):
@@ -304,6 +305,70 @@ def test_closing_the_stream_ends_the_request(mock_openrouter, records):
     assert body.closed
     [record] = records()
     assert "outcome=cancelled" in record.getMessage()
+    # A stop is not a failure.
+    assert record.levelno == logging.INFO
+
+
+def test_cancelling_the_reader_ends_the_request(mock_openrouter, records):
+    body = _HangingStream()
+    mock_openrouter(lambda request: httpx.Response(200, stream=body))
+    deltas = []
+
+    async def read():
+        async for delta in stream_openrouter_text(QWEN_MODEL, "hi"):
+            deltas.append(delta)
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            task = asyncio.create_task(read())
+            await body.waiting.wait()
+            await asyncio.sleep(0)  # the reader is now waiting for the next line
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())
+    assert deltas == ["first"]
+    assert body.closed
+    [record] = records()
+    assert "outcome=cancelled" in record.getMessage()
+    assert record.levelno == logging.INFO
+
+
+def test_a_stream_that_stops_before_its_end_fails(mock_openrouter, records):
+    mock_openrouter(
+        lambda request: _sse_response(
+            {"provider": "Cerebras", "choices": [{"delta": {"content": "Hel"}}]},
+            {"provider": "Cerebras", "choices": [{"delta": {"content": "lo"}, "finish_reason": None}]},
+            done=False,
+        )
+    )
+    deltas = []
+
+    async def read():
+        async for delta in stream_openrouter_text(QWEN_MODEL, "hi"):
+            deltas.append(delta)
+
+    with pytest.raises(OpenRouterTextError) as raised:
+        asyncio.run(read())
+    assert raised.value.reason == "stream_error"
+    assert deltas == ["Hel", "lo"]
+    [record] = records()
+    assert "outcome=stream_error" in record.getMessage()
+    assert record.levelno == logging.WARNING
+
+
+def test_a_stream_with_a_finish_reason_but_no_done_is_complete(mock_openrouter, records):
+    mock_openrouter(
+        lambda request: _sse_response(
+            {"provider": "Cerebras", "choices": [{"delta": {"content": "Hel"}}]},
+            {"provider": "Cerebras", "choices": [{"delta": {"content": "lo"}, "finish_reason": "stop"}]},
+            done=False,
+        )
+    )
+    assert asyncio.run(_call("stream")) == ["Hel", "lo"]
+    [record] = records()
+    assert "outcome=ok" in record.getMessage()
 
 
 @pytest.mark.parametrize("mode", MODES)
