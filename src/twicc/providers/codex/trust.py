@@ -8,7 +8,7 @@ Read = the project's own ``[projects."<root>"].trust_level`` via ``tomllib``.
 Write = the app-server RPC ``config/batchWrite`` (so the Codex binary owns the
 lock / atomicity / format preservation), keyed by the **canonical realpath** of
 the project root. The path segment is double-quoted in the dotted key path. See
-docs/plans/2026-06-09-project-trust-design.md §7 (validated against the Codex
+docs/archives/plans/2026-06-09-project-trust-design.md §7 (validated against the Codex
 Rust source: ``set_project_trust_level`` / ``config_manager_service``).
 """
 

@@ -446,7 +446,7 @@ _DOC_EDIT_SHELL_COMMAND_KEYS = {
 # ``mcp__``-prefixed and the only historical custom_tool_call is
 # ``apply_patch``); no historical function_call is named ``wait``
 # (``wait_agent`` is distinct). Design:
-# ``docs/plans/2026-07-10-codex-code-mode-display-design.md``.
+# ``docs/archives/plans/2026-07-10-codex-code-mode-display-design.md``.
 _CODE_MODE_EXEC_TOOL = "exec"
 _CODE_MODE_WAIT_TOOL = "wait"
 

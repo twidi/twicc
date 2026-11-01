@@ -1,5 +1,5 @@
 // layoutResolver.js — PURE dockable-layout resolver. No DOM, no side effects, no Vue.
-// Ported verbatim from the design prototype (see docs/plans/2026-06-16-dockable-layout-design.md
+// Ported verbatim from the design prototype (see docs/archives/plans/2026-06-16-dockable-layout-design.md
 // and -impl-step1.md). Single source of all layout rules + thresholds. Mirrors the
 // computeVisualItems pattern: raw inputs -> pure transform -> dumb render. Keep it pure
 // (no imports, unit-testable in isolation).

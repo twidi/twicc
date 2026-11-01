@@ -4,7 +4,7 @@ Glues the pure resolver (:mod:`twicc.trust`) to the provider-config projection
 (:mod:`twicc.providers.claude_code.trust`, :mod:`twicc.providers.codex.trust`)
 and the DB. The DB is the source of truth; provider configs are a write-mostly
 projection, read once per project at seeding (guarded by ``trust_imported``).
-See docs/plans/2026-06-09-project-trust-design.md §5–§6.
+See docs/archives/plans/2026-06-09-project-trust-design.md §5–§6.
 
 Both entry points are async (they do provider IO) and never raise on a provider
 write failure — the DB decision stands regardless.
@@ -257,7 +257,7 @@ def _load_resolution(project_id: str):
 # the frontend (which filters choices for UX only). Unknown trust is treated as
 # untrusted — the session-creation gate normally forces a decision first, so an
 # unresolved state here means the gate was bypassed.
-# See docs/plans/2026-06-09-project-trust-design.md §13.
+# See docs/archives/plans/2026-06-09-project-trust-design.md §13.
 
 
 def project_is_untrusted(project_id: str) -> bool:

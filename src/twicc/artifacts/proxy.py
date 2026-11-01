@@ -1,6 +1,6 @@
 """Server-side guard for the artifact network broker (phase 1).
 
-See ``docs/plans/2026-06-18-artifact-network-broker-design.md`` §6.2. The
+See ``docs/archives/plans/2026-06-18-artifact-network-broker-design.md`` §6.2. The
 boundary is **not** a block of internal ranges: only the cloud metadata address
 is ever hard-blocked. Every other target is classified (loopback / lan / public)
 so the host can show the user the true resolved destination before they consent.

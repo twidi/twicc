@@ -49,7 +49,7 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     # Global default dockable layout for new sessions: the id of a named layout
     # from layouts.json, or the synthetic "single-pane" (no docks). Resolved at
     # session creation (project default → this global fallback). See
-    # docs/plans/2026-06-19-layout-persistence-impl-plan.md.
+    # docs/archives/plans/2026-06-19-layout-persistence-impl-plan.md.
     "defaultLayoutId": "single-pane",
     "titleGenerationEnabled": True,
     "titleAutoApply": True,
@@ -151,7 +151,7 @@ _GENERIC_SYNCED_SETTINGS_DEFAULTS: dict = {
     # Hide the 5-hour quota bar: some plans have no 5-hour usage window.
     "hideFiveHourUsage": False,
     # Anonymous usage telemetry (no content, ever) — see
-    # docs/plans/2026-07-18-telemetry-design.md. `telemetryEnabled` is the
+    # docs/archives/plans/2026-07-18-telemetry-design.md. `telemetryEnabled` is the
     # user-facing opt-out; `telemetryNoticeSeen` tracks whether the one-time
     # notice has been acknowledged (drives whether it is shown again).
     "telemetryEnabled": True,

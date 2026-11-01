@@ -452,7 +452,7 @@ class BaseProviderHelpers:
     # unknown-trust) project, and the synced-settings key holding the default
     # mode used to seed/clamp such sessions. Empty set means the provider has
     # no trust-based restriction. See
-    # docs/plans/2026-06-09-project-trust-design.md §13.2.
+    # docs/archives/plans/2026-06-09-project-trust-design.md §13.2.
     UNTRUSTED_PERMISSION_MODES: ClassVar[frozenset[str]] = frozenset()
     UNTRUSTED_PERMISSION_MODE_SYNCED_KEY: ClassVar[str | None] = None
 
@@ -645,7 +645,7 @@ class BaseProviderHelpers:
         carries no ``None`` for a supported field. A ``None`` reaching this
         method therefore comes from a legacy session and falls through to the
         global synced default. See
-        ``docs/plans/2026-06-09-project-agent-defaults-design.md``.
+        ``docs/archives/plans/2026-06-09-project-agent-defaults-design.md``.
         """
         from twicc.synced_settings import read_synced_settings
 

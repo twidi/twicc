@@ -1,7 +1,7 @@
 // Run with: node --test src/utils/layoutResolver.test.js (from the frontend dir)
 //
 // Scenario assertions for the pure dockable-layout resolver — the executable spec that pins the
-// rules described in docs/plans/2026-06-16-dockable-layout-design.md. Ported from the design
+// rules described in docs/archives/plans/2026-06-16-dockable-layout-design.md. Ported from the design
 // prototype's playground (`tests.js`, plain data-in/data-out by construction) so the coverage
 // finally lives with the code it guards.
 //

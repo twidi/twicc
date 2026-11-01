@@ -3,7 +3,7 @@
 // one, else the generated color dot (the historical rendering). Replaces the
 // duplicated `--dot-color` circle markup across the app. Size is driven by the
 // CSS var `--project-mark-size` (default `--wa-space-m`), overridable per call
-// site. See docs/plans/2026-07-17-project-icons-design.md.
+// site. See docs/archives/plans/2026-07-17-project-icons-design.md.
 import { computed, reactive } from 'vue'
 
 const props = defineProps({

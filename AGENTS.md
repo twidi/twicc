@@ -118,7 +118,7 @@ TWICC_DATA_DIR=$PWD uv run python -m django <command> --settings=twicc.settings
 - **Timeline:** write `TimelineEvent` only through `record_event` / `record_event_sync` (`src/twicc/core/services/session_timeline.py`). Never insert directly. Never use Django signals (the code uses `queryset.update()`). Designs: `docs/plans/*timeline*-design.md`.
 - **Agent settings:** the seven per-session fields are a closed bundle with one shape for all providers. A new provider flag is a new `Session` column, classified in the provider's `getAgentSettingsCategories()` (`frontend/src/providers/`). Never a side table.
 - **Project defaults** resolve at session creation only, in two mirrors: `frontend/src/utils/projectAgentDefaults.js` and `src/twicc/project_agent_defaults.py`. Keep them in sync.
-- **Trust is human-only.** Never expose it as an agent flag or skill. `permission_mode_if_untrusted` is never a `Session` field. See `src/twicc/core/services/trust.py` and `docs/plans/2026-06-09-project-trust-design.md`.
+- **Trust is human-only.** Never expose it as an agent flag or skill. `permission_mode_if_untrusted` is never a `Session` field. See `src/twicc/core/services/trust.py` and `docs/archives/plans/2026-06-09-project-trust-design.md`.
 
 ## Artifact network broker
 
@@ -129,7 +129,7 @@ HTML artifacts use plain `fetch()`. TwiCC proxies it after a per-host user conse
 - Consent is client-side (`frontend/src/artifact-broker/host.js`). Do not add a consent check to `src/twicc/artifacts/proxy.py`.
 - The iframe CSP `connect-src 'none'` is the egress boundary. The shim is DX, not security.
 
-The in-SPA preview and the `/artifacts/<id>/` page share `frontend/src/composables/useArtifactBroker.js`. Never re-implement one side. Design: `docs/plans/2026-06-18-artifact-network-broker-design.md`.
+The in-SPA preview and the `/artifacts/<id>/` page share `frontend/src/composables/useArtifactBroker.js`. Never re-implement one side. Design: `docs/archives/plans/2026-06-18-artifact-network-broker-design.md`.
 
 ## Frontend traps
 

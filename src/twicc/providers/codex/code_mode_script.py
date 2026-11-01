@@ -19,7 +19,7 @@ status header Codex prepends to every ``exec`` / ``wait`` output
 (``format_script_status`` / ``prepend_script_status`` in
 ``codex-rs/core/src/tools/code_mode/mod.rs``).
 
-Design: ``docs/plans/2026-07-10-codex-code-mode-display-design.md``.
+Design: ``docs/archives/plans/2026-07-10-codex-code-mode-display-design.md``.
 """
 
 from __future__ import annotations

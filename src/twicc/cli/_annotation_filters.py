@@ -2,7 +2,7 @@
 
 Used by `twicc sessions`, `twicc search`, `twicc topology`
 to filter on the JSONField `Session.annotations`. See
-`docs/superpowers/specs/2026-06-01-annotation-filtering-design.md`.
+`docs/archives/superpowers/specs/2026-06-01-annotation-filtering-design.md`.
 """
 
 from __future__ import annotations

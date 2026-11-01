@@ -4,7 +4,7 @@
 // `requestDecision(project)` and awaits `{ trusted, propagation }` or `null`
 // (cancelled). The caller is responsible for persisting the decision (POST
 // /api/projects/<id>/trust/decide/). See ProjectEditDialog.vue for the dialog
-// pattern, and docs/plans/2026-06-09-project-trust-design.md §5.
+// pattern, and docs/archives/plans/2026-06-09-project-trust-design.md §5.
 import { ref } from 'vue'
 import { defaultTrustPropagation } from '../../utils/trust'
 import ProjectBadge from './ProjectBadge.vue'

@@ -593,7 +593,7 @@ export class BaseProviderHelpers {
      * ``permission_mode_if_untrusted`` is a default-shaping pseudo-field (not
      * part of the closed bundle / Session columns): it reuses the
      * ``permission_mode`` catalogue filtered down to the untrusted-allowed
-     * set. See docs/plans/2026-06-09-project-trust-design.md §13.1.
+     * set. See docs/archives/plans/2026-06-09-project-trust-design.md §13.1.
      */
     getFieldChoices(field) {
         if (field === 'permission_mode_if_untrusted') {

@@ -1,4 +1,4 @@
-"""Tests for the telemetry background task (design docs/plans/2026-07-18-telemetry-design.md).
+"""Tests for the telemetry background task (design docs/archives/plans/2026-07-18-telemetry-design.md).
 
 No network: httpx is always monkeypatched. ``is_telemetry_active`` gating uses
 the ``temp_settings`` fixture pattern from ``tests/test_settings_mutation.py``

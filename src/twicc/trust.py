@@ -10,7 +10,7 @@ This module holds only the pure resolver: given the trust-relevant slice of
 every project, compute one project's *effective* trust. The effective trust of
 a NULL (inherited) project is **never stored** — always recomputed.
 
-Resolution order (see docs/plans/2026-06-09-project-trust-design.md §4):
+Resolution order (see docs/archives/plans/2026-06-09-project-trust-design.md §4):
 
 1. ``trust`` non-NULL → that value (the self is sovereign).
 2. The project is a worktree (``worktree_of`` set) → inherit the **main repo's**

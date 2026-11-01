@@ -423,7 +423,7 @@ def get_project_icons_dir() -> Path:
     bucket (``repo-<hash>`` for a git repository's shared icon, ``proj-<hash>``
     for a per-project override). Each bucket carries the image file(s) plus,
     for repo buckets, a ``manifest.json`` recording the icon lifecycle
-    (auto/manual/cleared). See docs/plans/2026-07-17-project-icons-design.md.
+    (auto/manual/cleared). See docs/archives/plans/2026-07-17-project-icons-design.md.
     Populated on demand by ``twicc.project_icons``; not pre-created here.
     """
     return get_data_dir() / "project-icons"

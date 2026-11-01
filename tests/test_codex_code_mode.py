@@ -1,6 +1,6 @@
 """Codex code mode (GPT-5.6 ``exec`` / ``wait``) — extraction and compute wiring.
 
-Covers, per ``docs/plans/2026-07-10-codex-code-mode-display-design.md`` §9:
+Covers, per ``docs/archives/plans/2026-07-10-codex-code-mode-display-design.md`` §9:
 
 - the static script extractor (``parse_code_mode_script``) over the fixture
   list shared with the frontend mirror (``parseCodeModeScript.js``);

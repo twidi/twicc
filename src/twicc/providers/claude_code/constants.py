@@ -139,7 +139,7 @@ HYBRID_AGENT_SETTINGS_CATEGORIES: dict[AgentSettingCategory, list[str]] = {
 # ``bypassPermissions`` — no guardrail at all — is excluded. The untrusted
 # default seeds sessions created in untrusted projects and is the fallback the
 # backend trust clamp applies to out-of-set values.
-# See docs/plans/2026-06-09-project-trust-design.md §13.2.
+# See docs/archives/plans/2026-06-09-project-trust-design.md §13.2.
 UNTRUSTED_PERMISSION_MODES: frozenset[str] = frozenset({"default", "auto", "acceptEdits", "plan", "dontAsk"})
 UNTRUSTED_PERMISSION_MODE_SYNCED_KEY: str = "claudeCodeDefaultUntrustedPermissionMode"
 

@@ -16,7 +16,7 @@ away-only target is held while a human looks present at any TwiCC client and
 sent only once they are away (see :mod:`twicc.presence` and ``_deferred_send``).
 Targets without the flag (the legacy default) always send.
 
-Design doc: docs/plans/2026-06-11-external-notifications-apprise-design.md
+Design doc: docs/archives/plans/2026-06-11-external-notifications-apprise-design.md
 """
 
 import asyncio

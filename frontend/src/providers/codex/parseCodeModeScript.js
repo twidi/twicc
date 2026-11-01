@@ -22,7 +22,7 @@
  * (``format_script_status`` / ``prepend_script_status`` in
  * ``codex-rs/core/src/tools/code_mode/mod.rs``).
  *
- * Design: ``docs/plans/2026-07-10-codex-code-mode-display-design.md``.
+ * Design: ``docs/archives/plans/2026-07-10-codex-code-mode-display-design.md``.
  */
 
 // First-line pragma the model may emit to tune the cell's execution

@@ -1,7 +1,7 @@
 """Tests for the artifact network broker's server-side guard (phase 1).
 
 The security core of the broker (see
-``docs/plans/2026-06-18-artifact-network-broker-design.md`` §6.2): a pure
+``docs/archives/plans/2026-06-18-artifact-network-broker-design.md`` §6.2): a pure
 ``classify_ip`` plus the async resolve-and-pin guard. The boundary is **not** a
 block of internal ranges — only the cloud metadata address is ever hard-blocked;
 loopback / LAN / public are classified so the prompt can show the true target.

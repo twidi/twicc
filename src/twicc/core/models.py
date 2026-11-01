@@ -121,7 +121,7 @@ class Project(models.Model):
     # ~/.codex/config.toml, or their equivalents under the configured provider
     # homes) are a write-mostly projection. The effective trust
     # of a NULL (inherited) project is always computed live, never stored.
-    # See docs/plans/2026-06-09-project-trust-design.md.
+    # See docs/archives/plans/2026-06-09-project-trust-design.md.
     #
     # True = trusted (explicit decision), False = untrusted (explicit decision),
     # NULL = no own decision → inherited from an ancestor / worktree main repo,
@@ -166,7 +166,7 @@ class Project(models.Model):
     # layout (from layouts.json) or the synthetic "single-pane". NULL = inherit
     # (walk the worktree/path chain, then the global settings.json default).
     # Resolved at session creation only — a later change never touches an
-    # existing session. See docs/plans/2026-06-19-layout-persistence-impl-plan.md.
+    # existing session. See docs/archives/plans/2026-06-19-layout-persistence-impl-plan.md.
     default_layout_id = models.CharField(max_length=64, null=True, blank=True, default=None)
     # Per-project saved URLs for the session Browser pane (an unsandboxed
     # iframe showing e.g. the project's dev server): a list of
@@ -200,7 +200,7 @@ class Project(models.Model):
     # ``null`` is deliberately unused: a non-null "inherit" default means an
     # unset row inherits naturally (existing rows after migration, new
     # subprojects). Auto-discovery NEVER writes this column — only explicit
-    # user action does. See docs/plans/2026-07-17-project-icons-design.md.
+    # user action does. See docs/archives/plans/2026-07-17-project-icons-design.md.
     icon = models.CharField(max_length=100, default="inherit")
     # The git root whose repo icon this project inherits, WHEN it differs from
     # this project's own ``git_root``. NULL -> use ``git_root``. Set at

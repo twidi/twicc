@@ -6,7 +6,7 @@
 //   - dotColor: the project's color with the worktree → main-repo fallback,
 //     plus optional caller overrides (live previews, explicit fallbacks).
 //
-// See docs/plans/2026-07-17-project-icons-design.md.
+// See docs/archives/plans/2026-07-17-project-icons-design.md.
 import { computed, unref } from 'vue'
 import { useDataStore } from '../stores/data'
 

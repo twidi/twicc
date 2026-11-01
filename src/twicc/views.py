@@ -4044,7 +4044,7 @@ async def session_artifact(request, session_id, artifact_file_name):
 
 # Project-icon buckets are opaque hashes: ``repo-<16 hex>`` (a repository's
 # shared icon) or ``proj-<16 hex>`` (a per-project override). See
-# twicc.project_icons and docs/plans/2026-07-17-project-icons-design.md.
+# twicc.project_icons and docs/archives/plans/2026-07-17-project-icons-design.md.
 _ICON_BUCKET_RE = re.compile(r"^(?:repo|proj)-[0-9a-f]{16}$")
 
 

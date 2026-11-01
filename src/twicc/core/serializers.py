@@ -65,7 +65,7 @@ def serialize_project(project):
         # query-free. ``icon`` is the per-project state ("inherit"/"none"/token);
         # ``icon_override_url`` is this project's OWN manual icon (or null);
         # ``repo_icon_url`` is the auto-discovered repo icon for its anchor (the
-        # socle, shared by the repo). See docs/plans/2026-07-17-project-icons-design.md.
+        # socle, shared by the repo). See docs/archives/plans/2026-07-17-project-icons-design.md.
         "icon": project.icon,
         "icon_override_url": project_own_icon_url(project),
         "repo_icon_url": project_repo_icon_url(project),

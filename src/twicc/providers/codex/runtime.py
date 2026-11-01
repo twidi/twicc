@@ -49,7 +49,7 @@ _RELEASE_URL = f"https://github.com/openai/codex/releases/download/{CODEX_RELEAS
 
 # our platform key -> (wheel filename, sha256 of the wheel)
 # Recompute the sha256 values on every version bump (see the bump note at the
-# bottom of docs/plans/2026-07-09-codex-runtime-download-plan.md).
+# bottom of docs/archives/plans/2026-07-09-codex-runtime-download-plan.md).
 _WHEELS: dict[str, tuple[str, str]] = {
     "manylinux_2_17_x86_64": (
         f"openai_codex_cli_bin-{CODEX_VERSION}-py3-none-manylinux_2_17_x86_64.whl",

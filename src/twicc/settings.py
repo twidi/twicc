@@ -443,7 +443,7 @@ SESSION_DIRS_CLEANUP_ENABLED = os.environ.get("TWICC_NO_SESSION_DIRS_CLEANUP", "
 # a manual opt-out, devctl no longer sets it.
 TMUX_CLEANUP_ENABLED = os.environ.get("TWICC_NO_TMUX_CLEANUP", "").strip().lower() not in ("1", "true", "yes")
 
-# Anonymous telemetry (design docs/plans/2026-07-18-telemetry-design.md).
+# Anonymous telemetry (design docs/archives/plans/2026-07-18-telemetry-design.md).
 # TWICC_NO_TELEMETRY initializes the synced setting once at backend startup.
 # Runtime activity depends only on synced settings (see twicc.telemetry.task).
 

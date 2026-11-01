@@ -103,7 +103,7 @@ export function useSessionAgentSettings(sessionIdSource) {
     // reset lands on. In the snapshot model (option A) a NEW session is created
     // with these values FROZEN as concrete columns, so the baseline is purely a
     // display/diff reference — changing a default never moves a launched session.
-    // See docs/plans/2026-06-09-project-agent-defaults-design.md.
+    // See docs/archives/plans/2026-06-09-project-agent-defaults-design.md.
     // The provider's GLOBAL defaults (synced settings), with no project layer.
     // The bottom of every resolution: resolvedDefaults falls through to it, and
     // the reset stack's "Global defaults" target pins to it.

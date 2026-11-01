@@ -372,7 +372,7 @@ async def run_server(port: int):
         tips_watcher_task = asyncio.create_task(start_tips_watcher_task(shutdown_event))
         help_watcher_task = asyncio.create_task(start_help_watcher_task(shutdown_event))
 
-        # CLI drop-request plumbing (cf. docs/superpowers/specs/2026-05-17-cli-session-create-design.md)
+        # CLI drop-request plumbing (cf. docs/archives/superpowers/specs/2026-05-17-cli-session-create-design.md)
         from twicc.heartbeat import heartbeat_loop
         from twicc.drop_requests_watcher import get_drop_requests_watcher
 

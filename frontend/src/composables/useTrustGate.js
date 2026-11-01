@@ -6,7 +6,7 @@
 // calls `ensureProjectTrust(projectId)` and proceeds only when it returns a
 // truthy result.
 //
-// Flow (docs/plans/2026-06-09-project-trust-design.md §5):
+// Flow (docs/archives/plans/2026-06-09-project-trust-design.md §5):
 //   1. resolve locally from the store (no round-trip when already resolved)
 //   2. else ask the backend (it may seed from the provider configs)
 //   3. else prompt the user; persist the decision via /trust/decide/

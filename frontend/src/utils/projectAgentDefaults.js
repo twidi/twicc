@@ -6,7 +6,7 @@
 // field by field — the inherited agent-settings defaults and the inherited
 // default provider. Resolution is a CREATION-TIME concern only: this resolver
 // pre-fills a new draft with concrete values (frozen at launch — the snapshot
-// model, see docs/plans/2026-06-09-project-agent-defaults-design.md §4), and
+// model, see docs/archives/plans/2026-06-09-project-agent-defaults-design.md §4), and
 // also drives the display baseline (popover diff-marking and reset targets).
 // The backend never re-resolves the chain for a running session; its mirror
 // of this resolver (src/twicc/project_agent_defaults.py) runs only when the

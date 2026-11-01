@@ -9,7 +9,7 @@ inherited default provider.
 This resolver runs at **session creation only** (the CLI ``create-session``
 materializes the resolved values into the payload, exactly like the frontend
 freezes them onto a draft — see
-``docs/plans/2026-06-09-project-agent-defaults-design.md`` §4, "snapshot at
+``docs/archives/plans/2026-06-09-project-agent-defaults-design.md`` §4, "snapshot at
 creation"). It must NEVER be wired into the per-turn resolution sites
 (``resolve_agent_settings`` and its callers): re-resolving a running session
 against the project chain is precisely the option-B bug the design removed.
@@ -219,7 +219,7 @@ def materialize_inherited_defaults(
     Field by field, the project chain's value (worktree main repo / path
     ancestors) wins, else the provider's global synced default — so the created
     session stores a concrete snapshot, exactly like a UI-launched one (see
-    ``docs/plans/2026-06-09-project-agent-defaults-design.md`` §4, "snapshot
+    ``docs/archives/plans/2026-06-09-project-agent-defaults-design.md`` §4, "snapshot
     at creation"). ``permission_mode`` resolves through the trust-matching
     variant: the ``permission_mode_if_untrusted`` chain (then the global
     untrusted default) when the project is untrusted. The hidden

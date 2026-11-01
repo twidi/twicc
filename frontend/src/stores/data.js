@@ -1899,7 +1899,7 @@ export const useDataStore = defineStore('data', {
         /**
          * Resolve a project's inherited agent-settings defaults into a CONCRETE
          * 7-field bundle to FREEZE onto a new draft (the snapshot taken at draft
-         * creation — see docs/plans/2026-06-09-project-agent-defaults-design.md).
+         * creation — see docs/archives/plans/2026-06-09-project-agent-defaults-design.md).
          * Field by field: the project chain's value (worktree / path ancestors)
          * wins, else the provider's global default. The model is the alias (e.g.
          * "opus"), never a pinned version, so version auto-upgrade is preserved.

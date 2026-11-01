@@ -7,7 +7,7 @@ Read = the project's **exact** entry only (no walk-up): seeding adopts a genuine
 own decision, never an inherited one. Write = atomic read-modify-write that
 touches only ``hasTrustDialogAccepted`` for the given directory and preserves
 every other key, under an advisory sidecar lock. See
-docs/plans/2026-06-09-project-trust-design.md §7.
+docs/archives/plans/2026-06-09-project-trust-design.md §7.
 """
 
 from __future__ import annotations

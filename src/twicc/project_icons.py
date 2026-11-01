@@ -20,7 +20,7 @@ Repo-icon state is the source of truth in each ``manifest.json`` and is mirrored
 into the in-memory cache below (like ``twicc.projects._project_git_roots``), so
 the query-free serializer resolves an icon URL with zero disk I/O.
 
-Design: docs/plans/2026-07-17-project-icons-design.md.
+Design: docs/archives/plans/2026-07-17-project-icons-design.md.
 """
 
 from __future__ import annotations

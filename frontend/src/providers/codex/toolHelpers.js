@@ -175,7 +175,7 @@ const MCP_TOOL_NAME_PREFIX = 'mcp__'
 // write_stdin chunks do for ``exec_command``. Deliberately NOT a
 // member of ``FUNCTION_CALL_EXEC_TOOLS`` — its input is JS, not a
 // shell command, so it must never enter ``extractCommandPayload`` et
-// al. Design: ``docs/plans/2026-07-10-codex-code-mode-display-design.md``.
+// al. Design: ``docs/archives/plans/2026-07-10-codex-code-mode-display-design.md``.
 const CODE_MODE_EXEC_TOOL_NAME = 'exec'
 
 /**
