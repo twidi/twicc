@@ -3,7 +3,8 @@
 A text that fits in its first part is sent raw, in one request. A longer one is cut at the best
 boundary inside each part's size: a paragraph end, else a sentence end, else a clause end, else a
 space, else inside a word. The parts grow from ``FIRST_PART_CHARS`` so the audio starts fast,
-except for a streaming format, whose audio starts while its part is generated.
+except for a streaming format, whose audio starts while its part is generated. ``PartSplitter``
+cuts the same parts from a text that arrives in pieces.
 """
 
 import re
@@ -53,19 +54,23 @@ def _cut_position(window: str, size: int) -> int:
     return size
 
 
-def split_text(text: str, limit: int, first: int) -> list[str]:
-    """The parts of ``text``: part *k* (from 0) holds at most ``min(limit, first * PART_GROWTH ** k)``
-    characters. A text within ``first`` characters is returned unchanged, as one part. A longer
-    one gives stripped parts; a part without speech is dropped."""
+def _check_sizes(limit: int, first: int) -> None:
     if limit < 1 or first < 1:
         raise ValueError("limit and first must be positive")
-    if len(text) <= first:
-        return [text]
+
+
+def _cut_parts(text: str, done: int, limit: int, first: int, final: bool) -> tuple[list[str], int]:
+    """The stripped parts with speech cut from ``text``, after ``done`` parts already cut, and the
+    position after the last one. Part *k* (from 0) holds at most ``min(limit, first * PART_GROWTH ** k)``
+    characters. A rest within its part's size is a part only when ``final``: else more text may
+    still move its cut point, and it stays behind the returned position."""
     parts: list[str] = []
     position = _LEADING_SPACE.match(text).end()
     while position < len(text):
-        size = min(limit, first * PART_GROWTH ** len(parts))
+        size = min(limit, first * PART_GROWTH ** (done + len(parts)))
         if len(text) - position <= size:
+            if not final:
+                break
             cut = len(text) - position
         else:
             # Only the window is scanned, never the whole rest: the split stays linear.
@@ -74,7 +79,67 @@ def split_text(text: str, limit: int, first: int) -> list[str]:
         if has_speech(part):
             parts.append(part)
         position = _LEADING_SPACE.match(text, position + cut).end()
-    return parts
+    return parts, position
+
+
+def split_text(text: str, limit: int, first: int) -> list[str]:
+    """The parts of ``text``: part *k* (from 0) holds at most ``min(limit, first * PART_GROWTH ** k)``
+    characters. A text within ``first`` characters is returned unchanged, as one part. A longer
+    one gives stripped parts; a part without speech is dropped."""
+    _check_sizes(limit, first)
+    if len(text) <= first:
+        return [text]
+    return _cut_parts(text, 0, limit, first, final=True)[0]
+
+
+class PartSplitter:
+    """The parts of a text that arrives in pieces, cut as ``split_text`` cuts the whole text.
+
+    A part is released once the received text holds more than its size: its cut point can no longer
+    move. With no ``limit`` (and no ``first``), nothing is cut: the whole text is one part, at the
+    end. Unlike ``split_text``, a text within ``first`` characters is stripped (and dropped without
+    speech), as every other part.
+    """
+
+    def __init__(self, limit: int | None, first: int | None) -> None:
+        if (limit is None) != (first is None):
+            raise ValueError("limit and first must both be set or both be None")
+        if limit is not None:
+            _check_sizes(limit, first)
+        self._limit = limit
+        self._first = first
+        # The text received and not released yet, and how many parts were released before it.
+        self._buffer = ""
+        self._done = 0
+
+    def _release(self, final: bool) -> list[str]:
+        if self._limit is None:
+            if not final:
+                return []
+            part, self._buffer = self._buffer.strip(), ""
+            return [part] if has_speech(part) else []
+        parts, position = _cut_parts(self._buffer, self._done, self._limit, self._first, final)
+        # The released text is dropped: the buffer stays within one part, and each feed is cheap.
+        self._buffer = self._buffer[position:]
+        self._done += len(parts)
+        return parts
+
+    def feed(self, text: str) -> list[str]:
+        """Append ``text``; the parts it completes."""
+        self._buffer += text
+        return self._release(final=False)
+
+    def end(self) -> list[str]:
+        """The parts of the rest of the text, once it arrived whole."""
+        return self._release(final=True)
+
+    def tail(self) -> str:
+        """The text not released yet, stripped, up to its last sentence or paragraph end, or ``""``
+        when it has none. It reads what came of a text that stops before its end: a sentence end
+        at the very end of the text is not one yet (``_SENTENCE`` wants the space after it)."""
+        ends = [match.start() for match in _PARAGRAPH.finditer(self._buffer)]
+        ends += [match.end() for match in _SENTENCE.finditer(self._buffer)]
+        return self._buffer[: max(ends, default=0)].strip()
 
 
 def speech_parts(request: SpeechRequest) -> list[str]:

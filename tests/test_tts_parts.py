@@ -6,7 +6,7 @@ import pytest
 
 from twicc.tts import model_catalog
 from twicc.tts.openrouter import SpeechRequest
-from twicc.tts.parts import has_speech, speech_parts, split_text
+from twicc.tts.parts import PartSplitter, has_speech, speech_parts, split_text
 
 
 def _sentences(length: int) -> str:
@@ -130,3 +130,117 @@ def test_whole_mp3_models_are_sent_whole(monkeypatch):
     text = _sentences(3000)
     assert speech_parts(_request("elevenlabs/eleven-v3", "mp3", text)) == [text]
     assert len(speech_parts(_request("elevenlabs/eleven-v3", "pcm", text))) > 1
+
+
+def _fed(text: str, chunk: int, limit: int | None, first: int | None) -> list[str]:
+    """The parts a ``PartSplitter`` gives for ``text`` fed by ``chunk`` characters, then ended."""
+    splitter = PartSplitter(limit, first)
+    parts: list[str] = []
+    for start in range(0, len(text), chunk):
+        parts.extend(splitter.feed(text[start : start + chunk]))
+    return parts + splitter.end()
+
+
+_SPLITTER_TEXTS = {
+    "paragraphs": _prose(3000),
+    "sentences": _sentences(3000),
+    "one-long-word": "Supercalifragilistic" * 80,
+    "no-speech-parts": "```\n\nHello there.\n\n```\n\n| --- |\n\n" + _sentences(400) + "\n\n---\n\n" + _prose(300),
+    "spaces-around": "   \n" + _sentences(700) + "  \n\n  ",
+    "cjk": "你好世界。再见朋友。" * 60,
+}
+
+
+@pytest.mark.parametrize("chunk", [10_000_000, 1, 7])
+@pytest.mark.parametrize(("limit", "first"), [(2000, 250), (100, 20), (40, 40)])
+@pytest.mark.parametrize("name", list(_SPLITTER_TEXTS))
+def test_the_splitter_gives_the_parts_of_split_text(name, limit, first, chunk):
+    text = _SPLITTER_TEXTS[name]
+    assert len(text) > first
+    expected = split_text(text, limit, first)
+    assert len(expected) > 1
+    assert _fed(text, chunk, limit, first) == expected
+
+
+def test_the_splitter_releases_nothing_within_the_first_target():
+    splitter = PartSplitter(2000, 20)
+    assert splitter.feed("Aaaa bbbb. Cccc dddd") == []
+    assert splitter.feed("e") == ["Aaaa bbbb."]
+    assert splitter.end() == ["Cccc dddde"]
+
+
+def test_the_splitter_waits_until_the_cut_point_cannot_move():
+    # At 19 characters the best cut is the clause; the 20th character makes it a sentence end, and
+    # the 21st, a space, confirms it.
+    splitter = PartSplitter(2000, 20)
+    assert splitter.feed("Aaaa, bbbb cccc ddd") == []
+    assert splitter.feed(".") == []
+    assert splitter.feed(" Eeee") == ["Aaaa, bbbb cccc ddd."]
+    assert splitter.end() == ["Eeee"]
+
+
+def test_the_splitter_drops_a_part_without_speech_and_keeps_the_size_order():
+    splitter = PartSplitter(10, 5)
+    # "-----" is dropped: "Aaaa" is still the first part (5 characters), the next one gets 10.
+    assert splitter.feed("----- Aaaa bbbb cccc dddd") == ["Aaaa", "bbbb cccc"]
+    assert splitter.end() == ["dddd"]
+
+
+def test_the_splitter_strips_a_short_text_and_drops_it_without_speech():
+    splitter = PartSplitter(2000, 250)
+    assert splitter.feed("  Hello.  ") == []
+    assert splitter.end() == ["Hello."]
+    splitter = PartSplitter(2000, 250)
+    assert splitter.feed(" | --- | ") == []
+    assert splitter.end() == []
+    assert PartSplitter(2000, 250).end() == []
+
+
+def test_the_splitter_without_a_limit_gives_one_part_at_the_end():
+    text = _prose(5000)
+    splitter = PartSplitter(None, None)
+    for start in range(0, len(text), 7):
+        assert splitter.feed(text[start : start + 7]) == []
+    assert splitter.end() == [text.strip()]
+    splitter = PartSplitter(None, None)
+    splitter.feed(" ``` ")
+    assert splitter.end() == []
+
+
+def test_the_splitter_needs_positive_sizes_or_none_for_both():
+    for limit, first in ((0, 250), (2000, 0), (-1, 250), (2000, None), (None, 250)):
+        with pytest.raises(ValueError):
+            PartSplitter(limit, first)
+
+
+def test_a_long_text_feeds_quickly():
+    text = _prose(200_000)
+    start = time.perf_counter()
+    parts = _fed(text, 3, 2000, 250)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 2.0, elapsed
+    assert parts == split_text(text, 2000, 250)
+
+
+@pytest.mark.parametrize(
+    ("fed", "tail"),
+    [
+        pytest.param("", "", id="empty"),
+        pytest.param("Aaaa bbbb, cccc dddd", "", id="no-sentence-end"),
+        pytest.param("Aaaa bbbb.", "", id="a-final-period-is-not-yet-a-sentence-end"),
+        pytest.param("Aaaa bbbb\n\ncccc, dddd", "Aaaa bbbb", id="paragraph-end"),
+        pytest.param("  Aaaa. Bbbb! Cccc dd", "Aaaa. Bbbb!", id="sentence-end-then-half-a-sentence"),
+        pytest.param("Aaaa.\n\nBbbb? Cccc", "Aaaa.\n\nBbbb?", id="last-of-both"),
+        pytest.param("你好世界。再见", "你好世界。", id="cjk"),
+    ],
+)
+def test_the_tail_ends_at_the_last_sentence_or_paragraph_end(fed, tail):
+    splitter = PartSplitter(2000, 250)
+    assert splitter.feed(fed) == []
+    assert splitter.tail() == tail
+
+
+def test_the_tail_holds_only_what_was_not_released():
+    splitter = PartSplitter(2000, 20)
+    assert splitter.feed("Aaaa bbbb. Cccc dddd eeee. Ffff gg") == ["Aaaa bbbb."]
+    assert splitter.tail() == "Cccc dddd eeee."
