@@ -1,8 +1,8 @@
 # Claude session title synchronization
 
 Date: 2026-11-01
-Status: adversarial review complete; pending user approval; no implementation authorization.
-Revision: 2
+Status: user approved after adversarial review; no implementation authorization.
+Revision: 3
 
 ## 1. Purpose
 
@@ -146,6 +146,15 @@ Keep terminal handling asynchronous. A busy composer must not block WebSocket ha
 Supersede obsolete queued title publications. Do not disturb user input or interrupt an assistant turn.
 
 Do not append directly to the transcript as a fallback while the hybrid process remains active.
+
+**Accepted hybrid limitation:** Hybrid mode is currently disabled and may never be enabled.
+The user accepts strict delivery ordering when command attribution is uncertain.
+A CLI command result identifies its command, but does not prove that TwiCC sent that command.
+After a potentially delivered paste, do not send a successor until the outstanding delivery is resolved or the process stops.
+This restriction may delay subsequent TwiCC title publications until process death.
+Successful explicit CLI outcomes remain importable in effective command order; do not reject manual renames during this interval.
+Do not claim own-delivery confirmation from semantic convergence alone.
+This decision does not activate hybrid mode or authorize implementation.
 
 ### 6.3 Startup and process replacement
 
@@ -358,4 +367,11 @@ They do not imply that the user previously selected these details.
 - A fresh independent reviewer challenges the revised specification and approves it without material findings.
 
 Review outcome: two rounds, three internal reviewers, two material findings resolved, no remaining material findings.
-User approval is still required. No product code is implemented by this review.
+At the end of spec review, user approval remained pending. The subsequent user decision below supersedes that status.
+No product code is implemented by this review.
+
+### User decision after implementation-plan review
+
+The user approves the plan and accepts the strict hybrid limitation described in section 6.2.
+Hybrid mode is currently disabled and may never be enabled.
+This decision resolves the plan's hybrid product gate. It does not authorize product implementation.
