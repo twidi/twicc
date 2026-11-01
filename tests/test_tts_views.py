@@ -2088,3 +2088,63 @@ def test_a_script_settings_test_records_the_adaptation(client, adaptation):
     assert config_id == SCRIPT_ID
     assert (run["adapted_by"], run["adapt_reason"], run["adapted_text"]) == ("haiku", None, ADAPTED)
     assert run["chars"] == len(SCRIPT_READ["text"])
+
+
+@pytest.mark.parametrize("body", [CACHED_PAYLOAD, TEST_PAYLOAD])
+def test_an_adaptation_failure_after_the_first_part_cuts_the_reading(client, adaptation, monkeypatch, body):
+    request = parse_speech_request(VALID_PAYLOAD)
+    sentences = [f"Sentence number {index:02d} of the adapted text. " for index in range(12)]  # ~480 chars
+    gate = None
+
+    async def open_stream(engine, prompt):
+        for delta in sentences:
+            yield delta
+        await gate.wait()
+        raise RuntimeError("the model is down")
+
+    async def pump_speech(request, api_key, stream, parts=None, *, paced=False):
+        # As the real pump: one audio per part, and an error of the source fails the stream.
+        source = as_part_source(request.text, parts)
+        try:
+            index = 0
+            while True:
+                try:
+                    text = await source.next_part()
+                except SpeechError as error:
+                    stream.fail_if_live(error)
+                    return
+                if text is None:
+                    break
+                if not index:
+                    stream.set_headers("audio/mpeg", None)
+                stream.append(f"part{index};".encode())
+                index += 1
+        finally:
+            await source.aclose()
+        stream.finish()
+
+    monkeypatch.setattr(adapt, "_open_stream", open_stream)
+    monkeypatch.setattr(views, "pump_speech", pump_speech)
+
+    async def scenario():
+        nonlocal gate
+        gate = asyncio.Event()
+        audio_id = await _open_id(client, body)
+        response = await _read(client, audio_id)
+        chunks = aiter(response.streaming_content)
+        received = await _next(chunks)
+        gate.set()
+        with pytest.raises(ConnectionAbortedError):
+            async with asyncio.timeout(2.0):
+                async for chunk in chunks:
+                    received += chunk
+        await _within(asyncio.wait([get_stream(audio_id)._task]))
+        assert await _ending(client, audio_id) == {"state": "failed", "error": adapt.ADAPT_STOPPED}
+        return received
+
+    received = asyncio.run(scenario())
+    # The first part, then the tail of the received text (up to its last sentence end).
+    assert received == b"part0;part1;"
+    assert speech_cache.get((request, "haiku")) is None
+    assert speech_cache.get((request, None)) is None
+    assert adaptation.upstream.records == []
