@@ -19,6 +19,7 @@ const isTouchDevice = computed(() => settingsStore.isTouchDevice)
 
 const dialogRef = ref(null)
 const activeTab = ref('five-hour')
+const fiveHourHidden = computed(() => settingsStore.isFiveHourUsageHidden)
 
 // Currently displayed provider. Initialized from the prop on open(), then
 // driven by the in-dialog wa-select so the user can switch providers
@@ -232,7 +233,7 @@ async function fetchData({ isInitial = false, before = null, rangeDays = null, s
 // ── Public API ──────────────────────────────────────────────────────
 
 function open(period = 'five-hour') {
-    activeTab.value = period
+    activeTab.value = fiveHourHidden.value ? 'seven-day' : period
     fiveHourHoveredIndex.value = null
     sevenDayHoveredIndex.value = null
     isInspecting.value = false
@@ -928,11 +929,11 @@ function onTabShow(event) {
             </div>
 
             <TabBar @wa-tab-show="onTabShow">
-                <wa-tab slot="nav" panel="five-hour" :active="activeTab === 'five-hour'">5h Quota</wa-tab>
+                <wa-tab v-if="!fiveHourHidden" slot="nav" panel="five-hour" :active="activeTab === 'five-hour'">5h Quota</wa-tab>
                 <wa-tab slot="nav" panel="seven-day" :active="activeTab === 'seven-day'">7d Quota</wa-tab>
 
                 <!-- ═══ Five Hour Panel ═══ -->
-                <wa-tab-panel name="five-hour">
+                <wa-tab-panel v-if="!fiveHourHidden" name="five-hour">
                     <div class="usage-chart-panel">
                         <div v-if="isLoading" class="usage-chart-loading">
                             <wa-spinner></wa-spinner>
