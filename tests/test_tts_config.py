@@ -81,6 +81,10 @@ def test_normalize_drops_an_unknown_adapt(adapt):
     assert normalize_tts_config({"configs": [], "adapt": adapt})["adapt"] is None
 
 
+def test_adapt_accepts_qwen():
+    assert normalize_tts_config({"configs": [], "adapt": "qwen"})["adapt"] == "qwen"
+
+
 def test_normalize_without_adapt_is_none():
     assert normalize_tts_config({"configs": []})["adapt"] is None
 
@@ -308,8 +312,9 @@ LAST_TEST = {
     "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
     "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None, "parts": 3,
     "adapted_by": "haiku", "adapt_reason": None, "adapt_first_ms": 640, "adapted_text": "Hello, said aloud.",
+    "fallback_reason": None,
 }
-ADAPT_FIELDS = ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")
+ADAPT_FIELDS = ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text", "fallback_reason")
 
 
 def test_last_test_is_normalized_or_dropped():
@@ -357,9 +362,22 @@ def test_last_test_keeps_the_adaptation_fields():
     assert _normalized_last_test(not_adapted) == not_adapted
 
 
-@pytest.mark.parametrize("reason", ["off", "no_provider", "too_long", "failed", "stalled", "empty"])
+@pytest.mark.parametrize("reason", ["off", "no_provider", "too_long", "failed", "stalled", "empty", "refused"])
 def test_last_test_keeps_every_adapt_reason(reason):
     assert _normalized_last_test({**LAST_TEST, "adapt_reason": reason})["adapt_reason"] == reason
+
+
+def test_last_test_keeps_the_fallback_reason():
+    assert _normalized_last_test({**LAST_TEST, "fallback_reason": "stalled"})["fallback_reason"] == "stalled"
+    assert _normalized_last_test({**LAST_TEST, "fallback_reason": "refused"})["fallback_reason"] == "refused"
+    assert _normalized_last_test({**LAST_TEST, "fallback_reason": "bogus"})["fallback_reason"] is None
+    # A record written before the Qwen adaptation.
+    old_record = {key: value for key, value in LAST_TEST.items() if key != "fallback_reason"}
+    assert _normalized_last_test(old_record)["fallback_reason"] is None
+
+
+def test_last_test_keeps_a_qwen_adaptation():
+    assert _normalized_last_test({**LAST_TEST, "adapted_by": "qwen"})["adapted_by"] == "qwen"
 
 
 @pytest.mark.parametrize("field, value", [

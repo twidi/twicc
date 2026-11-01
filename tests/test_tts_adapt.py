@@ -1,6 +1,7 @@
 """Tests for the adaptation of a text for speech (twicc.tts.adapt).
 
-The streamed hermetic call is faked through ``adapt._open_stream``: no test reaches a model.
+The streamed call (hermetic or OpenRouter) is faked through ``adapt._open_stream``: no test
+reaches a model.
 Every scenario runs inside one ``asyncio.run(...)``, bounded by ``asyncio.timeout``.
 """
 
@@ -11,14 +12,17 @@ import re
 import pytest
 
 from twicc.core.enums import Provider
+from twicc.openrouter_text import QWEN_MODEL, OpenRouterTextError
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.tts import adapt
 from twicc.tts.adapt import (
     ADAPT_MAX_CHARS,
     ADAPT_PROMPT,
     ADAPT_STOPPED,
+    QWEN_ENGINE,
     AdaptedParts,
     Engine,
+    fallback_engine,
     resolve_engine,
 )
 from twicc.tts.openrouter import SpeechError
@@ -50,22 +54,17 @@ def _sentences(length: int) -> str:
     return " ".join(sentences)
 
 
-class FakeCall:
-    """A fake ``_open_stream``: each step is a text delta, a delay in seconds, an event to wait
+class FakeStream:
+    """One fake streamed call: each step is a text delta, a delay in seconds, an event to wait
     for, an exception to raise, or ``HANG``."""
 
-    def __init__(self, *steps):
+    def __init__(self, steps):
         self.steps = steps
-        self.calls = []
         self.finished = False
         self.closed = False
         self.task = None
 
-    def __call__(self, engine, prompt):
-        self.calls.append((engine, prompt))
-        return self._stream()
-
-    async def _stream(self):
+    async def run(self):
         self.task = asyncio.current_task()
         try:
             for step in self.steps:
@@ -84,6 +83,36 @@ class FakeCall:
             self.closed = True
 
 
+class FakeCall:
+    """A fake ``_open_stream``: the steps of every call (see :class:`FakeStream`), or one list of
+    step tuples: one stream per call, in order. ``calls`` records each ``(engine, prompt)``;
+    ``finished``, ``closed`` and ``task`` are those of the last stream."""
+
+    def __init__(self, *steps):
+        self.scripts = [tuple(script) for script in steps[0]] if len(steps) == 1 and isinstance(steps[0], list) else None
+        self.steps = steps
+        self.calls = []
+        self.streams: list[FakeStream] = []
+
+    def __call__(self, engine, prompt):
+        self.calls.append((engine, prompt))
+        stream = FakeStream(self.steps if self.scripts is None else self.scripts[len(self.calls) - 1])
+        self.streams.append(stream)
+        return stream.run()
+
+    @property
+    def finished(self):
+        return bool(self.streams) and self.streams[-1].finished
+
+    @property
+    def closed(self):
+        return bool(self.streams) and self.streams[-1].closed
+
+    @property
+    def task(self):
+        return self.streams[-1].task if self.streams else None
+
+
 @pytest.fixture
 def fake_call(monkeypatch):
     def install(*steps):
@@ -98,10 +127,14 @@ def fake_call(monkeypatch):
 def short_limits(monkeypatch):
     monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 2.0)
     monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 2.0)
+    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 2.0)
+    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 2.0)
 
 
-def _source(engine=HAIKU, *, text=ORIGINAL, limit=LIMIT, first=FIRST, fallback=FALLBACK, label=None):
-    return AdaptedParts(text, engine, limit, first, fallback=fallback, label={} if label is None else label)
+def _source(engine=HAIKU, *, text=ORIGINAL, limit=LIMIT, first=FIRST, fallback=FALLBACK, label=None, then=None):
+    return AdaptedParts(
+        text, engine, limit, first, fallback=fallback, label={} if label is None else label, then=then
+    )
 
 
 async def _rest(source: AdaptedParts, parts: list[str] | None = None) -> list[str]:
@@ -639,3 +672,293 @@ def test_the_label_tells_the_adaptation(fake_call):
     assert source.adapted_by is None
     assert source.adapt_first_ms is None
     assert source.adapted_text is None
+
+
+# --- Qwen on OpenRouter, then the agent --------------------------------------------
+
+
+def test_qwen_resolves_only_with_the_key(monkeypatch):
+    running: set[Provider] = set()
+    key_set = True
+    monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in running)
+    monkeypatch.setattr(adapt, "openrouter_key_set", lambda: key_set)
+    text = "A message."
+
+    # With the key, Qwen needs no provider.
+    for running in (set(), {Provider.CLAUDE_CODE}, {Provider.CLAUDE_CODE, Provider.CODEX}):
+        assert resolve_engine("qwen", text) == (QWEN_ENGINE, None)
+    assert resolve_engine("qwen", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+    assert resolve_engine("off", text) == (None, "off")
+    # No choice never takes Qwen.
+    running = {Provider.CLAUDE_CODE}
+    assert resolve_engine(None, text) == (HAIKU, None)
+
+    # Without the key, a Qwen choice works as no choice.
+    key_set = False
+    running = {Provider.CLAUDE_CODE}
+    assert resolve_engine("qwen", text) == (HAIKU, None)
+    running = {Provider.CODEX}
+    assert resolve_engine("qwen", text) == (LUNA, None)
+    running = set()
+    assert resolve_engine("qwen", text) == (None, "no_provider")
+    assert resolve_engine("qwen", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+
+
+def test_fallback_engine(monkeypatch):
+    running: set[Provider] = set()
+    monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in running)
+
+    running = {Provider.CLAUDE_CODE, Provider.CODEX}
+    assert fallback_engine(QWEN_ENGINE) == HAIKU
+    assert fallback_engine(HAIKU) is None
+    assert fallback_engine(LUNA) is None
+    running = {Provider.CLAUDE_CODE}
+    assert fallback_engine(QWEN_ENGINE) == HAIKU
+    running = {Provider.CODEX}
+    assert fallback_engine(QWEN_ENGINE) == LUNA
+    running = set()
+    assert fallback_engine(QWEN_ENGINE) is None
+    # The agents stay the default order: Qwen is never in it.
+    assert QWEN_ENGINE not in adapt.ENGINES and QWEN_ENGINE == Engine("qwen", None)
+
+
+def test_open_stream_routes_qwen_to_openrouter(monkeypatch):
+    calls = []
+
+    async def openrouter(model, prompt, *, system_prompt=None):
+        calls.append((model, prompt, system_prompt))
+        yield "from "
+        yield "qwen"
+
+    monkeypatch.setattr(adapt, "stream_openrouter_text", openrouter)
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            return [delta async for delta in adapt._open_stream(QWEN_ENGINE, "p")]
+
+    assert asyncio.run(scenario()) == ["from ", "qwen"]
+    assert calls == [(QWEN_MODEL, "p", None)]
+
+
+def test_qwen_limits(monkeypatch, fake_call):
+    monkeypatch.undo()  # the values of the module, not the short ones of the fixture
+    assert (adapt.QWEN_FIRST_TEXT_SECONDS, adapt.QWEN_NEXT_TEXT_SECONDS) == (5.0, 5.0)
+
+    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 2.0)
+    monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 2.0)
+
+    async def read(engine):
+        async with asyncio.timeout(5):
+            source = _source(engine)
+            parts = await _rest(source)
+            await source.aclose()
+            return source, parts
+
+    # Qwen: a late first text, and a late next text, are stalls.
+    fake_call(0.2, "Hello there.")
+    source, parts = asyncio.run(read(QWEN_ENGINE))
+    assert (parts, source.adapt_reason) == (FALLBACK, "stalled")
+    fake_call("Hello ", 0.2, "there.")
+    source, parts = asyncio.run(read(QWEN_ENGINE))
+    assert (parts, source.adapt_reason) == (FALLBACK, "stalled")
+
+    # An agent keeps its own limits.
+    fake_call(0.2, "Hello there.")
+    source, parts = asyncio.run(read(HAIKU))
+    assert (parts, source.adapt_reason) == (["Hello there."], None)
+    fake_call("Hello ", 0.2, "there.")
+    source, parts = asyncio.run(read(HAIKU))
+    assert (parts, source.adapt_reason) == (["Hello there."], None)
+
+
+async def _read_with_then(*, then=HAIKU, label=None):
+    async with asyncio.timeout(5):
+        label = {} if label is None else label
+        source = _source(QWEN_ENGINE, label=label, then=then)
+        assert label == {"adapted": "pending:qwen"}
+        parts = await _rest(source)
+        await source.aclose()
+        return source, parts, label
+
+
+@pytest.mark.parametrize(
+    "qwen_steps, reason",
+    [
+        ((0.05, OpenRouterTextError("http", 500)), "failed"),
+        ((0.05, OpenRouterTextError("declined")), "failed"),
+        ((HANG,), "stalled"),  # past the patched first-text limit
+        ((0.05,), "empty"),
+        ((0.05, "  ", "**"), "empty"),  # nothing to read aloud
+    ],
+)
+def test_a_qwen_failure_before_the_first_part_switches_to_the_agent(fake_call, monkeypatch, qwen_steps, reason):
+    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.2)
+    adapted = _sentences(600)
+    fake = fake_call([qwen_steps, (adapted,)])
+
+    source, parts, label = asyncio.run(_read_with_then())
+    splitter = PartSplitter(LIMIT, FIRST)
+    assert parts == splitter.feed(adapted) + splitter.end()
+    prompt = ADAPT_PROMPT.format(text=ORIGINAL)
+    assert fake.calls == [(QWEN_ENGINE, prompt), (HAIKU, prompt)]
+    assert fake.streams[0].closed and fake.streams[1].finished
+    assert source.adapted_by == "haiku"
+    assert source.fallback_from == "qwen"
+    assert source.fallback_reason == reason
+    assert source.adapt_reason is None
+    assert source.adapted_text == adapted
+    assert source.split is True
+    # From the creation of the source: the wait for Qwen counts.
+    assert isinstance(source.adapt_first_ms, int) and source.adapt_first_ms >= 40
+    assert label == {
+        "adapted": "haiku",
+        "fallback_from": "qwen",
+        "fallback_reason": reason,
+        "adapt_first_ms": source.adapt_first_ms,
+    }
+
+
+def test_text_received_from_a_failed_qwen_call_is_dropped(fake_call, monkeypatch):
+    # Qwen streams less than a first part, then stalls.
+    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
+    fake_call([("Qwen said this. ", HANG), (0.1, "Haiku said that.")])
+    seen = []
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            label = {}
+            source = _source(QWEN_ENGINE, label=label, then=HAIKU)
+            reading = asyncio.create_task(_rest(source))
+            while "adapt_first_ms" not in label:
+                await asyncio.sleep(0)
+            seen.append((label["adapted"], label["adapt_first_ms"]))
+            parts = await reading
+            return source, parts, label
+
+    source, parts, label = asyncio.run(scenario())
+    [(adapted, qwen_first_ms)] = seen
+    assert adapted == "qwen"
+    assert parts == ["Haiku said that."]
+    assert source.adapted_text == "Haiku said that."
+    assert source.adapt_reason is None
+    assert (source.fallback_from, source.fallback_reason) == ("qwen", "stalled")
+    # The agent's first text came after the Qwen stall and the agent's own delay.
+    assert source.adapt_first_ms >= 140 and source.adapt_first_ms > qwen_first_ms
+    assert label == {
+        "adapted": "haiku",
+        "adapt_first_ms": source.adapt_first_ms,
+        "fallback_from": "qwen",
+        "fallback_reason": "stalled",
+    }
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OpenRouterTextError("http", 401),
+        OpenRouterTextError("http", 402),
+        OpenRouterTextError("http", 403),
+        OpenRouterTextError("no_key"),
+    ],
+)
+def test_a_refused_qwen_call_is_reported_as_refused(fake_call, error):
+    fake_call([(error,), ("Hello there.",)])
+    source, parts, label = asyncio.run(_read_with_then())
+    assert parts == ["Hello there."]
+    assert (source.adapted_by, source.fallback_from, source.fallback_reason) == ("haiku", "qwen", "refused")
+    assert label["fallback_reason"] == "refused"
+
+
+def test_qwen_then_agent_both_fail_reads_the_original(fake_call):
+    fake = fake_call([(OpenRouterTextError("http", 401),), ("Some text.", RuntimeError("boom"))])
+    source, parts, label = asyncio.run(_read_with_then())
+    assert parts == FALLBACK
+    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE, HAIKU]
+    assert source.adapted_by is None
+    assert source.adapt_reason == "failed"
+    assert source.adapt_first_ms is None
+    assert source.adapted_text is None
+    assert (source.fallback_from, source.fallback_reason) == ("qwen", "refused")
+    assert label == {"adapted": "no", "adapt_reason": "failed", "fallback_from": "qwen", "fallback_reason": "refused"}
+
+
+def test_qwen_without_an_agent_reads_the_original(fake_call):
+    fake = fake_call([(OpenRouterTextError("http", 500),), ("never read",)])
+    source, parts, label = asyncio.run(_read_with_then(then=None))
+    assert parts == FALLBACK
+    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
+    assert source.adapted_by is None
+    assert source.adapt_reason == "failed"
+    assert (source.fallback_from, source.fallback_reason) == (None, None)
+    assert label == {"adapted": "no", "adapt_reason": "failed"}
+
+
+def test_a_qwen_failure_after_the_first_part_stops_the_reading(fake_call):
+    received = _sentences(600) + " A complete sentence. A sentence cut in the mid"
+    failing = asyncio.Event()
+    fake = fake_call([(received[:400], received[400:], failing, OpenRouterTextError("stream_error")), ("never",)])
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            source = _source(QWEN_ENGINE, then=HAIKU)
+            parts = [await source.next_part()]
+            failing.set()
+            with pytest.raises(SpeechError) as raised:
+                await _rest(source, parts)
+            await source.aclose()
+            return source, parts, raised.value
+
+    source, parts, error = asyncio.run(scenario())
+    splitter = PartSplitter(LIMIT, FIRST)
+    expected = splitter.feed(received)
+    expected.append(splitter.tail())
+    assert parts == expected
+    assert error.message == ADAPT_STOPPED
+    assert error.log_message == "adaptation failed after the first part"
+    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
+    assert (source.adapted_by, source.adapt_reason) == ("qwen", "failed")
+    assert (source.fallback_from, source.fallback_reason) == (None, None)
+
+
+def test_aclose_during_qwen_starts_no_agent_call(fake_call):
+    fake = fake_call([(HANG,), ("Agent text.",)])
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            source = _source(QWEN_ENGINE, then=HAIKU)
+            reading = asyncio.create_task(source.next_part())
+            while fake.task is None:
+                await asyncio.sleep(0)
+            await source.aclose()
+            assert fake.streams[0].closed
+            assert await reading is None
+            await asyncio.sleep(0.01)
+            return source
+
+    source = asyncio.run(scenario())
+    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
+    assert source.adapt_reason is None and source.fallback_reason is None
+
+
+def test_aclose_after_the_switch_closes_the_agent_call(fake_call):
+    fake = fake_call([(OpenRouterTextError("http", 500),), (HANG,)])
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            label = {}
+            source = _source(QWEN_ENGINE, label=label, then=HAIKU)
+            reading = asyncio.create_task(source.next_part())
+            while len(fake.calls) < 2:
+                await asyncio.sleep(0)
+            assert label == {"adapted": "pending:haiku", "fallback_from": "qwen", "fallback_reason": "failed"}
+            assert not fake.streams[1].closed
+            await source.aclose()
+            assert fake.streams[1].closed and not fake.streams[1].finished
+            assert await reading is None
+            return source
+
+    source = asyncio.run(scenario())
+    assert len(fake.calls) == 2
+    assert source.adapted_by == "haiku" and source.adapt_reason is None

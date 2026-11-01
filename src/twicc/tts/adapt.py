@@ -1,11 +1,14 @@
 """The adaptation of a text for speech (docs/plans/2026-11-01-tts-speech-rewrite-design.md).
 
-A small model (Claude Haiku or Codex Luna) rewrites the text for the ear in one streamed hermetic
-call. :class:`AdaptedParts` is the part source of an adapted reading: it feeds the adapted text, as
-it arrives, to a :class:`~twicc.tts.parts.PartSplitter`. Until its first part is returned, a failed,
-stalled or empty adaptation switches it to the parts of the original text, read as written. After
-that, the text received is read up to its last sentence end, then the reading stops with
-``ADAPT_STOPPED``: nothing tells where to go on in the original text.
+A small model rewrites the text for the ear in one streamed call: Claude Haiku or Codex Luna in a
+hermetic call, or Qwen on OpenRouter (docs/plans/2026-11-01-openrouter-text-calls-design.md).
+:class:`AdaptedParts` is the part source of an adapted reading: it feeds the adapted text, as it
+arrives, to a :class:`~twicc.tts.parts.PartSplitter`. Until its first part is returned, a failed,
+stalled or empty Qwen call hands the text to the first agent that runs, and any other failed,
+stalled or empty adaptation (the agent's after Qwen among them) switches it to the parts of the
+original text, read as written. After that, the text received is read up to its last sentence
+end, then the reading stops with ``ADAPT_STOPPED``: nothing tells where to go on in the original
+text.
 
 Neither the original text nor the adapted one ever reaches a log line.
 """
@@ -20,6 +23,7 @@ from contextlib import aclosing
 from typing import NamedTuple
 
 from twicc.core.enums import Provider
+from twicc.openrouter_text import QWEN_MODEL, OpenRouterTextError, openrouter_key_set, stream_openrouter_text
 from twicc.providers.claude_code.hermetic import stream_hermetic_claude
 from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex
 from twicc.providers.codex.title_suggest import TITLE_MODEL
@@ -34,6 +38,12 @@ logger = logging.getLogger(__name__)
 # start), then for each next piece of it.
 FIRST_TEXT_SECONDS = 30.0
 NEXT_TEXT_SECONDS = 15.0
+# The same for Qwen: its first text comes in under a second, and a failed call still leaves the
+# time for an agent to adapt the text.
+QWEN_FIRST_TEXT_SECONDS = 5.0
+QWEN_NEXT_TEXT_SECONDS = 5.0
+# The HTTP statuses of an OpenRouter call refused for its key or its account (wrong key, no credits).
+_REFUSED_STATUSES = frozenset({401, 402, 403})
 # The longest text adapted (the model's output limit must hold the whole adaptation); a longer one
 # is read as written.
 ADAPT_MAX_CHARS = 12_000
@@ -104,15 +114,18 @@ Answer with the rewritten text only, written in one go: plain text, no preamble,
 
 
 class Engine(NamedTuple):
-    """A model that adapts a text: its setting name and the provider that runs it."""
+    """A model that adapts a text: its setting name and the provider that runs it (None for a model
+    called on OpenRouter)."""
 
     name: str
-    provider: Provider
+    provider: Provider | None
 
 
-# In the default order: the first one whose provider runs adapts the text.
+# The agents, in the default order: the first one whose provider runs adapts the text.
 ENGINES = (Engine("haiku", Provider.CLAUDE_CODE), Engine("luna", Provider.CODEX))
 _ENGINES_BY_NAME = {engine.name: engine for engine in ENGINES}
+# Qwen on OpenRouter: chosen only, never in the default order.
+QWEN_ENGINE = Engine("qwen", None)
 
 # A Markdown heading mark at a line start: a model sometimes keeps one despite the prompt.
 _HEADING_MARK = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
@@ -123,12 +136,17 @@ _tasks: set[asyncio.Task] = set()
 
 def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | None]:
     """The engine that adapts ``text`` for the stored ``choice``, else why the text is read as
-    written (``"off"``, ``"too_long"``, ``"no_provider"``). A chosen engine whose provider does not
-    run gives way to the other one; no choice takes the first engine whose provider runs."""
+    written (``"off"``, ``"too_long"``, ``"no_provider"``). A chosen agent whose provider does not
+    run gives way to the other one; no choice takes the first agent whose provider runs. Qwen needs
+    only the OpenRouter key, no provider: without the key, a Qwen choice resolves as no choice."""
     if choice == "off":
         return None, "off"
     if len(text) > ADAPT_MAX_CHARS:
         return None, "too_long"
+    if choice == "qwen":
+        if openrouter_key_set():
+            return QWEN_ENGINE, None
+        choice = None
     chosen = _ENGINES_BY_NAME.get(choice)
     candidates = ENGINES if chosen is None else (chosen, *(engine for engine in ENGINES if engine != chosen))
     for engine in candidates:
@@ -137,10 +155,40 @@ def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | 
     return None, "no_provider"
 
 
+def fallback_engine(engine: Engine) -> Engine | None:
+    """The agent that adapts the text when ``engine`` fails before its first part: for Qwen, the
+    first agent whose provider runs; else (or when none runs) None."""
+    if engine != QWEN_ENGINE:
+        return None
+    for agent in ENGINES:
+        if is_provider_running(agent.provider):
+            return agent
+    return None
+
+
+def _step_limits(engine: Engine) -> tuple[float, float]:
+    """The longest waits for the first text of ``engine``'s call, then for each next piece (read at
+    call time)."""
+    if engine == QWEN_ENGINE:
+        return QWEN_FIRST_TEXT_SECONDS, QWEN_NEXT_TEXT_SECONDS
+    return FIRST_TEXT_SECONDS, NEXT_TEXT_SECONDS
+
+
+def _openrouter_reason(error: OpenRouterTextError) -> str:
+    """The adaptation reason of a failed OpenRouter call: ``"refused"`` for its key or its account,
+    else ``"failed"``."""
+    if error.reason == "no_key" or error.status in _REFUSED_STATUSES:
+        return "refused"
+    return "failed"
+
+
 async def _open_stream(engine: Engine, prompt: str) -> AsyncIterator[str]:
-    """The streamed hermetic call of ``engine``: the text deltas of its answer. The Codex preparation
-    runs on the first step, so that the caller's time limit for the first text bounds it too."""
-    if engine.provider == Provider.CLAUDE_CODE:
+    """The streamed call of ``engine``: the text deltas of its answer. Qwen streams from OpenRouter,
+    an agent in a hermetic call. The Codex preparation runs on the first step, so that the caller's
+    time limit for the first text bounds it too."""
+    if engine == QWEN_ENGINE:
+        stream = stream_openrouter_text(QWEN_MODEL, prompt)
+    elif engine.provider == Provider.CLAUDE_CODE:
         stream = stream_hermetic_claude(prompt, model="haiku")
     else:
         plan = await prepare_hermetic_codex(TITLE_MODEL)
@@ -171,12 +219,19 @@ class AdaptedParts:
     iterates the streamed call itself, each step bounded by ``asyncio.timeout``, so the SDK client
     connects and disconnects in it. ``aclose()`` cancels that task, which closes the call.
 
+    ``then`` is the engine that takes over when ``engine`` fails, stalls or answers nothing before
+    the first part is returned (the agent after Qwen): the call state is reset, and ``then``'s call
+    runs with its own limits. Without ``then``, or when ``then`` fails too, the original text is read.
+
     Reporting attributes, set as they become known: ``adapted_by`` (the engine name, ``None`` after
     a fallback to the original text), ``adapt_reason`` (why the adaptation failed, else ``None``),
-    ``adapt_first_ms`` (from the creation to the first adapted text) and ``adapted_text`` (the text
-    received); the last two are ``None`` after a fallback. ``label`` (the stream's) gets ``adapted``
-    (``"pending:<engine>"`` until the first adapted text, then the engine name, or ``"no"`` with
-    ``adapt_reason`` after a fallback) and ``adapt_first_ms``.
+    ``adapt_first_ms`` (from the creation to the first adapted text, a failed first call included)
+    and ``adapted_text`` (the text received from the engine that adapts); the last two are ``None``
+    after a fallback. After a switch to ``then``, ``fallback_from`` is the failed engine's name and
+    ``fallback_reason`` why it failed (both ``None`` without a switch, and kept by a later fallback
+    to the original text). ``label`` (the stream's) gets ``adapted`` (``"pending:<engine>"`` until
+    the first adapted text, then the engine name, or ``"no"`` with ``adapt_reason`` after a
+    fallback), ``adapt_first_ms``, and ``fallback_from`` with ``fallback_reason`` after a switch.
     """
 
     def __init__(
@@ -188,9 +243,13 @@ class AdaptedParts:
         *,
         fallback: Sequence[str],
         label: dict,
+        then: Engine | None = None,
     ) -> None:
         self._prompt = ADAPT_PROMPT.format(text=text)
         self._engine = engine
+        self._then = then
+        self._limit = limit
+        self._first = first
         self._splitter = PartSplitter(limit, first)
         self._fallback = deque(fallback)
         self._label = label
@@ -214,6 +273,8 @@ class AdaptedParts:
         self.adapted_by: str | None = engine.name
         self.adapt_reason: str | None = None
         self.adapt_first_ms: int | None = None
+        self.fallback_from: str | None = None
+        self.fallback_reason: str | None = None
         # The engine name only once a text came: a reading stopped before must not log it adapted.
         label["adapted"] = f"pending:{engine.name}"
 
@@ -230,8 +291,11 @@ class AdaptedParts:
             if self._fallen_back:
                 return self._fallback.popleft() if self._fallback else None
             if self._failure is not None and not self._returned:
-                # Nothing was spoken yet: the original text can still be read whole.
-                self._fall_back()
+                # Nothing was spoken yet: the next engine, or the original text, can still be read whole.
+                if self._then is not None:
+                    self._switch()
+                else:
+                    self._fall_back()
                 continue
             if self._parts:
                 if not self._returned:
@@ -262,6 +326,32 @@ class AdaptedParts:
             # Never raises the task's cancellation: only a cancellation of the caller.
             await asyncio.wait([task])
 
+    def _switch(self) -> None:
+        """Hand the text to ``then``: a new call, from a clean state, on the next turn of the loop.
+        The failed call's task is done (its failure is written at its end)."""
+        then = self._then
+        self.fallback_from = self._engine.name
+        self.fallback_reason = self._failure
+        self._label["fallback_from"] = self.fallback_from
+        self._label["fallback_reason"] = self.fallback_reason
+        self._label["adapted"] = f"pending:{then.name}"
+        # The failed call may have received some text: none of it is the adaptation.
+        self._label.pop("adapt_first_ms", None)
+        self._label.pop("adapt_reason", None)
+        self._splitter = PartSplitter(self._limit, self._first)
+        self._parts.clear()
+        self._first_from_feed = None
+        self._received = []
+        self._ended = False
+        self._failure = None
+        self._tail = None
+        self._task = None
+        self.adapt_first_ms = None
+        self.adapt_reason = None
+        self._engine = then
+        self.adapted_by = then.name
+        self._then = None
+
     def _fall_back(self) -> None:
         self._fallen_back = True
         self._parts.clear()
@@ -282,6 +372,9 @@ class AdaptedParts:
         except (HermeticConfigError, HermeticGuardViolation, HermeticStreamError):
             # Each of them logged its own line when it was created.
             self._fail("failed")
+        except OpenRouterTextError as error:
+            # The call logged its own line.
+            self._fail(_openrouter_reason(error))
         except Exception as error:
             # Only the type tells it: its message is not known to be free of the text.
             logger.warning("TTS text adaptation failed (%s): %s", self._engine.name, type(error).__name__)
@@ -298,8 +391,9 @@ class AdaptedParts:
         # The task's done callback wakes the reader.
 
     async def _stream(self) -> None:
+        first_limit, next_limit = _step_limits(self._engine)
         async with aclosing(_open_stream(self._engine, self._prompt)) as deltas:
-            limit = FIRST_TEXT_SECONDS
+            limit = first_limit
             while True:
                 deadline = asyncio.timeout(limit)
                 try:
@@ -311,7 +405,7 @@ class AdaptedParts:
                     if deadline.expired():
                         raise _Stalled from None
                     raise
-                limit = NEXT_TEXT_SECONDS
+                limit = next_limit
                 self._receive(delta)
 
     def _receive(self, delta: str) -> None:

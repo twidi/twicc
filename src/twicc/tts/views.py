@@ -31,7 +31,7 @@ from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 
 from twicc.paths import get_env_path
-from twicc.tts.adapt import TEST_TEXT_KEEP_CHARS, AdaptedParts, resolve_engine
+from twicc.tts.adapt import QWEN_ENGINE, TEST_TEXT_KEEP_CHARS, AdaptedParts, fallback_engine, resolve_engine
 from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.config import (
     TTS_RESPONSE_FORMATS,
@@ -320,27 +320,37 @@ async def _open_speech(
 
     The stored ``adapt`` choice resolves to an engine, or to why the text is read as written. With
     an engine, the parts are an :class:`AdaptedParts` source, cut to *limits*, that falls back to
-    the parts of *split*; without one, the parts of *split*. The label tells which (``adapted``,
-    ``adapt_reason``), never the text. The cache key is ``(request, engine name or None)``.
+    the parts of *split*; without one, the parts of *split*. With Qwen, the source hands the text to
+    the first running agent (``then``) when Qwen fails before its first part. The label tells which
+    (``adapted``, ``adapt_reason``), never the text. The cache key is ``(request, engine name or
+    None)``; with Qwen, a cached reading of ``then`` plays when no Qwen one is cached, so that a
+    re-read stays instant while Qwen keeps failing.
     """
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
     engine, adapt_reason = resolve_engine(await sync_to_async(_stored_adapt_choice)(), speech_request.text)
+    then = fallback_engine(engine) if engine == QWEN_ENGINE else None
     if engine is None:
         label["adapted"] = "no"
         label["adapt_reason"] = adapt_reason
     if use_cache:
-        cached = speech_cache.get((speech_request, None if engine is None else engine.name))
-        if cached is not None:
-            if engine is not None:
-                # A cache hit builds no source (which sets it otherwise): the audio is of this engine.
-                label["adapted"] = engine.name
-            return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
+        names = [None] if engine is None else [engine.name]
+        if then is not None:
+            names.append(then.name)
+        for name in names:
+            cached = speech_cache.get((speech_request, name))
+            if cached is not None:
+                if name is not None:
+                    # A cache hit builds no source (which sets it otherwise): the audio is of this engine.
+                    label["adapted"] = name
+                return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
     parts = split(speech_request)
     source = None
     if engine is not None:
-        source = AdaptedParts(speech_request.text, engine, *limits(speech_request), fallback=parts, label=label)
+        source = AdaptedParts(
+            speech_request.text, engine, *limits(speech_request), fallback=parts, label=label, then=then
+        )
     paced = not buffered
     stream = start_stream(
         lambda sink: pump(sink, parts if source is None else source, paced),
@@ -371,16 +381,24 @@ def _stored_adapt_choice() -> str | None:
 
 
 def _adaptation_fields(source: AdaptedParts | None, adapt_reason: str | None) -> dict:
-    """The adaptation fields of a last test: how *source* adapted the text, or, without a source,
-    why the text was read as written. The adapted text is cut to ``TEST_TEXT_KEEP_CHARS``."""
+    """The adaptation fields of a last test: how *source* adapted the text (and why Qwen failed
+    before an agent took over), or, without a source, why the text was read as written. The adapted
+    text is cut to ``TEST_TEXT_KEEP_CHARS``."""
     if source is None:
-        return {"adapted_by": None, "adapt_reason": adapt_reason, "adapt_first_ms": None, "adapted_text": None}
+        return {
+            "adapted_by": None,
+            "adapt_reason": adapt_reason,
+            "adapt_first_ms": None,
+            "adapted_text": None,
+            "fallback_reason": None,
+        }
     adapted_text = source.adapted_text
     return {
         "adapted_by": source.adapted_by,
         "adapt_reason": source.adapt_reason,
         "adapt_first_ms": source.adapt_first_ms,
         "adapted_text": None if adapted_text is None else adapted_text[:TEST_TEXT_KEEP_CHARS],
+        "fallback_reason": source.fallback_reason,
     }
 
 

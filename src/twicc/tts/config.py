@@ -22,12 +22,13 @@ SPEECH_FIELDS = ("model", "voice", "response_format", "speed", "instructions")
 SCRIPT_FIELDS = ("command", "output", "audio_format", "pcm_rate", "pcm_channels", "max_chars")
 SCRIPT_OUTPUTS = ("stream", "whole", "path")
 SCRIPT_FORMATS = ("mp3", "wav", "pcm")
-# The small models that adapt a text for speech.
-ADAPT_ENGINES = ("haiku", "luna")
+# The small models that adapt a text for speech (``qwen`` runs on OpenRouter, not on a provider).
+ADAPT_ENGINES = ("haiku", "luna", "qwen")
 # The stored ``adapt`` values; None (no stored choice) means on, with the first running provider.
 ADAPT_CHOICES = (*ADAPT_ENGINES, "off")
-# Why a reading was not adapted (in the log line and the last test).
-ADAPT_REASONS = ("off", "no_provider", "too_long", "failed", "stalled", "empty")
+# Why a reading was not adapted, or why Qwen failed before an agent took over (in the log line and
+# the last test). ``refused``: OpenRouter refused the call (no key, a wrong key, no credits).
+ADAPT_REASONS = ("off", "no_provider", "too_long", "failed", "stalled", "empty", "refused")
 
 
 def empty_tts_config() -> dict:
@@ -129,7 +130,8 @@ def _last_test(value: object) -> dict | None:
     ``parts`` is the number of requests of the text; None in a record written before split texts.
     The adaptation fields are None in a record written before the text adaptation: ``adapted_by``
     (the engine, None when not adapted), ``adapt_reason`` (why not), ``adapt_first_ms`` (the wait for
-    the first adapted text) and ``adapted_text``.
+    the first adapted text), ``adapted_text`` and ``fallback_reason`` (why Qwen failed before an
+    agent took over, else None).
     """
     if not isinstance(value, dict) or not isinstance(value.get("at"), str):
         return None
@@ -150,6 +152,7 @@ def _last_test(value: object) -> dict | None:
         "adapt_reason": _one_of(value.get("adapt_reason"), ADAPT_REASONS),
         "adapt_first_ms": _non_negative(value.get("adapt_first_ms"), int),
         "adapted_text": value["adapted_text"] if isinstance(value.get("adapted_text"), str) else None,
+        "fallback_reason": _one_of(value.get("fallback_reason"), ADAPT_REASONS),
     }
 
 
