@@ -150,3 +150,68 @@ def test_every_writer_fences_complete_uningested_old_commands(row, monkeypatch, 
         assert (await Session.objects.aget(pk=row.id)).title == 'Chosen'
         assert title_publication.get_title_coordinator().current_decision(row.id) == decision
     run_with_direct_writes(scenario)
+
+
+@pytest.mark.parametrize('writer', ['rest', 'cli'])
+def test_codex_rename_never_prepares_claude_state(row, monkeypatch, writer):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from django.test import RequestFactory
+    from twicc import views
+    from twicc.core.services import session_titles, session_update
+    from twicc.providers.codex.helpers import CodexHelpers
+    Session.objects.filter(pk=row.pk).update(provider=Provider.CODEX)
+    ingest = AsyncMock(side_effect=AssertionError('Codex must not enter Claude ingestion'))
+    monkeypatch.setattr(title_publication, '_worker', SimpleNamespace(_closed=False,
+                        hooks=SimpleNamespace(ingest_available=ingest)))
+    monkeypatch.setattr(session_titles, 'capture_title_boundary', AsyncMock(side_effect=AssertionError('Claude capture')))
+    monkeypatch.setattr(views, 'ensure_provider_running', lambda *args: None)
+    monkeypatch.setattr(session_update, 'ensure_provider_running', lambda *args: None)
+    push = AsyncMock()
+    monkeypatch.setattr(CodexHelpers, 'rename_session', push)
+    async def scenario():
+        if writer == 'rest':
+            response = await views.session_detail(RequestFactory().patch('/', data={'title': 'Codex choice'},
+                content_type='application/json'), row.project_id, row.id)
+            assert response.status_code == 200
+        else:
+            assert (await session_update.update_session_title_from_payload({'session_id': row.id, 'title': 'Codex choice'})).success
+    run_with_direct_writes(scenario)
+    row.refresh_from_db()
+    assert (row.title, row.title_origin, row.storage_incarnation) == ('Codex choice', 'user', None)
+    ingest.assert_not_called()
+    push.assert_awaited_once_with(row.id, 'Codex choice')
+
+
+def test_boundary_scanner_uses_bounded_chunks_for_large_records(row, monkeypatch, tmp_path):
+    from pathlib import Path
+    from twicc.core.services.session_titles import capture_title_boundary
+    Session.objects.filter(pk=row.pk).update(storage_incarnation='storage')
+    monkeypatch.setattr('twicc.provider_homes.claude_projects_dir', lambda: tmp_path)
+    path = tmp_path / row.file_path
+    path.parent.mkdir()
+    path.write_bytes(b' ' * 65537 + b'X' * 65537 + b'\n\t\n' + b'Z' * 150000)
+    original_open = Path.open
+    reads = []
+    class BoundedStream:
+        def __init__(self, stream):
+            self.stream = stream
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.stream.close()
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+        def readline(self, *args):
+            raise AssertionError('Record-sized readline is forbidden')
+        def read(self, size):
+            assert 0 < size <= 65536
+            reads.append(size)
+            return self.stream.read(size)
+    def bounded_open(current, *args, **kwargs):
+        stream = original_open(current, *args, **kwargs)
+        return BoundedStream(stream) if current == path else stream
+    monkeypatch.setattr(Path, 'open', bounded_open)
+    boundary = run_with_direct_writes(lambda: capture_title_boundary(row.id))
+    assert boundary.line_num == 1
+    assert len(reads) > 1

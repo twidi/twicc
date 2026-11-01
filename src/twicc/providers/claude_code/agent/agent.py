@@ -1049,6 +1049,7 @@ class ClaudeCodeAgent(BaseAgent):
         Raises:
             RuntimeError: If the process is already started
         """
+        self._title_launch_entered = True
         if self._client is not None:
             raise RuntimeError("Process already started")
 

@@ -195,8 +195,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             current = await Session.objects.filter(pk=session_id).values('last_line', 'storage_incarnation', 'history_epoch').aget()
             if (current['storage_incarnation'], current['history_epoch']) != boundary[1:3]:
                 raise RuntimeError('Claude source changes during title drain')
-            # A newer suffix can arrive after the finite drain. Fence that
-            # suffix for dispatch; final-stop draining requires full ingestion.
+            if current['last_line'] < boundary.line_num:
+                raise RuntimeError('Claude title drain is incomplete')
         return boundary
 
     async def _prepare_title_dispatch(self, decision, process):
@@ -306,9 +306,28 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 raise RuntimeError('Prior Claude process final drain is incomplete')
             agent._title_process_token = str(uuid4())
             agent._title_ready = False
+            agent._title_launch_entered = False
             agent._on_title_ready = self._title_process_ready
             await self._attach_title_process(agent)
-        await super()._register_and_start(agent, text, resume, **start_kwargs)
+        try:
+            await super()._register_and_start(agent, text, resume, **start_kwargs)
+        except BaseException:
+            # Adoption already owns a live process. Once provider start enters,
+            # only confirmed death and the final drain may release ownership.
+            if not start_kwargs.get('adopt', False) and not agent._title_launch_entered:
+                from twicc.providers.claude_code.title_publication import get_title_coordinator
+                async with worker.process_publication_reservation(agent.session_id):
+                    def unwind():
+                        coordinator = get_title_coordinator()
+                        if coordinator.process_token(agent.session_id) != agent._title_process_token:
+                            return
+                        coordinator.retire_process(agent.session_id, agent._title_process_token)
+                    await self._title_lane(unwind)
+                    if self._resolve_title_process(agent.session_id) is not None:
+                        current = self._resolve_title_process(agent.session_id)
+                        if current.agent is agent:
+                            self._title_processes.pop(agent.session_id, None)
+            raise
 
     async def _finish_title_process(self, session_id, process_token):
         from twicc.core.models import Session

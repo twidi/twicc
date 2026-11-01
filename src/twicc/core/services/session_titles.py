@@ -60,12 +60,19 @@ async def capture_title_boundary(session_id):
                 size = initial.st_size
                 stream.seek(0)
                 lines = 0
-                while stream.tell() < size:
-                    record = stream.readline(size - stream.tell())
-                    if not record.endswith(b'\n'):
-                        break
-                    if record.strip():
-                        lines += 1
+                nonempty = False
+                remaining = size
+                while remaining:
+                    chunk = stream.read(min(65536, remaining))
+                    if not chunk:
+                        raise BoundaryChanged
+                    remaining -= len(chunk)
+                    pieces = chunk.split(b'\n')
+                    for index, piece in enumerate(pieces):
+                        nonempty = nonempty or bool(piece.strip())
+                        if index < len(pieces) - 1:
+                            lines += int(nonempty)
+                            nonempty = False
                 final = path.stat()
                 if (initial.st_dev, initial.st_ino) != (final.st_dev, final.st_ino) or final.st_size < size:
                     raise BoundaryChanged
@@ -133,6 +140,9 @@ def _publish_committed(decision):
 
 async def with_title_boundary(session_id, operation):
     """Prepare then execute an operation which acquires the write lane itself."""
+    provider = await Session.objects.filter(pk=session_id).values_list('provider', flat=True).afirst()
+    if provider != Provider.CLAUDE_CODE:
+        return await operation()
     while True:
         worker = title_publication._worker
         if worker is not None and not worker._closed:

@@ -287,3 +287,76 @@ def test_old_process_death_cannot_cancel_successor_publication(context, monkeypa
             await worker.close_publications()
             await asyncio.gather(ready, return_exceptions=True)
     run_with_direct_writes(scenario)
+
+
+def test_failed_real_watcher_drain_never_allows_inactive_append(context, monkeypatch):
+    row, path = context
+    from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
+    from twicc.providers.claude_code import sessions_watcher
+    from twicc.providers.sessions_watcher import SessionChangeResult
+    watcher = ClaudeCodeSessionsWatcher()
+    watcher.projects_dir = path.parent.parent
+    monkeypatch.setattr(sessions_watcher, 'get_watcher', lambda: watcher)
+    path.write_bytes(orjson.dumps({'type': 'custom-title', 'sessionId': row.id, 'customTitle': 'Manual'}) + b'\n')
+    async def failed_change(*args):
+        return SessionChangeResult('failed', watcher._queue.source_generation(path), 0)
+    monkeypatch.setattr(watcher, '_process_change', failed_change)
+    writes = []
+    monkeypatch.setattr(titles, 'rename_session_in_jsonl', lambda *args: writes.append(args))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        await manager._title_lane(lambda: worker.coordinator.accept_decision(row.id, 'Pending'))
+        try:
+            with pytest.raises(RuntimeError, match='incomplete'):
+                async with worker.process_publication_reservation(row.id):
+                    await manager._reconcile_inactive_title(row.id)
+            assert writes == []
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.last_line, stored.storage_incarnation) == (0, 'storage')
+        finally:
+            await worker.close_publications()
+            await watcher._drain_changes()
+    run_with_writer(scenario)
+
+
+@pytest.mark.parametrize('possibly_running', [False, True])
+def test_registration_failure_unwinds_only_proven_prelaunch_attachment(context, monkeypatch, possibly_running):
+    row, _ = context
+    from twicc.agent import BaseAgentManager
+    from twicc.core.models import ProcessRun
+    original_registration = BaseAgentManager._register_and_start
+    def fail_process_run(**kwargs):
+        raise RuntimeError('ProcessRun registration fails')
+    monkeypatch.setattr(ProcessRun.objects, 'create', fail_process_run)
+    calls = []
+    async def base_registration(self, agent, *args, **kwargs):
+        calls.append(agent)
+        if len(calls) == 1:
+            if not possibly_running:
+                return await original_registration(self, agent, *args, **kwargs)
+            self._agents[agent.session_id] = agent
+            agent._title_launch_entered = True
+            self._agents.pop(agent.session_id)
+            raise RuntimeError('ProcessRun registration fails')
+    monkeypatch.setattr(BaseAgentManager, '_register_and_start', base_registration)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        agent = SimpleNamespace(session_id=row.id, ephemeral=False, provider=Provider.CLAUDE_CODE, get_pid=lambda: None)
+        try:
+            with pytest.raises(RuntimeError, match='registration fails'):
+                await manager._register_and_start(agent, 'prompt', resume=True)
+            if possibly_running:
+                assert manager._resolve_title_process(row.id).agent is agent
+                assert worker.coordinator.process_token(row.id) == agent._title_process_token
+            else:
+                assert manager._resolve_title_process(row.id) is None
+                assert worker.coordinator.process_token(row.id) is None
+                successor = SimpleNamespace(session_id=row.id, ephemeral=False)
+                await manager._register_and_start(successor, 'prompt', resume=True)
+                assert calls == [agent, successor]
+                assert manager._resolve_title_process(row.id).agent is successor
+        finally:
+            await worker.close_publications()
+    run_with_direct_writes(scenario)

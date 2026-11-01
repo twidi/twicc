@@ -202,6 +202,7 @@ class HybridClaudeAgent(BaseAgent):
         once the first paste landed, never on a timeout, a paste failure, a
         cancellation or an adoption.
         """
+        self._title_launch_entered = True
         self._state_change_callback = on_state_change
 
         if adopt:
