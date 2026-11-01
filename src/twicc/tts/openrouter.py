@@ -22,7 +22,7 @@ import orjson
 
 from twicc.tts.model_catalog import speech_model_facts
 from twicc.tts.part_audio import MP3_HEADER_SIZE, Mp3HeadFilter, PcmFrameTrimmer, id3_tag_size, mp3_frame
-from twicc.tts.part_source import PartSource, StaticParts
+from twicc.tts.part_source import PartSource, as_part_source, timed_next_part
 
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
@@ -155,25 +155,6 @@ def upstream_error_message(status: int, body: bytes) -> str:
     return message
 
 
-def part_source(text: str, parts: Sequence[str] | PartSource | None) -> PartSource:
-    """The source a pump pulls its parts from: *parts* itself, or a static source of the parts
-    (None: *text* alone, in one part)."""
-    if parts is None:
-        return StaticParts([text])
-    if isinstance(parts, PartSource):
-        return parts
-    return StaticParts(parts)
-
-
-async def timed_next_part(source: PartSource, stream: "AudioStream") -> str | None:
-    """The next part of *source*; the wait for it counts as generation time of *stream* (the
-    test times then include the adaptation of the text). May raise ``SpeechError``."""
-    started = time.monotonic()
-    text = await source.next_part()
-    stream.add_generation_seconds(time.monotonic() - started)
-    return text
-
-
 async def pump_speech(
     request: SpeechRequest,
     api_key: str,
@@ -200,7 +181,7 @@ async def pump_speech(
     cancellation (a release) propagates: the ``async with`` closes the upstream
     call.
     """
-    source = part_source(request.text, parts)
+    source = as_part_source(request.text, parts)
     try:
         async with _make_client(SPEECH_TIMEOUT) as client:
             index = 0
@@ -219,13 +200,13 @@ async def pump_speech(
                 index += 1
     except SpeechError as error:
         # The source's error: the audio received still plays, then the reading stops.
-        _fail_if_live(stream, error)
+        stream.fail_if_live(error)
         return
     except httpx.TimeoutException:
-        _fail_if_live(stream, SpeechError("OpenRouter did not answer in time"))
+        stream.fail_if_live(SpeechError("OpenRouter did not answer in time"))
         return
     except httpx.HTTPError:
-        _fail_if_live(stream, SpeechError("Could not reach OpenRouter"))
+        stream.fail_if_live(SpeechError("Could not reach OpenRouter"))
         return
     finally:
         await source.aclose()
@@ -289,13 +270,6 @@ async def _pump_part(
             logger.debug("TTS part %d: %d bytes of a partial PCM frame dropped", index + 1, dropped)
         stream.end_part()
     return True
-
-
-def _fail_if_live(stream: "AudioStream", error: SpeechError) -> None:
-    # An error while closing the upstream call can follow an upstream error that
-    # failed the stream already: the first failure stands.
-    if stream.state in ("opening", "running"):
-        stream.fail(error)
 
 
 # (monotonic time of the fetch, models) of the last successful fetch.

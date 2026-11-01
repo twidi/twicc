@@ -850,6 +850,23 @@ def test_added_generation_seconds_count_in_the_generation_time():
     asyncio.run(scenario())
 
 
+def test_fail_if_live_keeps_the_first_failure():
+    async def scenario():
+        stream = AudioStream(LABEL)
+        stream.fail_if_live(SpeechError("first"))
+        stream.fail_if_live(SpeechError("second"))
+        assert (stream.state, stream.error) == ("failed", "first")
+
+        complete = AudioStream(LABEL)
+        complete.begin_part()
+        complete.set_headers(PCM_TYPE, None)
+        complete.finish()
+        complete.fail_if_live(SpeechError("late"))
+        assert (complete.state, complete.error) == ("complete", None)
+
+    asyncio.run(scenario())
+
+
 def test_finish_counts_a_part_still_open():
     async def scenario():
         stream = AudioStream(LABEL)

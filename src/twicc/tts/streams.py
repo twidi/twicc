@@ -182,6 +182,12 @@ class AudioStream:
         self._settle_ready(error)
         self._end("failed", "failed" if error.upstream_status is None else f"upstream_error {error.upstream_status}")
 
+    def fail_if_live(self, error: SpeechError) -> None:
+        """Fail the stream unless it ended already: the first failure stands (an error while the
+        pump closes the upstream call can follow an upstream error that failed it)."""
+        if self.state in _LIVE_STATES:
+            self.fail(error)
+
     # -- Readers: called by the views. ---------------------------------------
 
     def byte_rate(self) -> float | None:

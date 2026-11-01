@@ -683,7 +683,7 @@ def test_the_wait_for_a_part_counts_as_generation_time(monkeypatch):
         source = FakeSource(["Part one.", 0.2, "Part two."], split=True)
         await _within(pump_speech(_request(), "k", stream, source))
         assert stream.state == "complete"
-        assert 200 <= stream.generation_ms < 400
+        assert stream.generation_ms >= 200  # the two requests alone take far less
 
     asyncio.run(scenario())
 

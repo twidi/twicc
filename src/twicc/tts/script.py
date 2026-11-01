@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from twicc.terminal import terminal_environment
-from twicc.tts.openrouter import PCM_SAMPLE_WIDTH, SpeechError, parse_pcm_format, part_source, timed_next_part
+from twicc.tts.openrouter import PCM_SAMPLE_WIDTH, SpeechError, parse_pcm_format
 from twicc.tts.part_audio import Mp3HeadFilter, PcmFrameTrimmer
-from twicc.tts.part_source import PartSource
+from twicc.tts.part_source import PartSource, as_part_source, timed_next_part
 from twicc.tts.parts import FIRST_PART_CHARS, split_text
 from twicc.tts.script_audio import OutputCheck
 
@@ -110,7 +110,7 @@ async def pump_script_speech(
     A later part of another type fails it too, and so does an error of the source. A cancellation
     (a release, a shutdown) stops the running command, then propagates.
     """
-    source = part_source(request.text, parts)
+    source = as_part_source(request.text, parts)
     paths: set[str] = set()  # the file paths returned in this speech
     try:
         index = 0
@@ -120,7 +120,7 @@ async def pump_script_speech(
                 text = await timed_next_part(source, stream)
             except SpeechError as error:
                 # The audio received still plays, then the reading stops.
-                stream.fail(error)
+                stream.fail_if_live(error)
                 return
             if text is None:
                 break

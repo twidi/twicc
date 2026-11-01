@@ -5,9 +5,13 @@ of the text, ``twicc.tts.adapt``). It tells whether the reading is split once it
 part. This module imports nothing from ``twicc.tts``: the pumps' modules import it.
 """
 
+import time
 from collections import deque
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from twicc.tts.streams import AudioStream
 
 
 @runtime_checkable
@@ -38,3 +42,22 @@ class StaticParts:
 
     async def aclose(self) -> None:
         self._parts.clear()
+
+
+def as_part_source(text: str, parts: Sequence[str] | PartSource | None) -> PartSource:
+    """The source a pump pulls its parts from: *parts* itself, or a static source of the parts
+    (None: *text* alone, in one part)."""
+    if parts is None:
+        return StaticParts([text])
+    if isinstance(parts, PartSource):
+        return parts
+    return StaticParts(parts)
+
+
+async def timed_next_part(source: PartSource, stream: "AudioStream") -> str | None:
+    """The next part of *source*; the wait for it counts as generation time of *stream* (the
+    test times then include the adaptation of the text). May raise ``SpeechError``."""
+    started = time.monotonic()
+    text = await source.next_part()
+    stream.add_generation_seconds(time.monotonic() - started)
+    return text
