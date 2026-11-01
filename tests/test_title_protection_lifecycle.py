@@ -360,3 +360,51 @@ def test_registration_failure_unwinds_only_proven_prelaunch_attachment(context, 
         finally:
             await worker.close_publications()
     run_with_direct_writes(scenario)
+
+
+def test_active_acceptance_and_dispatch_allow_suffix_appended_after_finite_drain(context, monkeypatch):
+    row, path = context
+    from twicc.providers.claude_code import sessions_watcher
+    from twicc.providers.claude_code.sessions_watcher import ClaudeCodeSessionsWatcher
+    watcher = ClaudeCodeSessionsWatcher()
+    watcher.projects_dir = path.parent.parent
+    monkeypatch.setattr(sessions_watcher, 'get_watcher', lambda: watcher)
+    old_title = orjson.dumps({'type': 'custom-title', 'sessionId': row.id, 'customTitle': 'Old'}) + b'\n'
+    path.write_bytes(old_title)
+    original_process = watcher.process_path
+    append_after_drain = False
+    async def drain_then_append(current):
+        await original_process(current)
+        if append_after_drain:
+            # This complete record is later than the admitted finite target.
+            # It exists before the caller's next capture, but does not belong
+            # to the just-completed watcher drain.
+            with path.open('ab') as stream:
+                stream.write(old_title)
+    monkeypatch.setattr(watcher, 'process_path', drain_then_append)
+    async def scenario():
+        nonlocal append_after_drain
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        agent = SimpleNamespace(session_id=row.id, _title_process_token='p', _title_ready=False,
+                                state=AgentState.STARTING, _client=object())
+        try:
+            await manager._attach_title_process(agent)
+            append_after_drain = True
+            accepted = await accept_explicit_title(row.id, 'Chosen')
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.last_line) == ('Chosen', 1)
+            assert path.read_bytes().count(b'custom-title') == 2
+            # The worker remains parked until readiness. Exercise its actual
+            # dispatch hook with a second controlled post-drain append.
+            agent._title_ready = True
+            assert await manager._prepare_title_dispatch(accepted.decision, manager._resolve_title_process(row.id))
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.last_line) == ('Chosen', 2)
+            assert path.read_bytes().count(b'custom-title') == 3
+            assert worker.coordinator.current_decision(row.id) == accepted.decision
+            await manager._cancel_title_dispatch(accepted.decision)
+        finally:
+            await worker.close_publications()
+            await watcher._drain_changes()
+    run_with_writer(scenario)

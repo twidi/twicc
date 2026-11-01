@@ -187,10 +187,12 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         path = claude_projects_dir() / row['file_path']
         if not await asyncio.to_thread(path.is_file):
             return None
+        # Capture a finite obligation before watcher admission. Later appends
+        # belong to the next drain, not to this one's completion check.
+        boundary = await capture_title_boundary(session_id)
         # The watcher's finite drain waits outside the DB lane and applies
         # through the same ordered live path as ordinary file notifications.
         await get_watcher().process_path(path)
-        boundary = await capture_title_boundary(session_id)
         if boundary is not None:
             current = await Session.objects.filter(pk=session_id).values('last_line', 'storage_incarnation', 'history_epoch').aget()
             if (current['storage_incarnation'], current['history_epoch']) != boundary[1:3]:
@@ -200,12 +202,22 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         return boundary
 
     async def _prepare_title_dispatch(self, decision, process):
+        from twicc.core.models import Session
+        from twicc.core.services.session_titles import capture_title_boundary
         from twicc.providers.claude_code.title_publication import get_title_coordinator
-        boundary = await self._ingest_title_available(decision.session_id)
+        await self._ingest_title_available(decision.session_id)
+        # Dispatch fences all records present immediately before transport,
+        # including suffixes newer than the successfully drained target.
+        boundary = await capture_title_boundary(decision.session_id)
         def prepare():
             current = self._resolve_title_process(decision.session_id)
             if (current is None or current.process_token != process.process_token
                     or current.agent is not process.agent or not current.ready):
+                return False
+            if boundary is not None and not Session.objects.filter(
+                pk=decision.session_id, storage_incarnation=boundary.storage_incarnation,
+                history_epoch=boundary.history_epoch,
+            ).exists():
                 return False
             return get_title_coordinator().start_dispatch(decision, boundary)
         return await self._title_lane(prepare)
