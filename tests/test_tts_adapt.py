@@ -113,20 +113,29 @@ async def _rest(source: AdaptedParts, parts: list[str] | None = None) -> list[st
 
 
 def test_the_prompt_frames_the_text():
-    assert ADAPT_PROMPT.startswith("You rewrite a text so that it can be read aloud by a speech engine.")
+    assert ADAPT_PROMPT.startswith("You rewrite a text so that a speech engine can read it aloud.")
     assert ADAPT_PROMPT.endswith("\n\n<text>\n{text}\n</text>")
     assert ADAPT_PROMPT.count("{text}") == 1
     assert (ADAPT_MAX_CHARS, adapt.TEST_TEXT_KEEP_CHARS) == (12_000, 4_000)
     assert ADAPT_STOPPED == "The text adaptation stopped before the end"
 
 
+def test_the_prompt_asks_for_no_reasoning_first():
+    # Without it, Haiku's adaptive thinking adds seconds before the first text.
+    assert "start writing at once, with no reasoning first." in ADAPT_PROMPT.split("\n", 1)[0]
+
+
 def test_the_prompt_keeps_code_diagrams_and_paths_short():
-    assert (
-        "- Replace a code block, a diagram (Mermaid…) included, with one short sentence on what it is or shows;"
-        " never walk through it.\n" in ADAPT_PROMPT
-    )
-    assert "- Say a file path by its last name only.\n" in ADAPT_PROMPT
-    assert "without reading it" not in ADAPT_PROMPT
+    assert "never tell how it works or what it does step by step." in ADAPT_PROMPT.lower()
+    assert "- A path: its last name only, as written." in ADAPT_PROMPT
+    assert "Never say the folder a file is in, in any language." in ADAPT_PROMPT
+    assert "A diagram shows the order flow." in ADAPT_PROMPT
+
+
+def test_the_prompt_formats_with_the_example_braces_and_any_text():
+    prompt = ADAPT_PROMPT.format(text="a {b} c")
+    assert "B --> C{Paid?}\n" in prompt
+    assert prompt.endswith("<text>\na {b} c\n</text>")
 
 
 def test_the_label_says_pending_until_the_first_text(fake_call):
