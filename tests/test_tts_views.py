@@ -2011,6 +2011,52 @@ def test_the_cache_key_carries_the_adaptation(client, adaptation, streams_log):
         assert ADAPTED not in line
 
 
+@pytest.mark.parametrize("text_came", [False, True])
+def test_a_released_reading_tells_whether_adapted_text_came(
+    client, adaptation, recorded_sources, streams_log, monkeypatch, text_came
+):
+    opened = []
+
+    async def open_stream(engine, prompt):
+        opened.append(engine.name)
+        if text_came:
+            yield "Hello to you"  # no sentence end: no part yet
+        await asyncio.Event().wait()
+
+    async def pump_speech(request, api_key, stream, parts=None, *, paced=False):
+        # Headers first, so that the reading can be released while the adaptation runs.
+        stream.set_headers("audio/mpeg", None)
+        try:
+            await parts.next_part()
+        finally:
+            await parts.aclose()
+
+    monkeypatch.setattr(adapt, "_open_stream", open_stream)
+    monkeypatch.setattr(views, "pump_speech", pump_speech)
+
+    async def scenario():
+        audio_id = await _open_id(client, VALID_PAYLOAD)
+        [made] = recorded_sources
+        await _within(_until(lambda: opened))
+        if text_came:
+            await _within(_until(lambda: made["label"]["adapted"] == "haiku"))
+        else:
+            await _settle()
+        response = await _release(client, audio_id)
+        assert response.status_code == 204
+        await _settle()
+
+    asyncio.run(scenario())
+    [line] = _speech_lines(streams_log)
+    assert line.endswith("outcome=released")
+    if text_came:
+        assert " adapted=haiku adapt_first_ms=" in line
+    else:
+        assert " adapted=pending:haiku " in line
+        assert "adapt_first_ms" not in line
+    assert "Hello to you" not in line
+
+
 def test_a_script_cache_key_carries_the_adaptation(client, adaptation):
     stored = _store_script()
     request = ScriptSpeechRequest(SCRIPT_READ["text"], **stored)

@@ -329,12 +329,12 @@ async def _open_speech(
     if engine is None:
         label["adapted"] = "no"
         label["adapt_reason"] = adapt_reason
-    else:
-        # ``AdaptedParts`` sets it too, but a cache hit builds no source and must still log it.
-        label["adapted"] = engine.name
     if use_cache:
         cached = speech_cache.get((speech_request, None if engine is None else engine.name))
         if cached is not None:
+            if engine is not None:
+                # A cache hit builds no source (which sets it otherwise): the audio is of this engine.
+                label["adapted"] = engine.name
             return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
     parts = split(speech_request)

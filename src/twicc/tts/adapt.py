@@ -47,8 +47,9 @@ You rewrite a text so that it can be read aloud by a speech engine. The text is 
 Rules:
 - Keep the language of the text, and all of its content: adapt it, do not summarize it, do not add anything.
 - Turn a table into sentences, and a list into a spoken enumeration.
-- Replace a code block with a short description of what it is, without reading it.
+- Replace a code block, a diagram (Mermaid…) included, with one short sentence on what it is or shows; never walk through it.
 - Shorten or leave out what nobody reads aloud: hashes, UUIDs, long paths, long numbers. Say a URL as its site name.
+- Say a file path by its last name only.
 - Remove the Markdown syntax and decorative symbols.
 - Answer with the rewritten text only: plain text, no preamble, no comment.
 
@@ -120,7 +121,8 @@ class AdaptedParts:
     a fallback to the original text), ``adapt_reason`` (why the adaptation failed, else ``None``),
     ``adapt_first_ms`` (from the creation to the first adapted text) and ``adapted_text`` (the text
     received); the last two are ``None`` after a fallback. ``label`` (the stream's) gets ``adapted``
-    (the engine name, or ``"no"`` with ``adapt_reason`` after a fallback) and ``adapt_first_ms``.
+    (``"pending:<engine>"`` until the first adapted text, then the engine name, or ``"no"`` with
+    ``adapt_reason`` after a fallback) and ``adapt_first_ms``.
     """
 
     def __init__(
@@ -158,7 +160,8 @@ class AdaptedParts:
         self.adapted_by: str | None = engine.name
         self.adapt_reason: str | None = None
         self.adapt_first_ms: int | None = None
-        label["adapted"] = engine.name
+        # The engine name only once a text came: a reading stopped before must not log it adapted.
+        label["adapted"] = f"pending:{engine.name}"
 
     @property
     def adapted_text(self) -> str | None:
@@ -260,6 +263,7 @@ class AdaptedParts:
     def _receive(self, delta: str) -> None:
         if self.adapt_first_ms is None:
             self.adapt_first_ms = _elapsed_ms(self._created)
+            self._label["adapted"] = self._engine.name
             self._label["adapt_first_ms"] = self.adapt_first_ms
         self._received.append(delta)
         parts = self._splitter.feed(delta)

@@ -120,6 +120,37 @@ def test_the_prompt_frames_the_text():
     assert ADAPT_STOPPED == "The text adaptation stopped before the end"
 
 
+def test_the_prompt_keeps_code_diagrams_and_paths_short():
+    assert (
+        "- Replace a code block, a diagram (Mermaid…) included, with one short sentence on what it is or shows;"
+        " never walk through it.\n" in ADAPT_PROMPT
+    )
+    assert "- Say a file path by its last name only.\n" in ADAPT_PROMPT
+    assert "without reading it" not in ADAPT_PROMPT
+
+
+def test_the_label_says_pending_until_the_first_text(fake_call):
+    first_text = asyncio.Event()
+    fake_call(first_text, "Hello to you. ", HANG)
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            label = {}
+            source = _source(label=label)
+            assert label == {"adapted": "pending:haiku"}
+            reading = asyncio.create_task(source.next_part())
+            await asyncio.sleep(0.05)  # the call runs, no text came yet
+            assert label == {"adapted": "pending:haiku"}
+            first_text.set()
+            while label["adapted"] != "haiku":
+                await asyncio.sleep(0)
+            assert isinstance(label["adapt_first_ms"], int)
+            await source.aclose()
+            await reading
+
+    asyncio.run(scenario())
+
+
 def test_the_stall_limits(monkeypatch):
     monkeypatch.undo()  # the values of the module, not the short ones of the fixture
     assert (adapt.FIRST_TEXT_SECONDS, adapt.NEXT_TEXT_SECONDS) == (30.0, 15.0)
@@ -542,7 +573,7 @@ def test_the_label_tells_the_adaptation(fake_call):
         async with asyncio.timeout(5):
             label = {"config": "a voice"}
             source = _source(LUNA, label=label)
-            assert label == {"config": "a voice", "adapted": "luna"}
+            assert label == {"config": "a voice", "adapted": "pending:luna"}
             assert source.adapted_by == "luna"
             assert source.adapt_first_ms is None
             assert await source.next_part() == "Hello there."
