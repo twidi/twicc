@@ -365,10 +365,18 @@ def title_state_transaction(*, durable=False):
     coordinator = get_title_coordinator()
     existing = coordinator._stage.get()
     root = existing is None or existing._closed
-    with coordinator.staged_state() as stage, transaction.atomic(durable=durable):
-        if root:
-            transaction.on_commit(stage.commit)
-        yield stage
+    with coordinator.staged_state() as stage:
+        checkpoint = stage.checkpoint()
+        with transaction.atomic(durable=durable):
+            if root:
+                transaction.on_commit(stage.commit)
+            yield stage
+            # Atomic can roll back without raising, including set_rollback(True).
+            # Restore before its savepoint exits so the outer overlay stays valid.
+            if transaction.get_rollback():
+                stage.restore(checkpoint)
+                if root:
+                    stage._closed = True
 
 
 def protect_claude_acceptance_boundary_locked(
@@ -462,13 +470,13 @@ def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[s
     from .compute import get_compute
     import orjson
 
-    changed = []
+    changed = {}
     pending = deque([result])
     replayed = {}
     def write_applied(current):
         for record in current.apply:
             if record.title is not None and BaseSessionCompute._write_provider_title(record.target_session_id, record.title):
-                changed.append(record.target_session_id)
+                changed[record.target_session_id] = None
     while pending:
         current = pending.popleft()
         write_applied(current)
@@ -499,7 +507,7 @@ def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[s
                 write_applied(latest)
             if latest is not None and latest.replay:
                 pending.append(ObservationResult(replay=latest.replay))
-    return tuple(dict.fromkeys(changed))
+    return tuple(changed)
 
 
 def acknowledge_claude_title_locked(decision, success: bool, boundary: SourceCursor | None) -> tuple[str, ...]:

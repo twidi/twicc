@@ -257,3 +257,29 @@ def test_old_epoch_ack_cannot_apply_buffered_title(managed):
     with publication.title_state_transaction():
         assert publication.acknowledge_claude_title_locked(decision, True, observation(session, 2, 'A').cursor) == ()
     assert Session.objects.get(pk='s').title == 'B'
+
+
+def test_silent_nested_rollback_restores_sql_decision_floor_and_protection(managed):
+    session, coordinator, original = managed
+    with publication.title_state_transaction():
+        with publication.title_state_transaction():
+            Session.objects.filter(pk='s').update(title='discarded')
+            coordinator.protect_acceptance_boundary(observation(session, 10, 'discarded').cursor)
+            coordinator.accept_decision('s', 'discarded')
+            transaction.set_rollback(True)
+        assert Session.objects.get(pk='s').title == 'B'
+        assert coordinator.current_decision('s') == original
+    assert Session.objects.get(pk='s').title == 'B'
+    assert coordinator.current_decision('s') == original
+    # An inner floor of ten would reject this echo after the outer commit.
+    with publication.title_state_transaction():
+        publication.apply_claude_observations_locked((observation(session, 1, 'B'),))
+        assert publication.acknowledge_claude_title_locked(original, True, observation(session, 1, 'B').cursor) == ()
+    assert coordinator.current_decision('s') is None
+    # An inner protection of ten would suppress this explicit outcome.
+    with publication.title_state_transaction():
+        publication.apply_claude_observations_locked((
+            observation(session, 2, 'C', 'rename_command', message='later'),
+            observation(session, 3, 'C', 'command_success', parent='later'),
+        ))
+    assert Session.objects.get(pk='s').title == 'C'
