@@ -580,6 +580,15 @@ Subject: `test(titles): cover claude publication races and recovery boundaries`
 
 ### Task 7: Add the real-CLI upgrade gate and maintainer instructions
 
+**Scoped execution ruling (2026-11-01):** Spec section 12 defines the required SDK compatibility gate.
+The default `--live --yes` run checks SDK behavior and reports hybrid as NOT_RUN.
+The user keeps hybrid disabled and accepts its strict limitation.
+The explicit `--live --yes --hybrid` run is mandatory before future hybrid activation.
+A blocked explicit TUI probe reports INCONCLUSIVE and exits 1.
+Offline hybrid fixtures never substitute for real TUI evidence.
+This ruling changes the Task 7 combined-gate expectation below; it does not activate hybrid mode.
+
+
 **Files:**
 - Create: `scripts/diagnose_claude_title_sync.py`
 - Test: `tests/test_claude_title_diagnostic.py`
@@ -630,7 +639,8 @@ Run: `uv run pytest tests/test_claude_title_diagnostic.py -q`
 Expected: all pass.
 
 Run: `uv run python scripts/diagnose_claude_title_sync.py --live --yes`
-Expected: all checks PASS, including strict hybrid uncertainty handling and persistence after active SDK control.
+Expected: all required SDK checks PASS, including persistence after active SDK control; hybrid is NOT_RUN.
+The explicit `--live --yes --hybrid` gate also requires real TUI evidence before future hybrid activation.
 Record actual SDK/CLI versions. On FAIL/INCONCLUSIVE, diagnose and fix the affected contract before declaring implementation complete.
 Run the existing hermetic live diagnostic if the SDK or its configuration changes; no SDK upgrade is required by this plan.
 

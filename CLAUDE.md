@@ -48,6 +48,10 @@ uv + npm · Django 6 ASGI (Uvicorn, Python ≥ 3.13) · Channels (in-memory laye
   - a Claude Agent SDK update.
 
   Do not ship on `FAIL` or `INCONCLUSIVE`.
+- **Claude SDK updates:** also run `uv run python scripts/diagnose_claude_title_sync.py --live --yes --json`.
+  This verifies the private persistent-session title control against the real bundled CLI.
+  Do not ship on `FAIL` or `INCONCLUSIVE`. Record both SDK and CLI versions.
+  Required checks and isolation: `docs/claude-sdk-updates.md`.
 
 ### uv: never target the ACTIVE environment
 
