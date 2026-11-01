@@ -1,9 +1,10 @@
 """In-memory cache of generated speech audio, capped by total size and by age.
 
-The key is the speech request itself, the text and the speech fields: a
+The key is ``(request, adapted_by)``. The request is the text and the speech fields: a
 :class:`~twicc.tts.openrouter.SpeechRequest`, or a :class:`~twicc.tts.script.ScriptSpeechRequest`
-(its command among them: a changed command misses the cache). One process-wide instance:
-:data:`speech_cache`.
+(its command among them: a changed command misses the cache). ``adapted_by`` is the engine that
+adapted the text (``"haiku"``, ``"luna"``), or None for a text read as written (a reading that fell
+back to it among them). One process-wide instance: :data:`speech_cache`.
 """
 
 import time
@@ -14,7 +15,7 @@ from typing import NamedTuple
 from twicc.tts.openrouter import SpeechRequest
 from twicc.tts.script import ScriptSpeechRequest
 
-type SpeechKey = SpeechRequest | ScriptSpeechRequest
+type SpeechKey = tuple[SpeechRequest | ScriptSpeechRequest, str | None]
 
 
 class CachedAudio(NamedTuple):

@@ -4,7 +4,8 @@ A speech goes through four steps (design: ``docs/plans/2026-10-30-tts-streaming-
 
 - open (``POST /api/tts/speech/``): start the upstream call (OpenRouter, or the stored
   command of a script config) in the background, and answer an audio id once its headers
-  arrive; a long text is sent in parts (:mod:`twicc.tts.parts`);
+  arrive; a long text is sent in parts (:mod:`twicc.tts.parts`); a small model can adapt the
+  text for speech first (:mod:`twicc.tts.adapt`);
 - read (``GET /api/tts/audio/<id>/``): stream the audio bytes as they arrive, at the
   playback pace for a paced stream (a 410 once the speech failed);
 - ending (``GET /api/tts/audio/<id>/ending/``): how the speech ended;
@@ -30,11 +31,13 @@ from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 
 from twicc.paths import get_env_path
+from twicc.tts.adapt import TEST_TEXT_KEEP_CHARS, AdaptedParts, resolve_engine
 from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.config import (
     TTS_RESPONSE_FORMATS,
     openrouter_api_key,
     positive_speed,
+    read_tts_config,
     record_last_test,
     script_config_validated,
     script_fields,
@@ -49,8 +52,11 @@ from twicc.tts.openrouter import (
     pump_speech,
     schedule_cost_log,
 )
+from twicc.tts.part_source import PartSource
+from twicc.tts.parts import adapted_limits as speech_adapted_limits
 from twicc.tts.parts import has_speech, speech_parts
 from twicc.tts.script import ScriptSpeechRequest, pump_script_speech, script_parts
+from twicc.tts.script import adapted_limits as script_adapted_limits
 from twicc.tts.streams import (
     AudioStream,
     ending_of,
@@ -185,12 +191,13 @@ async def tts_speech(request):
     A text without speech is a 400, without upstream call. A text longer than its
     first part is sent in parts, into one audio; its reads are paced when its byte
     rate is known, unless ``buffered: true`` (the browser buffers the whole audio
-    before it plays).
+    before it plays). The stored ``adapt`` choice of tts.json decides whether a small
+    model adapts the text for speech first (:func:`_open_speech`).
 
     A settings test sends its ``config_id``: once the audio is complete, the run
-    (characters, times, audio length, parts, then the cost once known) becomes that
-    config's ``last_test`` in tts.json. ``cache: true`` reads and fills the audio
-    cache, except for a settings test.
+    (characters of the original text, times, audio length, parts, the adaptation, then
+    the cost once known) becomes that config's ``last_test`` in tts.json. ``cache: true``
+    reads and fills the audio cache, except for a settings test.
 
     An upstream or script error is a ``SPEECH_ERROR_STATUS`` (424), never a 401 (the
     frontend reads any 401 as an expired TwiCC session) nor a 502 or 504 (a proxy such
@@ -233,6 +240,7 @@ async def tts_speech(request):
             config_id,
             label,
             speech_parts,
+            speech_adapted_limits,
             lambda sink, parts, paced: pump_speech(speech_request, api_key, sink, parts, paced=paced),
             api_key,
         )
@@ -288,6 +296,7 @@ async def _open_script_speech(data: dict) -> JsonResponse:
         config_id,
         label,
         script_parts,
+        script_adapted_limits,
         # The stored option, never one from the body; not in the request: a toggle keeps the cache.
         lambda sink, parts, paced: pump_script_speech(
             speech_request, sink, parts, paced=paced, delete_file=entry["delete_file"]
@@ -302,25 +311,40 @@ async def _open_speech(
     config_id: str | None,
     label: dict,
     split: Callable[..., list[str]],
-    pump: Callable[[AudioStream, list[str], bool], Awaitable[None]],
+    limits: Callable[..., tuple[int | None, int | None]],
+    pump: Callable[[AudioStream, list[str] | PartSource, bool], Awaitable[None]],
     api_key: str | None,
 ) -> JsonResponse:
-    """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*,
-    with the parts of *split*; the pump paces a split reading only), awaited until its headers
-    arrive."""
+    """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*;
+    the pump paces a split reading only), awaited until its headers arrive.
+
+    The stored ``adapt`` choice resolves to an engine, or to why the text is read as written. With
+    an engine, the parts are an :class:`AdaptedParts` source, cut to *limits*, that falls back to
+    the parts of *split*; without one, the parts of *split*. The label tells which (``adapted``,
+    ``adapt_reason``), never the text. The cache key is ``(request, engine name or None)``.
+    """
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
+    engine, adapt_reason = resolve_engine(await sync_to_async(_stored_adapt_choice)(), speech_request.text)
+    if engine is None:
+        label["adapted"] = "no"
+        label["adapt_reason"] = adapt_reason
+    else:
+        label["adapted"] = engine.name
     if use_cache:
-        cached = speech_cache.get(speech_request)
+        cached = speech_cache.get((speech_request, None if engine is None else engine.name))
         if cached is not None:
             return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
     parts = split(speech_request)
+    source = None
+    if engine is not None:
+        source = AdaptedParts(speech_request.text, engine, *limits(speech_request), fallback=parts, label=label)
     paced = not buffered
     stream = start_stream(
-        lambda sink: pump(sink, parts, paced),
+        lambda sink: pump(sink, parts if source is None else source, paced),
         label=label,
-        on_end=_end_steps(speech_request, api_key, config_id, use_cache),
+        on_end=_end_steps(speech_request, api_key, config_id, use_cache, source, adapt_reason),
     )
     try:
         await stream.ready
@@ -340,14 +364,40 @@ async def _open_speech(
     return _opened(stream)
 
 
+def _stored_adapt_choice() -> str | None:
+    """The stored text adaptation choice (None: on, with the first running provider)."""
+    return read_tts_config()["adapt"]
+
+
+def _adaptation_fields(source: AdaptedParts | None, adapt_reason: str | None) -> dict:
+    """The adaptation fields of a last test: how *source* adapted the text, or, without a source,
+    why the text was read as written. The adapted text is cut to ``TEST_TEXT_KEEP_CHARS``."""
+    if source is None:
+        return {"adapted_by": None, "adapt_reason": adapt_reason, "adapt_first_ms": None, "adapted_text": None}
+    adapted_text = source.adapted_text
+    return {
+        "adapted_by": source.adapted_by,
+        "adapt_reason": source.adapt_reason,
+        "adapt_first_ms": source.adapt_first_ms,
+        "adapted_text": None if adapted_text is None else adapted_text[:TEST_TEXT_KEEP_CHARS],
+    }
+
+
 def _end_steps(
-    speech_request: SpeechRequest | ScriptSpeechRequest, api_key: str | None, config_id: str | None, use_cache: bool
+    speech_request: SpeechRequest | ScriptSpeechRequest,
+    api_key: str | None,
+    config_id: str | None,
+    use_cache: bool,
+    source: AdaptedParts | None,
+    adapt_reason: str | None,
 ):
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
     Each step has its own guard: one failure never skips the others. A failed speech does nothing.
-    The cost of a split speech is the sum of its parts' costs: it is recorded only when every part
-    has a generation id. A script speech (no *api_key*) has no cost lookup.
+    The audio is cached under the adaptation that really ran: a reading that fell back to the
+    original text is cached as unadapted (*source*'s ``adapted_by`` is then None). The cost of a
+    split speech is the sum of its parts' costs: it is recorded only when every part has a
+    generation id. A script speech (no *api_key*) has no cost lookup.
     """
 
     async def on_end(stream: AudioStream) -> None:
@@ -358,7 +408,8 @@ def _end_steps(
         # An empty audio is not worth a cache entry: the next read asks again.
         if use_cache and stream.data:
             try:
-                speech_cache.set(speech_request, CachedAudio(bytes(stream.data), stream.content_type))
+                adapted_by = None if source is None else source.adapted_by
+                speech_cache.set((speech_request, adapted_by), CachedAudio(bytes(stream.data), stream.content_type))
             except Exception:
                 logger.exception("TTS audio could not be cached")
         if config_id:
@@ -372,6 +423,7 @@ def _end_steps(
                     "audio_seconds": audio_duration_seconds(stream.data, stream.content_type),
                     "cost": None,
                     "parts": parts,
+                    **_adaptation_fields(source, adapt_reason),
                 })
             except Exception:
                 logger.exception("TTS last test of %s could not be recorded", config_id)

@@ -82,6 +82,15 @@ def script_parts(request: ScriptSpeechRequest) -> list[str]:
     return split_text(request.text, request.max_chars, first)
 
 
+def adapted_limits(request: ScriptSpeechRequest) -> tuple[int | None, int | None]:
+    """The splitter's ``(limit, first)`` for an adapted reading: no limit without a max characters
+    per run (the whole adaptation in one run), else parts that start at ``FIRST_PART_CHARS`` for
+    every output kind (the adapted text arrives over time)."""
+    if request.max_chars is None:
+        return None, None
+    return request.max_chars, min(request.max_chars, FIRST_PART_CHARS)
+
+
 def shell_argv(command: str) -> list[str]:
     """The user's shell, as a non-interactive login shell, running *command*."""
     shell = os.environ.get("SHELL") or "/bin/sh"

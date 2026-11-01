@@ -154,3 +154,14 @@ def speech_parts(request: SpeechRequest) -> list[str]:
     facts = model_catalog.KNOWN_SPEECH_MODELS.get(model)
     first = limit if facts is not None and response_format in facts.streams else min(limit, FIRST_PART_CHARS)
     return split_text(request.text, limit, first)
+
+
+def adapted_limits(request: SpeechRequest) -> tuple[int | None, int | None]:
+    """The splitter's ``(limit, first)`` for an adapted reading of this request: no limit for a
+    model of ``WHOLE_MP3_MODELS`` (its MP3 text is one part), else the limit of ``speech_parts``.
+    The first part starts at ``FIRST_PART_CHARS`` for every format: the adapted text arrives over
+    time, so a full-size first part would wait for it."""
+    if request.response_format == "mp3" and request.model in model_catalog.WHOLE_MP3_MODELS:
+        return None, None
+    limit = min(MAX_PART_CHARS, model_catalog.max_chars_of(request.model))
+    return limit, min(limit, FIRST_PART_CHARS)

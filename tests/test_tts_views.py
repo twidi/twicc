@@ -17,11 +17,13 @@ import orjson
 import pytest
 from django.test import AsyncClient, AsyncRequestFactory
 
+from twicc.core.enums import Provider
 from twicc.paths import get_tts_config_path
-from twicc.tts import streams, views
+from twicc.tts import adapt, model_catalog, streams, views
 from twicc.tts.audio_cache import CachedAudio, speech_cache
-from twicc.tts.config import write_tts_config
+from twicc.tts.config import read_tts_config, write_tts_config
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
+from twicc.tts.part_source import as_part_source
 from twicc.tts.script import ScriptSpeechRequest, script_parts
 from twicc.tts.streams import get_stream
 from twicc.tts.views import (
@@ -124,6 +126,26 @@ def _reset_streams_and_cache():
     yield
     streams._reset_for_tests()
     speech_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_adaptation_model(monkeypatch):
+    """No provider runs, and no view test reaches a real model: the adaptation call fails the test.
+
+    A test that adapts a text swaps both (the ``adaptation`` fixture). The call runs in a
+    background task, which would swallow a raise: the teardown checks the calls instead.
+    """
+    calls = []
+
+    async def open_stream(engine, prompt):
+        calls.append(engine.name)
+        raise AssertionError("A view test reached the real adaptation call")
+        yield  # an async generator, like the real one
+
+    monkeypatch.setattr(adapt, "_open_stream", open_stream)
+    monkeypatch.setattr(adapt, "is_provider_running", lambda provider: False)
+    yield
+    assert calls == [], "A view test reached the real adaptation call"
 
 
 @pytest.fixture
@@ -470,8 +492,8 @@ def test_cancellation_propagates(upstream, streams_log):
 
     async def scenario():
         task = asyncio.create_task(views.tts_speech(request))
-        await _settle()
-        assert upstream.pump.calls  # the view awaits ``ready`` now
+        # The open step reads the stored adaptation choice in a thread first.
+        await _within(_until(lambda: upstream.pump.calls))  # the view awaits ``ready`` now
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await _within(task)
@@ -886,7 +908,7 @@ def test_release_before_any_read_cancels_the_upstream(client, upstream, streams_
             assert get_stream(audio_id) is None
 
     asyncio.run(scenario())
-    assert speech_cache.get(parse_speech_request(VALID_PAYLOAD)) is None
+    assert speech_cache.get((parse_speech_request(VALID_PAYLOAD), None)) is None
     assert upstream.records == []
     assert upstream.cost == []
     lines = _speech_lines(streams_log)
@@ -931,7 +953,7 @@ def test_release_after_complete_still_records_and_caches(client, upstream, monke
         await _within(_until(lambda: get_stream(audio_id).state == "complete"))
         assert (await _release(client, audio_id)).status_code == 204
         await _settle()
-        assert speech_cache.get(parse_speech_request(VALID_PAYLOAD)) == CachedAudio(b"cached", "audio/mpeg")
+        assert speech_cache.get((parse_speech_request(VALID_PAYLOAD), None)) == CachedAudio(b"cached", "audio/mpeg")
 
         # A settings test: released while its end steps still run.
         upstream.pump = FakeSpeech()
@@ -1102,7 +1124,7 @@ def test_a_cache_hit_survives_eviction(client, upstream):
 
 
 def test_a_settings_test_never_uses_the_cache(client, upstream):
-    request = parse_speech_request(VALID_PAYLOAD)
+    key = (parse_speech_request(VALID_PAYLOAD), None)
     body = {**TEST_PAYLOAD, "cache": True}
 
     async def scenario():
@@ -1112,10 +1134,10 @@ def test_a_settings_test_never_uses_the_cache(client, upstream):
         upstream.pump.send("finish")
         await _open_id(client, body)
         await _settle()
-        assert speech_cache.get(request) is None
+        assert speech_cache.get(key) is None
 
         # No read.
-        speech_cache.set(request, CachedAudio(b"cached", "audio/mpeg"))
+        speech_cache.set(key, CachedAudio(b"cached", "audio/mpeg"))
         upstream.pump.send("set_headers", "audio/mpeg", "gen-2")
         upstream.pump.send("append", b"fresh")
         upstream.pump.send("finish")
@@ -1123,7 +1145,7 @@ def test_a_settings_test_never_uses_the_cache(client, upstream):
         await _settle()
         assert len(upstream.pump.calls) == 2
         assert await _body(await _read(client, audio_id)) == b"fresh"
-        assert speech_cache.get(request) == CachedAudio(b"cached", "audio/mpeg")
+        assert speech_cache.get(key) == CachedAudio(b"cached", "audio/mpeg")
 
     asyncio.run(scenario())
 
@@ -1162,7 +1184,7 @@ def test_an_empty_complete_audio_is_not_cached(client, upstream):
         upstream.pump.send("finish")
         await _open_id(client, CACHED_PAYLOAD)
         await _settle()
-        assert speech_cache.get(parse_speech_request(VALID_PAYLOAD)) is None
+        assert speech_cache.get((parse_speech_request(VALID_PAYLOAD), None)) is None
 
         upstream.pump.send("set_headers", "audio/mpeg", "gen-2")
         upstream.pump.send("append", b"abc")
@@ -1226,8 +1248,13 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
         [(config_id, run)] = upstream.records
         assert config_id == "cfg-1"
         assert set(run) == {
-            "at", "generation_id", "chars", "generation_ms", "first_audio_ms", "audio_seconds", "cost", "parts"
+            "at", "generation_id", "chars", "generation_ms", "first_audio_ms", "audio_seconds", "cost", "parts",
+            "adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text",
         }
+        # No provider runs in these tests: the text is read as written.
+        assert (run["adapted_by"], run["adapt_reason"], run["adapt_first_ms"], run["adapted_text"]) == (
+            None, "no_provider", None, None
+        )
         assert run["generation_id"] == "gen-1"
         assert run["parts"] == 1
         assert run["chars"] == len(VALID_PAYLOAD["text"])
@@ -1750,3 +1777,314 @@ def test_a_test_that_differs_only_in_delete_file_runs(client, script_upstream):
 
     asyncio.run(scenario())
     assert script_upstream.delete_files == [True]  # the stored value, never the body's
+
+
+# --- The text adaptation --------------------------------------------------------
+
+ADAPTED = "Hello to you."
+
+
+class Adaptation:
+    """The fakes of an adapted reading: the running providers, the streamed call and a pump that
+    pulls every part of its source (an adaptation runs then), records them and sends one audio."""
+
+    def __init__(self, upstream: Upstream):
+        self.upstream = upstream
+        self.running = {Provider.CLAUDE_CODE, Provider.CODEX}
+        # Each call takes the next answer: a list of text deltas, or an exception to raise.
+        self.answers: list = []
+        self.calls: list[str] = []
+        self.pulled: list[list[str]] = []
+        self.sources: list = []
+        self.paced: list[bool] = []
+
+    async def open_stream(self, engine, prompt):
+        self.calls.append(engine.name)
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        for delta in answer:
+            yield delta
+
+    async def pump(self, request, stream, parts, paced) -> None:
+        self.sources.append(parts)
+        self.paced.append(paced)
+        source = as_part_source(request.text, parts)
+        texts = []
+        try:
+            while (text := await source.next_part()) is not None:
+                texts.append(text)
+        finally:
+            await source.aclose()
+        self.pulled.append(texts)
+        stream.set_headers("audio/mpeg", None)
+        stream.append(b"ID3" + str(len(self.pulled)).encode())
+        stream.finish()
+
+
+@pytest.fixture
+def adaptation(monkeypatch, upstream, tts_json):
+    """Both providers run; the adaptation call and both pumps are fakes (:class:`Adaptation`)."""
+    fake = Adaptation(upstream)
+    monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in fake.running)
+    monkeypatch.setattr(adapt, "_open_stream", fake.open_stream)
+
+    def pump_speech(request, api_key, stream, parts=None, *, paced=False):
+        return fake.pump(request, stream, parts, paced)
+
+    def pump_script_speech(request, stream, parts=None, *, paced=False, delete_file):
+        return fake.pump(request, stream, parts, paced)
+
+    monkeypatch.setattr(views, "pump_speech", pump_speech)
+    monkeypatch.setattr(views, "pump_script_speech", pump_script_speech)
+    return fake
+
+
+class RecordedAdaptedParts(adapt.AdaptedParts):
+    """The real part source, with the arguments the view gave it."""
+
+    made: list[dict] = []
+
+    def __init__(self, text, engine, limit, first, *, fallback, label):
+        RecordedAdaptedParts.made.append(
+            {"text": text, "engine": engine.name, "limits": (limit, first), "fallback": list(fallback), "label": label}
+        )
+        super().__init__(text, engine, limit, first, fallback=fallback, label=label)
+
+
+@pytest.fixture
+def recorded_sources(monkeypatch):
+    RecordedAdaptedParts.made = []
+    monkeypatch.setattr(views, "AdaptedParts", RecordedAdaptedParts)
+    return RecordedAdaptedParts.made
+
+
+def _store_adapt(choice) -> None:
+    write_tts_config({**read_tts_config(), "adapt": choice})
+
+
+async def _read_through(client, body) -> str:
+    """Open a speech and wait for its end steps (cache, last test): its id."""
+    audio_id = await _open_id(client, body)
+    task = get_stream(audio_id)._task
+    if task is not None:  # None: a cache hit
+        await _within(asyncio.wait([task]))
+    return audio_id
+
+
+@pytest.mark.parametrize(
+    "model, response_format, whole_mp3, limits",
+    [
+        ("openai/gpt-4o-mini-tts", "mp3", False, (2000, 250)),  # unknown: the default limit
+        ("sesame/csm-1b", "mp3", False, (200, 200)),
+        ("deepgram/aura-2", "mp3", False, (2000, 250)),  # a streaming format starts small too
+        ("elevenlabs/eleven-v3", "pcm", False, (2000, 250)),  # at most MAX_PART_CHARS
+        ("openai/gpt-4o-mini-tts", "mp3", True, (None, None)),  # sent whole: one part
+        ("openai/gpt-4o-mini-tts", "pcm", True, (2000, 250)),  # only its MP3 is sent whole
+    ],
+)
+def test_an_adapted_openrouter_reading_gets_an_adapted_source(
+    client, adaptation, recorded_sources, monkeypatch, model, response_format, whole_mp3, limits
+):
+    if whole_mp3:
+        monkeypatch.setattr(model_catalog, "WHOLE_MP3_MODELS", frozenset({model}))
+    body = {**VALID_PAYLOAD, "model": model, "response_format": response_format}
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, body))
+    [made] = recorded_sources
+    request = parse_speech_request(body)
+    assert made["text"] == VALID_PAYLOAD["text"]
+    assert made["engine"] == "haiku"
+    assert made["limits"] == limits
+    assert made["fallback"] == views.speech_parts(request)
+    [source] = adaptation.sources
+    assert isinstance(source, adapt.AdaptedParts)
+    assert adaptation.paced == [True]
+    assert adaptation.pulled == [[ADAPTED]]
+    assert made["label"]["adapted"] == "haiku"
+
+
+@pytest.mark.parametrize(
+    "fields, limits",
+    [
+        ({}, (None, None)),  # no max characters per run: the whole adaptation in one run
+        ({"max_chars": 300}, (300, 250)),
+        ({"max_chars": 100}, (100, 100)),
+        ({"max_chars": 300, "output": "whole"}, (300, 250)),
+    ],
+)
+def test_an_adapted_script_reading_gets_an_adapted_source(client, adaptation, recorded_sources, fields, limits):
+    stored = _store_script(**fields)
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, {**SCRIPT_READ, **stored, "buffered": True}))
+    [made] = recorded_sources
+    assert made["limits"] == limits
+    assert made["fallback"] == script_parts(ScriptSpeechRequest(SCRIPT_READ["text"], **stored))
+    assert adaptation.paced == [False]
+    assert adaptation.pulled == [[ADAPTED]]
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+@pytest.mark.parametrize("case", ["off", "too_long", "no_provider"])
+def test_a_reading_not_adapted_gets_todays_parts_and_says_why(
+    client, adaptation, recorded_sources, streams_log, kind, case
+):
+    text = "word " * 2401 if case == "too_long" else VALID_PAYLOAD["text"]  # 12,005 characters
+    if kind == "script":
+        _store_script(max_chars=300)
+        body = {**SCRIPT_READ, "max_chars": 300, "text": text}
+        expected = script_parts(ScriptSpeechRequest(text, **{**SCRIPT_FIELDS, "max_chars": 300}))
+    else:
+        body = {**VALID_PAYLOAD, "text": text}
+        expected = views.speech_parts(parse_speech_request(body))
+    if case == "off":
+        _store_adapt("off")
+    if case == "no_provider":
+        adaptation.running = set()
+    asyncio.run(_read_through(client, body))
+    assert recorded_sources == []
+    assert adaptation.calls == []
+    assert adaptation.sources == [expected]
+    [line] = _speech_lines(streams_log)
+    assert f" adapted=no adapt_reason={case} " in line
+    assert "adapt_first_ms" not in line
+
+
+def test_the_engine_follows_the_choice_and_the_running_providers(client, adaptation, recorded_sources):
+    async def scenario():
+        for choice, running in [
+            (None, {Provider.CLAUDE_CODE, Provider.CODEX}),
+            ("luna", {Provider.CLAUDE_CODE, Provider.CODEX}),
+            ("haiku", {Provider.CODEX}),
+        ]:
+            _store_adapt(choice)
+            adaptation.running = running
+            adaptation.answers.append([ADAPTED])
+            await _read_through(client, VALID_PAYLOAD)
+
+    asyncio.run(scenario())
+    assert adaptation.calls == ["haiku", "luna", "luna"]
+
+
+def test_the_cache_key_carries_the_adaptation(client, adaptation, streams_log):
+    request = parse_speech_request(VALID_PAYLOAD)
+
+    async def scenario():
+        adaptation.answers.append([ADAPTED])
+        await _read_through(client, CACHED_PAYLOAD)
+        assert speech_cache.get((request, "haiku")) == CachedAudio(b"ID31", "audio/mpeg")
+        assert speech_cache.get((request, None)) is None
+
+        # The same choice: the cache answers, no model runs.
+        audio_id = await _read_through(client, CACHED_PAYLOAD)
+        assert await _body(await _read(client, audio_id)) == b"ID31"
+        assert adaptation.calls == ["haiku"]
+
+        # Another engine misses the cache.
+        adaptation.running = {Provider.CODEX}
+        adaptation.answers.append([ADAPTED])
+        await _read_through(client, CACHED_PAYLOAD)
+        assert speech_cache.get((request, "luna")) == CachedAudio(b"ID32", "audio/mpeg")
+
+        # Off: an unadapted reading, then its cache hit.
+        _store_adapt("off")
+        await _read_through(client, CACHED_PAYLOAD)
+        assert speech_cache.get((request, None)) == CachedAudio(b"ID33", "audio/mpeg")
+        await _read_through(client, CACHED_PAYLOAD)
+
+    asyncio.run(scenario())
+    assert adaptation.calls == ["haiku", "luna"]
+    assert adaptation.pulled == [[ADAPTED], [ADAPTED], [VALID_PAYLOAD["text"]]]
+    lines = _speech_lines(streams_log)
+    assert len(lines) == 5
+    assert " adapted=haiku adapt_first_ms=" in lines[0]
+    # A cache hit tells the adaptation of its key, without a time: no model ran.
+    assert lines[1].endswith("outcome=cached")
+    assert " adapted=haiku " in lines[1]
+    assert "adapt_first_ms" not in lines[1]
+    assert " adapted=luna adapt_first_ms=" in lines[2]
+    assert " adapted=no adapt_reason=off " in lines[3]
+    assert lines[4].endswith("outcome=cached")
+    assert " adapted=no adapt_reason=off " in lines[4]
+    for line in lines:
+        assert VALID_PAYLOAD["text"] not in line
+        assert ADAPTED not in line
+
+
+def test_a_script_cache_key_carries_the_adaptation(client, adaptation):
+    stored = _store_script()
+    request = ScriptSpeechRequest(SCRIPT_READ["text"], **stored)
+
+    async def scenario():
+        adaptation.answers.append([ADAPTED])
+        await _read_through(client, SCRIPT_CACHED_READ)
+        await _read_through(client, SCRIPT_CACHED_READ)
+
+    asyncio.run(scenario())
+    assert speech_cache.get((request, "haiku")) == CachedAudio(b"ID31", "audio/mpeg")
+    assert speech_cache.get((request, None)) is None
+    assert adaptation.calls == ["haiku"]
+
+
+def test_a_fallen_back_reading_is_cached_unadapted(client, adaptation, streams_log):
+    request = parse_speech_request(VALID_PAYLOAD)
+
+    async def scenario():
+        adaptation.answers.append(RuntimeError("the model is down"))
+        await _read_through(client, CACHED_PAYLOAD)
+        assert speech_cache.get((request, None)) == CachedAudio(b"ID31", "audio/mpeg")
+        assert speech_cache.get((request, "haiku")) is None
+
+        # The next reading tries the adaptation again.
+        adaptation.answers.append([ADAPTED])
+        await _read_through(client, CACHED_PAYLOAD)
+        assert speech_cache.get((request, "haiku")) == CachedAudio(b"ID32", "audio/mpeg")
+
+    asyncio.run(scenario())
+    assert adaptation.calls == ["haiku", "haiku"]
+    assert adaptation.pulled == [[VALID_PAYLOAD["text"]], [ADAPTED]]
+    first, second = _speech_lines(streams_log)
+    assert " adapted=no adapt_reason=failed " in first
+    assert " adapted=haiku adapt_first_ms=" in second
+
+
+def test_a_settings_test_records_the_adaptation(client, adaptation):
+    long_answer = [f"Sentence number {index:04d} of the adapted text. " for index in range(200)]  # ~9,600 chars
+
+    async def scenario():
+        adaptation.answers.append(["Hello ", "to you."])
+        await _read_through(client, TEST_PAYLOAD)
+        adaptation.answers.append(long_answer)
+        await _read_through(client, TEST_PAYLOAD)
+        adaptation.answers.append(RuntimeError("the model is down"))
+        await _read_through(client, TEST_PAYLOAD)
+        adaptation.running = set()
+        await _read_through(client, TEST_PAYLOAD)
+
+    asyncio.run(scenario())
+    adapted, long_run, fallen_back, not_adapted = (run for _config_id, run in adaptation.upstream.records)
+    assert adapted["adapted_by"] == "haiku"
+    assert adapted["adapt_reason"] is None
+    assert isinstance(adapted["adapt_first_ms"], int)
+    assert adapted["adapted_text"] == ADAPTED
+    # The characters are those of the original text.
+    assert adapted["chars"] == len(VALID_PAYLOAD["text"])
+    assert long_run["adapted_text"] == "".join(long_answer)[: adapt.TEST_TEXT_KEEP_CHARS]
+    assert len(long_run["adapted_text"]) == adapt.TEST_TEXT_KEEP_CHARS
+    assert long_run["chars"] == len(VALID_PAYLOAD["text"])
+    assert {key: fallen_back[key] for key in ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")} == {
+        "adapted_by": None, "adapt_reason": "failed", "adapt_first_ms": None, "adapted_text": None
+    }
+    assert {key: not_adapted[key] for key in ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")} == {
+        "adapted_by": None, "adapt_reason": "no_provider", "adapt_first_ms": None, "adapted_text": None
+    }
+
+
+def test_a_script_settings_test_records_the_adaptation(client, adaptation):
+    _store_script()
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, SCRIPT_TEST))
+    [(config_id, run)] = adaptation.upstream.records
+    assert config_id == SCRIPT_ID
+    assert (run["adapted_by"], run["adapt_reason"], run["adapted_text"]) == ("haiku", None, ADAPTED)
+    assert run["chars"] == len(SCRIPT_READ["text"])
