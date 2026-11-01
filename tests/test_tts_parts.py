@@ -227,7 +227,9 @@ def test_a_long_text_feeds_quickly():
     [
         pytest.param("", "", id="empty"),
         pytest.param("Aaaa bbbb, cccc dddd", "", id="no-sentence-end"),
-        pytest.param("Aaaa bbbb.", "", id="a-final-period-is-not-yet-a-sentence-end"),
+        pytest.param("Aaaa bbbb.", "Aaaa bbbb.", id="a-final-period"),
+        pytest.param("Aaaa?", "Aaaa?", id="a-final-question-mark"),
+        pytest.param('Il dit "oui."', 'Il dit "oui."', id="a-final-period-and-closer"),
         pytest.param("Aaaa bbbb\n\ncccc, dddd", "Aaaa bbbb", id="paragraph-end"),
         pytest.param("  Aaaa. Bbbb! Cccc dd", "Aaaa. Bbbb!", id="sentence-end-then-half-a-sentence"),
         pytest.param("Aaaa.\n\nBbbb? Cccc", "Aaaa.\n\nBbbb?", id="last-of-both"),

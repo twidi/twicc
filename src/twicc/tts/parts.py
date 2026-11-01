@@ -136,9 +136,10 @@ class PartSplitter:
     def tail(self) -> str:
         """The text not released yet, stripped, up to its last sentence or paragraph end, or ``""``
         when it has none. It reads what came of a text that stops before its end: a sentence end
-        at the very end of the text is not one yet (``_SENTENCE`` wants the space after it)."""
+        at the very end of the text counts too (the scan adds the space ``_SENTENCE`` wants after
+        it)."""
         ends = [match.start() for match in _PARAGRAPH.finditer(self._buffer)]
-        ends += [match.end() for match in _SENTENCE.finditer(self._buffer)]
+        ends += [match.end() for match in _SENTENCE.finditer(self._buffer + " ")]
         return self._buffer[: max(ends, default=0)].strip()
 
 
