@@ -15,7 +15,7 @@
  *
  * Above the configs, the global "Adapt the text for speech" choice (tts.json `adapt`) shows the
  * adaptation that really runs, given the enabled providers and the OpenRouter key, as the Titles
- * setting does.
+ * setting does. With the key set, its hints always say where Qwen sends the text.
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
@@ -65,7 +65,7 @@ const settingsStore = useSettingsStore()
 const enabledProviders = computed(() => new Set(settingsStore.enabledProviders))
 const adaptChoice = computed(() => effectiveAdapt(store.adapt, enabledProviders.value, store.keyPresent))
 const adaptChoices = computed(() => adaptOptions(enabledProviders.value, store.keyPresent))
-const adaptHintKind = computed(() => adaptHint(adaptChoice.value, enabledProviders.value))
+const adaptHints = computed(() => adaptHint(adaptChoice.value, enabledProviders.value, store.keyPresent))
 
 // The test sentence as typed; saved in tts.json on change ('' there means the default one).
 const testText = ref(store.testText || DEFAULT_TEST_TEXT)
@@ -418,11 +418,9 @@ function answerNo(id) {
                     @update:model-value="store.setAdapt($event)"
                 />
             </div>
-            <span v-if="adaptHintKind === 'no_provider'" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
-            <template v-else>
-                <span class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
-                <span v-if="adaptHintKind === 'openrouter'" class="setting-group-hint">The text goes to OpenRouter and Cerebras, paid on your OpenRouter account.</span>
-            </template>
+            <span v-if="adaptHints.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
+            <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
+            <span v-if="adaptHints.openrouter" class="setting-group-hint">Qwen3.8 27B (OpenRouter) sends the text to OpenRouter and Cerebras, paid on your OpenRouter account.</span>
         </div>
 
         <div class="setting-group">

@@ -615,15 +615,24 @@ test('adaptOptions: Qwen is enabled once the OpenRouter key is set', () => {
     assert.deepEqual(adaptOptions([], true)[2], { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)' })
 })
 
-test('adaptHint: the OpenRouter note for Qwen, the no-provider note when Off comes from no provider', () => {
-    assert.equal(adaptHint('qwen', []), 'openrouter')
-    assert.equal(adaptHint('qwen', ['claude_code']), 'openrouter')
-    assert.equal(adaptHint('off', []), 'no_provider')
-    assert.equal(adaptHint('off', undefined), 'no_provider')
-    assert.equal(adaptHint('haiku', ['claude_code']), null)
-    assert.equal(adaptHint('luna', new Set(['codex'])), null)
+test('adaptHint: the no-provider note when Off comes from no provider', () => {
+    assert.equal(adaptHint('off', []).noProvider, true)
+    assert.equal(adaptHint('off', undefined).noProvider, true)
+    assert.equal(adaptHint('off', [], true).noProvider, true)
+    assert.equal(adaptHint('qwen', [], true).noProvider, false)
+    assert.equal(adaptHint('haiku', ['claude_code']).noProvider, false)
+    assert.equal(adaptHint('luna', new Set(['codex'])).noProvider, false)
     // Off chosen by the user, with a provider enabled.
-    assert.equal(adaptHint('off', ['claude_code']), null)
+    assert.equal(adaptHint('off', ['claude_code']).noProvider, false)
+})
+
+test('adaptHint: the OpenRouter note whenever the key is set, whatever the choice', () => {
+    // The user reads where Qwen sends the text before choosing it.
+    for (const [choice, providers] of [['qwen', []], ['qwen', ['claude_code']], ['haiku', ['claude_code']], ['luna', ['codex']], ['off', []], ['off', ['claude_code']]]) {
+        assert.equal(adaptHint(choice, providers, true).openrouter, true, `${choice} ${providers}`)
+        assert.equal(adaptHint(choice, providers, false).openrouter, false, `${choice} ${providers}`)
+    }
+    assert.equal(adaptHint('haiku', ['claude_code']).openrouter, false)
 })
 
 test('ttsAdaptationFacts: the engine and the wait for the first text', () => {

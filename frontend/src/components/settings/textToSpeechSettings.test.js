@@ -189,15 +189,18 @@ test('the adaptation control shows what really runs, from the enabled providers 
     assert.match(settingsSource, /const enabledProviders = computed\(\(\) => new Set\(settingsStore\.enabledProviders\)\)/)
     assert.match(settingsSource, /const adaptChoice = computed\(\(\) => effectiveAdapt\(store\.adapt, enabledProviders\.value, store\.keyPresent\)\)/)
     assert.match(settingsSource, /const adaptChoices = computed\(\(\) => adaptOptions\(enabledProviders\.value, store\.keyPresent\)\)/)
-    assert.match(settingsSource, /const adaptHintKind = computed\(\(\) => adaptHint\(adaptChoice\.value, enabledProviders\.value\)\)/)
+    assert.match(settingsSource, /const adaptHints = computed\(\(\) => adaptHint\(adaptChoice\.value, enabledProviders\.value, store\.keyPresent\)\)/)
     assert.doesNotMatch(settingsSource, /noAdaptProvider/)
 })
 
-test('the adaptation hint, the OpenRouter note for Qwen, or the no-provider hint instead', () => {
+test('the adaptation hint or the no-provider hint instead, then the OpenRouter note whenever the key is set', () => {
     assert.match(
         flatSource,
-        /<span v-if="adaptHintKind === 'no_provider'" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <template v-else> <span class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHintKind === 'openrouter'" class="setting-group-hint">The text goes to OpenRouter and Cerebras, paid on your OpenRouter account\.<\/span> <\/template>/,
+        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">Qwen3\.8 27B \(OpenRouter\) sends the text to OpenRouter and Cerebras, paid on your OpenRouter account\.<\/span>/,
     )
+    // One OpenRouter note only, and never bound to Qwen being the effective choice.
+    assert.equal(settingsSource.match(/OpenRouter and Cerebras/g)?.length, 1)
+    assert.doesNotMatch(settingsSource, /adaptHintKind/)
 })
 
 test('the four adaptation segments wrap onto a second line in a narrow adaptation group only', () => {

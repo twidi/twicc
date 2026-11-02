@@ -419,14 +419,18 @@ export function adaptOptions(enabledProviders, keyPresent = false) {
 }
 
 /**
- * The hint under the adaptation switch, for the effective `choice` (`effectiveAdapt`):
- * 'openrouter' for Qwen (where the text goes and who pays), 'no_provider' for an 'off' with no
- * Claude or Codex provider enabled, else null.
+ * The hints under the adaptation switch, for the effective `choice` (`effectiveAdapt`):
+ * `noProvider` when it is 'off' with no Claude or Codex provider enabled (that hint replaces the
+ * generic one), and `openrouter` (where Qwen sends the text and who pays) whenever the OpenRouter
+ * key is set, whatever the choice: the switch has no room for a note per option, so the user
+ * reads it before choosing Qwen. Without the key, the key-missing callout already says that Qwen
+ * is unavailable.
  */
-export function adaptHint(choice, enabledProviders) {
-    if (choice === QWEN_ADAPT) return 'openrouter'
-    if (choice === 'off' && !anyAdaptProvider(enabledSet(enabledProviders))) return 'no_provider'
-    return null
+export function adaptHint(choice, enabledProviders, keyPresent = false) {
+    return {
+        noProvider: choice === 'off' && !anyAdaptProvider(enabledSet(enabledProviders)),
+        openrouter: !!keyPresent,
+    }
 }
 
 /**
