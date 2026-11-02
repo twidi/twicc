@@ -57,6 +57,10 @@ async function loadComponent() {
         export const canShowRead = () => false
     `)
 
+    // The real helper has no import, so the tests exercise its real logic.
+    const touchTapFallbackStub = dataModule(
+        fs.readFileSync(new URL('../../../utils/touchTapFallback.js', import.meta.url), 'utf8'),
+    )
     compiled = compiled
         .replace("from 'vue'", `from '${vueStub}'`)
         .replace("from '../../../stores/codeComments'", `from '${codeCommentsStub}'`)
@@ -65,6 +69,7 @@ async function loadComponent() {
         .replace("from '../../../composables/useToast'", `from '${toastStub}'`)
         .replace("from '../../../stores/textToSpeech'", `from '${speechStoreStub}'`)
         .replace("from '../../../utils/selectionRead'", `from '${selectionReadStub}'`)
+        .replace("from '../../../utils/touchTapFallback'", `from '${touchTapFallbackStub}'`)
 
     return (await import(dataModule(compiled))).default
 }

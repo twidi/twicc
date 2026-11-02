@@ -584,7 +584,6 @@ defineExpose({ isExpanded: expanded })
                 variant="neutral"
                 appearance="filled"
                 size="small"
-                :title="READ_TITLES[readStatus]"
                 :aria-label="READ_TITLES[readStatus]"
                 @mousedown.prevent
                 @pointerdown="tapFallback.down('read', $event)"
