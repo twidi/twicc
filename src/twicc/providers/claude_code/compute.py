@@ -1859,6 +1859,7 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             'marble-origami-commit', 'marble-origami-snapshot',
             'marble-origami-reset', 'cost-state',
             'api-request', 'api-request-shape', 'api-request-blob',
+            'tools-used',
         ):
             return ItemKind.SYSTEM
 
