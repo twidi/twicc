@@ -2780,7 +2780,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             return event('interrupted', native=False)
         if kind == 'system' and parsed.get('subtype') == 'turn_duration':
             return event('end', native=False)
-        if text and text.startswith('<local-command-stdout>'):
+        if (
+            (kind == 'user' or (kind == 'system' and parsed.get('subtype') == 'local_command'))
+            and text and text.startswith('<local-command-stdout>')
+        ):
             return event('command_ack', native=False)
         if kind == 'user' and is_command_message(orjson.dumps(parsed).decode()):
             return event('command', native=False)

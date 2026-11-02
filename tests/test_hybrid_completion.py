@@ -379,3 +379,67 @@ def test_first_paste_does_not_replace_a_newer_confirmed_state(monkeypatch):
         assert agent.completion_controller.snapshot().outcome == "normal"
         agent._cancel_completion_timer()
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("earlier_final", [False, True])
+def test_assistant_command_output_prefix_keeps_its_native_final(earlier_final):
+    from twicc.providers.claude_code.compute import get_compute
+
+    async def scenario():
+        manager, agent = ClaudeCodeAgentManager(), make_agent()
+        manager._agents[agent.session_id] = agent
+        records = [{"type": "user", "uuid": "prompt", "message": {
+            "role": "user", "content": "Explain the command output tags."}}]
+        if earlier_final:
+            records.extend([
+                {"type": "assistant", "uuid": "intermediate", "message": {
+                    "role": "assistant", "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": "An earlier answer."}]}},
+                {"type": "system", "subtype": "turn_duration"},
+            ])
+        records.extend([
+            {"type": "assistant", "uuid": "conclusion", "message": {
+                "role": "assistant", "stop_reason": "end_turn", "content": [{
+                    "type": "text", "text": "<local-command-stdout>Example output</local-command-stdout>"}]}},
+            {"type": "system", "subtype": "turn_duration"},
+        ])
+        for line, record in enumerate(records, 1):
+            events = get_compute().extract_completion_observations(record, line)
+            await manager.handle_hybrid_jsonl_signals(agent.session_id, signals(*events))
+        ticket = agent.completion_controller.candidate()
+        assert ticket is not None
+        closed = agent.completion_controller.claim_due(ticket, ticket.deadline)
+        assert closed is not None
+        assert closed.outcome == "normal"
+        assert closed.final_refs[-1:] == (NativeMessageRef("claude_uuid", "conclusion"),)
+        if earlier_final:
+            assert closed.final_refs == (NativeMessageRef("claude_uuid", "intermediate"),
+                                         NativeMessageRef("claude_uuid", "conclusion"))
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("during_root_turn", [False, True])
+def test_native_user_command_ack_keeps_its_command_semantics(during_root_turn):
+    from twicc.providers.claude_code.compute import get_compute
+
+    async def scenario():
+        manager, agent = ClaudeCodeAgentManager(), make_agent()
+        manager._agents[agent.session_id] = agent
+        if during_root_turn:
+            await manager.handle_hybrid_jsonl_signals(agent.session_id, signals(
+                observation("user_message", "prompt")))
+        records = [
+            {"type": "user", "uuid": "command", "message": {
+                "role": "user", "content": "<command-name>/rename</command-name>"}},
+            {"type": "user", "uuid": "ack", "message": {
+                "role": "user", "content": "<local-command-stdout>Session renamed to: Example</local-command-stdout>"}},
+        ]
+        for line, record in enumerate(records, 1):
+            events = get_compute().extract_completion_observations(record, line)
+            await manager.handle_hybrid_jsonl_signals(agent.session_id, signals(*events))
+        expected = AgentState.ASSISTANT_TURN if during_root_turn else AgentState.USER_TURN
+        assert agent.state == expected
+        assert agent.completion_controller.snapshot().final_refs == ()
+        assert agent.completion_controller.candidate() is None
+    asyncio.run(scenario())
