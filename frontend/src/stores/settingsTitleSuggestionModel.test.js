@@ -15,6 +15,7 @@ test('uses provider routing when the setting is missing or invalid', () => {
     assert.equal(resolve?.('unknown'), 'provider')
     assert.equal(resolve?.('haiku'), 'haiku')
     assert.equal(resolve?.('luna'), 'luna')
+    assert.equal(resolve?.('qwen'), 'qwen')
 })
 
 test('keeps the stored model when its provider is enabled', () => {
@@ -65,7 +66,7 @@ test('maps each forced model to its provider', () => {
 test('labels the forced title models like the settings options', () => {
     assert.deepEqual(
         { ...constants.TITLE_SUGGESTION_MODEL_LABELS },
-        { haiku: 'Claude Haiku 5.5', luna: 'GPT-6 Luna' },
+        { haiku: 'Claude Haiku 5.5', luna: 'GPT-6 Luna', qwen: 'Qwen3.8 27B (OpenRouter)' },
     )
 })
 

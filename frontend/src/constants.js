@@ -187,6 +187,8 @@ export const TITLE_SUGGESTION_MODEL = Object.freeze({
     PROVIDER: 'provider',
     HAIKU: 'haiku',
     LUNA: 'luna',
+    // Qwen3.8 27B on OpenRouter: no provider, it needs the OpenRouter key.
+    QWEN: 'qwen',
 })
 
 const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MODEL))
@@ -237,11 +239,13 @@ export function resolveEffectiveTitleSuggestionModel(value, enabledProviders) {
 
 /**
  * Display names of the forced title models, as the Settings > Titles options
- * and the rename dialog show them.
+ * and the rename dialog show them. The speech adaptation (utils/ttsConfig.js)
+ * names its engines with them too.
  */
 export const TITLE_SUGGESTION_MODEL_LABELS = Object.freeze({
     [TITLE_SUGGESTION_MODEL.HAIKU]: 'Claude Haiku 5.5',
     [TITLE_SUGGESTION_MODEL.LUNA]: 'GPT-6 Luna',
+    [TITLE_SUGGESTION_MODEL.QWEN]: 'Qwen3.8 27B (OpenRouter)',
 })
 
 /**

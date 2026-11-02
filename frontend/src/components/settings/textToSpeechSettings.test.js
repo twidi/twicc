@@ -183,16 +183,28 @@ test('the text adaptation choice sits after the introduction, before the test te
     )
 })
 
-test('the adaptation control shows what really runs, from the enabled providers of the settings', () => {
+test('the adaptation control shows what really runs, from the enabled providers and the OpenRouter key', () => {
     assert.match(settingsSource, /const enabledProviders = computed\(\(\) => new Set\(settingsStore\.enabledProviders\)\)/)
-    assert.match(settingsSource, /const adaptChoice = computed\(\(\) => effectiveAdapt\(store\.adapt, enabledProviders\.value\)\)/)
-    assert.match(settingsSource, /const adaptChoices = computed\(\(\) => adaptOptions\(enabledProviders\.value\)\)/)
-    assert.match(settingsSource, /const noAdaptProvider = computed\(\(\) => !Object\.values\(ADAPT_PROVIDERS\)\.some\(provider => enabledProviders\.value\.has\(provider\)\)\)/)
+    assert.match(settingsSource, /const adaptChoice = computed\(\(\) => effectiveAdapt\(store\.adapt, enabledProviders\.value, store\.keyPresent\)\)/)
+    assert.match(settingsSource, /const adaptChoices = computed\(\(\) => adaptOptions\(enabledProviders\.value, store\.keyPresent\)\)/)
+    assert.match(settingsSource, /const adaptHintKind = computed\(\(\) => adaptHint\(adaptChoice\.value, enabledProviders\.value\)\)/)
+    assert.doesNotMatch(settingsSource, /noAdaptProvider/)
 })
 
-test('the adaptation hint, or the no-provider hint instead', () => {
-    assert.match(flatSource, /<span v-if="noAdaptProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span>/)
-    assert.match(flatSource, /<span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span>/)
+test('the adaptation hint, the OpenRouter note for Qwen, or the no-provider hint instead', () => {
+    assert.match(
+        flatSource,
+        /<span v-if="adaptHintKind === 'no_provider'" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <template v-else> <span class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHintKind === 'openrouter'" class="setting-group-hint">The text goes to OpenRouter and Cerebras, paid on your OpenRouter account\.<\/span> <\/template>/,
+    )
+})
+
+test('the four adaptation segments wrap onto a second line in a narrow adaptation group only', () => {
+    // The format controls of the config cards keep their one row of segments.
+    assert.match(settingsSource, /\.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: nowrap;\s*\}/)
+    assert.match(
+        settingsSource,
+        /@container \(max-width: 40rem\) \{\s*\.tts-adapt-group \.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: wrap;\s*\}\s*\}/,
+    )
 })
 
 test('the last test run shows the adaptation facts and the folded adapted text', () => {

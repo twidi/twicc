@@ -340,12 +340,16 @@ export function ttsLastTestFacts(lastTest, { priced = true } = {}) {
 // ── Text adaptation ──────────────────────────────────────────────
 //
 // The global `adapt` setting of tts.json: null (no stored choice: on, with the first enabled
-// provider), 'haiku', 'luna' or 'off'.
+// provider), 'haiku', 'luna', 'qwen' or 'off'. Qwen runs on OpenRouter, not on a provider: it
+// needs the OpenRouter key, and it is never the default.
 
-/** The provider each adaptation engine runs on, in the default order: Claude, then Codex. */
+/** The provider each agent engine runs on, in the default order: Claude, then Codex. */
 export const ADAPT_PROVIDERS = Object.freeze({ haiku: PROVIDER.CLAUDE_CODE, luna: PROVIDER.CODEX })
 
-const ADAPT_CHOICES = new Set(['haiku', 'luna', 'off'])
+/** The engine that runs on OpenRouter with the OpenRouter key (Qwen3.8 27B). */
+export const QWEN_ADAPT = 'qwen'
+
+const ADAPT_CHOICES = new Set(['haiku', 'luna', QWEN_ADAPT, 'off'])
 
 // The provider labels of the disabled-option titles (providers/*/helpers.js `static label`).
 export const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
@@ -357,6 +361,7 @@ const ADAPT_REASON_TEXTS = {
     failed: 'the model failed',
     stalled: 'the model did not answer in time',
     empty: 'the model gave no text',
+    refused: 'OpenRouter refused the call (check the key and the credits)',
 }
 
 /** A stored `adapt` value, or null (no stored choice) for anything else, as the backend reads it. */
@@ -368,22 +373,33 @@ function enabledSet(enabledProviders) {
     return enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
 }
 
+function anyAdaptProvider(enabled) {
+    return Object.values(ADAPT_PROVIDERS).some(provider => enabled.has(provider))
+}
+
 /**
- * The adaptation that really runs, given which providers are enabled: 'haiku', 'luna' or 'off'.
- * Display only: the stored choice is never rewritten, so enabling its provider again restores it.
- * 'off' stays off. No stored choice takes the first enabled engine; a forced one whose provider is
- * disabled takes the other enabled one. No enabled provider gives 'off'.
+ * The adaptation that really runs, given which providers are enabled and whether the OpenRouter
+ * key is set: 'haiku', 'luna', 'qwen' or 'off'. Display only: the stored choice is never
+ * rewritten, so enabling its provider again (or setting the key) restores it.
+ * 'off' stays off. 'qwen' runs when the key is set, with or without a provider; without the key
+ * it is no stored choice. No stored choice takes the first enabled agent; a forced agent whose
+ * provider is disabled takes the other enabled one. No enabled provider gives 'off'.
  */
-export function effectiveAdapt(stored, enabledProviders) {
+export function effectiveAdapt(stored, enabledProviders, keyPresent = false) {
     const choice = normalizeAdapt(stored)
     if (choice === 'off') return 'off'
+    if (choice === QWEN_ADAPT && keyPresent) return QWEN_ADAPT
     const enabled = enabledSet(enabledProviders)
     if (choice && enabled.has(ADAPT_PROVIDERS[choice])) return choice
     return Object.keys(ADAPT_PROVIDERS).find(engine => enabled.has(ADAPT_PROVIDERS[engine])) ?? 'off'
 }
 
-/** The adaptation switch options: an engine whose provider is disabled stays shown, disabled. */
-export function adaptOptions(enabledProviders) {
+/**
+ * The adaptation switch options: the agents, Qwen, then Off. An engine that cannot run (its
+ * provider disabled, or no OpenRouter key for Qwen) stays shown, disabled, with the reason as
+ * its title.
+ */
+export function adaptOptions(enabledProviders, keyPresent = false) {
     const enabled = enabledSet(enabledProviders)
     const engines = Object.entries(ADAPT_PROVIDERS).map(([value, provider]) => {
         const label = TITLE_SUGGESTION_MODEL_LABELS[value]
@@ -391,21 +407,40 @@ export function adaptOptions(enabledProviders) {
             ? { value, label }
             : { value, label, disabled: true, title: `${label}: ${ADAPT_PROVIDER_LABELS[provider]} is disabled` }
     })
-    return [...engines, { value: 'off', label: 'Off' }]
+    const qwenLabel = TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]
+    const qwen = keyPresent
+        ? { value: QWEN_ADAPT, label: qwenLabel }
+        : { value: QWEN_ADAPT, label: qwenLabel, disabled: true, title: `${qwenLabel}: the OpenRouter key is not set` }
+    return [...engines, qwen, { value: 'off', label: 'Off' }]
+}
+
+/**
+ * The hint under the adaptation switch, for the effective `choice` (`effectiveAdapt`):
+ * 'openrouter' for Qwen (where the text goes and who pays), 'no_provider' for an 'off' with no
+ * Claude or Codex provider enabled, else null.
+ */
+export function adaptHint(choice, enabledProviders) {
+    if (choice === QWEN_ADAPT) return 'openrouter'
+    if (choice === 'off' && !anyAdaptProvider(enabledSet(enabledProviders))) return 'no_provider'
+    return null
 }
 
 /**
  * The adaptation of the last test run: "Adapted by Claude Haiku 5.5 · first text 2.1 s", or
- * "Not adapted: the option is off". '' for a record written before the text adaptation.
+ * "Not adapted: the option is off". After a Qwen failure, why Qwen failed comes last:
+ * "· Qwen3.8 27B (OpenRouter) failed: the model did not answer in time". '' for a record
+ * written before the text adaptation.
  */
 export function ttsAdaptationFacts(lastTest) {
+    const fallback = ADAPT_REASON_TEXTS[lastTest?.fallback_reason]
+    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]} failed: ${fallback}` : text)
     const engine = lastTest?.adapted_by
     if (engine && TITLE_SUGGESTION_MODEL_LABELS[engine]) {
         const parts = [`Adapted by ${TITLE_SUGGESTION_MODEL_LABELS[engine]}`]
         // No wait for an adaptation served from the cache.
         if (lastTest.adapt_first_ms != null) parts.push(`first text ${shortNumber(lastTest.adapt_first_ms / 1000)} s`)
-        return parts.join(' · ')
+        return withFallback(parts.join(' · '))
     }
     const reason = ADAPT_REASON_TEXTS[lastTest?.adapt_reason]
-    return reason ? `Not adapted: ${reason}` : ''
+    return reason ? withFallback(`Not adapted: ${reason}`) : ''
 }

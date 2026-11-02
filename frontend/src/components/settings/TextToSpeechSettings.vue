@@ -14,14 +14,15 @@
  * change drops the validation (store `updateConfig`). A question or an error opens the card.
  *
  * Above the configs, the global "Adapt the text for speech" choice (tts.json `adapt`) shows the
- * adaptation that really runs, given the enabled providers, as the Titles setting does.
+ * adaptation that really runs, given the enabled providers and the OpenRouter key, as the Titles
+ * setting does.
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import {
-    ADAPT_PROVIDERS,
     DEFAULT_TEST_TEXT,
+    adaptHint,
     adaptOptions,
     effectiveAdapt,
     MAX_PCM_CHANNELS,
@@ -58,12 +59,13 @@ import SegmentedControl from '../ui/SegmentedControl.vue'
 const store = useTextToSpeechStore()
 const settingsStore = useSettingsStore()
 
-// The text adaptation shows the choice that really runs: an engine whose provider is disabled
-// shows disabled, with the effective one selected. The stored choice is never rewritten here.
+// The text adaptation shows the choice that really runs: an engine that cannot run (its provider
+// disabled, or Qwen without the OpenRouter key) shows disabled, with the effective one selected.
+// The stored choice is never rewritten here.
 const enabledProviders = computed(() => new Set(settingsStore.enabledProviders))
-const adaptChoice = computed(() => effectiveAdapt(store.adapt, enabledProviders.value))
-const adaptChoices = computed(() => adaptOptions(enabledProviders.value))
-const noAdaptProvider = computed(() => !Object.values(ADAPT_PROVIDERS).some(provider => enabledProviders.value.has(provider)))
+const adaptChoice = computed(() => effectiveAdapt(store.adapt, enabledProviders.value, store.keyPresent))
+const adaptChoices = computed(() => adaptOptions(enabledProviders.value, store.keyPresent))
+const adaptHintKind = computed(() => adaptHint(adaptChoice.value, enabledProviders.value))
 
 // The test sentence as typed; saved in tts.json on change ('' there means the default one).
 const testText = ref(store.testText || DEFAULT_TEST_TEXT)
@@ -415,8 +417,11 @@ function answerNo(id) {
                     @update:model-value="store.setAdapt($event)"
                 />
             </div>
-            <span v-if="noAdaptProvider" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
-            <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
+            <span v-if="adaptHintKind === 'no_provider'" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
+            <template v-else>
+                <span class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
+                <span v-if="adaptHintKind === 'openrouter'" class="setting-group-hint">The text goes to OpenRouter and Cerebras, paid on your OpenRouter account.</span>
+            </template>
         </div>
 
         <div class="setting-group">
@@ -859,7 +864,7 @@ function answerNo(id) {
     container-type: inline-size;
 }
 
-/* Its own container: on a phone the adaptation segments tighten as a card's do. */
+/* Its own container: on a phone the adaptation segments tighten as a card's do, then wrap. */
 .tts-adapt-group {
     container-type: inline-size;
 }
@@ -954,6 +959,14 @@ function answerNo(id) {
 @container (max-width: 26rem) {
     .tts-format-row > .segmented-control {
         --wa-form-control-padding-inline: 0.5em;
+    }
+}
+
+/* The four full labels of the adaptation do not fit one row on a narrow screen: there, and only
+   there, its segments wrap onto a second row (the format controls of a card keep their one row). */
+@container (max-width: 40rem) {
+    .tts-adapt-group .tts-format-row :deep(wa-radio-group::part(form-control-input)) {
+        flex-wrap: wrap;
     }
 }
 
