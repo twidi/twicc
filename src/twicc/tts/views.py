@@ -362,7 +362,7 @@ async def _open_speech(
     choice = await sync_to_async(_stored_adapt_choice)()
     cleaned = None
     if choice != "off" and config_id is None:
-        cleaned = direct_text(speech_request.text, origin)
+        cleaned = await sync_to_async(direct_text)(speech_request.text, origin)
         if cleaned is not None and not has_speech(cleaned):
             return _error(NOTHING_TO_SAY, 400)
     direct = cleaned is not None

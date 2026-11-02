@@ -74,7 +74,7 @@ For example, these texts are **not simple**, and go through the model:
   `=`, `|` or braces, `snake_case` names, `#123`), and HTML;
 - addresses, paths, hashes and long numbers;
 - long lists: more than five items, long items or sub-lists;
-- a selection of several lines in the chat, and any selection in the file
+- a selection with a line break or a tab in the chat, and any selection in the file
   viewer.
 
 When the rules do not recognise a text with certainty, the model decides.

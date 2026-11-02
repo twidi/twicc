@@ -19,7 +19,7 @@ SIMPLE = [
     ("in 2024. then", "in 2024. then"),
     ("well - maybe", "well - maybe"),
     ("and/or", "and/or"),
-    ("2 * 3 * 4 and 5 - 1", "2 * 3 * 4 and 5 - 1"),
+    ("2 x 3 x 4 and 5 - 1", "2 x 3 x 4 and 5 - 1"),
     ("*italic* start", "italic start"),
     ("\\*not italic\\*", "*not italic*"),
     ("first\n\n---\n\nsecond", "first\n\nsecond"),
@@ -141,7 +141,7 @@ def test_never_raises(text):
     assert result is None or isinstance(result, str)
 
 
-@pytest.mark.parametrize("text", ["[](x)", "1.", "**", "- "])
+@pytest.mark.parametrize("text", ["[](x)", "1.", "- "])
 def test_cleaned_to_nothing(text):
     result = direct_text(text)
     assert result is not None
@@ -165,3 +165,21 @@ def test_many_long_lines_of_unclosed_marks_stay_fast(mark):
     started = time.perf_counter()
     direct_text(text)
     assert time.perf_counter() - started < 0.2
+
+
+@pytest.mark.parametrize("text", ["**bold unclosed", "5 * 3 * 2", "a ~~b", "_dangling", "**"])
+def test_stray_emphasis_marks_are_complex(text):
+    assert direct_text(text) is None
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("*x*", "x"), ("**x**", "x"), ("_x_", "x"), ("~~x~~", "x"), ("* item", "item")],
+)
+def test_closed_emphasis_and_list_marker_stay_simple(text, expected):
+    assert direct_text(text) == expected
+
+
+@pytest.mark.parametrize("text", ["a\rb", "a b", "a\x0bb", "a\tb"])
+def test_rendered_origin_any_line_break_is_multi_line(text):
+    assert direct_text(text, "rendered") is None

@@ -68,7 +68,7 @@ _ITALIC_UNDERSCORE = re.compile(r"(?<![_\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![_\w]
 _STRIKETHROUGH = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~")
 # Symbols that survive the cleanup only in code, commands, paths or markup: read aloud they are
 # noise, so the model decides. ``%``, ``;``, ``:``, parentheses, ``+`` and ``-`` are prose.
-_LEFTOVER_SYMBOL = re.compile(r"[${}\\|=<>^@]|&&|[^\W_]_[^\W_]|#[^\W_]")
+_LEFTOVER_SYMBOL = re.compile(r"[${}\\|=<>^@*_]|~~|&&|#[^\W_]")
 _BLANK_RUN = re.compile(r"\n{3,}")
 
 
@@ -214,7 +214,7 @@ def direct_text(text: str, origin: str | None = None) -> str | None:
     try:
         if origin == "file":
             return None
-        if origin == "rendered" and ("\n" in text or "\t" in text):
+        if origin == "rendered" and (len(text.splitlines()) > 1 or "\t" in text):
             return None
         return _clean(text)
     except Exception:  # noqa: BLE001 - the contract is: never raise, doubt means complex
