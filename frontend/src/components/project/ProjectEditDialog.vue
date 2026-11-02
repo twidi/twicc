@@ -1,4 +1,5 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
 // ProjectEditDialog.vue - Dialog for editing/creating projects
 import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../../stores/data'
@@ -21,6 +22,8 @@ import AppTooltip from '../ui/AppTooltip.vue'
 import ProjectBadge from './ProjectBadge.vue'
 import ProjectDirectoryPath from './ProjectDirectoryPath.vue'
 import ProjectMark from './ProjectMark.vue'
+
+const { t } = useI18n()
 
 const props = defineProps({
     project: {
@@ -202,7 +205,7 @@ function removeWorkspace(visibleIndex) {
 function scanMatchingWorkspaces() {
     const dir = localDirectory.value.trim()
     if (!dir) {
-        workspaceScanFeedback.value = 'Enter a directory first'
+        workspaceScanFeedback.value = t('enter_a_directory_first')
         clearWorkspaceScanFeedbackLater()
         return
     }
@@ -217,7 +220,7 @@ function scanMatchingWorkspaces() {
     }
     workspaceScanFeedback.value = added > 0
         ? `${added} workspace${added > 1 ? 's' : ''} added`
-        : 'No matching workspaces found'
+        : t('no_matching_workspaces_found')
     clearWorkspaceScanFeedbackLater()
 }
 
@@ -482,12 +485,12 @@ function onIconFileChange(event) {
     if (event.target) event.target.value = '' // allow re-picking the same file
     if (!file) return
     if (file.size > 5 * 1024 * 1024) {
-        iconError.value = 'Image too large (max 5 MB).'
+        iconError.value = t('image_too_large_max_5_mb')
         return
     }
     const reader = new FileReader()
     reader.onload = () => { pendingIcon.value = { type: 'set', image: reader.result }; iconError.value = '' }
-    reader.onerror = () => { iconError.value = 'Could not read the file.' }
+    reader.onerror = () => { iconError.value = t('could_not_read_the_file') }
     reader.readAsDataURL(file)
 }
 
@@ -512,7 +515,7 @@ async function commitPendingIcon() {
             body: JSON.stringify(body),
         })
     } catch (error) {
-        iconError.value = 'Network error while saving the icon.'
+        iconError.value = t('network_error_while_saving_the_icon')
         return false
     }
     if (!response.ok) {
@@ -544,7 +547,7 @@ async function scanIcons() {
             body: JSON.stringify({ action: 'scan' }),
         })
     } catch (error) {
-        scanError.value = 'Network error. Please try again.'
+        scanError.value = t('network_error_please_try_again')
         scanBusy.value = false
         return
     }
@@ -613,7 +616,7 @@ async function submitCreate({ createDirectory = false } = {}) {
             body: JSON.stringify(body),
         })
     } catch (error) {
-        errorMessage.value = 'Network error. Please try again.'
+        errorMessage.value = t('network_error_please_try_again')
         directoryNotFound.value = false
         isSaving.value = false
         return
@@ -681,7 +684,7 @@ async function handleSave() {
 
     // Validate name length
     if (trimmedName.length > 25) {
-        errorMessage.value = 'Name must be 25 characters or less'
+        errorMessage.value = t('name_must_be_25_characters_or_less')
         return
     }
 
@@ -689,14 +692,14 @@ async function handleSave() {
         // --- Create mode ---
         const trimmedDirectory = localDirectory.value.trim()
         if (!trimmedDirectory) {
-            errorMessage.value = 'Directory path is required'
+            errorMessage.value = t('directory_path_is_required')
             return
         }
 
         // Check name uniqueness client-side (same logic as edit mode)
         const isDuplicate = store.getProjects.some(p => p.name && p.name === trimmedName)
         if (trimmedName && isDuplicate) {
-            errorMessage.value = 'A project with this name already exists'
+            errorMessage.value = t('a_project_with_this_name_already_exists')
             return
         }
 
@@ -709,7 +712,7 @@ async function handleSave() {
         const otherProjects = store.getProjects.filter(p => p.id !== props.project.id)
         const isDuplicate = otherProjects.some(p => p.name && p.name === trimmedName)
         if (trimmedName && isDuplicate) {
-            errorMessage.value = 'A project with this name already exists'
+            errorMessage.value = t('a_project_with_this_name_already_exists')
             return
         }
 
@@ -757,7 +760,7 @@ async function handleSave() {
                 body: JSON.stringify(body),
             })
         } catch (error) {
-            errorMessage.value = 'Network error. Please try again.'
+            errorMessage.value = t('network_error_please_try_again')
             isSaving.value = false
             return
         }
@@ -806,13 +809,13 @@ defineExpose({
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" :label="isCreateMode ? 'New Project' : 'Edit Project'" class="project-edit-dialog" @wa-show="handleDialogShow" @wa-after-show="handleDialogAfterShow">
+    <wa-dialog ref="dialogRef" :label="isCreateMode ? $t('new_project') : $t('edit_project')" class="project-edit-dialog" @wa-show="handleDialogShow" @wa-after-show="handleDialogAfterShow">
         <!-- Custom header: title + a live badge preview (edit mode), then the
              project path small underneath. The badge reflects the unsaved
              name/color being edited. -->
         <div slot="label" class="dialog-title">
             <div class="dialog-title-main">
-                <span class="dialog-title-text">{{ isCreateMode ? 'New Project' : 'Edit Project' }}</span>
+                <span class="dialog-title-text">{{ isCreateMode ? $t('new_project') : $t('edit_project') }}</span>
                 <ProjectBadge
                     v-if="!isCreateMode && project"
                     :project-id="project.id"
@@ -827,7 +830,7 @@ defineExpose({
             <div v-if="directoryMissing" class="dialog-title-missing">
                 <span class="dialog-title-missing-text">
                     {{ recheckOutcome === 'confirmed' ? 'Still not found on disk' : 'Directory not found on disk' }}
-                    <template v-if="recheckOutcome === 'error'"> — re-check failed</template>
+                    <template v-if="recheckOutcome === 'error'"> {{ $t('re_check_failed') }}</template>
                 </span>
                 <wa-button
                     size="small"
@@ -838,7 +841,7 @@ defineExpose({
                     @click="recheckDirectory"
                 >
                     <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
-                    Re-check
+                    {{ $t('re_check') }}
                 </wa-button>
             </div>
         </div>
@@ -852,14 +855,14 @@ defineExpose({
                 :active="mainTab"
                 @wa-tab-show="mainTab = $event.detail?.name ?? mainTab"
             >
-                <wa-tab slot="nav" panel="general">Project</wa-tab>
-                <wa-tab v-if="!isCreateMode" slot="nav" panel="agent">Agent settings</wa-tab>
+                <wa-tab slot="nav" panel="general">{{ $t('project') }}</wa-tab>
+                <wa-tab v-if="!isCreateMode" slot="nav" panel="agent">{{ $t('agent_settings') }}</wa-tab>
 
                 <wa-tab-panel name="general">
                     <div class="tab-body">
                         <!-- Create mode: directory input -->
                         <div v-if="isCreateMode" class="form-group">
-                            <label class="form-label">Directory</label>
+                            <label class="form-label">{{ $t('directory') }}</label>
                             <div class="directory-input-row">
                                 <wa-input
                                     ref="directoryInputRef"
@@ -870,7 +873,7 @@ defineExpose({
                                 ></wa-input>
                                 <DirectoryPickerPopup v-model="localDirectory" />
                             </div>
-                            <div class="form-hint">Absolute path to the project directory</div>
+                            <div class="form-hint">{{ $t('absolute_path_to_the_project_directory') }}</div>
                         </div>
 
                         <!-- (Edit mode shows the path under the dialog title, not here.) -->
@@ -878,25 +881,24 @@ defineExpose({
                         <!-- Editable fields: name + color share one row -->
                         <div class="name-color-row">
                             <div class="form-group name-group">
-                                <label class="form-label">Name</label>
+                                <label class="form-label">{{ $t('name') }}</label>
                                 <wa-input
                                     ref="nameInputRef"
                                     :value.prop="localName"
                                     @input="onNameInput"
-                                    placeholder="Project name"
+                                    :placeholder="$t('project_name')"
                                     maxlength="25"
                                 ></wa-input>
                                 <div class="form-hint">
-                                    Optional display name (max 25 characters)
-                                    — Named projects will always be displayed above unnamed ones.
+                                    {{ $t('optional_display_name_max_25_characters_named_projects_will') }}
                                     <template v-if="!isCreateMode && localName.trim()">
-                                        — <a href="#" class="clear-name-link" @click.prevent="localName = ''">Remove name</a>
+                                        — <a href="#" class="clear-name-link" @click.prevent="localName = ''">{{ $t('remove_name') }}</a>
                                     </template>
                                 </div>
                             </div>
 
                             <div class="form-group color-group">
-                                <label class="form-label">Color</label>
+                                <label class="form-label">{{ $t('color') }}</label>
                                 <wa-color-picker
                                     ref="colorPickerRef"
                                     :value.prop="localColor"
@@ -907,7 +909,7 @@ defineExpose({
 
                         <!-- Project icon (edit mode) — optional; falls back to the color dot -->
                         <div v-if="!isCreateMode" class="form-group icon-group">
-                            <label class="form-label">Icon <span class="form-label-optional">(optional)</span></label>
+                            <label class="form-label">{{ $t('icon') }} <span class="form-label-optional">{{ $t('optional') }}</span></label>
                             <div class="icon-editor-row">
                                 <ProjectMark
                                     class="icon-editor-preview"
@@ -922,32 +924,28 @@ defineExpose({
                                     @change="onIconFileChange"
                                 />
                                 <wa-button size="small" type="button" @click="pickIconFile">
-                                    <wa-icon slot="start" name="image"></wa-icon> Set icon…
+                                    <wa-icon slot="start" name="image"></wa-icon> {{ $t('set_icon') }}
                                 </wa-button>
                             </div>
                             <div class="icon-editor-links" :class="{ 'is-busy': scanBusy }">
-                                <a v-if="repoAnchorAvailable" href="#" class="icon-link" @click.prevent="scanIcons">Scan repository…</a>
-                                <a v-if="iconIsOverridden" href="#" class="icon-link" @click.prevent="stageIcon('inherit')">Follow inherited icon</a>
-                                <a v-if="!iconShowsColor" href="#" class="icon-link" @click.prevent="stageIcon('none')">Use color instead</a>
+                                <a v-if="repoAnchorAvailable" href="#" class="icon-link" @click.prevent="scanIcons">{{ $t('scan_repository') }}</a>
+                                <a v-if="iconIsOverridden" href="#" class="icon-link" @click.prevent="stageIcon('inherit')">{{ $t('follow_inherited_icon') }}</a>
+                                <a v-if="!iconShowsColor" href="#" class="icon-link" @click.prevent="stageIcon('none')">{{ $t('use_color_instead') }}</a>
                                 <wa-icon
                                     :id="iconHelpId"
                                     name="circle-question"
                                     class="icon-help-trigger"
                                     tabindex="0"
                                     role="button"
-                                    label="About project icons"
+                                    :label="$t('about_project_icons')"
                                 ></wa-icon>
                                 <AppTooltip :for="iconHelpId" trigger="click" force>
-                                    A favicon or logo found in the git repository is used automatically. Set your own
-                                    icon for this project — it applies to its sub-projects too, unless they set their
-                                    own. “Scan repository…” lists every icon found so you can pick one; “Follow
-                                    inherited icon” drops this project's own icon and inherits again; “Use color
-                                    instead” shows the color dot.
+                                    {{ $t('a_favicon_or_logo_found_in_the_git_repository') }}
                                 </AppTooltip>
                             </div>
                             <div v-if="scanDone" class="icon-scan-results">
                                 <template v-if="scanCandidates.length">
-                                    <div class="icon-scan-caption">Pick one for this project:</div>
+                                    <div class="icon-scan-caption">{{ $t('pick_one_for_this_project') }}</div>
                                     <div class="icon-scan-list">
                                         <button
                                             v-for="c in scanCandidates"
@@ -961,7 +959,7 @@ defineExpose({
                                         </button>
                                     </div>
                                 </template>
-                                <div v-else class="icon-scan-empty">No icons found in this repository.</div>
+                                <div v-else class="icon-scan-empty">{{ $t('no_icons_found_in_this_repository') }}</div>
                             </div>
                             <wa-callout v-if="scanError" variant="danger" size="small" class="icon-error">{{ scanError }}</wa-callout>
                             <wa-callout v-if="iconError" variant="danger" size="small" class="icon-error">{{ iconError }}</wa-callout>
@@ -972,7 +970,7 @@ defineExpose({
                         <!-- Worktree directory (edit mode, git main repos only —
                              hidden for worktree projects, which inherit it) -->
                         <div v-if="showWorktreeDirectory" class="form-group">
-                            <label class="form-label">Worktree directory <HelpIconButton help-key="worktrees" label="What's a worktree?" /></label>
+                            <label class="form-label">{{ $t('worktree_directory') }} <HelpIconButton help-key="worktrees" :label="$t('what_s_a_worktree')" /></label>
                             <div class="directory-input-row">
                                 <wa-input
                                     :value.prop="localWorktreeDirectory"
@@ -983,8 +981,7 @@ defineExpose({
                                 <DirectoryPickerPopup v-model="localWorktreeDirectory" :fallback-path="project.git_root || ''" />
                             </div>
                             <div class="form-hint">
-                                Absolute base directory where new git worktrees of this project are created.
-                                Leave empty to use the global default.
+                                {{ $t('absolute_base_directory_where_new_git_worktrees_of_this') }}
                             </div>
                             <wa-button
                                 v-if="composedGlobalWorktreeDir"
@@ -995,7 +992,7 @@ defineExpose({
                                 @click="useGlobalWorktreeDir"
                             >
                                 <wa-icon slot="start" name="wand-magic-sparkles"></wa-icon>
-                                Use {{ composedGlobalWorktreeDir }}
+                                {{ $t('use') }} {{ composedGlobalWorktreeDir }}
                             </wa-button>
                         </div>
 
@@ -1003,11 +1000,9 @@ defineExpose({
 
                         <!-- Trust (edit mode only) -->
                         <div v-if="!isCreateMode" class="form-group">
-                            <label class="form-label">Trust</label>
+                            <label class="form-label">{{ $t('trust') }}</label>
                             <p class="trust-intro">
-                                Is this a project you created or trust (your own code, a well-known
-                                open-source project, or your team's work)? Claude Code and Codex will be
-                                able to read, edit and run files here.
+                                {{ $t('is_this_a_project_you_created_or_trust_your') }}
                             </p>
                             <wa-select
                                 :value.prop="localTrustChoice"
@@ -1015,22 +1010,22 @@ defineExpose({
                                 size="small"
                                 class="trust-select"
                             >
-                                <wa-option value="inherit" label="Inherit">
-                                    Inherit
-                                    <small>No own decision — inherits the trust of a parent project.</small>
+                                <wa-option value="inherit" :label="$t('inherit')">
+                                    {{ $t('inherit') }}
+                                    <small>{{ $t('no_own_decision_inherits_the_trust_of_a_parent') }}</small>
                                 </wa-option>
-                                <wa-option value="trusted">Trusted</wa-option>
-                                <wa-option value="untrusted">Untrusted</wa-option>
+                                <wa-option value="trusted">{{ $t('trusted') }}</wa-option>
+                                <wa-option value="untrusted">{{ $t('untrusted') }}</wa-option>
                             </wa-select>
                             <div v-if="localTrustChoice === 'inherit'" class="form-hint">
                                 <template v-if="resolvedTrust?.state === true">
-                                    Inherited: <strong>trusted</strong><template v-if="resolvedSourceName"> (from {{ resolvedSourceName }})</template>
+                                    {{ $t('inherited') }} <strong>{{ $t('trusted_status') }}</strong><template v-if="resolvedSourceName"> {{ $t('from') }} {{ resolvedSourceName }})</template>
                                 </template>
                                 <template v-else-if="resolvedTrust?.state === false">
-                                    Inherited: <strong>untrusted</strong><template v-if="resolvedSourceName"> (from {{ resolvedSourceName }})</template>
+                                    {{ $t('inherited') }} <strong>{{ $t('untrusted_status') }}</strong><template v-if="resolvedSourceName"> {{ $t('from') }} {{ resolvedSourceName }})</template>
                                 </template>
                                 <template v-else>
-                                    Not resolved — you'll be asked when starting a session here.
+                                    {{ $t('not_resolved_you_ll_be_asked_when_starting_a') }}
                                 </template>
                             </div>
                             <wa-switch
@@ -1040,9 +1035,9 @@ defineExpose({
                                 @change="localTrustPropagation = $event.target.checked"
                                 size="small"
                             >
-                                Apply to sub-folders and worktrees
+                                {{ $t('apply_to_sub_folders_and_worktrees') }}
                                 <span class="trust-propagate-hint">
-                                    — descendants inherit this decision until you decide otherwise.
+                                    {{ $t('descendants_inherit_this_decision_until_you_decide_otherwise') }}
                                 </span>
                             </wa-switch>
                         </div>
@@ -1051,13 +1046,13 @@ defineExpose({
 
                         <!-- Default layout (edit mode) -->
                         <div v-if="!isCreateMode" class="form-group">
-                            <label class="form-label">Default layout for new sessions</label>
+                            <label class="form-label">{{ $t('default_layout_for_new_sessions') }}</label>
                             <wa-select
                                 :value.prop="localDefaultLayoutId"
                                 @change="localDefaultLayoutId = $event.target.value"
                                 size="small"
                             >
-                                <wa-option :value="LAYOUT_INHERIT">Inherit</wa-option>
+                                <wa-option :value="LAYOUT_INHERIT">{{ $t('inherit') }}</wa-option>
                                 <wa-option
                                     v-for="l in selectableLayouts"
                                     :key="l.id"
@@ -1066,8 +1061,7 @@ defineExpose({
                                 >{{ l.name }}</wa-option>
                             </wa-select>
                             <div class="form-hint">
-                                Layout new sessions in this project open with. Inherit = use the parent
-                                project's default (for a worktree), then the global default.
+                                {{ $t('layout_new_sessions_in_this_project_open_with_inherit') }}
                             </div>
                         </div>
 
@@ -1075,15 +1069,13 @@ defineExpose({
 
                         <!-- Browser pane URLs (edit mode) -->
                         <div v-if="!isCreateMode" class="form-group">
-                            <label class="form-label">Browser URLs</label>
+                            <label class="form-label">{{ $t('browser_urls') }}</label>
                             <BrowserUrlListEditor
                                 ref="browserUrlsEditorRef"
                                 :entries="props.project?.browser_urls || []"
                             />
                             <div class="form-hint">
-                                URLs saved for the session Browser tab; the selected one is the
-                                Home default. Empty list = inherit — the parent project's URLs
-                                (for a worktree), then a containing workspace's.
+                                {{ $t('urls_saved_for_the_session_browser_tab_the_selected') }}
                             </div>
                         </div>
 
@@ -1092,14 +1084,14 @@ defineExpose({
                         <!-- Workspaces -->
                         <div class="form-group">
                             <div class="form-label-row">
-                                <label class="form-label">Workspaces</label>
+                                <label class="form-label">{{ $t('workspaces') }}</label>
                                 <wa-switch
                                     v-if="hasArchivedWorkspaces"
                                     :checked="localShowArchivedWorkspaces"
                                     @change="localShowArchivedWorkspaces = $event.target.checked"
                                     size="small"
                                 >
-                                    Show archived
+                                    {{ $t('show_archived') }}
                                 </wa-switch>
                             </div>
 
@@ -1117,7 +1109,7 @@ defineExpose({
                                         type="button"
                                         class="action-btn action-btn-danger"
                                         @click="removeWorkspace(visibleIndex)"
-                                        title="Remove from workspace"
+                                        :title="$t('remove_from_workspace')"
                                     >
                                         <wa-icon name="xmark" />
                                     </button>
@@ -1125,11 +1117,11 @@ defineExpose({
                             </div>
 
                             <div v-else-if="selectedWorkspaceIds.length > 0" class="empty-workspaces-message">
-                                All workspaces for this project are archived (hidden).
+                                {{ $t('all_workspaces_for_this_project_are_archived_hidden') }}
                             </div>
 
                             <div v-else class="empty-workspaces-message">
-                                {{ isCreateMode ? 'No workspaces selected.' : 'Not in any workspace.' }}
+                                {{ isCreateMode ? $t('no_workspaces_selected') : $t('not_in_any_workspace') }}
                             </div>
 
                             <!-- Add to a workspace -->
@@ -1137,7 +1129,7 @@ defineExpose({
                                 v-if="availableWorkspaces.length > 0"
                                 value=""
                                 @change="addWorkspace"
-                                placeholder="Add to a workspace..."
+                                :placeholder="$t('add_to_a_workspace')"
                                 size="small"
                                 class="add-workspace-select"
                             >
@@ -1157,13 +1149,12 @@ defineExpose({
                                 <div class="scan-row">
                                     <wa-button type="button" variant="neutral" size="small" @click="scanMatchingWorkspaces">
                                         <wa-icon name="magnifying-glass-plus" slot="start"></wa-icon>
-                                        Add matching workspaces
+                                        {{ $t('add_matching_workspaces') }}
                                     </wa-button>
                                     <span v-if="workspaceScanFeedback" class="scan-feedback">{{ workspaceScanFeedback }}</span>
                                 </div>
                                 <p class="form-hint">
-                                    Workspaces whose auto-add pattern matches this directory will be added
-                                    automatically on creation, even if you remove them here.
+                                    {{ $t('workspaces_whose_auto_add_pattern_matches_this_directory_will') }}
                                 </p>
                             </template>
                         </div>
@@ -1180,13 +1171,13 @@ defineExpose({
             <!-- Callouts live outside the tabs so they stay visible on either tab -->
             <wa-callout v-if="directoryNotFound" variant="warning" size="small" class="directory-not-found-callout">
                 <div class="directory-not-found-content">
-                    <span>This directory does not exist. Do you want to create it?</span>
+                    <span>{{ $t('this_directory_does_not_exist_do_you_want_to') }}</span>
                     <div class="directory-not-found-actions">
                         <wa-button size="small" variant="brand" :disabled="isSaving" @click="submitCreate({ createDirectory: true })">
-                            Create directory
+                            {{ $t('create_directory') }}
                         </wa-button>
                         <wa-button size="small" variant="neutral" appearance="outlined" @click="directoryNotFound = false">
-                            Cancel
+                            {{ $t('cancel') }}
                         </wa-button>
                     </div>
                 </div>
@@ -1207,13 +1198,13 @@ defineExpose({
                 size="small"
                 class="footer-archived-switch"
             >
-                Archived
+                {{ $t('archived') }}
             </wa-switch>
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isSaving">
-                Cancel
+                {{ $t('cancel') }}
             </wa-button>
             <wa-button ref="saveButtonRef" type="submit" variant="brand" :disabled="isSaving">
-                {{ isCreateMode ? 'Create' : 'Save' }}
+                {{ isCreateMode ? $t('create') : $t('save') }}
             </wa-button>
         </div>
     </wa-dialog>

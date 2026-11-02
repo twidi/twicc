@@ -1,3 +1,4 @@
+import { createAppI18n } from '../../i18n/index.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -20,6 +21,7 @@ async function render(rows = [], recentProjects = [], recentWorkspaces = []) {
         sessionTooltipTrigger: 'manual', setSessionTooltip: () => {}, setEntryTooltip: () => {},
     }
     const app = Vue.createSSRApp({ render, data: () => ctx })
+    app.use(createAppI18n())
     for (const name of ['AppTooltip', 'ProjectMark', 'SessionListItem', 'ProcessIndicator', 'SettingsPopover', 'PeerInboxBadge', 'NewSessionProjectPicker', 'ProjectBadge', 'AggregatedProcessIndicator']) {
         app.component(name, { props: ['projectId', 'projectIds'], setup: (props, { slots }) => () => Vue.h('span', { 'data-component': name, 'data-project': props.projectId, 'data-projects': props.projectIds?.join(',') }, slots.default?.()) })
     }

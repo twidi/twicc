@@ -137,18 +137,18 @@ onBeforeUnmount(() => {
         <div class="home-view">
             <header class="home-header">
                 <BrandLogo :size="36" animated />
-                <h1>Welcome to TwiCC</h1>
+                <h1>{{ $t('welcome_to_twicc') }}</h1>
                 <span id="home-global-sparkline" class="global-sparkline">
                     <ActivitySparkline reveal :data="globalWeeklyActivity" />
                 </span>
-                <AppTooltip for="home-global-sparkline">Overall activity (message turns per week)</AppTooltip>
+                <AppTooltip for="home-global-sparkline">{{ $t('overall_activity_message_turns_per_week') }}</AppTooltip>
                 <div class="home-header-actions">
                     <wa-button v-if="totalSessionsCount > 0" variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-all' })">
-                        All {{ totalSessionsCount }} session{{ totalSessionsCount === 1 ? '' : 's' }} <wa-icon slot="end" name="arrow-right"></wa-icon>
+                        {{ $t('all_sessions', { count: totalSessionsCount }, totalSessionsCount) }} <wa-icon slot="end" name="arrow-right"></wa-icon>
                     </wa-button>
                     <wa-button variant="brand" appearance="filled-outlined" size="small" @click="router.push({ name: 'projects-artifacts' })">
                         <wa-icon slot="start" :name="ARTIFACT_ICON"></wa-icon>
-                        Artifacts <wa-icon slot="end" name="arrow-right"></wa-icon>
+                        {{ $t('artifacts') }} <wa-icon slot="end" name="arrow-right"></wa-icon>
                     </wa-button>
                 </div>
             </header>
@@ -163,13 +163,13 @@ onBeforeUnmount(() => {
                     :loading="isLoading"
                     @retry="handleRetry"
                 >
-                    Failed to load projects
+                    {{ $t('failed_to_load_projects') }}
                 </FetchErrorPanel>
 
                 <!-- Loading state -->
                 <div v-else-if="isLoading" class="loading-state">
                     <wa-spinner></wa-spinner>
-                    <span>Loading projects...</span>
+                    <span>{{ $t('loading_projects') }}</span>
                 </div>
 
                 <!-- Normal content -->

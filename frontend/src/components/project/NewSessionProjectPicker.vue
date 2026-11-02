@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { useSettingsStore } from '../../stores/settings'
@@ -11,6 +12,8 @@ import WorktreePickerRows from './WorktreePickerRows.vue'
 import WorktreeButton from './WorktreeButton.vue'
 import WorktreeDialog from './WorktreeDialog.vue'
 import ProjectEditDialog from './ProjectEditDialog.vue'
+
+const { t } = useI18n()
 
 defineOptions({ inheritAttrs: false })
 const emit = defineEmits(['select-project'])
@@ -30,7 +33,7 @@ const workspaceVisibleProjectIds = computed(() =>
     activeWorkspaceId.value ? workspacesStore.getVisibleProjectIds(activeWorkspaceId.value) : []
 )
 const activeWsLabel = computed(() =>
-    activeWorkspace.value ? `${activeWorkspace.value.name} projects` : null
+    activeWorkspace.value ? t('workspace_projects', { workspace: activeWorkspace.value.name }) : null
 )
 const nonStaleProjects = computed(() =>
     store.getListableProjects.filter(p => (showArchivedProjects.value || !p.archived) && !p.stale)
@@ -90,7 +93,7 @@ function openWorktreeDialog(project) {
         <slot name="trigger" />
         <wa-dropdown-item value="__new_project__">
             <wa-icon slot="icon" name="plus"></wa-icon>
-            New project
+            {{ $t('new_project') }}
         </wa-dropdown-item>
 
         <!-- Workspace projects first (when workspace active) -->
@@ -139,7 +142,7 @@ function openWorktreeDialog(project) {
         <!-- Other projects -->
         <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
             <wa-divider></wa-divider>
-            <wa-dropdown-item disabled class="section-header-item">Other projects</wa-dropdown-item>
+            <wa-dropdown-item disabled class="section-header-item">{{ $t('other_projects') }}</wa-dropdown-item>
         </template>
         <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
         <template v-for="p in splitNamedProjects.others" :key="p.id">

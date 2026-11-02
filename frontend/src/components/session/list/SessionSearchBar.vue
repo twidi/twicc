@@ -246,7 +246,7 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             :value="query"
             @input="query = $event.target.value"
             @keydown="handleKeydown"
-            placeholder="Search in session..."
+            :placeholder="$t('search_in_session')"
             size="small"
             class="search-input"
             clearable
@@ -276,31 +276,31 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             id="session-search-prev"
             class="nav-button"
             :disabled="!canNavigate"
-            aria-label="Previous match"
+            :aria-label="$t('previous_match')"
             @click="goToPrevious"
         >
             <wa-icon name="chevron-up"></wa-icon>
         </button>
-        <AppTooltip for="session-search-prev">Previous match (Shift+Enter / Shift+F3)</AppTooltip>
+        <AppTooltip for="session-search-prev">{{ $t('previous_match_shift_enter_shift_f3') }}</AppTooltip>
         <button
             id="session-search-next"
             class="nav-button"
             :disabled="!canNavigate"
-            aria-label="Next match"
+            :aria-label="$t('next_match')"
             @click="goToNext"
         >
             <wa-icon name="chevron-down"></wa-icon>
         </button>
-        <AppTooltip for="session-search-next">Next match (Enter / F3)</AppTooltip>
+        <AppTooltip for="session-search-next">{{ $t('next_match_enter_f3') }}</AppTooltip>
         <button
             id="session-search-close"
             class="nav-button close-button"
-            aria-label="Close search"
+            :aria-label="$t('close_search')"
             @click="emit('close')"
         >
             <wa-icon name="x"></wa-icon>
         </button>
-        <AppTooltip for="session-search-close">Close (Escape)</AppTooltip>
+        <AppTooltip for="session-search-close">{{ $t('close_escape') }}</AppTooltip>
     </div>
 </template>
 

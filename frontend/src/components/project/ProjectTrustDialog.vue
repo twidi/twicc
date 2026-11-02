@@ -55,12 +55,10 @@ defineExpose({ requestDecision })
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" label="Trust this project?" class="project-trust-dialog" @wa-hide="handleHide">
+    <wa-dialog ref="dialogRef" :label="$t('trust_this_project')" class="project-trust-dialog" @wa-hide="handleHide">
         <div class="dialog-content">
             <p class="intro">
-                Is this a project you created or trust (your own code, a well-known
-                open-source project, or your team's work)? Claude Code and Codex will be
-                able to read, edit and run files here.
+                {{ $t('is_this_a_project_you_created_or_trust_your') }}
             </p>
 
             <div v-if="project" class="project-info">
@@ -74,24 +72,24 @@ defineExpose({ requestDecision })
                 @change="propagation = $event.target.checked"
                 size="small"
             >
-                Apply to sub-folders and worktrees
+                {{ $t('apply_to_sub_folders_and_worktrees') }}
                 <span class="propagate-hint">
-                    — descendants inherit this decision until you decide otherwise.
+                    {{ $t('descendants_inherit_this_decision_until_you_decide_otherwise') }}
                 </span>
             </wa-switch>
         </div>
 
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="settle(null)">
-                Cancel
+                {{ $t('cancel') }}
             </wa-button>
             <wa-button variant="neutral" @click="decide(false)">
                 <wa-icon slot="start" name="xmark"></wa-icon>
-                Don't trust
+                {{ $t('don_t_trust') }}
             </wa-button>
             <wa-button variant="brand" @click="decide(true)">
                 <wa-icon slot="start" name="shield"></wa-icon>
-                Trust
+                {{ $t('trust') }}
             </wa-button>
         </div>
     </wa-dialog>

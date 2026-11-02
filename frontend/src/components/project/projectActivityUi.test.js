@@ -1,3 +1,4 @@
+import { createAppI18n } from '../../i18n/index.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -35,7 +36,7 @@ function fixture() {
 function setup(file, fixture, bindings, props = {}, extras = {}) {
     const { descriptor } = parse(read(file))
     return runInNewContext(`${descriptor.scriptSetup.content.replace(/^import .*$/gm, '')}; ({ ${bindings} })`, {
-        ...Vue, buildProjectTree, flattenProjectTree, splitProjectsByPriority, isWorkspaceProjectId, extractWorkspaceId,
+        useI18n: () => createAppI18n().global, ...Vue, buildProjectTree, flattenProjectTree, splitProjectsByPriority, isWorkspaceProjectId, extractWorkspaceId,
         ALL_PROJECTS_ID: '__all__', defineProps: () => props, defineEmits: () => () => {}, defineOptions: () => {},
         useDataStore: () => fixture.data, useSettingsStore: () => fixture.settings,
         useWorkspacesStore: () => fixture.workspaces, useRoute: () => ({ query: {} }), ...extras,
@@ -124,7 +125,7 @@ test('project card renders effective last activity in absolute date, relative da
     }
     const renderCard = async () => {
         const app = Vue.createSSRApp({ render() {
-            const node = render.call(this, Vue.proxyRefs({ ...state, $slots: {}, project: props.project, formatDate: n => `date:${n}` }), [])
+            const node = render.call(this, Vue.proxyRefs({ ...state, $t: createAppI18n().global.t, $slots: {}, project: props.project, formatDate: n => `date:${n}` }), [])
             visit(node)
             return node
         } })

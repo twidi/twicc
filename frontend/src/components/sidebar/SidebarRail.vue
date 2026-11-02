@@ -1,4 +1,5 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../../stores/data'
@@ -19,6 +20,8 @@ import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
 import SettingsPopover from '../app/SettingsPopover.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 import NewSessionProjectPicker from '../project/NewSessionProjectPicker.vue'
+
+const { t } = useI18n()
 
 const props = defineProps({
     mode: { type: String, required: true, validator: value => ['home', 'sessions', 'artifacts'].includes(value) },
@@ -126,13 +129,24 @@ function projectColor(projectId) {
     const project = store.getProject(projectId)
     return project?.color || (project?.worktree_of ? store.getProject(project.worktree_of)?.color : null) || null
 }
-const items = computed(() => resolveRailItems({
-    mode: props.mode,
-    sidebarOpen: props.sidebarOpen,
-    peerConfigured: props.peerConfigured,
-    inboxCount: props.inboxCount,
-    isMac: settingsStore.isMac,
-}))
+const items = computed(() => {
+    const labels = {
+        home: t(props.mode === 'home' ? 'navigation_home' : 'navigation_back'),
+        sessions: t('sessions'), artifacts: t('artifacts'),
+        search: t('navigation_search', { shortcut: settingsStore.isMac ? '⌘⇧F' : 'Ctrl+Shift+F' }),
+        'new-session': t('new_session'),
+        palette: t('navigation_palette', { shortcut: settingsStore.isMac ? '⌘K' : 'Ctrl+K' }),
+        inbox: t('navigation_inbox'), settings: t('settings'),
+        toggle: t(props.sidebarOpen ? 'navigation_close' : 'navigation_open'),
+    }
+    return resolveRailItems({
+        mode: props.mode,
+        sidebarOpen: props.sidebarOpen,
+        peerConfigured: props.peerConfigured,
+        inboxCount: props.inboxCount,
+        isMac: settingsStore.isMac,
+    }).map(item => ({ ...item, label: labels[item.id] }))
+})
 const top = computed(() => items.value.filter(item => item.group === 'top'))
 const bottom = computed(() => items.value.filter(item => item.group === 'bottom'))
 
@@ -144,7 +158,7 @@ function activate(item) {
 </script>
 
 <template>
-    <nav aria-label="Main navigation" class="sidebar-rail">
+    <nav :aria-label="$t('main_navigation')" class="sidebar-rail">
         <div class="panel-card">
             <template v-for="item in top" :key="item.id">
                 <button

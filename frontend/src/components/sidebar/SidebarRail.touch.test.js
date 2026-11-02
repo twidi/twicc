@@ -1,3 +1,4 @@
+import { createAppI18n } from '../../i18n/index.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -33,7 +34,7 @@ function fixture(t, isTouchDevice = true) {
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
     const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide})`, {
-        document, Map, createRailSessionLongPress,
+        document, Map, createRailSessionLongPress, useI18n: () => createAppI18n().global,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
         useSettingsStore: () => ({ isTouchDevice }), useDataStore: () => ({}),

@@ -1,4 +1,5 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
 // MessageInput.vue - Text input + send/apply controls for a session.
 // Per-session agent settings (model, effort, …) live in the
 // ``useSessionAgentSettings`` composable; the trigger summary and the
@@ -49,6 +50,8 @@ import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
+
+const { t } = useI18n()
 
 const props = defineProps({
     sessionId: {
@@ -544,9 +547,9 @@ const attachmentsBlockSend = computed(() =>
 )
 const buttonLabel = computed(() => {
     const state = processState.value?.state
-    if (state === 'starting') return 'Starting...'
-    if (isSettingsOnlyButton.value) return 'Apply settings'
-    return 'Send'
+    if (state === 'starting') return t('starting')
+    if (isSettingsOnlyButton.value) return t('apply_settings')
+    return t('send')
 })
 
 // Button icon changes based on mode
@@ -575,32 +578,32 @@ const placeholderText = computed(() => {
     const state = processState.value?.state
 
     if (state === 'starting') {
-        return `Starting ${providerLabel.value} process...`
+        return t('starting_provider', { provider: providerLabel.value })
     }
 
     if (state === 'assistant_turn') {
-        const base = `You can send a message now. ${providerLabel.value} will receive it as soon as possible (while working or after).`
+        const base = t('send_while_working', { provider: providerLabel.value })
         const note = helpers?.getPlaceholderAssistantTurnNote()
         return note ? `${base} ${note}` : base
     }
 
     const chars = helpers?.getCommandActivationChars() ?? []
     const historyHint = !isDraft.value
-        ? (settingsStore.isTouchDevice ? '! = message history' : '! and Up/PageUp = message history')
+        ? (settingsStore.isTouchDevice ? t('message_history') : t('and_up_pageup_message_history'))
         : null
 
     const atStartItems = []
-    if (chars.length > 0) atStartItems.push(`${formatCharList(chars)} = commands`)
+    if (chars.length > 0) atStartItems.push(t('command_chars', { chars: formatCharList(chars) }))
     if (historyHint) atStartItems.push(historyHint)
 
     const segments = []
-    if (atStartItems.length > 0) segments.push(`At start: ${atStartItems.join(', ')}`)
-    segments.push('Anywhere: @ = file paths')
+    if (atStartItems.length > 0) segments.push(t('at_start', { hints: atStartItems.join(', ') }))
+    segments.push(t('anywhere_file_paths'))
 
-    let text = `Shortcuts: ${segments.join('; ')}`
+    let text = t('shortcut_hints', { hints: segments.join('; ') })
     if (!settingsStore.isTouchDevice) {
         const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
-        text += `, ${keys} to send`
+        text += t('keys_to_send', { keys })
     }
     return text
 })
@@ -790,12 +793,12 @@ const collapsedMessageLabel = computed(() => {
     const count = attachmentCount.value
     const filesPart = count > 0 ? `${count} file${count > 1 ? 's' : ''} attached` : ''
     if (hasText && filesPart) return `Your message is waiting · ${filesPart}`
-    if (hasText) return 'Your message is waiting'
+    if (hasText) return t('your_message_is_waiting')
     if (filesPart) return filesPart
     // While sending is locked by a pending request, the bar is the entry point to
     // prepare the next message, so name it for that intent.
-    if (props.sendingLocked) return 'Prepare a message'
-    return 'Message input'
+    if (props.sendingLocked) return t('prepare_a_message')
+    return t('message_input')
 })
 
 // Leading icon mirrors the label state.
@@ -1641,7 +1644,7 @@ async function handleSend() {
         const text = rawText.trim()
         const classification = asyncQuestionSendClassification.value
         if (classification.commandBlocked) {
-            toast.warning('Use a normal message or clear your question answers before sending a command.')
+            toast.warning(t('use_a_normal_message_or_clear_your_question_answers'))
             return
         }
         // Attachments alone make a real message, so they take precedence over the
@@ -2126,7 +2129,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
         >
             <wa-icon name="chevron-down" variant="classic"></wa-icon>
         </wa-button>
-        <AppTooltip v-if="isTall && !collapsed" :for="collapseButtonId">Collapse the message input</AppTooltip>
+        <AppTooltip v-if="isTall && !collapsed" :for="collapseButtonId">{{ $t('collapse_the_message_input') }}</AppTooltip>
 
         <div v-if="commentsWithContentCount > 0" class="code-comments-bar">
             <wa-button
@@ -2182,7 +2185,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
         ></wa-textarea>
 
         <div v-if="asyncQuestionSendClassification.commandBlocked" class="async-question-notice" role="status">
-            Use a normal message or clear your question answers before sending a command.
+            {{ $t('use_a_normal_message_or_clear_your_question_answers') }}
         </div>
 
         <!-- Popups teleported out of the flex container -->
@@ -2269,7 +2272,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                 >
                     <wa-icon name="paperclip"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="attachButtonId">Attach files</AppTooltip>
+                <AppTooltip :for="attachButtonId">{{ $t('attach_files') }}</AppTooltip>
 
                 <!-- Attachment badge + popover -->
                 <template v-if="attachmentCount > 0">
@@ -2313,7 +2316,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                                 @click="removeAllAttachments"
                             >
                                 <wa-icon name="trash" slot="start"></wa-icon>
-                                Remove all
+                                {{ $t('remove_all') }}
                             </wa-button>
                         </div>
                     </wa-popover>
@@ -2356,7 +2359,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     :aria-pressed="session?.ephemeral === true"
                     @click="toggleEphemeral"
                 >
-                    <wa-icon name="ghost" label="Ephemeral session" class="ephemeral-icon" :class="{ 'session-state-icon--ephemeral': session?.ephemeral }"></wa-icon>
+                    <wa-icon name="ghost" :label="$t('ephemeral_session')" class="ephemeral-icon" :class="{ 'session-state-icon--ephemeral': session?.ephemeral }"></wa-icon>
                 </wa-button>
                 <AppTooltip v-if="isDraft" :for="ephemeralButtonId">
                     {{ session?.ephemeral ? 'Ephemeral mode on — click to turn off' : 'Start as an ephemeral session' }}
@@ -2390,7 +2393,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     class="cancel-button"
                 >
                     <wa-icon name="xmark" variant="classic"></wa-icon>
-                    <span>Cancel</span>
+                    <span>{{ $t('cancel') }}</span>
                 </wa-button>
                 <!-- Reset/Clear button for existing sessions: "Reset" when agent
                      settings changed (with or without message/attachments), "Clear"
@@ -2427,7 +2430,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                      preparing the next message; it sends once the request is answered. -->
                 <div v-else class="sending-locked-indicator" :id="sendingLockedId">
                     <wa-icon name="lock" variant="classic"></wa-icon>
-                    <span>Sending paused</span>
+                    <span>{{ $t('sending_paused') }}</span>
                 </div>
                 <AppTooltip v-if="sendingLocked" :for="sendingLockedId">{{ sendingLockedReason }}</AppTooltip>
             </div>
@@ -2435,16 +2438,16 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
 
         <wa-dialog
             ref="ephemeralDialogRef"
-            label="Start this session as ephemeral?"
+            :label="$t('start_this_session_as_ephemeral')"
             style="--width: min(520px, calc(100vw - 2rem))"
             @wa-after-show.self="ephemeralConfirmRef?.focus()"
         >
-            <p>TwiCC and the provider do not save a local session transcript. Only the final answer appears.</p>
-            <p>This browser saves your prompt and answer until Discard. You cannot resume the run. A connection loss can lose its answer.</p>
-            <p>Inherited MCP servers are off. Codex plugins are also off for this run.</p>
-            <wa-switch :checked="ephemeralDontShowAgain" @change="ephemeralDontShowAgain = $event.target.checked">Don't show again</wa-switch>
-            <wa-button slot="footer" @click="ephemeralDialogRef.open = false">Cancel</wa-button>
-            <wa-button ref="ephemeralConfirmRef" slot="footer" variant="brand" @click="confirmEphemeral">Start as ephemeral</wa-button>
+            <p>{{ $t('twicc_and_the_provider_do_not_save_a_local') }}</p>
+            <p>{{ $t('this_browser_saves_your_prompt_and_answer_until_discard') }}</p>
+            <p>{{ $t('inherited_mcp_servers_are_off_codex_plugins_are_also') }}</p>
+            <wa-switch :checked="ephemeralDontShowAgain" @change="ephemeralDontShowAgain = $event.target.checked">{{ $t('don_t_show_again') }}</wa-switch>
+            <wa-button slot="footer" @click="ephemeralDialogRef.open = false">{{ $t('cancel') }}</wa-button>
+            <wa-button ref="ephemeralConfirmRef" slot="footer" variant="brand" @click="confirmEphemeral">{{ $t('start_as_ephemeral') }}</wa-button>
         </wa-dialog>
 
         <!-- Hybrid CLI mode dialog — one dialog, four variants (see script).
@@ -2471,13 +2474,13 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                 class="hybrid-dialog-switch"
                 :checked="hybridDontShowAgain"
                 @change="hybridDontShowAgain = $event.target.checked"
-            >Don't show this again</wa-switch>
+            >{{ $t('don_t_show_this_again') }}</wa-switch>
             <wa-button
                 slot="footer"
                 variant="neutral"
                 appearance="outlined"
                 @click="cancelHybridDialog"
-            >Cancel</wa-button>
+            >{{ $t('cancel') }}</wa-button>
             <wa-button
                 ref="hybridConfirmBtnRef"
                 slot="footer"

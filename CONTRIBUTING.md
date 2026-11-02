@@ -85,7 +85,7 @@ The full set of conventions, patterns, and gotchas (avoiding circular imports, J
 
 Quick reminders:
 
-- Code, comments, identifiers, and UI strings are in **English**. Documentation files (`*.md`) may be in French.
+- Code, comments, identifiers, and source UI messages are in **English**. Translations live in the locale catalogs; see [Interface languages](docs/internationalization.md) for the workflow. Documentation files (`*.md`) may be in French.
 - The project aims for high quality. The only accepted shortcuts are no mandatory tests and no mandatory linting — but if you can add tests for a tricky bit, please do.
 - Use `orjson` instead of the stdlib `json` module in the backend.
 - Prefer `NamedTuple` over `@dataclass` for immutable containers.

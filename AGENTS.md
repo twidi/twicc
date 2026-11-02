@@ -9,7 +9,7 @@
 - **Never implement without explicit invitation.** When the user explains requirements or shares thoughts, wait for confirmation before writing code. Ask clarifying questions, but an explanation is not an invitation.
 - **Preserve existing user changes.** The current checkout may already contain uncommitted changes. Treat any change you did not make as user-owned: do not revert, overwrite, move, or clean it up unless the user explicitly asks.
 - **Git rebase:** never on remote branches (`origin/main`, …) unless explicitly asked. Always rebase on the local branch; if it exists, use it.
-- **Language:** all written artifacts — code, UI strings, comments, names, docs (incl. `docs/plans/`) — in English. French is reserved for live chat (and the dev's `AGENTS.local.md`). Even when the user speaks French, write UI/code/docs in English.
+- **Language:** all written artifacts — code, source UI messages, comments, names, docs (incl. `docs/plans/`) — in English. Translated UI messages belong in `frontend/src/i18n/locales/`; see `docs/internationalization.md`. French is reserved for live chat (and the dev's `AGENTS.local.md`). Even when the user speaks French, write UI/code/docs in English.
 
 ## Commit Conventions
 
