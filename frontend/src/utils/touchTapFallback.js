@@ -7,7 +7,11 @@
 
 /**
  * @param {object} [options]
- * @param {number} [options.delay] ms to wait for a click after a touch pointerup
+ * @param {number} [options.delay] ms to wait for a click after a touch pointerup.
+ *   The default 80 comes from a measure on Firefox for Android: when the browser
+ *   produces the click, it arrives about 25 ms after touchend. A click later than
+ *   the delay only means the action runs from the fallback and the late click is
+ *   ignored (see ignoreClickFor), so the action never runs twice.
  * @param {number} [options.moveThreshold] max px the pointer may move between down and up
  * @param {number} [options.ignoreClickFor] ms during which a click is ignored after the fallback ran
  * @param {Function} [options.setTimer] defaults to setTimeout
@@ -15,7 +19,7 @@
  * @param {Function} [options.now] defaults to Date.now
  */
 export function createTouchTapFallback({
-    delay = 350,
+    delay = 80,
     ignoreClickFor = 1000,
     moveThreshold = 10,
     setTimer = (fn, ms) => setTimeout(fn, ms),

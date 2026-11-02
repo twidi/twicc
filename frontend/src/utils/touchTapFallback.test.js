@@ -26,7 +26,7 @@ test('touch up then no click runs the action once after the delay', () => {
     let n = 0
     tap.down('a', touch)
     tap.up('a', touch, () => n++)
-    advance(349)
+    advance(79)
     assert.equal(n, 0)
     advance(1)
     assert.equal(n, 1)
@@ -39,7 +39,7 @@ test('a click before the delay cancels the fallback and is handled', () => {
     let n = 0
     tap.down('a', touch)
     tap.up('a', touch, () => n++)
-    advance(100)
+    advance(50)
     assert.equal(tap.click('a'), true)
     advance(1000)
     assert.equal(n, 0)
@@ -49,13 +49,13 @@ test('a click after the fallback ran is ignored within the window, handled after
     const { tap, advance } = setup()
     tap.down('a', touch)
     tap.up('a', touch, () => {})
-    advance(350)
+    advance(80)
     advance(500)
     assert.equal(tap.click('a'), false)
 
     tap.down('a', touch)
     tap.up('a', touch, () => {})
-    advance(350)
+    advance(80)
     advance(1000)
     assert.equal(tap.click('a'), true)
 })
@@ -64,7 +64,7 @@ test('a late click on another button is handled', () => {
     const { tap, advance } = setup()
     tap.down('a', touch)
     tap.up('a', touch, () => {})
-    advance(350)
+    advance(80)
     assert.equal(tap.click('b'), true)
 })
 
@@ -110,10 +110,10 @@ test('two successive taps work independently', () => {
     const ran = []
     tap.down('a', touch)
     tap.up('a', touch, () => ran.push('a'))
-    advance(350)
+    advance(80)
     tap.down('b', touch)
     tap.up('b', touch, () => ran.push('b'))
-    advance(350)
+    advance(80)
     assert.deepEqual(ran, ['a', 'b'])
 })
 
@@ -131,7 +131,7 @@ test('a new tap within the window after a fallback run is handled normally', () 
     let n = 0
     tap.down('a', touch)
     tap.up('a', touch, () => n++)
-    advance(350)
+    advance(80)
     advance(100)
     tap.down('a', touch)
     tap.up('a', touch, () => n++)
@@ -148,4 +148,26 @@ test('the fallback arms for a 3 px move and not for a 25 px move', () => {
     tap.down('a', { pointerType: 'touch', clientX: 10, clientY: 10 })
     tap.up('a', { pointerType: 'touch', clientX: 10, clientY: 35 }, () => {})
     assert.equal(timers.size, 0)
+})
+
+test('an explicit delay overrides the default', () => {
+    let t = 0
+    const timers = []
+    const tap = createTouchTapFallback({
+        delay: 200,
+        setTimer: (fn, ms) => { timers.push(ms); return timers.length },
+        clearTimer: () => {},
+        now: () => t,
+    })
+    tap.down('a', { pointerType: 'touch' })
+    tap.up('a', { pointerType: 'touch' }, () => {})
+    assert.deepEqual(timers, [200])
+})
+
+test('the default delay is 80 ms', () => {
+    const timers = []
+    const tap = createTouchTapFallback({ setTimer: (fn, ms) => { timers.push(ms); return 1 }, clearTimer: () => {} })
+    tap.down('a', { pointerType: 'touch' })
+    tap.up('a', { pointerType: 'touch' }, () => {})
+    assert.deepEqual(timers, [80])
 })
