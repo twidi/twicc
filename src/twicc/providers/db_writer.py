@@ -3212,7 +3212,7 @@ def _deletion_ids(payload):
 def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
     """Delete sources and enqueue surviving native roots in one transaction."""
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
-    from twicc.core.models import Session, TimelineEvent
+    from twicc.core.models import LogicalTurn, Session, TimelineEvent
     from twicc.core.content_storage.ingestion import initialize_ingestion_session
     from twicc.core.content_storage.references import remove_history_memberships
     from twicc.projects import update_project_metadata
@@ -3232,7 +3232,8 @@ def _apply_delete_sessions_payload(payload: DeleteSessionsPayload) -> list[str]:
             before_sessions.append(session_contribution(session))
             remove_history_memberships(session.id)
         Session.objects.filter(id__in=ids).delete()
-        TimelineEvent.objects.filter(session_id__in=ids).delete()
+        TimelineEvent.objects.filter(session_id__in=ids | missing_ids).delete()
+        LogicalTurn.objects.filter(session_id__in=ids | missing_ids).delete()
         from twicc.core.content_storage.cold_cache import schedule_cold_invalidation
 
         schedule_cold_invalidation(ids | missing_ids, mappings=True)

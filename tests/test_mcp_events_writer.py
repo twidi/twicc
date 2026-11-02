@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import suppress
 from datetime import timedelta
+from uuid import uuid4
 
 from asgiref.sync import sync_to_async
 import pytest
@@ -119,3 +120,14 @@ def test_restarted_writer_consumes_same_queue_and_cancelled_barrier_is_safe(stat
         assert (saved.cursor_line, saved.cursor_at) == (30, 130.0)
 
     asyncio.run(run())
+
+
+def test_history_rebase_clears_consumed_logical_interval(state):
+    _, row, runtime = state
+    completed_id = uuid4()
+    McpEventSubscription.objects.filter(pk=row.pk).update(last_logical_turn_id=completed_id)
+    asyncio.run(apply(runtime,
+        RebaseWrite(row.id, row.created_at, 1, 2, 3, 3, False, None, "", 3),
+    ))
+    row.refresh_from_db()
+    assert row.last_logical_turn_id is None

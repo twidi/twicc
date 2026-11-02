@@ -90,10 +90,12 @@ def _cleanup_stale_process_runs() -> int:
 
     from twicc.agent.states import AgentState
     from twicc.core.models import ProcessRun
+    from twicc.core.services.logical_turns import settle_abandoned_turns
     from twicc.providers.helpers import get_provider_helpers_registry
 
     now = timezone.now()
     dead_value = AgentState.DEAD.value
+    settle_abandoned_turns(at=now)
 
     # 1) Force every leftover non-DEAD row into DEAD. Anyone still claiming
     # to be alive is necessarily from a previous TwiCC instance — the

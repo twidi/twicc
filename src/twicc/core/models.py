@@ -1566,6 +1566,50 @@ class UsageSnapshot(models.Model):
         return self.seven_day_resets_at - timedelta(days=7)
 
 
+class LogicalTurn(models.Model):
+    """Durable assistant interval, independent of disposable process and session rows."""
+
+    id = models.UUIDField(primary_key=True)
+    session_id = models.CharField(max_length=255, db_index=True)
+    provider = models.CharField(max_length=50)
+    run_id = models.UUIDField()
+    process_run_id = models.BigIntegerField(null=True)
+    ordinal = models.PositiveIntegerField()
+    position = models.PositiveBigIntegerField()
+    revision = models.PositiveBigIntegerField(default=0)
+    storage_incarnation = models.CharField(max_length=36, null=True)
+    history_epoch = models.PositiveIntegerField(null=True)
+    source_floor = models.PositiveIntegerField()
+    first_ref = models.JSONField(null=True)
+    final_refs = models.JSONField(default=list)
+    opened_at = models.DateTimeField()
+    closed_at = models.DateTimeField(null=True)
+    outcome = models.CharField(max_length=20, null=True, choices=[
+        ("normal", "Normal"), ("ended", "Ended"), ("provider_error", "Provider error"),
+    ])
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["run_id", "ordinal"], name="uniq_logical_turn_run"),
+            models.UniqueConstraint(fields=["session_id", "position"], name="uniq_logical_turn_position"),
+            models.CheckConstraint(condition=Q(ordinal__gte=1), name="logical_turn_positive_ordinal"),
+            models.CheckConstraint(condition=Q(position__gte=1), name="logical_turn_positive_position"),
+        ]
+        indexes = [models.Index(fields=["session_id", "opened_at"], name="idx_logical_turn_session_open")]
+
+
+class LogicalTurnInput(models.Model):
+    """Opaque input token and its immutable pre-delivery transcript boundary."""
+
+    id = models.UUIDField(primary_key=True)
+    turn = models.ForeignKey(LogicalTurn, on_delete=models.CASCADE, related_name="inputs")
+    admission_cursor = models.PositiveIntegerField()
+    status = models.CharField(max_length=12, choices=[
+        ("pending", "Pending"), ("accepted", "Accepted"),
+        ("rejected", "Rejected"), ("uncertain", "Uncertain"),
+    ])
+
+
 class ProcessRun(models.Model):
     """Persistent record of an agent run, used to surface live/recent state.
 
@@ -2261,6 +2305,7 @@ class McpEventSubscription(models.Model):
     turn_opened_by = models.CharField(max_length=16, blank=True)
     turn_start_line = models.PositiveIntegerField()
     numbering = models.PositiveIntegerField(null=True)
+    last_logical_turn_id = models.UUIDField(null=True)
     data_dir = models.CharField(max_length=4096, default=mcp_event_data_dir)
     refresh_before = models.DateTimeField(db_index=True)
     # Generation stays fixed on refresh; replacement creates a new generation.

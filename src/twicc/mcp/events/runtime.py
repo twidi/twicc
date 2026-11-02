@@ -679,6 +679,7 @@ class EventsRuntime:
                 "cursor_line", "initial_last_line", "numbering", "turn_open", "turn_started_at",
                 "turn_opened_by", "turn_start_line",
             )}
+            values["last_logical_turn_id"] = None
         else:
             raise TypeError(f"Unknown event state write: {type(item).__name__}")
         return rows.update(**values, updated_at=self.clock.utcnow())
