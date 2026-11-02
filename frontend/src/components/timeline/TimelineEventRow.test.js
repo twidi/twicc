@@ -659,7 +659,7 @@ test('the version of a TwiCC start is a tag, and several tags follow the last wo
 test('the tool of a request is a value of the wording, like a title', async (t) => {
     const root = await render(t, [make('awaiting_input.started', { data: { request_type: 'tool_approval', tool_name: 'Bash' } })])
     const [wording] = byClass(root, 'timeline-wording')
-    assert.equal(textOf(wording), 'Waiting for approval Bash')
+    assert.equal(textOf(wording), 'Waiting for approval (Bash)')
     assert.deepEqual(byClass(wording, 'timeline-value').map(textOf), ['Bash'])
     assert.equal(byClass(root, 'timeline-tag').length, 0)
 })

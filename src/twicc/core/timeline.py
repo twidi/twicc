@@ -62,9 +62,11 @@ class AwaitingInputStartedData(NamedTuple):
 
 
 class AwaitingInputEndedData(NamedTuple):
-    # Repeats AwaitingInputStartedData (inherited, see STARTED_OF).
+    # The first two fields repeat AwaitingInputStartedData (inherited, see STARTED_OF).
     request_type: str | None = None
     tool_name: str | None = None
+    # Set with reason "auto_denied": the delay (seconds) TwiCC waited before denying the request.
+    auto_deny_after: int | None = None
 
 
 class PinnedStartedData(NamedTuple):

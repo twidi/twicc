@@ -88,9 +88,9 @@ function toolName(data) {
     return name ? truncateText(name, TOOL_MAX).text : null
 }
 
-/** The wording of a request, the tool name as a value (like a title): "Waiting for approval Bash". */
+/** The wording of a request, the tool name as a value (like a title) in parentheses: "Waiting for approval (Bash)". */
 function withTool(label, tool) {
-    return tool ? [text(`${label} `), valuePart(tool)] : [text(label)]
+    return tool ? [text(`${label} (`), valuePart(tool), text(')')] : [text(label)]
 }
 
 function describeSessionCreated(event, data, context, author) {
@@ -165,10 +165,13 @@ function describeProcessEnded(event, data, context) {
     }
 }
 
+/** The `reason` of an `awaiting_input.ended` row that TwiCC closed by denying the request after its delay. */
+const AUTO_DENIED_REASON = 'auto_denied'
+
 const AWAITING = {
     tool_approval: {
         started: (tool) => withTool('Waiting for approval', tool),
-        ended: (tool) => withTool('Approval handled', tool),
+        ended: (tool, reason) => withTool(reason === AUTO_DENIED_REASON ? 'Approval denied automatically' : 'Approval handled', tool),
     },
     ask_user_question: { started: () => [text('Question for you')], ended: () => [text('Question answered')] },
     hybrid_terminal: {
@@ -178,12 +181,21 @@ const AWAITING = {
 }
 const AWAITING_OTHER = { started: (tool) => withTool('Waiting for input', tool), ended: () => [text('Input handled')] }
 
+/** The tag of an auto-denied request: "no answer in 2 min", from the delay stored with the event (null when absent). */
+function noAnswerTag(seconds) {
+    if (!Number.isFinite(seconds) || seconds <= 0) return null
+    return seconds % 60 === 0 ? `no answer in ${seconds / 60} min` : `no answer in ${seconds} s`
+}
+
 function describeAwaiting(event, data, phase) {
     const wording = (lookup(AWAITING, data.request_type) ?? AWAITING_OTHER)[phase]
+    const autoDenied = phase === 'ended' && event.reason === AUTO_DENIED_REASON
     return {
-        icon: phase === 'started' ? 'hand' : 'circle-check',
-        severity: phase === 'started' ? 'warning' : 'neutral',
-        parts: wording(toolName(data)),
+        icon: phase === 'started' ? 'hand' : autoDenied ? 'clock' : 'circle-check',
+        severity: phase === 'started' || autoDenied ? 'warning' : 'neutral',
+        parts: wording(toolName(data), event.reason),
+        tags: [autoDenied ? noAnswerTag(data.auto_deny_after) : null],
+        saysAutomatic: autoDenied,
     }
 }
 

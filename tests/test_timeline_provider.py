@@ -11,6 +11,7 @@ from django.db import connection, migrations
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from twicc.agent.auto_deny import AUTO_DENY_DELAY_SECONDS
 from twicc.agent.timeline_hooks import (
     ProcessSnapshot, record_process_changes, record_process_ended, record_process_started,
 )
@@ -430,3 +431,24 @@ def test_the_guard_itself_detects_a_null_provider():
         kind=TimelineKind.BACKEND_STARTED, occurred_at=timezone.now(), actor=TimelineActor.SYSTEM, data={"pid": 1},
     )
     assert [row.session_id for row in rows_without_provider()] == ["raw"]
+
+
+def test_an_auto_denied_wait_ends_with_the_auto_denied_reason(project):
+    agent = SimpleNamespace(
+        session_id="autodeny", project_id=None, provider=Provider.CLAUDE_CODE, ephemeral=False, process_run=None,
+        pending_requests=(), kill_reason=None, error=None, is_hybrid=False, auto_denied_request_ids={"req-1"},
+    )
+    record_process_changes(
+        agent, ProcessSnapshot("assistant_turn", True, None), new_state="assistant_turn", new_awaiting=False, new_work=None,
+    )
+    ended = TimelineEvent.objects.get(session_id="autodeny", kind=TimelineKind.AWAITING_INPUT_ENDED)
+    assert ended.reason == "auto_denied"
+    assert ended.data["auto_deny_after"] == AUTO_DENY_DELAY_SECONDS
+    assert agent.auto_denied_request_ids == set()
+    # The next wait, answered by a human, has no reason.
+    record_process_changes(
+        agent, ProcessSnapshot("assistant_turn", True, None), new_state="assistant_turn", new_awaiting=False, new_work=None,
+    )
+    reasons = list(TimelineEvent.objects.filter(
+        session_id="autodeny", kind=TimelineKind.AWAITING_INPUT_ENDED).order_by("id").values_list("reason", flat=True))
+    assert reasons == ["auto_denied", ""]

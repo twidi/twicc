@@ -93,7 +93,8 @@ def test_waiting_for_the_user_records_the_request_and_the_tool(project):
     rows = list(TimelineEvent.objects.filter(session_id="s1", kind__startswith="awaiting_input").order_by("id"))
     assert [r.kind for r in rows] == ["awaiting_input.started", "awaiting_input.ended"]
     assert rows[0].data == {"request_type": "tool_approval", "tool_name": "Bash"}
-    assert rows[1].data == rows[0].data  # inherited by the recording service
+    # The tool is inherited by the recording service; nobody auto-denied the request.
+    assert rows[1].data == {**rows[0].data, "auto_deny_after": None}
 
 
 def test_turn_ended_carries_the_background_work_running_behind_the_agent(project):

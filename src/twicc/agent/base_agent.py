@@ -163,6 +163,9 @@ class BaseAgent(StopOriginMixin):
         # next scheduled wall-clock check (see ``_check_auto_deny``). Empty when
         # nothing is armed. Cancelled in ``_await_pending_request``'s finally.
         self._auto_deny_timers: dict[str, asyncio.TimerHandle] = {}
+        # Ids of the requests TwiCC auto-denied, until the timeline records the end of the wait
+        # (``timeline_hooks.record_process_changes``). Lets the ``awaiting_input.ended`` event say why.
+        self.auto_denied_request_ids: set[str] = set()
 
         # ProcessRun model row, populated by the manager once the agent is registered.
         self.process_run: Any = None
@@ -526,6 +529,7 @@ class BaseAgent(StopOriginMixin):
                     "[session %s] Auto-denying unanswered %s request %s",
                     self.session_id, request.tool_name, request.request_id,
                 )
+            self.auto_denied_request_ids.add(request.request_id)
             future.set_result(response)
             return
         self._auto_deny_timers[request.request_id] = asyncio.get_running_loop().call_later(

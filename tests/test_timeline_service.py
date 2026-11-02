@@ -143,7 +143,7 @@ def test_pin_and_awaiting_input_ended_rows_inherit_too(project):
                       data={"request_type": "tool_approval", "tool_name": "Bash"})
     assert record_event_sync(TimelineKind.PINNED_ENDED, session_id="s1", actor=TimelineActor.USER).data == {"scope": "all"}
     assert record_event_sync(TimelineKind.AWAITING_INPUT_ENDED, session_id="s1", actor=TimelineActor.AGENT).data == {
-        "request_type": "tool_approval", "tool_name": "Bash"}
+        "request_type": "tool_approval", "tool_name": "Bash", "auto_deny_after": None}
 
 
 def test_instance_events_inherit_from_the_latest_instance_row(project):

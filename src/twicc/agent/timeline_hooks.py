@@ -13,6 +13,7 @@ from typing import NamedTuple
 
 from django.utils import timezone
 
+from twicc.agent.auto_deny import AUTO_DENY_DELAY_SECONDS
 from twicc.agent.states import DELIBERATE_STOP_REASONS, AgentState
 from twicc.core.models import TimelineActor, TimelineKind
 from twicc.core.services.session_timeline import latest_event_id, record_event_sync
@@ -74,11 +75,13 @@ def _first_pending(agent):
     return pending[0] if pending else None
 
 
-def _write(agent, specs, *, occurred_at, actor=TimelineActor.AGENT, origin=None) -> None:
+def _write(agent, specs, *, occurred_at, actor=TimelineActor.AGENT, origin=None, reasons=None) -> None:
+    """Write ``specs``; ``reasons`` maps a kind to the ``reason`` of its row."""
     for spec in specs:
         record_event_sync(
             spec.kind, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
             occurred_at=occurred_at, actor=actor, origin=origin, provider=_provider_of(agent), data=spec.data,
+            reason=(reasons or {}).get(spec.kind, ""),
         )
 
 
@@ -126,7 +129,23 @@ def record_process_changes(agent, prev: ProcessSnapshot | None, *, new_state: st
         new_state=new_state, new_awaiting=new_awaiting, new_work=new_work,
         request_type=getattr(pending, "request_type", None), tool_name=getattr(pending, "tool_name", None),
     )
-    _write(agent, specs, occurred_at=timezone.now())
+    # The wait ended because TwiCC denied the request after its delay, not because someone answered.
+    auto_denied = any(spec.kind == TimelineKind.AWAITING_INPUT_ENDED for spec in specs) and bool(
+        getattr(agent, "auto_denied_request_ids", None),
+    )
+    if auto_denied:
+        agent.auto_denied_request_ids.clear()
+        # The delay is stored with the event: a later change of the constant leaves old rows right.
+        specs = [
+            spec._replace(data={**spec.data, "auto_deny_after": AUTO_DENY_DELAY_SECONDS})
+            if spec.kind == TimelineKind.AWAITING_INPUT_ENDED else spec
+            for spec in specs
+        ]
+    _write(
+        agent, specs, occurred_at=timezone.now(),
+        origin=SYSTEM_ORIGIN if auto_denied else None,
+        reasons={TimelineKind.AWAITING_INPUT_ENDED: "auto_denied"} if auto_denied else None,
+    )
 
 
 @_never_raises
