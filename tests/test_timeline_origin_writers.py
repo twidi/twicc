@@ -37,7 +37,8 @@ def no_agent_side_effects(monkeypatch):
 
     monkeypatch.setattr(registry, "get_agent_manager_registry",
                         lambda: SimpleNamespace(kill_agent=AsyncMock(), get_agent_info=lambda session_id: None,
-                                                get_active_agents=list))
+                                                get_active_agents=list,
+                                                get=lambda provider: SimpleNamespace(_agents={})))
     monkeypatch.setattr(terminal, "kill_all_tmux_terminals", lambda scope: None)
 
 
