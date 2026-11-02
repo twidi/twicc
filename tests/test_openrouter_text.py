@@ -402,3 +402,42 @@ def test_one_log_line_without_the_text(mock_openrouter, records, mode):
         text = record.getMessage() + repr(record.args) + str(record.exc_info)
         for secret in ("secret prompt", "secret system", answer, "sk-test"):
             assert secret not in text
+
+
+@pytest.mark.parametrize("status", [401, 402, 404])
+@pytest.mark.parametrize("mode", MODES)
+def test_an_http_failure_logs_its_status(mock_openrouter, records, mode, status):
+    # A wrong key, no credits and a retired model must read apart in the log line.
+    mock_openrouter(lambda request: httpx.Response(status, json={"error": {"message": "x"}}))
+    with pytest.raises(OpenRouterTextError):
+        asyncio.run(_call(mode))
+    [record] = records()
+    assert record.levelno == logging.WARNING
+    assert f"outcome=http_{status} " in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "make_response",
+    [
+        pytest.param(lambda request: httpx.Response(401, json={"error": {"message": "x"}}), id="http"),
+        pytest.param(lambda request: _answer("complete", provider="Groq"), id="wrong-provider"),
+        pytest.param(lambda request: _answer("complete", finish_reason="length"), id="cut"),
+    ],
+)
+def test_a_failed_complete_call_logs_no_first_ms(mock_openrouter, records, make_response):
+    # As in stream mode, ``first_ms=None`` means the call gave no text.
+    mock_openrouter(make_response)
+    with pytest.raises(OpenRouterTextError):
+        asyncio.run(_call("complete"))
+    [record] = records()
+    assert " first_ms=None " in record.getMessage()
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_successful_call_logs_its_first_ms(mock_openrouter, records, mode):
+    mock_openrouter(lambda request: _answer(mode))
+    asyncio.run(_call(mode))
+    [record] = records()
+    first_ms = record.args[4]
+    assert isinstance(first_ms, int)
+    assert f" first_ms={first_ms} " in record.getMessage()

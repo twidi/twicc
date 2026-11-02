@@ -82,6 +82,10 @@ class _CallLog:
             if isinstance(cost, int | float) and not isinstance(cost, bool):
                 self.cost = cost
 
+    def fail(self, error: OpenRouterTextError) -> None:
+        # The status tells a wrong key (401), no credits (402) and a retired model (404) apart.
+        self.outcome = error.reason if error.status is None else f"{error.reason}_{error.status}"
+
     def write(self) -> None:
         # A stop is the caller's choice, not a failure.
         log = logger.info if self.outcome in ("ok", "cancelled") else logger.warning
@@ -219,7 +223,7 @@ async def stream_openrouter_text(
             raise OpenRouterTextError("network") from None
         call_log.outcome = "ok"
     except OpenRouterTextError as error:
-        call_log.outcome = error.reason
+        call_log.fail(error)
         raise
     except (GeneratorExit, asyncio.CancelledError):
         call_log.outcome = "cancelled"
@@ -239,7 +243,6 @@ async def _request_whole_answer(model: TextModel, prompt: str, system_prompt: st
             response = await client.post(CHAT_URL, json=payload, headers=_auth_headers(api_key))
     except httpx.HTTPError:
         raise OpenRouterTextError("network") from None
-    call_log.mark_first()
     if response.status_code != 200:
         raise OpenRouterTextError("http", response.status_code)
     body = _parse_json(response.content)
@@ -255,6 +258,8 @@ async def _request_whole_answer(model: TextModel, prompt: str, system_prompt: st
     content = message.get("content")
     if not isinstance(content, str):
         raise OpenRouterTextError("bad_answer")
+    # As in stream mode, ``first_ms`` is set only when the call gives text.
+    call_log.mark_first()
     return content
 
 
@@ -272,7 +277,7 @@ async def complete_openrouter_text(
         call_log.outcome = "ok"
         return text
     except OpenRouterTextError as error:
-        call_log.outcome = error.reason
+        call_log.fail(error)
         raise
     except asyncio.CancelledError:
         call_log.outcome = "cancelled"
