@@ -11,6 +11,7 @@ import { isOpen as mediaPreviewOpen, openMediaPreview } from '../../../composabl
 import { toast } from '../../../composables/useToast'
 import { useTextToSpeechStore } from '../../../stores/textToSpeech'
 import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead'
+import { createTouchTapFallback } from '../../../utils/touchTapFallback'
 
 const props = defineProps({
     /** The text the user selected in the session view. In persistent mode: the
@@ -94,6 +95,17 @@ function dismissHelpHint() {
 }
 
 const expanded = ref(false)
+
+// Some browsers (Firefox for Android) sometimes drop the `click` after a touch tap.
+// The collapsed buttons run their action from the pointer events in that case.
+const tapFallback = createTouchTapFallback()
+const collapsedActions = { expand: () => expand(), copy: () => copy(), read: () => read() }
+function onTapUp(id, event) {
+    tapFallback.up(id, event, collapsedActions[id])
+}
+function onCollapsedClick(id) {
+    if (tapFallback.click(id)) collapsedActions[id]()
+}
 
 // Read button: a view of the app-wide speech store for this selection.
 const speechStore = useTextToSpeechStore()
@@ -543,7 +555,10 @@ defineExpose({ isExpanded: expanded })
                 appearance="filled-outlined"
                 size="small"
                 @mousedown.prevent
-                @click.stop="expand"
+                @pointerdown="tapFallback.down('expand', $event)"
+                @pointerup="onTapUp('expand', $event)"
+                @pointercancel="tapFallback.cancel()"
+                @click.stop="onCollapsedClick('expand')"
             >
                 <wa-icon name="comment" variant="regular"></wa-icon>
             </wa-button>
@@ -553,7 +568,10 @@ defineExpose({ isExpanded: expanded })
                 appearance="filled"
                 size="small"
                 @mousedown.prevent
-                @click.stop="copy"
+                @pointerdown="tapFallback.down('copy', $event)"
+                @pointerup="onTapUp('copy', $event)"
+                @pointercancel="tapFallback.cancel()"
+                @click.stop="onCollapsedClick('copy')"
             >
                 <wa-icon name="copy" variant="regular"></wa-icon>
             </wa-button>
@@ -566,7 +584,10 @@ defineExpose({ isExpanded: expanded })
                 :title="READ_TITLES[readStatus]"
                 :aria-label="READ_TITLES[readStatus]"
                 @mousedown.prevent
-                @click.stop="read"
+                @pointerdown="tapFallback.down('read', $event)"
+                @pointerup="onTapUp('read', $event)"
+                @pointercancel="tapFallback.cancel()"
+                @click.stop="onCollapsedClick('read')"
             >
                 <wa-icon :name="readIcon(readStatus)"></wa-icon>
             </wa-button>

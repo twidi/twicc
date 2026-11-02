@@ -16,8 +16,8 @@ test('the widget declares readOrigin, null by default', () => {
 
 test('the Read button sits in the collapsed row, after Copy', () => {
     const collapsed = widget.slice(widget.indexOf('<div v-if="!expanded" class="tsc-collapsed">'), widget.indexOf('<!-- Expanded'))
-    const copyAt = collapsed.indexOf('@click.stop="copy"')
-    const readAt = collapsed.indexOf('@click.stop="read"')
+    const copyAt = collapsed.indexOf(`@click.stop="onCollapsedClick('copy')"`)
+    const readAt = collapsed.indexOf(`@click.stop="onCollapsedClick('read')"`)
     assert.ok(copyAt > -1 && readAt > copyAt)
     const button = collapsed.slice(collapsed.lastIndexOf('<wa-button', readAt), collapsed.indexOf('</wa-button>', readAt))
     assert.match(button, /v-if="showRead"/)
@@ -50,4 +50,18 @@ test('the other widgets pass no origin', () => {
     for (const path of ['../../browser/BrowserPane.vue', '../../terminal/TerminalPanel.vue']) {
         for (const tag of widgetTags(read(path))) assert.doesNotMatch(tag, /read-origin/)
     }
+})
+
+test('the collapsed buttons route touch taps through the tap fallback', () => {
+    assert.match(widget, /createTouchTapFallback\(\)/)
+    const collapsed = widget.slice(widget.indexOf('<div v-if="!expanded" class="tsc-collapsed">'), widget.indexOf('<!-- Expanded'))
+    for (const id of ['expand', 'copy', 'read']) {
+        assert.ok(collapsed.includes(`@pointerdown="tapFallback.down('${id}', $event)"`), id)
+        assert.ok(collapsed.includes(`@pointerup="onTapUp('${id}', $event)"`), id)
+        assert.ok(collapsed.includes(`@click.stop="onCollapsedClick('${id}')"`), id)
+    }
+    assert.equal(collapsed.match(/@pointercancel="tapFallback\.cancel\(\)"/g).length, 3)
+    assert.equal(collapsed.match(/@mousedown\.prevent/g).length, 3)
+    const expandedPart = widget.slice(widget.indexOf('<!-- Expanded'))
+    assert.ok(!expandedPart.includes('tapFallback'))
 })
