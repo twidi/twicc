@@ -43,7 +43,7 @@ say stays true unless this document says otherwise.
 ## The Read button
 
 - **Where**: in the collapsed selection widget, the row of Comment and Copy: the selection in a
-  session, in a file and in the browser pane. The widgets that open straight on their comment
+  session and in a file (the browser pane has no collapsed widget). The widgets that open straight on their comment
   panel (the terminal, the browser page errors) and the persistent cards (the element card of
   the browser pane, the area card of the file pane) have no Read button.
 - **When**: only while the speech service is available (the active config validated, and for an
@@ -104,7 +104,7 @@ The rules read the text only; they are instant. The thresholds are fixed values.
 
 **A selection from a file** is source text, not Markdown: it always goes through the model.
 
-**A selection from rendered content** (a session, the browser pane) arrives as plain text, without the
+**A selection from rendered content** (a session) arrives as plain text, without the
 Markdown syntax: a rendered table, code block or list shows no pipe, fence or bullet. The rules
 cannot tell them from prose. So a selection that holds a line break or a tab is complex; a
 selection on one line is judged by the rules. A message read from its toolbar is judged on its
@@ -137,6 +137,6 @@ bad listening.
 - **The rules against real messages**: on a sample of real assistant and user messages, the share
   read directly, and a listening check of the direct ones (nothing read aloud that should not be:
   no symbol, no syntax).
-- **Selections of every origin**: a selection from a session, a file and the browser pane read
+- **Selections of every origin**: a selection from a session and a file read
   through the button, on both kinds of config, including a one-line selection from a rendered
   table cell or code line, and a one-line selection from a source file.
