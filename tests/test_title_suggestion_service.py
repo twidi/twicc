@@ -1,9 +1,12 @@
 """Shared title generation routing without a WebSocket adapter."""
 
+import logging
+
 from asgiref.sync import async_to_sync
 import pytest
 
 from twicc.core.enums import Provider
+from twicc.core.services import title_suggestion
 from twicc.core.services.title_suggestion import TitleSuggestionResult, suggest_title
 
 
@@ -250,3 +253,25 @@ def test_agent_models_are_reported(routing):
     result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="haiku")
     assert (result.requested_model, result.title_model) == ("haiku", "luna")
     assert result.title_provider == Provider.CODEX
+
+
+@pytest.fixture
+def logs(caplog, monkeypatch):
+    # Routed straight to caplog: settings_test's ``disable_existing_loggers: True`` can disable this
+    # logger, depending on the suite's import order.
+    logger = logging.getLogger(title_suggestion.__name__)
+    monkeypatch.setattr(logger, "disabled", False)
+    monkeypatch.setattr(logger, "propagate", False)
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    caplog.set_level(logging.DEBUG, logger=title_suggestion.__name__)
+    return caplog
+
+
+@pytest.mark.parametrize("session_provider", [Provider.CODEX, Provider.CLAUDE_CODE])
+def test_a_fallback_from_qwen_is_logged(routing, qwen, logs, session_provider):
+    qwen.key_set = True
+    qwen.outcome = None
+    async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="qwen")
+    assert [record.getMessage() for record in logs.records] == [
+        f"suggest_title: fell back from qwen to {session_provider.value}",
+    ]

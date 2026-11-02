@@ -81,7 +81,13 @@ async def suggest_title(
     requested_model = requested_title_model(title_model, session_provider)
     qwen_asked = requested_model == QWEN_TITLE_MODEL
 
-    def result(suggestion, title_provider, error, used_model=None):
+    def result(
+        *,
+        suggestion: str | None = None,
+        title_provider: Provider | None = None,
+        error: str | None = None,
+        used_model: str | None = None,
+    ) -> TitleSuggestionResult:
         if used_model is None and title_provider is not None:
             used_model = PROVIDER_TITLE_MODELS.get(title_provider)
         return TitleSuggestionResult(
@@ -89,16 +95,16 @@ async def suggest_title(
         )
 
     if not source:
-        return result(None, None, "no_prompt")
+        return result(error="no_prompt")
 
     if qwen_asked:
         # Before any provider check: Qwen needs no running agent.
         suggestion = await _generate_with_qwen(source, system_prompt, current_title)
         if suggestion is not None:
-            return result(suggestion, None, None, used_model=QWEN_TITLE_MODEL)
+            return result(suggestion=suggestion, used_model=QWEN_TITLE_MODEL)
         if no_fallback:
             logger.warning("suggest_title: qwen failed (no fallback)")
-            return result(None, None, "generation_failed")
+            return result(error="generation_failed")
 
     candidates = [requested_provider]
     if not no_fallback:
@@ -110,7 +116,7 @@ async def suggest_title(
             requested_model if qwen_asked else requested_provider.value,
         )
         # A model was tried: the title could not be generated.
-        return result(None, None, "generation_failed" if qwen_asked else "no_provider_available")
+        return result(error="generation_failed" if qwen_asked else "no_provider_available")
 
     suggestion = None
     title_provider = None
@@ -140,10 +146,10 @@ async def suggest_title(
             "suggest_title: every provider failed (requested=%s, tried=%s)",
             requested_model if qwen_asked else requested_provider.value, [p.value for p in available],
         )
-        return result(None, None, "generation_failed")
+        return result(error="generation_failed")
     if qwen_asked or title_provider != requested_provider:
         logger.info(
             "suggest_title: fell back from %s to %s",
             requested_model if qwen_asked else requested_provider.value, title_provider.value,
         )
-    return result(suggestion, title_provider, None)
+    return result(suggestion=suggestion, title_provider=title_provider)

@@ -39,7 +39,7 @@ def logs(caplog, monkeypatch):
 
 
 @pytest.mark.parametrize("answer", ["<current_title>Fix the parser</current_title>", "Fix the parser"])
-def test_builds_the_agents_prompt_and_unwraps_the_answer(fake_call, answer):
+def test_builds_the_agents_prompt_and_unwraps_the_answer(fake_call, logs, answer):
     fake_call["outcome"] = answer
 
     title = async_to_sync(generate_openrouter_title)("The message", "Title: {text}", current_title="Old title")
@@ -49,6 +49,12 @@ def test_builds_the_agents_prompt_and_unwraps_the_answer(fake_call, answer):
         (QWEN_MODEL, build_title_prompt("Title: {text}", "The message", "Old title"), None, 10),
     ]
     assert QWEN_TITLE_TIMEOUT_SECONDS == 10
+    # As the agents' lines: the success line shows the title, never the message.
+    [record] = logs.records
+    assert record.levelno == logging.INFO
+    assert repr("Fix the parser") in record.getMessage()
+    assert "source=openrouter" in record.getMessage()
+    assert "The message" not in record.getMessage()
 
 
 def test_a_rejected_title_is_none(fake_call, logs):
@@ -60,15 +66,26 @@ def test_a_rejected_title_is_none(fake_call, logs):
     assert len(warnings) == 1
     assert "rejected" in warnings[0].getMessage()
     assert "source=openrouter" in warnings[0].getMessage()
+    # The rejected line shows the title, as the agents' lines do.
+    assert repr("Fix the parser. Then ship it.") in warnings[0].getMessage()
+    assert "The message" not in warnings[0].getMessage()
 
 
-@pytest.mark.parametrize("error", [OpenRouterTextError("timeout"), OpenRouterTextError("http", 500), RuntimeError("boom")])
-def test_a_failed_call_is_none(fake_call, logs, error):
+@pytest.mark.parametrize("error, level, line", [
+    (OpenRouterTextError("timeout"), logging.WARNING, "timeout after 10s"),
+    # An expected failure: a warning, no traceback.
+    (OpenRouterTextError("http", 500), logging.WARNING, "reason=http"),
+    # An unexpected one: the traceback.
+    (RuntimeError("boom"), logging.ERROR, "boom"),
+])
+def test_a_failed_call_is_none(fake_call, logs, error, level, line):
     fake_call["outcome"] = error
 
     assert async_to_sync(generate_openrouter_title)("The message", "Title: {text}") is None
 
     assert len(fake_call["calls"]) == 1
     [record] = logs.records
+    assert record.levelno == level
+    assert line in record.getMessage()
     assert "source=openrouter" in record.getMessage()
     assert "The message" not in record.getMessage()
