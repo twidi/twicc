@@ -71,27 +71,27 @@ defineExpose({ focus })
                 value="show-archived"
                 :checked="showArchivedSessions"
             >
-                Show archived sessions
+                {{ $t('show_archived_sessions') }}
             </wa-dropdown-item>
             <wa-dropdown-item value="archive-older">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
-                {{ trimmedSearchQuery ? 'Archive filtered sessions older than…' : 'Archive sessions older than…' }}
-                <wa-dropdown-item slot="submenu" value="archive-older-24h">24 hours</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-3d">3 days</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-7d">7 days</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-10d">10 days</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-20d">20 days</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-30d">30 days</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-2m">2 months</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-3m">3 months</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-6m">6 months</wa-dropdown-item>
+                {{ trimmedSearchQuery ? $t('archive_filtered_sessions_older_than') : $t('archive_sessions_older_than') }}
+                <wa-dropdown-item slot="submenu" value="archive-older-24h">{{ $t('24_hours') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-3d">{{ $t('3_days') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-7d">{{ $t('7_days') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-10d">{{ $t('10_days') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-20d">{{ $t('20_days') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-30d">{{ $t('30_days') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-2m">{{ $t('2_months') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-3m">{{ $t('3_months') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-6m">{{ $t('6_months') }}</wa-dropdown-item>
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
                 value="compact-view"
                 :checked="compactView"
             >
-                Compact view
+                {{ $t('compact_view') }}
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
@@ -115,7 +115,7 @@ defineExpose({ focus })
                 value="multi-select"
                 :checked="multiSelectActive"
             >
-                Multi-select mode
+                {{ $t('multi_select_mode') }}
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item
@@ -123,18 +123,18 @@ defineExpose({ focus })
                 value="show-active"
                 :checked="showActiveAcrossFilters"
             >
-                <div>Show active sessions across projects</div>
-                <div class="session-option-hint">All with a running process or unread content</div>
+                <div>{{ $t('show_active_sessions_across_projects') }}</div>
+                <div class="session-option-hint">{{ $t('all_with_a_running_process_or_unread_content') }}</div>
             </wa-dropdown-item>
         </wa-dropdown>
-        <AppTooltip for="session-options-button">Session list options</AppTooltip>
+        <AppTooltip for="session-options-button">{{ $t('session_list_options') }}</AppTooltip>
 
         <!-- Search/filter input -->
         <wa-input
             ref="searchInputRef"
             :value="searchQuery"
             @input="emit('update:searchQuery', $event.target.value)"
-            placeholder="Filter sessions..."
+            :placeholder="$t('filter_sessions')"
             size="small"
             with-clear
             class="session-search"

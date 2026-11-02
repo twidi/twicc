@@ -1,3 +1,4 @@
+import { createAppI18n } from '../../i18n/index.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -20,7 +21,7 @@ function setup({ workspace = null, projects = [], worktrees = [] } = {}) {
         isNewSessionWorktreesExpanded, handleNewSessionSelect, handleProjectResolved,
         openWorktreeDialog, dropdownRef, createProjectDialogRef, worktreeDialogRef,
     })`, {
-        computed, ref, splitProjectsByPriority, buildProjectTree, flattenProjectTree,
+        useI18n: () => createAppI18n().global, computed, ref, splitProjectsByPriority, buildProjectTree, flattenProjectTree,
         defineOptions: () => {}, defineEmits: () => (...args) => emitted.push(args),
         useDataStore: () => ({ getListableProjects: projects, getWorktreesOf: () => worktrees }),
         useSettingsStore: () => settings,
@@ -198,6 +199,7 @@ test('compiled picker keeps dialog controls outside the native Web Awesome split
         app.component(name, { render: () => null })
     }
     const container = { children: [] }
+    app.use(createAppI18n())
     app.mount(container)
     const group = container.children.find(el => el.tagName === 'WA-BUTTON-GROUP')
     const assignedElements = group.children.filter(el => el.kind === 'element' && !el.props.slot)

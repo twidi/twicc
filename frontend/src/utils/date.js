@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Format a Unix timestamp using locale-aware formatting
  * @param {number} timestamp - Unix timestamp in seconds
@@ -13,7 +15,7 @@ export function formatDate(timestamp, { smart = false } = {}) {
 
     const date = new Date(timestamp * 1000)
     const now = new Date()
-    const locale = navigator.language
+    const locale = i18n.global.locale.value
 
     // Time formatting (always the same)
     const timeStr = date.toLocaleTimeString(locale, {
@@ -142,7 +144,7 @@ export function dayKeyOfTimestamp(timestamp) {
  */
 export function formatDaySeparatorLabel(timestampMs) {
     if (!timestampMs || !Number.isFinite(timestampMs)) return '-'
-    return new Date(timestampMs).toLocaleDateString(navigator.language, {
+    return new Date(timestampMs).toLocaleDateString(i18n.global.locale.value, {
         weekday: 'long',
         year: 'numeric',
         month: 'long',

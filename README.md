@@ -242,6 +242,13 @@ TwiCC runs on **Linux** and **macOS**. There is no native Windows support — th
 
 **WSL (Windows Subsystem for Linux)** is the recommended path for Windows users. TwiCC has been reported to work correctly under WSL2. If you hit issues, please open an issue or a pull request.
 
+## Interface languages
+
+Choose **Settings → General → Language** for English or **Português (Brasil)**.
+The preference is saved in your browser and applies immediately. Translation
+coverage is being expanded; see [Interface languages](docs/internationalization.md)
+for current coverage and how to contribute another language.
+
 ## Anonymous telemetry
 
 TwiCC sends anonymous usage statistics by default: counters, booleans, enums, and buckets, never content, titles, or paths. You can inspect the exact payload, disable telemetry, or reset its anonymous instance identifier in **Settings → General**. See the [telemetry transparency page](https://twicc-telemetry.twidi.com/) for the complete schema.

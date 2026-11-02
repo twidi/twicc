@@ -11,6 +11,7 @@ initStaticBrowserToolbar()
 // Web Awesome base styles and its default theme (the only one used)
 import '@awesome.me/webawesome/dist/styles/webawesome.css';
 import '@awesome.me/webawesome/dist/styles/themes/default.css'
+import '@awesome.me/webawesome/dist/translations/pt.js'
 // Light neutral steps tinted with the accent hue (SPA only; the canvas does not follow, see surfaces.css).
 import './styles/neutral-tint.css'
 // Shared transcript CSS tokens (also imported by the share bundle — design §8.8).
@@ -98,6 +99,7 @@ import '@awesome.me/webawesome/dist/components/relative-time/relative-time.js'
 import '@awesome.me/webawesome/dist/components/popup/popup.js'
 
 import { createApp } from 'vue'
+import { i18n, setLocale } from './i18n'
 import { createPinia } from 'pinia'
 import { createNotivue } from 'notivue'
 import { router } from './router'
@@ -132,6 +134,8 @@ import './styles/codemirror-search.css'
 import './styles/robot-working.css'
 
 const app = createApp(App)
+app.use(i18n)
+setLocale(i18n.global.locale.value)
 app.use(createPinia())
 app.use(router)
 app.directive('scroll-shadow', vScrollShadow)

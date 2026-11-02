@@ -64,7 +64,7 @@ function handleToggleShowArchived(event) {
 <template>
     <div>
         <div class="section-header">
-            <span class="section-label">Projects <HelpIconButton help-key="projects" label="What's a project?" /></span>
+            <span class="section-label">{{ $t('projects') }} <HelpIconButton help-key="projects" :label="$t('what_s_a_project')" /></span>
             <div class="header-actions">
                 <wa-switch
                     v-if="hasArchivedProjects"
@@ -73,7 +73,7 @@ function handleToggleShowArchived(event) {
                     :checked="showArchivedProjects"
                     @change="handleToggleShowArchived"
                 >
-                    Show archived
+                    {{ $t('show_archived') }}
                 </wa-switch>
                 <wa-button
                     id="project-list-create-btn"
@@ -84,12 +84,12 @@ function handleToggleShowArchived(event) {
                 >
                     <wa-icon name="plus"></wa-icon>
                 </wa-button>
-                <AppTooltip for="project-list-create-btn">New project</AppTooltip>
+                <AppTooltip for="project-list-create-btn">{{ $t('new_project') }}</AppTooltip>
             </div>
         </div>
 
         <!-- Section 1: Named projects (flat, by effective activity) -->
-        <div class="section-subheader">Named projects</div>
+        <div class="section-subheader">{{ $t('named_projects') }}</div>
         <div v-if="namedProjects.length" class="project-cards">
             <ProjectCard
                 v-for="project in namedProjects"
@@ -101,12 +101,12 @@ function handleToggleShowArchived(event) {
         </div>
         <wa-callout v-else variant="brand" class="naming-hint">
             <wa-icon slot="icon" name="lightbulb"></wa-icon>
-            Name your projects to keep them at the top of the list. Named projects are always displayed first, making your most important projects easier to find. To name a project, click the <wa-icon name="ellipsis-v" auto-width></wa-icon> menu on any project below.
+            {{ $t('name_your_projects_to_keep_them_at_the_top') }} <wa-icon name="ellipsis-v" auto-width></wa-icon> {{ $t('menu_on_any_project_below') }}
         </wa-callout>
 
         <!-- Section 2: Unnamed projects (tree) -->
         <template v-if="treeRoots.length">
-            <div class="section-subheader">Other projects</div>
+            <div class="section-subheader">{{ $t('other_projects') }}</div>
             <ProjectTreeNode
                 v-for="root in treeRoots"
                 :key="root.project ? root.project.id : root.segment"
@@ -117,7 +117,7 @@ function handleToggleShowArchived(event) {
         </template>
 
         <div v-if="namedProjects.length === 0 && treeRoots.length === 0" class="empty-state">
-            No projects found
+            {{ $t('no_projects_found') }}
         </div>
     </div>
 

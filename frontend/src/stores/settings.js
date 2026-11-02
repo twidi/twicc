@@ -27,6 +27,7 @@ import { usablePublicOrigin } from '../utils/publicOrigin'
 import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
 import { updateCompactHeight, watchCompactHeight } from '../utils/compactHeight'
 import { applyReduceEffects } from '../utils/reducedMotion'
+import { DEFAULT_LOCALE, isSupportedLocale, setLocale } from '../i18n'
 
 const STORAGE_KEY = 'twicc-settings'
 
@@ -41,6 +42,7 @@ const STORAGE_KEY = 'twicc-settings'
  */
 export const SETTINGS_SCHEMA = {
     // --- Local-only settings (defaults defined here) ---
+    locale: DEFAULT_LOCALE,
     displayMode: DEFAULT_DISPLAY_MODE,
     fontSize: 16,
     colorScheme: DEFAULT_COLOR_SCHEME,
@@ -146,6 +148,7 @@ export const SETTINGS_SCHEMA = {
  * Invalid values will be replaced with defaults.
  */
 const SETTINGS_VALIDATORS = {
+    locale: isSupportedLocale,
     defaultProvider: (v) => typeof v === 'string' && getRegisteredProviders().includes(v),
     disabledProviders: (v) =>
         Array.isArray(v) && v.every(item => typeof item === 'string' && getRegisteredProviders().includes(item)),
@@ -1252,6 +1255,7 @@ let _pendingDisabledProvidersPresent = false
  */
 export function initSettings() {
     const store = useSettingsStore()
+    watch(() => store.locale, value => setLocale(value), { immediate: true, flush: 'sync' })
 
     // Dispatch the parsed localStorage values that are owned by providers
     // (the generic ones were already applied via the store's state factory).
@@ -1289,6 +1293,7 @@ export function initSettings() {
     // by Vue inside watchers, so reactive reads track every dependency.
     const collectAllSyncedSettings = () => {
         const dict = {
+            locale: store.locale,
             defaultProvider: store.defaultProvider,
             defaultLayoutId: store.defaultLayoutId,
             orchestrationDisabledProviders: store.orchestrationDisabledProviders,

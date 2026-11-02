@@ -1,3 +1,4 @@
+import en from '../i18n/locales/en.json' with { type: 'json' }
 // Registration guard for the two agent-sharing gate keys (agent-sharing
 // design §4 "Plumbing"). settings.js is not importable under node --test
 // (extensionless imports), so the store-side registration points are
@@ -35,10 +36,13 @@ test('the switch copy carries both consent disclosures, per switch (§4/§14)', 
     const popoverSource = readFileSync(
         new URL('../components/app/SettingsPopover.vue', import.meta.url), 'utf8')
     for (const kind of ['session', 'artifact']) {
-        assert.match(popoverSource,
+        const key = `allows_agents_to_create_${kind}_shares_whose_target_belongs`
+        assert.ok(popoverSource.includes(`$t('${key}')`))
+        const copy = en[key]
+        assert.match(copy,
             new RegExp(`revoke any existing ${kind}\\s+share, including links created by you`),
             `${kind}: revoke-anything disclosure`)
-        assert.match(popoverSource,
+        assert.match(copy,
             new RegExp(`read the URL of every existing\\s+${kind} share, including links created by you or by another agent`),
             `${kind}: read-all disclosure`)
     }
