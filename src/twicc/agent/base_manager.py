@@ -725,6 +725,7 @@ class BaseAgentManager:
         agent._completion_persist_callback = self._persist_completion
         agent._completion_confirm_callback = self._confirm_completion
         agent._completion_end_callback = self._end_completion
+        agent._completion_retry_callback = self._retry_completion
         agent._state_change_callback = self._on_state_change
 
     def _completion_lifecycle_guard(self, agent: BaseAgent) -> tuple[int, CompletionSnapshot]:
@@ -748,6 +749,9 @@ class BaseAgentManager:
 
     async def _persist_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
         """Store a fact snapshot through writer admission, without public completion."""
+        if snapshot.turn_id in agent._completion_pending_publications:
+            # Claimed closures can only use the transactional publication path.
+            return False
         if agent.ephemeral:
             return True
         async def admitted():
@@ -764,6 +768,12 @@ class BaseAgentManager:
         """Commit the journal and optional ProcessRun transition in one transaction."""
         if agent.ephemeral:
             return True
+        return await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot, state=state)
+
+    def _store_completion_snapshot_admitted(
+        self, agent: BaseAgent, snapshot: CompletionSnapshot, *, state: AgentState | None = None,
+    ) -> bool:
+        """Compose journal writes on the admitted worker thread, including DEAD."""
         from django.db import transaction
         from django.utils import timezone
 
@@ -779,21 +789,22 @@ class BaseAgentManager:
         opened_at, source_floor, incarnation, epoch = opening
         needs_open = snapshot.turn_id not in agent._completion_opened_ids
 
-        def persist():
-            with transaction.atomic():
-                if needs_open:
-                    open_logical_turn(
-                        turn_id=snapshot.turn_id, session_id=agent.session_id, provider=agent.provider.value,
-                        run_id=snapshot.run_id, process_run_id=agent.process_run.pk if agent.process_run else None,
-                        ordinal=snapshot.ordinal, source_floor=source_floor,
-                        storage_incarnation=incarnation, history_epoch=epoch, opened_at=opened_at,
-                    )
-                stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
-                if stored and state is not None:
-                    self._persist_process_run_transition_admitted(agent, state)
-                return stored
-
-        stored = await asyncio.to_thread(persist)
+        with transaction.atomic():
+            if needs_open:
+                open_logical_turn(
+                    turn_id=snapshot.turn_id, session_id=agent.session_id, provider=agent.provider.value,
+                    run_id=snapshot.run_id, process_run_id=agent.process_run.pk if agent.process_run else None,
+                    ordinal=snapshot.ordinal, source_floor=source_floor,
+                    storage_incarnation=incarnation, history_epoch=epoch, opened_at=opened_at,
+                )
+            stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
+            if stored and state is not None:
+                if state != AgentState.USER_TURN:
+                    # The old closure remains valid when newer work opens.
+                    # Record its end, then restore the newer live boundary
+                    # within this same transaction, without a stale broadcast.
+                    self._persist_process_run_transition_admitted(agent, AgentState.USER_TURN)
+                self._persist_process_run_transition_admitted(agent, state)
         agent._completion_opened_ids.add(snapshot.turn_id)
         return stored
 
@@ -808,6 +819,11 @@ class BaseAgentManager:
             agent, lambda: snapshot if agent.completion_controller.snapshot() == snapshot else None,
         )
 
+    async def _retry_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
+        return await self._commit_completion(
+            agent, lambda: agent._completion_pending_publications.get(snapshot.turn_id),
+        )
+
     async def _commit_completion(
         self, agent: BaseAgent, decide: Callable[[], CompletionSnapshot | None],
     ) -> bool:
@@ -820,17 +836,31 @@ class BaseAgentManager:
                 snapshot = decide()
                 if snapshot is None:
                     return False
-                return await self._persist_completion_admitted(agent, snapshot, state=AgentState.USER_TURN)
+                agent._completion_pending_publications[snapshot.turn_id] = snapshot
+                if agent._completion_timer_candidate is not None:
+                    # Once claimed, root ingress must not cancel the task that
+                    # owns the admitted transaction. It can retry after failure.
+                    agent._completion_retry_deadline = asyncio.get_running_loop().time()
+                state = (AgentState.USER_TURN if agent.completion_controller.snapshot() == snapshot
+                         else agent.state)
+                return await self._persist_completion_admitted(agent, snapshot, state=state)
 
             try:
                 committed = await admitted() if agent.ephemeral else await run_under_db_write_lock(admitted)
             except Exception:
                 logger.exception("Error confirming logical completion for %s", agent.session_id)
                 committed = False
-            if not committed or agent.completion_controller.snapshot() != snapshot:
+            if not committed:
+                agent._completion_schedule_retry()
+                return False
+            agent._completion_pending_publications.pop(snapshot.turn_id, None)
+            agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
+            if agent.completion_controller.snapshot() != snapshot:
+                agent._completion_refresh()
                 return False
             if self._agents.get(agent.session_id) is not agent or agent._stop_requested:
                 return False
+            agent._completion_last_queued = snapshot
             agent._completion_committed_snapshot = snapshot
             agent._set_state(AgentState.USER_TURN)
             # A lifecycle hook can await nested DEAD. It must not cancel the
@@ -838,7 +868,9 @@ class BaseAgentManager:
             if agent._completion_timer_task is asyncio.current_task():
                 agent._completion_timer_task = None
                 agent._completion_timer_candidate = None
+                agent._completion_retry_deadline = None
         await agent._notify_state_change()
+        agent._completion_refresh()
         return True
 
     async def _on_state_change(self, agent: BaseAgent) -> None:
@@ -1307,12 +1339,37 @@ class BaseAgentManager:
         """Admit a ProcessRun write; completion reuses the admitted implementation."""
         if agent.process_run is None:
             return
+        write = (self._reconcile_dead_completion_admitted
+                 if state == AgentState.DEAD and agent._completion_pending_publications
+                 else self._persist_process_run_transition_admitted)
         try:
-            await run_under_db_write_lock(
-                lambda: asyncio.to_thread(self._persist_process_run_transition_admitted, agent, state),
-            )
+            await run_under_db_write_lock(lambda: asyncio.to_thread(write, agent, state))
         except Exception:
             logger.exception("Error persisting process state %s for %s", state.value, agent.session_id)
+
+    def _reconcile_dead_completion_admitted(self, agent: BaseAgent, state: AgentState) -> None:
+        """Keep valid claimed outcomes and interrupted later work before deleting the run."""
+        from django.db import transaction
+
+        pending = tuple(agent._completion_pending_publications.values())
+        latest = agent.completion_controller.snapshot()
+        opened_ids = agent._completion_opened_ids.copy()
+        try:
+            with transaction.atomic():
+                for snapshot in pending:
+                    self._store_completion_snapshot_admitted(agent, snapshot, state=AgentState.USER_TURN)
+                    if latest.ordinal > snapshot.ordinal:
+                        self._persist_process_run_transition_admitted(agent, AgentState.ASSISTANT_TURN)
+                if latest.ordinal and latest.outcome is not None and latest not in pending:
+                    self._store_completion_snapshot_admitted(agent, latest)
+                self._persist_process_run_transition_admitted(agent, state)
+        except BaseException:
+            agent._completion_opened_ids = opened_ids
+            raise
+        for snapshot in (*pending, latest):
+            agent._completion_pending_publications.pop(snapshot.turn_id, None)
+            agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
+        agent._completion_last_queued = latest
 
     def _persist_process_run_transition_admitted(self, agent: BaseAgent, state: AgentState) -> None:
         """Write on the admitted worker thread, including the existing timeline hook.

@@ -197,6 +197,9 @@ class BaseAgent(StopOriginMixin):
         self._completion_persist_callback: Callable | None = None
         self._completion_confirm_callback: Callable | None = None
         self._completion_end_callback: Callable | None = None
+        self._completion_retry_callback: Callable | None = None
+        self._completion_pending_publications: dict[str, CompletionSnapshot] = {}
+        self._completion_retry_deadline: float | None = None
         self._completion_openings: dict[str, Any] = {}
         self._completion_opened_ids: set[str] = set()
         self._completion_source_floor = 0
@@ -274,17 +277,22 @@ class BaseAgent(StopOriginMixin):
         timer = self._completion_timer_task
         self._completion_timer_task = None
         self._completion_timer_candidate = None
+        self._completion_retry_deadline = None
         if timer is not None and timer is not asyncio.current_task():
             timer.cancel()
 
     def _completion_refresh(self) -> None:
         snapshot = self.completion_controller.snapshot()
         if (snapshot.ordinal and self._completion_persist_callback is not None
+                and snapshot.turn_id not in self._completion_pending_publications
                 and snapshot != self._completion_last_queued):
             self._completion_pending_snapshots[snapshot.turn_id] = snapshot
             self._completion_last_queued = snapshot
-            if self._completion_persist_task is None:
-                self._completion_persist_task = self._completion_own_task(self._completion_drain_snapshots())
+        if self._completion_pending_publications:
+            self._completion_schedule_retry(0.0)
+            return
+        if self._completion_pending_snapshots and self._completion_persist_task is None:
+            self._completion_persist_task = self._completion_own_task(self._completion_drain_snapshots())
         candidate = self.completion_controller.candidate()
         if candidate == self._completion_timer_candidate:
             return
@@ -295,6 +303,40 @@ class BaseAgent(StopOriginMixin):
                 self._completion_wait(candidate), name=f"completion-timer-{self.session_id}",
             )
 
+    def _completion_schedule_retry(self, delay: float = 1.0) -> None:
+        """Keep a claimed closure owned until its transactional publication succeeds."""
+        if (not self._completion_pending_publications or self._completion_retry_callback is None
+                or self.state == AgentState.DEAD or self._stop_requested):
+            return
+        deadline = asyncio.get_running_loop().time() + delay
+        if (self._completion_timer_task is not None and self._completion_retry_deadline is not None
+                and self._completion_retry_deadline <= deadline):
+            return
+        self._cancel_completion_timer()
+        self._completion_retry_deadline = deadline
+        snapshot = next(iter(self._completion_pending_publications.values()))
+        self._completion_timer_task = asyncio.create_task(
+            self._completion_retry_wait(snapshot, delay), name=f"completion-retry-{self.session_id}",
+        )
+
+    async def _completion_retry_wait(self, snapshot: CompletionSnapshot, delay: float) -> None:
+        cancelled = False
+        try:
+            await asyncio.sleep(delay)
+            await self._completion_retry_callback(self, snapshot)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            if self._completion_timer_task is asyncio.current_task():
+                self._completion_timer_task = None
+                self._completion_retry_deadline = None
+                if not cancelled:
+                    if self._completion_pending_publications:
+                        self._completion_schedule_retry()
+                    else:
+                        self._completion_refresh()
+
     async def _completion_drain_snapshots(self) -> None:
         """Keep one writer admission in flight and the latest snapshot per interval.
 
@@ -303,6 +345,8 @@ class BaseAgent(StopOriginMixin):
         """
         try:
             while self._completion_pending_snapshots:
+                if self._completion_pending_publications:
+                    break
                 turn_id = next(iter(self._completion_pending_snapshots))
                 snapshot = self._completion_pending_snapshots.pop(turn_id)
                 await self._completion_persist_callback(self, snapshot)
@@ -310,6 +354,7 @@ class BaseAgent(StopOriginMixin):
             self._completion_persist_task = None
 
     async def _completion_wait(self, candidate: CompletionCandidate) -> None:
+        cancelled = False
         try:
             await asyncio.sleep(max(0.0, candidate.deadline - asyncio.get_running_loop().time()))
             if self._completion_confirm_callback is not None:
@@ -320,6 +365,7 @@ class BaseAgent(StopOriginMixin):
                     self._set_state(AgentState.USER_TURN)
                     await self._notify_state_change()
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception:
             self._logger.exception("Completion confirmation failed for %s", self.session_id)
@@ -327,6 +373,9 @@ class BaseAgent(StopOriginMixin):
             if self._completion_timer_task is asyncio.current_task():
                 self._completion_timer_task = None
                 self._completion_timer_candidate = None
+                self._completion_retry_deadline = None
+                if not cancelled and self._completion_pending_publications:
+                    self._completion_schedule_retry()
 
     async def _completion_interrupt_candidate(self) -> bool:
         """End a quiet candidate immediately, without an SDK control request."""
