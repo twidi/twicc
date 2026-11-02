@@ -2430,18 +2430,23 @@ def test_direct_and_as_written_never_share_the_cache(client, adaptation, direct_
     body = {**CACHED_PAYLOAD, "text": SIMPLE}
 
     async def scenario():
+        # Direct first: the as-written reading is not served from the direct entry.
         await _read_through(client, body)
+        assert adaptation.pulled == [[CLEANED]]
         _store_adapt("off")
         await _read_through(client, body)
-        # The reverse order: as written first, in a clean cache.
+        assert adaptation.pulled == [[CLEANED], [SIMPLE]]
+        assert speech_cache.get(_speech_key(body, "direct")) is not None
+        assert speech_cache.get(_speech_key(body, None)) is not None
+        # The reverse order, from an empty cache: as written first, then direct.
         speech_cache.clear()
-        adaptation.pulled.clear()
         await _read_through(client, body)
+        assert adaptation.pulled == [[CLEANED], [SIMPLE], [SIMPLE]]
         _store_adapt(None)
         await _read_through(client, body)
+        assert adaptation.pulled == [[CLEANED], [SIMPLE], [SIMPLE], [CLEANED]]
 
     asyncio.run(scenario())
-    assert adaptation.pulled == [[SIMPLE], [CLEANED]]
 
 
 @pytest.mark.parametrize(
@@ -2500,8 +2505,12 @@ def test_a_direct_reading_works_for_a_script_config(client, adaptation, direct_r
     assert " adapted=direct " in line
 
 
-def test_the_open_step_logs_no_text(client, adaptation, direct_reading, views_log):
+def test_the_open_step_logs_no_text(client, adaptation, direct_reading, views_log, streams_log):
     views_log.set_level(logging.DEBUG)
     asyncio.run(_read_through(client, {**VALID_PAYLOAD, "text": SIMPLE}))
     asyncio.run(_open(client, {**VALID_PAYLOAD, "text": "[](x)"}))
-    assert all("Hello" not in record.getMessage() and "[](x)" not in record.getMessage() for record in views_log.records)
+    messages = [record.getMessage() for record in views_log.records]
+    assert any(record.name == STREAMS_LOGGER_NAME for record in views_log.records)  # the stream's line
+    for message in messages:
+        for text in ("Hello", "world", "[](x)"):
+            assert text not in message
