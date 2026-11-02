@@ -116,10 +116,13 @@ class CodexAgentManager(BaseAgentManager):
         first user message on the first turn (see that method and
         :mod:`twicc.providers.codex.titles`).
         """
+        guard = self._completion_lifecycle_guard(agent)
         if getattr(agent, "ephemeral", False):
             await super()._on_state_change(agent)
             return
         await super()._on_state_change(agent)
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
         state = agent.get_info().state
         if state == AgentState.DEAD:
             wake_migration_scheduler()
@@ -156,6 +159,7 @@ class CodexAgentManager(BaseAgentManager):
         from twicc.core.models import Session
         from twicc.pending_titles import get_pending_title
 
+        guard = self._completion_lifecycle_guard(agent)
         session_id = agent.session_id
         if (
             get_pending_title(session_id)
@@ -169,7 +173,7 @@ class CodexAgentManager(BaseAgentManager):
             .values_list("title", flat=True)
             .first()
         )()
-        if not title:
+        if not title or not self._completion_lifecycle_is_current(agent, guard):
             return
 
         task = asyncio.create_task(
@@ -262,6 +266,8 @@ class CodexAgentManager(BaseAgentManager):
         async_questions: dict | None = None,
         request_id: str | None = None,
         send_origin: str = "internal",
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> bool:
         """Serialize admission, delivery and acceptance with rollout migration.
 
@@ -273,25 +279,53 @@ class CodexAgentManager(BaseAgentManager):
         ``SendDeliveryError`` and nothing is sent.
         """
 
-        self._check_ephemeral_readonly(session_id)
-        content = None
-        if attachment_plan is not None and attachment_plan.entries:
-            self._refuse_attachments_with_command(text)
-            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
-        async with gate_for(session_id):
-            return await self._send_to_session_under_gate(
-                session_id,
-                project_id,
-                cwd,
-                text,
-                settings,
-                images=images,
-                documents=documents,
-                async_questions=async_questions,
-                request_id=request_id,
-                send_origin=send_origin,
-                **_content_kwargs(content),
-            )
+        completion_kwargs = {}
+        completion_admission = {"entered": False}
+        staged_agent = self._agents.get(session_id)
+        has_input = (parse_hardcoded_command(text) is None and (
+            bool(text) or bool(images) or bool(isinstance(async_questions, dict) and async_questions.get("answers"))
+            or bool(attachment_plan and attachment_plan.entries)))
+        if has_input and (completion_token is not None or completion_cursor is not None
+                          or getattr(staged_agent, "_completion_enabled", False)):
+            completion_token = completion_token or str(uuid4())
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor,
+                                 "_completion_admission": completion_admission}
+            if staged_agent is not None and staged_agent.state != AgentState.DEAD:
+                self._check_ephemeral_readonly(session_id)
+                if completion_cursor is not None:
+                    staged_agent._completion_source_floor = completion_cursor
+                staged_agent._completion_input_pending(completion_token)
+        try:
+            self._check_ephemeral_readonly(session_id)
+            content = None
+            if attachment_plan is not None and attachment_plan.entries:
+                self._refuse_attachments_with_command(text)
+                content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+            async with gate_for(session_id):
+                delivered = await self._send_to_session_under_gate(
+                    session_id,
+                    project_id,
+                    cwd,
+                    text,
+                    settings,
+                    images=images,
+                    documents=documents,
+                    async_questions=async_questions,
+                    request_id=request_id,
+                    send_origin=send_origin,
+                    **_content_kwargs(content), **completion_kwargs,
+                )
+                if (staged_agent is not None and completion_token is not None and has_input
+                        and not completion_admission["entered"]):
+                    staged_agent._completion_input_settled(completion_token, "rejected")
+                return delivered
+        except BaseException as exc:
+            if staged_agent is not None and completion_token is not None and has_input:
+                from .agent import question_send_failure_status
+
+                status = question_send_failure_status(exc) if completion_admission["entered"] else "rejected"
+                staged_agent._completion_input_settled(completion_token, status)
+            raise
 
     async def reconcile_question_sends(
         self, session_id: str, project_id: str, cwd: str, settings: AgentSettings, request_ids: list[str],
@@ -326,6 +360,9 @@ class CodexAgentManager(BaseAgentManager):
         *, images: list[dict] | None = None, documents: list[dict] | None = None,
         async_questions: dict | None = None, request_id: str | None = None, send_origin: str = "internal",
         content: AttachmentContent | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
+        _completion_admission: dict | None = None,
     ) -> bool:
         """Prepare durable intent before calling the ordinary send implementation.
 
@@ -338,6 +375,11 @@ class CodexAgentManager(BaseAgentManager):
         from twicc.core.services.async_questions import accept_question_send, prepare_question_send
         from twicc.providers.db_writer import run_under_db_write_lock
 
+        completion_kwargs = {}
+        if completion_token is not None or completion_cursor is not None:
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor}
+        if _completion_admission is not None:
+            completion_kwargs["_completion_admission"] = _completion_admission
         command = parse_hardcoded_command(text)
         if command is not None:
             if async_questions is not None and (
@@ -346,7 +388,7 @@ class CodexAgentManager(BaseAgentManager):
                 raise SendDeliveryError("Question answers cannot accompany a command", code="async_questions_command")
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
-                **_content_kwargs(content),
+                **_content_kwargs(content), **completion_kwargs,
             )
         has_answers = isinstance(async_questions, dict) and bool(async_questions.get("answers"))
         if not text and not images and not documents and not has_answers and content is None:
@@ -360,7 +402,7 @@ class CodexAgentManager(BaseAgentManager):
                     raise SendDeliveryError(str(exc), code=str(exc)) from exc
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
-                **_content_kwargs(content),
+                **_content_kwargs(content), **completion_kwargs,
             )
         from twicc.core.models import AsyncQuestionState
         previous = await sync_to_async(lambda: (
@@ -386,7 +428,7 @@ class CodexAgentManager(BaseAgentManager):
         try:
             delivered = await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, prepared.text, settings,
-                images=images, documents=documents, submission=submission, **_content_kwargs(content),
+                images=images, documents=documents, submission=submission, **_content_kwargs(content), **completion_kwargs,
             )
             if submission.get("_delivery_future") is not None:
                 delivered = await submission["_delivery_future"]
@@ -401,7 +443,8 @@ class CodexAgentManager(BaseAgentManager):
             if isinstance(exc, asyncio.CancelledError) and submission.get("_delivery_task") is not None:
                 submission["_delivery_task"].cancel()
                 await asyncio.gather(submission["_delivery_task"], return_exceptions=True)
-            status = "uncertain" if submission.get("provider_delivered") else question_send_failure_status(exc)
+            status = ("rejected" if _completion_admission is not None and not _completion_admission["entered"]
+                      else "uncertain" if submission.get("provider_delivered") else question_send_failure_status(exc))
             try:
                 await run_under_db_write_lock(lambda: sync_to_async(accept_question_send)(
                     session_id, {**submission, "status": status},
@@ -452,6 +495,9 @@ class CodexAgentManager(BaseAgentManager):
         documents: list[dict] | None = None,
         content: AttachmentContent | None = None,
         submission: dict | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
+        _completion_admission: dict | None = None,
     ) -> bool:
         """Send a message to an existing session.
 
@@ -477,6 +523,9 @@ class CodexAgentManager(BaseAgentManager):
         for delivery, so the WS layer can emit a delivery ack; ``False`` for
         a settings-only update with nothing to send.
         """
+        completion_kwargs = {}
+        if completion_token is not None or completion_cursor is not None:
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor}
         self._warn_about_documents(session_id, documents)
 
         # Hardcoded slash commands (e.g. ``/compact``) are captured here — the
@@ -534,9 +583,11 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
+                    if _completion_admission is not None:
+                        _completion_admission["entered"] = True
                     return await agent.send(
                         text, images=images, **({"submission": submission} if submission else {}),
-                        **_content_kwargs(content),
+                        **_content_kwargs(content), **completion_kwargs,
                     )
 
                 elif agent.state == AgentState.ASSISTANT_TURN:
@@ -564,9 +615,11 @@ class CodexAgentManager(BaseAgentManager):
                         old_settings.fast_mode, settings.fast_mode,
                     )
                     await agent.apply_agent_settings(settings)
+                    if _completion_admission is not None:
+                        _completion_admission["entered"] = True
                     return await agent.send(
                         text, images=images, **({"submission": submission} if submission else {}),
-                        **_content_kwargs(content),
+                        **_content_kwargs(content), **completion_kwargs,
                     )
 
                 else:
@@ -580,10 +633,12 @@ class CodexAgentManager(BaseAgentManager):
             if not text and not images and content is None:
                 raise RuntimeError("Cannot start a new agent without a message")
 
+            if _completion_admission is not None:
+                _completion_admission["entered"] = True
             await self._start_agent(
                 session_id, project_id, cwd, text, resume=True,
                 settings=settings, images=images, **({"submission": submission} if submission else {}),
-                **_content_kwargs(content),
+                **_content_kwargs(content), **completion_kwargs,
             )
             return True
 
@@ -632,6 +687,8 @@ class CodexAgentManager(BaseAgentManager):
             allowed_while_busy = (
                 (command.name == "goal" and agent.in_goal_continuation())
                 or agent.in_subagent_hold()
+                or (getattr(agent, "_completion_enabled", False)
+                    and not agent._has_actual_turn_work() and not agent._manual_compaction)
             )
             if busy and not allowed_while_busy:
                 raise RuntimeError(
@@ -780,6 +837,8 @@ class CodexAgentManager(BaseAgentManager):
         ephemeral: bool = False,
         ephemeral_admission=None,
         attachment_plan: AttachmentPlan | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> str:
         """Create a brand-new Codex thread for the draft ``session_id``.
 
@@ -803,6 +862,9 @@ class CodexAgentManager(BaseAgentManager):
         new agent. This method owns the pre-copies: they are discarded
         whatever happens, including a startup failure before the finish.
         """
+        completion_kwargs = {}
+        if completion_token is not None or completion_cursor is not None:
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor}
         self._warn_about_documents(session_id, documents)
 
         # A hardcoded command (e.g. ``/goal …``) as the FIRST message must be
@@ -819,6 +881,7 @@ class CodexAgentManager(BaseAgentManager):
             return await self._create_session_locked(
                 session_id, project_id, cwd, text, settings, command,
                 images=images, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                **completion_kwargs,
             )
 
         self._refuse_attachments_with_command(text)
@@ -831,6 +894,7 @@ class CodexAgentManager(BaseAgentManager):
             return await self._create_session_locked(
                 session_id, project_id, cwd, text, settings, command,
                 images=images, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                **completion_kwargs,
                 prepared_attachments=prepared,
             )
         finally:
@@ -849,8 +913,13 @@ class CodexAgentManager(BaseAgentManager):
         ephemeral: bool,
         ephemeral_admission,
         prepared_attachments: PreparedAttachments | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> str:
         """The locked part of :meth:`create_session`."""
+        completion_kwargs = {}
+        if completion_token is not None or completion_cursor is not None:
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor}
         attachment_kwargs = {} if prepared_attachments is None else {"prepared_attachments": prepared_attachments}
         async with self._lock:
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
@@ -872,7 +941,7 @@ class CodexAgentManager(BaseAgentManager):
                 session_id, project_id, cwd, text, resume=False,
                 settings=settings, images=images,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
-                **attachment_kwargs,
+                **attachment_kwargs, **completion_kwargs,
             )
 
     def get_user_terminated_tool_reason(

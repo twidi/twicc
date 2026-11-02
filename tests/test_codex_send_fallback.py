@@ -74,6 +74,7 @@ def fixture():
 
 
 async def cleanup(agent):
+    agent._cancel_completion_timer()
     if agent._turn_task:
         agent._turn_task.cancel()
         await asyncio.gather(agent._turn_task, return_exceptions=True)
@@ -163,7 +164,7 @@ def test_replacement_stream_survives_previous_consumer_cleanup():
     async def run():
         agent, thread, deliveries = fixture()
         old = agent._current_turn
-        old.events = [SimpleNamespace(method="turn/completed", payload=SimpleNamespace(thread_id="session", turn=SimpleNamespace(id="old")))]
+        old.events = [SimpleNamespace(method="turn/completed", payload=SimpleNamespace(thread_id="session", turn=SimpleNamespace(id="old", status="completed")))]
         agent._active_tools["old-tool"] = {"name": "exec_command", "input": {}}
         logging_patch = patch("twicc.providers.codex.agent.agent.log_stream_event")
         logging_patch.start()
@@ -185,7 +186,8 @@ def test_replacement_stream_survives_previous_consumer_cleanup():
             assert agent.state == AgentState.ASSISTANT_TURN
             thread.opened[0].finished.set()
             await agent._turn_task
-            assert agent.state == AgentState.USER_TURN
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is not None
             assert agent._current_turn is None
             assert not agent._current_turn_ready.is_set()
             assert len(deliveries) == 1
@@ -210,7 +212,8 @@ def test_normal_send_keeps_settings_and_stream_lifecycle():
             assert agent._current_turn is thread.opened[0]
             thread.opened[0].finished.set()
             await agent._turn_task
-            assert agent.state == AgentState.USER_TURN
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is not None
         finally:
             await cleanup(agent)
     asyncio.run(run())
@@ -240,7 +243,8 @@ def test_old_completion_waits_for_pending_delivery(open_failure):
                     with pytest.raises(RuntimeError, match="ambiguous open"):
                         await send
                     await previous_task
-                    assert agent.state == AgentState.USER_TURN
+                    assert agent.state == AgentState.ASSISTANT_TURN
+                    assert agent.completion_controller.candidate() is None
                     assert deliveries == []
                 else:
                     assert await send is True

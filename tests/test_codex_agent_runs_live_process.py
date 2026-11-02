@@ -38,6 +38,7 @@ from twicc.providers import sessions_watcher
 from twicc.providers.codex.agent import agent as agent_module
 from twicc.providers.codex.agent import manager as manager_module
 from twicc.providers.codex.agent.agent import CodexAgent
+from twicc.providers.helpers import AgentSettings
 from twicc.providers.codex.agent.manager import CodexAgentManager
 from twicc.providers.codex.sessions_watcher import CodexSessionsWatcher
 from twicc.providers.sessions_watcher import ParsedSessionFile
@@ -148,7 +149,8 @@ def close_followup(owner_id: str, call_id: str, at: float) -> None:
 
 def make_agent(session_id: str = ROOT_ID, *, ephemeral: bool = False,
                state: AgentState = AgentState.USER_TURN) -> CodexAgent:
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent(session_id, "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(),
+                       ephemeral=ephemeral, work_dirs=[])
     agent.session_id = session_id
     agent.ephemeral = ephemeral
     agent.state = state
@@ -171,6 +173,11 @@ def make_agent(session_id: str = ROOT_ID, *, ephemeral: bool = False,
     agent._set_state = MagicMock(side_effect=lambda new_state: setattr(agent, "state", new_state))
     agent._init_shell_notice_state()
     agent._init_codex_shell_notice_state()
+    if state == AgentState.ASSISTANT_TURN:
+        # This fixture represents a physical root turn that already ended.
+        agent._completion_enabled = True
+        agent.completion_controller.activity(0)
+        agent.completion_controller.provider_ended(0)
     return agent
 
 
@@ -368,7 +375,8 @@ class TestPruneAndStopAgainstTheRunModel:
         assert reads == [[CHILD], [CHILD]]
         assert agent._live_subagents == {}
         assert agent._subagent_hold_active is False
-        assert agent.state == AgentState.USER_TURN
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert agent.completion_controller.candidate() is not None
         assert agent._subagent_stop_retry_tasks == set()
 
     def test_the_retry_does_not_retry_again(self, monkeypatch) -> None:
@@ -492,8 +500,9 @@ class TestEphemeralAgent:
 
         assert agent._live_subagents == {}
         assert agent._subagent_hold_active is False
-        assert agent.state == AgentState.USER_TURN
-        agent._notify_state_change.assert_awaited_once()
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert agent.completion_controller.candidate() is not None
+        agent._notify_state_change.assert_not_awaited()
 
     def test_stop_relay_keeps_a_child_re_added_and_active_again(self, monkeypatch) -> None:
         """The poll saw it idle; an ``interacted`` item re-adds it before the relay takes the lock."""
@@ -633,7 +642,8 @@ class TestHooksReachTheRootAgent:
         assert AgentRunEnd.objects.filter(session_id=ROOT, status="owner_turn_aborted").count() == 2
         assert live.agent._live_subagents == {}
         assert live.agent._subagent_hold_active is False
-        assert live.agent.state == AgentState.USER_TURN
+        assert live.agent.state == AgentState.ASSISTANT_TURN
+        assert live.agent.completion_controller.candidate() is not None
 
     def test_rule_five_close_from_the_child_file_releases_the_hold(self, tmp_path, monkeypatch):
         fixture = fixture_child_turn_ends()
@@ -647,7 +657,8 @@ class TestHooksReachTheRootAgent:
 
         assert live.agent._live_subagents == {}
         assert live.agent._subagent_hold_active is False
-        assert live.agent.state == AgentState.USER_TURN
+        assert live.agent.state == AgentState.ASSISTANT_TURN
+        assert live.agent.completion_controller.candidate() is not None
 
     def test_followup_batch_fires_the_resume_hook_before_the_stop_hook(self, tmp_path, monkeypatch):
         fixture = _idle_followup()

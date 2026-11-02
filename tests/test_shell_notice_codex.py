@@ -17,7 +17,7 @@ from twicc.providers.codex.agent.manager import CodexAgentManager
 
 
 def make_agent():
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("codex-root", "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), work_dirs=[])
     agent.session_id = "codex-root"
     agent.state = AgentState.USER_TURN
     agent._live_subagents = {}
@@ -106,7 +106,7 @@ def test_idle_predicate():
 async def test_send_returns_true_in_user_turn_and_clears_only_on_external_send():
     agent = make_agent()
     agent._notify_state_change = AsyncMock()
-    agent._schedule_turn = lambda text, images: None
+    agent._schedule_turn = lambda text, images, **kwargs: None
     agent._note_command_execution(*command_event("item/started", "7"))
     agent.mark_shells_noticed(["codex-root:7"])
     assert await agent.send("notice", shell_notice=True) is True
@@ -120,7 +120,7 @@ async def test_send_returns_true_in_user_turn_and_clears_only_on_external_send()
 async def test_hold_break_and_steer_are_external_sends():
     agent = make_agent()
     agent._broadcast_process_label = AsyncMock()
-    agent._schedule_turn = lambda text, images: None
+    agent._schedule_turn = lambda text, images, **kwargs: None
     agent._note_command_execution(*command_event("item/started", "7"))
     # Hold break: ASSISTANT_TURN parked in the hold, no active turn.
     agent.state = AgentState.ASSISTANT_TURN

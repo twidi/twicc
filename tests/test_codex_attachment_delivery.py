@@ -16,7 +16,7 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from openai_codex import ImageInput, TextInput
@@ -209,7 +209,7 @@ def test_start_consumes_the_initial_content_once_and_a_later_steer_carries_only_
     asyncio.run(agent.start("hello", AsyncMock(), resume=False, images=legacy))
 
     assert agent._initial_content is None
-    assert scheduled == [("hello", None, {"content": content})]
+    assert scheduled == [("hello", None, {"content": content, "completion_token": ANY})]
 
     # A later steer of the same turn: its own new text only, no replayed content.
     agent.state = AgentState.ASSISTANT_TURN
@@ -226,14 +226,14 @@ def test_start_uses_a_forwarded_content_for_a_resume(monkeypatch):
     scheduled = _schedule_recorder(agent)
     content = _file_only_content("")
     asyncio.run(agent.start("", AsyncMock(), resume=True, content=content))
-    assert scheduled == [("", None, {"content": content})]
+    assert scheduled == [("", None, {"content": content, "completion_token": ANY})]
 
 
-def test_legacy_start_keeps_its_exact_schedule_call(monkeypatch):
+def test_legacy_start_adds_only_the_runtime_completion_token(monkeypatch):
     agent = _make_agent(monkeypatch)
     scheduled = _schedule_recorder(agent)
     asyncio.run(agent.start("hello", AsyncMock(), resume=False))
-    assert scheduled == [("hello", None, {})]
+    assert scheduled == [("hello", None, {"completion_token": ANY})]
 
 
 def test_send_in_user_turn_schedules_the_content(monkeypatch):
@@ -242,7 +242,7 @@ def test_send_in_user_turn_schedules_the_content(monkeypatch):
     agent.state = AgentState.USER_TURN
     content = _file_only_content("")
     assert asyncio.run(agent.send("", content=content)) is True
-    assert scheduled == [("", None, {"content": content})]
+    assert scheduled == [("", None, {"content": content, "completion_token": ANY})]
 
 
 def test_mid_turn_steer_carries_the_content(monkeypatch):
@@ -273,7 +273,7 @@ def test_hold_break_schedules_the_content(monkeypatch):
     agent._subagent_hold_active = True
     content = _file_only_content("")
     assert asyncio.run(agent.send("", content=content)) is True
-    assert scheduled == [("", None, {"content": content})]
+    assert scheduled == [("", None, {"content": content, "completion_token": ANY})]
 
 
 def test_scheduled_turn_forwards_the_content_to_run_turn(monkeypatch):

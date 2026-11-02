@@ -56,6 +56,7 @@ import psutil
 from asgiref.sync import sync_to_async
 
 from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, SendDeliveryError, StateChangeCallback
+from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.shell_notice import (
     ShellInfo,
     ShellLookup,
@@ -504,6 +505,10 @@ class CodexAgent(BaseAgent):
         self._untrusted = untrusted
         # Tracked so ``interrupt_or_kill`` can fire ``turn/interrupt`` on the
         # active turn instead of yanking the whole transport.
+        self._actual_root_active = False
+        self._completion_scheduled_tokens: set[str] = set()
+        self._completion_finals: dict[str, NativeMessageRef] = {}
+        self._completion_turn_outcomes: dict[str, str] = {}
         self._current_turn: AsyncTurnHandle | None = None
         # Set in ``_run_turn`` once the ``thread.turn`` RPC roundtrip has
         # returned and ``_current_turn`` is published; cleared when the turn
@@ -725,6 +730,36 @@ class CodexAgent(BaseAgent):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _has_actual_turn_work(self) -> bool:
+        """SDK ownership excludes the public completion confirmation interval."""
+        return (self._actual_root_active or self._current_turn is not None
+                or not self._send_delivery_done.is_set()
+                or self._goal_monitor is not None or self._goal_continuation_active)
+
+    def _completion_assistant_holds(self) -> frozenset[str]:
+        """Read existing continuation facts without acquiring publication locks."""
+        holds = {f"subagent:{identity}" for identity in self._live_subagents}
+        if self._goal_monitor is not None or self._goal_continuation_active:
+            holds.add("goal")
+        if self._manual_compaction:
+            holds.add("compaction")
+        return frozenset(holds)
+
+    async def _completion_finish_immediately(self, outcome: str) -> None:
+        snapshot = self._completion_terminate(outcome)
+        if snapshot is not None and self._completion_end_callback is not None:
+            await self._completion_end_callback(self, snapshot)
+        else:
+            self._set_state(AgentState.USER_TURN)
+            self.last_activity = time.time()
+            await self._notify_state_change()
+
+    def _completion_record_physical_end(self, turn_id: str) -> None:
+        self._completion_holds_changed(self._completion_assistant_holds())
+        self._completion_provider_ended(final_ref=self._completion_finals.pop(turn_id, None))
+        if self._has_actual_turn_work():
+            self._completion_activity()
+
     async def start(
         self,
         text: str,
@@ -735,6 +770,8 @@ class CodexAgent(BaseAgent):
         command: HardcodedCommand | None = None,
         content: AttachmentContent | None = None,
         submission: dict | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Wire the state-change callback and schedule the first turn.
@@ -759,6 +796,11 @@ class CodexAgent(BaseAgent):
         live by the time we get here; the agent comes up idle and runs the
         command instead of scheduling a turn. See :meth:`run_hardcoded_command`.
         """
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        token = completion_token or str(uuid.uuid4())
+        if command is None:
+            self._completion_input_pending(token)
         self._note_external_send()
         self._state_change_callback = on_state_change
         if self._initial_content is not None:
@@ -801,24 +843,43 @@ class CodexAgent(BaseAgent):
             await self.run_hardcoded_command(command)
             return
 
-        # Flip to ASSISTANT_TURN immediately so the UI gates the input as
-        # "working" — the actual turn runs in the background task below.
+        self._actual_root_active = True
+        self._completion_activity()
+        # Publish working before the SDK opening task runs.
         self._set_state(AgentState.ASSISTANT_TURN)
         self.last_activity = time.time()
         await self._notify_state_change()
 
         self._schedule_turn(
-            text, images, **({"submission": submission} if submission else {}), **_content_kwargs(content),
+            text, images, completion_token=token, **({"submission": submission} if submission else {}), **_content_kwargs(content),
         )
         return True
 
     async def send(
+        self, text: str, *, completion_token: str | None = None,
+        completion_cursor: int | None = None, **kwargs: Any,
+    ) -> bool:
+        token = completion_token or str(uuid.uuid4())
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        self._completion_input_pending(token)
+        try:
+            accepted = await self._send_input(text, completion_token=token, **kwargs)
+        except BaseException as exc:
+            self._completion_input_settled(token, question_send_failure_status(exc))
+            raise
+        if token not in self._completion_scheduled_tokens:
+            self._completion_input_settled(token, "accepted" if accepted else "rejected")
+        return accepted
+
+    async def _send_input(
         self,
         text: str,
         *,
         images: list[dict] | None = None,
         content: AttachmentContent | None = None,
         submission: dict | None = None,
+        completion_token: str | None = None,
         **kwargs: Any,
     ) -> bool:
         """Schedule a new turn, or steer the active one.
@@ -827,10 +888,9 @@ class CodexAgent(BaseAgent):
         landed on the active turn); raises on failure. Codex never silently
         drops a send, so there is no ``False`` return.
 
-        - ``USER_TURN``: schedule a fresh turn (the normal flow).
-        - ``ASSISTANT_TURN`` in the subagent hold (no active turn): break the
-          hold and schedule a fresh turn — there is nothing to steer.
-        - ``ASSISTANT_TURN`` otherwise: steer — push the input into the active
+        - No actual SDK work: schedule a fresh turn. This includes the
+          public completion candidate and the native subagent hold.
+        - An opening RPC or active SDK turn: steer — push the input into the active
           ``TurnHandle`` so Codex picks it up at the next turn cycle, without
           interrupting tool execution or reasoning. The SDK's ``turn_steer``
           serializes behind the async ``_transport_lock`` held by the
@@ -872,19 +932,18 @@ class CodexAgent(BaseAgent):
                 self.last_activity = time.time()
                 return True
 
-            if self._subagent_hold_active and self._current_turn is None:
-                # Parked in the subagent hold: ASSISTANT_TURN with no active
-                # turn to steer (steering would just time out on the
-                # handshake wait below). The user message breaks the hold
-                # and opens a real turn — which re-arms the hold at its own
-                # end if children are still running. Clear the label
-                # explicitly: the state doesn't change, so no
-                # ``process_state`` broadcast would drop it for us.
+            if not self._has_actual_turn_work():
+                # The public completion candidate and native child hold have
+                # no SDK turn. Reserve the fresh opening before any await.
+                # Clear the label because the public state stays unchanged.
                 self._subagent_hold_active = False
+                self._actual_root_active = True
+                self._completion_activity()
                 await self._broadcast_process_label("")
                 self.last_activity = time.time()
                 self._schedule_turn(
-                    text, images, **({"submission": submission} if submission else {}), **_content_kwargs(content),
+                    text, images, completion_token=completion_token,
+                    **({"submission": submission} if submission else {}), **_content_kwargs(content),
                 )
                 return True
 
@@ -928,12 +987,14 @@ class CodexAgent(BaseAgent):
             self.last_activity = time.time()
             return True
 
+        self._actual_root_active = True
+        self._completion_activity()
         self._set_state(AgentState.ASSISTANT_TURN)
         self.last_activity = time.time()
         await self._notify_state_change()
 
         self._schedule_turn(
-            text, images, **({"submission": submission} if submission else {}), **_content_kwargs(content),
+            text, images, completion_token=completion_token, **({"submission": submission} if submission else {}), **_content_kwargs(content),
         )
         return True
 
@@ -1001,15 +1062,20 @@ class CodexAgent(BaseAgent):
 
     def _schedule_turn(
         self, text: str, images: list[dict] | None, *, content: AttachmentContent | None = None,
-        submission: dict | None = None,
+        submission: dict | None = None, completion_token: str | None = None,
     ) -> None:
         """Spawn the background task that drives one turn end-to-end."""
+        self._actual_root_active = True
+        self._completion_activity()
+        if completion_token is not None:
+            self._completion_scheduled_tokens.add(completion_token)
         if submission is not None:
             submission["scheduled"] = True
             submission["_delivery_future"] = asyncio.get_running_loop().create_future()
         self._turn_task = asyncio.create_task(
             self._run_turn(
-                text, images, **({"submission": submission} if submission else {}), **_content_kwargs(content),
+                text, images, **({"completion_token": completion_token} if completion_token is not None else {}),
+                **({"submission": submission} if submission else {}), **_content_kwargs(content),
             ),
             name=f"codex-turn-{self.session_id}",
         )
@@ -1451,9 +1517,9 @@ class CodexAgent(BaseAgent):
     async def _run_turn(
         self, text: str, images: list[dict] | None, *,
         content: AttachmentContent | None = None, turn_handle: AsyncTurnHandle | None = None,
-        submission: dict | None = None,
+        submission: dict | None = None, completion_token: str | None = None,
     ) -> None:
-        """Open one turn, wait for it to complete, transition to USER_TURN.
+        """Drain one physical turn and update logical completion eligibility.
 
         Errors raised by the SDK (transport closed, RPC errors, ...) are
         funnelled through ``_handle_error`` and surface as a ``DEAD`` state
@@ -1462,6 +1528,8 @@ class CodexAgent(BaseAgent):
         killed us on purpose) — no error toast in that case.
         """
         self._note_main_turn_opening()
+        self._actual_root_active = True
+        self._completion_activity()
         # A real TwiCC-driven turn supersedes any parked ``/goal`` continuation
         # or subagent hold: from here ``_run_turn`` owns the state, so drop the
         # flags (the watcher signals must not flip us out of this turn). The
@@ -1495,9 +1563,15 @@ class CodexAgent(BaseAgent):
                     raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
                 turn_input = await self._build_turn_input(text, images, content=content)
                 turn_handle = await self._open_turn(turn_input, **({"submission": submission} if submission else {}))
+                if completion_token is not None:
+                    self._completion_input_settled(completion_token, "accepted")
+                    self._completion_scheduled_tokens.discard(completion_token)
                 if submission is not None and not submission["_delivery_future"].done():
                     submission["_delivery_future"].set_result(True)
             except asyncio.CancelledError:
+                if completion_token is not None:
+                    self._completion_input_settled(completion_token, "uncertain")
+                    self._completion_scheduled_tokens.discard(completion_token)
                 if submission is not None:
                     await self._finish_question_submission(submission, "uncertain")
                 raise
@@ -1512,6 +1586,9 @@ class CodexAgent(BaseAgent):
                     e = SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
                 if submission is not None and not submission["_delivery_future"].done():
                     submission["_delivery_future"].set_exception(e)
+                if completion_token is not None:
+                    self._completion_input_settled(completion_token, status)
+                    self._completion_scheduled_tokens.discard(completion_token)
                 await self._handle_error(f"Failed to open turn: {e}", exc=e)
                 return
 
@@ -1552,6 +1629,8 @@ class CodexAgent(BaseAgent):
 
         await self._send_delivery_done.wait()
         if self._turn_task is not None and self._turn_task is not asyncio.current_task():
+            self._completion_record_physical_end(turn_handle.id)
+            self._completion_turn_outcomes.pop(turn_handle.id, None)
             # A fallback owns the replacement. This stream has drained, but its
             # old completion must not settle or continue the replacement turn.
             return
@@ -1562,6 +1641,14 @@ class CodexAgent(BaseAgent):
         # ``turn/completed`` arriving before ``self._codex.close()``
         # propagates — and we don't want to overwrite the terminal state.
         if self.state == AgentState.DEAD:
+            return
+
+        outcome = self._completion_turn_outcomes.pop(turn_handle.id, "completed")
+        if outcome in {"interrupted", "failed"}:
+            self._actual_root_active = False
+            self._completion_record_physical_end(turn_handle.id)
+            await self._completion_finish_immediately("ended" if outcome == "interrupted" else "provider_error")
+            await self._settle_async_questions(turn_handle.id, outcome=outcome)
             return
 
         if self._async_question_outcome != "completed":
@@ -1576,16 +1663,25 @@ class CodexAgent(BaseAgent):
                 "for session %s",
                 self.session_id,
             )
+            self._completion_record_physical_end(turn_handle.id)
             await self._continue_async_questions(turn_handle.id)
             await self._run_turn(_AUTO_REVIEW_RETRY_PROMPT, None)
             return
 
         if getattr(self, "_goal_monitor", None) is not None:
+            self._completion_record_physical_end(turn_handle.id)
+            self._actual_root_active = False
             await self._continue_async_questions(turn_handle.id)
             await self._run_goal_continuation(self._goal_monitor)
             return
 
+        self._completion_record_physical_end(turn_handle.id)
+        self._actual_root_active = False
         await self._settle_async_questions(turn_handle.id, outcome=self._async_question_outcome)
+        if self.state == AgentState.DEAD or (
+            self._turn_task is not None and self._turn_task is not asyncio.current_task()
+        ):
+            return
 
         if self._plan_item_this_turn:
             # The turn delivered a Plan-mode final answer: ask what to do next
@@ -1593,6 +1689,8 @@ class CodexAgent(BaseAgent):
             # (ASSISTANT_TURN while pending, then either the implement
             # continuation turn or USER_TURN).
             self._plan_item_this_turn = False
+            self._actual_root_active = False
+            self._completion_provider_ended()
             await self._prompt_plan_implementation()
             return
 
@@ -1608,13 +1706,13 @@ class CodexAgent(BaseAgent):
         # USER_TURN consumer quiet — "finished working" notifications, the
         # green check, the idle auto-stop — until a turn ends with nothing
         # left running. The Codex mirror of Claude Code's background hold.
-        if await self._try_arm_subagent_hold():
+        await self._try_arm_subagent_hold()
+        if self.state == AgentState.DEAD or (
+            self._turn_task is not None and self._turn_task is not asyncio.current_task()
+        ):
             return
-
-        # Turn completed normally → ready for the next user input.
-        self._set_state(AgentState.USER_TURN)
-        self.last_activity = time.time()
-        await self._notify_state_change()
+        self._completion_holds_changed(self._completion_assistant_holds())
+        self._completion_provider_ended()
 
     async def apply_agent_settings(self, settings: AgentSettings) -> None:
         """Refresh the bundle and persist a changed Fast tier for continuations.
@@ -1691,6 +1789,9 @@ class CodexAgent(BaseAgent):
             if self._live_subagents.pop(thread_id, None) is not None:
                 self._note_subagent_run_end(thread_id)
                 self._schedule_background_work_refresh()
+
+        if self._completion_enabled:
+            self._completion_holds_changed(self._completion_assistant_holds())
 
     def _note_command_execution(self, method: str, payload: Any) -> None:
         """Update the live-shell set from one ``commandExecution`` item event.
@@ -2018,6 +2119,9 @@ class CodexAgent(BaseAgent):
         label), then the label overrides on top.
         """
         await self._prune_finished_subagents()
+        self._completion_holds_changed(self._completion_assistant_holds())
+        if self.state == AgentState.DEAD or self._has_actual_turn_work():
+            return False
         if not self._live_subagents:
             self._subagent_hold_active = False
             return False
@@ -2120,7 +2224,8 @@ class CodexAgent(BaseAgent):
                 return
             self._schedule_background_work_refresh()
 
-            if self._current_turn is not None:
+            self._completion_holds_changed(self._completion_assistant_holds())
+            if self._has_actual_turn_work():
                 if self._subagent_wait_label_active:
                     label = self.current_status_label()
                     if label is not None:
@@ -2149,9 +2254,8 @@ class CodexAgent(BaseAgent):
                 self.session_id,
             )
             self._subagent_hold_active = False
-            self._set_state(AgentState.USER_TURN)
-            self.last_activity = time.time()
-            await self._notify_state_change()
+            self._completion_holds_changed(self._completion_assistant_holds())
+            await self._broadcast_process_label("")
 
     async def notify_subagents_resumed(self, agents: list[tuple[str, str]]) -> None:
         """Relay from the watcher: run-opening interactions resumed these subagents.
@@ -2195,6 +2299,9 @@ class CodexAgent(BaseAgent):
                 self._live_subagents[agent_id] = paths[agent_id]
                 self._subagent_paths[agent_id] = paths[agent_id]
             self._schedule_background_work_refresh()
+            if self.completion_controller.is_open:
+                self._subagent_hold_active = not self._has_actual_turn_work()
+                self._completion_holds_changed(self._completion_assistant_holds())
             if self._subagent_wait_label_active or self._subagent_hold_active:
                 label = self.current_status_label()
                 if label is not None:
@@ -2225,6 +2332,7 @@ class CodexAgent(BaseAgent):
             "Codex /compact: starting manual compaction for session %s", self.session_id,
         )
         self._manual_compaction = True
+        self._completion_holds_changed(self._completion_assistant_holds())
         self._set_state(AgentState.ASSISTANT_TURN)
         self.last_activity = time.time()
         await self._notify_state_change()
@@ -2288,16 +2396,7 @@ class CodexAgent(BaseAgent):
         # A ``/compact`` issued during the subagent hold settles back INTO the
         # hold, not to USER_TURN — the children it was waiting on are still
         # running.
-        if not await self._try_arm_subagent_hold():
-            self._set_state(AgentState.USER_TURN)
-            self.last_activity = time.time()
-            await self._notify_state_change()
-        # Dedicated signal so the frontend retires the optimistic ``/compact``
-        # bubble (no real user_message JSONL line is ever produced for it).
-        await self._broadcast_stream_event({
-            "type": "manual_compaction_done",
-            "session_id": self.session_id,
-        })
+        await self._settle_after_command(AgentState.USER_TURN, "manual_compaction_done")
 
     async def _compaction_safety_timeout(self) -> None:
         """Force-end a manual compaction if its ``compacted`` line never lands.
@@ -2429,11 +2528,14 @@ class CodexAgent(BaseAgent):
     async def _run_goal_continuation(self, monitor: GoalContinuation) -> None:
         """Stream physical goal turns without starting or interrupting them."""
         self._note_main_turn_opening()
+        self._completion_activity()
+        self._completion_holds_changed(self._completion_assistant_holds())
         stream = monitor.stream()
         terminal_outcome = "unknown"
         try:
             async for event in stream:
                 if event.method == "turn/started":
+                    self._completion_activity()
                     await self._link_async_question_turn(event.payload.turn.id)
                     self._current_turn = AsyncTurnHandle(self._codex, self._thread.id, event.payload.turn.id)
                     self._current_turn_ready.set()
@@ -2445,6 +2547,9 @@ class CodexAgent(BaseAgent):
                         self._current_turn = None
                         self._current_turn_ready.clear()
                 await self._handle_stream_event(event)
+                if event.method == "turn/completed":
+                    self._completion_record_physical_end(event.payload.turn.id)
+                    self._completion_turn_outcomes.pop(event.payload.turn.id, None)
                 if self.state == AgentState.DEAD:
                     return
         except TransportClosedError:
@@ -2467,6 +2572,11 @@ class CodexAgent(BaseAgent):
                 self._current_turn_ready.clear()
         turns = getattr(self, "_async_question_turns", [])
         await self._settle_async_questions(turns[-1] if turns else None, outcome=terminal_outcome)
+        if terminal_outcome in {"interrupted", "failed"}:
+            self._goal_continuation_active = False
+            self._completion_holds_changed(self._completion_assistant_holds())
+            await self._completion_finish_immediately("ended" if terminal_outcome == "interrupted" else "provider_error")
+            return
         await self.notify_goal_continuation_stopped()
 
     async def _set_goal(self, objective: str) -> None:
@@ -2486,6 +2596,7 @@ class CodexAgent(BaseAgent):
         if new_monitor:
             self._goal_monitor = GoalContinuation(self._codex, self._thread.id)
             self._goal_monitor.command_done.clear()
+        self._completion_holds_changed(self._completion_assistant_holds())
         await self._admit_async_question_owner()
         try:
             await self._thread.goal_set(objective)
@@ -2515,7 +2626,17 @@ class CodexAgent(BaseAgent):
         """
         if self.state == AgentState.DEAD:
             return
-        if state != AgentState.USER_TURN or not await self._try_arm_subagent_hold():
+        if self._has_actual_turn_work():
+            self._completion_activity()
+            self._completion_holds_changed(self._completion_assistant_holds())
+            self._set_state(AgentState.ASSISTANT_TURN)
+            await self._notify_state_change()
+        elif self.completion_controller.is_open:
+            await self._try_arm_subagent_hold()
+            self._completion_holds_changed(self._completion_assistant_holds())
+            if not self._has_actual_turn_work():
+                self._completion_provider_ended()
+        elif state != AgentState.USER_TURN or not await self._try_arm_subagent_hold():
             self._set_state(state)
             self.last_activity = time.time()
             await self._notify_state_change()
@@ -2556,11 +2677,9 @@ class CodexAgent(BaseAgent):
         self._goal_continuation_active = False
         # The continuation may have spawned subagents that outlive it: an
         # idle boundary like any other — hold instead of settling idle.
-        if await self._try_arm_subagent_hold():
-            return
-        self._set_state(AgentState.USER_TURN)
-        self.last_activity = time.time()
-        await self._notify_state_change()
+        self._completion_holds_changed(self._completion_assistant_holds())
+        self._completion_provider_ended()
+        await self._try_arm_subagent_hold()
 
     # ------------------------------------------------------------------
     # ``/plan`` — switch the thread into Plan collaboration mode
@@ -2646,6 +2765,8 @@ class CodexAgent(BaseAgent):
         )
 
         if args:
+            self._actual_root_active = True
+            self._completion_activity()
             # Inline prompt: the sticky mode is set, now run the prompt as an
             # ordinary turn (same transition dance as ``send`` on an idle
             # agent — this also moves a cold-woken agent out of STARTING).
@@ -2711,9 +2832,15 @@ class CodexAgent(BaseAgent):
             self.session_id,
         )
         response = await self._await_pending_request(request)
+        if self.state == AgentState.DEAD or (
+            self._turn_task is not None and self._turn_task is not asyncio.current_task()
+        ):
+            return
 
         decision = response.get("decision") if isinstance(response, dict) else None
         if decision == "implement":
+            self._actual_root_active = True
+            self._completion_activity()
             try:
                 await self._thread.update_settings_with_policy(
                     collaboration_mode=self._build_collaboration_mode(ModeKind.default),
@@ -2727,10 +2854,10 @@ class CodexAgent(BaseAgent):
                     "Default mode — not starting the implement turn",
                     self.session_id, exc_info=True,
                 )
-                if not await self._try_arm_subagent_hold():
-                    self._set_state(AgentState.USER_TURN)
-                    self.last_activity = time.time()
-                    await self._notify_state_change()
+                self._actual_root_active = False
+                self._completion_provider_ended()
+                if not await self._try_arm_subagent_hold() and not self._has_actual_turn_work():
+                    await self._completion_finish_immediately("normal")
                 return
             self._logger.info(
                 "Codex plan prompt: session %s back to Default mode — "
@@ -2744,11 +2871,9 @@ class CodexAgent(BaseAgent):
         # safe default): remain in Plan mode, hand control back to the user
         # — unless subagents spawned by earlier turns are still running, in
         # which case the hold takes over as at any idle boundary.
-        if await self._try_arm_subagent_hold():
+        if await self._try_arm_subagent_hold() or self._has_actual_turn_work():
             return
-        self._set_state(AgentState.USER_TURN)
-        self.last_activity = time.time()
-        await self._notify_state_change()
+        await self._completion_finish_immediately("normal")
 
     async def soft_interrupt(self) -> bool:
         """Interrupt the current turn but keep the thread alive (→ USER_TURN).
@@ -2983,6 +3108,7 @@ class CodexAgent(BaseAgent):
             await self._transition_to_dead()
 
     async def _transition_to_dead(self) -> None:
+        self._actual_root_active = False
         turns = getattr(self, "_async_question_turns", [])
         if getattr(self, "kill_reason", None) not in {"shutdown", "backend_shutdown"}:
             await self._settle_async_questions(
@@ -3225,6 +3351,23 @@ class CodexAgent(BaseAgent):
         payload_thread_id = getattr(payload, "thread_id", None)
         if payload_thread_id is not None and payload_thread_id != self.session_id:
             return
+
+        if method == "turn/completed":
+            self._completion_turn_outcomes[payload.turn.id] = _enum_value(payload.turn.status)
+        elif method == "turn/started":
+            self._completion_activity()
+        elif method in {"item/started", "item/completed"}:
+            item = getattr(payload, "item", None)
+            inner = getattr(item, "root", item)
+            if inner is not None and _enum_value(getattr(inner, "delivery", None)) != "async":
+                identity = getattr(inner, "id", None)
+                turn_id = getattr(payload, "turn_id", None) or getattr(self._current_turn, "id", None)
+                ref = NativeMessageRef("codex_item", identity, turn_id) if identity else None
+                self._completion_activity(first_ref=ref)
+                if (method == "item/completed" and getattr(inner, "type", None) == "agentMessage"
+                        and _enum_value(getattr(inner, "phase", None)) in {None, "final_answer"}):
+                    if identity or getattr(inner, "text", ""):
+                        self._completion_finals[turn_id] = ref or NativeMessageRef("unresolved", "", turn_id)
 
         if method in {"item/started", "item/completed", "turn/completed"} and not getattr(self, "ephemeral", False):
             from ..async_questions import question_fact
@@ -3496,6 +3639,8 @@ class CodexAgent(BaseAgent):
 
             if item_type == "agentMessage":
                 if getattr(self, "ephemeral", False):
+                    if _enum_value(getattr(inner, "delivery", None)) == "async":
+                        return
                     phase = getattr(inner, "phase", None)
                     phase = getattr(phase, "value", phase)
                     if phase == "final_answer":

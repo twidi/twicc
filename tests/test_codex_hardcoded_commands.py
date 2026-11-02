@@ -727,7 +727,7 @@ def test_goal_tool_result_notifies_the_live_continuation(plan_compute_session) -
     manager.notify_goal_continuation_stopped.assert_awaited_once_with(session.id)
 
 
-def test_goal_stop_notification_returns_parked_agent_to_user_turn(
+def test_goal_stop_notification_arms_confirmation_for_parked_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = _make_agent(monkeypatch)
@@ -735,8 +735,14 @@ def test_goal_stop_notification_returns_parked_agent_to_user_turn(
     agent._set_state(AgentState.ASSISTANT_TURN)
     agent._notify_state_change = AsyncMock()
 
-    asyncio.run(agent.notify_goal_continuation_stopped())
+    async def scenario():
+        agent._completion_activity()
+        await agent.notify_goal_continuation_stopped()
+        assert agent.completion_controller.candidate() is not None
+        agent._cancel_completion_timer()
 
-    assert agent.state == AgentState.USER_TURN
+    asyncio.run(scenario())
+
+    assert agent.state == AgentState.ASSISTANT_TURN
     assert agent.in_goal_continuation() is False
-    agent._notify_state_change.assert_awaited_once()
+    agent._notify_state_change.assert_not_awaited()

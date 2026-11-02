@@ -24,6 +24,7 @@ import pytest
 
 from twicc.agent.states import AgentState
 from twicc.providers.codex.agent import agent as agent_module
+from twicc.providers.helpers import AgentSettings
 from twicc.providers.codex.agent.agent import CodexAgent
 
 # The run model's view for the relay tests: these children are known and no
@@ -48,7 +49,7 @@ def _agent(
     stopped: list[str] | None = None,
 ) -> CodexAgent:
     """The in-memory slice used by the hold, with a stubbed watcher view."""
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("session-parent", "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), work_dirs=[])
     agent.session_id = "session-parent"
     agent.state = state
     agent.previous_state = None
@@ -146,14 +147,20 @@ class TestReleasingTheHold:
         agent._subagent_hold_active = True
         return agent
 
-    def test_last_child_releases_to_user_turn(self) -> None:
-        agent = self._held_agent({"agent-1": "/root/impl"})
-
-        asyncio.run(agent.notify_subagents_stopped(["agent-1"]))
-
-        assert agent._subagent_hold_active is False
-        assert agent.state == AgentState.USER_TURN
-        agent._notify_state_change.assert_awaited_once()
+    def test_last_child_arms_confirmation_without_another_final(self) -> None:
+        async def scenario():
+            agent = self._held_agent({"agent-1": "/root/impl"})
+            agent._completion_activity()
+            agent._completion_holds_changed(agent._completion_assistant_holds())
+            agent._completion_provider_ended()
+            assert agent.completion_controller.candidate() is None
+            await agent.notify_subagents_stopped(["agent-1"])
+            assert agent._subagent_hold_active is False
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is not None
+            agent._notify_state_change.assert_not_awaited()
+            agent._cancel_completion_timer()
+        asyncio.run(scenario())
 
     def test_remaining_children_refresh_the_count(self) -> None:
         agent = self._held_agent({"agent-1": "/root/a", "agent-2": "/root/b"})
@@ -240,7 +247,8 @@ class TestBreakingTheHoldWithAMessage:
 
         assert accepted is True
         assert agent._subagent_hold_active is False
-        agent._schedule_turn.assert_called_once_with("continue", None)
+        assert agent._schedule_turn.call_args.args == ("continue", None)
+        assert agent._schedule_turn.call_args.kwargs["completion_token"]
         # The state doesn't change, so no process_state broadcast would
         # drop the label — send clears it explicitly.
         assert _labels(agent) == [""]

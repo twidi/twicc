@@ -11,11 +11,12 @@ from twicc.core.enums import ItemKind, Provider
 from twicc.core.models import Project, Session, SessionItem
 from twicc.core.serializers import serialize_session_item
 from twicc.providers.codex.agent.agent import CodexAgent
+from twicc.providers.helpers import AgentSettings
 from twicc.providers.sessions_watcher import get_session_items
 
 
 def _agent(*, ephemeral=False):
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("retirement-parent", "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), ephemeral=ephemeral, work_dirs=[])
     agent.session_id = "retirement-parent"
     agent.ephemeral = ephemeral
     agent._items_by_id = {}

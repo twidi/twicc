@@ -60,6 +60,7 @@ def agent_fixture():
 
 
 async def cleanup(agent):
+    agent._cancel_completion_timer()
     task = agent._turn_task
     if task:
         task.cancel()
@@ -205,7 +206,8 @@ def test_terminal_goal_waits_for_active_turn_to_finish(status):
             assert await agent.send("Final constraint") is True
             event(router, "turn/completed", "a")
             await asyncio.wait_for(agent._turn_task, 0.5)
-            assert agent.state == AgentState.USER_TURN
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is not None
             assert not router.has_goal("parent")
             assert agent._current_turn is None
         finally:
@@ -278,7 +280,8 @@ def test_clear_does_not_restore_busy_state_after_turn_finishes_during_injection(
         try:
             await agent.run_goal_command("clear")
             await asyncio.wait_for(agent._turn_task, 0.5)
-            assert agent.state == AgentState.USER_TURN
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.candidate() is not None
         finally:
             await cleanup(agent)
 

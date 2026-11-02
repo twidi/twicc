@@ -27,6 +27,7 @@ import pytest
 
 from twicc.core.enums import Provider
 from twicc.core.models import AgentLink, Project, Session, ToolResultLink
+from twicc.providers.helpers import AgentSettings
 from twicc.providers.codex.agent.agent import CodexAgent, _is_collab_wait_call
 
 
@@ -52,7 +53,7 @@ def _collab_call(tool: str) -> SimpleNamespace:
 
 def _agent(stopped: list[str] | None = None) -> CodexAgent:
     """The in-memory slice used by the wait label, with a stubbed watcher view."""
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("session-parent", "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), work_dirs=[])
     agent.session_id = "session-parent"
     agent._live_subagents = {}
     agent._subagent_set_lock = asyncio.Lock()
@@ -216,7 +217,7 @@ class TestPruningAgainstTheWatcher:
             tool_use_id="call-done", tool_result_at=datetime(2025, 1, 1, 0, 5, tzinfo=UTC),
         )
 
-        agent = CodexAgent.__new__(CodexAgent)
+        agent = CodexAgent("session-parent", "project", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), work_dirs=[])
         agent.session_id = parent.id
         agent._live_subagents = {"child-done": "/root/a", "child-live": "/root/b"}
         agent._subagent_set_lock = asyncio.Lock()
