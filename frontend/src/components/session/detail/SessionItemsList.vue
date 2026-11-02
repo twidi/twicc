@@ -2764,6 +2764,7 @@ defineExpose({
                 :selected-text="textSelectionText"
                 :position="textSelectionPosition"
                 :metadata="textSelectionMetadata"
+                read-origin="rendered"
                 focus-composer-on-add
                 @close="closeTextSelectionComment"
             />

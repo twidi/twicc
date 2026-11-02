@@ -43,12 +43,28 @@ async function loadComponent() {
         export const toast = { error(msg) { globalThis.__tscErrors?.push(msg) }, success() {} }
     `)
 
+    const speechStoreStub = dataModule(`
+        export const useTextToSpeechStore = () => ({
+            available: true,
+            statusForSelection: () => 'idle',
+            play: async () => ({ ok: false, aborted: true }),
+            stop() {},
+        })
+    `)
+    const selectionReadStub = dataModule(`
+        export const READ_TITLES = { idle: 'Read aloud', loading: 'Cancel the request', playing: 'Stop reading' }
+        export const readIcon = status => (status === 'idle' ? 'volume-up' : 'stop')
+        export const canShowRead = () => false
+    `)
+
     compiled = compiled
         .replace("from 'vue'", `from '${vueStub}'`)
         .replace("from '../../../stores/codeComments'", `from '${codeCommentsStub}'`)
         .replace("from '../../../stores/settings'", `from '${settingsStub}'`)
         .replace("from '../../../composables/useMediaPreview'", `from '${mediaPreviewStub}'`)
         .replace("from '../../../composables/useToast'", `from '${toastStub}'`)
+        .replace("from '../../../stores/textToSpeech'", `from '${speechStoreStub}'`)
+        .replace("from '../../../utils/selectionRead'", `from '${selectionReadStub}'`)
 
     return (await import(dataModule(compiled))).default
 }
@@ -67,6 +83,7 @@ function setupComponent(component, overrides = {}, emit = () => {}) {
         attachScreenshot: null,
         focusComposerOnAdd: false,
         persistent: false,
+        readOrigin: null,
         anchorRect: null,
         avoidRect: null,
         ...overrides,

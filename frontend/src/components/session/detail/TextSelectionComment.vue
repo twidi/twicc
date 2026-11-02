@@ -9,6 +9,8 @@ import { formatComment } from '../../../stores/codeComments'
 import { useSettingsStore } from '../../../stores/settings'
 import { isOpen as mediaPreviewOpen, openMediaPreview } from '../../../composables/useMediaPreview'
 import { toast } from '../../../composables/useToast'
+import { useTextToSpeechStore } from '../../../stores/textToSpeech'
+import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead'
 
 const props = defineProps({
     /** The text the user selected in the session view. In persistent mode: the
@@ -49,6 +51,9 @@ const props = defineProps({
      *  (on Comment/Copy clicks). Defaults to clearing the DOM selection, which is
      *  enough for normal HTML; consumers (e.g. FilePane) override it to also clear
      *  the internal CodeMirror selection so the behavior is consistent there. */
+    /** Where the selection comes from, for the Read button: 'rendered' (rendered
+     *  content) or 'file' (a file). null: no Read button. */
+    readOrigin: { type: String, default: null },
     clearSourceSelection: { type: Function, default: () => window.getSelection()?.removeAllRanges() },
     /** Optional async () => dataUrl. When provided, an "Include screenshot"
      *  switch appears: toggling it on calls this to capture an image (the
@@ -89,6 +94,33 @@ function dismissHelpHint() {
 }
 
 const expanded = ref(false)
+
+// Read button: a view of the app-wide speech store for this selection.
+const speechStore = useTextToSpeechStore()
+const readStatus = computed(() => speechStore.statusForSelection(props.selectedText))
+const readBusy = computed(() => readStatus.value !== 'idle')
+const showRead = computed(() => canShowRead({
+    collapsed: !expanded.value,
+    persistent: props.persistent,
+    readOrigin: props.readOrigin,
+    available: speechStore.available,
+    busy: readBusy.value,
+}))
+
+async function read() {
+    if (readBusy.value) {
+        speechStore.stop()
+        return
+    }
+    const result = await speechStore.play(props.selectedText, { origin: props.readOrigin })
+    if (!result.ok && !result.aborted) toast.error(result.error, { duration: 4000 })
+    if (!result.ok) return
+    // An error can still come after the sound started. The toast is app-wide: it shows
+    // even when this widget is already closed.
+    result.ended.then(end => {
+        if (!end.ok && !end.aborted) toast.error(end.error, { duration: 4000 })
+    })
+}
 const commentText = ref('')
 const textareaRef = ref(null)
 const rootRef = ref(null)
@@ -524,6 +556,19 @@ defineExpose({ isExpanded: expanded })
                 @click.stop="copy"
             >
                 <wa-icon name="copy" variant="regular"></wa-icon>
+            </wa-button>
+            <wa-button
+                v-if="showRead"
+                class="tsc-trigger"
+                variant="neutral"
+                appearance="filled"
+                size="small"
+                :title="READ_TITLES[readStatus]"
+                :aria-label="READ_TITLES[readStatus]"
+                @mousedown.prevent
+                @click.stop="read"
+            >
+                <wa-icon :name="readIcon(readStatus)"></wa-icon>
             </wa-button>
         </div>
 

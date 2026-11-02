@@ -1847,6 +1847,7 @@ function goToNextDiff() {
                 :selected-text="textSelectionText"
                 :position="textSelectionPosition"
                 :metadata="textSelectionMetadata"
+                read-origin="file"
                 :clear-source-selection="clearSourceSelection"
                 @send-prepared="isPreviewFullscreen = false"
                 @close="closeTextSelectionComment"

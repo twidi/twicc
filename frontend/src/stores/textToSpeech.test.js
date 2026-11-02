@@ -816,6 +816,60 @@ test('applyConfig aborts a message request when availability is lost', async () 
     assert.equal(store.status, 'idle')
 })
 
+// ── Selection playback ───────────────────────────────────
+
+/** Start `play('hello', options)` until the request leaves, and return the body it sends (then stop). */
+async function sentForSelectionPlay(options) {
+    store.applyConfig(payload())
+    let sent
+    store._openSpeech = (body, signal) => {
+        sent = body
+        return abortableRequest('open')(body, signal)
+    }
+    const pending = options === undefined ? store.play('hello') : store.play('hello', options)
+    await until(() => sent)
+    const source = store.playback.source
+    store.stop()
+    assert.deepEqual(await pending, ABORTED)
+    return { sent, source }
+}
+
+test('play with an origin sends it and records a selection playback', async () => {
+    const { sent, source } = await sentForSelectionPlay({ origin: 'rendered' })
+    assert.equal(sent.origin, 'rendered')
+    assert.equal(source, 'selection')
+})
+
+test('play without an origin sends none and records a message playback', async () => {
+    const { sent, source } = await sentForSelectionPlay()
+    assert.equal('origin' in sent, false)
+    assert.equal(source, 'message')
+})
+
+test('statusForSelection and statusForText tell the two sources apart', async () => {
+    store.applyConfig(payload())
+    store._openSpeech = abortableRequest('open')
+    const selection = store.play('hello', { origin: 'file' })
+    assert.equal(store.statusForSelection('hello'), 'loading')
+    assert.equal(store.statusForSelection('other'), 'idle')
+    assert.equal(store.statusForText('hello'), 'idle')
+    store.stop()
+    await selection
+    const message = store.play('hello')
+    assert.equal(store.statusForText('hello'), 'loading')
+    assert.equal(store.statusForSelection('hello'), 'idle')
+    store.stop()
+    await message
+})
+
+test('applyConfig stops a selection playback when availability is lost', async () => {
+    store._openSpeech = abortableRequest('open')
+    const pending = store.play('hello', { origin: 'rendered' })
+    store.applyConfig(payload({ keyPresent: false }))
+    assert.deepEqual(await pending, ABORTED)
+    assert.equal(store.status, 'idle')
+})
+
 test('applyConfig keeps a test playback running', async () => {
     const pending = store.playWith('hello', FIELDS)
     await until(() => fakePlayer.handlers)

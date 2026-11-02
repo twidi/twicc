@@ -128,7 +128,7 @@ async function readEnding(store, audioId) {
  * Resolves `{ ok: true, ended }` when the sound starts (`ended` resolves the end result),
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
-async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null }) {
+async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null }) {
     store.stop()
     const mine = ++generation
 
@@ -153,6 +153,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
             cache: useCache,
             ...(configId ? { config_id: configId } : {}),
             ...(scriptId ? { script_id: scriptId } : {}),
+            ...(origin ? { origin } : {}),
             ...(buffersSending(requestedFormat(fields), currentPlatform()) ? { buffered: true } : {}),
         }
         const response = await store._openSpeech(body, controller.signal)
@@ -279,7 +280,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         adapt: null, // the text adaptation choice: null (on, first enabled provider), 'haiku', 'luna', 'openrouter' or 'off'
         models: [], // [{ id, name, voices: [string], pricing: { prompt, completion } }] from OpenRouter
         modelsStatus: 'idle', // 'idle' | 'loading' | 'loaded' | 'failed'
-        // source: 'message' | 'test' | null; configId: the config a settings test is about, else null.
+        // source: 'message' | 'selection' | 'test' | null; configId: the config a settings test is about, else null.
         playback: { text: null, status: 'idle', source: null, configId: null },
     }),
 
@@ -295,6 +296,11 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         /** The state of a message playback for this text: 'idle' | 'loading' | 'playing'. */
         statusForText: (state) => (text) => (
             state.playback.source === 'message' && state.playback.text === text ? state.playback.status : 'idle'
+        ),
+
+        /** The state of a selection playback for this text: 'idle' | 'loading' | 'playing'. */
+        statusForSelection: (state) => (text) => (
+            state.playback.source === 'selection' && state.playback.text === text ? state.playback.status : 'idle'
         ),
     },
 
@@ -313,7 +319,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this.keyPresent = Boolean(payload?.key_present)
             this.envPath = payload?.env_path ?? ''
             // Another device edited, deactivated or deleted the active config, or the key is gone.
-            if (this.playback.source === 'message' && !this.available) this.stop()
+            if ((this.playback.source === 'message' || this.playback.source === 'selection') && !this.available) this.stop()
         },
 
         /** The full config the backend stores: every write carries all of it (a missing key resets it). */
@@ -438,13 +444,16 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
 
         // ── Playback ─────────────────────────────────────
 
-        /** Read a message aloud with the active config (the backend may answer from its cache). */
-        play(text) {
+        /**
+         * Read a message aloud with the active config (the backend may answer from its cache).
+         * With an `origin` ('rendered' | 'file'), the text is a selection: the body carries the origin.
+         */
+        play(text, { origin = null } = {}) {
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
             const fields = speechFieldsOf(config)
             const scriptId = kindOf(fields) === 'script' ? config.id : null
-            return startPlayback(this, text, fields, { useCache: true, source: 'message', scriptId })
+            return startPlayback(this, text, fields, { useCache: true, source: origin ? 'selection' : 'message', scriptId, origin })
         },
 
         /**
