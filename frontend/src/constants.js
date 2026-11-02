@@ -187,9 +187,17 @@ export const TITLE_SUGGESTION_MODEL = Object.freeze({
     PROVIDER: 'provider',
     HAIKU: 'haiku',
     LUNA: 'luna',
-    // Qwen3.8 27B on OpenRouter: no provider, it needs the OpenRouter key.
-    QWEN: 'qwen',
+    // A fast model through OpenRouter (see ``OPENROUTER_MODEL_DESCRIPTION``):
+    // no provider, it needs the OpenRouter key.
+    OPENROUTER: 'openrouter',
 })
+
+/**
+ * The model behind the ``openrouter`` choice, for titles and for the speech
+ * adaptation, as the notes and hints name it. Mirrors the backend
+ * ``openrouter_text.OPENROUTER_TEXT_MODEL``: a model change edits both.
+ */
+export const OPENROUTER_MODEL_DESCRIPTION = 'Qwen3.8 27B on Cerebras'
 
 const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MODEL))
 
@@ -218,7 +226,7 @@ export const TITLE_SUGGESTION_MODEL_PROVIDERS = Object.freeze({
  * display-only, and the settings form shows what will really run.
  *
  * ``provider`` (follow the session) is never resolved away: it works whatever
- * is enabled. ``qwen`` needs the OpenRouter key and no provider; without the
+ * is enabled. ``openrouter`` needs the OpenRouter key and no provider; without the
  * key it works as ``provider``, as the backend does. A forced agent model whose
  * provider is disabled resolves to the other enabled agent model, and to
  * ``provider`` when there is none — a state the UI cannot reach (one provider
@@ -232,7 +240,7 @@ export const TITLE_SUGGESTION_MODEL_PROVIDERS = Object.freeze({
 export function resolveEffectiveTitleSuggestionModel(value, enabledProviders, openrouterKeySet = false) {
     const model = resolveTitleSuggestionModel(value)
     if (model === TITLE_SUGGESTION_MODEL.PROVIDER) return model
-    if (model === TITLE_SUGGESTION_MODEL.QWEN) {
+    if (model === TITLE_SUGGESTION_MODEL.OPENROUTER) {
         return openrouterKeySet ? model : TITLE_SUGGESTION_MODEL.PROVIDER
     }
 
@@ -253,7 +261,7 @@ export function resolveEffectiveTitleSuggestionModel(value, enabledProviders, op
 export const TITLE_SUGGESTION_MODEL_LABELS = Object.freeze({
     [TITLE_SUGGESTION_MODEL.HAIKU]: 'Claude Haiku 5.5',
     [TITLE_SUGGESTION_MODEL.LUNA]: 'GPT-6 Luna',
-    [TITLE_SUGGESTION_MODEL.QWEN]: 'Qwen3.8 27B (OpenRouter)',
+    [TITLE_SUGGESTION_MODEL.OPENROUTER]: 'OpenRouter',
 })
 
 /**
@@ -285,7 +293,7 @@ export function resolveSessionTitleModel(effectiveModel, sessionProvider) {
 
 /**
  * The title models the user can try instead of ``currentModel``: every other
- * forced agent model whose provider is enabled, then Qwen while the OpenRouter
+ * forced agent model whose provider is enabled, then OpenRouter while its
  * key is set.
  * @param {string|null} currentModel
  * @param {string[]|Set<string>} enabledProviders
@@ -297,8 +305,8 @@ export function titleModelAlternatives(currentModel, enabledProviders, openroute
     const alternatives = Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).filter(
         (model) => model !== currentModel && enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[model]),
     )
-    if (openrouterKeySet && currentModel !== TITLE_SUGGESTION_MODEL.QWEN) {
-        alternatives.push(TITLE_SUGGESTION_MODEL.QWEN)
+    if (openrouterKeySet && currentModel !== TITLE_SUGGESTION_MODEL.OPENROUTER) {
+        alternatives.push(TITLE_SUGGESTION_MODEL.OPENROUTER)
     }
     return alternatives
 }

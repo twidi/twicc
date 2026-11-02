@@ -10,13 +10,13 @@ from twicc.core.services import title_suggestion
 from twicc.core.services.title_suggestion import TitleSuggestionResult, suggest_title
 
 
-class QwenFake:
-    """The Qwen title call and the OpenRouter key, as a test sets them."""
+class OpenRouterFake:
+    """The OpenRouter title call and the OpenRouter key, as a test sets them."""
 
     def __init__(self):
         self.key_set = False
         # The answer: a title, None, or an exception to raise.
-        self.outcome = "Qwen title"
+        self.outcome = "OpenRouter title"
         self.calls = []
 
     async def generate(self, source, system_prompt, *, current_title=None):
@@ -27,15 +27,15 @@ class QwenFake:
 
 
 @pytest.fixture
-def qwen(monkeypatch):
-    fake = QwenFake()
+def openrouter(monkeypatch):
+    fake = OpenRouterFake()
     monkeypatch.setattr("twicc.core.services.title_suggestion.generate_openrouter_title", fake.generate)
     monkeypatch.setattr("twicc.core.services.title_suggestion.openrouter_key_set", lambda: fake.key_set)
     return fake
 
 
 @pytest.fixture
-def routing(monkeypatch, qwen):
+def routing(monkeypatch, openrouter):
     calls = []
     outcomes = {}
     running = {Provider.CLAUDE_CODE, Provider.CODEX}
@@ -136,14 +136,14 @@ def test_no_fallback_tries_only_requested_provider(routing, available, error):
     assert [call[0] for call in calls] == ([Provider.CODEX] if available else [])
 
 
-def test_qwen_makes_the_title(routing, qwen):
+def test_openrouter_makes_the_title(routing, openrouter):
     calls, _, _ = routing
-    qwen.key_set = True
-    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="qwen")
+    openrouter.key_set = True
+    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="openrouter")
     assert result == TitleSuggestionResult(
-        "Qwen title", Provider.CODEX, None, None, requested_model="qwen", title_model="qwen",
+        "OpenRouter title", Provider.CODEX, None, None, requested_model="openrouter", title_model="openrouter",
     )
-    assert qwen.calls == [("Source", "Prompt {text}", None)]
+    assert openrouter.calls == [("Source", "Prompt {text}", None)]
     assert calls == []
 
 
@@ -151,97 +151,97 @@ def test_qwen_makes_the_title(routing, qwen):
     (Provider.CODEX, Provider.CODEX, Provider.CLAUDE_CODE, "luna"),
     (Provider.CLAUDE_CODE, Provider.CLAUDE_CODE, Provider.CODEX, "haiku"),
 ])
-@pytest.mark.parametrize("qwen_outcome", [None, "", RuntimeError("broken")])
-def test_qwen_failure_falls_back_like_match_session_provider(
-    routing, qwen, session_provider, first, second, first_model, qwen_outcome,
+@pytest.mark.parametrize("openrouter_outcome", [None, "", RuntimeError("broken")])
+def test_openrouter_failure_falls_back_like_match_session_provider(
+    routing, openrouter, session_provider, first, second, first_model, openrouter_outcome,
 ):
     calls, outcomes, _ = routing
-    qwen.key_set = True
-    qwen.outcome = qwen_outcome
+    openrouter.key_set = True
+    openrouter.outcome = openrouter_outcome
     result = async_to_sync(suggest_title)(
-        "Source", "Prompt {text}", session_provider, title_model="qwen", current_title="Current",
+        "Source", "Prompt {text}", session_provider, title_model="openrouter", current_title="Current",
     )
     assert result == TitleSuggestionResult(
-        "Suggested title", session_provider, first, None, requested_model="qwen", title_model=first_model,
+        "Suggested title", session_provider, first, None, requested_model="openrouter", title_model=first_model,
     )
-    assert qwen.calls == [("Source", "Prompt {text}", "Current")]
+    assert openrouter.calls == [("Source", "Prompt {text}", "Current")]
     assert calls == [(first, "Source", "Prompt {text}", "Current")]
 
     # The session provider fails too: the other provider comes next.
     calls.clear()
-    qwen.calls.clear()
+    openrouter.calls.clear()
     outcomes[first] = None
     result = async_to_sync(suggest_title)(
-        "Source", "Prompt {text}", session_provider, title_model="qwen", current_title="Current",
+        "Source", "Prompt {text}", session_provider, title_model="openrouter", current_title="Current",
     )
     assert result.title_provider == second
     assert result.title_model == {"haiku": "luna", "luna": "haiku"}[first_model]
-    assert result.requested_model == "qwen"
+    assert result.requested_model == "openrouter"
     assert calls == [
         (first, "Source", "Prompt {text}", "Current"),
         (second, "Source", "Prompt {text}", "Current"),
     ]
 
 
-def test_qwen_without_fallback_fails_alone(routing, qwen):
+def test_openrouter_without_fallback_fails_alone(routing, openrouter):
     calls, _, _ = routing
-    qwen.key_set = True
-    qwen.outcome = None
+    openrouter.key_set = True
+    openrouter.outcome = None
     result = async_to_sync(suggest_title)(
-        "Source", "Prompt {text}", Provider.CODEX, title_model="qwen", no_fallback=True,
+        "Source", "Prompt {text}", Provider.CODEX, title_model="openrouter", no_fallback=True,
     )
     assert result == TitleSuggestionResult(
-        None, Provider.CODEX, None, "generation_failed", requested_model="qwen", title_model=None,
+        None, Provider.CODEX, None, "generation_failed", requested_model="openrouter", title_model=None,
     )
-    assert len(qwen.calls) == 1
+    assert len(openrouter.calls) == 1
     assert calls == []
 
 
-def test_qwen_failed_and_no_agent_runs_is_generation_failed(routing, qwen):
+def test_openrouter_failed_and_no_agent_runs_is_generation_failed(routing, openrouter):
     calls, _, running = routing
     running.clear()
-    qwen.key_set = True
-    qwen.outcome = None
-    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="qwen")
+    openrouter.key_set = True
+    openrouter.outcome = None
+    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="openrouter")
     assert result == TitleSuggestionResult(
-        None, Provider.CODEX, None, "generation_failed", requested_model="qwen", title_model=None,
+        None, Provider.CODEX, None, "generation_failed", requested_model="openrouter", title_model=None,
     )
-    assert len(qwen.calls) == 1
+    assert len(openrouter.calls) == 1
     assert calls == []
 
 
-def test_qwen_works_without_any_agent(routing, qwen):
+def test_openrouter_works_without_any_agent(routing, openrouter):
     calls, _, running = routing
     running.clear()
-    qwen.key_set = True
-    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="qwen")
+    openrouter.key_set = True
+    result = async_to_sync(suggest_title)("Source", "Prompt {text}", Provider.CODEX, title_model="openrouter")
     assert result == TitleSuggestionResult(
-        "Qwen title", Provider.CODEX, None, None, requested_model="qwen", title_model="qwen",
+        "OpenRouter title", Provider.CODEX, None, None, requested_model="openrouter", title_model="openrouter",
     )
     assert calls == []
 
 
 @pytest.mark.parametrize("session_provider, model", [(Provider.CODEX, "luna"), (Provider.CLAUDE_CODE, "haiku")])
-def test_qwen_without_the_key_routes_as_provider(routing, qwen, session_provider, model):
+def test_openrouter_without_the_key_routes_as_provider(routing, openrouter, session_provider, model):
     calls, _, _ = routing
-    as_qwen = async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="qwen")
-    qwen_calls = list(calls)
+    as_openrouter = async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="openrouter")
+    openrouter_calls = list(calls)
     calls.clear()
     as_provider = async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="provider")
-    assert as_qwen == as_provider == TitleSuggestionResult(
+    assert as_openrouter == as_provider == TitleSuggestionResult(
         "Suggested title", session_provider, session_provider, None, requested_model=model, title_model=model,
     )
-    assert qwen_calls == calls
-    assert qwen.calls == []
+    assert openrouter_calls == calls
+    assert openrouter.calls == []
 
 
-def test_qwen_without_a_source_is_no_prompt(routing, qwen):
-    qwen.key_set = True
-    result = async_to_sync(suggest_title)(None, "Prompt {text}", Provider.CODEX, title_model="qwen")
+def test_openrouter_without_a_source_is_no_prompt(routing, openrouter):
+    openrouter.key_set = True
+    result = async_to_sync(suggest_title)(None, "Prompt {text}", Provider.CODEX, title_model="openrouter")
     assert result == TitleSuggestionResult(
-        None, Provider.CODEX, None, "no_prompt", requested_model="qwen", title_model=None,
+        None, Provider.CODEX, None, "no_prompt", requested_model="openrouter", title_model=None,
     )
-    assert qwen.calls == []
+    assert openrouter.calls == []
 
 
 def test_agent_models_are_reported(routing):
@@ -268,10 +268,10 @@ def logs(caplog, monkeypatch):
 
 
 @pytest.mark.parametrize("session_provider", [Provider.CODEX, Provider.CLAUDE_CODE])
-def test_a_fallback_from_qwen_is_logged(routing, qwen, logs, session_provider):
-    qwen.key_set = True
-    qwen.outcome = None
-    async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="qwen")
+def test_a_fallback_from_openrouter_is_logged(routing, openrouter, logs, session_provider):
+    openrouter.key_set = True
+    openrouter.outcome = None
+    async_to_sync(suggest_title)("Source", "Prompt {text}", session_provider, title_model="openrouter")
     assert [record.getMessage() for record in logs.records] == [
-        f"suggest_title: fell back from qwen to {session_provider.value}",
+        f"suggest_title: fell back from openrouter to {session_provider.value}",
     ]

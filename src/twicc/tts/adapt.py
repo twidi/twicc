@@ -1,12 +1,12 @@
 """The adaptation of a text for speech (docs/plans/2026-11-01-tts-speech-rewrite-design.md).
 
 A small model rewrites the text for the ear in one streamed call: Claude Haiku or Codex Luna in a
-hermetic call, or Qwen on OpenRouter (docs/plans/2026-11-01-openrouter-text-calls-design.md).
+hermetic call, or the OpenRouter text model (docs/plans/2026-11-01-openrouter-text-calls-design.md).
 :class:`AdaptedParts` is the part source of an adapted reading: it feeds the adapted text, as it
 arrives, to a :class:`~twicc.tts.parts.PartSplitter`. Until its first part is returned, a failed,
-stalled or empty Qwen call hands the text to the first agent that runs, and any other failed,
-stalled or empty adaptation (the agent's after Qwen among them) switches it to the parts of the
-original text, read as written. After that, the text received is read up to its last sentence
+stalled or empty OpenRouter call hands the text to the first agent that runs, and any other
+failed, stalled or empty adaptation (the agent's after OpenRouter among them) switches it to the
+parts of the original text, read as written. After that, the text received is read up to its last sentence
 end, then the reading stops with ``ADAPT_STOPPED``: nothing tells where to go on in the original
 text.
 
@@ -23,7 +23,12 @@ from contextlib import aclosing
 from typing import NamedTuple
 
 from twicc.core.enums import Provider
-from twicc.openrouter_text import QWEN_MODEL, OpenRouterTextError, openrouter_key_set, stream_openrouter_text
+from twicc.openrouter_text import (
+    OPENROUTER_TEXT_MODEL,
+    OpenRouterTextError,
+    openrouter_key_set,
+    stream_openrouter_text,
+)
 from twicc.providers.claude_code.hermetic import stream_hermetic_claude
 from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex
 from twicc.providers.codex.title_suggest import TITLE_MODEL
@@ -38,10 +43,10 @@ logger = logging.getLogger(__name__)
 # start), then for each next piece of it.
 FIRST_TEXT_SECONDS = 30.0
 NEXT_TEXT_SECONDS = 15.0
-# The same for Qwen: its first text comes in under a second, and a failed call still leaves the
-# time for an agent to adapt the text.
-QWEN_FIRST_TEXT_SECONDS = 5.0
-QWEN_NEXT_TEXT_SECONDS = 5.0
+# The same for OpenRouter: its first text comes in under a second, and a failed call still leaves
+# the time for an agent to adapt the text.
+OPENROUTER_FIRST_TEXT_SECONDS = 5.0
+OPENROUTER_NEXT_TEXT_SECONDS = 5.0
 # The HTTP statuses of an OpenRouter call refused for its key or its account (wrong key, no credits).
 _REFUSED_STATUSES = frozenset({401, 402, 403})
 # The longest text adapted (the model's output limit must hold the whole adaptation); a longer one
@@ -124,8 +129,8 @@ class Engine(NamedTuple):
 # The agents, in the default order: the first one whose provider runs adapts the text.
 ENGINES = (Engine("haiku", Provider.CLAUDE_CODE), Engine("luna", Provider.CODEX))
 _ENGINES_BY_NAME = {engine.name: engine for engine in ENGINES}
-# Qwen on OpenRouter: chosen only, never in the default order.
-QWEN_ENGINE = Engine("qwen", None)
+# The OpenRouter text model: chosen only, never in the default order.
+OPENROUTER_ENGINE = Engine("openrouter", None)
 
 # A Markdown heading mark at a line start: a model sometimes keeps one despite the prompt.
 _HEADING_MARK = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
@@ -137,15 +142,16 @@ _tasks: set[asyncio.Task] = set()
 def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | None]:
     """The engine that adapts ``text`` for the stored ``choice``, else why the text is read as
     written (``"off"``, ``"too_long"``, ``"no_provider"``). A chosen agent whose provider does not
-    run gives way to the other one; no choice takes the first agent whose provider runs. Qwen needs
-    only the OpenRouter key, no provider: without the key, a Qwen choice resolves as no choice."""
+    run gives way to the other one; no choice takes the first agent whose provider runs. OpenRouter
+    needs only the OpenRouter key, no provider: without the key, an OpenRouter choice resolves as no
+    choice."""
     if choice == "off":
         return None, "off"
     if len(text) > ADAPT_MAX_CHARS:
         return None, "too_long"
-    if choice == "qwen":
+    if choice == OPENROUTER_ENGINE.name:
         if openrouter_key_set():
-            return QWEN_ENGINE, None
+            return OPENROUTER_ENGINE, None
         choice = None
     chosen = _ENGINES_BY_NAME.get(choice)
     candidates = ENGINES if chosen is None else (chosen, *(engine for engine in ENGINES if engine != chosen))
@@ -156,9 +162,9 @@ def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | 
 
 
 def fallback_engine(engine: Engine) -> Engine | None:
-    """The agent that adapts the text when ``engine`` fails before its first part: for Qwen, the
-    first agent whose provider runs; else (or when none runs) None."""
-    if engine != QWEN_ENGINE:
+    """The agent that adapts the text when ``engine`` fails before its first part: for OpenRouter,
+    the first agent whose provider runs; else (or when none runs) None."""
+    if engine != OPENROUTER_ENGINE:
         return None
     for agent in ENGINES:
         if is_provider_running(agent.provider):
@@ -169,8 +175,8 @@ def fallback_engine(engine: Engine) -> Engine | None:
 def _step_limits(engine: Engine) -> tuple[float, float]:
     """The longest waits for the first text of ``engine``'s call, then for each next piece (read at
     call time)."""
-    if engine == QWEN_ENGINE:
-        return QWEN_FIRST_TEXT_SECONDS, QWEN_NEXT_TEXT_SECONDS
+    if engine == OPENROUTER_ENGINE:
+        return OPENROUTER_FIRST_TEXT_SECONDS, OPENROUTER_NEXT_TEXT_SECONDS
     return FIRST_TEXT_SECONDS, NEXT_TEXT_SECONDS
 
 
@@ -183,11 +189,11 @@ def _openrouter_reason(error: OpenRouterTextError) -> str:
 
 
 async def _open_stream(engine: Engine, prompt: str) -> AsyncIterator[str]:
-    """The streamed call of ``engine``: the text deltas of its answer. Qwen streams from OpenRouter,
+    """The streamed call of ``engine``: the text deltas of its answer. OpenRouter streams over HTTP,
     an agent in a hermetic call. The Codex preparation runs on the first step, so that the caller's
     time limit for the first text bounds it too."""
-    if engine == QWEN_ENGINE:
-        stream = stream_openrouter_text(QWEN_MODEL, prompt)
+    if engine == OPENROUTER_ENGINE:
+        stream = stream_openrouter_text(OPENROUTER_TEXT_MODEL, prompt)
     elif engine.provider == Provider.CLAUDE_CODE:
         stream = stream_hermetic_claude(prompt, model="haiku")
     else:
@@ -220,8 +226,8 @@ class AdaptedParts:
     connects and disconnects in it. ``aclose()`` cancels that task, which closes the call.
 
     ``then`` is the engine that takes over when ``engine`` fails, stalls or answers nothing before
-    the first part is returned (the agent after Qwen): the call state is reset, and ``then``'s call
-    runs with its own limits. Without ``then``, or when ``then`` fails too, the original text is read.
+    the first part is returned (the agent after OpenRouter): the call state is reset, and ``then``'s
+    call runs with its own limits. Without ``then``, or when ``then`` fails too, the original text is read.
 
     Reporting attributes, set as they become known: ``adapted_by`` (the engine name, ``None`` after
     a fallback to the original text), ``adapt_reason`` (why the adaptation failed, else ``None``),

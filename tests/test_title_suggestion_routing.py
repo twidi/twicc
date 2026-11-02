@@ -51,14 +51,14 @@ def _suggest_title_frames(
     first_messages=None,
     no_fallback=None,
     openrouter_key=False,
-    qwen_answer=None,
+    openrouter_answer=None,
 ):
     """Run ``_handle_suggest_title`` against fake providers, return the frames sent.
 
     ``running`` is the set of providers the state layer reports as running
     (both by default); ``outcomes`` maps a provider to its ``_TitleHelpers``
     outcome (all ``"ok"`` by default). ``openrouter_key`` says whether the
-    OpenRouter key is set (not by default); ``qwen_answer`` is what the Qwen
+    OpenRouter key is set (not by default); ``openrouter_answer`` is what the OpenRouter
     title call returns.
     """
     messages = first_messages or {
@@ -86,7 +86,7 @@ def _suggest_title_frames(
 
     async def generate_openrouter_title(prompt, _system_prompt, *, current_title=None):
         assert current_title is None
-        return qwen_answer
+        return openrouter_answer
 
     monkeypatch.setattr(
         "twicc.core.services.title_suggestion.generate_openrouter_title", generate_openrouter_title,
@@ -521,35 +521,35 @@ def test_unknown_title_model_uses_the_session_provider(monkeypatch):
     }]
 
 
-def test_qwen_title_frame(monkeypatch):
+def test_openrouter_title_frame(monkeypatch):
     frames = _suggest_title_frames(
         monkeypatch,
         session_provider=Provider.CODEX,
-        title_model="qwen",
+        title_model="openrouter",
         openrouter_key=True,
-        qwen_answer="Qwen title",
+        openrouter_answer="OpenRouter title",
     )
 
     assert frames == [{
         "type": "title_suggested",
         "sessionId": "session-1",
-        "suggestion": "Qwen title",
+        "suggestion": "OpenRouter title",
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "codex",
         "titleProvider": None,
-        "requestedModel": "qwen",
-        "titleModel": "qwen",
+        "requestedModel": "openrouter",
+        "titleModel": "openrouter",
         "error": None,
     }]
 
 
-def test_qwen_failure_frame_names_the_fallback_model(monkeypatch):
+def test_openrouter_failure_frame_names_the_fallback_model(monkeypatch):
     frames = _suggest_title_frames(
         monkeypatch,
         session_provider=Provider.CLAUDE_CODE,
-        title_model="qwen",
+        title_model="openrouter",
         openrouter_key=True,
-        qwen_answer=None,
+        openrouter_answer=None,
     )
 
     assert frames == [{
@@ -559,7 +559,7 @@ def test_qwen_failure_frame_names_the_fallback_model(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": "claude_code",
-        "requestedModel": "qwen",
+        "requestedModel": "openrouter",
         "titleModel": "haiku",
         "error": None,
     }]

@@ -276,7 +276,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         keyPresent: false,
         envPath: '',
         testText: '', // the settings test sentence; '' means the default one
-        adapt: null, // the text adaptation choice: null (on, first enabled provider), 'haiku', 'luna', 'qwen' or 'off'
+        adapt: null, // the text adaptation choice: null (on, first enabled provider), 'haiku', 'luna', 'openrouter' or 'off'
         models: [], // [{ id, name, voices: [string], pricing: { prompt, completion } }] from OpenRouter
         modelsStatus: 'idle', // 'idle' | 'loading' | 'loaded' | 'failed'
         // source: 'message' | 'test' | null; configId: the config a settings test is about, else null.
@@ -388,7 +388,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         },
 
         /**
-         * Keep the text adaptation choice: 'haiku', 'luna', 'qwen', 'off', or null (back to the default).
+         * Keep the text adaptation choice: 'haiku', 'luna', 'openrouter', 'off', or null (back to the default).
          * Refuses any other value.
          */
         setAdapt(choice) {

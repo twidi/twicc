@@ -1,4 +1,4 @@
-"""Title suggestion through Qwen on OpenRouter: one attempt, the agents' prompt and checks."""
+"""Title suggestion through OpenRouter: one attempt, the agents' prompt and checks."""
 
 import logging
 
@@ -6,8 +6,8 @@ from asgiref.sync import async_to_sync
 import pytest
 
 from twicc import title_openrouter
-from twicc.openrouter_text import QWEN_MODEL, OpenRouterTextError
-from twicc.title_openrouter import QWEN_TITLE_TIMEOUT_SECONDS, generate_openrouter_title
+from twicc.openrouter_text import OpenRouterTextError, TextModel
+from twicc.title_openrouter import OPENROUTER_TITLE_TIMEOUT_SECONDS, generate_openrouter_title
 from twicc.title_transcript import build_title_prompt, unwrap_title_suggestion
 
 
@@ -39,16 +39,19 @@ def logs(caplog, monkeypatch):
 
 
 @pytest.mark.parametrize("answer", ["<current_title>Fix the parser</current_title>", "Fix the parser"])
-def test_builds_the_agents_prompt_and_unwraps_the_answer(fake_call, logs, answer):
+def test_builds_the_agents_prompt_and_unwraps_the_answer(fake_call, logs, monkeypatch, answer):
     fake_call["outcome"] = answer
+    # The title call reads the model behind the choice at call time, from one place.
+    model = TextModel("some/model", "Some provider", {})
+    monkeypatch.setattr(title_openrouter, "OPENROUTER_TEXT_MODEL", model)
 
     title = async_to_sync(generate_openrouter_title)("The message", "Title: {text}", current_title="Old title")
 
     assert title == unwrap_title_suggestion(answer) == "Fix the parser"
     assert fake_call["calls"] == [
-        (QWEN_MODEL, build_title_prompt("Title: {text}", "The message", "Old title"), None, 10),
+        (model, build_title_prompt("Title: {text}", "The message", "Old title"), None, 10),
     ]
-    assert QWEN_TITLE_TIMEOUT_SECONDS == 10
+    assert OPENROUTER_TITLE_TIMEOUT_SECONDS == 10
     # As the agents' lines: the success line shows the title, never the message.
     [record] = logs.records
     assert record.levelno == logging.INFO

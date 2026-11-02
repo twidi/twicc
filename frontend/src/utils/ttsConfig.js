@@ -340,16 +340,16 @@ export function ttsLastTestFacts(lastTest, { priced = true } = {}) {
 // ── Text adaptation ──────────────────────────────────────────────
 //
 // The global `adapt` setting of tts.json: null (no stored choice: on, with the first enabled
-// provider), 'haiku', 'luna', 'qwen' or 'off'. Qwen runs on OpenRouter, not on a provider: it
-// needs the OpenRouter key, and it is never the default.
+// provider), 'haiku', 'luna', 'openrouter' or 'off'. 'openrouter' runs on OpenRouter, not on a
+// provider: it needs the OpenRouter key, and it is never the default.
 
 /** The provider each agent engine runs on, in the default order: Claude, then Codex. */
 export const ADAPT_PROVIDERS = Object.freeze({ haiku: PROVIDER.CLAUDE_CODE, luna: PROVIDER.CODEX })
 
-/** The engine that runs on OpenRouter with the OpenRouter key (Qwen3.8 27B). */
-export const QWEN_ADAPT = 'qwen'
+/** The engine that runs on OpenRouter with the OpenRouter key (`OPENROUTER_MODEL_DESCRIPTION`). */
+export const OPENROUTER_ADAPT = 'openrouter'
 
-const ADAPT_CHOICES = new Set(['haiku', 'luna', QWEN_ADAPT, 'off'])
+const ADAPT_CHOICES = new Set(['haiku', 'luna', OPENROUTER_ADAPT, 'off'])
 
 // The provider labels of the disabled-option titles (providers/*/helpers.js `static label`).
 export const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
@@ -383,25 +383,24 @@ function anyAdaptProvider(enabled) {
 
 /**
  * The adaptation that really runs, given which providers are enabled and whether the OpenRouter
- * key is set: 'haiku', 'luna', 'qwen' or 'off'. Display only: the stored choice is never
+ * key is set: 'haiku', 'luna', 'openrouter' or 'off'. Display only: the stored choice is never
  * rewritten, so enabling its provider again (or setting the key) restores it.
- * 'off' stays off. 'qwen' runs when the key is set, with or without a provider; without the key
- * it is no stored choice. No stored choice takes the first enabled agent; a forced agent whose
+ * 'off' stays off. 'openrouter' runs when the key is set, with or without a provider; without the
+ * key it is no stored choice. No stored choice takes the first enabled agent; a forced agent whose
  * provider is disabled takes the other enabled one. No enabled provider gives 'off'.
  */
 export function effectiveAdapt(stored, enabledProviders, keyPresent = false) {
     const choice = normalizeAdapt(stored)
     if (choice === 'off') return 'off'
-    if (choice === QWEN_ADAPT && keyPresent) return QWEN_ADAPT
+    if (choice === OPENROUTER_ADAPT && keyPresent) return OPENROUTER_ADAPT
     const enabled = enabledSet(enabledProviders)
     if (choice && enabled.has(ADAPT_PROVIDERS[choice])) return choice
     return Object.keys(ADAPT_PROVIDERS).find(engine => enabled.has(ADAPT_PROVIDERS[engine])) ?? 'off'
 }
 
 /**
- * The adaptation switch options: the agents, Qwen, then Off. An engine that cannot run (its
- * provider disabled, or no OpenRouter key for Qwen) stays shown, disabled, with the reason as
- * its title.
+ * The adaptation switch options: the agents, OpenRouter, then Off. An engine that cannot run (its
+ * provider disabled, or no OpenRouter key) stays shown, disabled, with the reason as its title.
  */
 export function adaptOptions(enabledProviders, keyPresent = false) {
     const enabled = enabledSet(enabledProviders)
@@ -411,20 +410,20 @@ export function adaptOptions(enabledProviders, keyPresent = false) {
             ? { value, label }
             : { value, label, disabled: true, title: `${label}: ${ADAPT_PROVIDER_LABELS[provider]} is disabled` }
     })
-    const qwenLabel = TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]
-    const qwen = keyPresent
-        ? { value: QWEN_ADAPT, label: qwenLabel }
-        : { value: QWEN_ADAPT, label: qwenLabel, disabled: true, title: `${qwenLabel}: the OpenRouter key is not set` }
-    return [...engines, qwen, { value: 'off', label: 'Off' }]
+    const openrouterLabel = TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT]
+    const openrouter = keyPresent
+        ? { value: OPENROUTER_ADAPT, label: openrouterLabel }
+        : { value: OPENROUTER_ADAPT, label: openrouterLabel, disabled: true, title: `${openrouterLabel}: the OpenRouter key is not set` }
+    return [...engines, openrouter, { value: 'off', label: 'Off' }]
 }
 
 /**
  * The hints under the adaptation switch, for the effective `choice` (`effectiveAdapt`):
  * `noProvider` when it is 'off' with no Claude or Codex provider enabled (that hint replaces the
- * generic one), and `openrouter` (where Qwen sends the text and who pays) whenever the OpenRouter
- * key is set, whatever the choice: the switch has no room for a note per option, so the user
- * reads it before choosing Qwen. Without the key, the key-missing callout already says that Qwen
- * is unavailable.
+ * generic one), and `openrouter` (the model OpenRouter uses, where it sends the text and who pays)
+ * whenever the OpenRouter key is set, whatever the choice: the switch has no room for a note per
+ * option, so the user reads it before choosing OpenRouter. Without the key, the key-missing callout already says that
+ * OpenRouter is unavailable.
  */
 export function adaptHint(choice, enabledProviders, keyPresent = false) {
     return {
@@ -437,13 +436,13 @@ export function adaptHint(choice, enabledProviders, keyPresent = false) {
  * The adaptation of the last test run: "Adapted by Claude Haiku 5.5 · first text 2.1 s", or
  * "Not adapted: the option is off". When the engine of the last attempt (`adapt_engine`) failed,
  * it is named: "Not adapted: Claude Haiku 5.5 failed (the model failed)" (a record without
- * `adapt_engine`, written before it, keeps "Not adapted: the model failed"). After a Qwen failure,
- * why Qwen failed comes last: "· Qwen3.8 27B (OpenRouter) failed (the model did not answer in
+ * `adapt_engine`, written before it, keeps "Not adapted: the model failed"). After an OpenRouter
+ * failure, why OpenRouter failed comes last: "· OpenRouter failed (the model did not answer in
  * time)". '' for a record written before the text adaptation.
  */
 export function ttsAdaptationFacts(lastTest) {
     const fallback = ADAPT_REASON_TEXTS[lastTest?.fallback_reason]
-    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]} failed (${fallback})` : text)
+    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT]} failed (${fallback})` : text)
     const engine = lastTest?.adapted_by
     if (engine && TITLE_SUGGESTION_MODEL_LABELS[engine]) {
         const parts = [`Adapted by ${TITLE_SUGGESTION_MODEL_LABELS[engine]}`]

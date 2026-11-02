@@ -40,7 +40,7 @@ import {
     ttsStreamingNote,
     ADAPT_PROVIDERS,
     ADAPT_PROVIDER_LABELS,
-    QWEN_ADAPT,
+    OPENROUTER_ADAPT,
     normalizeAdapt,
     effectiveAdapt,
     adaptOptions,
@@ -535,14 +535,16 @@ test('stats and facts of an unpriced run have no cost part', () => {
 // ── Text adaptation ──────────────────────────────────────────────
 
 test('each adaptation engine runs on its provider', () => {
-    // Qwen runs on OpenRouter, not on a provider: it is not in the list.
+    // The OpenRouter choice needs no provider: it is not in the list.
     assert.deepEqual(ADAPT_PROVIDERS, { haiku: 'claude_code', luna: 'codex' })
 })
 
 test('normalizeAdapt keeps the four choices and drops anything else', () => {
-    assert.equal(QWEN_ADAPT, 'qwen')
-    for (const choice of ['haiku', 'luna', 'qwen', 'off']) assert.equal(normalizeAdapt(choice), choice)
+    assert.equal(OPENROUTER_ADAPT, 'openrouter')
+    for (const choice of ['haiku', 'luna', 'openrouter', 'off']) assert.equal(normalizeAdapt(choice), choice)
     assert.equal(normalizeAdapt('opus'), null)
+    // The name before the rename to 'openrouter': unknown, so no stored choice.
+    assert.equal(normalizeAdapt('qwen'), null)
     assert.equal(normalizeAdapt(null), null)
 })
 
@@ -576,50 +578,50 @@ test('effectiveAdapt: off stays off; a forced choice falls back to the other ena
     assert.equal(effectiveAdapt('luna', []), 'off')
 })
 
-test('effectiveAdapt: Qwen runs with the key, even with no provider; without the key it is no choice', () => {
-    assert.equal(effectiveAdapt('qwen', ['claude_code'], true), 'qwen')
-    assert.equal(effectiveAdapt('qwen', [], true), 'qwen')
-    assert.equal(effectiveAdapt('qwen', ['claude_code', 'codex'], false), 'haiku')
-    assert.equal(effectiveAdapt('qwen', ['codex']), 'luna')
-    assert.equal(effectiveAdapt('qwen', [], false), 'off')
-    // Never the default: the key alone does not choose Qwen.
+test('effectiveAdapt: OpenRouter runs with the key, even with no provider; without the key it is no choice', () => {
+    assert.equal(effectiveAdapt('openrouter', ['claude_code'], true), 'openrouter')
+    assert.equal(effectiveAdapt('openrouter', [], true), 'openrouter')
+    assert.equal(effectiveAdapt('openrouter', ['claude_code', 'codex'], false), 'haiku')
+    assert.equal(effectiveAdapt('openrouter', ['codex']), 'luna')
+    assert.equal(effectiveAdapt('openrouter', [], false), 'off')
+    // Never the default: the key alone does not choose OpenRouter.
     assert.equal(effectiveAdapt(null, ['claude_code'], true), 'haiku')
     assert.equal(effectiveAdapt(null, [], true), 'off')
 })
 
-test('adaptOptions: both models, Qwen, then Off; a model that cannot run stays shown, disabled', () => {
+test('adaptOptions: both models, OpenRouter, then Off; a model that cannot run stays shown, disabled', () => {
     assert.deepEqual(adaptOptions(['claude_code', 'codex']), [
         { value: 'haiku', label: 'Claude Haiku 5.5' },
         { value: 'luna', label: 'GPT-6 Luna' },
-        { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)', disabled: true, title: 'Qwen3.8 27B (OpenRouter): the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
         { value: 'off', label: 'Off' },
     ])
     assert.deepEqual(adaptOptions(new Set(['codex'])), [
         { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
         { value: 'luna', label: 'GPT-6 Luna' },
-        { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)', disabled: true, title: 'Qwen3.8 27B (OpenRouter): the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
         { value: 'off', label: 'Off' },
     ])
     assert.deepEqual(adaptOptions([]), [
         { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
         { value: 'luna', label: 'GPT-6 Luna', disabled: true, title: 'GPT-6 Luna: Codex is disabled' },
-        { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)', disabled: true, title: 'Qwen3.8 27B (OpenRouter): the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
         { value: 'off', label: 'Off' },
     ])
 })
 
-test('adaptOptions: Qwen is enabled once the OpenRouter key is set', () => {
+test('adaptOptions: OpenRouter is enabled once the OpenRouter key is set', () => {
     const options = adaptOptions(['claude_code', 'codex'], true)
-    assert.deepEqual(options.map(option => option.value), ['haiku', 'luna', 'qwen', 'off'])
-    assert.deepEqual(options[2], { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)' })
-    assert.deepEqual(adaptOptions([], true)[2], { value: 'qwen', label: 'Qwen3.8 27B (OpenRouter)' })
+    assert.deepEqual(options.map(option => option.value), ['haiku', 'luna', 'openrouter', 'off'])
+    assert.deepEqual(options[2], { value: 'openrouter', label: 'OpenRouter' })
+    assert.deepEqual(adaptOptions([], true)[2], { value: 'openrouter', label: 'OpenRouter' })
 })
 
 test('adaptHint: the no-provider note when Off comes from no provider', () => {
     assert.equal(adaptHint('off', []).noProvider, true)
     assert.equal(adaptHint('off', undefined).noProvider, true)
     assert.equal(adaptHint('off', [], true).noProvider, true)
-    assert.equal(adaptHint('qwen', [], true).noProvider, false)
+    assert.equal(adaptHint('openrouter', [], true).noProvider, false)
     assert.equal(adaptHint('haiku', ['claude_code']).noProvider, false)
     assert.equal(adaptHint('luna', new Set(['codex'])).noProvider, false)
     // Off chosen by the user, with a provider enabled.
@@ -627,8 +629,8 @@ test('adaptHint: the no-provider note when Off comes from no provider', () => {
 })
 
 test('adaptHint: the OpenRouter note whenever the key is set, whatever the choice', () => {
-    // The user reads where Qwen sends the text before choosing it.
-    for (const [choice, providers] of [['qwen', []], ['qwen', ['claude_code']], ['haiku', ['claude_code']], ['luna', ['codex']], ['off', []], ['off', ['claude_code']]]) {
+    // The user reads where OpenRouter sends the text before choosing it.
+    for (const [choice, providers] of [['openrouter', []], ['openrouter', ['claude_code']], ['haiku', ['claude_code']], ['luna', ['codex']], ['off', []], ['off', ['claude_code']]]) {
         assert.equal(adaptHint(choice, providers, true).openrouter, true, `${choice} ${providers}`)
         assert.equal(adaptHint(choice, providers, false).openrouter, false, `${choice} ${providers}`)
     }
@@ -642,25 +644,25 @@ test('ttsAdaptationFacts: the engine and the wait for the first text', () => {
     // Served from the cache: no wait to show.
     assert.equal(ttsAdaptationFacts({ ...run, adapt_first_ms: null }), 'Adapted by Claude Haiku 5.5')
     assert.equal(
-        ttsAdaptationFacts({ adapted_by: 'qwen', adapt_first_ms: 300 }),
-        'Adapted by Qwen3.8 27B (OpenRouter) · first text 0.3 s',
+        ttsAdaptationFacts({ adapted_by: 'openrouter', adapt_first_ms: 300 }),
+        'Adapted by OpenRouter · first text 0.3 s',
     )
 })
 
-test('ttsAdaptationFacts: why Qwen failed before an agent took over', () => {
+test('ttsAdaptationFacts: why OpenRouter failed before an agent took over', () => {
     assert.equal(
         ttsAdaptationFacts({ adapted_by: 'haiku', adapt_first_ms: 6200, fallback_reason: 'stalled' }),
-        'Adapted by Claude Haiku 5.5 · first text 6.2 s · Qwen3.8 27B (OpenRouter) failed (the model did not answer in time)',
+        'Adapted by Claude Haiku 5.5 · first text 6.2 s · OpenRouter failed (the model did not answer in time)',
     )
     // Both failed: each one is named, and the two failure parts read alike.
     assert.equal(
         ttsAdaptationFacts({ adapt_engine: 'haiku', adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
-        'Not adapted: Claude Haiku 5.5 failed (the model failed) · Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
+        'Not adapted: Claude Haiku 5.5 failed (the model failed) · OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
     )
     // A record written before `adapt_engine`: the agent is not named.
     assert.equal(
         ttsAdaptationFacts({ adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
-        'Not adapted: the model failed · Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
+        'Not adapted: the model failed · OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
     )
     // An unknown reason adds nothing.
     assert.equal(ttsAdaptationFacts({ adapted_by: 'luna', adapt_first_ms: null, fallback_reason: 'unknown' }), 'Adapted by GPT-6 Luna')
@@ -687,8 +689,8 @@ test('ttsAdaptationFacts: why the text was not adapted', () => {
 test('ttsAdaptationFacts: the engine that failed is named', () => {
     const run = { chars: 35, adapted_by: null, adapt_first_ms: null, adapted_text: null }
     assert.equal(
-        ttsAdaptationFacts({ ...run, adapt_engine: 'qwen', adapt_reason: 'refused' }),
-        'Not adapted: Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
+        ttsAdaptationFacts({ ...run, adapt_engine: 'openrouter', adapt_reason: 'refused' }),
+        'Not adapted: OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
     )
     assert.equal(
         ttsAdaptationFacts({ ...run, adapt_engine: 'luna', adapt_reason: 'stalled' }),

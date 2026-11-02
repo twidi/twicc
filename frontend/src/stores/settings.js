@@ -361,7 +361,7 @@ export const useSettingsStore = defineStore('settings', {
         getTitleSuggestionModel: (state) => resolveTitleSuggestionModel(state.titleSuggestionModel),
         /**
          * The title model actually in use: the stored one, unless its provider
-         * is disabled — then the other enabled provider's model — or, for Qwen,
+         * is disabled — then the other enabled provider's model — or, for OpenRouter,
          * unless the OpenRouter key is not set — then ``provider``.
          *
          * The stored value is never rewritten (see
@@ -559,7 +559,7 @@ export const useSettingsStore = defineStore('settings', {
 
         /**
          * Select the model used for title suggestions.
-         * @param {'provider' | 'haiku' | 'luna' | 'qwen'} model
+         * @param {'provider' | 'haiku' | 'luna' | 'openrouter'} model
          */
         setTitleSuggestionModel(model) {
             if (SETTINGS_VALIDATORS.titleSuggestionModel(model)) {

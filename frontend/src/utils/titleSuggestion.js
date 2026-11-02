@@ -35,8 +35,8 @@ export function suggestionModel(entry) {
 /**
  * Whether a suggestion was made by another model than the one asked for.
  *
- * The models are compared when the reply names both: a Qwen title has no
- * provider, and a fallback from Qwen to the session provider's agent changes
+ * The models are compared when the reply names both: an OpenRouter title has
+ * no provider, and a fallback from OpenRouter to the session provider's agent changes
  * the model, not the provider. Without them, the providers are compared.
  * @param {Object|null|undefined} entry - A ``titleSuggestions`` entry.
  * @returns {boolean} False when there is no suggestion.

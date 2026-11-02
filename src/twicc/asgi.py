@@ -1892,7 +1892,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "type": "suggest_title",
             "sessionId": "...",
             "provider": "claude_code" | "codex",
-            "titleSuggestionModel": "provider" | "haiku" | "luna" | "qwen",
+            "titleSuggestionModel": "provider" | "haiku" | "luna" | "openrouter",
             "systemPrompt": "System prompt with {text} placeholder",
             "prompt": "optional prompt text for draft/new sessions",
             "noFallback": true  // optional: only try the requested provider
@@ -1902,9 +1902,10 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         ``provider`` travels in the payload because draft sessions don't exist
         in the DB yet — the backend can't resolve them via ``Session.provider``.
         A missing or unknown ``titleSuggestionModel`` keeps the legacy behavior
-        and generates through the session provider; so does ``"qwen"`` without
-        the OpenRouter key. With the key, ``"qwen"`` tries Qwen on OpenRouter
-        first, then the agents from the session provider (see ``suggest_title``).
+        and generates through the session provider; so does ``"openrouter"``
+        without the OpenRouter key. With the key, ``"openrouter"`` tries the
+        OpenRouter text model first, then the agents from the session provider
+        (see ``suggest_title``).
         The reply names the model asked for (``requestedModel``) and the model
         that made the title (``titleModel``, None when none did).
 

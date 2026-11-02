@@ -24,7 +24,7 @@ const emit = defineEmits(['saved'])
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
-// Only for ``keyPresent``: Qwen is offered while the OpenRouter key is set.
+// Only for ``keyPresent``: OpenRouter is offered while the OpenRouter key is set.
 const textToSpeechStore = useTextToSpeechStore()
 
 const formId = computed(() => `session-rename-form-${props.session?.id || 'none'}`)
@@ -67,7 +67,7 @@ const defaultTitleModel = computed(() =>
 const requestedTitleModel = computed(() => chosenTitleModel.value || defaultTitleModel.value)
 
 // What the user is looking at: the model that produced the suggestion (which
-// is not the requested one after a backend fallback; Qwen has no provider, so
+// is not the requested one after a backend fallback; OpenRouter has no provider, so
 // the reply's model field names it), else the requested one.
 // While a request runs, the stored suggestion is the previous one's: only the
 // requested model is true.
@@ -78,8 +78,8 @@ const displayedTitleModel = computed(() => {
 })
 const displayedTitleModelLabel = computed(() => TITLE_SUGGESTION_MODEL_LABELS[displayedTitleModel.value] || null)
 
-// The other enabled title models, to try instead of the displayed one: Qwen
-// too while the OpenRouter key is set.
+// The other enabled title models, to try instead of the displayed one:
+// OpenRouter too while the OpenRouter key is set.
 const alternativeTitleModels = computed(() =>
     titleModelAlternatives(displayedTitleModel.value, settingsStore.enabledProviders, textToSpeechStore.keyPresent),
 )
@@ -128,9 +128,9 @@ function startSuggestion(sessionId, prompt) {
 }
 
 // The backend generated with another model than the one requested: a runtime
-// failure (Qwen's included: it falls back to an agent), or a session whose own
+// failure (OpenRouter's included: it falls back to an agent), or a session whose own
 // provider is disabled under "match session provider". A forced choice whose
-// provider is disabled, or a Qwen choice without the key, never lands here —
+// provider is disabled, or an OpenRouter choice without the key, never lands here —
 // it is already resolved before the request leaves — and neither does an
 // explicit "Try with …" (strict).
 const isFallbackSuggestion = computed(() => isFallbackEntry(suggestionEntry.value))

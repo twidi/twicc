@@ -54,21 +54,21 @@ test('asks the backend not to fall back only when the choice is explicit', () =>
     assert.equal('noFallback' in loose, false)
 })
 
-test('sends a Qwen choice as is', () => {
+test('sends an OpenRouter choice as is', () => {
     const payload = titleSuggestion.buildTitleSuggestionRequest?.({
         sessionId: 'session-1',
         provider: 'claude_code',
         systemPrompt: 'Summarize {text}',
-        titleSuggestionModel: 'qwen',
+        titleSuggestionModel: 'openrouter',
     })
 
-    assert.equal(payload.titleSuggestionModel, 'qwen')
+    assert.equal(payload.titleSuggestionModel, 'openrouter')
 })
 
 test('names the model that made the suggestion', () => {
     const suggestionModel = titleSuggestion.suggestionModel
 
-    assert.equal(suggestionModel?.({ titleModel: 'qwen', titleProvider: null }), 'qwen')
+    assert.equal(suggestionModel?.({ titleModel: 'openrouter', titleProvider: null }), 'openrouter')
     assert.equal(suggestionModel?.({ titleModel: 'luna', titleProvider: 'codex' }), 'luna')
     // A reply without the model field: the model of the provider that made it.
     assert.equal(suggestionModel?.({ titleModel: null, titleProvider: 'codex' }), 'luna')
@@ -80,14 +80,14 @@ test('names the model that made the suggestion', () => {
 test('a suggestion made by another model than the one asked for is a fallback', () => {
     const isFallbackEntry = titleSuggestion.isFallbackEntry
 
-    // Qwen failed, Haiku made the title: same provider fields, different models.
+    // OpenRouter failed, Haiku made the title: same provider fields, different models.
     assert.equal(isFallbackEntry?.({
-        suggestion: 't', requestedModel: 'qwen', titleModel: 'haiku',
+        suggestion: 't', requestedModel: 'openrouter', titleModel: 'haiku',
         requestedProvider: 'claude_code', titleProvider: 'claude_code',
     }), true)
-    assert.equal(isFallbackEntry?.({ suggestion: 't', requestedModel: 'qwen', titleModel: 'haiku' }), true)
+    assert.equal(isFallbackEntry?.({ suggestion: 't', requestedModel: 'openrouter', titleModel: 'haiku' }), true)
     assert.equal(isFallbackEntry?.({
-        suggestion: 't', requestedModel: 'qwen', titleModel: 'qwen',
+        suggestion: 't', requestedModel: 'openrouter', titleModel: 'openrouter',
         requestedProvider: 'claude_code', titleProvider: null,
     }), false)
     assert.equal(isFallbackEntry?.({ suggestion: 't', requestedModel: 'luna', titleModel: 'luna' }), false)
@@ -108,7 +108,7 @@ test('without a model field, a fallback compares the providers as before', () =>
 test('no suggestion is never a fallback', () => {
     const isFallbackEntry = titleSuggestion.isFallbackEntry
 
-    assert.equal(isFallbackEntry?.({ suggestion: null, requestedModel: 'qwen', titleModel: 'haiku' }), false)
+    assert.equal(isFallbackEntry?.({ suggestion: null, requestedModel: 'openrouter', titleModel: 'haiku' }), false)
     assert.equal(isFallbackEntry?.({ requestedProvider: 'claude_code', titleProvider: 'codex' }), false)
     assert.equal(isFallbackEntry?.(null), false)
 })

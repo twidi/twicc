@@ -15,6 +15,7 @@ import pytest
 from twicc import openrouter_text
 from twicc.openrouter_text import (
     CHAT_URL,
+    OPENROUTER_TEXT_MODEL,
     QWEN_MODEL,
     OpenRouterTextError,
     complete_openrouter_text,
@@ -104,6 +105,11 @@ def test_the_qwen_model():
     assert QWEN_MODEL.model == "qwen/qwen3.8-27b"
     assert QWEN_MODEL.provider == "Cerebras"
     assert QWEN_MODEL.options == {"reasoning": {"effort": "none"}, "max_tokens": 8000}
+
+
+def test_the_openrouter_choice_runs_the_qwen_model():
+    # Today's model behind the "OpenRouter" choice, for titles and for the speech adaptation.
+    assert OPENROUTER_TEXT_MODEL is QWEN_MODEL
 
 
 def test_openrouter_key_set(monkeypatch):

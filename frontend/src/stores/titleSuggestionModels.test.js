@@ -21,28 +21,28 @@ function radioFor(value) {
     return popoverSource.slice(open, end)
 }
 
-test('the Titles setting offers Qwen, disabled while the OpenRouter key is not set', () => {
-    const radio = radioFor('TITLE_SUGGESTION_MODEL.QWEN')
-    assert.match(radio, /:disabled="!!disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.QWEN\]"/)
-    assert.match(flat(radio), /\{\{ TITLE_SUGGESTION_MODEL_LABELS\[TITLE_SUGGESTION_MODEL\.QWEN\] \}\} for every session/)
-    // The disabled map holds Qwen exactly when the key is absent.
+test('the Titles setting offers OpenRouter, disabled while the OpenRouter key is not set', () => {
+    const radio = radioFor('TITLE_SUGGESTION_MODEL.OPENROUTER')
+    assert.match(radio, /:disabled="!!disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]"/)
+    assert.match(flat(radio), /\{\{ TITLE_SUGGESTION_MODEL_LABELS\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] \}\} for every session/)
+    // The disabled map holds OpenRouter exactly when the key is absent.
     assert.match(
         popoverSource,
-        /if \(!openrouterKeySet\.value\) disabled\[TITLE_SUGGESTION_MODEL\.QWEN\] = 'The OpenRouter key is not set\.'/,
+        /if \(!openrouterKeySet\.value\) disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] = 'The OpenRouter key is not set\.'/,
     )
     assert.match(popoverSource, /const openrouterKeySet = computed\(\(\) => textToSpeechStore\.keyPresent\)/)
 })
 
-test('the Qwen radio says where the text goes and who pays, unless the key is missing', () => {
-    const radio = flat(radioFor('TITLE_SUGGESTION_MODEL.QWEN'))
+test('the OpenRouter radio says where the text goes and who pays, unless the key is missing', () => {
+    const radio = flat(radioFor('TITLE_SUGGESTION_MODEL.OPENROUTER'))
     // The disabled note comes first; the privacy and cost note replaces it while the key is set.
     assert.match(
         radio,
-        /<span v-if="disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.QWEN\]" class="radio-note" >— \{\{ disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.QWEN\] \}\}<\/span>/,
+        /<span v-if="disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]" class="radio-note" >— \{\{ disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] \}\}<\/span>/,
     )
     assert.match(
         radio,
-        /<span v-else class="radio-note" >— sends the user messages to OpenRouter and Cerebras, paid on your OpenRouter account<\/span>/,
+        /<span v-else class="radio-note" >— uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; sends the user messages to OpenRouter, paid on your OpenRouter account<\/span>/,
     )
 })
 
@@ -51,14 +51,16 @@ test('the Titles hints hold for every model', () => {
     assert.match(source, /TwiCC generates the title with another model/)
     assert.doesNotMatch(source, /generates the title with the other provider/)
     // The radio note says where the text goes: the hint does not say it twice.
-    assert.equal(source.match(/OpenRouter and Cerebras/g)?.length, 1)
+    assert.equal(source.match(/paid on your OpenRouter account/g)?.length, 1)
+    // The model words come from the one constant, never written in the component.
+    assert.doesNotMatch(source, /Qwen|Cerebras/)
 })
 
-test('a displaced Qwen choice says it comes back with the key, an agent choice with its provider', () => {
+test('a displaced OpenRouter choice says it comes back with the key, an agent choice with its provider', () => {
     const source = flat(popoverSource)
     assert.match(
         source,
-        /<template v-if="displacedTitleModelIsQwen"> Your choice is kept, and comes back once the OpenRouter key is set and TwiCC restarted\. <\/template>/,
+        /<template v-if="displacedTitleModelIsOpenRouter"> Your choice is kept, and comes back once the OpenRouter key is set and TwiCC restarted\. <\/template>/,
     )
     assert.match(
         source,
@@ -66,7 +68,7 @@ test('a displaced Qwen choice says it comes back with the key, an agent choice w
     )
     assert.match(
         popoverSource,
-        /const displacedTitleModelIsQwen = computed\(\s*\(\) => titleSuggestionModelIsDisplaced\.value && store\.getTitleSuggestionModel === TITLE_SUGGESTION_MODEL\.QWEN,\s*\)/,
+        /const displacedTitleModelIsOpenRouter = computed\(\s*\(\) => titleSuggestionModelIsDisplaced\.value && store\.getTitleSuggestionModel === TITLE_SUGGESTION_MODEL\.OPENROUTER,\s*\)/,
     )
 })
 
@@ -79,14 +81,14 @@ test('the title_suggested handler keeps the asked and the real model', () => {
     assert.match(body, /titleModel: titleModel \|\| null,/)
 })
 
-test('the rename dialog names the real model, marks a fallback by model, and offers Qwen with the key', () => {
+test('the rename dialog names the real model, marks a fallback by model, and offers OpenRouter with the key', () => {
     assert.match(renameSource, /suggestionModel\(suggestionEntry\.value\)/)
     assert.match(renameSource, /isFallbackEntry\(suggestionEntry\.value\)/)
     assert.match(
         renameSource,
         /titleModelAlternatives\(displayedTitleModel\.value, settingsStore\.enabledProviders, textToSpeechStore\.keyPresent\)/,
     )
-    // The provider-only checks are gone: they cannot tell Qwen from an agent.
+    // The provider-only checks are gone: they cannot tell OpenRouter from an agent.
     assert.doesNotMatch(renameSource, /titleModelForProvider\(/)
     assert.doesNotMatch(renameSource, /entry\.titleProvider !== entry\.requestedProvider/)
 })

@@ -45,27 +45,28 @@ and the language stay the same. The test of a config is adapted too, and its
 last test run shows the adapted text.
 
 Choose the model in **Adapt the text for speech**, at the top of **Settings →
-Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, **Qwen3.8 27B
-(OpenRouter)**, or **Off**. With no choice, TwiCC takes Claude, else Codex. A
+Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, **OpenRouter**, or
+**Off**. With no choice, TwiCC takes Claude, else Codex. A
 Claude or Codex model whose provider is disabled is replaced by the other
 agent, and your choice comes back when you enable its provider again.
 
 Claude Haiku 5.5 and GPT-6 Luna run on your Claude or Codex subscription.
-**Qwen3.8 27B (OpenRouter)** needs the OpenRouter key (as the OpenRouter configs
-do). It sends the message to OpenRouter and Cerebras, and it is paid on your
-OpenRouter account. With the key set, Qwen adapts the text even when no
-provider runs. Without the key, the default replaces it, and your choice comes
-back once the key is set and TwiCC restarted.
+**OpenRouter** uses a fast model through OpenRouter: today, Qwen3.8 27B served
+by Cerebras. It needs the OpenRouter key (as the OpenRouter configs do). It
+sends the message to OpenRouter, and it is paid on your OpenRouter account.
+With the key set, OpenRouter adapts the text even when no provider runs.
+Without the key, the default replaces it, and your choice comes back once the
+key is set and TwiCC restarted.
 
-If Qwen fails before the reading starts, the first agent that runs (Claude,
-else Codex) adapts the text. If no model can run, if the message is too long,
-or if the model fails before the reading starts (for Qwen: if that agent fails
-too, or if no provider runs), the message is read **as written**. If the model fails later, the
-reading stops with an error.
+If OpenRouter fails before the reading starts, the first agent that runs
+(Claude, else Codex) adapts the text. If no model can run, if the message is
+too long, or if the model fails before the reading starts (for OpenRouter: if
+that agent fails too, or if no provider runs), the message is read **as
+written**. If the model fails later, the reading stops with an error.
 
 The last test run of a config shows the model that adapted the text, or each
 model that failed and why: a wrong key or an empty OpenRouter account shows
-there. The cost of a test is the cost of the speech only: the Qwen
+there. The cost of a test is the cost of the speech only: the OpenRouter
 adaptation is not in it.
 
 ## Script configs

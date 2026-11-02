@@ -2207,7 +2207,7 @@ def test_an_adaptation_failure_after_the_first_part_cuts_the_reading(client, ada
     assert adaptation.upstream.records == []
 
 
-# --- Qwen on OpenRouter, then the agent --------------------------------------------
+# --- OpenRouter, then the agent ---------------------------------------------------
 
 
 @pytest.fixture
@@ -2216,48 +2216,48 @@ def openrouter_key(monkeypatch):
     monkeypatch.setattr(adapt, "openrouter_key_set", lambda: True)
 
 
-def test_qwen_choice_passes_the_agent_as_then(client, adaptation, recorded_sources, openrouter_key):
-    _store_adapt("qwen")
+def test_openrouter_choice_passes_the_agent_as_then(client, adaptation, recorded_sources, openrouter_key):
+    _store_adapt("openrouter")
 
     async def scenario():
         adaptation.running = {Provider.CLAUDE_CODE}
         adaptation.answers.append([ADAPTED])
         await _read_through(client, VALID_PAYLOAD)
-        # No provider runs: Qwen still adapts, with no agent after it.
+        # No provider runs: OpenRouter still adapts, with no agent after it.
         adaptation.running = set()
         adaptation.answers.append([ADAPTED])
         await _read_through(client, VALID_PAYLOAD)
 
     asyncio.run(scenario())
-    assert [(made["engine"], made["then"]) for made in recorded_sources] == [("qwen", "haiku"), ("qwen", None)]
-    assert adaptation.calls == ["qwen", "qwen"]
+    assert [(made["engine"], made["then"]) for made in recorded_sources] == [("openrouter", "haiku"), ("openrouter", None)]
+    assert adaptation.calls == ["openrouter", "openrouter"]
     assert adaptation.pulled == [[ADAPTED], [ADAPTED]]
-    assert [made["label"]["adapted"] for made in recorded_sources] == ["qwen", "qwen"]
+    assert [made["label"]["adapted"] for made in recorded_sources] == ["openrouter", "openrouter"]
 
 
-def test_qwen_cache_lookup_tries_qwen_then_the_agent(client, adaptation, streams_log, openrouter_key):
-    _store_adapt("qwen")
+def test_openrouter_cache_lookup_tries_openrouter_then_the_agent(client, adaptation, streams_log, openrouter_key):
+    _store_adapt("openrouter")
     request = parse_speech_request(VALID_PAYLOAD)
 
     async def scenario():
         speech_cache.set((request, "haiku"), CachedAudio(b"HAIKU", "audio/mpeg"))
         audio_id = await _read_through(client, CACHED_PAYLOAD)
         assert await _body(await _read(client, audio_id)) == b"HAIKU"
-        # A Qwen reading wins over the agent's.
-        speech_cache.set((request, "qwen"), CachedAudio(b"QWEN", "audio/mpeg"))
+        # An OpenRouter reading wins over the agent's.
+        speech_cache.set((request, "openrouter"), CachedAudio(b"OPENROUTER", "audio/mpeg"))
         audio_id = await _read_through(client, CACHED_PAYLOAD)
-        assert await _body(await _read(client, audio_id)) == b"QWEN"
+        assert await _body(await _read(client, audio_id)) == b"OPENROUTER"
 
     asyncio.run(scenario())
     assert adaptation.calls == []
     first, second = _speech_lines(streams_log)
     assert first.endswith("outcome=cached") and " adapted=haiku " in first
-    assert second.endswith("outcome=cached") and " adapted=qwen " in second
+    assert second.endswith("outcome=cached") and " adapted=openrouter " in second
 
 
-def test_qwen_without_the_key_never_calls_openrouter(client, adaptation, recorded_sources, monkeypatch):
+def test_openrouter_without_the_key_never_calls_openrouter(client, adaptation, recorded_sources, monkeypatch):
     monkeypatch.setattr(adapt, "openrouter_key_set", lambda: False)
-    _store_adapt("qwen")
+    _store_adapt("openrouter")
 
     async def scenario():
         adaptation.answers.append([ADAPTED])
@@ -2270,29 +2270,29 @@ def test_qwen_without_the_key_never_calls_openrouter(client, adaptation, recorde
     assert adaptation.calls == ["haiku", "luna"]
     assert [(made["engine"], made["then"]) for made in recorded_sources] == [("haiku", None), ("luna", None)]
     # The stored choice is never rewritten.
-    assert read_tts_config()["adapt"] == "qwen"
+    assert read_tts_config()["adapt"] == "openrouter"
 
 
 def test_a_fallback_reading_is_cached_under_the_agent(client, adaptation, streams_log, openrouter_key):
-    _store_adapt("qwen")
+    _store_adapt("openrouter")
     request = parse_speech_request(VALID_PAYLOAD)
 
     async def scenario():
         adaptation.answers.extend([OpenRouterTextError("http", 500), [ADAPTED]])
         await _read_through(client, CACHED_PAYLOAD)
         assert speech_cache.get((request, "haiku")) == CachedAudio(b"ID31", "audio/mpeg")
-        assert speech_cache.get((request, "qwen")) is None
+        assert speech_cache.get((request, "openrouter")) is None
         assert speech_cache.get((request, None)) is None
-        # A re-read plays the agent's reading: no new call while Qwen keeps failing.
+        # A re-read plays the agent's reading: no new call while OpenRouter keeps failing.
         audio_id = await _read_through(client, CACHED_PAYLOAD)
         assert await _body(await _read(client, audio_id)) == b"ID31"
 
     asyncio.run(scenario())
-    assert adaptation.calls == ["qwen", "haiku"]
+    assert adaptation.calls == ["openrouter", "haiku"]
     assert adaptation.pulled == [[ADAPTED]]
     first, second = _speech_lines(streams_log)
     assert " adapted=haiku " in first
-    assert " fallback_from=qwen fallback_reason=failed" in first
+    assert " fallback_from=openrouter fallback_reason=failed" in first
     assert second.endswith("outcome=cached") and " adapted=haiku " in second
     for line in (first, second):
         assert VALID_PAYLOAD["text"] not in line
@@ -2300,7 +2300,7 @@ def test_a_fallback_reading_is_cached_under_the_agent(client, adaptation, stream
 
 
 def test_last_test_records_the_fallback_reason(client, adaptation, openrouter_key):
-    _store_adapt("qwen")
+    _store_adapt("openrouter")
 
     async def scenario():
         adaptation.answers.extend([OpenRouterTextError("http", 500), [ADAPTED]])
@@ -2309,34 +2309,34 @@ def test_last_test_records_the_fallback_reason(client, adaptation, openrouter_ke
         await _read_through(client, TEST_PAYLOAD)
 
     asyncio.run(scenario())
-    fallen_back, qwen = (run for _config_id, run in adaptation.upstream.records)
+    fallen_back, openrouter = (run for _config_id, run in adaptation.upstream.records)
     assert fallen_back["adapted_by"] == "haiku"
     assert fallen_back["fallback_reason"] == "failed"
     assert fallen_back["adapt_reason"] is None
     assert isinstance(fallen_back["adapt_first_ms"], int)
     assert fallen_back["adapted_text"] == ADAPTED
-    assert (qwen["adapted_by"], qwen["fallback_reason"], qwen["adapted_text"]) == ("qwen", None, ADAPTED)
-    assert (fallen_back["adapt_engine"], qwen["adapt_engine"]) == ("haiku", "qwen")
+    assert (openrouter["adapted_by"], openrouter["fallback_reason"], openrouter["adapted_text"]) == ("openrouter", None, ADAPTED)
+    assert (fallen_back["adapt_engine"], openrouter["adapt_engine"]) == ("haiku", "openrouter")
 
 
 def test_last_test_records_the_engine_of_the_last_failed_attempt(client, adaptation, openrouter_key):
-    _store_adapt("qwen")
+    _store_adapt("openrouter")
 
     async def scenario():
-        # Qwen fails, then the agent fails too.
+        # OpenRouter fails, then the agent fails too.
         adaptation.answers.extend([OpenRouterTextError("http", 401), RuntimeError("the model is down")])
         await _read_through(client, TEST_PAYLOAD)
-        # Qwen fails and no agent runs.
+        # OpenRouter fails and no agent runs.
         adaptation.running = set()
         adaptation.answers.append(OpenRouterTextError("http", 500))
         await _read_through(client, TEST_PAYLOAD)
 
     asyncio.run(scenario())
-    both_failed, qwen_only = (run for _config_id, run in adaptation.upstream.records)
+    both_failed, openrouter_only = (run for _config_id, run in adaptation.upstream.records)
     fields = ("adapt_engine", "adapted_by", "adapt_reason", "fallback_reason")
     assert {key: both_failed[key] for key in fields} == {
         "adapt_engine": "haiku", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": "refused",
     }
-    assert {key: qwen_only[key] for key in fields} == {
-        "adapt_engine": "qwen", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": None,
+    assert {key: openrouter_only[key] for key in fields} == {
+        "adapt_engine": "openrouter", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": None,
     }

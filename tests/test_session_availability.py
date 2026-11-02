@@ -285,7 +285,9 @@ def test_no_title_is_suggested_from_the_content(sessions, consumer, monkeypatch)
 
 
 @pytest.mark.parametrize("asked, key_set, expected", [
-    ("qwen", True, "qwen"), ("qwen", False, "haiku"),
+    ("openrouter", True, "openrouter"), ("openrouter", False, "haiku"),
+    # "qwen", the stored value before the rename to "openrouter": unknown, so the default.
+    ("qwen", True, "haiku"),
     ("luna", False, "luna"), ("haiku", True, "haiku"), ("provider", True, "haiku"), ("unknown", True, "haiku"),
 ])
 def test_the_unavailable_title_frame_names_the_asked_model(sessions, consumer, monkeypatch, asked, key_set, expected):

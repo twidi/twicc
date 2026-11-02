@@ -109,10 +109,10 @@ test('a File path script card offers to delete the returned file', () => {
 
 test('the intro names both kinds and the key callout speaks of what needs OpenRouter only', () => {
     assert.ok(flatSource.includes('Read the chat messages aloud with OpenRouter, or with your own script. See the'))
-    // The Qwen adaptation too: its disabled option says why in a tooltip only, unseen on a touch screen.
+    // The OpenRouter adaptation too: its disabled option says why in a tooltip only, unseen on a touch screen.
     assert.match(
         flatSource,
-        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> Add <code>TWICC_OPENROUTER_API_KEY<\/code> to <code>\{\{ store\.envPath \}\}<\/code>, then restart TwiCC\. Testing OpenRouter configs and the Qwen3\.8 27B \(OpenRouter\) adaptation are disabled until then\. <\/wa-callout>/,
+        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> Add <code>TWICC_OPENROUTER_API_KEY<\/code> to <code>\{\{ store\.envPath \}\}<\/code>, then restart TwiCC\. Testing OpenRouter configs and the OpenRouter adaptation are disabled until then\. <\/wa-callout>/,
     )
 })
 
@@ -196,10 +196,13 @@ test('the adaptation control shows what really runs, from the enabled providers 
 test('the adaptation hint or the no-provider hint instead, then the OpenRouter note whenever the key is set', () => {
     assert.match(
         flatSource,
-        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">Qwen3\.8 27B \(OpenRouter\) sends the text to OpenRouter and Cerebras, paid on your OpenRouter account\.<\/span>/,
+        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">OpenRouter uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; it sends the text to OpenRouter, paid on your OpenRouter account\.<\/span>/,
     )
-    // One OpenRouter note only, and never bound to Qwen being the effective choice.
-    assert.equal(settingsSource.match(/OpenRouter and Cerebras/g)?.length, 1)
+    // One OpenRouter note only, and never bound to OpenRouter being the effective choice.
+    assert.equal(settingsSource.match(/paid on your OpenRouter account/g)?.length, 1)
+    // The model words come from the one constant, never written here.
+    assert.match(settingsSource, /import \{ OPENROUTER_MODEL_DESCRIPTION \} from '\.\.\/\.\.\/constants'/)
+    assert.doesNotMatch(settingsSource, /Qwen|Cerebras/)
     assert.doesNotMatch(settingsSource, /adaptHintKind/)
 })
 

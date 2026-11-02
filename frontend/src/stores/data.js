@@ -6862,12 +6862,12 @@ export const useDataStore = defineStore('data', {
          * Always stores sourcePrompt (for regeneration), and suggestion if available.
          *
          * ``titleProvider`` is the provider that produced the suggestion, null
-         * on failure and for a Qwen title (no provider runs it); it differs
+         * on failure and for an OpenRouter title (no provider runs it); it differs
          * from ``requestedProvider`` when the backend fell back to the other
          * provider. ``titleModel`` is the model that produced it ('haiku',
-         * 'luna' or 'qwen'), null on failure; it differs from
-         * ``requestedModel`` (the model asked for) on any fallback, Qwen to an
-         * agent included. Both model fields are null when a backend does not
+         * 'luna' or 'openrouter'), null on failure; it differs from
+         * ``requestedModel`` (the model asked for) on any fallback, OpenRouter to
+         * an agent included. Both model fields are null when a backend does not
          * send them. ``error`` says why there is no suggestion: 'no_prompt'
          * (nothing to summarize — not a failure), 'no_provider_available' or
          * 'generation_failed'.

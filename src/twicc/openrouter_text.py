@@ -42,6 +42,9 @@ class TextModel(NamedTuple):
 
 QWEN_MODEL = TextModel("qwen/qwen3.8-27b", "Cerebras", {"reasoning": {"effort": "none"}, "max_tokens": 8000})
 
+# The model behind the "OpenRouter" choice, for titles and for the speech adaptation.
+OPENROUTER_TEXT_MODEL = QWEN_MODEL
+
 
 class OpenRouterTextError(Exception):
     """A text call failed.

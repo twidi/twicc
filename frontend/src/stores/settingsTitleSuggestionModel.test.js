@@ -16,7 +16,9 @@ test('uses provider routing when the setting is missing or invalid', () => {
     assert.equal(resolve?.('unknown'), 'provider')
     assert.equal(resolve?.('haiku'), 'haiku')
     assert.equal(resolve?.('luna'), 'luna')
-    assert.equal(resolve?.('qwen'), 'qwen')
+    assert.equal(resolve?.('openrouter'), 'openrouter')
+    // The name before the rename to "openrouter": unknown, so the default.
+    assert.equal(resolve?.('qwen'), 'provider')
 })
 
 test('keeps the stored model when its provider is enabled', () => {
@@ -67,8 +69,12 @@ test('maps each forced model to its provider', () => {
 test('labels the forced title models like the settings options', () => {
     assert.deepEqual(
         { ...constants.TITLE_SUGGESTION_MODEL_LABELS },
-        { haiku: 'Claude Haiku 5.5', luna: 'GPT-6 Luna', qwen: 'Qwen3.8 27B (OpenRouter)' },
+        { haiku: 'Claude Haiku 5.5', luna: 'GPT-6 Luna', openrouter: 'OpenRouter' },
     )
+})
+
+test('names the model behind the OpenRouter choice in one constant', () => {
+    assert.equal(constants.OPENROUTER_MODEL_DESCRIPTION, 'Qwen3.8 27B on Cerebras')
 })
 
 test('maps a provider to the title model that runs on it', () => {
@@ -105,39 +111,39 @@ test('offers the other enabled title models as alternatives', () => {
     assert.deepEqual(alternatives('haiku', undefined), [])
 })
 
-test('keeps a Qwen choice while the OpenRouter key is set, with or without an agent', () => {
+test('keeps an OpenRouter choice while the OpenRouter key is set, with or without an agent', () => {
     const resolve = constants.resolveEffectiveTitleSuggestionModel
 
-    assert.equal(resolve('qwen', ['claude_code'], true), 'qwen')
-    // Qwen needs no Claude Code or Codex provider.
-    assert.equal(resolve('qwen', [], true), 'qwen')
+    assert.equal(resolve('openrouter', ['claude_code'], true), 'openrouter')
+    // OpenRouter needs no Claude Code or Codex provider.
+    assert.equal(resolve('openrouter', [], true), 'openrouter')
 })
 
-test('a Qwen choice works as the session provider mode without the key', () => {
+test('an OpenRouter choice works as the session provider mode without the key', () => {
     const resolve = constants.resolveEffectiveTitleSuggestionModel
 
-    assert.equal(resolve('qwen', ['claude_code'], false), 'provider')
+    assert.equal(resolve('openrouter', ['claude_code'], false), 'provider')
     // The key flag defaults to absent.
-    assert.equal(resolve('qwen', ['claude_code', 'codex']), 'provider')
+    assert.equal(resolve('openrouter', ['claude_code', 'codex']), 'provider')
 })
 
-test('a displaced agent model gives way to the other agent, not to Qwen', () => {
+test('a displaced agent model gives way to the other agent, not to OpenRouter', () => {
     const resolve = constants.resolveEffectiveTitleSuggestionModel
 
     assert.equal(resolve('haiku', ['codex'], true), 'luna')
     assert.equal(resolve('luna', ['claude_code'], true), 'haiku')
 })
 
-test('offers Qwen as an alternative only while the OpenRouter key is set', () => {
+test('offers OpenRouter as an alternative only while the OpenRouter key is set', () => {
     const alternatives = constants.titleModelAlternatives
     const both = ['claude_code', 'codex']
 
-    assert.deepEqual(alternatives('haiku', both, true), ['luna', 'qwen'])
-    assert.deepEqual(alternatives('qwen', both, true), ['haiku', 'luna'])
+    assert.deepEqual(alternatives('haiku', both, true), ['luna', 'openrouter'])
+    assert.deepEqual(alternatives('openrouter', both, true), ['haiku', 'luna'])
     assert.deepEqual(alternatives('haiku', both, false), ['luna'])
     assert.deepEqual(alternatives('haiku', both), ['luna'])
-    // Qwen needs no agent.
-    assert.deepEqual(alternatives(null, [], true), ['qwen'])
+    // OpenRouter needs no agent.
+    assert.deepEqual(alternatives(null, [], true), ['openrouter'])
 })
 
 const settingsStoreSource = readFileSync(new URL('./settings.js', import.meta.url), 'utf8')

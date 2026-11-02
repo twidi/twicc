@@ -81,8 +81,13 @@ def test_normalize_drops_an_unknown_adapt(adapt):
     assert normalize_tts_config({"configs": [], "adapt": adapt})["adapt"] is None
 
 
-def test_adapt_accepts_qwen():
-    assert normalize_tts_config({"configs": [], "adapt": "qwen"})["adapt"] == "qwen"
+def test_adapt_accepts_openrouter():
+    assert normalize_tts_config({"configs": [], "adapt": "openrouter"})["adapt"] == "openrouter"
+
+
+def test_adapt_drops_the_name_before_the_rename():
+    # "qwen" was the stored value before the choice became "openrouter": unknown, so no choice.
+    assert normalize_tts_config({"configs": [], "adapt": "qwen"})["adapt"] is None
 
 
 def test_normalize_without_adapt_is_none():
@@ -371,13 +376,13 @@ def test_last_test_keeps_the_fallback_reason():
     assert _normalized_last_test({**LAST_TEST, "fallback_reason": "stalled"})["fallback_reason"] == "stalled"
     assert _normalized_last_test({**LAST_TEST, "fallback_reason": "refused"})["fallback_reason"] == "refused"
     assert _normalized_last_test({**LAST_TEST, "fallback_reason": "bogus"})["fallback_reason"] is None
-    # A record written before the Qwen adaptation.
+    # A record written before the OpenRouter adaptation.
     old_record = {key: value for key, value in LAST_TEST.items() if key != "fallback_reason"}
     assert _normalized_last_test(old_record)["fallback_reason"] is None
 
 
 def test_last_test_keeps_the_engine_of_the_last_attempt():
-    for engine in ("haiku", "luna", "qwen"):
+    for engine in ("haiku", "luna", "openrouter"):
         assert _normalized_last_test({**LAST_TEST, "adapt_engine": engine})["adapt_engine"] == engine
     assert _normalized_last_test({**LAST_TEST, "adapt_engine": "opus"})["adapt_engine"] is None
     assert _normalized_last_test({**LAST_TEST, "adapt_engine": None})["adapt_engine"] is None
@@ -386,8 +391,8 @@ def test_last_test_keeps_the_engine_of_the_last_attempt():
     assert _normalized_last_test(old_record) == {**LAST_TEST, "adapt_engine": None}
 
 
-def test_last_test_keeps_a_qwen_adaptation():
-    assert _normalized_last_test({**LAST_TEST, "adapted_by": "qwen"})["adapted_by"] == "qwen"
+def test_last_test_keeps_an_openrouter_adaptation():
+    assert _normalized_last_test({**LAST_TEST, "adapted_by": "openrouter"})["adapted_by"] == "openrouter"
 
 
 @pytest.mark.parametrize("field, value", [

@@ -3,7 +3,7 @@
 The key is ``(request, adapted_by)``. The request is the text and the speech fields: a
 :class:`~twicc.tts.openrouter.SpeechRequest`, or a :class:`~twicc.tts.script.ScriptSpeechRequest`
 (its command among them: a changed command misses the cache). ``adapted_by`` is the engine that
-adapted the text (``"haiku"``, ``"luna"``, ``"qwen"``), or None for a text read as written (a
+adapted the text (``"haiku"``, ``"luna"``, ``"openrouter"``), or None for a text read as written (a
 reading that fell back to it among them). One process-wide instance: :data:`speech_cache`.
 """
 

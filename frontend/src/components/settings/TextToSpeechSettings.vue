@@ -15,11 +15,13 @@
  *
  * Above the configs, the global "Adapt the text for speech" choice (tts.json `adapt`) shows the
  * adaptation that really runs, given the enabled providers and the OpenRouter key, as the Titles
- * setting does. With the key set, its hints always say where Qwen sends the text.
+ * setting does. With the key set, its hints always say which model OpenRouter uses and where it
+ * sends the text.
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
+import { OPENROUTER_MODEL_DESCRIPTION } from '../../constants'
 import {
     DEFAULT_TEST_TEXT,
     adaptHint,
@@ -60,7 +62,7 @@ const store = useTextToSpeechStore()
 const settingsStore = useSettingsStore()
 
 // The text adaptation shows the choice that really runs: an engine that cannot run (its provider
-// disabled, or Qwen without the OpenRouter key) shows disabled, with the effective one selected.
+// disabled, or OpenRouter without its key) shows disabled, with the effective one selected.
 // The stored choice is never rewritten here.
 const enabledProviders = computed(() => new Set(settingsStore.enabledProviders))
 const adaptChoice = computed(() => effectiveAdapt(store.adapt, enabledProviders.value, store.keyPresent))
@@ -404,8 +406,8 @@ function answerNo(id) {
         <wa-callout v-else variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>,
-            then restart TwiCC. Testing OpenRouter configs and the Qwen3.8 27B (OpenRouter)
-            adaptation are disabled until then.
+            then restart TwiCC. Testing OpenRouter configs and the OpenRouter adaptation are
+            disabled until then.
         </wa-callout>
 
         <div class="setting-group tts-adapt-group">
@@ -420,7 +422,7 @@ function answerNo(id) {
             </div>
             <span v-if="adaptHints.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
             <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
-            <span v-if="adaptHints.openrouter" class="setting-group-hint">Qwen3.8 27B (OpenRouter) sends the text to OpenRouter and Cerebras, paid on your OpenRouter account.</span>
+            <span v-if="adaptHints.openrouter" class="setting-group-hint">OpenRouter uses {{ OPENROUTER_MODEL_DESCRIPTION }}; it sends the text to OpenRouter, paid on your OpenRouter account.</span>
         </div>
 
         <div class="setting-group">

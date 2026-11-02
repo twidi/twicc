@@ -22,12 +22,13 @@ SPEECH_FIELDS = ("model", "voice", "response_format", "speed", "instructions")
 SCRIPT_FIELDS = ("command", "output", "audio_format", "pcm_rate", "pcm_channels", "max_chars")
 SCRIPT_OUTPUTS = ("stream", "whole", "path")
 SCRIPT_FORMATS = ("mp3", "wav", "pcm")
-# The small models that adapt a text for speech (``qwen`` runs on OpenRouter, not on a provider).
-ADAPT_ENGINES = ("haiku", "luna", "qwen")
+# The small models that adapt a text for speech (``openrouter`` needs no provider, only the key).
+ADAPT_ENGINES = ("haiku", "luna", "openrouter")
 # The stored ``adapt`` values; None (no stored choice) means on, with the first running provider.
 ADAPT_CHOICES = (*ADAPT_ENGINES, "off")
-# Why a reading was not adapted, or why Qwen failed before an agent took over (in the log line and
-# the last test). ``refused``: OpenRouter refused the call (no key, a wrong key, no credits).
+# Why a reading was not adapted, or why OpenRouter failed before an agent took over (in the log
+# line and the last test). ``refused``: OpenRouter refused the call (no key, a wrong key, no
+# credits).
 ADAPT_REASONS = ("off", "no_provider", "too_long", "failed", "stalled", "empty", "refused")
 
 
@@ -131,8 +132,8 @@ def _last_test(value: object) -> dict | None:
     The adaptation fields are None in a record written before the text adaptation: ``adapt_engine``
     (the engine of the last attempt, None when no engine ran), ``adapted_by`` (the engine, None when
     not adapted), ``adapt_reason`` (why not), ``adapt_first_ms`` (the wait for the first adapted
-    text), ``adapted_text`` and ``fallback_reason`` (why Qwen failed before an agent took over, else
-    None).
+    text), ``adapted_text`` and ``fallback_reason`` (why OpenRouter failed before an agent took
+    over, else None).
     """
     if not isinstance(value, dict) or not isinstance(value.get("at"), str):
         return None

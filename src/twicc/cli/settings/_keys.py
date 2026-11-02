@@ -23,8 +23,8 @@ GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
     "titleGenerationEnabled": "Enable title suggestions and automatic title generation.",
     "titleAutoApply": "Generate first titles and update automatic titles in the backend (requires titleGenerationEnabled).",
     "titleSuggestionModel": (
-        "Model used for title suggestions: provider, haiku, luna, or qwen "
-        "(Qwen3.8 27B on OpenRouter, needs TWICC_OPENROUTER_API_KEY). "
+        "Model used for title suggestions: provider, haiku, luna, or openrouter "
+        "(a fast model through OpenRouter, needs TWICC_OPENROUTER_API_KEY). "
         "A failing model falls back to the agents (Claude, Codex)."
     ),
     "titleSystemPrompt": "System prompt used to generate titles ('{text}' = the message); unset restores the default.",

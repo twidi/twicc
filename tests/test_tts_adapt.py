@@ -12,14 +12,14 @@ import re
 import pytest
 
 from twicc.core.enums import Provider
-from twicc.openrouter_text import QWEN_MODEL, OpenRouterTextError
+from twicc.openrouter_text import OpenRouterTextError, TextModel
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.tts import adapt
 from twicc.tts.adapt import (
     ADAPT_MAX_CHARS,
     ADAPT_PROMPT,
     ADAPT_STOPPED,
-    QWEN_ENGINE,
+    OPENROUTER_ENGINE,
     AdaptedParts,
     Engine,
     fallback_engine,
@@ -127,8 +127,8 @@ def fake_call(monkeypatch):
 def short_limits(monkeypatch):
     monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 2.0)
     monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 2.0)
-    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 2.0)
-    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 2.0)
+    monkeypatch.setattr(adapt, "OPENROUTER_FIRST_TEXT_SECONDS", 2.0)
+    monkeypatch.setattr(adapt, "OPENROUTER_NEXT_TEXT_SECONDS", 2.0)
 
 
 def _source(engine=HAIKU, *, text=ORIGINAL, limit=LIMIT, first=FIRST, fallback=FALLBACK, label=None, then=None):
@@ -674,34 +674,34 @@ def test_the_label_tells_the_adaptation(fake_call):
     assert source.adapted_text is None
 
 
-# --- Qwen on OpenRouter, then the agent --------------------------------------------
+# --- OpenRouter, then the agent ---------------------------------------------------
 
 
-def test_qwen_resolves_only_with_the_key(monkeypatch):
+def test_openrouter_resolves_only_with_the_key(monkeypatch):
     running: set[Provider] = set()
     key_set = True
     monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in running)
     monkeypatch.setattr(adapt, "openrouter_key_set", lambda: key_set)
     text = "A message."
 
-    # With the key, Qwen needs no provider.
+    # With the key, OpenRouter needs no provider.
     for running in (set(), {Provider.CLAUDE_CODE}, {Provider.CLAUDE_CODE, Provider.CODEX}):
-        assert resolve_engine("qwen", text) == (QWEN_ENGINE, None)
-    assert resolve_engine("qwen", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+        assert resolve_engine("openrouter", text) == (OPENROUTER_ENGINE, None)
+    assert resolve_engine("openrouter", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
     assert resolve_engine("off", text) == (None, "off")
-    # No choice never takes Qwen.
+    # No choice never takes OpenRouter.
     running = {Provider.CLAUDE_CODE}
     assert resolve_engine(None, text) == (HAIKU, None)
 
-    # Without the key, a Qwen choice works as no choice.
+    # Without the key, an OpenRouter choice works as no choice.
     key_set = False
     running = {Provider.CLAUDE_CODE}
-    assert resolve_engine("qwen", text) == (HAIKU, None)
+    assert resolve_engine("openrouter", text) == (HAIKU, None)
     running = {Provider.CODEX}
-    assert resolve_engine("qwen", text) == (LUNA, None)
+    assert resolve_engine("openrouter", text) == (LUNA, None)
     running = set()
-    assert resolve_engine("qwen", text) == (None, "no_provider")
-    assert resolve_engine("qwen", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+    assert resolve_engine("openrouter", text) == (None, "no_provider")
+    assert resolve_engine("openrouter", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
 
 
 def test_fallback_engine(monkeypatch):
@@ -709,43 +709,46 @@ def test_fallback_engine(monkeypatch):
     monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in running)
 
     running = {Provider.CLAUDE_CODE, Provider.CODEX}
-    assert fallback_engine(QWEN_ENGINE) == HAIKU
+    assert fallback_engine(OPENROUTER_ENGINE) == HAIKU
     assert fallback_engine(HAIKU) is None
     assert fallback_engine(LUNA) is None
     running = {Provider.CLAUDE_CODE}
-    assert fallback_engine(QWEN_ENGINE) == HAIKU
+    assert fallback_engine(OPENROUTER_ENGINE) == HAIKU
     running = {Provider.CODEX}
-    assert fallback_engine(QWEN_ENGINE) == LUNA
+    assert fallback_engine(OPENROUTER_ENGINE) == LUNA
     running = set()
-    assert fallback_engine(QWEN_ENGINE) is None
-    # The agents stay the default order: Qwen is never in it.
-    assert QWEN_ENGINE not in adapt.ENGINES and QWEN_ENGINE == Engine("qwen", None)
+    assert fallback_engine(OPENROUTER_ENGINE) is None
+    # The agents stay the default order: OpenRouter is never in it.
+    assert OPENROUTER_ENGINE not in adapt.ENGINES and OPENROUTER_ENGINE == Engine("openrouter", None)
 
 
-def test_open_stream_routes_qwen_to_openrouter(monkeypatch):
+def test_open_stream_streams_the_openrouter_text_model(monkeypatch):
     calls = []
+    # The adaptation reads the model behind the choice at call time, from one place.
+    model = TextModel("some/model", "Some provider", {})
+    monkeypatch.setattr(adapt, "OPENROUTER_TEXT_MODEL", model)
 
     async def openrouter(model, prompt, *, system_prompt=None):
         calls.append((model, prompt, system_prompt))
         yield "from "
-        yield "qwen"
+        yield "openrouter"
 
     monkeypatch.setattr(adapt, "stream_openrouter_text", openrouter)
 
     async def scenario():
         async with asyncio.timeout(5):
-            return [delta async for delta in adapt._open_stream(QWEN_ENGINE, "p")]
+            return [delta async for delta in adapt._open_stream(OPENROUTER_ENGINE, "p")]
 
-    assert asyncio.run(scenario()) == ["from ", "qwen"]
-    assert calls == [(QWEN_MODEL, "p", None)]
+    assert asyncio.run(scenario()) == ["from ", "openrouter"]
+    assert calls == [(model, "p", None)]
 
 
-def test_qwen_limits(monkeypatch, fake_call):
+def test_openrouter_limits(monkeypatch, fake_call):
     monkeypatch.undo()  # the values of the module, not the short ones of the fixture
-    assert (adapt.QWEN_FIRST_TEXT_SECONDS, adapt.QWEN_NEXT_TEXT_SECONDS) == (5.0, 5.0)
+    assert (adapt.OPENROUTER_FIRST_TEXT_SECONDS, adapt.OPENROUTER_NEXT_TEXT_SECONDS) == (5.0, 5.0)
 
-    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.05)
-    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "OPENROUTER_FIRST_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "OPENROUTER_NEXT_TEXT_SECONDS", 0.05)
     monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 2.0)
     monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 2.0)
 
@@ -756,12 +759,12 @@ def test_qwen_limits(monkeypatch, fake_call):
             await source.aclose()
             return source, parts
 
-    # Qwen: a late first text, and a late next text, are stalls.
+    # OpenRouter: a late first text, and a late next text, are stalls.
     fake_call(0.2, "Hello there.")
-    source, parts = asyncio.run(read(QWEN_ENGINE))
+    source, parts = asyncio.run(read(OPENROUTER_ENGINE))
     assert (parts, source.adapt_reason) == (FALLBACK, "stalled")
     fake_call("Hello ", 0.2, "there.")
-    source, parts = asyncio.run(read(QWEN_ENGINE))
+    source, parts = asyncio.run(read(OPENROUTER_ENGINE))
     assert (parts, source.adapt_reason) == (FALLBACK, "stalled")
 
     # An agent keeps its own limits.
@@ -776,15 +779,15 @@ def test_qwen_limits(monkeypatch, fake_call):
 async def _read_with_then(*, then=HAIKU, label=None):
     async with asyncio.timeout(5):
         label = {} if label is None else label
-        source = _source(QWEN_ENGINE, label=label, then=then)
-        assert label == {"adapted": "pending:qwen"}
+        source = _source(OPENROUTER_ENGINE, label=label, then=then)
+        assert label == {"adapted": "pending:openrouter"}
         parts = await _rest(source)
         await source.aclose()
         return source, parts, label
 
 
 @pytest.mark.parametrize(
-    "qwen_steps, reason",
+    "openrouter_steps, reason",
     [
         ((0.05, OpenRouterTextError("http", 500)), "failed"),
         ((0.05, OpenRouterTextError("declined")), "failed"),
@@ -793,44 +796,44 @@ async def _read_with_then(*, then=HAIKU, label=None):
         ((0.05, "  ", "**"), "empty"),  # nothing to read aloud
     ],
 )
-def test_a_qwen_failure_before_the_first_part_switches_to_the_agent(fake_call, monkeypatch, qwen_steps, reason):
-    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.2)
+def test_an_openrouter_failure_before_the_first_part_switches_to_the_agent(fake_call, monkeypatch, openrouter_steps, reason):
+    monkeypatch.setattr(adapt, "OPENROUTER_FIRST_TEXT_SECONDS", 0.2)
     adapted = _sentences(600)
-    fake = fake_call([qwen_steps, (adapted,)])
+    fake = fake_call([openrouter_steps, (adapted,)])
 
     source, parts, label = asyncio.run(_read_with_then())
     splitter = PartSplitter(LIMIT, FIRST)
     assert parts == splitter.feed(adapted) + splitter.end()
     prompt = ADAPT_PROMPT.format(text=ORIGINAL)
-    assert fake.calls == [(QWEN_ENGINE, prompt), (HAIKU, prompt)]
+    assert fake.calls == [(OPENROUTER_ENGINE, prompt), (HAIKU, prompt)]
     assert fake.streams[0].closed and fake.streams[1].finished
     assert source.adapted_by == "haiku"
     assert source.adapt_engine == "haiku"
-    assert source.fallback_from == "qwen"
+    assert source.fallback_from == "openrouter"
     assert source.fallback_reason == reason
     assert source.adapt_reason is None
     assert source.adapted_text == adapted
     assert source.split is True
-    # From the creation of the source: the wait for Qwen counts.
+    # From the creation of the source: the wait for OpenRouter counts.
     assert isinstance(source.adapt_first_ms, int) and source.adapt_first_ms >= 40
     assert label == {
         "adapted": "haiku",
-        "fallback_from": "qwen",
+        "fallback_from": "openrouter",
         "fallback_reason": reason,
         "adapt_first_ms": source.adapt_first_ms,
     }
 
 
-def test_text_received_from_a_failed_qwen_call_is_dropped(fake_call, monkeypatch):
-    # Qwen streams less than a first part, then stalls.
-    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
-    fake_call([("Qwen said this. ", HANG), (0.1, "Haiku said that.")])
+def test_text_received_from_a_failed_openrouter_call_is_dropped(fake_call, monkeypatch):
+    # OpenRouter streams less than a first part, then stalls.
+    monkeypatch.setattr(adapt, "OPENROUTER_NEXT_TEXT_SECONDS", 0.05)
+    fake_call([("OpenRouter said this. ", HANG), (0.1, "Haiku said that.")])
     seen = []
 
     async def scenario():
         async with asyncio.timeout(5):
             label = {}
-            source = _source(QWEN_ENGINE, label=label, then=HAIKU)
+            source = _source(OPENROUTER_ENGINE, label=label, then=HAIKU)
             reading = asyncio.create_task(_rest(source))
             while "adapt_first_ms" not in label:
                 await asyncio.sleep(0)
@@ -839,18 +842,18 @@ def test_text_received_from_a_failed_qwen_call_is_dropped(fake_call, monkeypatch
             return source, parts, label
 
     source, parts, label = asyncio.run(scenario())
-    [(adapted, qwen_first_ms)] = seen
-    assert adapted == "qwen"
+    [(adapted, openrouter_first_ms)] = seen
+    assert adapted == "openrouter"
     assert parts == ["Haiku said that."]
     assert source.adapted_text == "Haiku said that."
     assert source.adapt_reason is None
-    assert (source.fallback_from, source.fallback_reason) == ("qwen", "stalled")
-    # The agent's first text came after the Qwen stall and the agent's own delay.
-    assert source.adapt_first_ms >= 140 and source.adapt_first_ms > qwen_first_ms
+    assert (source.fallback_from, source.fallback_reason) == ("openrouter", "stalled")
+    # The agent's first text came after the OpenRouter stall and the agent's own delay.
+    assert source.adapt_first_ms >= 140 and source.adapt_first_ms > openrouter_first_ms
     assert label == {
         "adapted": "haiku",
         "adapt_first_ms": source.adapt_first_ms,
-        "fallback_from": "qwen",
+        "fallback_from": "openrouter",
         "fallback_reason": "stalled",
     }
 
@@ -864,49 +867,49 @@ def test_text_received_from_a_failed_qwen_call_is_dropped(fake_call, monkeypatch
         OpenRouterTextError("no_key"),
     ],
 )
-def test_a_refused_qwen_call_is_reported_as_refused(fake_call, error):
+def test_a_refused_openrouter_call_is_reported_as_refused(fake_call, error):
     fake_call([(error,), ("Hello there.",)])
     source, parts, label = asyncio.run(_read_with_then())
     assert parts == ["Hello there."]
-    assert (source.adapted_by, source.fallback_from, source.fallback_reason) == ("haiku", "qwen", "refused")
+    assert (source.adapted_by, source.fallback_from, source.fallback_reason) == ("haiku", "openrouter", "refused")
     assert label["fallback_reason"] == "refused"
 
 
-def test_qwen_then_agent_both_fail_reads_the_original(fake_call):
+def test_openrouter_then_agent_both_fail_reads_the_original(fake_call):
     fake = fake_call([(OpenRouterTextError("http", 401),), ("Some text.", RuntimeError("boom"))])
     source, parts, label = asyncio.run(_read_with_then())
     assert parts == FALLBACK
-    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE, HAIKU]
+    assert [engine for engine, _prompt in fake.calls] == [OPENROUTER_ENGINE, HAIKU]
     assert source.adapted_by is None
-    # The engine of the last attempt is kept: the agent that failed after Qwen.
+    # The engine of the last attempt is kept: the agent that failed after OpenRouter.
     assert source.adapt_engine == "haiku"
     assert source.adapt_reason == "failed"
     assert source.adapt_first_ms is None
     assert source.adapted_text is None
-    assert (source.fallback_from, source.fallback_reason) == ("qwen", "refused")
-    assert label == {"adapted": "no", "adapt_reason": "failed", "fallback_from": "qwen", "fallback_reason": "refused"}
+    assert (source.fallback_from, source.fallback_reason) == ("openrouter", "refused")
+    assert label == {"adapted": "no", "adapt_reason": "failed", "fallback_from": "openrouter", "fallback_reason": "refused"}
 
 
-def test_qwen_without_an_agent_reads_the_original(fake_call):
+def test_openrouter_without_an_agent_reads_the_original(fake_call):
     fake = fake_call([(OpenRouterTextError("http", 500),), ("never read",)])
     source, parts, label = asyncio.run(_read_with_then(then=None))
     assert parts == FALLBACK
-    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
+    assert [engine for engine, _prompt in fake.calls] == [OPENROUTER_ENGINE]
     assert source.adapted_by is None
-    assert source.adapt_engine == "qwen"
+    assert source.adapt_engine == "openrouter"
     assert source.adapt_reason == "failed"
     assert (source.fallback_from, source.fallback_reason) == (None, None)
     assert label == {"adapted": "no", "adapt_reason": "failed"}
 
 
-def test_a_qwen_failure_after_the_first_part_stops_the_reading(fake_call):
+def test_an_openrouter_failure_after_the_first_part_stops_the_reading(fake_call):
     received = _sentences(600) + " A complete sentence. A sentence cut in the mid"
     failing = asyncio.Event()
     fake = fake_call([(received[:400], received[400:], failing, OpenRouterTextError("stream_error")), ("never",)])
 
     async def scenario():
         async with asyncio.timeout(5):
-            source = _source(QWEN_ENGINE, then=HAIKU)
+            source = _source(OPENROUTER_ENGINE, then=HAIKU)
             parts = [await source.next_part()]
             failing.set()
             with pytest.raises(SpeechError) as raised:
@@ -921,17 +924,17 @@ def test_a_qwen_failure_after_the_first_part_stops_the_reading(fake_call):
     assert parts == expected
     assert error.message == ADAPT_STOPPED
     assert error.log_message == "adaptation failed after the first part"
-    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
-    assert (source.adapted_by, source.adapt_reason) == ("qwen", "failed")
+    assert [engine for engine, _prompt in fake.calls] == [OPENROUTER_ENGINE]
+    assert (source.adapted_by, source.adapt_reason) == ("openrouter", "failed")
     assert (source.fallback_from, source.fallback_reason) == (None, None)
 
 
-def test_aclose_during_qwen_starts_no_agent_call(fake_call):
+def test_aclose_during_openrouter_starts_no_agent_call(fake_call):
     fake = fake_call([(HANG,), ("Agent text.",)])
 
     async def scenario():
         async with asyncio.timeout(5):
-            source = _source(QWEN_ENGINE, then=HAIKU)
+            source = _source(OPENROUTER_ENGINE, then=HAIKU)
             reading = asyncio.create_task(source.next_part())
             while fake.task is None:
                 await asyncio.sleep(0)
@@ -942,7 +945,7 @@ def test_aclose_during_qwen_starts_no_agent_call(fake_call):
             return source
 
     source = asyncio.run(scenario())
-    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
+    assert [engine for engine, _prompt in fake.calls] == [OPENROUTER_ENGINE]
     assert source.adapt_reason is None and source.fallback_reason is None
 
 
@@ -952,11 +955,11 @@ def test_aclose_after_the_switch_closes_the_agent_call(fake_call):
     async def scenario():
         async with asyncio.timeout(5):
             label = {}
-            source = _source(QWEN_ENGINE, label=label, then=HAIKU)
+            source = _source(OPENROUTER_ENGINE, label=label, then=HAIKU)
             reading = asyncio.create_task(source.next_part())
             while len(fake.calls) < 2:
                 await asyncio.sleep(0)
-            assert label == {"adapted": "pending:haiku", "fallback_from": "qwen", "fallback_reason": "failed"}
+            assert label == {"adapted": "pending:haiku", "fallback_from": "openrouter", "fallback_reason": "failed"}
             assert not fake.streams[1].closed
             await source.aclose()
             assert fake.streams[1].closed and not fake.streams[1].finished
@@ -968,17 +971,17 @@ def test_aclose_after_the_switch_closes_the_agent_call(fake_call):
     assert source.adapted_by == "haiku" and source.adapt_reason is None
 
 
-def test_the_agent_after_qwen_keeps_its_own_limits(fake_call, monkeypatch):
-    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.05)
-    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
+def test_the_agent_after_openrouter_keeps_its_own_limits(fake_call, monkeypatch):
+    monkeypatch.setattr(adapt, "OPENROUTER_FIRST_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "OPENROUTER_NEXT_TEXT_SECONDS", 0.05)
     monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 1.0)
     monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 1.0)
-    # Qwen fails at once; the agent's texts come later than Qwen's limits, within its own.
+    # OpenRouter fails at once; the agent's texts come later than OpenRouter's limits, within its own.
     fake = fake_call([(OpenRouterTextError("http", 500),), (0.3, "Hello ", 0.3, "there.")])
     source, parts, label = asyncio.run(_read_with_then())
     assert parts == ["Hello there."]
-    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE, HAIKU]
+    assert [engine for engine, _prompt in fake.calls] == [OPENROUTER_ENGINE, HAIKU]
     assert source.adapted_by == "haiku"
     assert source.adapt_reason is None
-    assert (source.fallback_from, source.fallback_reason) == ("qwen", "failed")
+    assert (source.fallback_from, source.fallback_reason) == ("openrouter", "failed")
     assert source.adapted_text == "Hello there."
