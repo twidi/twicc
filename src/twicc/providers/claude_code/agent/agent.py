@@ -1264,6 +1264,10 @@ class ClaudeCodeAgent(BaseAgent):
             # background): raising them would let a hung foreground command block
             # the turn just as long.
             env_option["BASH_MAX_TIMEOUT_MS"] = "2147483647"
+            # TwiCC titles its sessions itself and ignores the CLI's ``ai-title``
+            # entries: skip the small-model request that generates them (the
+            # hybrid mode gets the same through ``-n``).
+            env_option["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = "1"
             # Configured provider homes (CLAUDE_CONFIG_DIR & co): explicit even
             # though os.environ inheritance would carry them — the invariant
             # that a launched process never touches another home must not
