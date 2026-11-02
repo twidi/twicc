@@ -6,9 +6,9 @@ hermetic call, or the OpenRouter text model (docs/plans/2026-11-01-openrouter-te
 arrives, to a :class:`~twicc.tts.parts.PartSplitter`. Until its first part is returned, a failed,
 stalled or empty OpenRouter call hands the text to the first agent that runs, and any other
 failed, stalled or empty adaptation (the agent's after OpenRouter among them) switches it to the
-parts of the original text, read as written. After that, the text received is read up to its last sentence
-end, then the reading stops with ``ADAPT_STOPPED``: nothing tells where to go on in the original
-text.
+parts of the original text, read as written. After that, the text received is read up to its last
+sentence end, then the reading stops with ``ADAPT_STOPPED``: nothing tells where to go on in the
+original text.
 
 Neither the original text nor the adapted one ever reaches a log line.
 """
@@ -227,7 +227,8 @@ class AdaptedParts:
 
     ``then`` is the engine that takes over when ``engine`` fails, stalls or answers nothing before
     the first part is returned (the agent after OpenRouter): the call state is reset, and ``then``'s
-    call runs with its own limits. Without ``then``, or when ``then`` fails too, the original text is read.
+    call runs with its own limits. Without ``then``, or when ``then`` fails too, the original text is
+    read.
 
     Reporting attributes, set as they become known: ``adapted_by`` (the engine name, ``None`` after
     a fallback to the original text), ``adapt_reason`` (why the adaptation failed, else ``None``),

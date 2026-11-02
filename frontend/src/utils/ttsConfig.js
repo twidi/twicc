@@ -362,7 +362,7 @@ const ADAPT_REASON_TEXTS = {
     stalled: 'the model did not answer in time',
     empty: 'the model gave no text',
     // No parentheses: the text goes inside the "failed (…)" of a named engine.
-    refused: 'OpenRouter refused the call; check the key and the credits',
+    refused: 'the call was refused; check the key and the credits',
 }
 
 // The reasons of an engine that ran and failed (the others: no engine ran).
@@ -413,7 +413,7 @@ export function adaptOptions(enabledProviders, keyPresent = false) {
     const openrouterLabel = TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT]
     const openrouter = keyPresent
         ? { value: OPENROUTER_ADAPT, label: openrouterLabel }
-        : { value: OPENROUTER_ADAPT, label: openrouterLabel, disabled: true, title: `${openrouterLabel}: the OpenRouter key is not set` }
+        : { value: OPENROUTER_ADAPT, label: openrouterLabel, disabled: true, title: `${openrouterLabel}: its key is not set` }
     return [...engines, openrouter, { value: 'off', label: 'Off' }]
 }
 
@@ -422,8 +422,8 @@ export function adaptOptions(enabledProviders, keyPresent = false) {
  * `noProvider` when it is 'off' with no Claude or Codex provider enabled (that hint replaces the
  * generic one), and `openrouter` (the model OpenRouter uses, where it sends the text and who pays)
  * whenever the OpenRouter key is set, whatever the choice: the switch has no room for a note per
- * option, so the user reads it before choosing OpenRouter. Without the key, the key-missing callout already says that
- * OpenRouter is unavailable.
+ * option, so the user reads it before choosing OpenRouter. Without the key, the key-missing
+ * callout already says that OpenRouter is unavailable.
  */
 export function adaptHint(choice, enabledProviders, keyPresent = false) {
     return {

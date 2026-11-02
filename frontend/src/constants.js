@@ -194,8 +194,10 @@ export const TITLE_SUGGESTION_MODEL = Object.freeze({
 
 /**
  * The model behind the ``openrouter`` choice, for titles and for the speech
- * adaptation, as the notes and hints name it. Mirrors the backend
- * ``openrouter_text.OPENROUTER_TEXT_MODEL``: a model change edits both.
+ * adaptation, as the notes and hints name it. A model change edits three
+ * places: this constant, ``OPENROUTER_TEXT_MODEL`` in
+ * ``src/twicc/openrouter_text.py``, and the help page
+ * ``frontend/public/help/text-to-speech.md``.
  */
 export const OPENROUTER_MODEL_DESCRIPTION = 'Qwen3.8 27B on Cerebras'
 

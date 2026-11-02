@@ -593,19 +593,19 @@ test('adaptOptions: both models, OpenRouter, then Off; a model that cannot run s
     assert.deepEqual(adaptOptions(['claude_code', 'codex']), [
         { value: 'haiku', label: 'Claude Haiku 5.5' },
         { value: 'luna', label: 'GPT-6 Luna' },
-        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: its key is not set' },
         { value: 'off', label: 'Off' },
     ])
     assert.deepEqual(adaptOptions(new Set(['codex'])), [
         { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
         { value: 'luna', label: 'GPT-6 Luna' },
-        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: its key is not set' },
         { value: 'off', label: 'Off' },
     ])
     assert.deepEqual(adaptOptions([]), [
         { value: 'haiku', label: 'Claude Haiku 5.5', disabled: true, title: 'Claude Haiku 5.5: Claude is disabled' },
         { value: 'luna', label: 'GPT-6 Luna', disabled: true, title: 'GPT-6 Luna: Codex is disabled' },
-        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: the OpenRouter key is not set' },
+        { value: 'openrouter', label: 'OpenRouter', disabled: true, title: 'OpenRouter: its key is not set' },
         { value: 'off', label: 'Off' },
     ])
 })
@@ -657,12 +657,12 @@ test('ttsAdaptationFacts: why OpenRouter failed before an agent took over', () =
     // Both failed: each one is named, and the two failure parts read alike.
     assert.equal(
         ttsAdaptationFacts({ adapt_engine: 'haiku', adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
-        'Not adapted: Claude Haiku 5.5 failed (the model failed) · OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
+        'Not adapted: Claude Haiku 5.5 failed (the model failed) · OpenRouter failed (the call was refused; check the key and the credits)',
     )
     // A record written before `adapt_engine`: the agent is not named.
     assert.equal(
         ttsAdaptationFacts({ adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
-        'Not adapted: the model failed · OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
+        'Not adapted: the model failed · OpenRouter failed (the call was refused; check the key and the credits)',
     )
     // An unknown reason adds nothing.
     assert.equal(ttsAdaptationFacts({ adapted_by: 'luna', adapt_first_ms: null, fallback_reason: 'unknown' }), 'Adapted by GPT-6 Luna')
@@ -676,7 +676,7 @@ test('ttsAdaptationFacts: why the text was not adapted', () => {
         failed: 'the model failed',
         stalled: 'the model did not answer in time',
         empty: 'the model gave no text',
-        refused: 'OpenRouter refused the call; check the key and the credits',
+        refused: 'the call was refused; check the key and the credits',
     }
     for (const [reason, text] of Object.entries(reasons)) {
         const run = { chars: 35, adapted_by: null, adapt_reason: reason, adapt_first_ms: null, adapted_text: null }
@@ -690,7 +690,7 @@ test('ttsAdaptationFacts: the engine that failed is named', () => {
     const run = { chars: 35, adapted_by: null, adapt_first_ms: null, adapted_text: null }
     assert.equal(
         ttsAdaptationFacts({ ...run, adapt_engine: 'openrouter', adapt_reason: 'refused' }),
-        'Not adapted: OpenRouter failed (OpenRouter refused the call; check the key and the credits)',
+        'Not adapted: OpenRouter failed (the call was refused; check the key and the credits)',
     )
     assert.equal(
         ttsAdaptationFacts({ ...run, adapt_engine: 'luna', adapt_reason: 'stalled' }),

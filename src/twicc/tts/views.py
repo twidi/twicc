@@ -328,9 +328,9 @@ async def _open_speech(
     an engine, the parts are an :class:`AdaptedParts` source, cut to *limits*, that falls back to
     the parts of *split*; without one, the parts of *split*. With OpenRouter, the source hands the
     text to the first running agent (``then``) when OpenRouter fails before its first part. The
-    label tells which (``adapted``, ``adapt_reason``), never the text. The cache key is ``(request, engine name or
-    None)``; with OpenRouter, a cached reading of ``then`` plays when no OpenRouter one is cached, so
-    that a re-read stays instant while OpenRouter keeps failing.
+    label tells which (``adapted``, ``adapt_reason``), never the text. The cache key is
+    ``(request, engine name or None)``; with OpenRouter, a cached reading of ``then`` plays when no
+    OpenRouter one is cached, so that a re-read stays instant while OpenRouter keeps failing.
     """
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
