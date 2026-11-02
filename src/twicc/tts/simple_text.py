@@ -66,6 +66,9 @@ _BOLD_UNDERSCORE = re.compile(r"(?<![_\w])__(?=\S)(.+?)(?<=\S)__(?![_\w])")
 _ITALIC_STAR = re.compile(r"(?<![*\w])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![*\w])")
 _ITALIC_UNDERSCORE = re.compile(r"(?<![_\w])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![_\w])")
 _STRIKETHROUGH = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~")
+# Symbols that survive the cleanup only in code, commands, paths or markup: read aloud they are
+# noise, so the model decides. ``%``, ``;``, ``:``, parentheses, ``+`` and ``-`` are prose.
+_LEFTOVER_SYMBOL = re.compile(r"[${}\\|=<>^@]|&&|[^\W_]_[^\W_]|#[^\W_]")
 _BLANK_RUN = re.compile(r"\n{3,}")
 
 
@@ -196,6 +199,8 @@ def _clean(text: str) -> str | None:
         output.append(_clean_emphasis(line).rstrip())
 
     cleaned = _BLANK_RUN.sub("\n\n", "\n".join(output)).strip()
+    if _LEFTOVER_SYMBOL.search(cleaned):
+        return None
     return _ESCAPE_BACK.sub(_unescape, cleaned)
 
 
