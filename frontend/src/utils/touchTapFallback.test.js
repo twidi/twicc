@@ -116,3 +116,36 @@ test('two successive taps work independently', () => {
     advance(350)
     assert.deepEqual(ran, ['a', 'b'])
 })
+
+test('cancel() while armed means the action never runs', () => {
+    const { tap, advance, timers } = setup()
+    tap.down('a', touch)
+    tap.up('a', touch, () => assert.fail('must not run'))
+    tap.cancel()
+    assert.equal(timers.size, 0)
+    advance(5000)
+})
+
+test('a new tap within the window after a fallback run is handled normally', () => {
+    const { tap, advance } = setup()
+    let n = 0
+    tap.down('a', touch)
+    tap.up('a', touch, () => n++)
+    advance(350)
+    advance(100)
+    tap.down('a', touch)
+    tap.up('a', touch, () => n++)
+    assert.equal(tap.click('a'), true)
+    advance(1000)
+    assert.equal(n, 1)
+})
+
+test('the fallback arms for a 3 px move and not for a 25 px move', () => {
+    const { tap, timers } = setup()
+    tap.down('a', { pointerType: 'touch', clientX: 10, clientY: 10 })
+    tap.up('a', { pointerType: 'touch', clientX: 13, clientY: 10 }, () => {})
+    assert.equal(timers.size, 1)
+    tap.down('a', { pointerType: 'touch', clientX: 10, clientY: 10 })
+    tap.up('a', { pointerType: 'touch', clientX: 10, clientY: 35 }, () => {})
+    assert.equal(timers.size, 0)
+})

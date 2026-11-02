@@ -339,6 +339,7 @@ function onDragPointerUp() {
 // ─── Expand / close ────────────────────────────────────────────────
 
 function expand() {
+    tapFallback.cancel()
     panelOffset.value = { dx: 0, dy: 0 }
     expanded.value = true
     // Dismiss the source selection so the highlight goes away. In plain HTML the
@@ -357,6 +358,7 @@ function expand() {
 }
 
 function close() {
+    tapFallback.cancel()
     removeViewportListeners()
     emit('close')
 }
@@ -531,6 +533,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+    tapFallback.cancel()
     document.removeEventListener('mousedown', handleDocumentMousedown, true)
     document.removeEventListener('pointermove', onDragPointerMove)
     document.removeEventListener('pointerup', onDragPointerUp)

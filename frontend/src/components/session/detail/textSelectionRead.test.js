@@ -65,3 +65,11 @@ test('the collapsed buttons route touch taps through the tap fallback', () => {
     const expandedPart = widget.slice(widget.indexOf('<!-- Expanded'))
     assert.ok(!expandedPart.includes('tapFallback'))
 })
+
+test('the tap fallback is cancelled on unmount, close and expand', () => {
+    for (const marker of ['onBeforeUnmount(() => {', 'function close() {', 'function expand() {']) {
+        const at = widget.indexOf(marker)
+        assert.ok(at > -1, marker)
+        assert.match(widget.slice(at, at + marker.length + 40), /tapFallback\.cancel\(\)/, marker)
+    }
+})

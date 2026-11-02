@@ -8,6 +8,7 @@
 /**
  * @param {object} [options]
  * @param {number} [options.delay] ms to wait for a click after a touch pointerup
+ * @param {number} [options.moveThreshold] max px the pointer may move between down and up
  * @param {number} [options.ignoreClickFor] ms during which a click is ignored after the fallback ran
  * @param {Function} [options.setTimer] defaults to setTimeout
  * @param {Function} [options.clearTimer] defaults to clearTimeout
@@ -16,11 +17,13 @@
 export function createTouchTapFallback({
     delay = 350,
     ignoreClickFor = 1000,
+    moveThreshold = 10,
     setTimer = (fn, ms) => setTimeout(fn, ms),
     clearTimer = handle => clearTimeout(handle),
     now = () => Date.now(),
 } = {}) {
     let downId = null
+    let downAt = null // { x, y }
     let pending = null // { id, handle }
     let fired = null // { id, at }
 
@@ -36,11 +39,18 @@ export function createTouchTapFallback({
         /** A pointerdown on button `id`. Cancels any pending fallback. */
         down(id, event) {
             cancel()
-            if (event?.pointerType === 'touch') downId = id
+            fired = null
+            if (event?.pointerType === 'touch') {
+                downId = id
+                downAt = { x: event.clientX ?? 0, y: event.clientY ?? 0 }
+            }
         },
         /** A pointerup on button `id`: arms the fallback for a touch tap. */
         up(id, event, action) {
             if (event?.pointerType !== 'touch' || downId !== id) return
+            const dx = (event.clientX ?? 0) - downAt.x
+            const dy = (event.clientY ?? 0) - downAt.y
+            if (Math.hypot(dx, dy) > moveThreshold) return
             cancel()
             const entry = { id, handle: null }
             entry.handle = setTimer(() => {
