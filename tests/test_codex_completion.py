@@ -585,3 +585,98 @@ def test_plan_stay_cleanup_cannot_close_new_actual_work():
         assert agent.completion_controller.is_open
         cleanup(agent)
     asyncio.run(scenario())
+
+
+def test_goal_settlement_routes_send_to_fresh_turn_before_cleanup_returns():
+    async def scenario():
+        agent = make_agent()
+        agent._codex = MagicMock()
+        monitor = SimpleNamespace(stream=lambda: Turn([event("turn/started"), final("goal"),
+                                                       event("turn/completed")]).stream(), close=MagicMock())
+        agent._goal_monitor = monitor
+        agent._goal_continuation_active = True
+        entered, release, native_opened, native_release = (asyncio.Event() for _ in range(4))
+        async def settle(*args, **kwargs):
+            entered.set()
+            await release.wait()
+        class FreshTurn:
+            id = "fresh-turn"
+            async def stream(self):
+                native_opened.set()
+                await native_release.wait()
+                yield event("turn/completed", turn_id=self.id)
+        agent._settle_async_questions = settle
+        agent._open_turn = AsyncMock(return_value=FreshTurn())
+        agent._build_turn_input = AsyncMock(return_value=[])
+        goal = asyncio.create_task(agent._run_goal_continuation(monitor))
+        agent._turn_task = goal
+        try:
+            await entered.wait()
+            assert agent._goal_monitor is None
+            assert agent._current_turn is None
+            assert not agent._has_actual_turn_work()
+            assert agent.completion_controller.candidate() is None
+            assert await asyncio.wait_for(agent.send("next"), .2)
+            await native_opened.wait()
+            fresh = agent._turn_task
+            assert fresh is not goal
+            release.set()
+            await goal
+            assert agent._current_turn.id == "fresh-turn"
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.is_open
+            assert agent.completion_controller.candidate() is None
+            agent._open_turn.assert_awaited_once()
+            native_release.set()
+            await fresh
+        finally:
+            release.set()
+            native_release.set()
+            await asyncio.gather(goal, agent._turn_task, return_exceptions=True)
+            cleanup(agent)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status,outcome", [("interrupted", "ended"), ("failed", "provider_error")])
+@pytest.mark.parametrize("verify_immediate", [True, False])
+def test_exceptional_goal_closes_before_settlement_and_cannot_close_new_work(status, outcome, verify_immediate):
+    async def scenario():
+        agent = make_agent()
+        agent._codex = MagicMock()
+        monitor = SimpleNamespace(stream=lambda: Turn([event("turn/started"), final("goal"),
+                                                       event("turn/completed", status=status)]).stream(),
+                                  close=MagicMock())
+        agent._goal_monitor = monitor
+        agent._goal_continuation_active = True
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def settle(*args, **kwargs):
+            entered.set()
+            await release.wait()
+        agent._settle_async_questions = settle
+        goal = asyncio.create_task(agent._run_goal_continuation(monitor))
+        agent._turn_task = goal
+        try:
+            await entered.wait()
+            closed = agent.completion_controller.snapshot()
+            if verify_immediate:
+                assert closed.outcome == outcome
+                assert agent.state == AgentState.USER_TURN
+            await agent.notify_goal_continuation_stopped()
+            agent._schedule_turn = MagicMock()
+            assert await agent.send("new work")
+            current = agent.completion_controller.snapshot()
+            if verify_immediate:
+                assert current.turn_id != closed.turn_id
+            assert agent._has_actual_turn_work()
+            release.set()
+            await goal
+            assert agent._has_actual_turn_work()
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert agent.completion_controller.snapshot().turn_id == current.turn_id
+            assert agent.completion_controller.is_open
+            assert agent.completion_controller.candidate() is None
+        finally:
+            release.set()
+            await asyncio.gather(goal, return_exceptions=True)
+            cleanup(agent)
+    asyncio.run(scenario())

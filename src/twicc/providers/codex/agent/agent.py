@@ -2566,18 +2566,29 @@ class CodexAgent(BaseAgent):
         finally:
             await stream.aclose()
             monitor.close()
-            if self._goal_monitor is monitor:
+            owns_monitor = self._goal_monitor is monitor
+            if owns_monitor:
                 self._goal_monitor = None
                 self._current_turn = None
                 self._current_turn_ready.clear()
+                self._goal_continuation_active = False
+                self._completion_holds_changed(self._completion_assistant_holds())
+        if not owns_monitor or self.state == AgentState.DEAD:
+            return
+        exceptional = terminal_outcome in {"interrupted", "failed"}
+        if exceptional:
+            # Close this goal before bookkeeping can admit a newer interval.
+            await self._completion_finish_immediately("ended" if terminal_outcome == "interrupted" else "provider_error")
         turns = getattr(self, "_async_question_turns", [])
         await self._settle_async_questions(turns[-1] if turns else None, outcome=terminal_outcome)
-        if terminal_outcome in {"interrupted", "failed"}:
-            self._goal_continuation_active = False
-            self._completion_holds_changed(self._completion_assistant_holds())
-            await self._completion_finish_immediately("ended" if terminal_outcome == "interrupted" else "provider_error")
+        if exceptional or self.state == AgentState.DEAD or self._has_actual_turn_work() or (
+            self._turn_task is not None and self._turn_task is not asyncio.current_task()
+        ):
             return
-        await self.notify_goal_continuation_stopped()
+        # Native ownership ends before bookkeeping. Eligibility ends after it.
+        self._completion_holds_changed(self._completion_assistant_holds())
+        self._completion_provider_ended()
+        await self._try_arm_subagent_hold()
 
     async def _set_goal(self, objective: str) -> None:
         """Create or update the thread's goal from ``/goal <objective>``.
