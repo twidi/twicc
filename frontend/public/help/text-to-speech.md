@@ -38,16 +38,20 @@ between parts can be audible.
 
 ## Reading a selection
 
-Select text in a session or in a file: the floating widget shows a **Read**
-button, next to **Comment** and **Copy**. It shows only when the speech
-service is available, as the speaker button of a message does.
+Select text in the chat or in the file viewer: the floating widget shows the
+**Read button** (the speaker icon), next to the Comment and Copy buttons. It
+does not show in the terminal, in the browser pane or on the element cards.
+It shows only when the speech service is available, as the speaker button of
+a message does.
 
-- Read reads the selected text with the active config.
-- While it reads, the button becomes **Stop**. Click it to cancel the request
-  or to stop the sound.
+- The button reads the selected text with the active config. Its title is
+  "Read aloud".
+- While it reads, the same button is a **Stop icon** (title "Stop reading"),
+  and it stays visible. Click it to cancel the request or to stop the sound.
 - The sound goes on when the widget closes. Stop it from the speech indicator
   of the rail, as for a message.
-- A selection with no word in it (only symbols) is not read.
+- A text with nothing to read aloud once its formatting is removed is
+  refused, as for a message.
 
 ## Adapting the text
 
@@ -56,15 +60,24 @@ text is not simple: a table becomes sentences, a list a spoken enumeration, a
 code block a short description; hashes, long paths and the Markdown syntax go
 away. The content and the language stay the same. A **simple text is read at
 once**, with its Markdown marks removed and no model: the sound starts
-sooner, and nothing is paid for the rewrite. The test of a config always uses
-the model, so it shows the adaptation, and its last test run shows the
-adapted text.
+sooner, and nothing is paid for the rewrite. A Markdown link is read by its
+text.
 
-These texts are **not simple**, and go through the model:
+The test of a config never takes the direct reading: it goes through the
+model whenever the model can run, so it shows the adaptation, and its last
+test run shows the adapted text. With **Off**, or with no model available, it
+is read as written.
 
-- tables, code, links and addresses, paths, hashes and long numbers;
-- lists of more than five items, with long items or with sub-lists;
-- a selection of several lines in a session, and any selection in a file.
+For example, these texts are **not simple**, and go through the model:
+
+- tables, code and code-like text (anything with code symbols such as `$`,
+  `=`, `|` or braces, `snake_case` names, `#123`), and HTML;
+- addresses, paths, hashes and long numbers;
+- long lists: more than five items, long items or sub-lists;
+- a selection of several lines in the chat, and any selection in the file
+  viewer.
+
+When the rules do not recognise a text with certainty, the model decides.
 
 Choose the model in **Adapt the text for speech**, at the top of **Settings →
 Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, **OpenRouter**, or
