@@ -2009,7 +2009,7 @@ function onChangelogClose() {
                                     <span
                                         v-else
                                         class="radio-note"
-                                    >— uses {{ OPENROUTER_MODEL_DESCRIPTION }}; sends the user messages to OpenRouter, paid on your OpenRouter account</span>
+                                    >— much faster: a title in under a second instead of several; uses {{ OPENROUTER_MODEL_DESCRIPTION }}; sends the user messages to OpenRouter, paid on your OpenRouter account</span>
                                 </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">

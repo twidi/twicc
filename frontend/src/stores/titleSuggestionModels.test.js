@@ -43,7 +43,7 @@ test('the OpenRouter radio says where the text goes and who pays, unless the key
     )
     assert.match(
         radio,
-        /<span v-else class="radio-note" >— uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; sends the user messages to OpenRouter, paid on your OpenRouter account<\/span>/,
+        /<span v-else class="radio-note" >— much faster: a title in under a second instead of several; uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; sends the user messages to OpenRouter, paid on your OpenRouter account<\/span>/,
     )
 })
 
