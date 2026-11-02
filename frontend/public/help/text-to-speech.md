@@ -36,32 +36,55 @@ part is generated when the playback needs it, about a minute ahead: the sound
 starts quickly, and a stop does not generate (nor pay for) the rest. The seams
 between parts can be audible.
 
+## Reading a selection
+
+Select text in a session or in a file: the floating widget shows a **Read**
+button, next to **Comment** and **Copy**. It shows only when the speech
+service is available, as the speaker button of a message does.
+
+- Read reads the selected text with the active config.
+- While it reads, the button becomes **Stop**. Click it to cancel the request
+  or to stop the sound.
+- The sound goes on when the widget closes. Stop it from the speech indicator
+  of the rail, as for a message.
+- A selection with no word in it (only symbols) is not read.
+
 ## Adapting the text
 
-Before a message is read, a small model can **rewrite it for the ear**: a
-table becomes sentences, a list a spoken enumeration, a code block a short
-description; hashes, long paths and the Markdown syntax go away. The content
-and the language stay the same. The test of a config is adapted too, and its
-last test run shows the adapted text.
+A small model can **rewrite a text for the ear** before it is read, when the
+text is not simple: a table becomes sentences, a list a spoken enumeration, a
+code block a short description; hashes, long paths and the Markdown syntax go
+away. The content and the language stay the same. A **simple text is read at
+once**, with its Markdown marks removed and no model: the sound starts
+sooner, and nothing is paid for the rewrite. The test of a config always uses
+the model, so it shows the adaptation, and its last test run shows the
+adapted text.
+
+These texts are **not simple**, and go through the model:
+
+- tables, code, links and addresses, paths, hashes and long numbers;
+- lists of more than five items, with long items or with sub-lists;
+- a selection of several lines in a session, and any selection in a file.
 
 Choose the model in **Adapt the text for speech**, at the top of **Settings →
 Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, **OpenRouter**, or
-**Off**. With no choice, TwiCC takes Claude, else Codex. A
-Claude or Codex model whose provider is disabled is replaced by the other
-agent, and your choice comes back when you enable its provider again.
+**Off**, which reads every text as written. With no choice, TwiCC takes
+Claude, else Codex. A Claude or Codex model whose provider is disabled is
+replaced by the other agent, and your choice comes back when you enable its
+provider again.
 
 Claude Haiku 5.5 and GPT-6 Luna run on your Claude or Codex subscription.
 **OpenRouter** calls a fast model on OpenRouter: today, Qwen3.8 27B served by
 Cerebras. It needs the OpenRouter key, as the OpenRouter configs do. It sends
-the message to OpenRouter, and it is paid on your OpenRouter account. With the
+the text to OpenRouter, and it is paid on your OpenRouter account. With the
 key set, it adapts the text even when no provider runs.
 Without the key, the default replaces it, and your choice comes back once the
 key is set and TwiCC restarted.
 
 If OpenRouter fails before the reading starts, the first agent that runs
-(Claude, else Codex) adapts the text. If no model can run, if the message is
+(Claude, else Codex) adapts the text. If no model can run, if the text is
 too long, or if the model fails before the reading starts (for OpenRouter: if
-that agent fails too, or if no provider runs), the message is read **as
+that agent fails too, or if no provider runs), the text is read **as
 written**. If the model fails later, the reading stops with an error.
 
 The last test run of a config shows the model that adapted the text, or each
