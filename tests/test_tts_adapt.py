@@ -962,3 +962,19 @@ def test_aclose_after_the_switch_closes_the_agent_call(fake_call):
     source = asyncio.run(scenario())
     assert len(fake.calls) == 2
     assert source.adapted_by == "haiku" and source.adapt_reason is None
+
+
+def test_the_agent_after_qwen_keeps_its_own_limits(fake_call, monkeypatch):
+    monkeypatch.setattr(adapt, "QWEN_FIRST_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "QWEN_NEXT_TEXT_SECONDS", 0.05)
+    monkeypatch.setattr(adapt, "FIRST_TEXT_SECONDS", 1.0)
+    monkeypatch.setattr(adapt, "NEXT_TEXT_SECONDS", 1.0)
+    # Qwen fails at once; the agent's texts come later than Qwen's limits, within its own.
+    fake = fake_call([(OpenRouterTextError("http", 500),), (0.3, "Hello ", 0.3, "there.")])
+    source, parts, label = asyncio.run(_read_with_then())
+    assert parts == ["Hello there."]
+    assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE, HAIKU]
+    assert source.adapted_by == "haiku"
+    assert source.adapt_reason is None
+    assert (source.fallback_from, source.fallback_reason) == ("qwen", "failed")
+    assert source.adapted_text == "Hello there."
