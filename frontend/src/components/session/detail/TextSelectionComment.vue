@@ -51,10 +51,10 @@ const props = defineProps({
      *  (on Comment/Copy clicks). Defaults to clearing the DOM selection, which is
      *  enough for normal HTML; consumers (e.g. FilePane) override it to also clear
      *  the internal CodeMirror selection so the behavior is consistent there. */
+    clearSourceSelection: { type: Function, default: () => window.getSelection()?.removeAllRanges() },
     /** Where the selection comes from, for the Read button: 'rendered' (rendered
      *  content) or 'file' (a file). null: no Read button. */
     readOrigin: { type: String, default: null },
-    clearSourceSelection: { type: Function, default: () => window.getSelection()?.removeAllRanges() },
     /** Optional async () => dataUrl. When provided, an "Include screenshot"
      *  switch appears: toggling it on calls this to capture an image (the
      *  BrowserPane wires it to the companion). Absent → no switch. */
