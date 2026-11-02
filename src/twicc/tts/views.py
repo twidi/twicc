@@ -63,6 +63,7 @@ from twicc.tts.parts import adapted_limits as speech_adapted_limits
 from twicc.tts.parts import has_speech, speech_parts
 from twicc.tts.script import ScriptSpeechRequest, pump_script_speech, script_parts
 from twicc.tts.script import adapted_limits as script_adapted_limits
+from twicc.tts.simple_text import ORIGINS, direct_text
 from twicc.tts.streams import (
     AudioStream,
     ending_of,
@@ -87,6 +88,8 @@ READ_SLICE = 64 * 1024
 SPEECH_FAILED = "Text-to-speech failed"
 AUDIO_GONE = "The audio is no longer available"
 AUDIO_CUT = "The audio stopped before the end"
+# The cache name of a directly read text (no engine ran): never an engine name.
+DIRECT_ENGINE = "direct"
 NOTHING_TO_SAY = "There is nothing to read aloud in this text"
 
 # The status of a speech that failed upstream (OpenRouter) or in its script: "Failed
@@ -137,6 +140,16 @@ def _speech_text(data: dict) -> str:
     if not has_speech(text):
         raise ValueError(NOTHING_TO_SAY)
     return text
+
+
+def _origin(data: dict) -> str | None:
+    """The ``origin`` of *data*: None (absent or null: a message), or one of ``ORIGINS``. Raises ``ValueError``."""
+    origin = data.get("origin")
+    if origin is None:
+        return None
+    if not isinstance(origin, str) or origin not in ORIGINS:
+        raise ValueError(f"'origin' must be one of: {', '.join(ORIGINS)}")
+    return origin
 
 
 def parse_speech_request(data: object) -> SpeechRequest:
@@ -224,6 +237,7 @@ async def tts_speech(request):
             return await _open_script_speech(data)
         try:
             speech_request = parse_speech_request(data)
+            origin = _origin(data)
         except ValueError as error:
             return _error(str(error), 400)
         api_key = openrouter_api_key()
@@ -249,6 +263,7 @@ async def tts_speech(request):
             speech_adapted_limits,
             lambda sink, parts, paced: pump_speech(speech_request, api_key, sink, parts, paced=paced),
             api_key,
+            origin=origin,
         )
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
@@ -266,6 +281,7 @@ async def _open_script_speech(data: dict) -> JsonResponse:
     """
     try:
         text = _speech_text(data)
+        origin = _origin(data)
     except ValueError as error:
         return _error(str(error), 400)
     script_id = data.get("script_id")
@@ -308,6 +324,7 @@ async def _open_script_speech(data: dict) -> JsonResponse:
             speech_request, sink, parts, paced=paced, delete_file=entry["delete_file"]
         ),
         None,
+        origin=origin,
     )
 
 
@@ -320,11 +337,19 @@ async def _open_speech(
     limits: Callable[..., tuple[int | None, int | None]],
     pump: Callable[[AudioStream, list[str] | PartSource, bool], Awaitable[None]],
     api_key: str | None,
+    *,
+    origin: str | None = None,
 ) -> JsonResponse:
     """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*;
     the pump paces a split reading only), awaited until its headers arrive.
 
-    The stored ``adapt`` choice resolves to an engine, or to why the text is read as written. With
+    First the decision: unless the stored ``adapt`` choice is ``"off"`` or the request is a settings
+    test (*config_id*), a text that :func:`~twicc.tts.simple_text.direct_text` finds simple (judged
+    by *origin*) is read **directly**: its cleaned text is split into the parts, with no model call,
+    whatever its size and the engines available. A cleaned text with nothing to read aloud is a 400.
+    The label then says ``adapted="direct"`` and the cache key is ``(request, "direct")``: a direct
+    and an as-written reading never share an entry. Otherwise the stored ``adapt`` choice resolves
+    to an engine, or to why the text is read as written. With
     an engine, the parts are an :class:`AdaptedParts` source, cut to *limits*, that falls back to
     the parts of *split*; without one, the parts of *split*. With OpenRouter, the source hands the
     text to the first running agent (``then``) when OpenRouter fails before its first part. The
@@ -334,13 +359,24 @@ async def _open_speech(
     """
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
-    engine, adapt_reason = resolve_engine(await sync_to_async(_stored_adapt_choice)(), speech_request.text)
+    choice = await sync_to_async(_stored_adapt_choice)()
+    cleaned = None
+    if choice != "off" and config_id is None:
+        cleaned = direct_text(speech_request.text, origin)
+        if cleaned is not None and not has_speech(cleaned):
+            return _error(NOTHING_TO_SAY, 400)
+    direct = cleaned is not None
+    if direct:
+        engine, adapt_reason = None, None
+        label["adapted"] = "direct"
+    else:
+        engine, adapt_reason = resolve_engine(choice, speech_request.text)
     then = fallback_engine(engine) if engine == OPENROUTER_ENGINE else None
-    if engine is None:
+    if engine is None and not direct:
         label["adapted"] = "no"
         label["adapt_reason"] = adapt_reason
     if use_cache:
-        names = [None] if engine is None else [engine.name]
+        names = [DIRECT_ENGINE] if direct else [None] if engine is None else [engine.name]
         if then is not None:
             names.append(then.name)
         for name in names:
@@ -351,7 +387,7 @@ async def _open_speech(
                     label["adapted"] = name
                 return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
-    parts = split(speech_request)
+    parts = split(speech_request._replace(text=cleaned) if direct else speech_request)
     source = None
     if engine is not None:
         source = AdaptedParts(
@@ -361,7 +397,10 @@ async def _open_speech(
     stream = start_stream(
         lambda sink: pump(sink, parts if source is None else source, paced),
         label=label,
-        on_end=_end_steps(speech_request, api_key, config_id, use_cache, source, adapt_reason),
+        on_end=_end_steps(
+            speech_request, api_key, config_id, use_cache, source, adapt_reason,
+            cache_name=DIRECT_ENGINE if direct else None,
+        ),
     )
     try:
         await stream.ready
@@ -417,6 +456,7 @@ def _end_steps(
     use_cache: bool,
     source: AdaptedParts | None,
     adapt_reason: str | None,
+    cache_name: str | None = None,
 ):
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
@@ -424,7 +464,8 @@ def _end_steps(
     The audio is cached under the adaptation that really ran: a reading that fell back to the
     original text is cached as unadapted (*source*'s ``adapted_by`` is then None). The cost of a
     split speech is the sum of its parts' costs: it is recorded only when every part has a
-    generation id. A script speech (no *api_key*) has no cost lookup.
+    generation id. A script speech (no *api_key*) has no cost lookup. A direct reading passes its
+    *cache_name* (``"direct"``), which replaces the engine name.
     """
 
     async def on_end(stream: AudioStream) -> None:
@@ -435,7 +476,7 @@ def _end_steps(
         # An empty audio is not worth a cache entry: the next read asks again.
         if use_cache and stream.data:
             try:
-                adapted_by = None if source is None else source.adapted_by
+                adapted_by = cache_name or (None if source is None else source.adapted_by)
                 speech_cache.set((speech_request, adapted_by), CachedAudio(bytes(stream.data), stream.content_type))
             except Exception:
                 logger.exception("TTS audio could not be cached")

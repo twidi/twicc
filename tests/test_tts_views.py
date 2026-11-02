@@ -25,7 +25,9 @@ from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.config import read_tts_config, write_tts_config
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
 from twicc.tts.part_source import as_part_source
+from twicc.tts.parts import has_speech
 from twicc.tts.script import ScriptSpeechRequest, script_parts
+from twicc.tts.simple_text import direct_text
 from twicc.tts.streams import get_stream
 from twicc.tts.views import (
     NO_COMMAND,
@@ -145,6 +147,9 @@ def _no_adaptation_model(monkeypatch):
 
     monkeypatch.setattr(adapt, "_open_stream", open_stream)
     monkeypatch.setattr(adapt, "is_provider_running", lambda provider: False)
+    # No text is simple for the existing tests: they keep the engine, the reason and the cache key they
+    # check. The direct reading has its own tests (the ``direct_reading`` fixture undoes this patch).
+    monkeypatch.setattr(views, "direct_text", lambda text, origin=None: None)
     yield
     assert calls == [], "A view test reached the real adaptation call"
 
@@ -2340,3 +2345,163 @@ def test_last_test_records_the_engine_of_the_last_failed_attempt(client, adaptat
     assert {key: openrouter_only[key] for key in fields} == {
         "adapt_engine": "openrouter", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": None,
     }
+
+
+# --- The direct reading of a simple text ----------------------------------------
+
+SIMPLE = "Hello **world**."
+CLEANED = "Hello world."
+TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
+
+
+@pytest.fixture
+def direct_reading(monkeypatch):
+    """Undo the autouse patch of ``views.direct_text``: the real decision runs."""
+    monkeypatch.setattr(views, "direct_text", direct_text)
+
+
+def _speech_key(body: dict, name: str | None):
+    return (parse_speech_request(body), name)
+
+
+@pytest.mark.parametrize("choice", [None, "haiku"])
+def test_a_simple_text_is_read_directly(client, adaptation, direct_reading, streams_log, choice):
+    if choice is not None:
+        _store_adapt(choice)
+    body = {**CACHED_PAYLOAD, "text": SIMPLE}
+    asyncio.run(_read_through(client, body))
+    assert adaptation.calls == []
+    assert adaptation.pulled == [[CLEANED]]
+    [line] = _speech_lines(streams_log)
+    assert " adapted=direct " in line
+    assert "adapt_reason" not in line
+    assert speech_cache.get(_speech_key(body, "direct")) is not None
+    assert speech_cache.get(_speech_key(body, None)) is None
+
+
+def test_a_complex_text_still_goes_through_the_model(client, adaptation, direct_reading):
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, {**VALID_PAYLOAD, "text": TABLE}))
+    assert adaptation.calls == ["haiku"]
+    assert adaptation.pulled == [[ADAPTED]]
+
+
+def test_off_reads_as_written_without_the_decision(client, adaptation, direct_reading, streams_log):
+    _store_adapt("off")
+    asyncio.run(_read_through(client, {**VALID_PAYLOAD, "text": SIMPLE}))
+    assert adaptation.calls == []
+    assert adaptation.pulled == [[SIMPLE]]
+    [line] = _speech_lines(streams_log)
+    assert " adapted=no adapt_reason=off " in line
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+@pytest.mark.parametrize("case", ["too_long", "no_provider"])
+def test_direct_comes_before_the_limit_and_the_engine(client, adaptation, direct_reading, streams_log, kind, case):
+    text = "word " * 2601 if case == "too_long" else SIMPLE  # 13,005 characters
+    text = text.strip()
+    if case == "no_provider":
+        adaptation.running = set()
+    if kind == "script":
+        _store_script()
+        body = {**SCRIPT_READ, "text": text}
+    else:
+        body = {**VALID_PAYLOAD, "text": text}
+    asyncio.run(_read_through(client, body))
+    assert adaptation.calls == []
+    [line] = _speech_lines(streams_log)
+    assert " adapted=direct " in line
+    assert "too_long" not in line
+    assert "no_provider" not in line
+    # The parts cut the text where whitespace falls: compare the words.
+    assert " ".join(adaptation.pulled[0]).split() == (text if case == "too_long" else CLEANED).split()
+
+
+def test_a_settings_test_always_adapts(client, adaptation, direct_reading):
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, {**TEST_PAYLOAD, "text": SIMPLE}))
+    assert adaptation.calls == ["haiku"]
+    [(config_id, run)] = adaptation.upstream.records
+    assert config_id == "cfg-1"
+    assert (run["adapted_by"], run["adapt_reason"], run["adapted_text"]) == ("haiku", None, ADAPTED)
+
+
+def test_direct_and_as_written_never_share_the_cache(client, adaptation, direct_reading):
+    body = {**CACHED_PAYLOAD, "text": SIMPLE}
+
+    async def scenario():
+        await _read_through(client, body)
+        _store_adapt("off")
+        await _read_through(client, body)
+        # The reverse order: as written first, in a clean cache.
+        speech_cache.clear()
+        adaptation.pulled.clear()
+        await _read_through(client, body)
+        _store_adapt(None)
+        await _read_through(client, body)
+
+    asyncio.run(scenario())
+    assert adaptation.pulled == [[SIMPLE], [CLEANED]]
+
+
+@pytest.mark.parametrize(
+    "origin, text, model",
+    [
+        ("file", SIMPLE, True),
+        ("rendered", "a\nb", True),
+        ("rendered", "one line", False),
+        (None, SIMPLE, False),
+        (None, "a\n\nb", False),
+    ],
+)
+def test_origin_is_validated_and_applied(client, adaptation, direct_reading, origin, text, model):
+    body = {**VALID_PAYLOAD, "text": text}
+    if origin is not None:
+        body["origin"] = origin
+    adaptation.answers.append([ADAPTED])
+    asyncio.run(_read_through(client, body))
+    assert adaptation.calls == (["haiku"] if model else [])
+
+
+@pytest.mark.parametrize("origin", ["nope", 3, True, ["file"]])
+def test_a_bad_origin_is_a_400(client, upstream, direct_reading, origin):
+    for body in ({**VALID_PAYLOAD, "origin": origin}, {**SCRIPT_READ, "origin": origin}):
+        response = asyncio.run(_open(client, body))
+        assert response.status_code == 400
+        assert response.json() == {"error": "'origin' must be one of: rendered, file"}
+    assert upstream.pump.calls == []
+
+
+def test_a_null_origin_counts_as_absent(client, adaptation, direct_reading):
+    asyncio.run(_read_through(client, {**VALID_PAYLOAD, "text": SIMPLE, "origin": None}))
+    assert adaptation.calls == []
+    assert adaptation.pulled == [[CLEANED]]
+
+
+def test_cleaned_to_nothing_is_refused(client, upstream, direct_reading):
+    text = "[](x)"
+    assert has_speech(text)
+    cleaned = direct_text(text)
+    assert cleaned is not None
+    assert not has_speech(cleaned)
+    response = asyncio.run(_open(client, {**VALID_PAYLOAD, "text": text}))
+    assert response.status_code == 400
+    assert response.json() == {"error": NOTHING_TO_SAY}
+    assert upstream.pump.calls == []
+    assert streams._streams == {}
+
+
+def test_a_direct_reading_works_for_a_script_config(client, adaptation, direct_reading, streams_log):
+    _store_script()
+    asyncio.run(_read_through(client, {**SCRIPT_READ, "text": SIMPLE}))
+    assert adaptation.calls == []
+    assert adaptation.pulled == [[CLEANED]]
+    [line] = _speech_lines(streams_log)
+    assert " adapted=direct " in line
+
+
+def test_the_open_step_logs_no_text(client, adaptation, direct_reading, views_log):
+    views_log.set_level(logging.DEBUG)
+    asyncio.run(_read_through(client, {**VALID_PAYLOAD, "text": SIMPLE}))
+    asyncio.run(_open(client, {**VALID_PAYLOAD, "text": "[](x)"}))
+    assert all("Hello" not in record.getMessage() and "[](x)" not in record.getMessage() for record in views_log.records)
