@@ -412,6 +412,10 @@ def check_o8_claude_options(report: Report) -> None:
         problems.append(f"extra_args={options.extra_args!r}")
     if options.env.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY") != "1":
         problems.append("automatic memory not disabled")
+    for name in ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+                 "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"):
+        if options.env.get(name) != "1":
+            problems.append(f"{name} not set")
     transport = SubprocessCLITransport(prompt="x", options=options)
     transport._cli_path = transport._find_cli()
     cmd = transport._build_command()

@@ -23,6 +23,19 @@ FAMILY_PREFIXES: dict[str, str] = {"haiku": "claude-haiku-"}
 
 _TOOL_BLOCK_NAMES = frozenset({"ToolUseBlock", "ToolResultBlock", "ServerToolUseBlock", "ServerToolResultBlock"})
 
+# Everything a hermetic call does not need, switched off in the CLI's environment:
+# - no automatic memory;
+# - no nonessential traffic: telemetry, error reporting, updates, and the feature-flag fetch, which also
+#   leaves out the server-side advisor tool and the skills and plugins synced from claude.ai;
+# - no session title: without it the CLI sends the whole prompt a second time to the small model;
+# - no install from the official plugin marketplace (the nonessential switch does not cover it).
+HERMETIC_ENV: dict[str, str] = {
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+}
+
 
 class HermeticClaudeResult(NamedTuple):
     """What a hermetic Claude call produced, plus what the guard needs."""
@@ -59,8 +72,8 @@ def _build_options(
         cwd=str(cwd),
         system_prompt=None,
         extra_args={"no-session-persistence": None, "disable-slash-commands": None},
-        # Configured provider homes, explicit (see the SDK agent's env_option), plus no automatic memory.
-        env={**provider_env_overlay(), "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
+        # Configured provider homes, explicit (see the SDK agent's env_option), plus ``HERMETIC_ENV``.
+        env={**provider_env_overlay(), **HERMETIC_ENV},
         include_partial_messages=include_partial_messages,   # the text deltas, for the streaming mode only
     )
 

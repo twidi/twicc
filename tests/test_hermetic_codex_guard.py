@@ -13,7 +13,8 @@ HOME = Path("/home/u/.codex")
 def test_process_overrides_contain_every_item_of_the_spec():
     o = mod.process_overrides(Path("/c/cat.json"))
     assert 'model_catalog_json="/c/cat.json"' in o
-    for item in ("project_doc_max_bytes=0", "skills.max_context_tokens=1", 'web_search="disabled"', "notify=[]"):
+    for item in ("project_doc_max_bytes=0", "skills.max_context_tokens=1", 'web_search="disabled"', "notify=[]",
+                 "analytics.enabled=false", "feedback.enabled=false", "check_for_update_on_startup=false"):
         assert item in o
     for name in ("hooks", "plugins", "apps", "browser_use", "browser_use_external", "computer_use",
                  "in_app_browser", "image_generation", "goals", "memories", "shell_tool", "unified_exec",

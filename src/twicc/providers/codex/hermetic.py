@@ -55,6 +55,11 @@ def process_overrides(catalog_path: Path, extra: Iterable[str] = ()) -> tuple[st
         "skills.max_context_tokens=1",   # 0 is rejected at startup
         'web_search="disabled"',
         "notify=[]",
+        # No traffic a hermetic call does not need. Unknown keys are silently ignored, so only the effect
+        # of ``analytics.enabled`` is checked (no analytics event in the Codex logs).
+        "analytics.enabled=false",
+        "feedback.enabled=false",
+        "check_for_update_on_startup=false",
         *(f"features.{name}=false" for name in FEATURES_OFF),
         *extra,
     )

@@ -99,7 +99,13 @@ def test_options_builder_sets_every_field(monkeypatch, tmp_path):
     assert o.strict_mcp_config is True and o.permission_mode == "dontAsk" and o.max_turns == 1
     assert o.cwd == str(tmp_path) and o.system_prompt is None
     assert o.extra_args == {"no-session-persistence": None, "disable-slash-commands": None}
-    assert o.env == {"CLAUDE_CONFIG_DIR": "/c", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+    assert o.env == {
+        "CLAUDE_CONFIG_DIR": "/c",
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+        "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+    }
     assert o.can_use_tool is not None
 
 
