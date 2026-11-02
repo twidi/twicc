@@ -41,3 +41,18 @@ def test_settings_change_acks_are_not_activity() -> None:
     assert not ClaudeCodeAgent._is_turn_activity(UserMessage(
         content="<local-command-stdout>Set model to opus</local-command-stdout>",
     ))
+
+
+def test_requesting_is_root_activity_but_other_statuses_are_not() -> None:
+    assert ClaudeCodeAgent._is_turn_activity(SystemMessage(
+        subtype="status", data={"status": "requesting"},
+    ))
+    assert not ClaudeCodeAgent._is_turn_activity(SystemMessage(
+        subtype="status", data={"status": "idle"},
+    ))
+
+
+def test_child_output_is_not_root_activity() -> None:
+    assert not ClaudeCodeAgent._is_turn_activity(AssistantMessage(
+        content=[], model="claude-opus-5", parent_tool_use_id="child-tool",
+    ))

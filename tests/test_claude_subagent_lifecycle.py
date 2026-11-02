@@ -329,3 +329,24 @@ class TestStopStepMonotonicGuard:
         Session.objects.filter(id=agent_session.id).update(last_updated_at=_T1)
         stopped = self._stop_step(parent_session, _T1)
         assert stopped == [AgentStoppedUpdate('agent-guard', _T1, stamped=True)]
+
+
+def test_explicit_last_child_stop_releases_parent_completion_without_notification():
+    """The SDK stop reply must release a hold if its notification never arrives."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from claude_agent_sdk import SystemMessage
+    from tests.test_claude_completion import answer, feed, make_agent, result
+
+    async def scenario():
+        agent = make_agent()
+        await feed(agent, [answer(), SystemMessage(subtype="task_started", data={
+            "task_id": "child", "task_type": "local_agent"}), result()])
+        assert agent.completion_controller.candidate() is None
+        agent._client = SimpleNamespace(stop_task=AsyncMock())
+        await agent.stop_subagent("child")
+        assert agent.completion_controller.candidate() is not None
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())

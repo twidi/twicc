@@ -21,6 +21,7 @@ from twicc.agent import (
     SendDeliveryError,
 )
 from twicc.agent.exceptions import SessionUnavailableError
+from twicc.agent.completion_types import CompletionSnapshot
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import system_marker
@@ -57,7 +58,11 @@ def _parked_content_kwargs(pending: dict) -> dict:
     entry keeps its exact legacy call.
     """
     content = pending.get("content")
-    return {"content": content} if content is not None else {}
+    kwargs = {"content": content} if content is not None else {}
+    for key in ("completion_token", "completion_cursor"):
+        if pending.get(key) is not None:
+            kwargs[key] = pending[key]
+    return kwargs
 
 
 def _parked_start_kwargs(pending: dict) -> dict:
@@ -145,6 +150,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # Settings a background shell held back, applied once the last one
         # ends (see ``_after_background_work_change``); cancelled at shutdown.
         self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
+        self._hybrid_signal_tasks: set[asyncio.Task] = set()
 
     def _ensure_title_publications(self):
         """Configure the shared worker on the manager event loop."""
@@ -443,6 +449,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         documents: list[dict] | None = None,
         cancel_cron_restart: bool = True,
         attachment_plan: AttachmentPlan | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> bool:
         """Send a message to an existing session, applying settings changes as needed.
 
@@ -485,18 +493,42 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
         provider_helpers = get_provider_helpers(Provider.CLAUDE_CODE)
 
+        has_input = bool(text) or bool(images) or bool(documents) or bool(attachment_plan and attachment_plan.entries)
+        completion_kwargs = {}
+        staged_agent = self._agents.get(session_id)
+        provider_admission = False
+        if has_input and (
+            completion_token is not None or completion_cursor is not None
+            or getattr(staged_agent, "_completion_enabled", False)
+        ):
+            from uuid import uuid4
+
+            completion_token = completion_token or str(uuid4())
+            completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor}
+            if staged_agent is not None and staged_agent.state != AgentState.DEAD:
+                self._check_ephemeral_readonly(session_id)
+                if completion_cursor is not None:
+                    staged_agent._completion_source_floor = completion_cursor
+                staged_agent._completion_input_pending(completion_token)
+
         content = None
         parked_attachments: dict = {}
         if attachment_plan is not None and attachment_plan.entries:
             # Refuse a read-only ephemeral target before promoting anything.
             self._check_ephemeral_readonly(session_id)
-            content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+            try:
+                content = await self._commit_attachment_plan(attachment_plan, session_id=session_id, text=text)
+            except BaseException:
+                if staged_agent is not None and completion_token is not None:
+                    staged_agent._completion_input_settled(completion_token, "rejected")
+                raise
             # A parked send is not delivered yet: it carries its refs and their
             # release, called by whichever place delivers it (spec §6.1.4).
             refs = tuple(entry.ref for entry in attachment_plan.entries)
             parked_attachments = {"refs": refs, "on_delivered": self._delivery_release(refs)}
         # Only when there is content: legacy calls keep their exact kwargs.
         content_kwargs = {"content": content} if content is not None else {}
+        content_kwargs.update(completion_kwargs)
 
         # The release of a parked send this call delivers itself: called once
         # ``_lock`` is released (the release itself never takes ``_lock``).
@@ -544,6 +576,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             await agent.apply_live_settings(settings)
                             delivered = False
                             if has_content:
+                                provider_admission = True
                                 delivered = await agent.send(
                                     text, images=images, documents=documents, **content_kwargs,
                                 )
@@ -572,6 +605,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             # - if has_crons: launches cron restart task (which will
                             #   also send pending text after success)
                             # - cleans up agent from _agents
+                            provider_admission = has_content
                             await agent.interrupt_or_kill(reason="apply-settings")
                             if will_restart:
                                 # Broadcast "starting" so the frontend blocks interaction
@@ -603,6 +637,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             await agent.apply_live_settings(settings)
                             delivered = False
                             if has_content:
+                                provider_admission = True
                                 delivered = await agent.send(
                                     text, images=images, documents=documents, **content_kwargs,
                                 )
@@ -622,6 +657,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                             await agent.set_permission_mode(settings.permission_mode)
                         delivered = False
                         if has_content:
+                            provider_admission = True
                             delivered = await agent.send(
                                 text, images=images, documents=documents, **content_kwargs,
                             )
@@ -643,6 +679,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     )
 
                 # Create and start new agent with resume
+                provider_admission = True
                 await self._start_agent(
                     session_id, project_id, cwd, text, resume=True,
                     settings=settings,
@@ -651,6 +688,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 )
                 return True
         finally:
+            if staged_agent is not None and completion_token is not None and not provider_admission and has_input:
+                staged_agent._completion_input_settled(completion_token, "rejected")
             if release_after_lock is not None:
                 release_after_lock()
 
@@ -667,6 +706,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         ephemeral: bool = False,
         ephemeral_admission=None,
         attachment_plan: AttachmentPlan | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> str:
         """Create a new session with a client-provided session ID.
 
@@ -687,6 +728,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             SendDeliveryError: If the attachments cannot be committed
         """
         content_kwargs = {}
+        if completion_token is not None:
+            content_kwargs["completion_token"] = completion_token
+        if completion_cursor is not None:
+            content_kwargs["completion_cursor"] = completion_cursor
         if attachment_plan is not None and attachment_plan.entries:
             self._check_ephemeral_readonly(session_id, ephemeral_admission)
             content_kwargs["content"] = await self._commit_attachment_plan(
@@ -923,13 +968,16 @@ class ClaudeCodeAgentManager(BaseAgentManager):
     ) -> None:
         """Apply JSONL-derived state signals to a live hybrid agent.
 
-        Order matters within a batch: turn starters first (user message,
-        slash-command echo), then tool results (pending cleared), then turn
-        enders (command ack, turn end) — so a batch carrying a whole fast
-        turn settles on USER_TURN.
+        Nonempty observations preserve native order and replace boolean replay.
+        Legacy boolean callers retain their previous routing order.
         """
         agent = self._agents.get(session_id)
         if agent is None or not getattr(agent, "is_hybrid", False):
+            return
+        if signals.observations:
+            terminal = agent.observe_jsonl_observations(signals.observations)
+            guard = self._completion_lifecycle_guard(agent)
+            await self._publish_hybrid_observations(agent, guard, terminal)
             return
         if signals.user_message:
             await agent.on_jsonl_user_message()
@@ -941,6 +989,36 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             await agent.on_jsonl_local_command_ack()
         if signals.turn_end:
             await agent.on_jsonl_turn_end()
+
+    def observe_hybrid_jsonl_signals(self, session_id: str, signals: HybridJsonlSignals) -> None:
+        """Accept committed facts synchronously; only publication may wait."""
+        agent = self._agents.get(session_id)
+        if agent is None or not getattr(agent, "is_hybrid", False) or not signals.observations:
+            return
+        terminal = agent.observe_jsonl_observations(signals.observations)
+        guard = self._completion_lifecycle_guard(agent)
+        # Lifecycle callbacks can await nested death. DEAD drains journal tasks,
+        # so this publication task must remain outside that journal task set.
+        task = asyncio.create_task(
+            self._publish_hybrid_observations(agent, guard, terminal),
+            name=f"hybrid-observations-{session_id}",
+        )
+        self._hybrid_signal_tasks.add(task)
+        task.add_done_callback(self._hybrid_signal_finished)
+
+    def _hybrid_signal_finished(self, task: asyncio.Task) -> None:
+        self._hybrid_signal_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Hybrid observation publication failed", exc_info=task.exception())
+
+    async def _publish_hybrid_observations(
+        self, agent: BaseAgent, guard: tuple[int, CompletionSnapshot],
+        terminal: tuple[CompletionSnapshot, ...],
+    ) -> None:
+        for snapshot in terminal:
+            await agent._completion_end_callback(agent, snapshot)
+        if self._completion_lifecycle_is_current(agent, guard):
+            await agent._notify_state_change()
 
     # ------------------------------------------------------------------
     # Factory hook (Claude Code agent construction)
@@ -1226,6 +1304,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         "helper kept the row" signal — equivalent to "agent died with crons
         attached and is eligible for cron restart".
         """
+        guard = self._completion_lifecycle_guard(agent)
         if getattr(agent, "ephemeral", False):
             await super()._on_state_change(agent)
             return
@@ -1280,12 +1359,16 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             except Exception as e:
                 logger.error("Error purging old process runs for session %s: %s", agent.session_id, e)
 
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
         if state == AgentState.DEAD and getattr(agent, '_title_process_token', None):
             agent._title_ready = False
             if not getattr(agent, 'is_hybrid', False):
                 # Some SDK error paths report DEAD before transport cleanup.
                 # Confirm process shutdown before taking the final boundary.
                 await agent._shutdown_sdk_client()
+                if not self._completion_lifecycle_is_current(agent, guard):
+                    return
             from twicc.providers.claude_code.title_publication import get_publications
             worker = get_publications()
             try:
@@ -1296,7 +1379,11 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
         # Base: persist ProcessRun state → broadcast → on DEAD: update_session_stopped_at
         # (overridden above) + helper-driven keep-or-delete + _cleanup_dead.
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
         await super()._on_state_change(agent)
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
 
         # --- Check for pending settings changes on USER_TURN transition ---
         # When settings are changed during ASSISTANT_TURN, they are saved to DB
@@ -1311,6 +1398,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # The base class flushes pending choices through atomic acceptance.
         # Final title draining completes above, before registry removal.
         # Post-DEAD provider hook: cron auto-restart.
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
         if state == AgentState.DEAD:
             # Auto-restart crons for deaths nobody asked for.
             # ``agent.process_run is not None`` ⟹ the helper kept the row,

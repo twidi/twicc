@@ -2752,6 +2752,53 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                 return False
         return None
 
+    def extract_completion_observations(self, parsed, line_num):
+        """Extract root lifecycle facts before display rewrites lose native identity."""
+        from twicc.providers.live_sync import CompletionObservation
+
+        if parsed.get('parent_tool_use_id') or parsed.get('isSidechain'):
+            return ()
+        kind = parsed.get('type')
+        message = parsed.get('message')
+        message = message if isinstance(message, dict) else {}
+        content = message.get('content')
+        text = extract_text_from_content(content)
+        ref_kind, native_id = '', ''
+        if isinstance(parsed.get('uuid'), str) and parsed['uuid']:
+            ref_kind, native_id = 'claude_uuid', parsed['uuid']
+        elif isinstance(message.get('id'), str) and message['id']:
+            ref_kind, native_id = 'claude_message', message['id']
+
+        def event(name, *, native=True):
+            return (CompletionObservation(name, ref_kind if native else '', native_id if native else '', line_num),)
+
+        if parsed.get('isApiErrorMessage'):
+            return event('provider_error', native=False)
+        if kind == 'user' and parsed.get('isCompactSummary'):
+            return event('compaction', native=False)
+        if kind == 'user' and text and is_interruption_marker(text):
+            return event('interrupted', native=False)
+        if kind == 'system' and parsed.get('subtype') == 'turn_duration':
+            return event('end', native=False)
+        if text and text.startswith('<local-command-stdout>'):
+            return event('command_ack', native=False)
+        if kind == 'user' and is_command_message(orjson.dumps(parsed).decode()):
+            return event('command', native=False)
+        if kind == 'assistant':
+            from twicc.providers.helpers import get_provider_helpers
+
+            verdict = get_provider_helpers(self.provider).is_final_assistant_message(parsed)
+            if verdict is False:
+                return event('continuing')
+            if text and text.strip():
+                return (CompletionObservation('final', ref_kind or 'unresolved', native_id, line_num),)
+            return event('activity')
+        if self.is_tool_result_item(parsed):
+            return event('progress')
+        if kind == 'user' and self.compute_item_kind(parsed) == ItemKind.USER_MESSAGE:
+            return event('user_message')
+        return ()
+
     def extract_provider_title_observations(self, parsed, session, line_num, parents):
         from .title_sync import SourceCursor
 

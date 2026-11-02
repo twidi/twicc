@@ -1,8 +1,8 @@
 """JSONL-derived state signals for hybrid sessions.
 
-Produced by the Claude Code sessions watcher (one per ingest batch with
-fresh lines, hybrid sessions only) and consumed by
-``ClaudeCodeAgentManager.handle_hybrid_jsonl_signals``.
+Produced from fresh native records during live slices, hybrid sessions only.
+The watcher records committed observations synchronously. Publication follows
+outside ingest ownership. Legacy boolean callers remain compatible.
 
 Also home to ``HybridHookOutcome``, the routing verdict the manager returns
 to the hooks watcher for each event file.
@@ -12,8 +12,9 @@ from enum import StrEnum
 from typing import NamedTuple
 
 from twicc.providers.claude_code.title_sync import TitleObservation
+from twicc.providers.live_sync import CompletionObservation
 
-# Ordered title command evidence has a separate channel from boolean turn signals.
+# Title command evidence has its own channel and never supplies root activity.
 HybridRenameEvidence = TitleObservation
 
 
@@ -53,3 +54,5 @@ class HybridJsonlSignals(NamedTuple):
     # executes inline mid-turn) and MUST NOT end the turn nor reap pendings
     # (a /rename ack once denied a live permission prompt that way).
     local_command_ack: bool = False
+    # Ordered native observations replace boolean lifecycle replay when present.
+    observations: tuple[CompletionObservation, ...] = ()

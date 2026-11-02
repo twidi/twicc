@@ -18,18 +18,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from twicc.providers.claude_code.agent.hybrid.agent import HybridClaudeAgent
+from twicc.providers.helpers import AgentSettings
 
 
 def make_agent() -> HybridClaudeAgent:
-    """Stub what the method reads; it needs no session, tmux or transcript.
-
-    Anything it acquires later that is not stubbed here makes the test raise
-    ``AttributeError`` — red, never a silent pass.
-    """
-    agent = object.__new__(HybridClaudeAgent)
-    agent.session_id = "s-hybrid"
-    agent.cwd = "/tmp"
-    agent._pending_requests = {}
+    """Use real runtime state and stub external hook checks and publication."""
+    agent = HybridClaudeAgent("s-hybrid", "project", "/tmp", AgentSettings())
     agent._is_stale_drop = AsyncMock(return_value=False)
     agent._schedule_gui_expiry = lambda nonce: None
     agent._notify_state_change = AsyncMock()

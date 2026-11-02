@@ -25,11 +25,13 @@ from dataclasses import replace
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from asgiref.sync import sync_to_async
 from claude_agent_sdk import PermissionResultAllow, PermissionUpdate
 
 from twicc.agent.base_agent import BaseAgent, StateChangeCallback
+from twicc.agent.completion_types import CompletionSnapshot, NativeMessageRef
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.agent.states import AgentInfo, AgentState, PendingRequest
 from twicc.core.enums import Provider
@@ -39,6 +41,7 @@ from twicc.core.services.attachments.staging import ERROR_COMMIT_FAILED
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.paths import get_session_hybrid_dir
 from twicc.providers.claude_code.title_control import TitleControlError, canonicalize_claude_title
+from twicc.providers.live_sync import CompletionObservation
 from twicc.providers.claude_code.agent.permissions import (
     extract_claude_tool_paths,
     maybe_update_plan_file,
@@ -125,12 +128,17 @@ class HybridClaudeAgent(BaseAgent):
         # Read by ClaudeCodeAgentManager._on_state_change for every Claude
         # Code agent (old-ProcessRun purge at first USER_TURN).
         self._old_runs_purged = False
+        self._first_user_turn_reached = False
+        self._first_turn_done_event = asyncio.Event()
         # True while the current ASSISTANT_TURN was started by a local
         # slash-command echo (not a real prompt): only then does the
         # command's <local-command-stdout> ack end the turn. Mid-real-turn
         # acks (e.g. the auto /rename's) are ignored — one once reaped a
         # live permission prompt, denying it behind the user's back.
         self._local_cmd_turn = False
+        self._completion_final_ref: NativeMessageRef | None = None
+        self._completion_start_token: str | None = None
+        self._completion_hook_checks: set[str] = set()
         # True when TwiCC tried to paste (a user send or an auto command) and
         # the composer wasn't free — a TUI dialog is open or the user has text
         # typed in the terminal. Surfaced verbatim in get_info().extra so any
@@ -143,6 +151,14 @@ class HybridClaudeAgent(BaseAgent):
     # Manager-contract shims (SDK-agent methods reached on every Claude
     # Code agent regardless of flavor)
     # ------------------------------------------------------------------
+
+    def _set_state(self, new_state: AgentState) -> None:
+        super()._set_state(new_state)
+        if new_state == AgentState.USER_TURN:
+            self._first_user_turn_reached = True
+            self._first_turn_done_event.set()
+        elif new_state == AgentState.DEAD:
+            self._first_turn_done_event.set()
 
     def get_pid(self) -> int | None:
         return self.agent_pid
@@ -179,6 +195,8 @@ class HybridClaudeAgent(BaseAgent):
         adopt: bool = False,
         content: AttachmentContent | None = None,
         on_delivered: Callable[[], Any] | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> None:
         """Create the tmux session and schedule the first paste.
 
@@ -236,6 +254,12 @@ class HybridClaudeAgent(BaseAgent):
             await self._notify_state_change()
             self._start_liveness_monitor()
             return
+
+        completion_token = completion_token or str(uuid4())
+        self._completion_start_token = completion_token
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        self._completion_input_pending(completion_token)
 
         if content is not None:
             # Synchronous refusals, before any launch or scheduling.
@@ -334,15 +358,17 @@ class HybridClaudeAgent(BaseAgent):
             await asyncio.to_thread(hybrid_tmux.paste_text, self.session_id, full_text)
             if self.state == AgentState.DEAD:
                 return
+            if self._completion_start_token is not None:
+                self._completion_input_settled(self._completion_start_token, "accepted" if ready else "uncertain")
             if ready:
                 # A paste made after the readiness timeout may have been
                 # swallowed: only a paste onto a ready composer is delivered.
                 await self._notify_delivered()
-            # Optimistic transition; the JSONL bridge corrects it within ms
-            # if the submit did not take.
-            self._set_state(AgentState.ASSISTANT_TURN)
-            self.last_activity = time.time()
-            await self._notify_state_change()
+            # Native ingress can already complete while delivery callbacks wait.
+            if self.state == AgentState.STARTING and not self._completion_enabled:
+                self._set_state(AgentState.ASSISTANT_TURN)
+                self.last_activity = time.time()
+                await self._notify_state_change()
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -448,6 +474,8 @@ class HybridClaudeAgent(BaseAgent):
         images: list[dict] | None = None,
         documents: list[dict] | None = None,
         content: AttachmentContent | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> bool:
         """Paste a follow-up message into the TUI composer.
 
@@ -455,25 +483,38 @@ class HybridClaudeAgent(BaseAgent):
         ``images`` / ``documents`` (see :meth:`_materialize_content`). A
         command with content is refused before anything is written or pasted.
         """
-        if content is not None:
-            self._refuse_command_with_content(content)
-            full_text = await self._materialize_content(content)
-        else:
-            full_text = await self._materialize_attachments(text, images, documents)
-        # Pre-paste guard: with a TUI dialog open the paste is swallowed and
-        # its trailing Enter would VALIDATE the highlighted option (verified
-        # empirically); with text already typed in the TUI composer it would
-        # append to and submit the user's draft. Fail fast instead — the
-        # frontend restores the message into the TwiCC composer.
-        if not await self._checked_paste(full_text):
-            raise SendDeliveryError(
-                "The Claude CLI is showing a dialog or has text typed in its "
-                "composer — resolve it in the Claude CLI terminal, then "
-                "send again.",
-                code="hybrid_composer_busy",
-            )
-        self.last_activity = time.time()
-        return True
+        completion_token = completion_token or str(uuid4())
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        self._completion_input_pending(completion_token)
+        try:
+            if content is not None:
+                self._refuse_command_with_content(content)
+                full_text = await self._materialize_content(content)
+            else:
+                full_text = await self._materialize_attachments(text, images, documents)
+            # Pre-paste guard: with a TUI dialog open the paste is swallowed and
+            # its trailing Enter would VALIDATE the highlighted option (verified
+            # empirically); with text already typed in the TUI composer it would
+            # append to and submit the user's draft. Fail fast instead — the
+            # frontend restores the message into the TwiCC composer.
+            if not await self._checked_paste(full_text):
+                self._completion_input_settled(completion_token, "rejected")
+                raise SendDeliveryError(
+                    "The Claude CLI is showing a dialog or has text typed in its "
+                    "composer — resolve it in the Claude CLI terminal, then "
+                    "send again.",
+                    code="hybrid_composer_busy",
+                )
+            self._completion_input_settled(completion_token, "accepted")
+            self.last_activity = time.time()
+            return True
+        except SendDeliveryError:
+            self._completion_input_settled(completion_token, "rejected")
+            raise
+        except BaseException:
+            self._completion_input_settled(completion_token, "uncertain")
+            raise
 
     async def _checked_paste(
         self, text: str, *, before_paste: Callable[[], Awaitable[bool]] | None = None,
@@ -668,6 +709,18 @@ class HybridClaudeAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def on_permission_request(self, payload: dict, nonce: str) -> bool:
+        """Reserve pending action before the hook's first asynchronous check."""
+        if nonce in self._pending_requests:
+            return True
+        self._completion_hook_checks.add(nonce)
+        self._completion_awaiting_changed(True)
+        try:
+            return await self._register_permission_request(payload, nonce)
+        finally:
+            self._completion_hook_checks.discard(nonce)
+            self._completion_awaiting_changed(bool(self._pending_requests or self._completion_hook_checks))
+
+    async def _register_permission_request(self, payload: dict, nonce: str) -> bool:
         """The injected hook fired: a TUI prompt is up — register a real,
         GUI-answerable pending request keyed on the hook's nonce.
 
@@ -780,6 +833,54 @@ class HybridClaudeAgent(BaseAgent):
 
         return await _transcript_moved()
 
+    def observe_jsonl_observations(
+        self, observations: tuple[CompletionObservation, ...],
+    ) -> tuple[CompletionSnapshot, ...]:
+        """Apply ordered facts without yielding to publication or manager locks."""
+        terminal = []
+        for event in observations:
+            if self.state == AgentState.DEAD:
+                break
+            ref = NativeMessageRef(event.ref_kind, event.native_id) if event.ref_kind else None
+            kind = event.kind
+            if kind in ("user_message", "activity", "final", "continuing", "progress"):
+                self._completion_activity(first_ref=ref if event.native_id else None)
+                if kind == "user_message" and self._completion_start_token is not None:
+                    self._completion_input_settled(self._completion_start_token, "accepted")
+                    self._completion_start_token = None
+                self._local_cmd_turn = False
+                if kind in ("user_message", "progress"):
+                    self._clear_all_pendings("reap")
+                if kind == "final":
+                    self._completion_final_ref = ref or NativeMessageRef("unresolved", "")
+                elif kind == "continuing":
+                    self._completion_final_ref = None
+            elif kind == "command":
+                if self.state != AgentState.ASSISTANT_TURN:
+                    self._local_cmd_turn = True
+                    self._set_state(AgentState.ASSISTANT_TURN)
+            elif kind in ("command_ack", "compaction"):
+                if self._local_cmd_turn:
+                    self._local_cmd_turn = False
+                    self._set_state(AgentState.USER_TURN)
+            elif kind in ("end", "interrupted", "provider_error"):
+                self._local_cmd_turn = False
+                self._clear_all_pendings("reap")
+                self._completion_provider_ended(final_ref=self._completion_final_ref)
+                self._completion_final_ref = None
+                if kind != "end":
+                    outcome = "ended" if kind == "interrupted" else "provider_error"
+                    snapshot = self.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
+                    self._cancel_completion_timer()
+                    if snapshot is not None and self._completion_end_callback is not None:
+                        # Reserve paired publication before an earlier fact drain runs.
+                        self._completion_pending_publications[snapshot.turn_id] = snapshot
+                        terminal.append(snapshot)
+                    else:
+                        self._set_state(AgentState.USER_TURN)
+            self.last_activity = time.time()
+        return tuple(terminal)
+
     async def on_jsonl_user_message(self) -> None:
         """A real user prompt landed in the JSONL → a turn is running."""
         self._local_cmd_turn = False
@@ -865,6 +966,7 @@ class HybridClaudeAgent(BaseAgent):
                 self.session_id, request_id,
             )
             return False
+        self._completion_awaiting_changed(bool(self._pending_requests or self._completion_hook_checks))
         self._cancel_gui_expiry(request_id)
         if not self._pending_requests:
             # Same stamp as the SDK path: the time spent waiting on the user
@@ -934,6 +1036,7 @@ class HybridClaudeAgent(BaseAgent):
             return
         cleared = list(self._pending_requests.values())
         self._pending_requests.clear()
+        self._completion_awaiting_changed(bool(self._completion_hook_checks))
         for task in self._gui_expiry_tasks.values():
             task.cancel()
         self._gui_expiry_tasks.clear()
@@ -1155,6 +1258,9 @@ class HybridClaudeAgent(BaseAgent):
         """
         if self.state == AgentState.DEAD:
             return False
+
+        if await self._completion_interrupt_candidate():
+            return True
 
         sid = self.session_id
 

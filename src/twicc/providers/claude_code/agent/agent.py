@@ -28,7 +28,7 @@ from claude_agent_sdk import (
     PermissionResultDeny,
     PermissionUpdate,
     ResultMessage, StreamEvent, SystemMessage, ThinkingConfigAdaptive, ThinkingConfigDisabled,
-    ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserMessage,
+    TextBlock, ToolPermissionContext, ToolResultBlock, ToolUseBlock, UserMessage,
 )
 
 from asgiref.sync import sync_to_async
@@ -37,6 +37,7 @@ import json_repair
 import orjson
 
 from twicc.agent import AgentInfo, AgentState, BaseAgent, PendingRequest, StateChangeCallback
+from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.auto_deny import AUTO_DENY_MESSAGE, AUTO_DENY_TOOLS
 from twicc.agent.plugin import get_plugin_dir
 from twicc.agent.shell_notice import (
@@ -1027,6 +1028,8 @@ class ClaudeCodeAgent(BaseAgent):
         documents: list[dict] | None = None,
         content: AttachmentContent | None = None,
         on_delivered: Callable[[], Any] | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> None:
         """Start the process and send the first message.
 
@@ -1054,6 +1057,10 @@ class ClaudeCodeAgent(BaseAgent):
             raise RuntimeError("Process already started")
 
         self._state_change_callback = on_state_change
+        completion_token = completion_token or str(uuid.uuid4())
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        self._completion_input_pending(completion_token)
         self._note_external_send()
         self._open_main_turn()
 
@@ -1358,6 +1365,7 @@ class ClaudeCodeAgent(BaseAgent):
             # Build query prompt as async generator (streaming mode)
             query_prompt = await self._build_query_prompt(prompt, images, documents, content=content)
             await self._client.query(query_prompt)
+            self._completion_input_settled(completion_token, "accepted")
 
             self._logger.debug(
                 "Connection established for session %s",
@@ -1380,7 +1388,11 @@ class ClaudeCodeAgent(BaseAgent):
                 self.session_id,
             )
 
+        except asyncio.CancelledError:
+            self._completion_input_settled(completion_token, "uncertain")
+            raise
         except Exception as e:
+            self._completion_input_settled(completion_token, "uncertain")
             # Handle error and transition to DEAD state. Do not re-raise as the
             # spec requires process errors to be logged and reported, never propagated.
             # The error is communicated to the frontend via WebSocket broadcast.
@@ -1462,6 +1474,7 @@ class ClaudeCodeAgent(BaseAgent):
         # pinned in ASSISTANT_TURN if that notification goes missing.
         if self._live_background_tasks.pop(subagent_id, None) is not None:
             self._subagent_run_ended_at[subagent_id] = time.time()
+            self._completion_holds_changed(self._completion_assistant_holds())
             self._schedule_background_work_refresh()
             if self._waiting_label_active:
                 await self._refresh_waiting_label()
@@ -1635,16 +1648,65 @@ class ClaudeCodeAgent(BaseAgent):
         The ``set_model`` ack is a ``UserMessage``, so it still needs its own
         exclusion.
         """
+        if getattr(msg, "parent_tool_use_id", None):
+            return False
+        if isinstance(msg, SystemMessage):
+            return msg.subtype == "status" and msg.data.get("status") == "requesting"
         return (
             isinstance(msg, (AssistantMessage, UserMessage, StreamEvent))
             and not ClaudeCodeAgent._is_settings_change_ack(msg)
         )
+
+    def _completion_assistant_holds(self) -> frozenset[str]:
+        """Use bounded assistant work only; background shells never hold completion."""
+        return frozenset((
+            *(f"agent:{key}" for key in self._live_background_tasks),
+            *(f"monitor:{key}" for key in self._live_monitor_tasks),
+            *(("wakeup",) if self._has_pending_wakeup() else ()),
+        ))
+
+    def _completion_observe_message(self, msg: object) -> bool:
+        """Record root facts synchronously, before stream broadcasts can yield."""
+        changed = False
+        if self._is_turn_activity(msg):
+            previous = self.state
+            ref = None
+            if isinstance(msg, (AssistantMessage, UserMessage)):
+                native_uuid = getattr(msg, "uuid", None)
+                message_id = getattr(msg, "message_id", None)
+                if native_uuid:
+                    ref = NativeMessageRef("claude_uuid", native_uuid)
+                elif message_id:
+                    ref = NativeMessageRef("claude_message", message_id)
+            self._completion_activity(first_ref=ref)
+            changed = self.state != previous
+            if isinstance(msg, AssistantMessage) and not msg.error:
+                from twicc.providers.helpers import get_provider_helpers
+
+                final = get_provider_helpers(self.provider).is_final_assistant_message({
+                    "type": "assistant", "message": {"stop_reason": msg.stop_reason},
+                })
+                if final is False:
+                    self._completion_final_ref = None
+                elif any(isinstance(block, TextBlock) and block.text.strip() for block in msg.content):
+                    self._completion_final_ref = ref or NativeMessageRef("unresolved", "")
+        if isinstance(msg, ResultMessage) and not msg.is_error:
+            # A no-output reply can provide the first actual root evidence.
+            if not self.completion_controller.is_open and self._main_turn_open:
+                previous = self.state
+                self._completion_activity()
+                changed = self.state != previous
+            self._completion_holds_changed(self._completion_assistant_holds())
+            self._completion_provider_ended(final_ref=self._completion_final_ref)
+            self._completion_final_ref = None
+        return changed
 
     def _init_claude_shell_notice_state(self) -> None:
         """Claude maps of the background shell notice (spec §5.2)."""
         # Open between a main turn's first sign (init, main message, send) and
         # its ResultMessage; the idle predicate reads it.
         self._main_turn_open = False
+        self._completion_final_ref: NativeMessageRef | None = None
         self._agent_by_tool_use: dict[str, str] = {}
         self._agent_labels: dict[str, str] = {}
         self._tool_use_parents: OrderedDict[str, tuple[str | None, str | None]] = OrderedDict()
@@ -1729,7 +1791,11 @@ class ClaudeCodeAgent(BaseAgent):
 
     def _set_state(self, new_state: AgentState) -> None:
         super()._set_state(new_state)
-        if new_state == AgentState.DEAD:
+        if new_state == AgentState.USER_TURN:
+            self._first_user_turn_reached = True
+            self._first_turn_done_event.set()
+        elif new_state == AgentState.DEAD:
+            self._first_turn_done_event.set()
             self._main_turn_open = False
 
     def _shell_notice_idle(self) -> bool:
@@ -2106,8 +2172,12 @@ class ClaudeCodeAgent(BaseAgent):
             return
         delay = self._pending_wakeup_at - time.time() + 1.0
         self._wakeup_refresh_handle = asyncio.get_running_loop().call_later(
-            delay, self._schedule_background_work_refresh,
+            delay, self._completion_wakeup_due,
         )
+
+    def _completion_wakeup_due(self) -> None:
+        self._completion_holds_changed(self._completion_assistant_holds())
+        self._schedule_background_work_refresh()
 
     def _has_pending_wakeup(self) -> bool:
         """True while the last-seen ScheduleWakeup is still due to fire."""
@@ -2153,6 +2223,8 @@ class ClaudeCodeAgent(BaseAgent):
         documents: list[dict] | None = None,
         shell_notice: bool = False,
         content: AttachmentContent | None = None,
+        completion_token: str | None = None,
+        completion_cursor: int | None = None,
     ) -> bool:
         """Send a follow-up message to the process.
 
@@ -2179,6 +2251,10 @@ class ClaudeCodeAgent(BaseAgent):
         if self.state not in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN):
             raise RuntimeError(f"Cannot send message in state {self.state}")
 
+        completion_token = completion_token or str(uuid.uuid4())
+        if completion_cursor is not None:
+            self._completion_source_floor = completion_cursor
+        self._completion_input_pending(completion_token)
         if not shell_notice:
             self._note_external_send()
         self._open_main_turn()
@@ -2200,9 +2276,14 @@ class ClaudeCodeAgent(BaseAgent):
             # Build query prompt as async generator (streaming mode)
             query_prompt = await self._build_query_prompt(text, images, documents, content=content)
             await self._client.query(query_prompt)
+            self._completion_input_settled(completion_token, "accepted")
             return True
 
+        except asyncio.CancelledError:
+            self._completion_input_settled(completion_token, "uncertain")
+            raise
         except Exception as e:
+            self._completion_input_settled(completion_token, "uncertain")
             # Handle error and transition to DEAD state. Do not re-raise as the
             # spec requires process errors to be logged and reported, never propagated.
             # The error is communicated to the frontend via WebSocket broadcast.
@@ -2291,6 +2372,10 @@ class ClaudeCodeAgent(BaseAgent):
                 if msg is None:
                     continue
 
+                root_state_changed = self._completion_observe_message(msg)
+                if root_state_changed:
+                    await self._notify_state_change()
+
                 # Bookkeeping only: a malformed message must never end the
                 # loop (and with it the agent).
                 try:
@@ -2306,6 +2391,7 @@ class ClaudeCodeAgent(BaseAgent):
                 # still runs.
                 if isinstance(msg, SystemMessage):
                     await self._update_live_tasks(msg)
+                    self._completion_holds_changed(self._completion_assistant_holds())
 
                 # A ScheduleWakeup's tool_result carries the authoritative fire
                 # time (``scheduledFor``, epoch ms). The harness rounds the
@@ -2316,12 +2402,14 @@ class ClaudeCodeAgent(BaseAgent):
                 if isinstance(msg, UserMessage) and isinstance(msg.tool_use_result, dict):
                     previous_wakeup_at = self._pending_wakeup_at
                     self._note_schedule_wakeup(msg.tool_use_result)
+                    self._completion_holds_changed(self._completion_assistant_holds())
                     if self._pending_wakeup_at != previous_wakeup_at:
                         self._schedule_background_work_refresh()
                         self._arm_wakeup_refresh()
 
                 if isinstance(msg, UserMessage):
                     await self._update_live_monitor_tasks(msg)
+                    self._completion_holds_changed(self._completion_assistant_holds())
 
                 if isinstance(msg, StreamEvent):
                     # Stream events only carry the parent's own model output
@@ -2461,6 +2549,7 @@ class ClaudeCodeAgent(BaseAgent):
 
                 elif (
                     isinstance(msg, AssistantMessage)
+                    and not msg.error
                     and msg.message_id == current_stream_message_id
                     and (current_stream_block_type or last_finished_block_type)
                 ):
@@ -2489,6 +2578,7 @@ class ClaudeCodeAgent(BaseAgent):
                     )
                     self._cancel_all_pending_futures()
                     self.kill_reason = "auth_required"
+                    self._completion_terminate("provider_error")
                     self.last_activity = time.time()
                     self._first_turn_done_event.set()
                     await self._transition_to_dead()
@@ -2561,11 +2651,6 @@ class ClaudeCodeAgent(BaseAgent):
                             )
                             return
 
-                    # Signal first USER_TURN for ProcessRun lifecycle
-                    if not self._first_user_turn_reached:
-                        self._first_user_turn_reached = True
-                        self._first_turn_done_event.set()
-
                     # Turn ended — every tool of this turn is finished, so any
                     # remaining _active_tools entry is stale (typically resurrected
                     # by a late content_block_delta after its PostToolUse fired).
@@ -2573,58 +2658,20 @@ class ClaudeCodeAgent(BaseAgent):
                         self._active_tools.clear()
                         await self._broadcast_process_tools()
 
-                    hold_for_background = bool(self._live_background_tasks)
-                    hold_for_monitor = bool(self._live_monitor_tasks)
-                    hold_for_wakeup = self._has_pending_wakeup()
-                    if (hold_for_background or hold_for_monitor or hold_for_wakeup) and not was_soft_interrupt:
-                        # The async-by-default CLI ends its turn as soon as the
-                        # parent stops talking — while background agents it
-                        # spawned keep running, and/or a ScheduleWakeup it set is
-                        # still pending; either way the harness re-invokes it for
-                        # a follow-up turn (a terminal task-notification, or the
-                        # wake-up firing). Holding ASSISTANT_TURN here is the
-                        # single choke point that keeps every USER_TURN consumer
-                        # quiet — process-state broadcasts, external "finished
-                        # working" pushes, browser notifications, the idle
-                        # auto-stop — until a turn ends with nothing left to wait
-                        # on. A deliberate soft interrupt bypasses the hold: the
-                        # user asked for control, show the session as theirs.
-                        if hold_for_background:
-                            self._logger.info(
-                                "Session %s: turn ended with %d background agent(s) still "
-                                "running — holding ASSISTANT_TURN (%s)",
-                                self.session_id,
-                                len(self._live_background_tasks),
-                                ", ".join(
-                                    f"{tid} ({desc})" if desc else tid
-                                    for tid, desc in self._live_background_tasks.items()
-                                ),
-                            )
-                        elif hold_for_monitor:
-                            self._logger.info(
-                                "Session %s: turn ended with %d live Monitor task(s) — "
-                                "holding ASSISTANT_TURN (%s)",
-                                self.session_id,
-                                len(self._live_monitor_tasks),
-                                ", ".join(sorted(self._live_monitor_tasks)),
-                            )
+                    if was_soft_interrupt:
+                        snapshot = self.completion_controller.terminate("ended", asyncio.get_running_loop().time())
+                        self._cancel_completion_timer()
+                        self._completion_final_ref = None
+                        self._waiting_label_active = False
+                        if snapshot is not None and self._completion_end_callback is not None:
+                            await self._completion_end_callback(self, snapshot)
                         else:
-                            self._logger.info(
-                                "Session %s: turn ended with a pending scheduled wake-up "
-                                "(~%ds out) — holding ASSISTANT_TURN",
-                                self.session_id,
-                                int(self._pending_wakeup_at - time.time()),
-                            )
-                        if self.state != AgentState.ASSISTANT_TURN:
-                            self._set_state(AgentState.ASSISTANT_TURN)
+                            self._set_state(AgentState.USER_TURN)
                             await self._notify_state_change()
+                    elif self._completion_assistant_holds():
                         await self._refresh_waiting_label()
                     else:
-                        # The process_state broadcast that follows drops any
-                        # label on the frontend; just reset the local flag.
                         self._waiting_label_active = False
-                        self._set_state(AgentState.USER_TURN)
-                        await self._notify_state_change()
 
                 elif self._is_compacting_status(msg):
                     # CLI is compacting context — notify frontend to show "compacting" label

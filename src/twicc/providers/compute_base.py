@@ -1963,6 +1963,9 @@ class BaseSessionCompute:
     def extract_provider_title_observations(self, parsed, session, line_num, parents):
         return ()
 
+    def extract_completion_observations(self, parsed, line_num):
+        return ()
+
     def apply_provider_title_observations(self, records: tuple) -> tuple[str, ...]:
         return ()
 
@@ -4395,6 +4398,7 @@ class BaseSessionCompute:
         source_texts: dict[int, str] = {}
         current_line_num = session.last_line
         async_question_facts = []
+        completion_observations = []
 
         # Track title updates (session_id -> title)
         placeholder_titles: dict[str, str] = {}
@@ -4493,6 +4497,9 @@ class BaseSessionCompute:
                 parsed = orjson.loads(line)
             except orjson.JSONDecodeError:
                 parsed = {}
+
+            if session.hybrid and session.type == SessionType.SESSION and not session.parent_session_id:
+                completion_observations.extend(self.extract_completion_observations(parsed, current_line_num))
 
             # Extract timestamp first so transform_inline can stash it in
             # processed_items (used by the screenshot substitution
@@ -5047,6 +5054,7 @@ class BaseSessionCompute:
             agent_run_signals.agents_resumed,
             title_updated_session_ids,
             tuple(unresolved_launcher_lookups),
+            tuple(record for record in completion_observations if record.line_num in new_line_nums),
         )
 
     @staticmethod

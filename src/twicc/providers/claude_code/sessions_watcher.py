@@ -599,50 +599,17 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
         await manager.discard_active_tool(update.session_id, update.tool_use_id)
 
     async def _after_compaction_synced(self, session_id: str) -> None:
-        """End a hybrid agent's turn when a compaction lands.
+        """Compaction already travels in source order through the committed hook."""
+        return
 
-        A manually-triggered ``/compact`` writes no ``turn_duration`` line, so
-        without this the JSONL bridge would leave the agent in ASSISTANT_TURN
-        until the next real turn (same issue Codex solves with this hook).
-        ``handle_hybrid_jsonl_signals`` ignores non-hybrid sessions, so no
-        hybrid check is needed here.
-        """
+    def _after_live_slice_committed(self, session, result) -> None:
+        if not session.hybrid or not result.updates.completion_observations:
+            return
         from twicc.providers.claude_code.agent.hybrid.signals import HybridJsonlSignals
         from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
 
-        asyncio.create_task(
-            get_claude_code_agent_manager().handle_hybrid_jsonl_signals(
-                session_id,
-                HybridJsonlSignals(turn_end=True),
-            ),
-            name=f"hybrid-compact-turn-end-{session_id}",
-        )
-
-    async def _after_new_lines_synced(
-        self,
-        session,
-        new_line_nums: list[int],
-        tool_result_updates: list[ToolResultUpdate],
-    ) -> None:
-        """JSONL → state bridge for hybrid sessions.
-
-        Ordered title evidence already commits through title_publication's
-        shared live/full application path. Keep this boolean bridge separate:
-        title confirmations must not change turns or permission requests.
-
-        Derives the batch's :class:`HybridJsonlSignals` from the freshly
-        computed items and hands them to the agent manager. Fire-and-forget:
-        the derivation (a DB read) and the agent transitions run in a task
-        so the ingest path never blocks on agent locks. Latency stays at
-        inotify level (ms), same as the live UI updates.
-        """
-        if not session.hybrid:
-            return
-        asyncio.create_task(
-            self._bridge_hybrid_signals(
-                session.id, new_line_nums, bool(tool_result_updates),
-            ),
-            name=f"hybrid-jsonl-bridge-{session.id}",
+        get_claude_code_agent_manager().observe_hybrid_jsonl_signals(
+            session.id, HybridJsonlSignals(observations=result.updates.completion_observations),
         )
 
     async def _bridge_hybrid_signals(
@@ -651,115 +618,47 @@ class ClaudeCodeSessionsWatcher(BaseSessionsWatcher):
         new_line_nums: list[int],
         has_tool_results: bool,
     ) -> None:
+        """Compatibility relay; live ingest uses the synchronous committed hook.
+
+        Preserve source order here too. Boolean fields only describe the legacy
+        summary; a nonempty observation tuple owns all lifecycle replay.
+        """
         try:
-            from twicc.core.enums import ItemKind
             from twicc.core.models import SessionItem
-
-            from twicc.providers.claude_code.compute import (
-                INTERRUPTION_MARKER_PREFIX,
-                extract_text_from_content,
-                get_message_content,
-                is_command_message,
-                is_interruption_marker,
-            )
-
-            def _derive() -> tuple[bool, bool, bool, bool]:
-                user_message = False
-                turn_end = False
-                command_message = False
-                local_command_ack = False
-                rows = (
-                    SessionItem.objects
-                    .filter(session_id=session_id, line_num__in=new_line_nums)
-                    .order_by("line_num")
-                )
-                for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
-                    kind, content = item.kind, effective_current(item)
-                    if kind == ItemKind.USER_MESSAGE:
-                        if is_command_message(content):
-                            command_message = True
-                            continue
-                        user_message = True
-                    elif kind == ItemKind.API_ERROR and content:
-                        # Two shapes both classify as API_ERROR: intermediate
-                        # retry progress (type=system, subtype=api_error,
-                        # retryAttempt=N/M) which must NOT end the turn — the CLI
-                        # is still retrying — and the terminal surfaced error
-                        # (isApiErrorMessage=true) shown once retries are
-                        # exhausted or the error is non-retryable. Only the
-                        # terminal one ends the turn: the interactive CLI returns
-                        # to an empty composer but never writes a turn_duration,
-                        # so without this a hybrid agent would stay stuck in
-                        # ASSISTANT_TURN. Sniff then parse.
-                        if '"isApiErrorMessage"' in content:
-                            try:
-                                parsed = orjson.loads(content)
-                            except Exception:
-                                continue
-                            if parsed.get("isApiErrorMessage"):
-                                turn_end = True
-                    elif kind == ItemKind.SYSTEM and content:
-                        if '"turn_duration"' in content:
-                            try:
-                                parsed = orjson.loads(content)
-                            except Exception:
-                                continue
-                            if (
-                                parsed.get("type") == "system"
-                                and parsed.get("subtype") == "turn_duration"
-                            ):
-                                turn_end = True
-                        elif "<local-command-stdout>" in content:
-                            # A local slash command's stdout marks its end.
-                            # NOT folded into turn_end: mid-turn it must not
-                            # end anything (the agent handler decides).
-                            local_command_ack = True
-                        elif INTERRUPTION_MARKER_PREFIX in content:
-                            # Interruption breadcrumb (classified SYSTEM by
-                            # compute): the turn was aborted — it will never
-                            # write a turn_duration. Sniff then parse: the
-                            # prefix could appear inside arbitrary content.
-                            try:
-                                parsed = orjson.loads(content)
-                                text = extract_text_from_content(
-                                    get_message_content(parsed),
-                                )
-                            except Exception:
-                                continue
-                            if (
-                                parsed.get("type") == "user"
-                                and text
-                                and is_interruption_marker(text)
-                            ):
-                                turn_end = True
-                return user_message, turn_end, command_message, local_command_ack
-
-            user_message, turn_end, command_message, local_command_ack = (
-                await asyncio.to_thread(_derive)
-            )
-            if not (
-                user_message or turn_end or command_message
-                or local_command_ack or has_tool_results
-            ):
-                return
-
             from twicc.providers.claude_code.agent.hybrid.signals import HybridJsonlSignals
             from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
 
+            def derive():
+                records = []
+                rows = SessionItem.objects.filter(
+                    session_id=session_id, line_num__in=new_line_nums,
+                ).order_by("line_num")
+                compute = self.get_compute()
+                for item in iter_current_items(rows, 128, 8 * 1024 * 1024):
+                    try:
+                        parsed = orjson.loads(effective_current(item))
+                    except (orjson.JSONDecodeError, TypeError):
+                        continue
+                    records.extend(compute.extract_completion_observations(parsed, item.line_num))
+                return tuple(records)
+
+            observations = await asyncio.to_thread(derive)
+            if not observations and not has_tool_results:
+                return
+            kinds = {record.kind for record in observations}
             await get_claude_code_agent_manager().handle_hybrid_jsonl_signals(
                 session_id,
                 HybridJsonlSignals(
-                    user_message=user_message,
-                    turn_end=turn_end,
+                    user_message="user_message" in kinds,
+                    turn_end=bool(kinds & {"end", "interrupted", "provider_error"}),
                     tool_results=has_tool_results,
-                    command_message=command_message,
-                    local_command_ack=local_command_ack,
+                    command_message="command" in kinds,
+                    local_command_ack="command_ack" in kinds,
+                    observations=observations,
                 ),
             )
         except Exception:
-            logger.exception(
-                "Hybrid JSONL bridge failed for session %s", session_id,
-            )
+            logger.exception("Hybrid JSONL bridge failed for session %s", session_id)
 
 
 # ---- Singleton accessor ----

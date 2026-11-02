@@ -14,11 +14,12 @@ from twicc.agent.shell_notice import OwnerFacts, ShellOwner
 from twicc.agent.states import AgentState
 from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent
 from twicc.providers.claude_code.agent.hybrid.agent import HybridClaudeAgent
+from twicc.providers.helpers import AgentSettings
 
 
 def make_agent():
-    agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
-    agent.session_id = "root-1"
+    agent = ClaudeCodeAgent("root-1", "project", "/tmp", AgentSettings(),
+                            AsyncMock(), AsyncMock(), AsyncMock())
     agent.state = AgentState.USER_TURN
     agent._live_background_tasks = {}
     agent._live_monitor_tasks = set()

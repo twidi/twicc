@@ -53,7 +53,7 @@ from twicc.projects import (
     update_project_metadata as _update_project_metadata_sync,
 )
 from twicc.providers.compute_executor import run_compute_sync
-from twicc.providers.live_sync import LiveSyncLimits
+from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult
 from twicc.providers.session_change_queue import MigrationRelease, PathDrainTarget, SessionChangeQueue
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.sync_diagnostics import log_slow, sync_timing_context
@@ -554,6 +554,10 @@ class BaseSessionsWatcher:
         """
         return
 
+    def _after_live_slice_committed(self, session: Session, result: LiveSyncResult) -> None:
+        """Record committed provider facts synchronously before any later await."""
+        return
+
     async def _after_new_lines_synced(
         self,
         session: Session,
@@ -911,6 +915,7 @@ class BaseSessionsWatcher:
         limit = self._line_limits.get(path, 500) if bounded else 500
         with sync_timing_context(compute.provider, session.id):
             result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
+            self._after_live_slice_committed(session, result)
             log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
                      bytes=result.bytes_consumed, backlog=result.has_more)
         from twicc.providers.compute_work import notify_committed_source_changed

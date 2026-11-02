@@ -23,6 +23,15 @@ class RawLiveSlice(NamedTuple):
     bytes_consumed: int
 
 
+class CompletionObservation(NamedTuple):
+    """Bounded native lifecycle facts; safe to import in compute workers."""
+
+    kind: str
+    ref_kind: str = ""
+    native_id: str = ""
+    line_num: int = 0
+
+
 class LiveSyncUpdates(NamedTuple):
     new_line_nums: list[int]
     modified_line_nums: list[int]
@@ -36,6 +45,7 @@ class LiveSyncUpdates(NamedTuple):
     agents_resumed: list[tuple[str, str]]
     title_updated_session_ids: tuple[str, ...] = ()
     unresolved_launcher_lookups: tuple = ()
+    completion_observations: tuple[CompletionObservation, ...] = ()
 
     @classmethod
     def empty(cls) -> LiveSyncUpdates:
@@ -97,4 +107,5 @@ def merge_live_updates(left: LiveSyncUpdates, right: LiveSyncUpdates) -> LiveSyn
         left.agents_resumed + right.agents_resumed,
         tuple(dict.fromkeys((*left.title_updated_session_ids, *right.title_updated_session_ids))),
         tuple(dict.fromkeys((*left.unresolved_launcher_lookups, *right.unresolved_launcher_lookups))),
+        left.completion_observations + right.completion_observations,
     )
