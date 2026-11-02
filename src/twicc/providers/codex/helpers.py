@@ -75,6 +75,7 @@ _FINAL_ANSWER_PHASE = "final_answer"
 _COMMENTARY_PHASE = "commentary"
 
 if TYPE_CHECKING:
+    from twicc.agent.completion_types import NativeMessageRef
     from twicc.core.models import SessionItem
 
 
@@ -747,6 +748,15 @@ class CodexHelpers(BaseProviderHelpers):
 
     def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
         return user_message_text(parsed) or agent_message_text(parsed) or ""
+
+    def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
+        from twicc.agent.completion_types import NativeMessageRef
+
+        item = completed_item(parsed)
+        if item is None or item.get("delivery") == "async" or not item.get("id"):
+            return ()
+        payload = parsed.get("payload") or {}
+        return (NativeMessageRef("codex_item", item["id"], payload.get("turn_id")),)
 
     def is_final_assistant_message(self, parsed: dict) -> bool | None:
         # One ``AgentMessage`` item = one JSONL line = one message, and the

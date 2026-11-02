@@ -438,3 +438,50 @@ def test_resuming_from_the_ignored_final_waits_for_the_next_answer(project, on_t
     assert from_ignored["outcome"] == REPLIED
     assert from_ignored["line_num"] == 9
     assert from_ignored["text"] == "the conclusion"
+
+
+def test_managed_background_continuation_requires_later_confirmation(project, on_tick):
+    from django.utils import timezone
+    from tests.test_wait_reply import managed_turn, native_assistant
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'ignored answer', 'a1')
+    row = with_background(process(session, AgentState.USER_TURN.value))
+    next_turn = managed_turn(session, position=2, refs=('b1',), first='b1')
+    def next_answer():
+        native_assistant(session, 5, 'confirmed answer', 'b1')
+        set_state(row)
+    def confirm():
+        next_turn.outcome = 'normal'
+        next_turn.closed_at = timezone.now()
+        next_turn.save()
+    on_tick({2: next_answer, 5: confirm})
+    result = wait(session, wait_background=True)
+    assert result['text'] == 'confirmed answer'
+    assert result['waited_seconds'] == .1
+
+
+def test_managed_ignored_answer_stays_ignored_after_empty_continuation(project, on_tick):
+    from tests.test_wait_reply import managed_turn, native_assistant
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'ignored answer', 'a1')
+    row = with_background(process(session, AgentState.USER_TURN.value))
+    managed_turn(session, position=2, outcome='normal', refs=(), first=None)
+    on_tick({2: lambda: set_state(row)})
+    result = wait(session, timeout=.3, wait_background=True)
+    assert result['outcome'] == TIMEOUT
+    assert result['text'] == 'ignored answer'
+    assert result['background_work_in_progress'] is None
+
+
+def test_mixed_history_background_ignore_preserves_public_cursor(project):
+    from tests.test_wait_reply import managed_turn, native_assistant
+    session = make_session(project)
+    assistant(session, 2, 'historical answer', 'end_turn')
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 5, 'managed answer', 'a1')
+    with_background(process(session, AgentState.USER_TURN.value))
+    reply = wait(session, timeout=.1, wait_background=True)
+    assert reply['outcome'] == TIMEOUT
+    assert reply['since_line_num'] == 0

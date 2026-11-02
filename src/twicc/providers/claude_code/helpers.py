@@ -54,6 +54,7 @@ from .pricing import CLAUDE_FAMILIES, extract_model_info
 __all__ = ["ClaudeCodeHelpers", "ClaudeCodeModelExtra"]
 
 if TYPE_CHECKING:
+    from twicc.agent.completion_types import NativeMessageRef
     from twicc.core.models import Session, SessionItem
 
 logger = logging.getLogger(__name__)
@@ -728,6 +729,20 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
                 return f"{command.name} {strip_markdown(command.args)}"
             return command.name
         return text
+
+    def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
+        from twicc.agent.completion_types import NativeMessageRef
+
+        if (parsed.get("type") not in {"assistant", "user"}
+                or parsed.get("parent_tool_use_id") or parsed.get("isSidechain")):
+            return ()
+        refs = []
+        if identity := parsed.get("uuid"):
+            refs.append(NativeMessageRef("claude_uuid", identity))
+        message = parsed.get("message") or {}
+        if identity := message.get("id") or parsed.get("message_id"):
+            refs.append(NativeMessageRef("claude_message", identity))
+        return tuple(refs)
 
     def is_final_assistant_message(self, parsed: dict) -> bool | None:
         """Read the verdict off ``message.stop_reason``, line by line.

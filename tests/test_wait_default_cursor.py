@@ -230,3 +230,19 @@ def test_the_plural_applies_both_rules(project, capsysbinary, monkeypatch):
     make(project, "p2", ready=False, last_line=9)
     sessions_wait_reply.main(["p1", "p2"], timeout=1)
     assert seen == {"p1": 4, "p2": 9}
+
+
+def test_wait_token_defaults_to_its_admission_cursor(project):
+    from uuid import uuid4
+    from tests.test_wait_reply import managed_turn, native_assistant
+    from twicc.cli._wait_reply import wait_for_reply
+    from twicc.core.models import LogicalTurnInput
+    session = make(project, 'token-cursor')
+    turn = managed_turn(session, outcome='normal')
+    native_assistant(session, 5, 'accepted answer', 'a1')
+    token = LogicalTurnInput.objects.create(id=uuid4(), turn=turn, admission_cursor=3, status='accepted')
+    reply = wait_for_reply(session.id, wait_token=str(token.pk), timeout=.1, want_text=True)
+    assert reply['outcome'] == 'replied'
+    assert reply['since_line_num'] == 3
+    strict = wait_for_reply(session.id, wait_token=str(token.pk), since_line_num=5, timeout=.1, want_text=True)
+    assert strict['outcome'] == 'ended'

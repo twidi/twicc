@@ -50,6 +50,8 @@ class AgentSettingCategory(StrEnum):
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from twicc.agent.completion_types import NativeMessageRef
+
     from twicc.core.models import Session, SessionItem
 
 
@@ -832,6 +834,10 @@ class BaseProviderHelpers:
             128, 8 * 1024 * 1024,
         )
         return [message.text for message in self.get_user_messages(items)]
+
+    def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
+        """Return root native record identities without loading agent runtime on import."""
+        return ()
 
     def get_indexable_messages(self, items: Iterable[SessionItem]) -> list[IndexableMessage]:
         """Extract indexable messages from ``items``.

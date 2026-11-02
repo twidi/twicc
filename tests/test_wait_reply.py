@@ -649,8 +649,9 @@ def test_a_working_session_costs_one_query_per_tick(project, monkeypatch, jsonl)
     assert sum("core_sessionitem" in sql for sql in tables) >= 3
     assert sum("core_session" in sql and "core_sessionitem" not in sql for sql in tables) == 1
     assert sum("core_processrun" in sql for sql in tables) == 0
-    # Everything left is the transcript scan, the one thing that must happen.
-    assert all("core_sessionitem" in sql for sql in tables
+    # Each tick also checks for newly admitted durable logical intervals.
+    assert sum("core_logicalturn" in sql for sql in tables) == sum("core_sessionitem" in sql for sql in tables)
+    assert all("core_sessionitem" in sql or "core_logicalturn" in sql for sql in tables
                if "core_session" not in sql or "core_sessionitem" in sql)
 
 
@@ -1712,3 +1713,210 @@ def test_send_message_hands_wait_background_to_the_wait(monkeypatch, wait_backgr
     }, wait_background=wait_background)
 
     assert seen["wait_background"] is wait_background
+
+
+# Managed intervals require their durable conclusion, independently of process state.
+def managed_turn(session, *, position=1, outcome=None, refs=('a1',), first='a1'):
+    from uuid import uuid4
+    from twicc.core.models import LogicalTurn
+    if session.storage_incarnation is None:
+        session.storage_incarnation = str(uuid4())
+        session.save(update_fields=['storage_incarnation'])
+    ref = lambda value: {"kind": 'claude_uuid', "native_id": value, "turn_id": None}
+    return LogicalTurn.objects.create(id=uuid4(), session_id=session.id, provider=session.provider,
+        run_id=uuid4(), ordinal=1, position=position, source_floor=0,
+        storage_incarnation=session.storage_incarnation, history_epoch=session.history_epoch,
+        first_ref=ref(first) if first else None, final_refs=[ref(value) for value in refs],
+        opened_at=timezone.now(), closed_at=timezone.now() if outcome else None, outcome=outcome)
+
+
+def native_assistant(session, line, text, identity):
+    assistant(session, line, text, 'end_turn')
+    item = SessionItem.objects.get(session=session, line_num=line)
+    parsed = orjson.loads(item.content)
+    parsed['uuid'] = identity
+    item.content = orjson.dumps(parsed).decode()
+    item.save(update_fields=['content'])
+
+
+def test_managed_open_interval_waits_for_later_parent_final(project, on_tick):
+    session = make_session(project)
+    turn = managed_turn(session)
+    native_assistant(session, 2, 'intermediate', 'a1')
+    process(session, AgentState.ASSISTANT_TURN.value)
+    def close():
+        native_assistant(session, 5, 'last answer', 'a2')
+        turn.final_refs.append({"kind": 'claude_uuid', "native_id": 'a2', "turn_id": None})
+        turn.outcome = 'normal'
+        turn.closed_at = timezone.now()
+        turn.save()
+    on_tick({2: close})
+    assert wait(session)['text'] == 'last answer'
+
+
+def test_managed_pending_request_wins_over_intermediate_final(project):
+    session = make_session(project)
+    managed_turn(session)
+    native_assistant(session, 2, 'intermediate', 'a1')
+    process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+    assert wait(session)['outcome'] == 'awaiting_user_input'
+
+
+def test_newer_pending_request_preserves_completed_older_answer(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'older answer', 'a1')
+    managed_turn(session, position=2, refs=('b1',), first='b1')
+    process(session, AgentState.ASSISTANT_TURN.value, awaiting=True)
+    assert wait(session)['text'] == 'older answer'
+
+
+@pytest.mark.parametrize('outcome', ['ended', 'provider_error'])
+def test_managed_terminal_stop_never_replies_from_transcript(project, outcome):
+    session = make_session(project)
+    managed_turn(session, outcome=outcome)
+    native_assistant(session, 2, 'intermediate', 'a1')
+    assert wait(session)['outcome'] == outcome
+
+
+@pytest.mark.parametrize('outcome', ['normal', 'ended'])
+def test_empty_interval_keeps_cursor_before_later_answer(project, outcome):
+    from twicc.cli._wait_reply import _SessionWait
+    session = make_session(project)
+    first = managed_turn(session, outcome=outcome, refs=(), first=None)
+    managed_turn(session, position=2, outcome='normal', refs=('b1',), first='b1')
+    native_assistant(session, 8, 'later answer', 'b1')
+    waiter = _SessionWait(session.id, 0, started=0, twicc_pid=TWICC_PID, want_text=True)
+    assert waiter.step()['outcome'] == ENDED
+    progress = waiter.progress()
+    assert progress.consumed_up_to == 0
+    assert progress.last_logical_turn_id == str(first.pk)
+    resumed = _SessionWait(session.id, progress.consumed_up_to, started=0, twicc_pid=TWICC_PID,
+                           want_text=True, after_turn_id=progress.last_logical_turn_id)
+    assert resumed.step()['text'] == 'later answer'
+
+
+def test_unindexed_managed_final_survives_missing_process(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal', refs=('a2',))
+    native_assistant(session, 2, 'intermediate', 'a1')
+    assert wait(session, timeout=.3)['outcome'] == TIMEOUT
+
+
+def test_mixed_historical_answer_precedes_managed_first_record(project):
+    session = make_session(project)
+    assistant(session, 2, 'historical answer', 'end_turn')
+    managed_turn(session, first='a1')
+    native_assistant(session, 5, 'intermediate', 'a1')
+    assert wait(session)['text'] == 'historical answer'
+
+
+def test_unindexed_first_ref_does_not_classify_later_record_as_legacy(project):
+    session = make_session(project)
+    managed_turn(session, first='a1')
+    native_assistant(session, 5, 'unowned until first record indexes', 'other')
+    assert wait(session, timeout=.3)['outcome'] == TIMEOUT
+
+
+def test_invalid_wait_token_fails_without_transcript_fallback(project):
+    session = make_session(project)
+    assistant(session, 2, 'historical answer', 'end_turn')
+    result = _wait_reply.wait_for_reply_or_degrade(session.id, since_line_num=0, timeout=1,
+                                                  want_text=True, wait_token='invalid')
+    assert result['outcome'] == WAIT_FAILED
+
+
+def test_consumed_managed_final_never_becomes_legacy(project):
+    from twicc.cli._wait_reply import _SessionWait
+    session = make_session(project)
+    turn = managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'consumed answer', 'a1')
+    waiter = _SessionWait(session.id, 0, started=0, twicc_pid=TWICC_PID,
+                          want_text=True, after_turn_id=str(turn.pk))
+    assert waiter.step() is None
+
+
+def test_known_empty_interval_allows_earlier_unowned_history_after_flush(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal', refs=(), first=None)
+    assistant(session, 2, 'historical answer', 'end_turn')
+    reply = wait(session)
+    assert reply['outcome'] == REPLIED
+    assert reply['text'] == 'historical answer'
+    assert reply['waited_seconds'] >= .1
+
+
+def test_managed_provider_error_preserves_indexed_error_details(project):
+    session = make_session(project)
+    managed_turn(session, outcome='provider_error')
+    native_assistant(session, 2, 'intermediate', 'a1')
+    api_error(session, 5, terminal=True, text='provider unavailable')
+    reply = wait(session)
+    assert reply['outcome'] == PROVIDER_ERROR
+    assert reply['line_num'] == 5
+    assert reply['text'] == 'provider unavailable'
+
+
+def test_managed_late_lower_source_line_survives_later_interval(project, on_tick):
+    session = make_session(project)
+    managed_turn(session, outcome='normal', refs=('a1', 'a2'))
+    native_assistant(session, 2, 'intermediate', 'a1')
+    managed_turn(session, position=2, outcome='normal', refs=('b1',), first='b1')
+    native_assistant(session, 8, 'later answer', 'b1')
+    on_tick({2: lambda: native_assistant(session, 5, 'A2', 'a2')})
+    assert wait(session)['text'] == 'A2'
+
+
+def test_normal_managed_stop_allows_later_unmanaged_answer(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'managed answer', 'a1')
+    native_assistant(session, 9, 'unmanaged answer', 'b1')
+    assert wait(session, since_line_num=2)['text'] == 'unmanaged answer'
+
+
+def test_live_managed_owner_blocks_unknown_final_while_journal_lags(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'managed answer', 'a1')
+    native_assistant(session, 9, 'unconfirmed answer', 'b1')
+    process(session, AgentState.ASSISTANT_TURN.value)
+    assert wait(session, since_line_num=2, timeout=.3)['outcome'] == TIMEOUT
+
+
+def test_interrupted_managed_stop_blocks_late_unobserved_final(project):
+    session = make_session(project)
+    turn = managed_turn(session, outcome='ended')
+    native_assistant(session, 2, 'intermediate', 'a1')
+    native_assistant(session, 9, 'late unconfirmed final', 'unknown')
+    from twicc.cli._wait_reply import _SessionWait
+    waiter = _SessionWait(session.id, 2, started=0, twicc_pid=TWICC_PID,
+                          want_text=True, after_turn_id=str(turn.pk))
+    assert waiter.step() is None
+
+
+def test_source_invalidation_precedes_historical_fallback(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    assistant(session, 1, 'historical answer', 'end_turn')
+    native_assistant(session, 2, 'managed answer', 'a1')
+    Session.objects.filter(pk=session.pk).update(history_epoch=1)
+    assert wait(session)['outcome'] == WAIT_FAILED
+
+
+def test_cursor_after_managed_coverage_keeps_legacy_stopped_backstop(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal')
+    native_assistant(session, 2, 'consumed answer', 'a1')
+    assert wait(session, since_line_num=2, timeout=.3)['outcome'] == ENDED
+
+
+def test_managed_timeout_keeps_own_intermediate_text(project):
+    session = make_session(project)
+    managed_turn(session, outcome='normal', refs=('a1', 'a2'))
+    native_assistant(session, 2, 'intermediate', 'a1')
+    managed_turn(session, position=2, outcome='normal', refs=('b1',), first='b1')
+    native_assistant(session, 8, 'later answer', 'b1')
+    reply = wait(session, timeout=.3)
+    assert reply['outcome'] == TIMEOUT
+    assert reply['text'] == 'intermediate'

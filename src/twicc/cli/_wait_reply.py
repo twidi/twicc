@@ -1,73 +1,19 @@
-"""Block until one or more sessions answer.
+"""Wait for a confirmed logical answer, with transcript fallback for unmanaged history.
 
-Behind ``--wait-reply`` on ``create-session``, ``send-message`` and
-``send-messages``. The one-session wait is the one-element case of the batch,
-so there is a single implementation of everything below.
+Managed intervals select their exact last native final after durable confirmation.
+Open intervals, unresolved references, and watcher lag never imply success.
+Exceptional outcomes remain terminal after the process row disappears. A pending
+request for the selected current interval takes priority over intermediate text.
 
-The question "has it answered?" is read off the **transcript**, not off the
-process state machine: a session parked in ``ASSISTANT_TURN`` by a Monitor, a
-live subagent or a pending wake-up has already written its answer long before
-it returns to ``USER_TURN`` (see ``ClaudeCodeAgent``'s ResultMessage handler).
-Waiting on the state machine there costs hours; waiting on
-``SessionItem.is_final`` costs nothing.
+Legacy history retains its strict line cursor, provider-error handling, watcher
+flush barrier, and stopped-agent backstop. A record owned by any managed interval
+never becomes a legacy final, including intervals consumed by earlier waits.
 
-A pending request ends the wait too, and always: a session blocked on a tool
-approval or a question is not going to answer until a human clicks, so the
-caller has to be told rather than left to the deadline. The two endings are one
-question — "is it still my turn to wait?" — which is why there is no flag
-separating them.
-
-Whether the agent is still working is the **backstop**, never the signal.
-``is_final`` says when an answer arrived; it never says when one will not.
-A turn that crashes, that is interrupted, or that closes on an empty text
-produces no ``is_final: true`` and would otherwise hang until the deadline.
-
-"The agent stopped" is never enough on its own: it says so before its answer
-is readable, twice over — it has the line left to flush, and the watcher has
-it left to index. So that ending waits for both, one measured
-(:data:`AGENT_FLUSH_SECONDS`) and one proven (:func:`_watcher_is_behind`).
-It is the module's one ending that rests on a bet rather than a proof, sized
-well past anything observed; the improbable cases belong to the deadline.
-
-The caller owns the cursor: the wait only ever accepts a line **strictly
-past** it. ``create-session`` passes ``0`` — a new session's transcript is
-empty, so any final message is ours. ``send-message`` and ``send-messages``
-pass the session's ``last_line``, read server-side the instant the message was
-handed to the agent, which is what keeps them from returning the previous
-turn's answer. A batch carries one cursor per recipient: they are not at the
-same line, and a shared one would let a chatty session close a quiet one's
-wait. ``session <id> wait-reply`` takes ``--from-line`` / ``--since``, ``sessions
-wait-reply`` takes ``--since`` only (a line number belongs to one transcript);
-both default to :func:`default_wait_cursors` (after the last user message, the
-current ``last_line`` while the compute is not current).
-
-``wait_background`` (``--wait-background``) changes one thing: a final
-message read while the session's ``background_work_in_progress`` is not null
-does not count. It is ignored as if it did not exist — the cursor moves past
-it — and the first final message read while the snapshot is null ends the
-wait ``replied``, exactly as without the flag. "Read while" is the snapshot
-taken in the same tick as the scan that returned the line, and taken
-**after** that scan: a final message written just after the work ended is
-read with a snapshot that already says so, and counts. The judgement is on
-the reading, not the writing: a wait started or resumed after the work ended
-counts the final messages already written, the one ignored before included —
-which is why a resume that wants the *next* answer starts from the ignored
-message's ``line_num``.
-
-The backstop changes to match. An idle agent with work still running behind
-it is not a finished turn (a shell left running in ``user_turn``), so it
-keeps the wait open like a working agent does. And once a final message was
-ignored, the next one is owed: an alive idle agent keeps the wait open until
-it comes, whether 1 s or 50 s after the work ended — Claude Code reopens the
-turn only on the model's first output, and no fixed window covers that. What
-the work's end brings depends on the provider — Claude Code reopens a turn
-when a background shell ends, Codex answers after a process ends only if the
-agent waited for it within its turn — so a wait on work that brings no new
-answer ends in ``timeout``, carrying the last ignored final message and the
-snapshot. Everything else is untouched: a pending request, a provider error,
-and the dead-agent backstop (a dead agent has no background work; its
-``ended`` carries the ignored final message). With no final message ignored,
-the idle backstop is the original one.
+``--wait-background`` ignores an answer read while background work runs. Only
+this explicit ignore permits continuation into a later confirmed interval. An
+ignored answer never revives merely because background work ends. Timeouts carry
+its text and the current background snapshot. Pending requests carry no ignored
+answer. Each wait keeps source scanning separate from logical consumption.
 """
 
 from __future__ import annotations
@@ -75,7 +21,10 @@ from __future__ import annotations
 
 import os
 import time
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
+
+if TYPE_CHECKING:
+    from twicc.core.services.logical_turn_answers import WaitProgress
 
 
 POLL_INTERVAL_SECONDS = 0.25
@@ -216,10 +165,11 @@ def default_wait_cursors(sessions) -> dict[str, int]:
 def wait_for_reply_or_degrade(
     session_id: str,
     *,
-    since_line_num: int,
+    since_line_num: int | None = None,
     timeout: float,
     want_text: bool,
     wait_background: bool = False,
+    wait_token: str | None = None,
 ) -> dict:
     """:func:`wait_for_reply`, unable to take its caller's payload down with it.
 
@@ -238,7 +188,7 @@ def wait_for_reply_or_degrade(
     try:
         return wait_for_reply(
             session_id, since_line_num=since_line_num, timeout=timeout,
-            want_text=want_text, wait_background=wait_background,
+            want_text=want_text, wait_background=wait_background, wait_token=wait_token,
         )
     except BaseException as exc:  # noqa: BLE001 - deliberate, see above
         return degraded_reply(since_line_num, time.monotonic() - started, exc)
@@ -398,18 +348,20 @@ def _session_jsonl_path(session):
 
 
 class _SessionWait:
-    """One session's share of a wait: its cursor, and what a tick carries over.
+    """Track one selected interval and separate reading from durable consumption.
 
-    Everything here used to be locals of a one-session loop. Nothing about the
-    logic changed in the move — the point was only to let one loop drive many
-    sessions, which is what ``--wait-first`` / ``--wait-all`` need. The single
-    session case goes through the same code, so the tests that cover it cover
-    this too.
+    The batch and singular APIs share this state. ``progress()`` exposes the
+    safe line cursor and the last consumed logical position for reconstruction.
     """
 
-    def __init__(self, session_id: str, since_line_num: int, *, started: float,
-                 twicc_pid, want_text: bool, wait_background: bool = False):
+    def __init__(self, session_id: str, since_line_num: int | None = None, *, started: float,
+                 twicc_pid, want_text: bool, wait_background: bool = False,
+                 wait_token: str | None = None, after_turn_id: str | None = None):
         self.session_id = session_id
+        if since_line_num is None:
+            from twicc.core.services.logical_turns import input_for_token
+            association = input_for_token(session_id=session_id, token=wait_token) if wait_token is not None else None
+            since_line_num = association.admission_cursor if association is not None else 0
         self.since_line_num = since_line_num
         self.scanned_up_to = since_line_num
         self.started = started
@@ -426,7 +378,170 @@ class _SessionWait:
         # background work ran when it was read, and the latest snapshot. Both
         # stay ``None`` without the flag, so every ending keeps its shape.
         self.last_ignored = None
+        self.ignored_legacy_up_to = since_line_num
         self.background = None
+        self.wait_token = wait_token
+        self.after_turn_id = after_turn_id
+        self.consumed_up_to = since_line_num
+        self.last_logical_turn_id = after_turn_id
+        self.logical_turn_id = None
+        self.empty_since = None
+        self.empty_confirming = False
+        self.empty_flush_ready = False
+        from twicc.core.services.logical_turn_answers import NativeAnswerCache
+        self.native_cache = NativeAnswerCache(session_id)
+
+    def progress(self) -> WaitProgress:
+        from twicc.core.services.logical_turn_answers import WaitProgress
+        return WaitProgress(self.consumed_up_to, self.last_logical_turn_id)
+
+    def _consume_turn(self, turn, turns, message=None):
+        boundary = self.consumed_up_to
+        own_lines = [line for ref in turn.final_refs for line in self.native_cache.lines(ref)]
+        if own_lines:
+            boundary = max(boundary, max(own_lines))
+        if message is not None:
+            boundary = max(boundary, message.line_num)
+        later_lines = [line for later in turns if later.position > turn.position
+                       for ref in ([later.first_ref] if later.first_ref else []) + later.final_refs
+                       for line in self.native_cache.lines(ref)]
+        if later_lines:
+            boundary = min(boundary, max(self.consumed_up_to, min(later_lines) - 1))
+        self.consumed_up_to = boundary
+        self.last_logical_turn_id = str(turn.pk)
+
+    def _legacy_is_owned(self, line, turns, activity):
+        for index, turn in enumerate(turns):
+            start = self.native_cache.lines(turn.first_ref)
+            next_starts = [source_line for later in turns[index + 1:]
+                           for source_line in self.native_cache.lines(later.first_ref)]
+            if next_starts and line >= min(next_starts):
+                continue
+            final_lines = self.native_cache.lines(turn.final_refs[-1]) if turn.final_refs else []
+            if (turn.outcome == 'normal' and final_lines and line > max(final_lines)
+                    and not activity.alive):
+                continue
+            if start:
+                if line >= min(start):
+                    return True
+            elif line > turn.source_floor:
+                # A known-empty interval owns no final, but only the existing
+                # flush barrier permits historical records beyond its floor.
+                if turn.outcome == 'normal' and not turn.final_refs and not turn.first_ref:
+                    if self.empty_flush_ready and not activity.alive:
+                        continue
+                return True
+        return False
+
+    def _managed_step(self):
+        """Select a durable interval before considering unmanaged transcript results."""
+        from twicc.core.models import LogicalTurn
+        from twicc.core.services.logical_turn_answers import resolve_logical_answer, select_logical_turn
+
+        turns = list(LogicalTurn.objects.filter(session_id=self.session_id).order_by('position'))
+        if not turns and self.wait_token is None and self.after_turn_id is None:
+            return False, None
+        self.native_cache.refresh()
+        if self.native_cache.all_messages:
+            self.scanned_up_to = max(self.scanned_up_to, max(self.native_cache.all_messages))
+        try:
+            if self.logical_turn_id is None:
+                turn = select_logical_turn(session_id=self.session_id, cursor=self.since_line_num,
+                    wait_token=self.wait_token, after_turn_id=self.after_turn_id, cache=self.native_cache)
+                if turn is not None:
+                    self.logical_turn_id = str(turn.pk)
+                    self.empty_since = None
+                    self.empty_confirming = False
+                    self.empty_flush_ready = False
+            else:
+                turn = next((row for row in turns if str(row.pk) == self.logical_turn_id), None)
+                if turn is None:
+                    return True, self.build(WAIT_FAILED)
+        except ValueError as exc:
+            return True, self.build(WAIT_FAILED) | {'error': str(exc)}
+
+        answer = resolve_logical_answer(turn, cursor=self.since_line_num, cache=self.native_cache) if turn else None
+        if answer is not None and answer.status == 'invalidated':
+            return True, self.build(WAIT_FAILED) | {'error': 'Logical turn source changed'}
+        activity = _agent_activity(self.session_id, self.twicc_pid)
+        self.background = activity.background
+        empty_history = any(
+            row.outcome == 'normal' and not row.first_ref and not row.final_refs
+            and any(line > max(self.since_line_num, row.source_floor)
+                    and not any(boundary <= line for later in turns if later.position > row.position
+                                for boundary in self.native_cache.lines(later.first_ref))
+                    for line in self.native_cache.all_messages)
+            for row in turns)
+        if empty_history:
+            if self.empty_since is None:
+                self.empty_since = time.monotonic()
+            if time.monotonic() - self.empty_since >= AGENT_FLUSH_SECONDS and self.session is not None:
+                self.session.refresh_from_db(fields=['last_offset'])
+                if _watcher_is_behind(self.session):
+                    self.empty_confirming = False
+                elif self.empty_confirming:
+                    self.empty_flush_ready = True
+                else:
+                    self.empty_confirming = True
+
+        # Keep historical records before managed coverage. Consumed intervals
+        # still participate in ownership, so their finals never become legacy.
+        legacy = [message for line, message in sorted(self.native_cache.all_messages.items())
+                  if line > max(self.since_line_num, self.ignored_legacy_up_to) and message.is_final is True
+                  and not self._legacy_is_owned(line, turns, activity)]
+        if legacy and self.wait_token is None:
+            if self.wait_background and activity.background is not None:
+                self.last_ignored = legacy[-1]
+                self.ignored_legacy_up_to = max(self.ignored_legacy_up_to, legacy[-1].line_num)
+            else:
+                self.consumed_up_to = max(self.consumed_up_to, legacy[0].line_num)
+                return True, self.build(REPLIED, legacy[0])
+        if turn is None:
+            if activity.awaiting:
+                return True, self.build(AWAITING)
+            return True, self._stopped_backstop(activity)
+        observed_messages = [self.native_cache.answer(ref, cursor=self.since_line_num)
+                             for ref in turn.final_refs]
+        observed_messages = [message for message in observed_messages if message is not None]
+        if observed_messages:
+            self.last_message = observed_messages[-1]
+        if answer.status == 'pending':
+            if activity.awaiting and turns and turn.pk == turns[-1].pk:
+                return True, self.build(AWAITING)
+            return True, None
+        if answer.status == 'ended' and turn.outcome == 'normal' and not turn.final_refs and not turn.first_ref:
+            if empty_history and not self.empty_flush_ready:
+                return True, None
+        if answer.status == 'provider_error':
+            later_starts = [line for later in turns if later.position > turn.position
+                            for line in self.native_cache.lines(later.first_ref)]
+            errors = [(line, text) for line, text in sorted(self.native_cache.errors.items())
+                      if line > max(self.since_line_num, turn.source_floor)
+                      and (not later_starts or line < min(later_starts))]
+            self._consume_turn(turn, turns)
+            if errors:
+                line, text = errors[-1]
+                block = self.build(PROVIDER_ERROR, line_num=line)
+                if self.want_text:
+                    block['text'] = text
+                return True, block
+        if answer.status == 'replied' and self.wait_background and activity.background is not None:
+            self.last_ignored = answer.message
+            self._consume_turn(turn, turns, answer.message)
+            self.after_turn_id = str(turn.pk)
+            self.logical_turn_id = None
+            self.wait_token = None
+            return True, None
+        self._consume_turn(turn, turns, answer.message)
+        if answer.status == 'ended' and self.last_ignored is not None and turn.outcome == 'normal':
+            self.after_turn_id = str(turn.pk)
+            self.logical_turn_id = None
+            self.wait_token = None
+            if activity.awaiting:
+                return True, self.build(AWAITING)
+            if activity.alive:
+                return True, None
+        return True, self.build(answer.status, answer.message)
 
     def build(self, outcome: str, message=None, *, line_num=None) -> dict:
         block = {
@@ -474,6 +589,10 @@ class _SessionWait:
                 .first()
             )
 
+        handled, block = self._managed_step()
+        if handled:
+            return block
+
         activity = None
         if self.session is not None:
             new_items = list(
@@ -508,6 +627,7 @@ class _SessionWait:
                     # The *first* final message past the cursor is the answer to
                     # what the caller just sent. A later one would belong to a
                     # turn the caller did not trigger.
+                    self.consumed_up_to = max(self.consumed_up_to, finals[0].line_num)
                     return self.build(REPLIED, finals[0])
                 if messages:
                     self.last_message = messages[-1]
@@ -544,6 +664,9 @@ class _SessionWait:
             # always the better ending.
             return self.build(AWAITING)
 
+        return self._stopped_backstop(activity)
+
+    def _stopped_backstop(self, activity):
         if activity.working or (self.wait_background and (
             activity.background is not None
             or (self.last_ignored is not None and activity.alive)
@@ -611,6 +734,7 @@ def wait_for_replies(
     want_text: bool,
     first: bool = False,
     wait_background: bool = False,
+    wait_tokens: dict[str, str] | None = None,
 ) -> dict:
     """Wait on one or more sessions; return one reply block per id.
 
@@ -648,6 +772,7 @@ def wait_for_replies(
         session_id: _SessionWait(
             session_id, cursor, started=started, twicc_pid=twicc_pid,
             want_text=want_text, wait_background=wait_background,
+            wait_token=(wait_tokens or {}).get(session_id),
         )
         for session_id, cursor in cursors.items()
     }
@@ -696,10 +821,11 @@ def wait_for_replies(
 def wait_for_reply(
     session_id: str,
     *,
-    since_line_num: int,
+    since_line_num: int | None = None,
     timeout: float,
     want_text: bool,
     wait_background: bool = False,
+    wait_token: str | None = None,
 ) -> dict:
     """Poll until the session answers, blocks on a human, the turn ends, or
     ``timeout`` elapses.
@@ -713,4 +839,5 @@ def wait_for_reply(
     return wait_for_replies(
         {session_id: since_line_num},
         timeout=timeout, want_text=want_text, wait_background=wait_background,
+        wait_tokens={session_id: wait_token} if wait_token is not None else None,
     )[session_id]

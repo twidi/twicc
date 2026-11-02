@@ -4361,6 +4361,10 @@ class BaseSessionCompute:
                 metadata = load_native_metadata([session.id], known={session.id: native_metadata_row(session)})
                 with ingestion_plaintext_change(session, metadata=metadata):
                     updates = self._sync_session_slice(session, file_path, raw, metadata=metadata)
+                    # Live ingestion owns writer admission and this transaction.
+                    # Keep the runtime-aware resolver outside spawned compute imports.
+                    from twicc.core.services.logical_turn_answers import bind_indexed_turn_sources
+                    bind_indexed_turn_sources(session.id)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 

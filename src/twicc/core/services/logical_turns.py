@@ -45,7 +45,7 @@ def store_turn_snapshot(snapshot: CompletionSnapshot, *, closed_at: datetime | N
         raise ValueError("Invalid logical turn outcome")
     if (snapshot.outcome is None) != (closed_at is None):
         raise ValueError("Terminal outcomes require a closing timestamp")
-    return bool(LogicalTurn.objects.filter(
+    stored = bool(LogicalTurn.objects.filter(
         pk=snapshot.turn_id, run_id=snapshot.run_id, ordinal=snapshot.ordinal,
         revision__lt=snapshot.revision, outcome__isnull=True, closed_at__isnull=True,
     ).update(
@@ -54,6 +54,12 @@ def store_turn_snapshot(snapshot: CompletionSnapshot, *, closed_at: datetime | N
         final_refs=[ref._asdict() for ref in dict.fromkeys(snapshot.final_refs)],
         outcome=snapshot.outcome, closed_at=closed_at,
     ))
+    if stored:
+        from twicc.core.services.logical_turn_answers import bind_indexed_turn_sources
+
+        session_id = LogicalTurn.objects.values_list('session_id', flat=True).get(pk=snapshot.turn_id)
+        bind_indexed_turn_sources(session_id)
+    return stored
 
 
 def bind_turn_input(*, token: str, turn_id: str, admission_cursor: int, status: str) -> None:
