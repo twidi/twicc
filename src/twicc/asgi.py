@@ -41,7 +41,7 @@ from twicc.core.services.attachments import planner as attachment_planner
 from twicc.core.services.attachments.staging import AttachmentError
 from twicc.core.services.attachments.target import resolve_existing_session_plan_target
 from twicc.core.services.session_creation import create_session_from_payload
-from twicc.core.services.title_suggestion import suggest_title
+from twicc.core.services.title_suggestion import requested_title_model, suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
 from twicc.agent.exceptions import SendDeliveryError, SessionUnavailableError
 from twicc.core.session_availability import (
@@ -1892,7 +1892,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "type": "suggest_title",
             "sessionId": "...",
             "provider": "claude_code" | "codex",
-            "titleSuggestionModel": "provider" | "haiku" | "luna",
+            "titleSuggestionModel": "provider" | "haiku" | "luna" | "qwen",
             "systemPrompt": "System prompt with {text} placeholder",
             "prompt": "optional prompt text for draft/new sessions",
             "noFallback": true  // optional: only try the requested provider
@@ -1902,7 +1902,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         ``provider`` travels in the payload because draft sessions don't exist
         in the DB yet — the backend can't resolve them via ``Session.provider``.
         A missing or unknown ``titleSuggestionModel`` keeps the legacy behavior
-        and generates through the session provider.
+        and generates through the session provider; so does ``"qwen"`` without
+        the OpenRouter key. With the key, ``"qwen"`` tries Qwen on OpenRouter
+        first, then the agents from the session provider (see ``suggest_title``).
+        The reply names the model asked for (``requestedModel``) and the model
+        that made the title (``titleModel``, None when none did).
 
         Modes:
         - prompt provided: Use prompt directly (draft/new session), clipped to
@@ -1975,6 +1979,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     "sourcePrompt": None,
                     "requestedProvider": provider.value,
                     "titleProvider": None,
+                    "requestedModel": requested_title_model(title_model, provider),
+                    "titleModel": None,
                     "error": SESSION_UNAVAILABLE,
                 })
                 return
@@ -1997,6 +2003,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             "sourcePrompt": prompt,    # Always included for regeneration
             "requestedProvider": result.requested_provider.value,
             "titleProvider": result.title_provider.value if result.title_provider else None,
+            "requestedModel": result.requested_model,
+            "titleModel": result.title_model,
             "error": result.error,     # None on success
         })
 

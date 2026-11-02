@@ -279,7 +279,27 @@ def test_no_title_is_suggested_from_the_content(sessions, consumer, monkeypatch)
 
     [frame] = _frames(consumer)
     assert (frame["type"], frame["error"]) == ("title_suggested", SESSION_UNAVAILABLE)
+    # No asked model: the session provider's model.
+    assert (frame["requestedModel"], frame["titleModel"]) == ("haiku", None)
     suggest.assert_not_called()
+
+
+@pytest.mark.parametrize("asked, key_set, expected", [
+    ("qwen", True, "qwen"), ("qwen", False, "haiku"),
+    ("luna", False, "luna"), ("haiku", True, "haiku"), ("provider", True, "haiku"), ("unknown", True, "haiku"),
+])
+def test_the_unavailable_title_frame_names_the_asked_model(sessions, consumer, monkeypatch, asked, key_set, expected):
+    monkeypatch.setattr("twicc.asgi.suggest_title", AsyncMock())
+    monkeypatch.setattr("twicc.core.services.title_suggestion.openrouter_key_set", lambda: key_set)
+
+    asyncio.run(consumer._handle_suggest_title({
+        "sessionId": "blocked", "provider": "claude_code", "systemPrompt": "Title: {text}",
+        "titleSuggestionModel": asked,
+    }))
+
+    [frame] = _frames(consumer)
+    assert frame["error"] == SESSION_UNAVAILABLE
+    assert (frame["requestedModel"], frame["titleModel"]) == (expected, None)
 
 
 def test_the_codex_question_dismissal_is_refused(monkeypatch):

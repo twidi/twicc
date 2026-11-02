@@ -50,12 +50,16 @@ def _suggest_title_frames(
     outcomes=None,
     first_messages=None,
     no_fallback=None,
+    openrouter_key=False,
+    qwen_answer=None,
 ):
     """Run ``_handle_suggest_title`` against fake providers, return the frames sent.
 
     ``running`` is the set of providers the state layer reports as running
     (both by default); ``outcomes`` maps a provider to its ``_TitleHelpers``
-    outcome (all ``"ok"`` by default).
+    outcome (all ``"ok"`` by default). ``openrouter_key`` says whether the
+    OpenRouter key is set (not by default); ``qwen_answer`` is what the Qwen
+    title call returns.
     """
     messages = first_messages or {
         Provider.CLAUDE_CODE: "Claude prompt",
@@ -77,6 +81,15 @@ def _suggest_title_frames(
     monkeypatch.setattr("twicc.core.services.title_suggestion.get_provider_helpers", helpers.__getitem__)
     monkeypatch.setattr(
         "twicc.core.services.title_suggestion.is_provider_running", lambda provider: provider in running_set,
+    )
+    monkeypatch.setattr("twicc.core.services.title_suggestion.openrouter_key_set", lambda: openrouter_key)
+
+    async def generate_openrouter_title(prompt, _system_prompt, *, current_title=None):
+        assert current_title is None
+        return qwen_answer
+
+    monkeypatch.setattr(
+        "twicc.core.services.title_suggestion.generate_openrouter_title", generate_openrouter_title,
     )
 
     consumer = WSConsumer()
@@ -107,15 +120,17 @@ def test_missing_title_model_uses_the_session_provider(monkeypatch):
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "codex",
         "titleProvider": "codex",
+        "requestedModel": "luna",
+        "titleModel": "luna",
         "error": None,
     }]
 
 
 @pytest.mark.parametrize(
-    ("session_provider", "title_model", "expected_suggestion", "expected_prompt", "expected_provider"),
+    ("session_provider", "title_model", "expected_suggestion", "expected_prompt", "expected_provider", "expected_model"),
     [
-        (Provider.CODEX, "haiku", "claude_code: Codex prompt", "Codex prompt", "claude_code"),
-        (Provider.CLAUDE_CODE, "luna", "codex: Claude prompt", "Claude prompt", "codex"),
+        (Provider.CODEX, "haiku", "claude_code: Codex prompt", "Codex prompt", "claude_code", "haiku"),
+        (Provider.CLAUDE_CODE, "luna", "codex: Claude prompt", "Claude prompt", "codex", "luna"),
     ],
 )
 def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
@@ -125,6 +140,7 @@ def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
     expected_suggestion,
     expected_prompt,
     expected_provider,
+    expected_model,
 ):
     frames = _suggest_title_frames(
         monkeypatch,
@@ -139,6 +155,8 @@ def test_fixed_title_model_overrides_generation_without_changing_prompt_source(
         "sourcePrompt": expected_prompt,
         "requestedProvider": expected_provider,
         "titleProvider": expected_provider,
+        "requestedModel": expected_model,
+        "titleModel": expected_model,
         "error": None,
     }]
 
@@ -160,6 +178,8 @@ def test_falls_back_when_the_requested_provider_is_not_running(monkeypatch):
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "claude_code",
         "titleProvider": "codex",
+        "requestedModel": "haiku",
+        "titleModel": "luna",
         "error": None,
     }]
 
@@ -180,6 +200,8 @@ def test_falls_back_when_the_requested_provider_fails(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": "codex",
+        "requestedModel": "haiku",
+        "titleModel": "luna",
         "error": None,
     }]
 
@@ -199,6 +221,8 @@ def test_reports_when_no_provider_is_running(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "no_provider_available",
     }]
 
@@ -217,6 +241,8 @@ def test_reports_when_every_provider_fails(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "generation_failed",
     }]
 
@@ -238,6 +264,8 @@ def test_reports_a_session_with_no_first_message_without_touching_a_provider(mon
         "sourcePrompt": "",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "no_prompt",
     }]
 
@@ -258,6 +286,8 @@ def test_falls_back_when_the_requested_provider_raises(monkeypatch):
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "claude_code",
         "titleProvider": "codex",
+        "requestedModel": "haiku",
+        "titleModel": "luna",
         "error": None,
     }]
 
@@ -277,6 +307,8 @@ def test_still_replies_when_every_provider_raises(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "generation_failed",
     }]
 
@@ -315,6 +347,8 @@ def test_still_replies_when_reading_the_first_message_raises(monkeypatch):
         "sourcePrompt": None,
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "no_prompt",
     }]
 
@@ -334,6 +368,8 @@ def test_treats_a_falsy_answer_as_a_failure(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "generation_failed",
     }]
 
@@ -352,6 +388,8 @@ def test_a_falsy_answer_still_lets_the_next_provider_win(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "claude_code",
         "titleProvider": "codex",
+        "requestedModel": "haiku",
+        "titleModel": "luna",
         "error": None,
     }]
 
@@ -404,6 +442,8 @@ def test_no_fallback_generates_with_the_requested_provider_only(monkeypatch):
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "codex",
         "titleProvider": "codex",
+        "requestedModel": "luna",
+        "titleModel": "luna",
         "error": None,
     }]
 
@@ -425,6 +465,8 @@ def test_no_fallback_reports_a_failure_instead_of_using_the_other_provider(monke
         "sourcePrompt": "Claude prompt",
         "requestedProvider": "codex",
         "titleProvider": None,
+        "requestedModel": "luna",
+        "titleModel": None,
         "error": "generation_failed",
     }]
 
@@ -445,6 +487,8 @@ def test_no_fallback_reports_a_provider_that_is_not_running(monkeypatch):
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "claude_code",
         "titleProvider": None,
+        "requestedModel": "haiku",
+        "titleModel": None,
         "error": "no_provider_available",
     }]
 
@@ -471,5 +515,51 @@ def test_unknown_title_model_uses_the_session_provider(monkeypatch):
         "sourcePrompt": "Codex prompt",
         "requestedProvider": "codex",
         "titleProvider": "codex",
+        "requestedModel": "luna",
+        "titleModel": "luna",
+        "error": None,
+    }]
+
+
+def test_qwen_title_frame(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CODEX,
+        title_model="qwen",
+        openrouter_key=True,
+        qwen_answer="Qwen title",
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "Qwen title",
+        "sourcePrompt": "Codex prompt",
+        "requestedProvider": "codex",
+        "titleProvider": None,
+        "requestedModel": "qwen",
+        "titleModel": "qwen",
+        "error": None,
+    }]
+
+
+def test_qwen_failure_frame_names_the_fallback_model(monkeypatch):
+    frames = _suggest_title_frames(
+        monkeypatch,
+        session_provider=Provider.CLAUDE_CODE,
+        title_model="qwen",
+        openrouter_key=True,
+        qwen_answer=None,
+    )
+
+    assert frames == [{
+        "type": "title_suggested",
+        "sessionId": "session-1",
+        "suggestion": "claude_code: Claude prompt",
+        "sourcePrompt": "Claude prompt",
+        "requestedProvider": "claude_code",
+        "titleProvider": "claude_code",
+        "requestedModel": "qwen",
+        "titleModel": "haiku",
         "error": None,
     }]
