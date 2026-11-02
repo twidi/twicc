@@ -5,7 +5,11 @@ are instant and conservative: they read the text only, make no network or model 
 raise. When a construct is not recognised with certainty, the text is complex and the model
 decides.
 
-Every regex is written without nested quantifiers, so the cost stays linear in the text size.
+Every regex is written without nested quantifiers, and the emphasis scan has a work budget, so the
+cost stays linear in the text size.
+
+A token with a single slash between two plain words (``src/main``, ``and/or``, ``TCP/IP``) stays
+simple: it cannot be told from ordinary prose.
 """
 
 import re
@@ -17,6 +21,9 @@ _MAX_LIST_ITEMS = 5
 _ITEM_LENGTH_LIMIT = 150
 # A line longer than this, with Markdown marks in it, goes to the model (bounds the emphasis scan).
 _MAX_MARKUP_LINE = 2000
+# Total work (sum of squared lengths of the lines with marks) allowed to the emphasis scan: it
+# keeps many long lines of unclosed marks linear.
+_MARKUP_WORK_BUDGET = 4_000_000
 
 _PRIVATE_USE = re.compile("[-]")
 _ESCAPE = re.compile(r"\\([\\*_~\[\]()#+\-.!|>{}<`])")
@@ -27,7 +34,16 @@ _LINK = re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
 _BACKTICK = "`"
 _HTML = re.compile(r"<[A-Za-z/!?]")
 _FOOTNOTE = re.compile(r"\[\^")
-_URL = re.compile(r"https?://|www\.", re.IGNORECASE)
+_URL = re.compile(r"://|mailto:|www\.", re.IGNORECASE)
+_ENTITY = re.compile(r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
+_BRACKET = re.compile(r"[\[\]]")
+_CLOSING_HASHES = re.compile(r"\s#+$")
+_HEX_LITERAL = re.compile(r"(?<![0-9A-Za-z])0[xX][0-9a-fA-F]{6,}")
+_DOMAIN_PATH = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}/")
+_DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/]")
+_FILE_NAME = re.compile(
+    r"[\w-]\.(?:py|js|ts|vue|md|json|yaml|yml|toml|txt|html|css|sh|rs|go|java|cpp|c|h)$", re.IGNORECASE
+)
 _UUID = re.compile(
     r"(?<![0-9A-Za-z])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])"
 )
@@ -42,7 +58,7 @@ _SETEXT_UNDERLINE = re.compile(r"={3,}")
 _THEMATIC_BREAK = re.compile(r"([-*_])(?:\s*\1){2,}")
 _QUOTE = re.compile(r"\s*(?:>\s?)+")
 _HEADING = re.compile(r"#{1,6}\s+")
-_LIST_ITEM = re.compile(r"(\s*)(?:[-+*]|\d{1,9}[.)])(?:\s+|$)")
+_LIST_ITEM = re.compile(r"(\s*)(?:[-+*]|\d{1,3}[.)])(?:\s+|$)")
 
 _BOLD_ITALIC = re.compile(r"(?<![*\w])\*\*\*(?=\S)(.+?)(?<=\S)\*\*\*(?![*\w])")
 _BOLD_STAR = re.compile(r"(?<!\*)\*\*(?=\S)(.+?)(?<=\S)\*\*(?!\*)")
@@ -56,6 +72,8 @@ _BLANK_RUN = re.compile(r"\n{3,}")
 def _is_path(token: str) -> bool:
     token = token.strip(_TOKEN_EDGES).rstrip(".")
     if len(token) > 1 and token.startswith(("/", "./", "~/", "../")):
+        return True
+    if _DRIVE_PATH.match(token) or _DOMAIN_PATH.match(token) or _FILE_NAME.search(token):
         return True
     if "/" not in token or not _SLASH_BETWEEN_LETTERS.search(token):
         return False
@@ -74,6 +92,9 @@ def _has_complex_content(text: str) -> bool:
         or _HTML.search(text)
         or _FOOTNOTE.search(text)
         or _URL.search(text)
+        or _ENTITY.search(text)
+        or _BRACKET.search(text)  # a link, task box or reference the link rule did not reduce
+        or _HEX_LITERAL.search(text)
         or _UUID.search(text)
         or _LONG_DIGITS.search(text)
     ):
@@ -110,14 +131,20 @@ def _clean(text: str) -> str | None:
     if _has_complex_content(text):
         return None
 
+    lines = text.split("\n")
+    if lines[0].strip() == "---" and any(line.strip() in ("---", "...") for line in lines[1:]):
+        return None  # front matter
     output: list[str] = []
+    work = 0
     items = 0
     in_list = False
     item_length = 0
-    for raw in text.split("\n"):
+    for raw in lines:
         line = raw.rstrip()
-        if len(line) > _MAX_MARKUP_LINE and _MARKUP_CHARS.search(line):
-            return None
+        if _MARKUP_CHARS.search(line):
+            work += len(line) ** 2
+            if len(line) > _MAX_MARKUP_LINE or work > _MARKUP_WORK_BUDGET:
+                return None
         if not line.strip():
             output.append("")  # a blank line does not end a list: a loose list is one list
             continue
@@ -141,6 +168,8 @@ def _clean(text: str) -> str | None:
         heading = _HEADING.match(line)
         item = _LIST_ITEM.match(line)
         if heading:
+            if _CLOSING_HASHES.search(line):
+                return None
             in_list = False
             items = 0
             line = line[heading.end() :]
@@ -174,7 +203,8 @@ def direct_text(text: str, origin: str | None = None) -> str | None:
     """The text cleaned of its Markdown when it is simple, else None (complex: the model decides).
 
     ``origin`` is None for a message (judged on its Markdown source), ``"rendered"`` for a
-    selection from rendered content, ``"file"`` for a selection from a file.
+    selection from rendered content, ``"file"`` for a selection from a file. Any other value is
+    treated as a message: the caller validates ``origin``.
     """
     try:
         if origin == "file":

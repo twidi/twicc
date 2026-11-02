@@ -25,6 +25,10 @@ SIMPLE = [
     ("- a\n\n- b\n\n- c\n\n- d\n\n- e", "a\n\nb\n\nc\n\nd\n\ne"),
     ("- " + "x" * 149 + "\n- y", "x" * 149 + "\ny"),
     ("- a\n- b\n- c\n- d\n- e", "a\nb\nc\nd\ne"),
+    ("1999. Was a good year", "1999. Was a good year"),
+    ("1999) Was a good year", "1999) Was a good year"),
+    # Undecidable against ordinary prose: a single slash between two words stays simple.
+    ("Open src/main and TCP/IP", "Open src/main and TCP/IP"),
 ]
 
 COMPLEX = [
@@ -56,6 +60,25 @@ COMPLEX = [
     "Title\n=====",
     "    indented code",
     "- a\n\n- b\n\n- c\n\n- d\n\n- e\n\n- f",
+    "[a [b] c](x)",
+    "[a](foo(1).html)",
+    "- [ ] todo",
+    "- [x] done",
+    "See [x][ref]",
+    "[x]: https_not_needed",
+    "## T ##",
+    "---\ntitle: x\n---\nBody",
+    "Fish &amp; chips",
+    "Fish &#38; chips",
+    "Get ftp://x now",
+    "Write mailto:a@b.com now",
+    "Go to example.com/path now",
+    "Open C:\\x now",
+    "Open C:/x now",
+    "Value 0x1F3A9B2C here",
+    "Open foo.py now",
+    "Read README.md now",
+    "Open a.h now",
 ]
 
 
@@ -116,3 +139,11 @@ def test_linear_on_a_big_text(text):
     started = time.perf_counter()
     direct_text(text)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize("mark", ["*a ", "**a ", "_a ", "__a ", "~~a ", "[a ", "***a "])
+def test_many_long_lines_of_unclosed_marks_stay_fast(mark):
+    text = "\n".join([mark * (2000 // len(mark))] * 50)
+    started = time.perf_counter()
+    direct_text(text)
+    assert time.perf_counter() - started < 0.2
