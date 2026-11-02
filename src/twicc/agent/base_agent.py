@@ -188,6 +188,7 @@ class BaseAgent(StopOriginMixin):
         self.completion_controller = CompletionController(run_id=str(uuid4()))
         self._completion_enabled = False
         self._completion_publication_lock = asyncio.Lock()
+        self._completion_publication_task: asyncio.Task | None = None
         self._completion_timer_task: asyncio.Task | None = None
         self._completion_timer_candidate: CompletionCandidate | None = None
         self._completion_tasks: set[asyncio.Task] = set()
@@ -273,8 +274,13 @@ class BaseAgent(StopOriginMixin):
         task.add_done_callback(done)
         return task
 
-    def _cancel_completion_timer(self) -> None:
+    def _cancel_completion_timer(self, *, preserve_admitted: bool = False) -> None:
         timer = self._completion_timer_task
+        if (preserve_admitted and timer is not None and timer is self._completion_publication_task
+                and timer is not asyncio.current_task()):
+            # An admitted transaction owns this task until its writer drains.
+            # A later candidate interrupt must not cancel an older publication.
+            return
         self._completion_timer_task = None
         self._completion_timer_candidate = None
         self._completion_retry_deadline = None
@@ -382,7 +388,7 @@ class BaseAgent(StopOriginMixin):
         if self.completion_controller.candidate() is None:
             return False
         snapshot = self.completion_controller.terminate("ended", asyncio.get_running_loop().time())
-        self._cancel_completion_timer()
+        self._cancel_completion_timer(preserve_admitted=True)
         if snapshot is None:
             return False
         self.ephemeral_soft_interrupted = self.ephemeral

@@ -582,3 +582,166 @@ def test_failed_confirmation_then_stop_reconciles_claim_before_process_deletion(
         assert [call.args[0].state for call in manager._broadcast_info.await_args_list] == [AgentState.DEAD]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("death", [False, True])
+def test_recovery_rollback_restores_process_mirror_before_retry(bridge, death):
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        with patch.object(manager, "_persist_completion_admitted", new=AsyncMock(return_value=False)):
+            await manager._confirm_completion(agent, ticket)
+        agent._cancel_completion_timer()
+        claimed = agent.completion_controller.snapshot()
+        agent._completion_activity()
+        agent._cancel_completion_timer()
+        if death:
+            agent.mark_stopping()
+            agent._set_state(AgentState.DEAD)
+        original = manager._persist_process_run_transition_admitted
+
+        def reject_second_transition(current, state):
+            if state == AgentState.ASSISTANT_TURN:
+                raise RuntimeError("second transition rolls back")
+            original(current, state)
+
+        with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=reject_second_transition):
+            if death:
+                await manager._persist_process_run_transition(agent, AgentState.DEAD)
+            else:
+                await manager._retry_completion(agent, claimed)
+        assert agent.process_run.state == AgentState.ASSISTANT_TURN.value
+        row = await asyncio.to_thread(ProcessRun.objects.get, pk=agent.process_run.pk)
+        assert row.state == agent.process_run.state
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        assert await asyncio.to_thread(TimelineEvent.objects.count) == 0
+        if death:
+            await manager._persist_process_run_transition(agent, AgentState.DEAD)
+        else:
+            await manager._retry_completion(agent, claimed)
+            if agent._completion_tasks:
+                await asyncio.gather(*tuple(agent._completion_tasks))
+        boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+            kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
+        ).order_by("id").values_list("kind", flat=True)))
+        expected = [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        if death:
+            expected.append(TimelineKind.TURN_ENDED)
+        assert boundaries == expected
+        assert (await asyncio.to_thread(LogicalTurn.objects.get, pk=claimed.turn_id)).outcome == "normal"
+        agent._cancel_completion_timer()
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_committed_retry_is_idempotent_and_unblocks_later_interval(bridge):
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        with patch.object(manager, "_persist_completion_admitted", new=AsyncMock(return_value=False)):
+            await manager._confirm_completion(agent, ticket)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = manager._persist_completion_admitted
+
+        async def committed_then_blocked(current, snapshot, *, state=None):
+            result = await original(current, snapshot, state=state)
+            entered.set()
+            await release.wait()
+            return result
+
+        with patch.object(manager, "_persist_completion_admitted", side_effect=committed_then_blocked):
+            agent._completion_holds_changed(frozenset())
+            retry = agent._completion_timer_task
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            retry.cancel()
+            agent._completion_activity()
+            latest = agent.completion_controller.snapshot()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await retry
+        agent._completion_holds_changed(frozenset())
+        await asyncio.wait_for(agent._completion_timer_task, timeout=2)
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        assert not agent._completion_pending_publications
+        first = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        second = await asyncio.to_thread(LogicalTurn.objects.get, pk=latest.turn_id)
+        assert first.outcome == "normal"
+        assert second.outcome is None
+        assert first.position < second.position
+        assert (await asyncio.to_thread(ProcessRun.objects.get, pk=agent.process_run.pk)).state == AgentState.ASSISTANT_TURN.value
+        boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+            kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
+        ).order_by("id").values_list("kind", flat=True)))
+        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        manager._broadcast_info.assert_not_awaited()
+        agent._cancel_completion_timer()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("older_rejected_again", [False, True])
+def test_candidate_interrupt_preserves_an_older_admitted_retry(bridge, older_rejected_again):
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        with patch.object(manager, "_persist_completion_admitted", new=AsyncMock(return_value=False)):
+            await manager._confirm_completion(agent, ticket)
+        entered, release, interrupt_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = manager._persist_completion_admitted
+        original_end = manager._end_completion
+        attempts = 0
+
+        async def committed_then_blocked(current, snapshot, *, state=None):
+            nonlocal attempts
+            if snapshot.turn_id == ticket.turn_id:
+                attempts += 1
+                if attempts == 1:
+                    result = False if older_rejected_again else await original(current, snapshot, state=state)
+                    entered.set()
+                    await release.wait()
+                    return result
+            return await original(current, snapshot, state=state)
+
+        async def end(current, snapshot):
+            interrupt_entered.set()
+            return await original_end(current, snapshot)
+
+        agent._completion_end_callback = end
+        with patch.object(manager, "_persist_completion_admitted", side_effect=committed_then_blocked):
+            agent._completion_holds_changed(frozenset())
+            retry = agent._completion_timer_task
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            agent._completion_activity()
+            latest = agent.completion_controller.snapshot()
+            newer_publication = asyncio.create_task(agent._notify_state_change())
+            agent._completion_provider_ended()
+            interrupt = asyncio.create_task(agent._completion_interrupt_candidate())
+            await asyncio.wait_for(interrupt_entered.wait(), timeout=2)
+            try:
+                assert retry.cancelling() == 0
+            finally:
+                release.set()
+                results = await asyncio.gather(retry, newer_publication, interrupt, return_exceptions=True)
+                if agent._completion_tasks:
+                    await asyncio.gather(*tuple(agent._completion_tasks))
+        assert results[-1] is True
+        assert not agent._completion_pending_publications
+        first = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        second = await asyncio.to_thread(LogicalTurn.objects.get, pk=latest.turn_id)
+        assert first.outcome == "normal"
+        assert second.outcome == "ended"
+        assert first.position < second.position
+        assert agent.state == AgentState.USER_TURN
+        assert (await asyncio.to_thread(ProcessRun.objects.get, pk=agent.process_run.pk)).state == AgentState.USER_TURN.value
+        boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+            kind__in=[TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED],
+        ).order_by("id").values_list("kind", flat=True)))
+        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED]
+        states = [call.args[0].state for call in manager._broadcast_info.await_args_list]
+        assert states[-1] == AgentState.USER_TURN
+        assert states.count(AgentState.USER_TURN) == 1
+        assert all(state == AgentState.ASSISTANT_TURN for state in states[:-1])
+        agent._cancel_completion_timer()
+
+    asyncio.run(scenario())
