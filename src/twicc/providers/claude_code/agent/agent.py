@@ -1496,6 +1496,8 @@ class ClaudeCodeAgent(BaseAgent):
         Raises:
             RuntimeError: If the process is not started.
         """
+        if await self._completion_interrupt_candidate():
+            return True
         if self._client is None:
             raise RuntimeError("Process not started")
 

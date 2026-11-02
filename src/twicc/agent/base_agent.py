@@ -14,12 +14,15 @@ import asyncio
 from dataclasses import replace
 import logging
 import time
+from uuid import uuid4
 from collections.abc import Callable, Collection, Coroutine, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from twicc.agent.completion import CompletionController
+from twicc.agent.completion_types import CompletionCandidate, CompletionSnapshot, NativeMessageRef
 from twicc.agent.auto_deny import AUTO_DENY_CHECK_INTERVAL_SECONDS, AUTO_DENY_DELAY_SECONDS
 from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
 from twicc.agent.stop_origin import StopOriginMixin
@@ -180,9 +183,165 @@ class BaseAgent(StopOriginMixin):
         self._work_dirs: list[str] = []
         self._init_shell_notice_state()
 
+        # Providers opt in by recording completion facts. Until then, existing
+        # state transitions and one-shot ephemeral results remain unchanged.
+        self.completion_controller = CompletionController(run_id=str(uuid4()))
+        self._completion_enabled = False
+        self._completion_publication_lock = asyncio.Lock()
+        self._completion_timer_task: asyncio.Task | None = None
+        self._completion_timer_candidate: CompletionCandidate | None = None
+        self._completion_tasks: set[asyncio.Task] = set()
+        self._completion_persist_task: asyncio.Task | None = None
+        self._completion_pending_snapshots: dict[str, CompletionSnapshot] = {}
+        self._completion_last_queued: CompletionSnapshot | None = None
+        self._completion_persist_callback: Callable | None = None
+        self._completion_confirm_callback: Callable | None = None
+        self._completion_end_callback: Callable | None = None
+        self._completion_openings: dict[str, Any] = {}
+        self._completion_opened_ids: set[str] = set()
+        self._completion_source_floor = 0
+        self._completion_storage_incarnation: str | None = None
+        self._completion_history_epoch: int | None = None
+        self._completion_committed_snapshot: CompletionSnapshot | None = None
+        self._state_revision = 0
+
     # ------------------------------------------------------------------
     # State machine
     # ------------------------------------------------------------------
+
+    def _completion_activity(self, *, first_ref: NativeMessageRef | None = None) -> None:
+        """Record actual root work before the provider yields control."""
+        from django.utils import timezone
+
+        if self.state == AgentState.DEAD or self._stop_requested:
+            return
+        self._completion_enabled = True
+        previous = self.completion_controller.snapshot()
+        self.completion_controller.activity(asyncio.get_running_loop().time(), first_ref=first_ref)
+        snapshot = self.completion_controller.snapshot()
+        if snapshot.turn_id != previous.turn_id:
+            # Capture only observations made before work. Never infer the floor
+            # from indexing that may have advanced during an awaited DB write.
+            self._completion_openings[snapshot.turn_id] = (
+                timezone.now(), self._completion_source_floor,
+                self._completion_storage_incarnation, self._completion_history_epoch,
+            )
+        if self.state != AgentState.ASSISTANT_TURN:
+            self._set_state(AgentState.ASSISTANT_TURN)
+        self._completion_refresh()
+
+    def _completion_provider_ended(self, *, final_ref: NativeMessageRef | None = None) -> None:
+        self.completion_controller.provider_ended(asyncio.get_running_loop().time(), final_ref=final_ref)
+        self._completion_refresh()
+
+    def _completion_holds_changed(self, holds: frozenset[str]) -> None:
+        self.completion_controller.set_holds(holds, asyncio.get_running_loop().time())
+        self._completion_refresh()
+
+    def _completion_awaiting_changed(self, awaiting: bool) -> None:
+        self.completion_controller.set_awaiting(awaiting, asyncio.get_running_loop().time())
+        self._completion_refresh()
+
+    def _completion_input_pending(self, token: str) -> None:
+        self.completion_controller.input_pending(token, asyncio.get_running_loop().time())
+        self._completion_refresh()
+
+    def _completion_input_settled(self, token: str, status: str) -> None:
+        self.completion_controller.input_settled(token, status, asyncio.get_running_loop().time())
+        self._completion_refresh()
+
+    def _completion_terminate(self, outcome: str) -> CompletionSnapshot | None:
+        snapshot = self.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
+        self._cancel_completion_timer()
+        if snapshot is not None:
+            self._completion_refresh()
+        return snapshot
+
+    def _completion_own_task(self, coroutine: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(coroutine, name=f"completion-{self.session_id}")
+        self._completion_tasks.add(task)
+
+        def done(finished):
+            self._completion_tasks.discard(finished)
+            if not finished.cancelled() and finished.exception() is not None:
+                self._logger.error("Completion publication failed for %s", self.session_id,
+                                   exc_info=finished.exception())
+
+        task.add_done_callback(done)
+        return task
+
+    def _cancel_completion_timer(self) -> None:
+        timer = self._completion_timer_task
+        self._completion_timer_task = None
+        self._completion_timer_candidate = None
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+
+    def _completion_refresh(self) -> None:
+        snapshot = self.completion_controller.snapshot()
+        if (snapshot.ordinal and self._completion_persist_callback is not None
+                and snapshot != self._completion_last_queued):
+            self._completion_pending_snapshots[snapshot.turn_id] = snapshot
+            self._completion_last_queued = snapshot
+            if self._completion_persist_task is None:
+                self._completion_persist_task = self._completion_own_task(self._completion_drain_snapshots())
+        candidate = self.completion_controller.candidate()
+        if candidate == self._completion_timer_candidate:
+            return
+        self._cancel_completion_timer()
+        if candidate is not None:
+            self._completion_timer_candidate = candidate
+            self._completion_timer_task = asyncio.create_task(
+                self._completion_wait(candidate), name=f"completion-timer-{self.session_id}",
+            )
+
+    async def _completion_drain_snapshots(self) -> None:
+        """Keep one writer admission in flight and the latest snapshot per interval.
+
+        Dict insertion order preserves closed intervals before later openings.
+        Streaming bursts update facts immediately without queuing per-token tasks.
+        """
+        try:
+            while self._completion_pending_snapshots:
+                turn_id = next(iter(self._completion_pending_snapshots))
+                snapshot = self._completion_pending_snapshots.pop(turn_id)
+                await self._completion_persist_callback(self, snapshot)
+        finally:
+            self._completion_persist_task = None
+
+    async def _completion_wait(self, candidate: CompletionCandidate) -> None:
+        try:
+            await asyncio.sleep(max(0.0, candidate.deadline - asyncio.get_running_loop().time()))
+            if self._completion_confirm_callback is not None:
+                await self._completion_confirm_callback(self, candidate)
+            elif self.ephemeral:
+                snapshot = self.completion_controller.claim_due(candidate, asyncio.get_running_loop().time())
+                if snapshot is not None:
+                    self._set_state(AgentState.USER_TURN)
+                    await self._notify_state_change()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._logger.exception("Completion confirmation failed for %s", self.session_id)
+        finally:
+            if self._completion_timer_task is asyncio.current_task():
+                self._completion_timer_task = None
+                self._completion_timer_candidate = None
+
+    async def _completion_interrupt_candidate(self) -> bool:
+        """End a quiet candidate immediately, without an SDK control request."""
+        if self.completion_controller.candidate() is None:
+            return False
+        snapshot = self.completion_controller.terminate("ended", asyncio.get_running_loop().time())
+        self._cancel_completion_timer()
+        if snapshot is None:
+            return False
+        self.ephemeral_soft_interrupted = self.ephemeral
+        if self._completion_end_callback is not None:
+            return await self._completion_end_callback(self, snapshot)
+        self._set_state(AgentState.USER_TURN)
+        await self._notify_state_change()
+        return True
 
     @property
     def _logger(self) -> logging.Logger:
@@ -195,6 +354,9 @@ class BaseAgent(StopOriginMixin):
 
     def _set_state(self, new_state: AgentState) -> None:
         """Transition into ``new_state`` and trigger the DEAD-event side-effect."""
+        if new_state == AgentState.DEAD and self._completion_enabled:
+            self._completion_terminate("provider_error" if self.error else "ended")
+        self._state_revision += 1
         old_state = self.state
         self.previous_state = old_state
         self.state = new_state
@@ -226,6 +388,10 @@ class BaseAgent(StopOriginMixin):
                 # origin of whoever triggered this transition (often a stale context) nor falls to the
                 # default. Deferred writers inside the chain use an origin captured earlier.
                 with system_marker():
+                    if self.state == AgentState.DEAD and self._completion_tasks:
+                        # _transition_to_dead shields this notify task. Drain
+                        # journal work here, after DEAD is already observable.
+                        await asyncio.gather(*tuple(self._completion_tasks))
                     await self._state_change_callback(self)
             except Exception as e:
                 self._logger.error(
@@ -462,6 +628,7 @@ class BaseAgent(StopOriginMixin):
         if auto_deny_response is not None:
             request = replace(request, auto_deny_at=request.created_at + AUTO_DENY_DELAY_SECONDS)
         self._pending_requests[request.request_id] = request
+        self._completion_awaiting_changed(True)
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending_futures[request.request_id] = future
 
@@ -482,6 +649,7 @@ class BaseAgent(StopOriginMixin):
                 timer.cancel()
             # Drop the entry whether we resolved or were cancelled.
             self._pending_requests.pop(request.request_id, None)
+            self._completion_awaiting_changed(bool(self._pending_requests))
             self._pending_futures.pop(request.request_id, None)
             # The agent stops being blocked on the user the instant the LAST
             # pending request clears (parallel approvals resolve independently,
@@ -784,6 +952,7 @@ class BaseAgent(StopOriginMixin):
         """
         if self._stop_requested or self.state == AgentState.DEAD:
             return False
+        self._completion_terminate("ended")
         self._stop_requested = True
         return True
 

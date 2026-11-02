@@ -24,6 +24,7 @@ from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
+from .completion_types import CompletionCandidate, CompletionSnapshot
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -666,6 +667,13 @@ class BaseAgentManager:
                 from django.db import transaction
 
                 with transaction.atomic():
+                    observed = Session.objects.filter(id=session_id).values(
+                        "last_line", "storage_incarnation", "history_epoch",
+                    ).first()
+                    if observed is not None:
+                        agent._completion_source_floor = observed["last_line"] or 0
+                        agent._completion_storage_incarnation = observed["storage_incarnation"]
+                        agent._completion_history_epoch = observed["history_epoch"]
                     pr = ProcessRun.objects.create(
                         provider=agent.provider.value,
                         session_id=session_id,
@@ -683,7 +691,11 @@ class BaseAgentManager:
 
         admission = contextlib.nullcontext() if getattr(agent, "ephemeral", False) else storage_admission()
         async with admission:
+            previous_agent = self._agents.get(session_id)
+            if previous_agent is not None and previous_agent is not agent:
+                previous_agent._completion_terminate("ended")
             self._agents[session_id] = agent
+            self._bind_completion_callbacks(agent)
             self._final_title_checks.pop(session_id, None)
             agent._background_work_callback = self._persist_background_work
             ephemeral_runs.mark_registered(session_id)
@@ -708,6 +720,126 @@ class BaseAgentManager:
     # ------------------------------------------------------------------
     # State-change skeleton
     # ------------------------------------------------------------------
+
+    def _bind_completion_callbacks(self, agent: BaseAgent) -> None:
+        agent._completion_persist_callback = self._persist_completion
+        agent._completion_confirm_callback = self._confirm_completion
+        agent._completion_end_callback = self._end_completion
+        agent._state_change_callback = self._on_state_change
+
+    def _completion_lifecycle_guard(self, agent: BaseAgent) -> tuple[int, CompletionSnapshot]:
+        """Capture before awaits; provider overrides recheck before each lifecycle hook."""
+        return agent._state_revision, agent.completion_controller.snapshot()
+
+    def _completion_lifecycle_is_current(self, agent: BaseAgent, guard: tuple[int, CompletionSnapshot]) -> bool:
+        """Guard provider hooks after super(), without holding publication locks.
+
+        DEAD cleanup intentionally removes the agent. A replacement still makes
+        the old callback obsolete; absent registry entries are valid for DEAD.
+        Legacy providers retain their pre-controller lifecycle behavior.
+        """
+        if not agent._completion_enabled:
+            return True
+        current = self._agents.get(agent.session_id)
+        return (
+            (current is agent or (current is None and agent.state == AgentState.DEAD))
+            and self._completion_lifecycle_guard(agent) == guard
+        )
+
+    async def _persist_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
+        """Store a fact snapshot through writer admission, without public completion."""
+        if agent.ephemeral:
+            return True
+        async def admitted():
+            return await self._persist_completion_admitted(agent, snapshot)
+        try:
+            return await run_under_db_write_lock(admitted)
+        except Exception:
+            logger.exception("Error persisting logical completion for %s", agent.session_id)
+            return False
+
+    async def _persist_completion_admitted(
+        self, agent: BaseAgent, snapshot: CompletionSnapshot, *, state: AgentState | None = None,
+    ) -> bool:
+        """Commit the journal and optional ProcessRun transition in one transaction."""
+        if agent.ephemeral:
+            return True
+        from django.db import transaction
+        from django.utils import timezone
+
+        from twicc.core.services.logical_turns import open_logical_turn, store_turn_snapshot
+
+        opening = agent._completion_openings.get(snapshot.turn_id)
+        if opening is None:
+            # Direct controller consumers may open before a provider adapter
+            # captures timing. Scope still comes only from the pre-work cache.
+            opening = (timezone.now(), agent._completion_source_floor,
+                       agent._completion_storage_incarnation, agent._completion_history_epoch)
+            agent._completion_openings[snapshot.turn_id] = opening
+        opened_at, source_floor, incarnation, epoch = opening
+        needs_open = snapshot.turn_id not in agent._completion_opened_ids
+
+        def persist():
+            with transaction.atomic():
+                if needs_open:
+                    open_logical_turn(
+                        turn_id=snapshot.turn_id, session_id=agent.session_id, provider=agent.provider.value,
+                        run_id=snapshot.run_id, process_run_id=agent.process_run.pk if agent.process_run else None,
+                        ordinal=snapshot.ordinal, source_floor=source_floor,
+                        storage_incarnation=incarnation, history_epoch=epoch, opened_at=opened_at,
+                    )
+                stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
+                if stored and state is not None:
+                    self._persist_process_run_transition_admitted(agent, state)
+                return stored
+
+        stored = await asyncio.to_thread(persist)
+        agent._completion_opened_ids.add(snapshot.turn_id)
+        return stored
+
+    async def _confirm_completion(self, agent: BaseAgent, candidate: CompletionCandidate) -> None:
+        """Claim only after writer admission; lifecycle hooks execute after unlocking."""
+        await self._commit_completion(
+            agent, lambda: agent.completion_controller.claim_due(candidate, asyncio.get_running_loop().time()),
+        )
+
+    async def _end_completion(self, agent: BaseAgent, snapshot: CompletionSnapshot) -> bool:
+        return await self._commit_completion(
+            agent, lambda: snapshot if agent.completion_controller.snapshot() == snapshot else None,
+        )
+
+    async def _commit_completion(
+        self, agent: BaseAgent, decide: Callable[[], CompletionSnapshot | None],
+    ) -> bool:
+        snapshot = None
+        async with agent._completion_publication_lock:
+            async def admitted():
+                nonlocal snapshot
+                if self._agents.get(agent.session_id) is not agent or agent._stop_requested:
+                    return False
+                snapshot = decide()
+                if snapshot is None:
+                    return False
+                return await self._persist_completion_admitted(agent, snapshot, state=AgentState.USER_TURN)
+
+            try:
+                committed = await admitted() if agent.ephemeral else await run_under_db_write_lock(admitted)
+            except Exception:
+                logger.exception("Error confirming logical completion for %s", agent.session_id)
+                committed = False
+            if not committed or agent.completion_controller.snapshot() != snapshot:
+                return False
+            if self._agents.get(agent.session_id) is not agent or agent._stop_requested:
+                return False
+            agent._completion_committed_snapshot = snapshot
+            agent._set_state(AgentState.USER_TURN)
+            # A lifecycle hook can await nested DEAD. It must not cancel the
+            # timer task that is currently waiting for that hook to drain.
+            if agent._completion_timer_task is asyncio.current_task():
+                agent._completion_timer_task = None
+                agent._completion_timer_candidate = None
+        await agent._notify_state_change()
+        return True
 
     async def _on_state_change(self, agent: BaseAgent) -> None:
         """Default skeleton: persist ProcessRun state → broadcast → DB lifecycle → registry cleanup.
@@ -737,9 +869,21 @@ class BaseAgentManager:
 
             # Reserve before the first await. A newer registration revokes it.
             final_title_run = authorize_final_title_check(self, agent)
-        if not getattr(agent, "ephemeral", False):
-            await self._persist_process_run_transition(agent, info.state)
-        await self._broadcast_info(info)
+        guard = self._completion_lifecycle_guard(agent)
+        async with agent._completion_publication_lock:
+            if not self._completion_lifecycle_is_current(agent, guard):
+                return
+            already_committed = (
+                agent._completion_enabled and info.state == AgentState.USER_TURN
+                and agent._completion_committed_snapshot == agent.completion_controller.snapshot()
+            )
+            if not getattr(agent, "ephemeral", False) and not already_committed:
+                await self._persist_process_run_transition(agent, info.state)
+            if not self._completion_lifecycle_is_current(agent, guard):
+                return
+            await self._broadcast_info(info)
+        if not self._completion_lifecycle_is_current(agent, guard):
+            return
         # The broadcast carried this snapshot. If the work changed while the
         # persist was awaited (a refresh may even have published the newer
         # value, which the broadcast just overwrote on the front), publish
@@ -757,6 +901,8 @@ class BaseAgentManager:
             self._cancel_pending_title_verify(agent.session_id)
             if not getattr(agent, "ephemeral", False):
                 await self._update_session_stopped_at(agent)
+            if not self._completion_lifecycle_is_current(agent, guard):
+                return
             self._cleanup_dead(agent)
             if final_title_run is not None:
                 from twicc.title_auto_task import request_title_check
@@ -774,7 +920,8 @@ class BaseAgentManager:
             note_activity()
             if not getattr(agent, "ephemeral", False):
                 await self._flush_pending_title(agent)
-        if getattr(agent, "ephemeral", False):
+        if (getattr(agent, "ephemeral", False)
+                and self._completion_lifecycle_is_current(agent, guard)):
             await self._complete_ephemeral(agent, info.state)
 
     async def _complete_ephemeral(self, agent: BaseAgent, state: AgentState) -> None:
@@ -1157,155 +1304,53 @@ class BaseAgentManager:
     async def _persist_process_run_transition(
         self, agent: BaseAgent, state: AgentState,
     ) -> None:
-        """Mirror a runtime state transition onto the agent's ProcessRun row.
+        """Admit a ProcessRun write; completion reuses the admitted implementation."""
+        if agent.process_run is None:
+            return
+        try:
+            await run_under_db_write_lock(
+                lambda: asyncio.to_thread(self._persist_process_run_transition_admitted, agent, state),
+            )
+        except Exception:
+            logger.exception("Error persisting process state %s for %s", state.value, agent.session_id)
 
-        For non-``DEAD`` transitions: UPDATE ``state``,
-        ``last_state_change_at`` and ``agent_pid``. For ``DEAD``: consult
-        the provider helper — if it returns ``True``, UPDATE the row to
-        ``state=DEAD`` (same triplet); otherwise DELETE the row (and clear
-        ``agent.process_run`` so override-level post-DEAD logic can branch
-        on whether the row was kept).
+    def _persist_process_run_transition_admitted(self, agent: BaseAgent, state: AgentState) -> None:
+        """Write on the admitted worker thread, including the existing timeline hook.
 
-        ``agent_pid`` is refreshed on every UPDATE because
-        :meth:`BaseAgent.get_pid` returns ``None`` until the provider has
-        actually spawned its subprocess — which only happens inside
-        ``agent.start()``, after ``ProcessRun.objects.create`` has already
-        run. The first transition out of ``STARTING`` is therefore the
-        earliest moment we can persist a usable value. On ``DEAD`` the
-        subprocess is gone again, so ``get_pid()`` flips back to ``None``
-        and the column reflects that.
-
-        ``awaiting_user_input`` mirrors ``bool(agent.pending_requests)``,
-        forced to ``False`` on ``DEAD`` (a dead agent is not awaiting
-        anything, even if its pending-requests dict still has entries that
-        will be drained in the cancellation cleanup). The column is the
-        persistable view of "blocked on user click", since the runtime
-        ``state`` stays in ``ASSISTANT_TURN`` while the SDK's
-        ``can_use_tool`` callback blocks. This persist site fires both on
-        explicit state transitions and on pending-request add/remove,
-        because :meth:`BaseAgent._await_pending_request` invokes
-        ``_notify_state_change`` at both moments.
-
-        ``background_work_in_progress`` receives the agent's background-work
-        snapshot read once the lock is held (forced to ``None`` on ``DEAD``).
-        Between transitions, :meth:`_persist_background_work` keeps it
-        current.
-
-        The helper read + write are grouped under a single
-        ``run_under_db_write_lock`` acquire so no other writer can race
-        between the keep/delete decision and the DB mutation (mirrors the
-        pattern previously used in Claude Code's ``_on_state_change``).
-        Every log emission goes through :func:`provider_log_context` so
-        records carry the agent's provider tag — agent message loops do
-        not set the context themselves, so wrapping it here is the
-        canonical attribution point. No-op when the agent has no
-        process_run attached (early failure before ``_register_and_start``
-        completed).
+        This implementation never reacquires writer admission. A caller can wrap
+        it and the logical journal snapshot in one transaction.
         """
         if agent.process_run is None:
             return
-
         from django.utils import timezone
 
         from twicc.agent.timeline_hooks import record_process_changes, record_process_ended, snapshot_of
         from twicc.core.models import ProcessRun
-        from twicc.logging_context import provider_log_context
         from twicc.providers.helpers import get_provider_helpers
 
-        now = timezone.now()
-        pr_pk = agent.process_run.pk
-        state_value = state.value
-        agent_pid = agent.get_pid()
-        # ``awaiting_user_input`` is the persistable counterpart of
-        # ``agent.pending_requests``. Force ``False`` on DEAD: the pending
-        # requests dict may still hold entries at the moment the DEAD
-        # callback runs (cleanup happens in the ``finally`` of
-        # ``_await_pending_request`` AFTER the future is cancelled), but a
-        # dead agent is not actually awaiting anything — the column reflects
-        # the operational truth.
-        awaiting = False if state == AgentState.DEAD else bool(agent.pending_requests)
-
         with provider_log_context(agent.provider):
-            if state != AgentState.DEAD:
-                async def _persist_update() -> None:
-                    background_work = agent.background_work_snapshot()
-                    prev = snapshot_of(agent.process_run) if agent.process_run is not None else None
-                    await asyncio.to_thread(
-                        lambda: ProcessRun.objects.filter(pk=pr_pk).update(
-                            state=state_value,
-                            last_state_change_at=now,
-                            agent_pid=agent_pid,
-                            awaiting_user_input=awaiting,
-                            background_work_in_progress=background_work,
-                        )
-                    )
-                    if prev is not None:
-                        await asyncio.to_thread(
-                            lambda: record_process_changes(
-                                agent, prev, new_state=state_value, new_awaiting=awaiting, new_work=background_work,
-                            )
-                        )
-                    if agent.process_run is not None:
-                        agent.process_run.state = state_value
-                        agent.process_run.last_state_change_at = now
-                        agent.process_run.agent_pid = agent_pid
-                        agent.process_run.awaiting_user_input = awaiting
-                        agent.process_run.background_work_in_progress = background_work
-
-                try:
-                    await run_under_db_write_lock(_persist_update)
-                except Exception as e:
-                    logger.error(
-                        "Error persisting state %s on process run %s for session %s: %s",
-                        state_value, pr_pk, agent.session_id, e,
-                    )
-                return
-
-            # DEAD: helper decides keep vs delete. Helper is sync (typically
-            # a DB read); wrapped in ``to_thread`` so the event loop stays free.
-            helper = get_provider_helpers(agent.provider)
-
-            async def _settle_dead() -> None:
-                prev = snapshot_of(agent.process_run)
-                await asyncio.to_thread(lambda: record_process_ended(agent, prev))
-                keep = await asyncio.to_thread(
-                    lambda: helper.should_keep_dead_process_run(
-                        agent.process_run, agent=agent,
-                    )
-                )
-                if keep:
-                    # A dead agent's children died with it.
-                    background_work = None
-                    await asyncio.to_thread(
-                        lambda: ProcessRun.objects.filter(pk=pr_pk).update(
-                            state=state_value,
-                            last_state_change_at=now,
-                            agent_pid=agent_pid,
-                            awaiting_user_input=awaiting,
-                            background_work_in_progress=background_work,
-                        )
-                    )
-                    if agent.process_run is not None:
-                        agent.process_run.state = state_value
-                        agent.process_run.last_state_change_at = now
-                        agent.process_run.agent_pid = agent_pid
-                        agent.process_run.awaiting_user_input = awaiting
-                        agent.process_run.background_work_in_progress = background_work
-                else:
-                    await asyncio.to_thread(lambda: agent.process_run.delete())
+            process_run = agent.process_run
+            previous = snapshot_of(process_run)
+            now = timezone.now()
+            awaiting = state != AgentState.DEAD and bool(agent.pending_requests)
+            work = None if state == AgentState.DEAD else agent.background_work_snapshot()
+            if state == AgentState.DEAD:
+                record_process_ended(agent, previous)
+                if not get_provider_helpers(agent.provider).should_keep_dead_process_run(process_run, agent=agent):
+                    process_run.delete()
                     agent.process_run = None
-                    logger.info(
-                        "Deleted process run %s for session %s on death",
-                        pr_pk, agent.session_id,
-                    )
-
-            try:
-                await run_under_db_write_lock(_settle_dead)
-            except Exception as e:
-                logger.error(
-                    "Error settling DEAD process run %s for session %s: %s",
-                    pr_pk, agent.session_id, e,
-                )
+                    return
+            ProcessRun.objects.filter(pk=process_run.pk).update(
+                state=state.value, last_state_change_at=now, agent_pid=agent.get_pid(),
+                awaiting_user_input=awaiting, background_work_in_progress=work,
+            )
+            if state != AgentState.DEAD and previous is not None:
+                record_process_changes(agent, previous, new_state=state.value, new_awaiting=awaiting, new_work=work)
+            process_run.state = state.value
+            process_run.last_state_change_at = now
+            process_run.agent_pid = agent.get_pid()
+            process_run.awaiting_user_input = awaiting
+            process_run.background_work_in_progress = work
 
     async def _update_session_stopped_at(self, agent: BaseAgent) -> None:
         """Update ``Session.last_stopped_at`` and broadcast ``session_updated``."""

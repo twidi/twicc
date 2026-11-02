@@ -2775,6 +2775,8 @@ class CodexAgent(BaseAgent):
         Returns ``True`` if an interrupt was issued, ``False`` if no turn is
         active (best-effort, e.g. the turn just ended).
         """
+        if await self._completion_interrupt_candidate():
+            return True
         turn_handle = self._current_turn
         if turn_handle is None:
             return False
