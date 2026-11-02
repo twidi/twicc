@@ -1999,17 +1999,17 @@ function onChangelogClose() {
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.QWEN]"
                                         class="radio-note"
                                     >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.QWEN] }}</span>
+                                    <!-- Where the text goes and who pays, before the user picks it. -->
+                                    <span
+                                        v-else
+                                        class="radio-note"
+                                    >— sends the user messages to OpenRouter and Cerebras, paid on your OpenRouter account</span>
                                 </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">
                                 If the selected model cannot be used — disabled, over quota, or
                                 failing — TwiCC generates the title with another model, when one is
                                 available.
-                                <template v-if="titleSuggestionModel === TITLE_SUGGESTION_MODEL.QWEN">
-                                    With {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.QWEN] }}, the user
-                                    messages of the session go to OpenRouter and Cerebras, and the calls are paid
-                                    on your OpenRouter account.
-                                </template>
                                 <template v-if="titleSuggestionModelIsDisplaced">
                                     <template v-if="displacedTitleModelIsQwen">
                                         Your choice is kept, and comes back once the OpenRouter key is set and

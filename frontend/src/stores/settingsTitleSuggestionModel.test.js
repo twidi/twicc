@@ -145,7 +145,7 @@ const settingsStoreSource = readFileSync(new URL('./settings.js', import.meta.ur
 test('the effective title model getter reads the OpenRouter key from the speech store', () => {
     assert.match(
         settingsStoreSource,
-        /resolveEffectiveTitleSuggestionModel\(state\.titleSuggestionModel, this\.enabledProviders, useTextToSpeechStore\(\)\.keyPresent\)/,
+        /resolveEffectiveTitleSuggestionModel\(\s*state\.titleSuggestionModel,\s*this\.enabledProviders,\s*useTextToSpeechStore\(\)\.keyPresent,?\s*\)/,
     )
     assert.match(settingsStoreSource, /import \{ useTextToSpeechStore \} from '\.\/textToSpeech'/)
 })

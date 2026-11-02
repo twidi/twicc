@@ -33,15 +33,25 @@ test('the Titles setting offers Qwen, disabled while the OpenRouter key is not s
     assert.match(popoverSource, /const openrouterKeySet = computed\(\(\) => textToSpeechStore\.keyPresent\)/)
 })
 
+test('the Qwen radio says where the text goes and who pays, unless the key is missing', () => {
+    const radio = flat(radioFor('TITLE_SUGGESTION_MODEL.QWEN'))
+    // The disabled note comes first; the privacy and cost note replaces it while the key is set.
+    assert.match(
+        radio,
+        /<span v-if="disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.QWEN\]" class="radio-note" >— \{\{ disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.QWEN\] \}\}<\/span>/,
+    )
+    assert.match(
+        radio,
+        /<span v-else class="radio-note" >— sends the user messages to OpenRouter and Cerebras, paid on your OpenRouter account<\/span>/,
+    )
+})
+
 test('the Titles hints hold for every model', () => {
     const source = flat(popoverSource)
     assert.match(source, /TwiCC generates the title with another model/)
     assert.doesNotMatch(source, /generates the title with the other provider/)
-    // Shown only while Qwen is the model in use: where the text goes, who pays.
-    assert.match(
-        source,
-        /<template v-if="titleSuggestionModel === TITLE_SUGGESTION_MODEL\.QWEN"> [^<]*OpenRouter and Cerebras[^<]*OpenRouter account\.? <\/template>/,
-    )
+    // The radio note says where the text goes: the hint does not say it twice.
+    assert.equal(source.match(/OpenRouter and Cerebras/g)?.length, 1)
 })
 
 test('a displaced Qwen choice says it comes back with the key, an agent choice with its provider', () => {
