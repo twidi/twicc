@@ -1250,11 +1250,11 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
         assert config_id == "cfg-1"
         assert set(run) == {
             "at", "generation_id", "chars", "generation_ms", "first_audio_ms", "audio_seconds", "cost", "parts",
-            "adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text", "fallback_reason",
+            "adapt_engine", "adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text", "fallback_reason",
         }
         # No provider runs in these tests: the text is read as written.
-        assert (run["adapted_by"], run["adapt_reason"], run["adapt_first_ms"], run["adapted_text"]) == (
-            None, "no_provider", None, None
+        assert (run["adapt_engine"], run["adapted_by"], run["adapt_reason"], run["adapt_first_ms"], run["adapted_text"]) == (
+            None, None, "no_provider", None, None
         )
         assert run["generation_id"] == "gen-1"
         assert run["parts"] == 1
@@ -2116,6 +2116,7 @@ def test_a_settings_test_records_the_adaptation(client, adaptation):
     asyncio.run(scenario())
     adapted, long_run, fallen_back, not_adapted = (run for _config_id, run in adaptation.upstream.records)
     assert adapted["adapted_by"] == "haiku"
+    assert adapted["adapt_engine"] == "haiku"
     assert adapted["adapt_reason"] is None
     assert isinstance(adapted["adapt_first_ms"], int)
     assert adapted["adapted_text"] == ADAPTED
@@ -2124,11 +2125,15 @@ def test_a_settings_test_records_the_adaptation(client, adaptation):
     assert long_run["adapted_text"] == "".join(long_answer)[: adapt.TEST_TEXT_KEEP_CHARS]
     assert len(long_run["adapted_text"]) == adapt.TEST_TEXT_KEEP_CHARS
     assert long_run["chars"] == len(VALID_PAYLOAD["text"])
-    assert {key: fallen_back[key] for key in ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")} == {
-        "adapted_by": None, "adapt_reason": "failed", "adapt_first_ms": None, "adapted_text": None
+    fields = ("adapt_engine", "adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")
+    assert {key: fallen_back[key] for key in fields} == {
+        "adapt_engine": "haiku", "adapted_by": None, "adapt_reason": "failed", "adapt_first_ms": None,
+        "adapted_text": None,
     }
-    assert {key: not_adapted[key] for key in ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text")} == {
-        "adapted_by": None, "adapt_reason": "no_provider", "adapt_first_ms": None, "adapted_text": None
+    # No engine ran.
+    assert {key: not_adapted[key] for key in fields} == {
+        "adapt_engine": None, "adapted_by": None, "adapt_reason": "no_provider", "adapt_first_ms": None,
+        "adapted_text": None,
     }
 
 
@@ -2311,3 +2316,27 @@ def test_last_test_records_the_fallback_reason(client, adaptation, openrouter_ke
     assert isinstance(fallen_back["adapt_first_ms"], int)
     assert fallen_back["adapted_text"] == ADAPTED
     assert (qwen["adapted_by"], qwen["fallback_reason"], qwen["adapted_text"]) == ("qwen", None, ADAPTED)
+    assert (fallen_back["adapt_engine"], qwen["adapt_engine"]) == ("haiku", "qwen")
+
+
+def test_last_test_records_the_engine_of_the_last_failed_attempt(client, adaptation, openrouter_key):
+    _store_adapt("qwen")
+
+    async def scenario():
+        # Qwen fails, then the agent fails too.
+        adaptation.answers.extend([OpenRouterTextError("http", 401), RuntimeError("the model is down")])
+        await _read_through(client, TEST_PAYLOAD)
+        # Qwen fails and no agent runs.
+        adaptation.running = set()
+        adaptation.answers.append(OpenRouterTextError("http", 500))
+        await _read_through(client, TEST_PAYLOAD)
+
+    asyncio.run(scenario())
+    both_failed, qwen_only = (run for _config_id, run in adaptation.upstream.records)
+    fields = ("adapt_engine", "adapted_by", "adapt_reason", "fallback_reason")
+    assert {key: both_failed[key] for key in fields} == {
+        "adapt_engine": "haiku", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": "refused",
+    }
+    assert {key: qwen_only[key] for key in fields} == {
+        "adapt_engine": "qwen", "adapted_by": None, "adapt_reason": "failed", "fallback_reason": None,
+    }

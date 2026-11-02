@@ -641,11 +641,17 @@ test('ttsAdaptationFacts: the engine and the wait for the first text', () => {
 test('ttsAdaptationFacts: why Qwen failed before an agent took over', () => {
     assert.equal(
         ttsAdaptationFacts({ adapted_by: 'haiku', adapt_first_ms: 6200, fallback_reason: 'stalled' }),
-        'Adapted by Claude Haiku 5.5 · first text 6.2 s · Qwen3.8 27B (OpenRouter) failed: the model did not answer in time',
+        'Adapted by Claude Haiku 5.5 · first text 6.2 s · Qwen3.8 27B (OpenRouter) failed (the model did not answer in time)',
     )
+    // Both failed: each one is named, and the two failure parts read alike.
+    assert.equal(
+        ttsAdaptationFacts({ adapt_engine: 'haiku', adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
+        'Not adapted: Claude Haiku 5.5 failed (the model failed) · Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
+    )
+    // A record written before `adapt_engine`: the agent is not named.
     assert.equal(
         ttsAdaptationFacts({ adapted_by: null, adapt_reason: 'failed', fallback_reason: 'refused' }),
-        'Not adapted: the model failed · Qwen3.8 27B (OpenRouter) failed: OpenRouter refused the call (check the key and the credits)',
+        'Not adapted: the model failed · Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
     )
     // An unknown reason adds nothing.
     assert.equal(ttsAdaptationFacts({ adapted_by: 'luna', adapt_first_ms: null, fallback_reason: 'unknown' }), 'Adapted by GPT-6 Luna')
@@ -659,12 +665,36 @@ test('ttsAdaptationFacts: why the text was not adapted', () => {
         failed: 'the model failed',
         stalled: 'the model did not answer in time',
         empty: 'the model gave no text',
-        refused: 'OpenRouter refused the call (check the key and the credits)',
+        refused: 'OpenRouter refused the call; check the key and the credits',
     }
     for (const [reason, text] of Object.entries(reasons)) {
         const run = { chars: 35, adapted_by: null, adapt_reason: reason, adapt_first_ms: null, adapted_text: null }
         assert.equal(ttsAdaptationFacts(run), `Not adapted: ${text}`)
+        // `adapt_engine` null: no engine ran.
+        assert.equal(ttsAdaptationFacts({ ...run, adapt_engine: null }), `Not adapted: ${text}`)
     }
+})
+
+test('ttsAdaptationFacts: the engine that failed is named', () => {
+    const run = { chars: 35, adapted_by: null, adapt_first_ms: null, adapted_text: null }
+    assert.equal(
+        ttsAdaptationFacts({ ...run, adapt_engine: 'qwen', adapt_reason: 'refused' }),
+        'Not adapted: Qwen3.8 27B (OpenRouter) failed (OpenRouter refused the call; check the key and the credits)',
+    )
+    assert.equal(
+        ttsAdaptationFacts({ ...run, adapt_engine: 'luna', adapt_reason: 'stalled' }),
+        'Not adapted: GPT-6 Luna failed (the model did not answer in time)',
+    )
+    assert.equal(
+        ttsAdaptationFacts({ ...run, adapt_engine: 'haiku', adapt_reason: 'empty' }),
+        'Not adapted: Claude Haiku 5.5 failed (the model gave no text)',
+    )
+    // No engine ran for these reasons: the wording stays.
+    for (const [reason, text] of [['off', 'the option is off'], ['too_long', 'the text is too long'], ['no_provider', 'no Claude or Codex provider is running']]) {
+        assert.equal(ttsAdaptationFacts({ ...run, adapt_engine: 'haiku', adapt_reason: reason }), `Not adapted: ${text}`)
+    }
+    // An unknown engine is not named.
+    assert.equal(ttsAdaptationFacts({ ...run, adapt_engine: 'opus', adapt_reason: 'failed' }), 'Not adapted: the model failed')
 })
 
 test('ttsAdaptationFacts: nothing for a record without adaptation fields', () => {

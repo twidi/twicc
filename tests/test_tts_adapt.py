@@ -805,6 +805,7 @@ def test_a_qwen_failure_before_the_first_part_switches_to_the_agent(fake_call, m
     assert fake.calls == [(QWEN_ENGINE, prompt), (HAIKU, prompt)]
     assert fake.streams[0].closed and fake.streams[1].finished
     assert source.adapted_by == "haiku"
+    assert source.adapt_engine == "haiku"
     assert source.fallback_from == "qwen"
     assert source.fallback_reason == reason
     assert source.adapt_reason is None
@@ -877,6 +878,8 @@ def test_qwen_then_agent_both_fail_reads_the_original(fake_call):
     assert parts == FALLBACK
     assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE, HAIKU]
     assert source.adapted_by is None
+    # The engine of the last attempt is kept: the agent that failed after Qwen.
+    assert source.adapt_engine == "haiku"
     assert source.adapt_reason == "failed"
     assert source.adapt_first_ms is None
     assert source.adapted_text is None
@@ -890,6 +893,7 @@ def test_qwen_without_an_agent_reads_the_original(fake_call):
     assert parts == FALLBACK
     assert [engine for engine, _prompt in fake.calls] == [QWEN_ENGINE]
     assert source.adapted_by is None
+    assert source.adapt_engine == "qwen"
     assert source.adapt_reason == "failed"
     assert (source.fallback_from, source.fallback_reason) == (None, None)
     assert label == {"adapted": "no", "adapt_reason": "failed"}

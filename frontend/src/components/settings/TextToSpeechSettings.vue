@@ -404,7 +404,8 @@ function answerNo(id) {
         <wa-callout v-else variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>,
-            then restart TwiCC. Testing OpenRouter configs is disabled until then.
+            then restart TwiCC. Testing OpenRouter configs and the Qwen3.8 27B (OpenRouter)
+            adaptation are disabled until then.
         </wa-callout>
 
         <div class="setting-group tts-adapt-group">
@@ -962,12 +963,10 @@ function answerNo(id) {
     }
 }
 
-/* The four full labels of the adaptation do not fit one row on a narrow screen: there, and only
-   there, its segments wrap onto a second row (the format controls of a card keep their one row). */
-@container (max-width: 40rem) {
-    .tts-adapt-group .tts-format-row :deep(wa-radio-group::part(form-control-input)) {
-        flex-wrap: wrap;
-    }
+/* The four full labels of the adaptation do not fit one row on a narrow screen: its segments wrap
+   onto a second row when the row overflows (the format controls of a card keep their one row). */
+.tts-adapt-group .tts-format-row :deep(wa-radio-group::part(form-control-input)) {
+    flex-wrap: wrap;
 }
 
 .tts-test-row {

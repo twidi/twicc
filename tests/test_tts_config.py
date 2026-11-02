@@ -311,10 +311,10 @@ def test_ws_connect_skips_the_tts_payload_outside_the_subscribe_filter(transacti
 LAST_TEST = {
     "at": "2026-10-30T10:42:00+00:00", "generation_id": "gen-1", "chars": 2000,
     "generation_ms": 2200, "first_audio_ms": 1160, "audio_seconds": 143.0, "cost": None, "parts": 3,
-    "adapted_by": "haiku", "adapt_reason": None, "adapt_first_ms": 640, "adapted_text": "Hello, said aloud.",
-    "fallback_reason": None,
+    "adapt_engine": "haiku", "adapted_by": "haiku", "adapt_reason": None, "adapt_first_ms": 640,
+    "adapted_text": "Hello, said aloud.", "fallback_reason": None,
 }
-ADAPT_FIELDS = ("adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text", "fallback_reason")
+ADAPT_FIELDS = ("adapt_engine", "adapted_by", "adapt_reason", "adapt_first_ms", "adapted_text", "fallback_reason")
 
 
 def test_last_test_is_normalized_or_dropped():
@@ -374,6 +374,16 @@ def test_last_test_keeps_the_fallback_reason():
     # A record written before the Qwen adaptation.
     old_record = {key: value for key, value in LAST_TEST.items() if key != "fallback_reason"}
     assert _normalized_last_test(old_record)["fallback_reason"] is None
+
+
+def test_last_test_keeps_the_engine_of_the_last_attempt():
+    for engine in ("haiku", "luna", "qwen"):
+        assert _normalized_last_test({**LAST_TEST, "adapt_engine": engine})["adapt_engine"] == engine
+    assert _normalized_last_test({**LAST_TEST, "adapt_engine": "opus"})["adapt_engine"] is None
+    assert _normalized_last_test({**LAST_TEST, "adapt_engine": None})["adapt_engine"] is None
+    # A record written before the field existed.
+    old_record = {key: value for key, value in LAST_TEST.items() if key != "adapt_engine"}
+    assert _normalized_last_test(old_record) == {**LAST_TEST, "adapt_engine": None}
 
 
 def test_last_test_keeps_a_qwen_adaptation():

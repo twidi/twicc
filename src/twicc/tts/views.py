@@ -381,11 +381,12 @@ def _stored_adapt_choice() -> str | None:
 
 
 def _adaptation_fields(source: AdaptedParts | None, adapt_reason: str | None) -> dict:
-    """The adaptation fields of a last test: how *source* adapted the text (and why Qwen failed
-    before an agent took over), or, without a source, why the text was read as written. The adapted
-    text is cut to ``TEST_TEXT_KEEP_CHARS``."""
+    """The adaptation fields of a last test: how *source* adapted the text, the engine of its last
+    attempt (and why Qwen failed before an agent took over), or, without a source, why the text was
+    read as written. The adapted text is cut to ``TEST_TEXT_KEEP_CHARS``."""
     if source is None:
         return {
+            "adapt_engine": None,
             "adapted_by": None,
             "adapt_reason": adapt_reason,
             "adapt_first_ms": None,
@@ -394,6 +395,7 @@ def _adaptation_fields(source: AdaptedParts | None, adapt_reason: str | None) ->
         }
     adapted_text = source.adapted_text
     return {
+        "adapt_engine": source.adapt_engine,
         "adapted_by": source.adapted_by,
         "adapt_reason": source.adapt_reason,
         "adapt_first_ms": source.adapt_first_ms,

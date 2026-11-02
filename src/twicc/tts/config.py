@@ -128,10 +128,11 @@ def _last_test(value: object) -> dict | None:
 
     ``cost`` (USD) comes some seconds after the run, through the generation lookup.
     ``parts`` is the number of requests of the text; None in a record written before split texts.
-    The adaptation fields are None in a record written before the text adaptation: ``adapted_by``
-    (the engine, None when not adapted), ``adapt_reason`` (why not), ``adapt_first_ms`` (the wait for
-    the first adapted text), ``adapted_text`` and ``fallback_reason`` (why Qwen failed before an
-    agent took over, else None).
+    The adaptation fields are None in a record written before the text adaptation: ``adapt_engine``
+    (the engine of the last attempt, None when no engine ran), ``adapted_by`` (the engine, None when
+    not adapted), ``adapt_reason`` (why not), ``adapt_first_ms`` (the wait for the first adapted
+    text), ``adapted_text`` and ``fallback_reason`` (why Qwen failed before an agent took over, else
+    None).
     """
     if not isinstance(value, dict) or not isinstance(value.get("at"), str):
         return None
@@ -148,6 +149,7 @@ def _last_test(value: object) -> dict | None:
         "audio_seconds": _non_negative(value.get("audio_seconds"), float),
         "cost": _non_negative(value.get("cost"), float),
         "parts": _non_negative(value.get("parts"), int),
+        "adapt_engine": _one_of(value.get("adapt_engine"), ADAPT_ENGINES),
         "adapted_by": _one_of(value.get("adapted_by"), ADAPT_ENGINES),
         "adapt_reason": _one_of(value.get("adapt_reason"), ADAPT_REASONS),
         "adapt_first_ms": _non_negative(value.get("adapt_first_ms"), int),

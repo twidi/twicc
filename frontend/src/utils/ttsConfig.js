@@ -361,8 +361,12 @@ const ADAPT_REASON_TEXTS = {
     failed: 'the model failed',
     stalled: 'the model did not answer in time',
     empty: 'the model gave no text',
-    refused: 'OpenRouter refused the call (check the key and the credits)',
+    // No parentheses: the text goes inside the "failed (…)" of a named engine.
+    refused: 'OpenRouter refused the call; check the key and the credits',
 }
+
+// The reasons of an engine that ran and failed (the others: no engine ran).
+const ADAPT_FAILURE_REASONS = new Set(['failed', 'stalled', 'empty', 'refused'])
 
 /** A stored `adapt` value, or null (no stored choice) for anything else, as the backend reads it. */
 export function normalizeAdapt(value) {
@@ -427,13 +431,15 @@ export function adaptHint(choice, enabledProviders) {
 
 /**
  * The adaptation of the last test run: "Adapted by Claude Haiku 5.5 · first text 2.1 s", or
- * "Not adapted: the option is off". After a Qwen failure, why Qwen failed comes last:
- * "· Qwen3.8 27B (OpenRouter) failed: the model did not answer in time". '' for a record
- * written before the text adaptation.
+ * "Not adapted: the option is off". When the engine of the last attempt (`adapt_engine`) failed,
+ * it is named: "Not adapted: Claude Haiku 5.5 failed (the model failed)" (a record without
+ * `adapt_engine`, written before it, keeps "Not adapted: the model failed"). After a Qwen failure,
+ * why Qwen failed comes last: "· Qwen3.8 27B (OpenRouter) failed (the model did not answer in
+ * time)". '' for a record written before the text adaptation.
  */
 export function ttsAdaptationFacts(lastTest) {
     const fallback = ADAPT_REASON_TEXTS[lastTest?.fallback_reason]
-    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]} failed: ${fallback}` : text)
+    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[QWEN_ADAPT]} failed (${fallback})` : text)
     const engine = lastTest?.adapted_by
     if (engine && TITLE_SUGGESTION_MODEL_LABELS[engine]) {
         const parts = [`Adapted by ${TITLE_SUGGESTION_MODEL_LABELS[engine]}`]
@@ -442,5 +448,10 @@ export function ttsAdaptationFacts(lastTest) {
         return withFallback(parts.join(' · '))
     }
     const reason = ADAPT_REASON_TEXTS[lastTest?.adapt_reason]
-    return reason ? withFallback(`Not adapted: ${reason}`) : ''
+    if (!reason) return ''
+    const failedEngine = TITLE_SUGGESTION_MODEL_LABELS[lastTest.adapt_engine]
+    if (failedEngine && ADAPT_FAILURE_REASONS.has(lastTest.adapt_reason)) {
+        return withFallback(`Not adapted: ${failedEngine} failed (${reason})`)
+    }
+    return withFallback(`Not adapted: ${reason}`)
 }

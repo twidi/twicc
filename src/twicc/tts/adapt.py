@@ -227,9 +227,10 @@ class AdaptedParts:
     a fallback to the original text), ``adapt_reason`` (why the adaptation failed, else ``None``),
     ``adapt_first_ms`` (from the creation to the first adapted text, a failed first call included)
     and ``adapted_text`` (the text received from the engine that adapts); the last two are ``None``
-    after a fallback. After a switch to ``then``, ``fallback_from`` is the failed engine's name and
-    ``fallback_reason`` why it failed (both ``None`` without a switch, and kept by a later fallback
-    to the original text). ``label`` (the stream's) gets ``adapted`` (``"pending:<engine>"`` until
+    after a fallback. ``adapt_engine`` is the name of the engine of the last attempt, kept after a
+    fallback to the original text. After a switch to ``then``, ``fallback_from`` is the failed
+    engine's name and ``fallback_reason`` why it failed (both ``None`` without a switch, and kept by
+    a later fallback to the original text). ``label`` (the stream's) gets ``adapted`` (``"pending:<engine>"`` until
     the first adapted text, then the engine name, or ``"no"`` with ``adapt_reason`` after a
     fallback), ``adapt_first_ms``, and ``fallback_from`` with ``fallback_reason`` after a switch.
     """
@@ -281,6 +282,10 @@ class AdaptedParts:
     @property
     def adapted_text(self) -> str | None:
         return "".join(self._received) if self._received else None
+
+    @property
+    def adapt_engine(self) -> str:
+        return self._engine.name
 
     async def next_part(self) -> str | None:
         while not self._closed:

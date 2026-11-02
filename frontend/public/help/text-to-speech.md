@@ -47,8 +47,8 @@ last test run shows the adapted text.
 Choose the model in **Adapt the text for speech**, at the top of **Settings →
 Text to Speech**: **Claude Haiku 5.5**, **GPT-6 Luna**, **Qwen3.8 27B
 (OpenRouter)**, or **Off**. With no choice, TwiCC takes Claude, else Codex. A
-model whose provider is disabled is replaced by the other one, and your choice
-comes back when you enable its provider again.
+Claude or Codex model whose provider is disabled is replaced by the other
+agent, and your choice comes back when you enable its provider again.
 
 Claude Haiku 5.5 and GPT-6 Luna run on your Claude or Codex subscription.
 **Qwen3.8 27B (OpenRouter)** needs the OpenRouter key (as the OpenRouter configs
@@ -57,15 +57,15 @@ OpenRouter account. With the key set, Qwen adapts the text even when no
 provider runs. Without the key, the default replaces it, and your choice comes
 back once the key is set and TwiCC restarted.
 
-If Qwen fails before the reading starts, Claude adapts the text, else Codex. If
-no model can run, if the message is too long, or if the model fails before the
-reading starts (for Qwen: if Claude or Codex fails too, or if no provider
-runs), the message is read **as written**. If the model fails later, the
+If Qwen fails before the reading starts, the first agent that runs (Claude,
+else Codex) adapts the text. If no model can run, if the message is too long,
+or if the model fails before the reading starts (for Qwen: if that agent fails
+too, or if no provider runs), the message is read **as written**. If the model fails later, the
 reading stops with an error.
 
-The last test run of a config shows the model that adapted the text and, after
-a Qwen failure, why Qwen failed: a wrong key or an empty OpenRouter account
-shows there. The cost of a test is the cost of the speech only: the Qwen
+The last test run of a config shows the model that adapted the text, or each
+model that failed and why: a wrong key or an empty OpenRouter account shows
+there. The cost of a test is the cost of the speech only: the Qwen
 adaptation is not in it.
 
 ## Script configs

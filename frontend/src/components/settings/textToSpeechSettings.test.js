@@ -107,11 +107,13 @@ test('a File path script card offers to delete the returned file', () => {
     )
 })
 
-test('the intro names both kinds and the key callout speaks of OpenRouter configs only', () => {
+test('the intro names both kinds and the key callout speaks of what needs OpenRouter only', () => {
     assert.ok(flatSource.includes('Read the chat messages aloud with OpenRouter, or with your own script. See the'))
-    assert.ok(flatSource.includes(
-        'Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>, then restart TwiCC. Testing OpenRouter configs is disabled until then.',
-    ))
+    // The Qwen adaptation too: its disabled option says why in a tooltip only, unseen on a touch screen.
+    assert.match(
+        flatSource,
+        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> Add <code>TWICC_OPENROUTER_API_KEY<\/code> to <code>\{\{ store\.envPath \}\}<\/code>, then restart TwiCC\. Testing OpenRouter configs and the Qwen3\.8 27B \(OpenRouter\) adaptation are disabled until then\. <\/wa-callout>/,
+    )
 })
 
 test('two new-config buttons add an OpenRouter config and a script config', () => {
@@ -201,10 +203,12 @@ test('the adaptation hint, the OpenRouter note for Qwen, or the no-provider hint
 test('the four adaptation segments wrap onto a second line in a narrow adaptation group only', () => {
     // The format controls of the config cards keep their one row of segments.
     assert.match(settingsSource, /\.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: nowrap;\s*\}/)
+    // The adaptation group only: its segments wrap when the row overflows, at any width.
     assert.match(
         settingsSource,
-        /@container \(max-width: 40rem\) \{\s*\.tts-adapt-group \.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: wrap;\s*\}\s*\}/,
+        /\n\.tts-adapt-group \.tts-format-row :deep\(wa-radio-group::part\(form-control-input\)\) \{\s*flex-wrap: wrap;\s*\}/,
     )
+    assert.doesNotMatch(settingsSource, /@container \(max-width: 40rem\)/)
 })
 
 test('the last test run shows the adaptation facts and the folded adapted text', () => {
