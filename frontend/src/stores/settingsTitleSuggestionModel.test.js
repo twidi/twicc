@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import * as constants from '../constants.js'
 
@@ -102,4 +103,60 @@ test('offers the other enabled title models as alternatives', () => {
     // Nothing displayed yet: every enabled model is an alternative.
     assert.deepEqual(alternatives(null, both), ['haiku', 'luna'])
     assert.deepEqual(alternatives('haiku', undefined), [])
+})
+
+test('keeps a Qwen choice while the OpenRouter key is set, with or without an agent', () => {
+    const resolve = constants.resolveEffectiveTitleSuggestionModel
+
+    assert.equal(resolve('qwen', ['claude_code'], true), 'qwen')
+    // Qwen needs no Claude Code or Codex provider.
+    assert.equal(resolve('qwen', [], true), 'qwen')
+})
+
+test('a Qwen choice works as the session provider mode without the key', () => {
+    const resolve = constants.resolveEffectiveTitleSuggestionModel
+
+    assert.equal(resolve('qwen', ['claude_code'], false), 'provider')
+    // The key flag defaults to absent.
+    assert.equal(resolve('qwen', ['claude_code', 'codex']), 'provider')
+})
+
+test('a displaced agent model gives way to the other agent, not to Qwen', () => {
+    const resolve = constants.resolveEffectiveTitleSuggestionModel
+
+    assert.equal(resolve('haiku', ['codex'], true), 'luna')
+    assert.equal(resolve('luna', ['claude_code'], true), 'haiku')
+})
+
+test('offers Qwen as an alternative only while the OpenRouter key is set', () => {
+    const alternatives = constants.titleModelAlternatives
+    const both = ['claude_code', 'codex']
+
+    assert.deepEqual(alternatives('haiku', both, true), ['luna', 'qwen'])
+    assert.deepEqual(alternatives('qwen', both, true), ['haiku', 'luna'])
+    assert.deepEqual(alternatives('haiku', both, false), ['luna'])
+    assert.deepEqual(alternatives('haiku', both), ['luna'])
+    // Qwen needs no agent.
+    assert.deepEqual(alternatives(null, [], true), ['qwen'])
+})
+
+const settingsStoreSource = readFileSync(new URL('./settings.js', import.meta.url), 'utf8')
+
+test('the effective title model getter reads the OpenRouter key from the speech store', () => {
+    assert.match(
+        settingsStoreSource,
+        /resolveEffectiveTitleSuggestionModel\(state\.titleSuggestionModel, this\.enabledProviders, useTextToSpeechStore\(\)\.keyPresent\)/,
+    )
+    assert.match(settingsStoreSource, /import \{ useTextToSpeechStore \} from '\.\/textToSpeech'/)
+})
+
+test('no write of the stored title model depends on the OpenRouter key', () => {
+    const writes = settingsStoreSource.split('\n').filter(line => /titleSuggestionModel\s*=[^=]/.test(line))
+    assert.ok(writes.length > 0, 'the setter writes the stored model')
+    for (const line of writes) assert.doesNotMatch(line, /keyPresent|TextToSpeech/)
+    const setter = settingsStoreSource.slice(
+        settingsStoreSource.indexOf('setTitleSuggestionModel(model) {'),
+        settingsStoreSource.indexOf('setTitleSystemPrompt('),
+    )
+    assert.doesNotMatch(setter, /keyPresent|TextToSpeech/)
 })

@@ -10,6 +10,7 @@ import { useLayoutsStore } from '../../stores/layouts'
 import { useAuthStore } from '../../stores/auth'
 import { usePeersStore } from '../../stores/peers'
 import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
+import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { getProviderHelpers, getProviderLabel, getProviderOptions, getRegisteredProviders, getProviderIcon } from '../../providers'
 import ProviderIcon from '../ui/ProviderIcon.vue'
 import { getActivationCharMetadata } from '../../utils/commandActivation'
@@ -71,6 +72,7 @@ const layoutsStore = useLayoutsStore()
 const authStore = useAuthStore()
 const peersStore = usePeersStore()
 const benchmarkTaskStore = useBenchmarkTaskStore()
+const textToSpeechStore = useTextToSpeechStore()
 
 // Reactive set of currently enabled providers (derived from the settings store).
 const enabledProviders = computed(() => new Set(store.enabledProviders))
@@ -507,14 +509,19 @@ const allowAgentArtifactShares = computed(() => store.isAllowAgentArtifactShares
 const titleGenerationEnabled = computed(() => store.isTitleGenerationEnabled)
 const titleAutoApply = computed(() => store.isTitleAutoApply)
 // The radio shows the EFFECTIVE model, not the stored one: a forced choice
-// whose provider is disabled displays as the model that will really run. The
-// stored value is left untouched, so enabling the provider again restores the
-// user's choice by itself (see ``resolveEffectiveTitleSuggestionModel``).
+// whose provider is disabled, or a Qwen choice without the OpenRouter key,
+// displays as the model that will really run. The stored value is left
+// untouched, so enabling the provider again (or setting the key and restarting
+// TwiCC) restores the user's choice by itself (see
+// ``resolveEffectiveTitleSuggestionModel``).
 const titleSuggestionModel = computed(() => store.getEffectiveTitleSuggestionModel)
+// Whether ``TWICC_OPENROUTER_API_KEY`` is set (never its value): Qwen needs it.
+const openrouterKeySet = computed(() => textToSpeechStore.keyPresent)
 
 /**
- * The forced title models whose provider is disabled, mapped to the reason
- * shown under the radio. A model in this map is not selectable.
+ * The forced title models that cannot run, mapped to the reason shown under
+ * the radio: an agent model whose provider is disabled, Qwen without the
+ * OpenRouter key. A model in this map is not selectable.
  */
 const disabledTitleSuggestionModels = computed(() => {
     const disabled = {}
@@ -522,13 +529,19 @@ const disabledTitleSuggestionModels = computed(() => {
         if (enabledProviders.value.has(provider)) continue
         disabled[model] = `${getProviderLabel(provider)} is disabled.`
     }
+    if (!openrouterKeySet.value) disabled[TITLE_SUGGESTION_MODEL.QWEN] = 'The OpenRouter key is not set.'
     return disabled
 })
 
-// The user's stored choice is not the one running: a disabled provider moved
-// the selection. Gates the sentence promising the choice comes back.
+// The user's stored choice is not the one running: a disabled provider, or a
+// missing OpenRouter key, moved the selection. Gates the sentence promising
+// the choice comes back.
 const titleSuggestionModelIsDisplaced = computed(
     () => store.getTitleSuggestionModel !== store.getEffectiveTitleSuggestionModel,
+)
+// The displaced choice is Qwen: it comes back with the key, not with a provider.
+const displacedTitleModelIsQwen = computed(
+    () => titleSuggestionModelIsDisplaced.value && store.getTitleSuggestionModel === TITLE_SUGGESTION_MODEL.QWEN,
 )
 const titleSystemPrompt = computed(() => store.getTitleSystemPrompt)
 const titleSystemPromptInput = ref('')
@@ -1977,14 +1990,35 @@ function onChangelogClose() {
                                         class="radio-note"
                                     >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA] }}</span>
                                 </wa-radio>
+                                <wa-radio
+                                    :value="TITLE_SUGGESTION_MODEL.QWEN"
+                                    :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.QWEN]"
+                                >
+                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.QWEN] }} for every session
+                                    <span
+                                        v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.QWEN]"
+                                        class="radio-note"
+                                    >— {{ disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.QWEN] }}</span>
+                                </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">
-                                If the selected provider cannot be used — disabled, over quota, or
-                                failing — TwiCC generates the title with the other provider, when that
-                                one is enabled.
+                                If the selected model cannot be used — disabled, over quota, or
+                                failing — TwiCC generates the title with another model, when one is
+                                available.
+                                <template v-if="titleSuggestionModel === TITLE_SUGGESTION_MODEL.QWEN">
+                                    With {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.QWEN] }}, the user
+                                    messages of the session go to OpenRouter and Cerebras, and the calls are paid
+                                    on your OpenRouter account.
+                                </template>
                                 <template v-if="titleSuggestionModelIsDisplaced">
-                                    Your choice is kept, and comes back as soon as you enable its
-                                    provider again.
+                                    <template v-if="displacedTitleModelIsQwen">
+                                        Your choice is kept, and comes back once the OpenRouter key is set and
+                                        TwiCC restarted.
+                                    </template>
+                                    <template v-else>
+                                        Your choice is kept, and comes back as soon as you enable its
+                                        provider again.
+                                    </template>
                                 </template>
                             </span>
                             <div v-if="titleGenerationEnabled" class="title-prompt-section">

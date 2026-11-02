@@ -16,6 +16,8 @@ import {
     resolveEffectiveTitleSuggestionModel,
 } from '../constants'
 import { NOTIFICATION_SOUNDS } from '../utils/notificationSounds'
+// One-way: the speech store imports no store.
+import { useTextToSpeechStore } from './textToSpeech'
 import { getProviderHelpers, getRegisteredProviders } from '../providers'
 // Note: useDataStore is imported lazily to avoid circular dependency (settings.js ↔ data.js)
 import { setColorScheme as setColorSchemeOnDom, setSystemSchemeChangeHandler } from '../utils/theme'
@@ -359,7 +361,8 @@ export const useSettingsStore = defineStore('settings', {
         getTitleSuggestionModel: (state) => resolveTitleSuggestionModel(state.titleSuggestionModel),
         /**
          * The title model actually in use: the stored one, unless its provider
-         * is disabled — then the other enabled provider's model.
+         * is disabled — then the other enabled provider's model — or, for Qwen,
+         * unless the OpenRouter key is not set — then ``provider``.
          *
          * The stored value is never rewritten (see
          * ``resolveEffectiveTitleSuggestionModel``), so this is the getter both
@@ -369,7 +372,7 @@ export const useSettingsStore = defineStore('settings', {
          * A regular function (not an arrow) to reach ``enabledProviders``.
          */
         getEffectiveTitleSuggestionModel(state) {
-            return resolveEffectiveTitleSuggestionModel(state.titleSuggestionModel, this.enabledProviders)
+            return resolveEffectiveTitleSuggestionModel(state.titleSuggestionModel, this.enabledProviders, useTextToSpeechStore().keyPresent)
         },
         getTitleSystemPrompt: (state) => state.titleSystemPrompt,
         areCostsShown: (state) => state.showCosts,
@@ -556,7 +559,7 @@ export const useSettingsStore = defineStore('settings', {
 
         /**
          * Select the model used for title suggestions.
-         * @param {'provider' | 'haiku' | 'luna'} model
+         * @param {'provider' | 'haiku' | 'luna' | 'qwen'} model
          */
         setTitleSuggestionModel(model) {
             if (SETTINGS_VALIDATORS.titleSuggestionModel(model)) {

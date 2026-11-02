@@ -208,25 +208,33 @@ export const TITLE_SUGGESTION_MODEL_PROVIDERS = Object.freeze({
 })
 
 /**
- * The title model actually in use, given which providers are enabled.
+ * The title model actually in use, given which providers are enabled and
+ * whether the OpenRouter key is set.
  *
  * The stored setting is a preference, never rewritten when its provider is
- * disabled: that would destroy the choice for good (re-enabling the provider
- * could not restore it), and the backend falls back at runtime anyway. So the
- * resolution is display-only, and the settings form shows what will really run.
+ * disabled or the key is removed: that would destroy the choice for good
+ * (re-enabling the provider, or setting the key again, could not restore it),
+ * and the backend falls back at runtime anyway. So the resolution is
+ * display-only, and the settings form shows what will really run.
  *
  * ``provider`` (follow the session) is never resolved away: it works whatever
- * is enabled. A forced model whose provider is disabled resolves to the other
- * enabled one, and to ``provider`` when there is none — a state the UI cannot
- * reach (one provider must stay enabled) but the CLI can.
+ * is enabled. ``qwen`` needs the OpenRouter key and no provider; without the
+ * key it works as ``provider``, as the backend does. A forced agent model whose
+ * provider is disabled resolves to the other enabled agent model, and to
+ * ``provider`` when there is none — a state the UI cannot reach (one provider
+ * must stay enabled) but the CLI can.
  *
  * @param {string} value - The stored ``titleSuggestionModel``.
  * @param {string[]|Set<string>} enabledProviders - Provider keys currently enabled.
+ * @param {boolean} [openrouterKeySet=false] - Whether ``TWICC_OPENROUTER_API_KEY`` is set.
  * @returns {string} One of the ``TITLE_SUGGESTION_MODEL`` values.
  */
-export function resolveEffectiveTitleSuggestionModel(value, enabledProviders) {
+export function resolveEffectiveTitleSuggestionModel(value, enabledProviders, openrouterKeySet = false) {
     const model = resolveTitleSuggestionModel(value)
     if (model === TITLE_SUGGESTION_MODEL.PROVIDER) return model
+    if (model === TITLE_SUGGESTION_MODEL.QWEN) {
+        return openrouterKeySet ? model : TITLE_SUGGESTION_MODEL.PROVIDER
+    }
 
     const enabled = enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
     if (enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[model])) return model
@@ -277,14 +285,20 @@ export function resolveSessionTitleModel(effectiveModel, sessionProvider) {
 
 /**
  * The title models the user can try instead of ``currentModel``: every other
- * forced model whose provider is enabled.
+ * forced agent model whose provider is enabled, then Qwen while the OpenRouter
+ * key is set.
  * @param {string|null} currentModel
  * @param {string[]|Set<string>} enabledProviders
+ * @param {boolean} [openrouterKeySet=false] - Whether ``TWICC_OPENROUTER_API_KEY`` is set.
  * @returns {string[]}
  */
-export function titleModelAlternatives(currentModel, enabledProviders) {
+export function titleModelAlternatives(currentModel, enabledProviders, openrouterKeySet = false) {
     const enabled = enabledProviders instanceof Set ? enabledProviders : new Set(enabledProviders || [])
-    return Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).filter(
+    const alternatives = Object.keys(TITLE_SUGGESTION_MODEL_PROVIDERS).filter(
         (model) => model !== currentModel && enabled.has(TITLE_SUGGESTION_MODEL_PROVIDERS[model]),
     )
+    if (openrouterKeySet && currentModel !== TITLE_SUGGESTION_MODEL.QWEN) {
+        alternatives.push(TITLE_SUGGESTION_MODEL.QWEN)
+    }
+    return alternatives
 }

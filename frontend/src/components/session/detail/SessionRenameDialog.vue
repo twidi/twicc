@@ -2,14 +2,15 @@
 import { ref, watch, computed } from 'vue'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
+import { useTextToSpeechStore } from '../../../stores/textToSpeech'
 import { requestTitleSuggestion } from '../../../composables/useWebSocket'
 import { getProviderLabel } from '../../../providers'
 import { buildSessionTitlePatch, showAutomaticTitleHint } from '../../../utils/sessionTitle.js'
+import { isFallbackEntry, suggestionModel } from '../../../utils/titleSuggestion.js'
 import {
     TITLE_SUGGESTION_MODEL_LABELS,
     resolveSessionTitleModel,
     titleModelAlternatives,
-    titleModelForProvider,
 } from '../../../constants'
 
 const props = defineProps({
@@ -23,6 +24,8 @@ const emit = defineEmits(['saved'])
 
 const store = useDataStore()
 const settingsStore = useSettingsStore()
+// Only for ``keyPresent``: Qwen is offered while the OpenRouter key is set.
+const textToSpeechStore = useTextToSpeechStore()
 
 const formId = computed(() => `session-rename-form-${props.session?.id || 'none'}`)
 const dialogRef = ref(null)
@@ -64,19 +67,21 @@ const defaultTitleModel = computed(() =>
 const requestedTitleModel = computed(() => chosenTitleModel.value || defaultTitleModel.value)
 
 // What the user is looking at: the model that produced the suggestion (which
-// is not the requested one after a backend fallback), else the requested one.
+// is not the requested one after a backend fallback; Qwen has no provider, so
+// the reply's model field names it), else the requested one.
 // While a request runs, the stored suggestion is the previous one's: only the
 // requested model is true.
 const displayedTitleModel = computed(() => {
     if (isLoadingSuggestion.value) return requestedTitleModel.value
-    return (suggestion.value && titleModelForProvider(suggestionEntry.value?.titleProvider))
+    return (suggestion.value && suggestionModel(suggestionEntry.value))
         || requestedTitleModel.value
 })
 const displayedTitleModelLabel = computed(() => TITLE_SUGGESTION_MODEL_LABELS[displayedTitleModel.value] || null)
 
-// The other enabled title models, to try instead of the displayed one.
+// The other enabled title models, to try instead of the displayed one: Qwen
+// too while the OpenRouter key is set.
 const alternativeTitleModels = computed(() =>
-    titleModelAlternatives(displayedTitleModel.value, settingsStore.enabledProviders),
+    titleModelAlternatives(displayedTitleModel.value, settingsStore.enabledProviders, textToSpeechStore.keyPresent),
 )
 
 // Why there is no suggestion, when the user can act on it. ``no_prompt`` is
@@ -122,16 +127,13 @@ function startSuggestion(sessionId, prompt) {
     }
 }
 
-// The backend generated through another provider than the one requested: a
-// runtime failure, or a session whose own provider is disabled under "match
-// session provider". A forced choice whose provider is disabled never lands
-// here — it is already resolved before the request leaves — and neither does an
+// The backend generated with another model than the one requested: a runtime
+// failure (Qwen's included: it falls back to an agent), or a session whose own
+// provider is disabled under "match session provider". A forced choice whose
+// provider is disabled, or a Qwen choice without the key, never lands here —
+// it is already resolved before the request leaves — and neither does an
 // explicit "Try with …" (strict).
-const isFallbackSuggestion = computed(() => {
-    const entry = suggestionEntry.value
-    if (!entry?.suggestion || !entry.titleProvider || !entry.requestedProvider) return false
-    return entry.titleProvider !== entry.requestedProvider
-})
+const isFallbackSuggestion = computed(() => isFallbackEntry(suggestionEntry.value))
 
 const providerLabel = computed(() => getProviderLabel(props.session?.provider))
 

@@ -6862,15 +6862,22 @@ export const useDataStore = defineStore('data', {
          * Always stores sourcePrompt (for regeneration), and suggestion if available.
          *
          * ``titleProvider`` is the provider that produced the suggestion, null
-         * on failure; it differs from ``requestedProvider`` when the backend
-         * fell back. ``error`` says why there is no suggestion: 'no_prompt'
+         * on failure and for a Qwen title (no provider runs it); it differs
+         * from ``requestedProvider`` when the backend fell back to the other
+         * provider. ``titleModel`` is the model that produced it ('haiku',
+         * 'luna' or 'qwen'), null on failure; it differs from
+         * ``requestedModel`` (the model asked for) on any fallback, Qwen to an
+         * agent included. Both model fields are null when a backend does not
+         * send them. ``error`` says why there is no suggestion: 'no_prompt'
          * (nothing to summarize — not a failure), 'no_provider_available' or
          * 'generation_failed'.
          * @param {Object} data - { sessionId, suggestion, sourcePrompt,
-         *     requestedProvider, titleProvider, error }
+         *     requestedProvider, titleProvider, requestedModel, titleModel, error }
          */
         handleTitleSuggested(data) {
-            const { sessionId, suggestion, sourcePrompt, requestedProvider, titleProvider, error } = data
+            const {
+                sessionId, suggestion, sourcePrompt, requestedProvider, titleProvider, requestedModel, titleModel, error,
+            } = data
             // Resolve the draft alias if the backend echoed the draft id back
             // (the ``suggest_title`` payload was sent under the draft id; for
             // providers that rebind to a canonical id, we want the response
@@ -6883,6 +6890,8 @@ export const useDataStore = defineStore('data', {
                 sourcePrompt: sourcePrompt || null,
                 requestedProvider: requestedProvider || null,
                 titleProvider: titleProvider || null,
+                requestedModel: requestedModel || null,
+                titleModel: titleModel || null,
                 error: error || null,
             }
         },
