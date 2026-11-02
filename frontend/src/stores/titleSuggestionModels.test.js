@@ -26,10 +26,11 @@ test('the Titles setting offers OpenRouter, disabled while the OpenRouter key is
     assert.match(radio, /:disabled="!!disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]"/)
     assert.match(flat(radio), /\{\{ TITLE_SUGGESTION_MODEL_LABELS\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] \}\} for every session/)
     // The disabled map holds OpenRouter exactly when the key is absent.
-    assert.match(
-        popoverSource,
-        /if \(!openrouterKeySet\.value\) disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] = 'The OpenRouter key is not set\.'/,
-    )
+    assert.match(popoverSource, /if \(!openrouterKeySet\.value\) \{\s*disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] =/)
+    // The note says what to do (the variable, where, and the restart), not only that the key is missing.
+    assert.match(popoverSource, /Add TWICC_OPENROUTER_API_KEY to \$\{textToSpeechStore\.envPath\}, then restart TwiCC\./)
+    assert.match(popoverSource, /Add TWICC_OPENROUTER_API_KEY to the \.env file of your TwiCC data directory, then restart TwiCC\./)
+    assert.doesNotMatch(popoverSource, /'The OpenRouter key is not set\.'/)
     assert.match(popoverSource, /const openrouterKeySet = computed\(\(\) => textToSpeechStore\.keyPresent\)/)
 })
 

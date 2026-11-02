@@ -530,7 +530,12 @@ const disabledTitleSuggestionModels = computed(() => {
         if (enabledProviders.value.has(provider)) continue
         disabled[model] = `${getProviderLabel(provider)} is disabled.`
     }
-    if (!openrouterKeySet.value) disabled[TITLE_SUGGESTION_MODEL.OPENROUTER] = 'The OpenRouter key is not set.'
+    // Say what to do, as the Text to Speech settings do: the key lives in the `.env` of the data directory.
+    if (!openrouterKeySet.value) {
+        disabled[TITLE_SUGGESTION_MODEL.OPENROUTER] = textToSpeechStore.envPath
+            ? `Add TWICC_OPENROUTER_API_KEY to ${textToSpeechStore.envPath}, then restart TwiCC.`
+            : 'Add TWICC_OPENROUTER_API_KEY to the .env file of your TwiCC data directory, then restart TwiCC.'
+    }
     return disabled
 })
 
