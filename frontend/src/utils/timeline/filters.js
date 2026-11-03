@@ -10,7 +10,8 @@
 /** The views of section 4.1, in display order. `short` is the label of a narrow band (section 3.1). */
 export const VIEWS = [
     { value: 'all', label: 'All', short: 'All' },
-    { value: 'without_turns', label: 'Without turns', short: 'No turns' },
+    { value: 'messages', label: 'Messages', short: 'Messages' },
+    { value: 'without_turns', label: 'Activity', short: 'Activity' },
     { value: 'waits_problems', label: 'Waits & problems', short: 'Waits' },
 ]
 

@@ -76,13 +76,19 @@ def test_the_view_and_the_groups_filter_the_first_page():
     title = make_event("title.changed", at=7, actor="system", data={"source": "auto", "new": "N", "old": None})
     unclean = make_unclean_end(at=8)
 
-    every = [unclean, title, mine, clean_end, lost, wait_end, wait, turn]
+    user = make_event("user_message.sent", at=9, actor="user", via="ui")
+    assistant = make_event("assistant_message.sent", at=10)
+    turn_end = make_event("turn.ended", at=11)
+    every = [turn_end, assistant, user, unclean, title, mine, clean_end, lost, wait_end, wait, turn]
     assert ids(call().json()) == [row.id for row in every]
-    assert ids(call(view="without_turns").json()) == [row.id for row in every if row is not turn]
-    assert ids(call(view="waits_problems").json()) == [unclean.id, lost.id, wait.id]
+    assert ids(call(view="messages").json()) == [turn_end.id, assistant.id, user.id, turn.id]
+    assert ids(call(view="without_turns").json()) == [
+        unclean.id, title.id, mine.id, clean_end.id, lost.id, wait_end.id, wait.id,
+    ]
+    assert ids(call(view="waits_problems").json()) == [unclean.id, lost.id, wait_end.id, wait.id]
     assert ids(call(view="waits_problems", families="processes,twicc").json()) == [unclean.id, lost.id]
-    assert ids(call(authors="you").json()) == [mine.id]
-    assert ids(call(families="turns,waits").json()) == [wait_end.id, wait.id, turn.id]
+    assert ids(call(authors="you").json()) == [user.id, mine.id]
+    assert ids(call(families="turns,waits").json()) == [turn_end.id, wait_end.id, wait.id, turn.id]
     assert ids(call(families="turns", authors="you").json()) == []
 
 
@@ -281,3 +287,28 @@ def test_the_external_author_keeps_its_scope_and_provider(projects, params):
     # Each row once, in time order, across page boundaries (the null-provider row included).
     assert seen == [row.id for row in expected]
     assert forged.id in ids(call(**params, authors="unknown").json())
+
+
+@pytest.mark.parametrize(("view", "selected"), [
+    ("messages", (0, 1, 5, 6)),
+    ("without_turns", (2, 3, 4, 7)),
+    ("waits_problems", (3, 4, 7)),
+])
+def test_presets_keep_the_same_rows_when_paginating_and_fetching_live(view, selected):
+    kinds = ("turn.started", "user_message.sent", "settings.changed", "awaiting_input.started",
+             "awaiting_input.ended", "assistant_message.sent", "turn.ended", "process.ended")
+    rows = [make_event(kind, at=index, reason="error" if kind == "process.ended" else "")
+            for index, kind in enumerate(kinds)]
+    expected = [rows[index].id for index in selected]
+    params = {"view": view, "limit": 2}
+    page = call(**params).json()
+    seen = ids(page)
+    for _ in range(len(rows)):
+        if not page["has_more"]:
+            break
+        page = next_page(params, page)
+        seen += ids(page)
+    assert seen == expected[::-1]
+    live = call(view=view, after_id=0).json()
+    assert ids(live) == expected
+    assert live["latest_id"] == rows[-1].id

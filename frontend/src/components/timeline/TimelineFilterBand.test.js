@@ -238,7 +238,7 @@ const removeOf = (root, label) => byClass(root, 'timeline-filter-pill')
 
 // ── The band line ──────────────────────────────────────────────────────────────────────────────────────────
 
-test('the band line: the title, the three views bound to the store, the Filters button', async (t) => {
+test('the band line: the title, the four views bound to the store, the Filters button', async (t) => {
     const { root, store, actions } = await mount(t)
     const [line] = byClass(root, 'timeline-filter-line')
     assert.deepEqual(elementsOf(line).map(classesOf), ['timeline-filter-title', 'timeline-filter-controls'])
@@ -246,10 +246,10 @@ test('the band line: the title, the three views bound to the store, the Filters 
     const [views] = byClass(root, 'timeline-filter-views')
     assert.ok(byClass(views, 'segmented-control').length === 1, 'the views are a SegmentedControl')
     const radios = radiosOf(root)
-    assert.deepEqual(radios.map((radio) => radio.props.value), ['all', 'without_turns', 'waits_problems'])
-    assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'Without turns', 'Waits & problems'])
-    assert.deepEqual(radios.map((radio) => radio.props.title), ['All', 'Without turns', 'Waits & problems'])
-    assert.deepEqual(radios.map((radio) => radio.props['aria-label'] ?? null), [null, null, null], 'the label is the name')
+    assert.deepEqual(radios.map((radio) => radio.props.value), ['all', 'messages', 'without_turns', 'waits_problems'])
+    assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'Messages', 'Activity', 'Waits & problems'])
+    assert.deepEqual(radios.map((radio) => radio.props.title), ['All', 'Messages', 'Activity', 'Waits & problems'])
+    assert.deepEqual(radios.map((radio) => radio.props['aria-label'] ?? null), [null, null, null, null], 'the label is the name')
     const [group] = descendants(root, (node) => node.type === 'wa-radio-group')
     assert.equal(group.props.label, 'View')
     assert.equal(group.props['.value'] ?? group.props.value, 'all')
@@ -767,11 +767,11 @@ test('the views and the Filters button by level: short labels and the hidden but
         assert.equal(textOf(button).trim(), 'Filters', `${level}: "Filters" stays in the accessible text`)
         const radios = radiosOf(root)
         if (level === 'compact') {
-            assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'No turns', 'Waits'])
-            assert.deepEqual(radios.map((radio) => radio.props.title), ['All', 'Without turns', 'Waits & problems'])
-            assert.deepEqual(radios.map((radio) => radio.props['aria-label']), ['All', 'Without turns', 'Waits & problems'])
+            assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'Messages', 'Activity', 'Waits'])
+            assert.deepEqual(radios.map((radio) => radio.props.title), ['All', 'Messages', 'Activity', 'Waits & problems'])
+            assert.deepEqual(radios.map((radio) => radio.props['aria-label']), ['All', 'Messages', 'Activity', 'Waits & problems'])
         } else {
-            assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'Without turns', 'Waits & problems'])
+            assert.deepEqual(radios.map((radio) => textOf(radio).trim()), ['All', 'Messages', 'Activity', 'Waits & problems'])
         }
     }
     const hidden = declarationsOf(STYLE, '.timeline-filter-line--compact .timeline-filter-button-label')

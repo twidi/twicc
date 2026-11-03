@@ -561,7 +561,7 @@ def test_the_after_id_query_scans_a_primary_key_range_never_a_scope_index(busy, 
     assert "idx_timeline_project" not in plan and "idx_timeline_provider" not in plan
 
 
-FILTER_PARAMS = [{"families": "turns"}, {"families": "sessions,processes"}, {"view": "without_turns"},
+FILTER_PARAMS = [{"view": "messages"}, {"families": "turns"}, {"families": "sessions,processes"}, {"view": "without_turns"},
                  {"view": "waits_problems"}]
 
 

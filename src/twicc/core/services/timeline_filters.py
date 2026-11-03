@@ -39,7 +39,7 @@ from twicc.request_origin import (
 )
 
 #: The views of section 4.1, in display order.
-VIEWS: tuple[str, ...] = ("all", "without_turns", "waits_problems")
+VIEWS: tuple[str, ...] = ("all", "messages", "without_turns", "waits_problems")
 
 #: Family key -> its kinds (section 4.2). Every ``TimelineKind`` is in exactly one family (a test pins it).
 FAMILIES: dict[str, tuple[str, ...]] = {
@@ -197,9 +197,10 @@ def families_q(families: tuple[str, ...]) -> Q | None:
 
 #: The kind of each problem condition (section 4.4): ``problem_q`` and ``view_kinds`` both read it.
 _PROBLEM_KINDS: tuple[str, ...] = (TimelineKind.PROCESS_ENDED, TimelineKind.BACKEND_ENDED)
-#: The kinds the ``without_turns`` view leaves out, and the kinds the ``waits_problems`` view shows besides problems.
-_WITHOUT_TURNS_EXCLUDED: tuple[str, ...] = FAMILIES["turns"]
-_WAITS_VIEW_KINDS: tuple[str, ...] = (TimelineKind.AWAITING_INPUT_STARTED,)
+#: Messages include turn boundaries. Activity keeps the existing ``without_turns`` API key.
+_MESSAGES_VIEW_KINDS: tuple[str, ...] = FAMILIES["messages"] + FAMILIES["turns"]
+_WITHOUT_TURNS_EXCLUDED: tuple[str, ...] = _MESSAGES_VIEW_KINDS
+_WAITS_VIEW_KINDS: tuple[str, ...] = FAMILIES["waits"]
 
 
 def problem_q() -> Q:
@@ -215,6 +216,8 @@ def view_q(view: str) -> Q | None:
     """The base rows of a view (section 4.1); ``None`` for ``all``."""
     if view == "all":
         return None
+    if view == "messages":
+        return kind_in(*_MESSAGES_VIEW_KINDS)
     if view == "without_turns":
         return ~kind_in(*_WITHOUT_TURNS_EXCLUDED)
     if view == "waits_problems":
@@ -227,6 +230,8 @@ def view_kinds(view: str) -> frozenset[str]:
     every = frozenset(TimelineKind.values)
     if view == "all":
         return every
+    if view == "messages":
+        return frozenset(_MESSAGES_VIEW_KINDS)
     if view == "without_turns":
         return every - set(_WITHOUT_TURNS_EXCLUDED)
     if view == "waits_problems":

@@ -13,7 +13,8 @@ const filters = (fields = {}) => ({ ...createFilters(), ...fields })
 test('the keys and labels of the global constraints', () => {
     assert.deepEqual(VIEWS, [
         { value: 'all', label: 'All', short: 'All' },
-        { value: 'without_turns', label: 'Without turns', short: 'No turns' },
+        { value: 'messages', label: 'Messages', short: 'Messages' },
+        { value: 'without_turns', label: 'Activity', short: 'Activity' },
         { value: 'waits_problems', label: 'Waits & problems', short: 'Waits' },
     ])
     assert.deepEqual(FAMILIES, [

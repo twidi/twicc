@@ -64,7 +64,7 @@ def as_mapping(row):
 
 
 def test_the_keys_and_their_order():
-    assert VIEWS == ("all", "without_turns", "waits_problems")
+    assert VIEWS == ("all", "messages", "without_turns", "waits_problems")
     assert tuple(FAMILIES) == ("sessions", "processes", "turns", "messages", "waits", "settings", "organization", "twicc")
     assert AUTHORS == ("unknown", "automatic", "you", "agent_cli_mcp", "external_mcp", "session_agent")
 
@@ -157,8 +157,12 @@ def test_views():
     every_id = set(by_kind.values()) | {problem.id, unclean.id}
 
     assert view_q("all") is None
-    assert every_id - matching_ids(view_q("without_turns")) == {by_kind["turn.started"], by_kind["turn.ended"]}
-    assert matching_ids(view_q("waits_problems")) == {by_kind["awaiting_input.started"], problem.id, unclean.id}
+    exchanges = {by_kind[kind] for kind in ("turn.started", "turn.ended", "user_message.sent", "assistant_message.sent")}
+    assert matching_ids(view_q("messages")) == exchanges
+    assert every_id - matching_ids(view_q("without_turns")) == exchanges
+    assert matching_ids(view_q("waits_problems")) == {
+        by_kind["awaiting_input.started"], by_kind["awaiting_input.ended"], problem.id, unclean.id,
+    }
     with pytest.raises(ValueError):
         view_q("pending")
 
@@ -282,6 +286,10 @@ def test_possible_kinds_are_exactly_the_kinds_the_view_and_families_can_match():
 
 
 def test_the_combinations_that_can_never_match():
+    assert not can_match(TimelineFilter(view="messages", families=("sessions", "waits")))
+    assert can_match(TimelineFilter(view="messages", families=("turns",)))
+    assert can_match(TimelineFilter(view="messages", families=("messages",)))
+    assert not can_match(TimelineFilter(view="without_turns", families=("turns", "messages")))
     assert not can_match(TimelineFilter(view="without_turns", families=("turns",)))
     assert can_match(TimelineFilter(view="without_turns", families=("turns", "waits")))
     for families in (("sessions",), ("turns",), ("settings",), ("organization",), ("sessions", "settings")):
@@ -294,10 +302,11 @@ def test_the_combinations_that_can_never_match():
 
 
 @pytest.mark.django_db
-def test_messages_are_in_all_and_without_turns_but_not_waits():
+def test_message_family_narrows_the_messages_view_and_is_absent_from_activity_and_waits():
     rows = save(build('user_message.sent'), build('assistant_message.sent'), build('turn.started'))
     messages = {rows[0].pk, rows[1].pk}
     assert match_q(TimelineFilter()) is None
     assert messages <= set(TimelineEvent.objects.values_list("id", flat=True))
-    assert matching_ids(match_q(TimelineFilter(view='without_turns', families=('messages',)))) == messages
+    assert matching_ids(match_q(TimelineFilter(view='messages', families=('messages',)))) == messages
+    assert matching_ids(match_q(TimelineFilter(view='without_turns', families=('messages',)))) == set()
     assert matching_ids(match_q(TimelineFilter(view='waits_problems', families=('messages',)))) == set()

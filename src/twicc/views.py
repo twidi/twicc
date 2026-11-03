@@ -3489,8 +3489,9 @@ async def timeline(request):
         project_ids: Comma-separated project ids. Empty or missing means the global scope.
         provider: Comma-separated provider keys. Rows without a provider (instance events ``backend.*``,
                   session rows no source could name) are always included.
-        view: ``all`` (default), ``without_turns`` or ``waits_problems``.
-        families: Comma-separated event families (``sessions``, ``processes``, ``turns``, ``waits``,
+        view: ``all`` (default), ``messages`` (messages and turns), ``without_turns`` (Activity:
+              neither messages nor turns), or ``waits_problems`` (wait starts, resolutions and problems).
+        families: Comma-separated event families (``sessions``, ``processes``, ``turns``, ``messages``, ``waits``,
                   ``settings``, ``organization``, ``twicc``).
         authors: Comma-separated "Done by" values (``unknown``, ``automatic``, ``you``, ``agent_cli_mcp``,
                  ``external_mcp``, ``session_agent``).
