@@ -46,7 +46,9 @@ WAIT_OPTIONS = {
 
 #: Legitimate in *prose*, never in something copyable: the documents name the
 #: two switches this command drops precisely to say they do not apply here.
-NAMED_IN_PROSE = CROSS_REFERENCES | {"--include-hidden", "--include-archived"}
+# --wait-token belongs to the singular command referenced in the plural help.
+# Keep it out of CROSS_REFERENCES so copyable plural invocations still reject it.
+NAMED_IN_PROSE = CROSS_REFERENCES | {"--include-hidden", "--include-archived", "--wait-token"}
 
 
 def _command():

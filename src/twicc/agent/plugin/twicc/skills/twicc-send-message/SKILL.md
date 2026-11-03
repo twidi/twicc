@@ -31,7 +31,11 @@ Then run `$TWICC <args>` — **never quote `$TWICC`** (use `$TWICC args`, never 
 
 Managed sessions use **confirmed logical completion**, with an initial **one-second** confirmation interval. New root activity, pending delivery, or an assistant hold cancels confirmation. A pending request takes priority over an intermediate answer. The result contains the **last relevant answer** from the selected logical interval, after indexing. Background shells do not extend ordinary confirmation; explicit `--wait-background` preserves its separate waiting rule. Historical sessions without a logical interval retain transcript waiting.
 
-Accepted creates and sends can return `wait_token`. Use `session <ID> wait-reply --wait-token <TOKEN>` to select that accepted input. Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+Accepted creates and sends can return `wait_token`. **Prefer `session <ID> wait-reply --wait-token <TOKEN>` when the token is available.** It selects that accepted input.
+
+Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+
+After an ordinary timeout, reuse the same token to wait for the same input. To wait for a later answer after a consumed or ignored answer, omit the old token and use that answer's `line_num` as `--from-line`; repeat `--wait-background` if needed.
 
 ```bash
 $TWICC send-message [OPTIONS] '<SESSION_ID|parent>' ['<PROMPT>']
@@ -98,10 +102,10 @@ The message is delivered immediately. The recipient picks it up based on its cur
 
 ## Output format
 
-`last_line` is the transcript cursor at the instant the agent took the message. It ships on every `sent` result, with or without `--wait-reply`.
+`wait_token`, when returned, selects this accepted input for a later wait. `last_line` is the transcript cursor captured before provider delivery. It ships on every `sent` result, with or without `--wait-reply`.
 
 ```json
-{"status":"sent","session_id":"...","provider":"...","project_id":"...","request_uuid":"...","last_line":124}
+{"status":"sent","session_id":"...","provider":"...","project_id":"...","request_uuid":"...","last_line":124,"wait_token":"01a0c4d2-0000-7000-8000-000000000001"}
 {"status":"validation_error","errors":[{"field":"SESSION_ID","code":"session_stale","message":"..."}]}
 {"status":"rejected","errors":[{"field":"...","code":"...","message":"..."}],"request_uuid":"..."}
 {"status":"failed","error":"...","request_uuid":"..."}
@@ -127,7 +131,7 @@ $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a --attach /home/twidi/sc
 $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a --attach /home/twidi/screenshot.png
 # No PROMPT: the attachment alone is the message.
 $TWICC send-message 4a8352fb-1674-41c0-8a85-0a5a3e4e623a 'Hello'
-# → {"status":"sent","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"...","last_line":124}
+# → {"status":"sent","session_id":"...","provider":"claude_code","project_id":"...","request_uuid":"...","last_line":124,"wait_token":"01a0c4d2-0000-7000-8000-000000000001"}
 $TWICC send-message parent 'I finished the sub-task you asked for.'
 # From inside an agent: targets the session that spawned it;
 ```
@@ -144,7 +148,7 @@ $TWICC send-message <SESSION_ID> '<TEXT>' --wait-reply [--wait-timeout N] [--no-
 
 It adds a `reply` block: `outcome`, `line_num`, `is_final`, `since_line_num`, `waited_seconds`, the answer's `text` (drop it with `--no-reply-text` when you only need the go-ahead), and `error` on `wait_failed`. `outcome` is `replied` (the message closing the turn), `awaiting_user_input` (a pending request — a tool approval or a question — which only a human can clear), `provider_error` (the provider refused: quota, outage), `ended` (the turn is over and nothing closed it — a crash, an interruption, an empty answer), `timeout`, `backend_gone`, or `wait_failed`.
 
-**Only a line written after your message counts.** `since_line_num` is the transcript cursor, captured before provider delivery, so the *previous* turn's closing message is not returned in its place — the trap a separate wait started after the send falls into. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working, and that cursor is what you resume from — with `$TWICC session <SESSION_ID> wait-reply --from-line <CURSOR>` (skill: `twicc-session`), the command that takes one. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise, and `--wait-background` again if the wait had it — then from the ignored final message's `line_num` when the ending carries one. The exit code only ever says whether the message was sent.
+**Only a line written after your message counts.** `since_line_num` is the transcript cursor, captured before provider delivery, so the *previous* turn's closing message is not returned in its place — the trap a separate wait started after the send falls into. Chaining `--wait-reply` calls is safe by construction: each one returns only once the answer is indexed, so the next cursor is always past it. A timeout is not a failure: the agent keeps working. Prefer `$TWICC session <SESSION_ID> wait-reply --wait-token <TOKEN>` for the same input after an ordinary timeout. If no token is available, use `$TWICC session <SESSION_ID> wait-reply --from-line <CURSOR>` (skill: `twicc-session`). To wait past a consumed or ignored answer, omit the old token. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise, and `--wait-background` again if the wait had it — then from the ignored final message's `line_num` when the ending carries one. The exit code only ever says whether the message was sent.
 
 `since_line_num: 0` on a `replied` means no cursor came back (a backend older than the flag). The wait then started from the top of the turn, so check the answer is the one you expected.
 
@@ -154,7 +158,7 @@ Accepted send `last_line` is captured **before provider delivery**, including de
 
 Without `--wait-reply`:
 
-- Wait later: `$TWICC session <SESSION_ID> wait-reply --from-line <LAST_LINE>`, with the `last_line` of the send result as the cursor. **Never follow a send without `--wait-reply` by a wait without a cursor**: the default cursor (after the last user message) could land before your message is indexed and return the previous answer. `--from-line` and `--since` (an ISO 8601 instant; no offset means UTC; a bare date means its midnight UTC) exist only on `session <ID> wait-reply` (both) and `sessions wait-reply` (`--since` only) — not on this command, whose `--wait-reply` reads the cursor server-side. Exit `0` on `replied` / `awaiting_user_input`, `5` on `timeout` / `ended` / `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Skill: `twicc-session`.
+- Wait later: prefer `$TWICC session <SESSION_ID> wait-reply --wait-token <TOKEN>`. Without a returned token, use `$TWICC session <SESSION_ID> wait-reply --from-line <LAST_LINE>`. **After a send without `--wait-reply`, supply its token or an explicit cursor**: the default cursor (after the last user message) could land before your message is indexed and return the previous answer. `--from-line` and `--since` (an ISO 8601 instant; no offset means UTC; a bare date means its midnight UTC) exist only on `session <ID> wait-reply` (both) and `sessions wait-reply` (`--since` only) — not on this command, whose `--wait-reply` reads the cursor server-side. Exit `0` on `replied` / `awaiting_user_input`, `5` on `timeout` / `ended` / `provider_error`, `2` on `backend_gone`, `1` on a refusal or `wait_failed`. Skill: `twicc-session`.
 - Check state (snapshot): `process.state` from `$TWICC session <SESSION_ID>` — still working, blocked, or done? Skill: `twicc-session`.
 - Read the reply: `$TWICC session <SESSION_ID> messages --tail 1`.
 

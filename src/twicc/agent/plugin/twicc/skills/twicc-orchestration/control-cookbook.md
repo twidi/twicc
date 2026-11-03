@@ -13,7 +13,12 @@ Wait for the children you spawned, not grandchildren. Name their ids (from each
 $TWICC sessions wait-reply <CHILD_ID>... --wait-timeout 300
 ```
 
-For a later round, pass `--since` the instant captured before that send.
+For precise waits after create/send, prefer `session <ID> wait-reply --wait-token <TOKEN>`
+per returned token. Reuse the token after an ordinary timeout for the same input.
+The plural wait accepts no tokens. For a later round with one cursor-based batch,
+pass `--since` the instant captured before that send. Without a token, a singular
+wait takes `--from-line` with the send's returned `last_line`. To wait past a
+consumed or ignored answer, omit the old token and use its `line_num`.
 
 Exit 0 whatever the outcomes: read each `results[id].outcome`. Repeat the same
 call, naming only the ids still on `timeout` (or `wait_failed`). Re-running

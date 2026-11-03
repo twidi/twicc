@@ -1,7 +1,8 @@
 """``twicc sessions wait-reply`` — wait on several sessions nobody just messaged —
 or ones you messaged with ``send-messages`` without ``--wait-reply`` (then pass
 ``--since`` an instant taken before the send, or wait on each with ``session
-<id> wait-reply --from-line <last_line>``).
+<id> wait-reply --wait-token <TOKEN>`` for each returned token; without a
+    token, use ``--from-line <last_line>``). The plural wait accepts no tokens.
 
 The plural of ``session <ID> wait-reply``, and the same loop: one poll drives
 every session, one wall-clock budget covers the batch, and each concludes on

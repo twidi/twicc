@@ -620,7 +620,8 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     why it carries the same name: it ends on an answer or on a pending request,
     whichever comes first. Those rides on a command that triggered the turn, so
     their cursor falls out of the send. Here nothing was sent by this command:
-    the caller names the cursor, or it defaults to after the last user message.
+    the caller supplies a token or cursor. Without either, it defaults to
+    after the last user message.
     A named line is the ``line_num`` or ``since_line_num`` a previous wait
     already handed back. That is what makes a timed-out wait resumable.
 
@@ -628,10 +629,11 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
     number belongs to one session and nothing else, so it cannot address a
     batch; an instant addresses any number of them the same way.
 
-    Omitted, the cursor goes after the session's last user message, so an
+    Without a token or explicit cursor, it goes after the session's last user message, so an
     answer already given is returned; while the session's compute is not
     current, it is its current ``last_line``. After a send without
-    ``--wait-reply``, pass ``--from-line`` the ``last_line`` the send returned. The
+    ``--wait-reply``, prefer its returned ``wait_token``. Without a token, pass
+    ``--from-line`` the returned ``last_line``. The
     race that killed ``--transition`` does not apply: a marker read too late
     never moves again, but a session that is simply idle is observable, and an
     idle session with no answer past the cursor reports ``ended`` rather than

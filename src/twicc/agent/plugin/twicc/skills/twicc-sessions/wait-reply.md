@@ -6,13 +6,17 @@ The plural of `session <ID> wait-reply`: one loop polls them all. MCP tool: `mcp
 
 Managed sessions use **confirmed logical completion**, with an initial **one-second** confirmation interval. New root activity, pending delivery, or an assistant hold cancels confirmation. A pending request takes priority over an intermediate answer. The result contains the **last relevant answer** from the selected logical interval, after indexing. Background shells do not extend ordinary confirmation; explicit `--wait-background` preserves its separate waiting rule. Historical sessions without a logical interval retain transcript waiting.
 
-Accepted creates and sends can return `wait_token`. Use `session <ID> wait-reply --wait-token <TOKEN>` to select that accepted input. Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+Accepted creates and sends can return `wait_token`. **Prefer `session <ID> wait-reply --wait-token <TOKEN>` when the token is available.** It selects that accepted input.
+
+Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+
+After an ordinary timeout, reuse the same token to wait for the same input. To wait for a later answer after a consumed or ignored answer, omit the old token and use that answer's `line_num` as `--from-line`; repeat `--wait-background` if needed.
 
 ```bash
 $TWICC sessions wait-reply [SESSION_ID...] [--since INSTANT] [--wait-first|--wait-all] [--wait-timeout N] [--no-reply-text] [--wait-background] [FILTERS]
 ```
 
-For sessions **nobody just messaged**: spawned earlier, steered from the UI, messaged by someone else — or messaged by you with `send-messages` without `--wait-reply` (then pass `--since` an instant taken before the send, or wait on each with `session <id> wait-reply --from-line <last_line>`). When you send the messages yourself, use `send-messages --wait-reply`: it reads each cursor server-side. **A send without `--wait-reply` is never followed by a wait without a cursor.**
+For sessions **nobody just messaged**: spawned earlier, steered from the UI, messaged by someone else — or messaged by you with `send-messages` without `--wait-reply` (prefer a singular wait per returned token; for one cursor-based batch, pass `--since` an instant taken before the send). When you send the messages yourself, use `send-messages --wait-reply`: it reads each cursor server-side. **After a send without `--wait-reply`, supply its token or an explicit cursor.** This plural command accepts no tokens; the singular command accepts one token per call.
 
 - **One budget covers the batch**: it costs one wall-clock wait, not N.
 - Each session concludes the same two ways the singular does: an answer, or a **pending request** only a human can clear. A current pending request takes priority over an intermediate answer.

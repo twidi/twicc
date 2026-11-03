@@ -21,9 +21,13 @@ Shape: star · push or pull · waves · merge · homogeneous.
    or spawn a fresh worker for it.
 4. Fresh workers need no `--since` (except while a session's compute is not
    current — e.g. right after a TwiCC restart: then pass `--since` an instant
-   before the spawn or the send). For reused workers, capture the instant before
-   sending the next task (`date -u +%Y-%m-%dT%H:%M:%SZ`) and pass it as
-   `--since`, or send it with `send-message --wait-reply`. Update their `wave` annotation too, so the
+   before the spawn or the send). For a precise wait after create/send, prefer
+   `session <ID> wait-reply --wait-token <TOKEN>` per returned token. Reuse it
+   after an ordinary timeout for the same input. The plural wait accepts no
+   tokens. For one cursor-based batch of reused workers, capture the instant
+   before sending (`date -u +%Y-%m-%dT%H:%M:%SZ`) and pass it as `--since`,
+   or send with `send-message --wait-reply`. Without a token, a singular wait
+   takes `--from-line` with the send's `last_line`. Update their `wave` annotation too, so the
    map shows which wave each worker is on.
 5. Continue until the queue drains; aggregate.
 

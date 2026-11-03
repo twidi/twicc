@@ -56,7 +56,7 @@ $TWICC create-session [OPTIONS] '<PROMPT>'
 {"status":"timeout","received_seen":true,"message":"...","request_uuid":"..."}
 ```
 
-An accepted create can return `wait_token`; use `session <ID> wait-reply --wait-token <TOKEN>` for a precise later wait.
+An accepted create can return `wait_token`; prefer `session <ID> wait-reply --wait-token <TOKEN>` for a later wait. Reuse that token after an ordinary timeout to wait for the same input. If no token is available, use the cursors described in `wait-reply.md`.
 
 The `reply` block comes only with `--wait-reply` (file: `wait-reply.md`). A `created` status only means the session started and the prompt was handed to the agent — not that the agent has finished; it keeps working in the background.
 

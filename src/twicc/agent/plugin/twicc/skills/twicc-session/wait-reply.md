@@ -6,7 +6,11 @@ Wait until a session answers, or blocks on a human. MCP tool: `mcp__twicc__sessi
 
 Managed sessions use **confirmed logical completion**, with an initial **one-second** confirmation interval. New root activity, pending delivery, or an assistant hold cancels confirmation. A pending request takes priority over an intermediate answer. The result contains the **last relevant answer** from the selected logical interval, after indexing. Background shells do not extend ordinary confirmation; explicit `--wait-background` preserves its separate waiting rule. Historical sessions without a logical interval retain transcript waiting.
 
-Accepted creates and sends can return `wait_token`. Use `session <ID> wait-reply --wait-token <TOKEN>` to select that accepted input. Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+Accepted creates and sends can return `wait_token`. **Prefer `session <ID> wait-reply --wait-token <TOKEN>` when the token is available.** It selects that accepted input.
+
+Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+
+After an ordinary timeout, reuse the same token to wait for the same input. To wait for a later answer after a consumed or ignored answer, omit the old token and use that answer's `line_num` as `--from-line`; repeat `--wait-background` if needed.
 
 ```bash
 $TWICC session '<SESSION_ID>' wait-reply [--wait-token TOKEN] [--from-line N] [--since INSTANT] [--wait-timeout N] [--no-reply-text] [--wait-background]
@@ -14,17 +18,18 @@ $TWICC session '<SESSION_ID>' wait-reply [--wait-token TOKEN] [--from-line N] [-
 
 The wait that `--wait-reply` runs on the commands that send, for a session **you did not just message**: spawned earlier, steered from the UI, messaged by someone else, or messaged by you without `--wait-reply`.
 
-**When you send the message yourself, use `send-message --wait-reply`**: it reads the cursor server-side. A send without it is **never** followed by a wait without a cursor: pass `--from-line` the `last_line` the send returned.
+**When you send the message yourself, use `send-message --wait-reply`**: it reads the cursor server-side. For a separate wait, prefer the returned `wait_token`. If no token is available, pass `--from-line` the returned `last_line`. After a send, supply either its token or an explicit cursor; the default cursor can return a previous answer.
 
 ### The cursor
 
-Only a line strictly past the cursor counts; a confirmed answer already past it is returned after indexing. **Choosing it right is the whole of using this command.**
+A token supplies its stored cursor unless you pass an explicit cursor. Only a line strictly past the cursor counts; a confirmed answer already past it is returned after indexing. The following table applies when no token is supplied.
 
 | Situation | `--from-line` |
 |---|---|
-| First call | Omit it: the wait starts after the session's last user message, so an answer already given is returned. Exception: while the session's compute is not current (e.g. right after a TwiCC restart), it starts at the current last line — pass `--since` an instant before the spawn or the send. |
+| Send returned no token | Its **`last_line`**. |
+| First call without a preceding send | Omit it: the wait starts after the session's last user message, so an answer already given is returned. Exception: while the session's compute is not current (e.g. right after a TwiCC restart), it starts at the current last line — pass `--since` an instant before the spawn or the send. |
 | Previous wait ended `replied` or `provider_error` | Its **`line_num`**. Its `since_line_num` points before that line and would return it again. |
-| Previous wait ended `timeout`, `ended`, `backend_gone`, `wait_failed` or `awaiting_user_input` | Its **`since_line_num`**: nothing was consumed. |
+| Previous wait ended `timeout`, `ended`, `backend_gone`, `wait_failed` or `awaiting_user_input` | Its **`since_line_num`**, except an ignored background answer: use its **`line_num`** to wait for the next answer. |
 
 `--since INSTANT` — the same cursor as an ISO 8601 instant, when you have a time and not a line, or one moment for several sessions (a line number means a different place in each): the cursor goes just before the first line stamped strictly after it, so that line counts. A line with no timestamp is not a boundary, and such a line that sits before the boundary is not re-scanned, even if it was written after the instant. A timestamp going backwards can only move the cursor earlier, never past a line. Mutually exclusive with `--from-line`. Accepts `2026-09-19T05:38:20+00:00` (the format `messages` returns), `2026-09-19 05:38:20`, or a bare date (its midnight). **No offset means UTC.** An instant older than the session is not an error: the cursor goes just before its first stamped line, which counts.
 
@@ -67,7 +72,7 @@ No flag chooses between an answer and a pending request, and a block is an `outc
 ## Examples
 
 ```bash
-$TWICC session 4a8352fb-... wait-reply --wait-timeout 120
+$TWICC session 4a8352fb-... wait-reply --wait-token 01a0c4d2-0000-7000-8000-000000000001 --wait-timeout 120
 # → {"session_id":"4a8352fb-...","reply":{"outcome":"replied","line_num":42,...,"text":"done"}}
 $TWICC session 4a8352fb-... wait-reply --from-line 42 --wait-timeout 60
 # Resumes past the answer just read: only a later line counts.
@@ -88,5 +93,5 @@ $TWICC session 4a8352fb-... wait-reply --wait-background --wait-timeout 300
 
 1. `replied` — give the answer's `text`, or its summary.
 2. `awaiting_user_input` — say the session is blocked on a human, then read what it asks (`questions.md`).
-3. `timeout` — say the session is still working; keep the cursor to resume from. With `--wait-background`, give the last ignored answer, if any, and what still runs; resume from its `line_num`.
+3. `timeout` — say the session is still working; keep the token for the same input, or the cursor if no token exists. With `--wait-background`, give the last ignored answer, if any, and what still runs; resume from its `line_num`.
 4. Any other outcome — name it and what it means.

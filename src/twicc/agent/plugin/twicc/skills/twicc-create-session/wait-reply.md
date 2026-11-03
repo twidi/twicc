@@ -6,7 +6,11 @@ Create the session and wait for its answer in one call, or track and read it lat
 
 Managed sessions use **confirmed logical completion**, with an initial **one-second** confirmation interval. New root activity, pending delivery, or an assistant hold cancels confirmation. A pending request takes priority over an intermediate answer. The result contains the **last relevant answer** from the selected logical interval, after indexing. Background shells do not extend ordinary confirmation; explicit `--wait-background` preserves its separate waiting rule. Historical sessions without a logical interval retain transcript waiting.
 
-Accepted creates and sends can return `wait_token`. Use `session <ID> wait-reply --wait-token <TOKEN>` to select that accepted input. Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+Accepted creates and sends can return `wait_token`. **Prefer `session <ID> wait-reply --wait-token <TOKEN>` when the token is available.** It selects that accepted input.
+
+Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+
+After an ordinary timeout, reuse the same token to wait for the same input. To wait for a later answer after a consumed or ignored answer, omit the old token and use that answer's `line_num` as `--from-line`; repeat `--wait-background` if needed.
 
 ```bash
 $TWICC create-session "<PROMPT>" --wait-reply [--wait-timeout N] [--no-reply-text] [--wait-background]
@@ -55,14 +59,14 @@ The agent stays blocked until someone clears it. Read it with `$TWICC session <S
 
 **Not a failure**: the agent keeps working and the session is intact — only the waiting stopped. Expect it on a worker whose first turn runs long: raise `--wait-timeout`, or take the `session_id` and come back later.
 
-Resume with `$TWICC session <SESSION_ID> wait-reply --from-line <CURSOR>` (skill: `twicc-session`), the command that takes a cursor. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. To resume a wait that had `--wait-background`, pass the flag again, and pass the ignored final message's `line_num` when the ending carries one: a wait resumed from `since_line_num` after the work ended counts that message.
+For the same input after an ordinary timeout, prefer `$TWICC session <SESSION_ID> wait-reply --wait-token <TOKEN>` with the create result's token. If no token is available, resume with `$TWICC session <SESSION_ID> wait-reply --from-line <CURSOR>` (skill: `twicc-session`). To wait past a consumed or ignored answer, omit the old token. Pass the `line_num` when the ending consumed a line (`replied`, `provider_error`), the `since_line_num` otherwise. To resume a wait that had `--wait-background`, pass the flag again, and pass the ignored final message's `line_num` when the ending carries one: a wait resumed from `since_line_num` after the work ended counts that message.
 
 ## Following up
 
 A `created` status only means the session started and the prompt was handed to the agent; it keeps working in the background.
 
 - **Map spawned work:** `$TWICC topology self` — the full spawned-session tree rooted at your top-level ancestor, with compact process state for every node (skill: `twicc-topology`).
-- **Wait for the answer later:** `$TWICC sessions wait-reply <SESSION_ID>...` waits until each child answers or blocks on a pending request (skill: `twicc-sessions`). Each wait starts after the child's last user message, so an answer already given is returned — except while a session's compute is not current (e.g. right after a TwiCC restart): then pass `--since` an instant before the spawn or the send. Exit 0 whatever the outcomes: read `summary.all_replied` and each `outcome`.
+- **Wait for the answer later:** prefer `$TWICC session <SESSION_ID> wait-reply --wait-token <TOKEN>` with the create result's token. For one cursor-based batch, `$TWICC sessions wait-reply <SESSION_ID>...` waits until each child answers or blocks on a pending request (skill: `twicc-sessions`). Each wait starts after the child's last user message, so an answer already given is returned — except while a session's compute is not current (e.g. right after a TwiCC restart): then pass `--since` an instant before the spawn or the send. Exit 0 whatever the outcomes: read `summary.all_replied` and each `outcome`.
 - **Continue the conversation:** once at `user_turn`, `$TWICC send-message <SESSION_ID> '<text>'` (skill: `twicc-send-message`). Change settings mid-session with `$TWICC update-session <SESSION_ID> settings ...` (skill: `twicc-update-session`).
 - **Let the child talk back:** tell the spawned session, in the prompt, to load the `twicc-send-message` skill and use `send-message parent '<text>'`. `parent` resolves to you via its `spawned_by` link; the reply lands in your own session. Under `--permission-mode dontAsk` / `strict` the child cannot run the `$TWICC` CLI: tell it to use the `mcp__twicc__send_message` tool instead (file: `session-behavior.md`). With the TwiCC MCP server disabled, fetch the child's final message via `$TWICC session <ID> messages --tail 1` instead.
 
@@ -85,6 +89,7 @@ Read `process.state` from `$TWICC sessions get <SESSION_ID>` (skill: `twicc-sess
 ```bash
 $TWICC create-session --title 'Review last commit' --wait-reply --wait-timeout 120 'Review the last commit and report the risks'
 $TWICC create-session --title 'Audit src' --wait-reply --wait-background --wait-timeout 300 'Audit src/ and report the risks'
+$TWICC session 01a0c4d2-... wait-reply --wait-token 01a0c4d2-0000-7000-8000-000000000001 --wait-timeout 60
 $TWICC session 01a0c4d2-... wait-reply --from-line 19 --wait-timeout 60
 # Resumes past the answer read at line 19: only a later line counts.
 ```

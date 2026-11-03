@@ -239,7 +239,8 @@ def create_session_cmd(
             "Wait for confirmed logical completion after creation: initially one second "
             "without root activity, pending delivery, or assistant holds. Return the "
             "last relevant indexed answer. A pending request takes priority over "
-            "intermediate text. Accepted creation can return wait_token for later waiting. "
+            "intermediate text. For a later wait, prefer `session <ID> wait-reply "
+            "--wait-token <TOKEN>` with the returned wait_token. "
             "Adds a `reply` block to the result carrying the answer's text, "
             "its `line_num`, and an `outcome` saying what ended the wait: "
             "'replied' (the message closing the turn), 'awaiting_user_input' "
@@ -270,6 +271,9 @@ def create_session_cmd(
             "line (`replied`, `provider_error`), `since_line_num` otherwise. "
             "Raise it for a session whose "
             "first turn is long; there is no way to wait forever on purpose. "
+            "For the same input after an ordinary timeout, reuse its wait_token "
+            "with `session <ID> wait-reply --wait-token <TOKEN>`. "
+            "To wait past a consumed or ignored answer, omit the old token and use line_num. "
             "Requires --wait-reply."
         ),
     ),
@@ -305,6 +309,11 @@ def create_session_cmd(
     with the result, in one call. That is the way to collect a worker's
     output; to check whether it is still running, read `process.state` from
     "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
+    For a separate wait, prefer `session <ID> wait-reply --wait-token <TOKEN>`
+    with the returned wait_token. Reuse it after an ordinary timeout for the same
+    input. Without a token, use the returned last_line as --from-line, or line 0
+    for a new session. To wait past a consumed or ignored answer, omit the old
+    token and use its line_num as --from-line.
     With --wait-background, a final read during background work does not
     count.
     """

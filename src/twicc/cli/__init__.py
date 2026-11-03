@@ -479,7 +479,8 @@ def _sessions_wait_reply(
             "for its midnight. No offset means UTC. There is no --from-line here: "
             "a line number belongs to one transcript and means something "
             "else in every other, which is why an instant is what addresses "
-            "a batch. After `send-messages` without --wait-reply, pass an "
+            "a batch. After `send-messages` without --wait-reply, prefer singular waits "
+            "with each returned wait_token. For this cursor-based batch, pass an "
             "instant taken before the send."
         ),
     ),
@@ -557,9 +558,11 @@ def _sessions_wait_reply(
 
     The plural of `session <ID> wait-reply`, on sessions nobody just messaged:
     spawned earlier, steered from the UI, or messaged by someone else — or ones
-    you messaged with `send-messages` without `--wait-reply` (then pass `--since`
-    an instant taken before the send, or wait on each with `session <id>
-    wait-reply --from-line <last_line>`). One
+    you messaged with `send-messages` without `--wait-reply` (prefer
+    `session <id> wait-reply --wait-token <TOKEN>` per returned token;
+    without a token, use `--from-line <last_line>`). This plural command
+    accepts no tokens; for a single batch, pass `--since` an instant taken
+    before the send. One
     loop polls them all and one budget covers the batch, so it costs a
     wall-clock wait, not N of them.
 
@@ -587,7 +590,8 @@ def _sessions_wait_reply(
     given is returned — (its current last line while its compute is not
     current), or above the instant --since names, translated per session.
     There is no --from-line: line 42 is a different place in every transcript.
-    After `send-messages` without --wait-reply, pass --since an instant taken
+    After `send-messages` without --wait-reply, prefer a singular wait per
+    returned token. For this cursor-based batch, pass --since an instant taken
     before the send.
 
     Returns `summary` + `results`, one `reply` block per id — the block the
@@ -786,7 +790,11 @@ def messages(
 def _session_wait_reply(
     ctx: typer.Context,
     wait_token: str = typer.Option(
-        None, "--wait-token", help="Wait for this accepted input. Without an explicit cursor, use its admission boundary.",
+        None, "--wait-token", help=(
+            "Prefer the wait_token returned by create/send to select that accepted input. "
+            "Without an explicit cursor, use its admission boundary. Reuse it after an ordinary timeout "
+            "for the same input. To wait past a consumed or ignored answer, omit the old token and use --from-line."
+        ),
     ),
     from_line: int = typer.Option(
         None, "--from-line",
@@ -796,10 +804,11 @@ def _session_wait_reply(
             "that consumed a line (`replied`, `provider_error`) or the "
             "`since_line_num` of one that did not — resuming a "
             "`provider_error` from `since_line_num` re-matches the same "
-            "error forever. Omitted, the wait starts after the session's last "
+            "error forever. For an ignored background answer, use its line_num without "
+            "the old token, with --wait-background again. Omitted, the wait starts after the session's last "
             "user message (its current last line while its compute is not "
-            "current). After `send-message` without --wait-reply, pass the "
-            "`last_line` it returned."
+            "current) when no token is supplied. After `send-message` without --wait-reply, "
+            "prefer --wait-token. If no token is available, pass the returned last_line here."
         ),
     ),
     from_legacy: int = typer.Option(None, "--from", hidden=True),
@@ -823,7 +832,9 @@ def _session_wait_reply(
             "Seconds the wait may last, whatever ends it. Default 300, the "
             "ceiling MCP callers are asked to respect — an MCP client may "
             "itself give up on a tool silent that long, so over MCP pass a "
-            "shorter value and come back from the `since_line_num` you got."
+            "shorter value. After an ordinary timeout, reuse the same wait_token; without "
+            "one, use since_line_num. For an ignored background answer, omit the old "
+            "token and use its line_num as --from-line, with --wait-background again."
         ),
     ),
     no_reply_text: bool = typer.Option(
@@ -843,8 +854,11 @@ def _session_wait_reply(
     The same wait `--wait-reply` runs on the commands that send, on a session
     nobody just messaged: one spawned earlier, steered from the UI, or
     messaged by someone else — or one you messaged yourself without
-    `--wait-reply` (then pass `--from-line` the `last_line` the send returned).
+    `--wait-reply` (prefer `--wait-token` with the returned token; without one,
+    pass `--from-line` the returned `last_line`).
     Nothing is sent by this command. A wait_token selects its accepted input.
+    Reuse it after an ordinary timeout to keep waiting for the same input.
+    To wait past a consumed or ignored answer, omit the old token and use its line_num.
     Without an explicit cursor, use its stored admission cursor. Explicit
     --from-line and --since bounds remain strict. Otherwise the cursor defaults
     to after the last user message.
@@ -887,11 +901,14 @@ def _session_wait_reply(
     alike. An ending
     that consumed a line — `replied`, and `provider_error`, which points at
     the error the provider wrote — resumes from its `line_num`; every other
-    one resumes from its `since_line_num`, which nothing consumed. Getting
+    one resumes from its `since_line_num`, except an ignored background
+    answer: use its line_num without the old token, with --wait-background
+    again. Getting
     this backwards on a `provider_error` re-matches the same error forever.
-    Omitted, the wait starts after the session's last user message (its
-    current last line while its compute is not current). After `send-message`
-    without --wait-reply, pass the `last_line` it returned.
+    Without a token or explicit cursor, the wait starts after the session's
+    last user message (its current last line while its compute is not current).
+    After `send-message` without --wait-reply, prefer the returned wait_token;
+    without a token, pass the returned last_line as --from-line.
 
     `outcome` is `replied` (the message closing the turn),
     `awaiting_user_input` (a pending request), `ended` (the turn is over and

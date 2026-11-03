@@ -49,8 +49,8 @@ def send_message_cmd(
             "written after this message counts, so the previous turn's "
             "answer is not returned in its place. The exit code never "
             "changes: the message was sent either way, so read `outcome`. "
-            "Without it, a separate wait must pass --from-line with the "
-            "`last_line` this command returns."
+            "For a separate wait, prefer --wait-token with the returned wait_token. "
+            "Without a token, pass --from-line with the returned last_line."
         ),
     ),
     wait_timeout: float = typer.Option(
@@ -66,6 +66,9 @@ def send_message_cmd(
             "working, and the result carries the cursor to resume from — `line_num` "
             "when the ending consumed a line (`replied`, `provider_error`), "
             "`since_line_num` otherwise. "
+            "For the same input after an ordinary timeout, reuse its wait_token "
+            "with `session <ID> wait-reply --wait-token <TOKEN>`. "
+            "To wait past a consumed or ignored answer, omit the old token and use line_num. "
             "Requires --wait-reply."
         ),
     ),

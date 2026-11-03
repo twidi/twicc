@@ -129,10 +129,11 @@ def send_messages_cmd(
             "request leaves `all_replied` false. Only entries that were actually "
             "sent are waited on. One shared deadline covers the batch (see "
             "--wait-timeout): the sessions are waited on in parallel, so it "
-            "is a wall-clock budget, not N x timeout. Without it, a separate "
-            "wait must pass `sessions wait-reply` "
-            "an instant taken before this command (--since), or `session <id> "
-            "wait-reply` the `last_line` of each entry (--from-line)."
+            "is a wall-clock budget, not N x timeout. For a separate wait, prefer "
+            "`session <id> wait-reply --wait-token <TOKEN>` per returned token. "
+            "The plural wait accepts no tokens. For a cursor-based batch, pass "
+            "`sessions wait-reply` an instant taken before this command (--since). "
+            "Without a token, a singular wait takes each returned last_line (--from-line)."
         ),
     ),
     wait_timeout: float = typer.Option(
@@ -147,6 +148,9 @@ def send_messages_cmd(
             "working, and each entry carries the cursor to resume from — `line_num` "
             "when its ending consumed a line (`replied`, `provider_error`), "
             "`since_line_num` otherwise. "
+            "For the same input after an ordinary timeout, reuse its wait_token "
+            "with `session <ID> wait-reply --wait-token <TOKEN>`. "
+            "To wait past a consumed or ignored answer, omit the old token and use line_num. "
             "Requires --wait-reply."
         ),
     ),
