@@ -310,6 +310,7 @@ def test_authentication_error_bypasses_a_matching_stream_branch(monkeypatch):
 def test_deferred_settings_restart_keeps_the_admission_token(monkeypatch):
     from twicc.providers.claude_code import cron_restart
     from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+    from twicc.request_origin import RequestOrigin, origin_scope
     async def scenario():
         manager, original = ClaudeCodeAgentManager(), make_agent()
         original.ephemeral = False
@@ -320,8 +321,10 @@ def test_deferred_settings_restart_keeps_the_admission_token(monkeypatch):
         manager._check_session_writable = AsyncMock()
         manager._broadcast_agent_state = AsyncMock()
         original.interrupt_or_kill = AsyncMock()
-        accepted = await manager.send_to_session(original.session_id, original.project_id, original.cwd, "continue",
-            original.agent_settings._replace(effort="max"), completion_token="deferred", completion_cursor=81)
+        origin = RequestOrigin("agent", "cli", "sending-session")
+        with origin_scope(origin):
+            accepted = await manager.send_to_session(original.session_id, original.project_id, original.cwd, "continue",
+                original.agent_settings._replace(effort="max"), completion_token="deferred", completion_cursor=81)
         assert accepted is False
         assert manager._pending_after_restart[original.session_id]["completion_token"] == "deferred"
         replacement = make_agent()
@@ -335,6 +338,7 @@ def test_deferred_settings_restart_keeps_the_admission_token(monkeypatch):
         await manager._restart_crons_for_session(original.session_id)
         assert replacement.completion_controller._inputs["deferred"] == "accepted"
         assert replacement._completion_source_floor == 81
+        assert replacement._timeline_input_origins["deferred"] == origin
     asyncio.run(scenario())
 
 

@@ -71,10 +71,11 @@ logger = logging.getLogger(__name__)
 def _sync_live_session_items(
     compute: BaseSessionCompute, session_id: str, path: Path, limits: LiveSyncLimits, timeline_since=None,
     verified_final_refs=None,
+    get_input_origins=None,
 ):
     """Load the ORM row and apply one live batch on the compute worker."""
     return compute.sync_session_slice(session_id, path, limits=limits, timeline_since=timeline_since,
-                                      verified_final_refs=verified_final_refs)
+                                      verified_final_refs=verified_final_refs, get_input_origins=get_input_origins)
 
 
 class SessionChangeResult(NamedTuple):
@@ -925,7 +926,8 @@ class BaseSessionsWatcher:
         verified_final_refs = manager.timeline_verified_message_refs(session.id)
         with sync_timing_context(compute.provider, session.id):
             result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit),
-                                            self.timeline_since, verified_final_refs)
+                                            self.timeline_since, verified_final_refs,
+                                            lambda: manager.timeline_input_origins(session.id))
             self._after_live_slice_committed(session, result)
             log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
                      bytes=result.bytes_consumed, backlog=result.has_more)

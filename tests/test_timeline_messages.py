@@ -48,14 +48,14 @@ def live_session(request, tmp_path):
                      'content': [{'type': 'text' if user else 'Text', 'text': text}],
                      'phase': None if final is None else ('final_answer' if final else 'commentary'), **extra}}}
 
-    def append(*records, capture=True, limit=500, since=None, verified_final_refs=None):
+    def append(*records, capture=True, limit=500, since=None, verified_final_refs=None, get_input_origins=None):
         with path.open('ab') as stream:
             for record in records:
                 stream.write(orjson.dumps(record) + b'\n')
         while True:
             kwargs = {'timeline_since': boundary if since is None else since} if capture else {}
             result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(limit),
-                verified_final_refs=verified_final_refs, **kwargs)
+                verified_final_refs=verified_final_refs, get_input_origins=get_input_origins, **kwargs)
             if not result.has_more:
                 break
 
@@ -421,6 +421,28 @@ def test_user_origin_requires_explicit_source_evidence(live_session):
     explicit, unknown = f.events()
     assert (explicit.actor, explicit.via, explicit.actor_ref) == ('agent', 'cli', 'sender')
     assert (unknown.actor, unknown.via) == ('external', None)
+
+
+def test_live_input_origins_are_read_after_source_indexing(live_session):
+    from twicc.core.models import SessionItem
+    from twicc.request_origin import UI_ORIGIN
+
+    f = live_session
+    ref = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_client', 'live-request')
+    observed = []
+
+    def get_input_origins():
+        # A request can arrive after the watcher schedules its worker. Read its
+        # origin only after the worker reads and indexes the native message.
+        observed.append(SessionItem.objects.filter(session_id=f.session.id, kind='user_message').exists())
+        return [{'ref': ref._asdict(), 'origin': UI_ORIGIN._asdict(), 'source_floor': 0,
+                 'storage_incarnation': None, 'history_epoch': None}]
+
+    f.append(f.message('live-request', 'From the UI', user=True, clientId='live-request'),
+             get_input_origins=get_input_origins)
+    assert observed == [True]
+    event, = f.events()
+    assert (event.actor, event.via) == ('user', 'ui')
 
 
 def test_attachment_images_do_not_enter_saved_text(live_session):

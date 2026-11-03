@@ -42,7 +42,7 @@ def test_validate_data_fills_defaults_and_keeps_known_keys():
     assert validate_data("process.ended", None) == {
         "provider": None, "cause": None, "twicc_pid": None, "hybrid": None, "error": None, "upper_bound": None,
     }
-    assert validate_data("turn.ended", None) == {"background_work": None, "message_refs": None}
+    assert validate_data("turn.ended", None) == {"background_work": None, "message_refs": None, "input_origins": None}
 
 
 def test_validate_data_rejects_unknown_and_missing_keys():

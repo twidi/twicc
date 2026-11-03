@@ -25,7 +25,7 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from .exceptions import SendDeliveryError
-from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef, VerifiedMessageRef
+from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, VerifiedMessageRef
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -133,6 +133,13 @@ class BaseAgentManager:
             if (opening := agent._completion_openings.get(turn_id)) is not None
             for ref in tuple(refs)
         )
+
+    def timeline_input_origins(self, session_id: str) -> list:
+        """Copy exact sending origins on the live ingestion worker after source reading."""
+        agent = self._agents.get(session_id)
+        if agent is None or agent.ephemeral:
+            return []
+        return agent._timeline_origins_for_refs(list(agent._timeline_input_refs.values()))
 
     def get_agent_info(self, session_id: str) -> AgentInfo | None:
         """Return a snapshot for a single agent, or ``None`` if unknown."""
@@ -656,6 +663,9 @@ class BaseAgentManager:
         from twicc.core.content_storage.lifecycle import update_lifecycle
         from twicc.providers.db_writer import storage_admission
 
+        completion_origin = start_kwargs.pop("completion_origin", None)
+        if completion_origin is not None and start_kwargs.get("completion_token") is not None:
+            agent._timeline_input_origins.setdefault(start_kwargs["completion_token"], completion_origin)
         session_id = agent.session_id
         now = timezone.now()
 

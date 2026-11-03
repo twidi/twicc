@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 import orjson
@@ -13,7 +13,7 @@ from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, SessionType, TimelineEvent, TimelineKind
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.providers.helpers import get_provider_helpers
-from twicc.request_origin import RequestOrigin, origin_from_payload
+from twicc.request_origin import RequestOrigin, SYSTEM_ORIGIN, origin_from_payload
 
 logger = logging.getLogger(__name__)
 _MESSAGE_KINDS = (TimelineKind.USER_MESSAGE_SENT, TimelineKind.ASSISTANT_MESSAGE_SENT)
@@ -55,7 +55,29 @@ def _canonical(session, record):
     return next((ref for ref in refs if ref.kind == kind), None)
 
 
-def _capture(session, records, *, timeline_since, verified=(), eligible=False):
+def _saved_input_origins(session):
+    return [entry for entries in TimelineEvent.objects.filter(
+        session_id=session.id, provider=session.provider,
+        kind__in=[TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED],
+    ).values_list('data__input_origins', flat=True) for entry in entries or []]
+
+
+def _input_origin(session, first, aliases, origins):
+    wanted = [ref._asdict() for ref in aliases]
+    for entry in origins:
+        if (entry['ref'] not in wanted or first.line_num <= entry['source_floor']
+                or entry['storage_incarnation'] not in (None, session.storage_incarnation)
+                or entry['history_epoch'] not in (None, session.history_epoch)):
+            continue
+        raw = entry['origin']
+        # These proofs come from TwiCC's own request capture, not a drop payload.
+        origin = SYSTEM_ORIGIN if raw == SYSTEM_ORIGIN._asdict() else origin_from_payload(raw)
+        if origin is not None:
+            return origin
+    return None
+
+
+def _capture(session, records, *, timeline_since, verified=(), eligible=False, input_origins=()):
     if not records or session.type != SessionType.SESSION:
         return
     records = sorted(records, key=lambda record: record[0].line_num)
@@ -92,9 +114,10 @@ def _capture(session, records, *, timeline_since, verified=(), eligible=False):
     aliases = list(dict.fromkeys(ref for _, _, refs in records for ref in refs))
     kind = TimelineKind.USER_MESSAGE_SENT if user else TimelineKind.ASSISTANT_MESSAGE_SENT
     digest = hashlib.sha256(orjson.dumps([session.provider, kind, identity.kind, identity.native_id])).hexdigest()
-    # Source files do not prove that a user-role message came from the human UI.
-    # An unrecognized actor/via pair is the timeline's existing unknown convention.
-    origin = origin_from_payload(selected[0][1].get('_origin')) if user else None
+    # A user role alone proves no sender. Match the exact outgoing identity to
+    # its captured request, including when indexing follows turn publication.
+    origin = (_input_origin(session, first, aliases, input_origins)
+              or origin_from_payload(selected[0][1].get('_origin'))) if user else None
     record_event_sync(kind, session_id=session.id, project_id=session.project_id, provider=session.provider,
                       occurred_at=first.timestamp, origin=origin or RequestOrigin('external' if user else 'agent'),
                       dedupe_key='msg:' + digest,
@@ -128,7 +151,8 @@ def _groups(session, records):
 
 def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
                             timeline_since: datetime | None,
-                            verified_final_refs: Sequence[VerifiedMessageRef] | None = None) -> None:
+                            verified_final_refs: Sequence[VerifiedMessageRef] | None = None,
+                            get_input_origins: Callable[[], list] | None = None) -> None:
     """Capture only new live candidates and their exact Claude message groups."""
     if not new_line_nums:
         return
@@ -139,6 +163,8 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
         session = Session.objects.get(pk=session_id)
         rows = SessionItem.objects.filter(session_id=session_id, line_num__in=new_line_nums)
         groups = list(_groups(session, _read(session, rows)))
+        origins = [*(get_input_origins() if get_input_origins is not None else []), *_saved_input_origins(session)] if any(
+            group[0][0].kind == ItemKind.USER_MESSAGE for group in groups) else []
         helpers = get_provider_helpers(session.provider)
         needs_proof = (session.provider == 'claude_code' or verified_final_refs) and any(
             group[0][0].kind == ItemKind.ASSISTANT_MESSAGE
@@ -159,7 +185,7 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
             _capture(session, group, timeline_since=timeline_since,
                      verified=(*saved, *proof, *(item.ref for item in runtime_proof
                                                 if group[0][0].line_num > item.source_floor)),
-                     eligible=any(ref in saved for _, _, aliases in group for ref in aliases))
+                     eligible=any(ref in saved for _, _, aliases in group for ref in aliases), input_origins=origins)
     except Exception:
         logger.exception('Timeline message capture failed for %s', session_id)
 
@@ -174,12 +200,14 @@ def _record_refs(session, refs, *, timeline_since, floor=0, eligible=False, veri
     if all(ref.kind == 'claude_message' for ref in refs):
         query = query.filter(message_id__in=[ref.native_id for ref in refs])
     records = (record for record in _read(session, query) if wanted.intersection(record[2]))
+    origins = _saved_input_origins(session)
     for group in _groups(session, records):
         if group[0][0].line_num <= floor:
             continue
         _capture(session, group, timeline_since=timeline_since,
                  verified=refs if verified is None else verified,
-                 eligible=eligible or any(ref in saved for _, _, aliases in group for ref in aliases))
+                 eligible=eligible or any(ref in saved for _, _, aliases in group for ref in aliases),
+                 input_origins=origins)
 
 
 def record_verified_messages(session_id: str, *, refs: Sequence[VerifiedMessageRef], timeline_since: datetime) -> None:

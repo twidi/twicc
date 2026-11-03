@@ -77,7 +77,7 @@ def test_open_inner_intervals_are_closed_first_with_the_same_time(project):
     reconcile_at_boot(now=timezone.now(), boot_id="b1")
     got = rows(session_id="s1")
     assert [r.kind for r in got] == ["turn.ended", "awaiting_input.ended", "process.ended"]
-    assert got[0].data == {"background_work": None, "message_refs": None}  # a lost process runs nothing
+    assert got[0].data == {"background_work": None, "message_refs": None, "input_origins": None}  # a lost process runs nothing
     assert len({r.occurred_at for r in got}) == 1
     assert all(r.precision == "estimated" for r in got)  # inner ends included, like the lost end
 

@@ -31,7 +31,7 @@ from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import clear_context, reconcile, reset_baseline
 from twicc.core.enums import Provider
 from twicc.logging_context import provider_log_context
-from twicc.request_origin import system_marker
+from twicc.request_origin import RequestOrigin, capture_origin, system_marker
 
 from .states import AgentInfo, AgentState, PendingRequest, get_process_memory
 
@@ -217,6 +217,7 @@ class BaseAgent(StopOriginMixin):
         self._timeline_message_refs: dict[str, list[NativeMessageRef]] = {}
         self._timeline_start_refs: dict[str, NativeMessageRef | None] = {}
         self._timeline_input_refs: dict[str, NativeMessageRef] = {}
+        self._timeline_input_origins: dict[str, RequestOrigin] = {}
         self._state_revision = 0
 
     # ------------------------------------------------------------------
@@ -250,6 +251,22 @@ class BaseAgent(StopOriginMixin):
                 refs.append(ref)
             self._timeline_start_refs.setdefault(item.turn_id, ref)
 
+    def _timeline_origins_for_refs(self, refs: list) -> list:
+        """Copy sending origins for exact input identities, never for adjacent messages."""
+        wanted = [ref._asdict() if isinstance(ref, NativeMessageRef) else ref for ref in refs]
+        result = []
+        for token, ref in tuple(self._timeline_input_refs.items()):
+            origin = self._timeline_input_origins.get(token)
+            item = self._completion_inputs.get(token)
+            if origin is None or item is None or item.status == "rejected" or ref._asdict() not in wanted:
+                continue
+            opening = self._completion_openings.get(item.turn_id)
+            result.append({"ref": ref._asdict(), "origin": origin._asdict(),
+                           "source_floor": item.admission_cursor,
+                           "storage_incarnation": opening[2] if opening else self._completion_storage_incarnation,
+                           "history_epoch": opening[3] if opening else self._completion_history_epoch})
+        return result
+
     def _timeline_refs_for_turn(self, snapshot: CompletionSnapshot, *, start: bool = False) -> list:
         """Copy the selected interval before writer admission can yield."""
         if start:
@@ -276,6 +293,7 @@ class BaseAgent(StopOriginMixin):
             item = self._completion_inputs.get(token)
             if item is not None and item.turn_id == turn_id:
                 self._timeline_input_refs.pop(token, None)
+                self._timeline_input_origins.pop(token, None)
 
     def _completion_activity(self, *, first_ref: NativeMessageRef | None = None) -> None:
         """Record actual root work before the provider yields control."""
@@ -320,6 +338,7 @@ class BaseAgent(StopOriginMixin):
         self._completion_refresh()
 
     def _completion_input_pending(self, token: str, *, staged: bool = False) -> None:
+        self._timeline_input_origins.setdefault(token, capture_origin())
         # Manager staging blocks confirmation before setup. Only actual provider
         # delivery associates the receipt with this agent's interval.
         if token not in self._completion_input_receipts:
@@ -337,6 +356,8 @@ class BaseAgent(StopOriginMixin):
         item = self._completion_inputs.get(token)
         if item is not None and item.status in ("accepted", "rejected") and status != item.status:
             return
+        if status == "rejected":
+            self._timeline_input_origins.pop(token, None)
         receipt = self._completion_input_receipts.get(token)
         if status in ("rejected", "uncertain") and receipt is not None and not receipt.done():
             receipt.set_result(False)

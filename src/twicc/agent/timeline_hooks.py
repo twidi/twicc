@@ -78,9 +78,14 @@ def _first_pending(agent):
 def _write(agent, specs, *, occurred_at, actor=TimelineActor.AGENT, origin=None, reasons=None) -> None:
     """Write ``specs``; ``reasons`` maps a kind to the ``reason`` of its row."""
     for spec in specs:
+        data = spec.data
+        if spec.kind in (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED):
+            origins_for = getattr(agent, "_timeline_origins_for_refs", None)
+            if origins_for is not None:
+                data = {**data, "input_origins": origins_for(data.get("message_refs") or []) or None}
         record_event_sync(
             spec.kind, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
-            occurred_at=occurred_at, actor=actor, origin=origin, provider=_provider_of(agent), data=spec.data,
+            occurred_at=occurred_at, actor=actor, origin=origin, provider=_provider_of(agent), data=data,
             reason=(reasons or {}).get(spec.kind, ""),
         )
 

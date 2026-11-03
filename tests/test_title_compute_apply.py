@@ -250,11 +250,13 @@ def test_live_merged_slices_broadcast_changed_target_once(source, tmp_path, monk
     async def capture(group, event):
         sent.append(event["data"])
 
-    def merged_sync(compute, session_id, path, limits, timeline_since, verified_final_refs=None):
+    def merged_sync(compute, session_id, path, limits, timeline_since, verified_final_refs=None, get_input_origins=None):
         first = compute.sync_session_slice(session_id, path, limits=LiveSyncLimits(max_lines=1),
-                                           timeline_since=timeline_since, verified_final_refs=verified_final_refs)
+                                           timeline_since=timeline_since, verified_final_refs=verified_final_refs,
+                                           get_input_origins=get_input_origins)
         second = compute.sync_session_slice(session_id, path, limits=LiveSyncLimits(max_lines=1),
-                                           timeline_since=timeline_since, verified_final_refs=verified_final_refs)
+                                           timeline_since=timeline_since, verified_final_refs=verified_final_refs,
+                                           get_input_origins=get_input_origins)
         assert first.updates.title_updated_session_ids == (target.id,)
         assert second.updates.title_updated_session_ids == (target.id,)
         return second._replace(updates=merge_live_updates(first.updates, second.updates))

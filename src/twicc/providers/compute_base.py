@@ -4344,6 +4344,7 @@ class BaseSessionCompute:
         self, session_id: str, file_path: Path, *, limits: LiveSyncLimits,
         timeline_since: datetime | None = None,
         verified_final_refs: tuple | None = None,
+        get_input_origins: Callable[[], list] | None = None,
     ) -> LiveSyncResult:
         """Reload and commit one complete slice, including provider state protection."""
         started = perf_counter()
@@ -4371,8 +4372,11 @@ class BaseSessionCompute:
                     from twicc.core.services.logical_turn_answers import bind_indexed_turn_sources
                     bind_indexed_turn_sources(session.id)
                     from twicc.core.services.timeline_messages import record_indexed_messages
+                    # A send can start while this worker reads the source. Copy
+                    # request origins here, after those records are indexed.
                     record_indexed_messages(session.id, new_line_nums=updates.new_line_nums,
-                                            timeline_since=timeline_since, verified_final_refs=verified_final_refs)
+                                            timeline_since=timeline_since, verified_final_refs=verified_final_refs,
+                                            get_input_origins=get_input_origins)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 

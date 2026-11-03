@@ -916,7 +916,7 @@ def _park_for_crons(parked, monkeypatch, refs=REFS):
 
 def test_parked_send_carries_content_refs_and_release(parked, monkeypatch):
     entry = _park_for_crons(parked, monkeypatch)
-    assert set(entry) == {"text", "images", "documents", "content", "refs", "on_delivered"}
+    assert set(entry) == {"text", "images", "documents", "content", "refs", "on_delivered", "completion_origin"}
     assert entry["refs"] == REFS
     assert entry["content"] == _content()
     assert parked.released == []

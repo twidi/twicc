@@ -61,7 +61,8 @@ Use `claude_message` as the assistant group identity, `claude_uuid` for users, a
 Retain all native aliases of a Claude group. Include a timeline-only `codex_client` alias when a user item has `clientId`.
 Never add that alias to the logical journal's completion protocol.
 
-Add `TurnStartedData(message_refs: list | None = None)` and the same optional field to `TurnEndedData`.
+Add `TurnStartedData(message_refs: list | None = None, input_origins: list | None = None)` and the same optional fields to `TurnEndedData`.
+Each `input_origins` entry stores the exact `ref`, the captured request `origin`, `source_floor`, `storage_incarnation`, and `history_epoch`.
 An end's references cover the user messages and retained assistant messages of that interval.
 A start references its triggering input when known; an automatic start has no user reference.
 References match a message event by session and an exact `source_refs` alias.
@@ -101,11 +102,11 @@ An explicit nonfinal verdict or Codex `delivery=async` prevents final capture.
 **Tests:** Create `tests/test_timeline_messages.py`; extend `tests/test_timeline_enums_sync.py`, `tests/test_timeline_filters_sync.py`, `tests/test_timeline_filters.py`, and `tests/test_watcher_catch_up.py`.
 
 **Interfaces:**
-- Produce `record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int], timeline_since: datetime | None, verified_final_refs: Sequence[VerifiedMessageRef] | None = None) -> None` in `timeline_messages.py`.
+- Produce `record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int], timeline_since: datetime | None, verified_final_refs: Sequence[VerifiedMessageRef] | None = None, get_input_origins: Callable[[], list] | None = None) -> None` in `timeline_messages.py`.
 - Produce `record_verified_messages(session_id: str, *, refs: Sequence[VerifiedMessageRef], timeline_since: datetime) -> None` for Task 2's already-admitted writer.
 - Produce `recover_referenced_messages(session_id: str) -> None` for existing ingestion publication paths; resolve only saved live-turn references.
 - Produce `BaseProviderHelpers.extract_timeline_text_from_parsed(parsed: dict) -> str`, implemented by both providers with verbatim text extraction.
-- Extend `BaseSessionCompute.sync_session_slice(..., limits: LiveSyncLimits, timeline_since: datetime | None = None) -> LiveSyncResult`.
+- Extend `BaseSessionCompute.sync_session_slice(..., limits: LiveSyncLimits, timeline_since: datetime | None = None, get_input_origins: Callable[[], list] | None = None) -> LiveSyncResult`.
 - Payload consumers receive the event kind, `data.text`, `data.source_refs`, and `data.source_line`. They derive the role from kind.
 
 - [ ] **Write failing tests.** Use real persisted provider fixtures and production content readers; fixture helpers below describe test-local setup.
@@ -148,7 +149,12 @@ Read only new candidate identities and their Claude groups; do not rescan the en
 Use the normal readers for freshly inserted content; do not invent a retry guarantee after checkpoint commit.
 Keep timeline capture best-effort. Do not block ingestion, force storage restoration, or advance source-readiness state for this feature.
 For verified references, resolve only the exact referenced native group. Use the capture boundary unless a saved live-turn reference already proves eligibility.
-Set assistant actor to `agent`; use source evidence for user origin where available, otherwise use the existing unknown-origin convention.
+Set assistant actor to `agent`. Capture each input request's origin before delivery and retain it with its exact reserved native identity.
+Pass a live-origin reader through the watcher. Invoke it inside best-effort capture after native source indexing, including concurrent sends.
+Save matching input origins and source scope in existing turn-event JSON for late indexing after completion and journal cleanup.
+Preserve parked input origins across automatic settings restarts. Do not change the process event's automatic attribution.
+Use exact runtime or saved origin proof, then explicit source evidence, otherwise the existing unknown-origin convention.
+Leave previously recorded message events unchanged. Add no table or migration for this correction.
 Do not infer that every `user` role came from the human UI.
 Add both new enum members and optional turn payloads; bump `SCHEMA_VERSION` for the changed payload shapes.
 Generate only the choices migration. Add both kinds to the `messages` family in both registries.

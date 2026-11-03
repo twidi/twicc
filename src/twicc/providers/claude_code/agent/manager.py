@@ -24,7 +24,7 @@ from twicc.agent.exceptions import SessionUnavailableError
 from twicc.agent.completion_types import CompletionInput, CompletionSnapshot
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
-from twicc.request_origin import system_marker
+from twicc.request_origin import capture_origin, system_marker
 
 from .agent import ClaudeCodeAgent
 
@@ -74,6 +74,8 @@ def _parked_start_kwargs(pending: dict) -> dict:
     ``_parked_release_after_start``).
     """
     kwargs = _parked_content_kwargs(pending)
+    if pending.get("completion_origin") is not None:
+        kwargs["completion_origin"] = pending["completion_origin"]
     on_delivered = pending.get("on_delivered")
     if on_delivered is not None:
         kwargs["on_delivered"] = on_delivered
@@ -638,6 +640,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                 # entries are not released (the reaper removes them).
                                 self._pending_after_restart[session_id] = {
                                     "text": text, "images": images, "documents": documents,
+                                    "completion_origin": capture_origin(),
                                     **content_kwargs, **parked_attachments,
                                 }
                                 token = content_kwargs.get("completion_token")
@@ -1625,6 +1628,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             ):
                 agent = self._agents.get(session_id)
                 if agent and agent.state == AgentState.USER_TURN:
+                    if pending.get("completion_origin") is not None and pending.get("completion_token") is not None:
+                        agent._timeline_input_origins.setdefault(pending["completion_token"], pending["completion_origin"])
                     logger.info("Sending pending message after cron restart for session %s", session_id)
                     delivered = await agent.send(
                         pending["text"],

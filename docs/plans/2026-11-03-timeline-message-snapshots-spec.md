@@ -46,6 +46,15 @@ The event kind identifies the role. Do not duplicate it in a JSON `role` field.
 The message event's `data` stores complete text with Markdown and source identity for deduplication.
 Keep the full text in this event once. Do not duplicate it in turn events.
 
+Capture each outgoing request's full origin before provider delivery. Match it by the exact native user-message identity.
+Claude SDK and Codex reserve those outgoing identities. Their UI messages belong to `You`; agent CLI/MCP inputs retain their sending agent's origin.
+Keep unmatched sources under `Unknown`. Never infer the sender from a `user` role, message text, or nearby event.
+Hybrid terminal inputs have no exact outgoing identity and remain unmatched unless explicit source evidence identifies their origin.
+Carry the exact input origins and source scope in existing turn-event JSON for delayed source indexing.
+Read live origins after source indexing, so a send admitted while the watcher reads is included.
+Preserve the original message origin across automatic settings restarts; the process restart remains automatic.
+Leave existing message events unchanged. No attribution backfill or new table is required.
+
 The existing turn events carry references to their associated message events.
 A start may have no triggering user message. A logical turn may contain several user messages and several assistant final messages.
 The completion association identifies the ordered messages exchanged during that turn; it does not assert that one answer semantically answers one prompt.
