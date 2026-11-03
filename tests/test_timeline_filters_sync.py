@@ -20,7 +20,7 @@ const problemReasons = Object.entries(PROCESS_ENDED_REASONS)
     .filter(([, [, severity]]) => severity === 'warning' || severity === 'danger')
     .map(([reason]) => reason);
 console.log(JSON.stringify({
-    views: values(VIEWS), families: values(FAMILIES), authors: values(AUTHORS), providers: PROVIDERS, problemReasons,
+    views: values(VIEWS), families: values(FAMILIES), messageFamily: FAMILIES.find((entry) => entry.value === "messages"), authors: values(AUTHORS), providers: PROVIDERS, problemReasons,
 }));
 """
 
@@ -35,6 +35,9 @@ def test_frontend_keys_match_the_backend():
     frontend = orjson.loads(result.stdout)
     assert frontend["views"] == list(VIEWS)
     assert frontend["families"] == list(FAMILIES)
+    assert frontend["messageFamily"] == {
+        "value": "messages", "label": "Messages", "hint": "user messages, assistant finals",
+    }
     assert frontend["authors"] == list(AUTHORS)
     assert frontend["providers"] == [provider.value for provider in Provider]
     assert sorted(frontend["problemReasons"]) == sorted(PROBLEM_REASONS)

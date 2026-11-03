@@ -4339,6 +4339,7 @@ class BaseSessionCompute:
 
     def sync_session_slice(
         self, session_id: str, file_path: Path, *, limits: LiveSyncLimits,
+        timeline_since: datetime | None = None,
     ) -> LiveSyncResult:
         """Reload and commit one complete slice, including provider state protection."""
         started = perf_counter()
@@ -4365,6 +4366,9 @@ class BaseSessionCompute:
                     # Keep the runtime-aware resolver outside spawned compute imports.
                     from twicc.core.services.logical_turn_answers import bind_indexed_turn_sources
                     bind_indexed_turn_sources(session.id)
+                    from twicc.core.services.timeline_messages import record_indexed_messages
+                    record_indexed_messages(session.id, new_line_nums=updates.new_line_nums,
+                                            timeline_since=timeline_since)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 
@@ -4632,6 +4636,7 @@ class BaseSessionCompute:
                     checked_message_ids.add(message_id)
                     if SessionItem.objects.filter(
                         session_id=session.id, message_id=message_id, line_num__lt=current_line_num,
+                        context_usage__isnull=False,
                     ).exists():
                         seen_message_ids.add(message_id)
             self.compute_item_cost_and_usage(

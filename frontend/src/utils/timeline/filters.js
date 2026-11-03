@@ -19,6 +19,7 @@ export const FAMILIES = [
     { value: 'sessions', label: 'Sessions', hint: 'created, renamed' },
     { value: 'processes', label: 'Processes', hint: 'started, stopped' },
     { value: 'turns', label: 'Turns', hint: 'started, ended' },
+    { value: 'messages', label: 'Messages', hint: 'user messages, assistant finals' },
     { value: 'waits', label: 'Waiting for you', hint: 'approvals, questions' },
     { value: 'settings', label: 'Settings', hint: 'model, effort, permissions' },
     { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned, detached' },

@@ -923,6 +923,10 @@ class BaseProviderHelpers:
         """
         raise NotImplementedError
 
+    def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
+        """Return message text verbatim, without search or title normalization."""
+        raise NotImplementedError
+
     def is_final_assistant_message(self, parsed: dict) -> bool | None:
         """Is this line the assistant's *final* message of its turn?
 

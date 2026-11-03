@@ -2005,6 +2005,10 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         message = parsed_json.get("message", {})
         if not isinstance(message, dict):
             return
+        # Every split block needs its native group, including blocks without usage.
+        msg_id = message.get("id")
+        if msg_id:
+            item.message_id = msg_id
         usage = message.get("usage")
         if not usage:
             return
@@ -2022,11 +2026,6 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         context_usage = calculate_line_context_usage(token_usage)
         if context_usage == 0:
             return
-
-        # Extract and store message_id for deduplication tracking
-        msg_id = message.get("id")
-        if msg_id:
-            item.message_id = msg_id
 
         item.context_usage = context_usage
 

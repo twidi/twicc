@@ -81,7 +81,7 @@ def test_a_turn_round_trip_records_started_then_ended(project):
     transition(agent, AgentState.USER_TURN)
     assert kinds("s1") == ["turn.started", "turn.ended"]
     turn_ended = TimelineEvent.objects.get(session_id="s1", kind="turn.ended")
-    assert turn_ended.data == {"background_work": None}
+    assert turn_ended.data == {"background_work": None, "message_refs": None}
 
 
 def test_waiting_for_the_user_records_the_request_and_the_tool(project):
@@ -103,7 +103,7 @@ def test_turn_ended_carries_the_background_work_running_behind_the_agent(project
     transition(agent, AgentState.ASSISTANT_TURN)
     agent._work = WORK
     transition(agent, AgentState.USER_TURN)
-    assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": WORK}
+    assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": WORK, "message_refs": None}
 
 
 def test_background_work_changes_while_idle_preserve_one_logical_turn_end(project):
@@ -122,7 +122,7 @@ def test_background_work_changes_while_idle_preserve_one_logical_turn_end(projec
         assert agent.process_run.last_state_change_at == changed_at
     assert list(TimelineEvent.objects.filter(session_id="s1").order_by("id").values()) == completed
     assert kinds("s1") == ["turn.started", "turn.ended"]
-    assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": None}
+    assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": None, "message_refs": None}
 
 
 def test_background_work_changes_during_an_assistant_turn_record_nothing(project):
@@ -145,7 +145,7 @@ def test_death_closes_open_intervals_then_ends_the_process_with_one_timestamp(pr
     transition(agent, AgentState.DEAD)
     tail = list(TimelineEvent.objects.filter(session_id="s1").order_by("id"))[-3:]
     assert [r.kind for r in tail] == ["turn.ended", "awaiting_input.ended", "process.ended"]
-    assert tail[0].data == {"background_work": None}  # a dead process runs nothing
+    assert tail[0].data == {"background_work": None, "message_refs": None}  # a dead process runs nothing
     assert len({r.occurred_at for r in tail}) == 1
     assert tail[-1].reason == "manual" and tail[-1].actor == "user"
 

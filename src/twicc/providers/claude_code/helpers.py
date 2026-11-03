@@ -730,6 +730,17 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
             return command.name
         return text
 
+    def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
+        content = get_message_content(parsed)
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "\n".join(
+            block["text"] for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        )
+
     def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
         from twicc.agent.completion_types import NativeMessageRef
 

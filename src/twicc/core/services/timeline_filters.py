@@ -46,6 +46,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
     "sessions": (TimelineKind.SESSION_CREATED, TimelineKind.TITLE_CHANGED),
     "processes": (TimelineKind.PROCESS_STARTED, TimelineKind.PROCESS_ENDED),
     "turns": (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED),
+    "messages": (TimelineKind.USER_MESSAGE_SENT, TimelineKind.ASSISTANT_MESSAGE_SENT),
     "waits": (TimelineKind.AWAITING_INPUT_STARTED, TimelineKind.AWAITING_INPUT_ENDED),
     "settings": (TimelineKind.SETTINGS_CHANGED,),
     "organization": (

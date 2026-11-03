@@ -65,7 +65,7 @@ def as_mapping(row):
 
 def test_the_keys_and_their_order():
     assert VIEWS == ("all", "without_turns", "waits_problems")
-    assert tuple(FAMILIES) == ("sessions", "processes", "turns", "waits", "settings", "organization", "twicc")
+    assert tuple(FAMILIES) == ("sessions", "processes", "turns", "messages", "waits", "settings", "organization", "twicc")
     assert AUTHORS == ("unknown", "automatic", "you", "agent_cli_mcp", "external_mcp", "session_agent")
 
 
@@ -291,3 +291,13 @@ def test_the_combinations_that_can_never_match():
     # The other groups never make a filter impossible here: only the view and the families decide.
     assert can_match(TimelineFilter(authors=("you",), providers=("codex",), session_id="s1"))
     assert possible_kinds(TimelineFilter()) == frozenset(TimelineKind.values)
+
+
+@pytest.mark.django_db
+def test_messages_are_in_all_and_without_turns_but_not_waits():
+    rows = save(build('user_message.sent'), build('assistant_message.sent'), build('turn.started'))
+    messages = {rows[0].pk, rows[1].pk}
+    assert match_q(TimelineFilter()) is None
+    assert messages <= set(TimelineEvent.objects.values_list("id", flat=True))
+    assert matching_ids(match_q(TimelineFilter(view='without_turns', families=('messages',)))) == messages
+    assert matching_ids(match_q(TimelineFilter(view='waits_problems', families=('messages',)))) == set()

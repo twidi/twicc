@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import transaction
+from django.utils import timezone
 from watchfiles import Change, awatch
 
 from twicc import search
@@ -67,9 +68,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _sync_live_session_items(compute: BaseSessionCompute, session_id: str, path: Path, limits: LiveSyncLimits):
+def _sync_live_session_items(
+    compute: BaseSessionCompute, session_id: str, path: Path, limits: LiveSyncLimits, timeline_since=None,
+):
     """Load the ORM row and apply one live batch on the compute worker."""
-    return compute.sync_session_slice(session_id, path, limits=limits)
+    return compute.sync_session_slice(session_id, path, limits=limits, timeline_since=timeline_since)
 
 
 class SessionChangeResult(NamedTuple):
@@ -423,6 +426,7 @@ class BaseSessionsWatcher:
     projects_dir: Path
 
     def __init__(self) -> None:
+        self.timeline_since = timezone.now()
         self._stop_event: asyncio.Event | None = None
         self._boost_event: asyncio.Event | None = None
         self._fast_poll_until: float = 0.0
@@ -914,7 +918,8 @@ class BaseSessionsWatcher:
         bounded = session.compute_version == compute.compute_version
         limit = self._line_limits.get(path, 500) if bounded else 500
         with sync_timing_context(compute.provider, session.id):
-            result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit))
+            result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit),
+                                            self.timeline_since)
             self._after_live_slice_committed(session, result)
             log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
                      bytes=result.bytes_consumed, backlog=result.has_more)
@@ -1367,6 +1372,7 @@ class BaseSessionsWatcher:
                 or (self._launcher_resolver_task is not None and not self._launcher_resolver_task.done())
                 or any(not task.done() for task in self._wake_tasks)):
             raise RuntimeError('Cannot prepare watcher before shutdown drains')
+        self.timeline_since = timezone.now()
         self._queue = SessionChangeQueue()
         self._consumer_task = None
         self._sources.clear()

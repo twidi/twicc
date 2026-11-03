@@ -749,6 +749,9 @@ class CodexHelpers(BaseProviderHelpers):
     def extract_indexable_text_from_parsed(self, parsed: dict) -> str:
         return user_message_text(parsed) or agent_message_text(parsed) or ""
 
+    def extract_timeline_text_from_parsed(self, parsed: dict) -> str:
+        return user_message_text(parsed) or agent_message_text(parsed) or ""
+
     def completion_record_refs(self, parsed: dict) -> tuple[NativeMessageRef, ...]:
         from twicc.agent.completion_types import NativeMessageRef
 

@@ -279,9 +279,9 @@ def test_tuning_applies_only_to_future_current_version_slices(provider_home, mon
     parsed = module.ParsedSessionFile('p', session.id, SessionType.SESSION, session.file_path)
     limits = []
     original = module._sync_live_session_items
-    def measured(compute, sid, path, limit):
+    def measured(compute, sid, path, limit, timeline_since):
         limits.append(limit.max_lines)
-        return original(compute, sid, path, limit)._replace(elapsed_ms=elapsed)
+        return original(compute, sid, path, limit, timeline_since)._replace(elapsed_ms=elapsed)
     monkeypatch.setattr(module, '_sync_live_session_items', measured)
     monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
     async def run():
@@ -313,9 +313,9 @@ def test_slow_slices_never_tune_the_limit_below_one_line(provider_home, monkeypa
     watcher._line_limits[path] = 1
     limits = []
     original = module._sync_live_session_items
-    def slow(compute, sid, path, limit):
+    def slow(compute, sid, path, limit, timeline_since):
         limits.append(limit.max_lines)
-        return original(compute, sid, path, limit)._replace(elapsed_ms=101)
+        return original(compute, sid, path, limit, timeline_since)._replace(elapsed_ms=101)
     monkeypatch.setattr(module, '_sync_live_session_items', slow)
     monkeypatch.setattr(module, 'broadcast_message', AsyncMock())
     async def run():

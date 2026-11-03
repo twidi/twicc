@@ -2333,6 +2333,8 @@ class TimelineKind(models.TextChoices):
     SETTINGS_CHANGED = "settings.changed", "Settings changed"
     PROCESS_STARTED = "process.started", "Process started"
     PROCESS_ENDED = "process.ended", "Process ended"
+    USER_MESSAGE_SENT = "user_message.sent", "User message sent"
+    ASSISTANT_MESSAGE_SENT = "assistant_message.sent", "Assistant message sent"
     TURN_STARTED = "turn.started", "Turn started"
     TURN_ENDED = "turn.ended", "Turn ended"
     AWAITING_INPUT_STARTED = "awaiting_input.started", "Awaiting input started"

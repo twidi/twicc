@@ -26,7 +26,7 @@ def test_record_event_sync_writes_one_row_with_defaults(project):
     assert event is not None
     event.refresh_from_db()
     assert event.project_id == project.id and event.precision == TimelinePrecision.EXACT
-    assert event.occurred_at >= before and event.data == {}
+    assert event.occurred_at >= before and event.data == {"message_refs": None}
 
 
 def test_invalid_payload_returns_none_and_writes_nothing(project):

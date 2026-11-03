@@ -42,7 +42,7 @@ def test_validate_data_fills_defaults_and_keeps_known_keys():
     assert validate_data("process.ended", None) == {
         "provider": None, "cause": None, "twicc_pid": None, "hybrid": None, "error": None, "upper_bound": None,
     }
-    assert validate_data("turn.ended", None) == {"background_work": None}
+    assert validate_data("turn.ended", None) == {"background_work": None, "message_refs": None}
 
 
 def test_validate_data_rejects_unknown_and_missing_keys():
@@ -53,9 +53,9 @@ def test_validate_data_rejects_unknown_and_missing_keys():
 
 
 def test_validate_data_rejects_payload_on_payloadless_kind():
-    assert validate_data("turn.started", None) == {}
+    assert validate_data("archived.started", None) == {}
     with pytest.raises(ValueError):
-        validate_data("turn.started", {"x": 1})
+        validate_data("archived.started", {"x": 1})
 
 
 def test_validate_data_no_longer_accepts_a_data_via_key():

@@ -46,3 +46,32 @@ def test_catch_up_is_silent_on_an_empty_dir(provider_home, monkeypatch):
     monkeypatch.setattr(watcher, "_process_change", lambda *a: calls.append(a))
     asyncio.run(watcher._catch_up_existing_files(channel_layer=None))
     assert calls == []
+
+
+def test_live_sync_supplies_capture_boundary_without_changing_it(tmp_path):
+    from datetime import timedelta
+    import orjson
+    from django.utils import timezone
+    from twicc.core.models import Project, Session, TimelineEvent
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+    from twicc.providers.live_sync import LiveSyncLimits
+    from twicc.providers.sessions_watcher import _sync_live_session_items
+
+    watcher = ClaudeCodeSessionsWatcher()
+    boundary = watcher.timeline_since
+    session = Session.objects.create(id='catch-up', provider='claude_code', project=Project.objects.create(id='p'))
+    path = tmp_path / 'live.jsonl'
+    records = [
+        {'type': 'user', 'uuid': identity, 'timestamp': timestamp.isoformat(),
+         'message': {'role': 'user', 'content': text}}
+        for identity, timestamp, text in [
+            ('old', boundary - timedelta(days=1), 'history'),
+            ('new', timezone.now(), 'live'),
+        ]
+    ]
+    path.write_bytes(b''.join(orjson.dumps(record) + b'\n' for record in records))
+    compute = ClaudeCodeSessionCompute()
+    _sync_live_session_items(compute, session.id, path, LiveSyncLimits(1), boundary)
+    _sync_live_session_items(compute, session.id, path, LiveSyncLimits(1), boundary)
+    assert [event.data['text'] for event in TimelineEvent.objects.filter(kind='user_message.sent')] == ['live']
+    assert watcher.timeline_since == boundary

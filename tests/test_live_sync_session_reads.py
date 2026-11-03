@@ -432,11 +432,12 @@ def test_live_sync_matches_golden_record(scenario, tmp_path, django_capture_on_c
 # reads were removed: 51 / 53 / 60 / 52.
 BUDGETS: dict[tuple[str, str], int] = {
     # One intentional lookup detects newly admitted unbound logical intervals.
-    # Do not negative-cache this read: a later journal row must be discovered.
-    ("claude_code", "root"): 36,
-    ("codex", "root"): 38,
-    ("claude_code", "child"): 43,
-    ("codex", "child"): 35,
+    # A second lookup detects explicit pending timeline message references.
+    # Do not negative-cache either read: later references must be discovered.
+    ("claude_code", "root"): 37,
+    ("codex", "root"): 39,
+    ("claude_code", "child"): 44,
+    ("codex", "child"): 36,
 }
 
 

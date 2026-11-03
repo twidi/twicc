@@ -11,7 +11,7 @@ from twicc.agent.states import AgentState
 from twicc.core.models import TimelineKind
 
 #: Version of the payload shapes below. Bump it when a kind's payload changes shape (design §3).
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class SessionCreatedData(NamedTuple):
@@ -49,11 +49,22 @@ class ProcessEndedData(NamedTuple):
     upper_bound: str | None = None  # ISO time of the boot that detected a lost process
 
 
+class MessageSentData(NamedTuple):
+    text: str
+    source_refs: list
+    source_line: int
+
+
+class TurnStartedData(NamedTuple):
+    message_refs: list | None = None
+
+
 class TurnEndedData(NamedTuple):
     # The ProcessRun.background_work_in_progress snapshot ({"subagents": n, "shells": n,
     # "monitors": n, "scheduled_wakeup_at": iso | None, "goal": bool}), or None when
     # nothing runs. Non-None = waiting for the user while work still runs behind the agent.
     background_work: dict | None = None
+    message_refs: list | None = None
 
 
 class AwaitingInputStartedData(NamedTuple):
@@ -100,7 +111,9 @@ PAYLOAD_TYPES: dict[str, type | None] = {
     TimelineKind.SETTINGS_CHANGED: SettingsChangedData,
     TimelineKind.PROCESS_STARTED: ProcessStartedData,
     TimelineKind.PROCESS_ENDED: ProcessEndedData,
-    TimelineKind.TURN_STARTED: None,
+    TimelineKind.USER_MESSAGE_SENT: MessageSentData,
+    TimelineKind.ASSISTANT_MESSAGE_SENT: MessageSentData,
+    TimelineKind.TURN_STARTED: TurnStartedData,
     TimelineKind.TURN_ENDED: TurnEndedData,
     TimelineKind.AWAITING_INPUT_STARTED: AwaitingInputStartedData,
     TimelineKind.AWAITING_INPUT_ENDED: AwaitingInputEndedData,
