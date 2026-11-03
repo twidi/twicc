@@ -390,7 +390,7 @@ def test_native_finals_share_one_durable_interval_and_one_public_start(monkeypat
         await run(agent, [final("intermediate"), event("turn/completed")])
         interval = agent.completion_controller.snapshot().turn_id
         agent._schedule_turn = MagicMock()
-        await agent.send("continue", completion_token="second-input")
+        await agent.send("continue", completion_token="2efc0667-3234-487d-bac1-93b6de135d82")
         agent._schedule_turn.assert_called_once()
         assert agent.completion_controller.snapshot().turn_id == interval
         agent.completion_controller.delay_seconds = 0

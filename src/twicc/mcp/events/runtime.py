@@ -10,14 +10,14 @@ import threading
 from typing import NamedTuple
 
 from django.db import close_old_connections, connections
-from django.db.models import Case, F, Value, When
+from django.db.models import Case, F, UUIDField, Value, When
 from django.db.models.functions import Greatest
 
 from twicc.agent.states import AgentState
 from twicc.cli import _twicc_info
 from twicc.cli._drop_request import transport
 from twicc.cli._wait_reply import POLL_INTERVAL_SECONDS, _SessionWait
-from twicc.core.models import McpEventSubscription, Session, SessionItem
+from twicc.core.models import LogicalTurn, McpEventSubscription, Session, SessionItem
 from twicc.core.serializers import session_compute_ready
 from twicc.mcp.events import SYSTEM_CLOCK
 from twicc.mcp.events.delivery import DeliveryService, build_occurrence, fit_body
@@ -109,6 +109,7 @@ class CursorWrite(NamedTuple):
     numbering: int | None
     cursor_line: int
     cursor_at: float | None
+    last_logical_turn_id: str | None = None
 
 
 class TurnWrite(NamedTuple):
@@ -290,13 +291,14 @@ class EventsRuntime:
         for row in rows:
             self._add_monitor(SubscriptionSnapshot.from_row(row))
 
-    def _new_wait(self, monitor, *, cursor_line=None):
+    def _new_wait(self, monitor, *, cursor_line=None, after_turn_id=None, reset_logical=False):
         info = _twicc_info.resolve_live_twicc()
         return _SessionWait(
             monitor.session_id, monitor.cursor_line if cursor_line is None else cursor_line,
             started=self.clock.monotonic(),
             twicc_pid=info.pid if info is not None else None, want_text=True,
             wait_background=monitor.arguments.get("wait_background", False),
+            after_turn_id=(None if reset_logical else after_turn_id or monitor.last_logical_turn_id),
         )
 
     def _read_monitor_session(self, monitor):
@@ -447,11 +449,12 @@ class EventsRuntime:
             *monitor.generation, monitor.numbering, snapshot.history_epoch, snapshot.last_line, snapshot.last_line,
             working, info.state_changed_at if working else None, "initial" if working else "", snapshot.last_line,
         )
-        wait = self._new_wait(monitor, cursor_line=snapshot.last_line)
+        wait = self._new_wait(monitor, cursor_line=snapshot.last_line, reset_logical=True)
         self.post_write(write)
         self._apply_turn(monitor, write)
         monitor.cursor_line = monitor.initial_last_line = snapshot.last_line
         monitor.numbering = snapshot.history_epoch
+        monitor.last_logical_turn_id = None
         monitor.first = False
         monitor.wait = wait
         monitor.pending_rebase = False
@@ -480,9 +483,13 @@ class EventsRuntime:
         request = None
         guard_drop = False
         if outcome == "ended":
-            if not monitor.turn_open:
+            managed_end = monitor.wait.progress().last_logical_turn_id not in (
+                None, str(monitor.last_logical_turn_id),
+            )
+            if not monitor.turn_open and not managed_end:
                 return True
-            if monitor.turn_opened_by == "transition" and reply["line_num"] is None and info is not None:
+            if (not managed_end and monitor.turn_opened_by == "transition"
+                    and reply["line_num"] is None and info is not None):
                 # The wait loads the provider before it can conclude a row's end.
                 provider = monitor.wait.session.provider if monitor.wait.session is not None else info.provider
                 guard_drop = first_non_command_prompt(
@@ -539,24 +546,29 @@ class EventsRuntime:
             while len(request_order) > 256:
                 request_ids.discard(request_order.popleft())
         else:
+            progress = wait.progress()
+            managed_consumption = (progress.last_logical_turn_id is not None
+                                   and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
             if outcome == "ended":
                 turn_open = False
                 if snapshot is not None:
                     start_line = snapshot.last_line
-                next_cursor = wait.scanned_up_to
+                next_cursor = progress.consumed_up_to if managed_consumption else wait.scanned_up_to
             else:
-                next_cursor = reply["line_num"]
+                next_cursor = progress.consumed_up_to if managed_consumption else reply["line_num"]
                 if opened_by != "history" and turn_open and started is not None and conclusion_time < started:
                     start_line = max(start_line, next_cursor)
                     if opened_by != "awaiting":
                         opened_by = "transition"
                 else:
                     turn_open = False
-            if monitor.first:
+            if (monitor.first and progress.last_logical_turn_id is None
+                    and wait.logical_turn_id is None and wait.after_turn_id is None):
                 next_cursor = max(next_cursor, monitor.initial_last_line)
             cursor = CursorWrite(*monitor.generation, monitor.numbering, next_cursor,
-                                 max(monitor.cursor_at, conclusion_time))
-            wait = self._new_wait(monitor, cursor_line=next_cursor)
+                                 max(monitor.cursor_at, conclusion_time), progress.last_logical_turn_id)
+            wait = self._new_wait(monitor, cursor_line=next_cursor,
+                                  after_turn_id=progress.last_logical_turn_id)
         turn = TurnWrite(*monitor.generation, turn_open, started, opened_by, start_line)
         emission = Emission(*monitor.generation, occurrence["eventId"], body, cursor, (turn,)) if body is not None else None
 
@@ -578,6 +590,7 @@ class EventsRuntime:
             monitor.reported_request_ids, monitor.reported_request_order = request_ids, request_order
             if cursor is not None:
                 monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
+                monitor.last_logical_turn_id = cursor.last_logical_turn_id
                 monitor.first = False
         return True
 
@@ -587,7 +600,9 @@ class EventsRuntime:
                 or (monitor.turn_started_at is not None and info.state_changed_at <= monitor.turn_started_at)):
             return
         old_cursor = monitor.cursor_line
-        next_cursor = max(old_cursor, monitor.wait.scanned_up_to)
+        next_cursor = max(old_cursor, monitor.wait.progress().consumed_up_to
+                          if monitor.wait.logical_turn_id is not None or monitor.wait.after_turn_id is not None
+                          else monitor.wait.scanned_up_to)
         ignored = monitor.wait.last_ignored
         opened_by, start_line = monitor.turn_opened_by, monitor.turn_start_line
         if not monitor.turn_open:
@@ -597,7 +612,8 @@ class EventsRuntime:
             opened_by, start_line = "transition", next_cursor
         turn = TurnWrite(*monitor.generation, True, info.state_changed_at, opened_by, start_line)
         wait = self._new_wait(monitor, cursor_line=next_cursor)
-        cursor = CursorWrite(*monitor.generation, monitor.numbering, next_cursor, None)
+        cursor = CursorWrite(*monitor.generation, monitor.numbering, next_cursor, None,
+                             monitor.last_logical_turn_id)
         self.post_write(turn)
         if next_cursor > old_cursor:
             self.post_write(cursor)
@@ -661,7 +677,22 @@ class EventsRuntime:
         """Only run through storage.write, never directly from the worker."""
         rows = McpEventSubscription.objects.filter(id=item.id, created_at=item.created_at)
         if isinstance(item, CursorWrite):
+            # Deliveries finish independently. An older callback must not move
+            # logical consumption backwards, even when both line cursors are zero.
+            logical_progress = F("last_logical_turn_id")
+            if item.last_logical_turn_id is not None:
+                current = rows.filter(numbering=item.numbering).values_list(
+                    "session_id", "last_logical_turn_id",
+                ).first()
+                if current is not None:
+                    positions = {str(identity): position for identity, position in LogicalTurn.objects.filter(
+                        session_id=current[0], pk__in=[item.last_logical_turn_id, current[1]],
+                    ).values_list("id", "position")}
+                    position = positions.get(str(item.last_logical_turn_id))
+                    if position is not None and position >= positions.get(str(current[1]), 0):
+                        logical_progress = Value(item.last_logical_turn_id, output_field=UUIDField())
             values = {
+                "last_logical_turn_id": logical_progress,
                 "cursor_line": Case(
                     When(numbering=item.numbering, then=Greatest(F("cursor_line"), Value(item.cursor_line))),
                     default=F("cursor_line"),

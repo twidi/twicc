@@ -24,7 +24,8 @@ from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
-from .completion_types import CompletionCandidate, CompletionSnapshot
+from .exceptions import SendDeliveryError
+from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -72,6 +73,7 @@ class BaseAgentManager:
 
     def __init__(self) -> None:
         self._agents: dict[str, BaseAgent] = {}
+        self._completion_input_receipts: dict[str, asyncio.Future] = {}
         self._final_title_checks: dict[str, TitleCheckRun] = {}
         self._ephemeral_cleanup_tasks: set[asyncio.Task] = set()
         self._lock = asyncio.Lock()
@@ -721,7 +723,25 @@ class BaseAgentManager:
     # State-change skeleton
     # ------------------------------------------------------------------
 
+    async def wait_for_completion_input(self, token: str) -> CompletionInput | None:
+        """Observe the exact delivery receipt even after its agent is replaced."""
+        receipt = self._completion_input_receipts.get(token)
+        if receipt is None:
+            return None
+        accepted = await asyncio.shield(receipt)
+        if not accepted:
+            raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
+        return accepted
+
+    async def _completion_admission_cursor(self, session_id: str) -> int:
+        from twicc.core.models import Session
+
+        return await sync_to_async(lambda: Session.objects.filter(pk=session_id)
+                                   .values_list("last_line", flat=True).first())() or 0
+
     def _bind_completion_callbacks(self, agent: BaseAgent) -> None:
+        agent._completion_input_callback = self._completion_input_receipts.__setitem__
+        self._completion_input_receipts.update(agent._completion_input_receipts)
         agent._completion_persist_callback = self._persist_completion
         agent._completion_confirm_callback = self._confirm_completion
         agent._completion_end_callback = self._end_completion
@@ -768,7 +788,16 @@ class BaseAgentManager:
         """Commit the journal and optional ProcessRun transition in one transaction."""
         if agent.ephemeral:
             return True
-        return await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot, state=state)
+        try:
+            stored = await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot, state=state)
+        except Exception:
+            for token, item in agent._completion_inputs.items():
+                receipt = agent._completion_input_receipts.get(token)
+                if item.turn_id == snapshot.turn_id and receipt is not None and not receipt.done():
+                    receipt.set_result(False)
+            raise
+        agent._completion_inputs_committed()
+        return stored
 
     @contextlib.contextmanager
     def _completion_transaction(self, agent: BaseAgent):
@@ -798,7 +827,7 @@ class BaseAgentManager:
         from django.utils import timezone
 
         from twicc.core.models import LogicalTurn
-        from twicc.core.services.logical_turns import open_logical_turn, store_turn_snapshot
+        from twicc.core.services.logical_turns import bind_turn_input, open_logical_turn, store_turn_snapshot
 
         opening = agent._completion_openings.get(snapshot.turn_id)
         if opening is None:
@@ -810,6 +839,8 @@ class BaseAgentManager:
         opened_at, source_floor, incarnation, epoch = opening
         needs_open = snapshot.turn_id not in agent._completion_opened_ids
 
+        inputs = [(token, cursor, status) for token, (turn_id, cursor, status)
+                  in tuple(agent._completion_inputs.items()) if turn_id == snapshot.turn_id]
         with self._completion_transaction(agent):
             if needs_open:
                 open_logical_turn(
@@ -818,6 +849,8 @@ class BaseAgentManager:
                     ordinal=snapshot.ordinal, source_floor=source_floor,
                     storage_incarnation=incarnation, history_epoch=epoch, opened_at=opened_at,
                 )
+            for token, cursor, status in inputs:
+                bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
             stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
             if stored and state is not None:
                 if agent.process_run is not None and agent.process_run.state != AgentState.ASSISTANT_TURN.value:
@@ -847,6 +880,9 @@ class BaseAgentManager:
                 if stored:
                     self._persist_process_run_transition_admitted(agent, state)
         agent._completion_opened_ids.add(snapshot.turn_id)
+        agent._completion_durable_inputs.update(
+            (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs
+        )
         return stored
 
     async def _confirm_completion(self, agent: BaseAgent, candidate: CompletionCandidate) -> None:

@@ -22,7 +22,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
 from twicc.agent.completion import CompletionController
-from twicc.agent.completion_types import CompletionCandidate, CompletionSnapshot, NativeMessageRef
+from twicc.agent.completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef
 from twicc.agent.auto_deny import AUTO_DENY_CHECK_INTERVAL_SECONDS, AUTO_DENY_DELAY_SECONDS
 from twicc.agent.shell_notice import OwnerFacts, ShellLookup, ShellNoticeState, ShellResolution
 from twicc.agent.stop_origin import StopOriginMixin
@@ -203,6 +203,10 @@ class BaseAgent(StopOriginMixin):
         self._completion_retry_deadline: float | None = None
         self._completion_openings: dict[str, Any] = {}
         self._completion_opened_ids: set[str] = set()
+        self._completion_inputs: dict[str, CompletionInput] = {}
+        self._completion_input_callback: Callable | None = None
+        self._completion_input_receipts: dict[str, asyncio.Future] = {}
+        self._completion_durable_inputs: dict[str, CompletionInput] = {}
         self._completion_source_floor = 0
         self._completion_storage_incarnation: str | None = None
         self._completion_history_epoch: int | None = None
@@ -230,6 +234,9 @@ class BaseAgent(StopOriginMixin):
                 timezone.now(), self._completion_source_floor,
                 self._completion_storage_incarnation, self._completion_history_epoch,
             )
+        for token, (turn_id, cursor, status) in tuple(self._completion_inputs.items()):
+            if turn_id is None and status != "rejected":
+                self._completion_inputs[token] = CompletionInput(snapshot.turn_id, cursor, status)
         if self.state != AgentState.ASSISTANT_TURN:
             self._set_state(AgentState.ASSISTANT_TURN)
         self._completion_refresh()
@@ -246,13 +253,47 @@ class BaseAgent(StopOriginMixin):
         self.completion_controller.set_awaiting(awaiting, asyncio.get_running_loop().time())
         self._completion_refresh()
 
-    def _completion_input_pending(self, token: str) -> None:
+    def _completion_input_pending(self, token: str, *, staged: bool = False) -> None:
+        # Manager staging blocks confirmation before setup. Only actual provider
+        # delivery associates the receipt with this agent's interval.
+        if token not in self._completion_input_receipts:
+            self._completion_input_receipts[token] = asyncio.get_running_loop().create_future()
+        if self._completion_input_callback is not None:
+            self._completion_input_callback(token, self._completion_input_receipts[token])
+        if not staged and token not in self._completion_inputs:
+            snapshot = self.completion_controller.snapshot()
+            turn_id = snapshot.turn_id if self.completion_controller.is_open else None
+            self._completion_inputs[token] = CompletionInput(turn_id, self._completion_source_floor, "pending")
         self.completion_controller.input_pending(token, asyncio.get_running_loop().time())
         self._completion_refresh()
 
     def _completion_input_settled(self, token: str, status: str) -> None:
+        item = self._completion_inputs.get(token)
+        if item is not None and item.status in ("accepted", "rejected") and status != item.status:
+            return
+        receipt = self._completion_input_receipts.get(token)
+        if status in ("rejected", "uncertain") and receipt is not None and not receipt.done():
+            receipt.set_result(False)
+        if token in self._completion_inputs:
+            turn_id, cursor, _ = self._completion_inputs[token]
+            self._completion_inputs[token] = CompletionInput(turn_id, cursor, status)
+            # A status change must persist even when root facts are unchanged.
+            self._completion_last_queued = None
         self.completion_controller.input_settled(token, status, asyncio.get_running_loop().time())
         self._completion_refresh()
+
+    async def wait_for_completion_input(self, token: str) -> CompletionInput | None:
+        """Observe native acceptance only after its durable association commits."""
+        receipt = self._completion_input_receipts.get(token)
+        if receipt is None:
+            return None
+        return await asyncio.shield(receipt) or None
+
+    def _completion_inputs_committed(self) -> None:
+        for token, item in self._completion_durable_inputs.items():
+            receipt = self._completion_input_receipts.get(token)
+            if receipt is not None and not receipt.done() and item.status == "accepted":
+                receipt.set_result(item)
 
     def _completion_terminate(self, outcome: str) -> CompletionSnapshot | None:
         snapshot = self.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
@@ -409,6 +450,11 @@ class BaseAgent(StopOriginMixin):
 
     def _set_state(self, new_state: AgentState) -> None:
         """Transition into ``new_state`` and trigger the DEAD-event side-effect."""
+        if new_state == AgentState.DEAD:
+            for token, receipt in self._completion_input_receipts.items():
+                item = self._completion_inputs.get(token)
+                if not receipt.done() and (item is None or item[0] is None or item[2] != "accepted"):
+                    receipt.set_result(False)
         if new_state == AgentState.DEAD and self._completion_enabled:
             self._completion_terminate("provider_error" if self.error else "ended")
         self._state_revision += 1

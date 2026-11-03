@@ -81,6 +81,7 @@ class SubscriptionSnapshot(NamedTuple):
     refresh_before: datetime
     created_at: datetime
     updated_at: datetime
+    last_logical_turn_id: str | None = None
 
     @property
     def generation(self):

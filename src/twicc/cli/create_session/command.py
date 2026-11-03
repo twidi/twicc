@@ -593,6 +593,7 @@ def create_session_cmd(
             timeout=wait_timeout,
             want_text=not no_reply_text,
             wait_background=wait_background,
+            **({"wait_token": final["wait_token"]} if "wait_token" in final else {}),
         )
         emit_json(final)
         raise typer.Exit(0)

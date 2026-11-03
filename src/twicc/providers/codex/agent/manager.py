@@ -286,7 +286,7 @@ class CodexAgentManager(BaseAgentManager):
             bool(text) or bool(images) or bool(isinstance(async_questions, dict) and async_questions.get("answers"))
             or bool(attachment_plan and attachment_plan.entries)))
         if has_input and (completion_token is not None or completion_cursor is not None
-                          or getattr(staged_agent, "_completion_enabled", False)):
+                          or isinstance(staged_agent, BaseAgent)):
             completion_token = completion_token or str(uuid4())
             completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor,
                                  "_completion_admission": completion_admission}
@@ -294,7 +294,7 @@ class CodexAgentManager(BaseAgentManager):
                 self._check_ephemeral_readonly(session_id)
                 if completion_cursor is not None:
                     staged_agent._completion_source_floor = completion_cursor
-                staged_agent._completion_input_pending(completion_token)
+                staged_agent._completion_input_pending(completion_token, staged=True)
         try:
             self._check_ephemeral_readonly(session_id)
             content = None
@@ -539,6 +539,9 @@ class CodexAgentManager(BaseAgentManager):
 
         async with self._lock:
             self._check_ephemeral_readonly(session_id)
+            if command is None and completion_cursor is None and completion_kwargs:
+                completion_cursor = await self._completion_admission_cursor(session_id)
+                completion_kwargs["completion_cursor"] = completion_cursor
             if command is not None:
                 await self._dispatch_hardcoded_command(
                     session_id, project_id, cwd, command, settings,

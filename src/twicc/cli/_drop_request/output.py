@@ -37,7 +37,7 @@ _SHARE_ID_FIELDS = ("share_id",)
 _READ_FIELDS = ("session_id", "provider", "agent_state", "pending_requests")
 
 # Present on some results, absent on others; never invented as ``null``.
-_OPTIONAL_FIELDS = ("last_line",)
+_OPTIONAL_FIELDS = ("last_line", "wait_token")
 
 
 def build_final(outcome, *, request_uuid: str, timeout: int) -> dict:

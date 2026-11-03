@@ -259,10 +259,16 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
             code, message, _names = attachment_planner.describe_attachment_error(exc)
             return _rejected("attachments", code, message), False
 
+    # Legacy managers have no receipt. Managed delivery captures its own immutable
+    # boundary inside the gate and lock; use that receipt after native acceptance.
+    admission_cursor = await sync_to_async(lambda: Session.objects.filter(pk=session_id)
+                                          .values_list("last_line", flat=True).first())() or 0
+    completion_token = str(uuid4())
     try:
         delivered = await manager.send_to_session(
             session_id, session.project_id, project.directory, text,
             settings=effective,
+            completion_token=completion_token,
             **plan_kwargs,
             **({"async_questions": payload.get("async_questions"),
                 "request_id": payload.get("_send_request_id") or str(uuid4()),
@@ -278,14 +284,16 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
         # Maybe parked by the manager: the parked entry holds the refs and their release.
         return _rejected("session", "send_failed", "The message was not accepted for delivery"), True
 
-    # Read **after** the agent has taken the message, and server-side: it is
-    # the highest line the watcher had indexed at that instant, so every line
-    # past it was written afterwards. A caller reading it itself, once the
-    # command has returned, would be racing the reply it is about to wait for.
-    last_line = await sync_to_async(
-        lambda: Session.objects.filter(id=session_id)
-        .values_list("last_line", flat=True).first()
-    )()
+    status_extra = {"last_line": admission_cursor}
+    from twicc.agent.base_manager import BaseAgentManager
+
+    if isinstance(manager, BaseAgentManager):
+        try:
+            receipt = await manager.wait_for_completion_input(completion_token)
+        except RuntimeError as exc:
+            return _rejected("session", getattr(exc, "code", "send_uncertain"), str(exc)), False
+        if receipt is not None:
+            status_extra.update(last_line=receipt.admission_cursor, wait_token=completion_token)
 
     return SendMessageResult(
         success=True,
@@ -293,5 +301,5 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
         provider=provider.value,
         project_id=session.project_id,
         errors=None,
-        status_extra={"last_line": last_line or 0},
+        status_extra=status_extra,
     ), False

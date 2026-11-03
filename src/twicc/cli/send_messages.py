@@ -333,6 +333,9 @@ def send_messages_cmd(
                 want_text=not no_reply_text,
                 first=wait_first,
                 wait_background=wait_background,
+                **({"wait_tokens": {sid: ordered[sid]["wait_token"] for sid in cursors
+                                    if "wait_token" in ordered[sid]}}
+                   if any("wait_token" in ordered[sid] for sid in cursors) else {}),
             )
         except BaseException as exc:  # noqa: BLE001 - deliberate
             # The sends already succeeded. A locked database or a Ctrl-C during

@@ -493,13 +493,16 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
         provider_helpers = get_provider_helpers(Provider.CLAUDE_CODE)
 
-        has_input = bool(text) or bool(images) or bool(documents) or bool(attachment_plan and attachment_plan.entries)
-        completion_kwargs = {}
         staged_agent = self._agents.get(session_id)
+        is_command = text.lstrip().startswith("/") or (
+            getattr(staged_agent, "is_hybrid", False) and text.lstrip().startswith("!"))
+        has_input = (not is_command and (
+            bool(text) or bool(images) or bool(documents) or bool(attachment_plan and attachment_plan.entries)))
+        completion_kwargs = {}
         provider_admission = False
         if has_input and (
             completion_token is not None or completion_cursor is not None
-            or getattr(staged_agent, "_completion_enabled", False)
+            or isinstance(staged_agent, BaseAgent)
         ):
             from uuid import uuid4
 
@@ -509,7 +512,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 self._check_ephemeral_readonly(session_id)
                 if completion_cursor is not None:
                     staged_agent._completion_source_floor = completion_cursor
-                staged_agent._completion_input_pending(completion_token)
+                staged_agent._completion_input_pending(completion_token, staged=True)
 
         content = None
         parked_attachments: dict = {}
@@ -536,6 +539,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         try:
             async with self._lock:
                 self._check_ephemeral_readonly(session_id)
+                if has_input and completion_cursor is None and completion_kwargs:
+                    completion_cursor = await self._completion_admission_cursor(session_id)
+                    content_kwargs["completion_cursor"] = completion_cursor
                 # Cancel any running cron restart task — user is taking over this session.
                 # Callers that ARE the cron restart task pass cancel_cron_restart=False
                 # to avoid cancelling themselves.

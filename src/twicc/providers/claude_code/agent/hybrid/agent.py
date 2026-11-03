@@ -259,7 +259,8 @@ class HybridClaudeAgent(BaseAgent):
         self._completion_start_token = completion_token
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
-        self._completion_input_pending(completion_token)
+        if not is_hybrid_command(text):
+            self._completion_input_pending(completion_token)
 
         if content is not None:
             # Synchronous refusals, before any launch or scheduling.
@@ -486,7 +487,8 @@ class HybridClaudeAgent(BaseAgent):
         completion_token = completion_token or str(uuid4())
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
-        self._completion_input_pending(completion_token)
+        if not is_hybrid_command(text):
+            self._completion_input_pending(completion_token)
         try:
             if content is not None:
                 self._refuse_command_with_content(content)

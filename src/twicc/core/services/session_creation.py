@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, UTC
 from typing import NamedTuple
+from uuid import uuid4
 
 import orjson
 from asgiref.sync import sync_to_async
@@ -61,6 +62,7 @@ class SessionCreationResult(NamedTuple):
     # for the WS error frame. Kept out of ``SessionCreationError`` so the drop-request status
     # payload (``errors`` as dicts) keeps its shape.
     error_names: tuple[str, ...] = ()
+    status_extra: dict = {}
 
 
 async def create_session_from_drop_payload(payload: dict) -> SessionCreationResult:
@@ -508,11 +510,13 @@ async def _create_session_from_payload(
     # --- invoke the agent manager --------------------------------
     from twicc.agent.registry import get_agent_manager_registry
     manager = get_agent_manager_registry().get(provider)
+    completion_token = str(uuid4())
     try:
         canonical_id = await manager.create_session(
             session_id, project_id, cwd, text,
             settings=effective, images=images, documents=documents,
             ephemeral_admission=ephemeral_admission,
+            **({"completion_token": completion_token, "completion_cursor": 0} if not ephemeral else {}),
             **({"ephemeral": True} if ephemeral else {}),
             **({"attachment_plan": attachment_plan} if attachment_plan is not None else {}),
         )
@@ -529,12 +533,28 @@ async def _create_session_from_payload(
             SessionCreationError("session", code, str(e))
         ])
 
+    status_extra = {}
+    if not ephemeral:
+        from twicc.agent.base_manager import BaseAgentManager
+
+        status_extra["last_line"] = 0
+        if isinstance(manager, BaseAgentManager):
+            try:
+                receipt = await manager.wait_for_completion_input(completion_token)
+            except RuntimeError as exc:
+                return SessionCreationResult(False, None, None, None, [
+                    SessionCreationError("session", getattr(exc, "code", "send_uncertain"), str(exc)),
+                ])
+            if receipt is not None:
+                status_extra["wait_token"] = completion_token
+
     return SessionCreationResult(
         success=True,
         session_id=canonical_id,
         provider=provider.value,
         project_id=project_id,
         errors=None,
+        status_extra=status_extra,
     )
 
 

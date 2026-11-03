@@ -57,9 +57,10 @@ def batch(monkeypatch, two_sessions):
 
     seen: dict = {}
 
-    def fake_wait(cursors, *, timeout, want_text, first, wait_background=False):
+    def fake_wait(cursors, *, timeout, want_text, first, wait_background=False, wait_tokens=None):
         seen.update(cursors=dict(cursors), timeout=timeout, want_text=want_text,
                     first=first, wait_background=wait_background)
+        seen["wait_tokens"] = wait_tokens
         return {
             sid: {"outcome": "replied", "line_num": 9, "text": "ok"}
             for sid in cursors
@@ -313,3 +314,13 @@ def test_only_a_sent_recipient_is_waited_on(batch, capsysbinary, status):
     run(capsysbinary)
 
     assert list(batch["seen"]["cursors"]) == ["alpha"]
+
+
+def test_batch_wait_uses_each_accepted_input_token(batch, capsysbinary):
+    first, second = sent("alpha", 0), sent("beta", 0)
+    first.data["wait_token"], second.data["wait_token"] = "accepted-A", "accepted-B"
+    batch["statuses"].update(alpha=first, beta=second)
+    payload = run(capsysbinary)
+    assert batch["seen"]["wait_tokens"] == {"alpha": "accepted-A", "beta": "accepted-B"}
+    assert payload["results"]["alpha"]["wait_token"] == "accepted-A"
+    assert payload["results"]["beta"]["wait_token"] == "accepted-B"

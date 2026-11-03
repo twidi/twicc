@@ -785,6 +785,9 @@ def messages(
 @session_app.command("wait-reply")
 def _session_wait_reply(
     ctx: typer.Context,
+    wait_token: str = typer.Option(
+        None, "--wait-token", help="Wait for this accepted input. Without an explicit cursor, use its admission boundary.",
+    ),
     from_line: int = typer.Option(
         None, "--from-line",
         help=(
@@ -902,6 +905,7 @@ def _session_wait_reply(
     session_wait_reply(
         ctx.obj, from_line=from_line, since=since, timeout=wait_timeout,
         want_text=not no_reply_text, wait_background=wait_background,
+        **({"wait_token": wait_token} if wait_token is not None else {}),
     )
 
 

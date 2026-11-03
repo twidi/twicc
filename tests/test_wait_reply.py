@@ -1155,7 +1155,8 @@ def _run_send_message(monkeypatch, status_data: dict, *,
 
     seen: dict = {}
 
-    def _probe(session_id, *, since_line_num, timeout, want_text, wait_background=False):
+    def _probe(session_id, *, since_line_num, timeout, want_text, wait_background=False, wait_token=None):
+        seen["wait_token"] = wait_token
         seen["session_id"] = session_id
         seen["since_line_num"] = since_line_num
         seen["timeout"] = timeout
@@ -1211,14 +1212,8 @@ def test_send_message_starts_from_zero_when_the_server_sent_no_cursor(monkeypatc
 
 
 @pytest.mark.django_db(transaction=True)
-def test_the_service_reads_the_cursor_after_the_agent_took_the_message(monkeypatch):
-    """The moment matters as much as the value.
-
-    A cursor read *before* the send would sit below lines the new turn is
-    about to write only by luck; read after, every line past it provably
-    belongs to the turn just triggered. The stub moves ``last_line`` while
-    the send is in flight, so a read placed too early returns the old value.
-    """
+def test_legacy_manager_keeps_the_boundary_before_the_agent_takes_the_message(monkeypatch):
+    """An answer indexed during delivery must remain strictly past admission."""
     import asyncio
 
     from asgiref.sync import sync_to_async
@@ -1255,7 +1250,7 @@ def test_the_service_reads_the_cursor_after_the_agent_took_the_message(monkeypat
     ))
 
     assert result.success is True
-    assert result.status_extra["last_line"] == 137
+    assert result.status_extra["last_line"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -1985,3 +1980,12 @@ def test_old_journal_preserves_unowned_timeout_intermediate(answer_fixture):
     assert reply['text'] == 'unmanaged intermediate'
     assert reply['line_num'] == 9
     assert reply['is_final'] is False
+
+
+@pytest.mark.django_db
+def test_send_message_hands_accepted_token_to_its_wait(monkeypatch):
+    seen = _run_send_message(monkeypatch, {
+        "session_id": "cursor-wiring-session", "provider": "claude_code",
+        "project_id": "cursor-wiring-project", "last_line": 0, "wait_token": "accepted-input",
+    })
+    assert seen["wait_token"] == "accepted-input"

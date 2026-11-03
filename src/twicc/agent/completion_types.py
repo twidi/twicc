@@ -23,3 +23,11 @@ class CompletionSnapshot(NamedTuple):
     first_ref: NativeMessageRef | None
     final_refs: tuple[NativeMessageRef, ...]
     outcome: str | None
+
+
+class CompletionInput(NamedTuple):
+    """Immutable admission facts; a receipt exposes only committed acceptance."""
+
+    turn_id: str | None
+    admission_cursor: int
+    status: str

@@ -87,7 +87,7 @@ from .approvals import (
     make_pending_request,
 )
 from .goal_continuation import GoalContinuation
-from .hardcoded_commands import HardcodedCommand
+from .hardcoded_commands import HardcodedCommand, parse_hardcoded_command
 from .original_files_cache import (
     MAX_FILE_SIZE as _ORIGINAL_FILE_MAX_SIZE,
     cache_original_files,
@@ -862,7 +862,8 @@ class CodexAgent(BaseAgent):
         token = completion_token or str(uuid.uuid4())
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
-        self._completion_input_pending(token)
+        if not kwargs.get("shell_notice") and parse_hardcoded_command(text) is None:
+            self._completion_input_pending(token)
         try:
             accepted = await self._send_input(text, completion_token=token, **kwargs)
         except BaseException as exc:

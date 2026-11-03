@@ -608,7 +608,7 @@ def workflow(session_id: str, workflow_id: str) -> None:
 
 
 def wait_reply(session_id: str, *, from_line: int | None = None, since: str | None = None,
-               timeout: float, want_text: bool = True, wait_background: bool = False) -> None:
+               wait_token: str | None = None, timeout: float, want_text: bool = True, wait_background: bool = False) -> None:
     """Block until the session concludes, past the cursor.
 
     The same wait ``--wait-reply`` runs on the commands that send, which is
@@ -672,12 +672,15 @@ def wait_reply(session_id: str, *, from_line: int | None = None, since: str | No
         cursor = _cursor_at(session, instant)
     elif from_line is not None:
         cursor = from_line
+    elif wait_token is not None:
+        cursor = None
     else:
         cursor = default_wait_cursors([session])[session.id]
 
     reply = wait_for_reply_or_degrade(
         session_id, since_line_num=cursor, timeout=timeout, want_text=want_text,
         wait_background=wait_background,
+        **({"wait_token": wait_token} if wait_token is not None else {}),
     )
     emit_json({"session_id": session_id, "reply": reply})
 
