@@ -187,18 +187,52 @@ def test_background_consumption_uses_returned_managed_terminal_identity(env, out
     assert env.emissions[0].cursor.last_logical_turn_id == str(returned.pk)
 
 
-def test_background_consumption_uses_new_empty_managed_end_identity(env):
+@pytest.mark.parametrize("ready_before_end", [False, True])
+def test_background_consumption_uses_new_empty_managed_end_identity(env, ready_before_end):
     consume_background_answer(env)
     returned = managed_turn(env.session, position=2, outcome="normal", refs=(), first=None)
     LogicalTurn.objects.filter(pk=returned.pk).update(source_floor=2)
     env.registry.remove_agent(env.session.id)
-    env.runtime._read_monitor_session(env.monitor)
+    if ready_before_end:
+        env.runtime._read_monitor_session(env.monitor)
     wait = env.monitor.wait
     env.tick()
     assert wait.logical_turn_id is None
     assert wait.progress().last_logical_turn_id == str(returned.pk)
-    assert env.payloads()[0]["data"]["reply"]["outcome"] == "ended"
+    if not ready_before_end:
+        assert not env.emissions
+        stopped_ticks(env)
     assert env.emissions[0].event_id == event_id(env.row.id, "ended", f"logical_turn:{returned.pk}")
+    assert env.payloads()[0]["data"]["reply"]["outcome"] == "ended"
+    assert env.payloads()[0]["data"]["reply"]["line_num"] is None
+    assert "text" not in env.payloads()[0]["data"]["reply"]
+
+
+@pytest.mark.parametrize("change", ["outcome", "source", "consumed_interval"])
+def test_deferred_empty_managed_end_does_not_override_changed_result(env, change):
+    earlier = consume_background_answer(env)
+    deferred = managed_turn(env.session, position=2, outcome="normal", refs=(), first=None)
+    LogicalTurn.objects.filter(pk=deferred.pk).update(source_floor=2)
+    env.registry.remove_agent(env.session.id)
+    env.tick()
+    assert not env.emissions
+    assert env.monitor.wait.progress().last_logical_turn_id == str(deferred.pk)
+    if change == "outcome":
+        agent(env, state=AgentState.USER_TURN, at=999, pending_requests=[pending("new-request")])
+        env.tick()
+        assert env.payloads()[0]["data"]["reply"]["outcome"] == "awaiting_user_input"
+        env.registry.remove_agent(env.session.id)
+        expected_key = f"logical_turn:{earlier.pk}"
+    elif change == "source":
+        env.session.storage_incarnation = str(uuid4())
+        env.session.save(update_fields=["storage_incarnation"])
+        expected_key = "0:2"
+    else:
+        returned = managed_turn(env.session, position=3, outcome="ended", refs=(), first=None)
+        expected_key = f"logical_turn:{returned.pk}"
+    stopped_ticks(env)
+    assert env.emissions[-1].event_id == event_id(env.row.id, "ended", expected_key)
+    assert len(env.emissions) == (2 if change == "outcome" else 1)
 
 
 @pytest.mark.parametrize("ignored_owner", ["managed", "legacy", "earlier_managed"])

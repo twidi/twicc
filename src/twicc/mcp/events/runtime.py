@@ -97,10 +97,19 @@ class Monitor:
         self.tick_outcome = None
         self.recovering_ended = False
         self.failure_state = None
+        self.deferred_logical_end = None
 
     @property
     def generation(self):
         return self.id, self.created_at
+
+
+class DeferredLogicalEnd(NamedTuple):
+    wait: _SessionWait
+    logical_turn_id: str
+    source_scope: tuple | None
+    ignored_answer: object
+    reply: dict
 
 
 class CursorWrite(NamedTuple):
@@ -466,6 +475,7 @@ class EventsRuntime:
         monitor.last_logical_turn_id = None
         monitor.first = False
         monitor.wait = wait
+        monitor.deferred_logical_end = None
         monitor.pending_rebase = False
 
     @staticmethod
@@ -487,8 +497,19 @@ class EventsRuntime:
         previous, had_previous = monitor.session_snapshot, monitor.has_session_snapshot
         previous_logical_turn_id = monitor.wait.progress().last_logical_turn_id
         reply = monitor.wait.step()
+        progress = monitor.wait.progress()
+        deferred = monitor.deferred_logical_end
+        if deferred is not None and (
+                monitor.wait is not deferred.wait
+                or progress.last_logical_turn_id != deferred.logical_turn_id
+                or monitor.wait.native_cache.scope != deferred.source_scope
+                or monitor.wait.last_ignored != deferred.ignored_answer
+                or reply is not None and reply["outcome"] != "ended"):
+            monitor.deferred_logical_end = deferred = None
         if reply is None:
             return
+        if deferred is not None:
+            reply = deferred.reply
         if (reply["outcome"] == "wait_failed"
                 and reply.get("error") == "Invalid logical progress for this session"
                 and monitor.last_logical_turn_id is not None
@@ -504,15 +525,16 @@ class EventsRuntime:
             ))
             monitor.wait = wait
             monitor.last_logical_turn_id = None
+            monitor.deferred_logical_end = None
             return
         outcome = monitor.tick_outcome = reply["outcome"]
-        progress = monitor.wait.progress()
         managed_consumption = (progress.last_logical_turn_id is not None
                                and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
         # Earlier silent consumption advances cursors, but cannot own a later
         # unmanaged result. A selected consumed turn also covers deferred ends.
         managed_conclusion = (managed_consumption and outcome in ("replied", "provider_error", "ended")
-                              and (progress.last_logical_turn_id != previous_logical_turn_id
+                              and (deferred is not None
+                                   or progress.last_logical_turn_id != previous_logical_turn_id
                                    or monitor.wait.logical_turn_id == progress.last_logical_turn_id))
         request = None
         guard_drop = False
@@ -544,6 +566,11 @@ class EventsRuntime:
         if monitor.pending_rebase:
             return
         if outcome == "ended" and not self._ready_end(previous, snapshot, had_previous):
+            if managed_conclusion:
+                monitor.deferred_logical_end = DeferredLogicalEnd(
+                    monitor.wait, progress.last_logical_turn_id, monitor.wait.native_cache.scope,
+                    monitor.wait.last_ignored, reply.copy(),
+                )
             return
         if guard_drop:
             turn = TurnWrite(*monitor.generation, False, monitor.turn_started_at, monitor.turn_opened_by,
@@ -634,6 +661,7 @@ class EventsRuntime:
                 self.post_write(cursor)
             self._apply_turn(monitor, turn)
             monitor.wait = wait
+            monitor.deferred_logical_end = None
             monitor.reported_request_ids, monitor.reported_request_order = request_ids, request_order
             if cursor is not None:
                 monitor.cursor_line, monitor.cursor_at = cursor.cursor_line, cursor.cursor_at
