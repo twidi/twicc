@@ -104,9 +104,10 @@ def _groups(session, records):
         identity = _canonical(session, record)
         if identity is not None:
             groups.setdefault((identity.kind, identity.native_id), []).append(record)
+    hydrated = []
     for (kind, identity), group in groups.items():
         if kind != 'claude_message':
-            yield group[:1]
+            hydrated.append(group[:1])
             continue
         seen = set()
         complete = []
@@ -116,7 +117,9 @@ def _groups(session, records):
                 complete.append(record)
             if uuid is not None:
                 seen.add(uuid)
-        yield complete
+        if complete:
+            hydrated.append(complete)
+    yield from sorted(hydrated, key=lambda group: group[0][0].line_num)
 
 
 def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
@@ -126,11 +129,11 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
     if not new_line_nums:
         return
     try:
-        saved = _saved_refs(session_id)
-        if timeline_since is None and not saved:
+        saved_groups = _saved_ref_groups(session_id)
+        if timeline_since is None and not saved_groups:
             return
         session = Session.objects.get(pk=session_id)
-        saved = _current_saved_refs(session, saved)
+        saved = _current_saved_refs(session, saved_groups)
         rows = SessionItem.objects.filter(session_id=session_id, line_num__in=new_line_nums)
         for group in _groups(session, _read(session, rows)):
             _capture(session, group, timeline_since=timeline_since,
@@ -160,16 +163,16 @@ def record_verified_messages(session_id: str, *, refs: Sequence[NativeMessageRef
     """Resolve final proof on an already-admitted writer; never guess adjacent text."""
     try:
         session = Session.objects.get(pk=session_id)
-        saved = _current_saved_refs(session, _saved_refs(session_id))
+        saved = _current_saved_refs(session, _saved_ref_groups(session_id))
         _record_refs(session, refs, timeline_since=timeline_since, saved=saved)
     except Exception:
         logger.exception('Verified timeline message capture failed for %s', session_id)
 
 
-def _saved_refs(session_id):
-    return {NativeMessageRef(**ref) for refs in TimelineEvent.objects.filter(
+def _saved_ref_groups(session_id):
+    return [{NativeMessageRef(**ref) for ref in refs} for refs in TimelineEvent.objects.filter(
         session_id=session_id, kind__in=[TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED],
-    ).values_list('data__message_refs', flat=True) for ref in refs or []}
+    ).values_list('data__message_refs', flat=True) if refs]
 
 
 def _same_scope(turn, session):
@@ -178,20 +181,22 @@ def _same_scope(turn, session):
             and (turn.history_epoch is None or turn.history_epoch == session.history_epoch))
 
 
-def _current_saved_refs(session, refs):
-    if not refs:
-        return refs
-    refs = set(refs)
-    for turn in LogicalTurn.objects.filter(session_id=session.id):
-        if not _same_scope(turn, session):
-            refs -= {NativeMessageRef(**ref) for ref in ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
-    return refs
+def _current_saved_refs(session, groups, *, turns=None):
+    if not groups:
+        return set()
+    turns = LogicalTurn.objects.filter(session_id=session.id) if turns is None else turns
+    invalid = {NativeMessageRef(**ref) for turn in turns if not _same_scope(turn, session)
+               for ref in ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
+    # An end event also owns inputs absent from the journal's first/final refs.
+    # A stale journal alias invalidates that event's complete reference group.
+    return {ref for group in groups if not group.intersection(invalid) for ref in group}
 
 
 def recover_referenced_messages(session_id: str) -> None:
     """Resolve only saved live-turn aliases, including after journal retention ends."""
     try:
-        pending = _saved_refs(session_id)
+        groups = _saved_ref_groups(session_id)
+        pending = {ref for group in groups for ref in group}
         if not pending:
             return
         resolved = {NativeMessageRef(**ref) for refs in TimelineEvent.objects.filter(
@@ -201,7 +206,9 @@ def recover_referenced_messages(session_id: str) -> None:
         if not pending:
             return
         session = Session.objects.get(pk=session_id)
-        for turn in LogicalTurn.objects.filter(session_id=session_id):
+        turns = list(LogicalTurn.objects.filter(session_id=session_id))
+        pending &= _current_saved_refs(session, groups, turns=turns)
+        for turn in turns:
             turn_refs = {NativeMessageRef(**ref) for ref in ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
             refs = pending & turn_refs
             if not refs:

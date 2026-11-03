@@ -426,3 +426,44 @@ def test_attachment_images_do_not_enter_saved_text(live_session):
         record['payload']['item']['content'].append({'type': 'image', 'url': 'data:image/png;base64,AA=='})
     f.append(record)
     assert f.texts() == ['caption']
+
+
+@pytest.mark.parametrize('publication', ['live', 'recovery'])
+def test_additional_user_ref_rejects_the_full_invalid_source_group(live_session, publication):
+    from twicc.core.services.session_timeline import record_event_sync
+    from twicc.core.services.timeline_messages import recover_referenced_messages
+    f = live_session
+    kind = 'claude_uuid' if f.provider == 'claude_code' else 'codex_item'
+    native_turn = 'native-turn' if f.provider == 'codex' else None
+    first = NativeMessageRef(kind, 'first-user', native_turn)._asdict()
+    extra = NativeMessageRef(kind, 'extra-user', native_turn)._asdict()
+    expired = NativeMessageRef(kind, 'expired-user', native_turn)._asdict()
+    LogicalTurn.objects.create(id=uuid4(), session_id=f.session.id, provider=f.provider, run_id=uuid4(),
+        ordinal=1, position=1, source_floor=0, first_ref=first, final_refs=[],
+        storage_incarnation='replaced', opened_at=f.boundary)
+    records = [f.message('extra-user', 'replaced text', user=True),
+               f.message('expired-user', 'expired journal text', user=True)]
+    if publication == 'recovery':
+        f.append(*records, capture=False)
+    record_event_sync('turn.ended', session_id=f.session.id, actor='agent', data={'message_refs': [first, extra]})
+    record_event_sync('turn.ended', session_id=f.session.id, actor='agent', data={'message_refs': [expired]})
+    if publication == 'live':
+        f.append(*records, since=timezone.now() + timedelta(days=1))
+    else:
+        recover_referenced_messages(f.session.id)
+    assert f.texts() == ['expired journal text']
+
+
+def test_delayed_claude_groups_keep_first_source_order(live_session):
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude split groups')
+    f.append(f.message('a-prefix', 'A1', message_id='a', final=None),
+             f.message('b-prefix', 'B1', message_id='b', final=None))
+    assert f.texts() == []
+    f.append(f.message('b-final', 'B2', message_id='b'),
+             f.message('a-final', 'A2', message_id='a'))
+    events = f.events()
+    assert len({event.occurred_at for event in events}) == 1
+    assert [event.data['source_line'] for event in events] == [1, 2]
+    assert f.texts() == ['A1\nA2', 'B1\nB2']
