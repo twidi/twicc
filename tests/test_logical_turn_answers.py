@@ -27,15 +27,20 @@ def answer_fixture(request, content_row_factory):
         return {'kind': kind or ('claude_uuid' if provider == 'claude_code' else 'codex_item'),
                     'native_id': identity, 'turn_id': turn if provider == 'codex' else None}
 
-    def index(identity, line, text, *, child=False, delivery=None, message_id=None, sidechain=False):
+    def index(identity, line, text, *, child=False, delivery=None, message_id=None, sidechain=False, final=True):
         if provider == 'claude_code':
             parsed = {'type': 'assistant', 'uuid': identity, 'isSidechain': sidechain, 'parent_tool_use_id': 'child' if child else None,
-                          'message': {'id': message_id, 'role': 'assistant', 'stop_reason': 'end_turn',
+                          'message': {'id': message_id, 'role': 'assistant', 'stop_reason': 'end_turn' if final else 'tool_use',
                                        'content': [{'type': 'text', 'text': text}]}}
         else:
             parsed = {'type': 'event_msg', 'payload': {'type': 'item_completed', 'thread_id': 'child' if child else session.id,
-                          'turn_id': 'native-A', 'item': {'type': 'AgentMessage', 'id': identity, 'phase': 'final_answer',
+                          'turn_id': 'native-A', 'item': {'type': 'AgentMessage', 'id': identity, 'phase': 'final_answer' if final else 'commentary',
                           'delivery': delivery, 'content': [{'type': 'Text', 'text': text}]}}}
+        if final is None:
+            if provider == 'claude_code':
+                parsed['message'].pop('stop_reason', None)
+            else:
+                parsed['payload']['item'].pop('phase', None)
         content = content_row_factory(orjson.dumps(parsed).decode(), True, provider)
         return SessionItem.objects.create(session=session, line_num=line, kind=ItemKind.ASSISTANT_MESSAGE,
                                           content='', current_content=content)
@@ -123,17 +128,24 @@ def test_token_selects_accepted_interval_and_validates_session(answer_fixture):
 
 
 def test_claude_split_blocks_join_by_message_identity(answer_fixture):
-    from twicc.core.services.logical_turn_answers import resolve_logical_answer
+    from twicc.core.services.logical_turn_answers import NativeAnswerCache, resolve_logical_answer, select_logical_turn
     f = answer_fixture
     if f.provider != 'claude_code':
         pytest.skip('Claude split records')
     turn = f.turn(refs=())
     turn.final_refs = [f.ref('api-id', kind='claude_message')]
-    f.index('block-1', 2, 'first', message_id='api-id')
+    turn.save(update_fields=['final_refs'])
+    cache = NativeAnswerCache(f.session.id)
+    f.index('block-1', 2, 'first', message_id='api-id', final=None)
+    assert resolve_logical_answer(turn, cursor=0, cache=cache).status == 'pending'
+    assert resolve_logical_answer(turn, cursor=2, cache=cache).status == 'pending'
+    assert select_logical_turn(session_id=f.session.id, cursor=2, wait_token=None, cache=cache).pk == turn.pk
     f.index('block-2', 3, 'second', message_id='api-id')
-    answer = resolve_logical_answer(turn, cursor=0)
+    answer = resolve_logical_answer(turn, cursor=0, cache=cache)
     assert answer.message.text == 'first\nsecond'
     assert answer.message.line_num == 3
+    assert answer.message.is_final is True
+    assert resolve_logical_answer(turn, cursor=3, cache=cache).status == 'ended'
 
 
 def test_codex_async_delivery_cannot_resolve_root_answer(answer_fixture):

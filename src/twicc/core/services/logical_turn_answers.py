@@ -36,6 +36,7 @@ class NativeAnswerCache:
         self.provider = None
         self.watermark = 0
         self.records = {}
+        self.closing_records = {}
         self.messages = {}
         self.all_messages = {}
         self.errors = {}
@@ -47,6 +48,7 @@ class NativeAnswerCache:
         staged.provider = self.provider
         staged.watermark = self.watermark
         staged.records = {ref: dict(lines) for ref, lines in self.records.items()}
+        staged.closing_records = {ref: set(lines) for ref, lines in self.closing_records.items()}
         staged.messages = {ref: dict(messages) for ref, messages in self.messages.items()}
         staged.all_messages = dict(self.all_messages)
         staged.errors = dict(self.errors)
@@ -64,6 +66,7 @@ class NativeAnswerCache:
             self.provider = session.provider
             self.watermark = 0
             self.records.clear()
+            self.closing_records.clear()
             self.messages.clear()
             self.all_messages.clear()
             self.errors.clear()
@@ -87,6 +90,8 @@ class NativeAnswerCache:
             refs = helpers.completion_record_refs(parsed)
             for ref in refs:
                 self.records.setdefault(tuple(ref), {})[item.line_num] = item.pk
+                if helpers.is_final_assistant_message(parsed) is True:
+                    self.closing_records.setdefault(tuple(ref), set()).add(item.line_num)
             if item.kind != ItemKind.ASSISTANT_MESSAGE:
                 continue
             text = helpers.extract_indexable_text_from_parsed(parsed)
@@ -100,6 +105,13 @@ class NativeAnswerCache:
 
     def lines(self, ref):
         return sorted(self.records.get(_key(ref), {})) if ref else []
+
+    def final_lines(self, ref):
+        # Claude API message IDs span blocks. An early block proves membership;
+        # the closing marker proves that the final source boundary is indexed.
+        if ref and ref['kind'] == 'claude_message' and not self.closing_records.get(_key(ref)):
+            return []
+        return self.lines(ref)
 
     def answer(self, ref, *, cursor):
         messages = sorted(self.messages.get(_key(ref), {}).values(), key=lambda message: message.line_num)
@@ -134,12 +146,14 @@ def resolve_logical_answer(turn: LogicalTurn, *, cursor: int,
     ref = turn.final_refs[-1]
     if ref['kind'] == 'unresolved' or not ref['native_id']:
         return LogicalAnswer('pending', None)
-    lines = cache.lines(ref)
+    lines = cache.final_lines(ref)
     if not lines:
         return LogicalAnswer('pending', None)
     if max(lines) <= cursor:
         return LogicalAnswer('ended', None)
     message = cache.answer(ref, cursor=cursor)
+    if message is not None and ref['kind'] == 'claude_message':
+        message = message._replace(is_final=True)
     return LogicalAnswer('replied', message) if message else LogicalAnswer('pending', None)
 
 
@@ -163,7 +177,7 @@ def select_logical_turn(*, session_id: str, cursor: int, wait_token: str | None,
     cache = cache or NativeAnswerCache(session_id)
     cache.refresh()
     for turn in turns:
-        lines = cache.lines(turn.final_refs[-1]) if turn.final_refs else []
+        lines = cache.final_lines(turn.final_refs[-1]) if turn.final_refs else []
         if lines and max(lines) <= cursor and turn.outcome is not None:
             continue
         # A floor is only an admission lower bound. Unresolved records cannot

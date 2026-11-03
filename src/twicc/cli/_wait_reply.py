@@ -433,6 +433,18 @@ class _SessionWait:
                 return True
         return False
 
+    def _legacy_precedes_turn(self, line, turn):
+        if turn is None:
+            return True
+        start = self.native_cache.lines(turn.first_ref)
+        if start:
+            return line < min(start)
+        if turn.outcome == 'normal' and not turn.first_ref and not turn.final_refs:
+            # Known-empty coverage has its separate watcher-flush barrier.
+            return True
+        # An unresolved opening cannot order records newer than admission.
+        return line <= turn.source_floor
+
     def _managed_step(self):
         """Select a durable interval before considering unmanaged transcript results."""
         from twicc.core.models import LogicalTurn
@@ -486,9 +498,11 @@ class _SessionWait:
 
         # Keep historical records before managed coverage. Consumed intervals
         # still participate in ownership, so their finals never become legacy.
-        legacy = [message for line, message in sorted(self.native_cache.all_messages.items())
-                  if line > max(self.since_line_num, self.ignored_legacy_up_to) and message.is_final is True
-                  and not self._legacy_is_owned(line, turns, activity)]
+        unowned_messages = [message for line, message in sorted(self.native_cache.all_messages.items())
+                            if line > max(self.since_line_num, self.ignored_legacy_up_to)
+                            and not self._legacy_is_owned(line, turns, activity)
+                            and self._legacy_precedes_turn(line, turn)]
+        legacy = [message for message in unowned_messages if message.is_final is True]
         if legacy and self.wait_token is None:
             if self.wait_background and activity.background is not None:
                 self.last_ignored = legacy[-1]
@@ -497,6 +511,17 @@ class _SessionWait:
                 self.consumed_up_to = max(self.consumed_up_to, legacy[0].line_num)
                 return True, self.build(REPLIED, legacy[0])
         if turn is None:
+            if unowned_messages:
+                self.last_message = unowned_messages[-1]
+            errors = [(line, text) for line, text in sorted(self.native_cache.errors.items())
+                      if line > self.since_line_num and not self._legacy_is_owned(line, turns, activity)]
+            if errors:
+                line, text = errors[0]
+                self.consumed_up_to = max(self.consumed_up_to, line)
+                block = self.build(PROVIDER_ERROR, line_num=line)
+                if self.want_text:
+                    block['text'] = text
+                return True, block
             if activity.awaiting:
                 return True, self.build(AWAITING)
             return True, self._stopped_backstop(activity)

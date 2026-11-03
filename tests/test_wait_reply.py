@@ -20,6 +20,8 @@ import orjson
 import pytest
 from django.utils import timezone
 
+from tests import test_logical_turn_answers
+
 from twicc.agent.states import AgentState
 from twicc.cli import _wait_reply
 from twicc.cli._wait_reply import (
@@ -34,6 +36,9 @@ from twicc.cli._wait_reply import (
 from twicc.core.enums import ItemKind
 from twicc.core.models import ProcessRun, Project, Session, SessionItem, SessionType
 
+
+answer_fixture = test_logical_turn_answers.answer_fixture
+content_row_factory = test_logical_turn_answers.content_row_factory
 
 TWICC_PID = 4242
 
@@ -1920,3 +1925,63 @@ def test_managed_timeout_keeps_own_intermediate_text(project):
     reply = wait(session, timeout=.3)
     assert reply['outcome'] == TIMEOUT
     assert reply['text'] == 'intermediate'
+
+
+@pytest.mark.parametrize('cursor,expected', [(0, 'managed answer'), (2, 'later unmanaged answer')])
+def test_managed_answer_orders_unmanaged_fallback_by_source(answer_fixture, cursor, expected):
+    from twicc.cli._wait_reply import _SessionWait
+    f = answer_fixture
+    turn = f.turn(refs=('A1',), first='A1')
+    f.index('A1', 2, 'managed answer')
+    f.index('B1', 9, 'later unmanaged answer')
+    waiter = _SessionWait(f.session.id, cursor, started=0, twicc_pid=None, want_text=True)
+    assert waiter.step()['text'] == expected
+    assert waiter.progress().consumed_up_to == (2 if cursor == 0 else 9)
+    if cursor == 0:
+        assert waiter.progress().last_logical_turn_id == str(turn.pk)
+
+
+def test_historical_fallback_precedes_selected_managed_answer(answer_fixture):
+    from twicc.cli._wait_reply import _SessionWait
+    f = answer_fixture
+    f.turn(refs=('A1',), first='A1')
+    f.index('history', 1, 'historical answer')
+    f.index('A1', 2, 'managed answer')
+    waiter = _SessionWait(f.session.id, 0, started=0, twicc_pid=None, want_text=True)
+    assert waiter.step()['text'] == 'historical answer'
+    assert waiter.progress().consumed_up_to == 1
+    assert waiter.progress().last_logical_turn_id is None
+
+
+@pytest.mark.parametrize('want_text', [True, False])
+def test_old_journal_preserves_unowned_terminal_api_error(answer_fixture, content_row_factory, want_text):
+    from twicc.cli._wait_reply import _SessionWait
+    f = answer_fixture
+    f.turn(refs=('A1',), first='A1')
+    f.index('A1', 2, 'managed answer')
+    parsed = {'type': 'system', 'isApiErrorMessage': True,
+              'error': {'message': 'unmanaged provider unavailable'}}
+    SessionItem.objects.create(session=f.session, line_num=9, kind=ItemKind.API_ERROR, content='',
+        current_content=content_row_factory(orjson.dumps(parsed).decode(), True, f.provider))
+    waiter = _SessionWait(f.session.id, 2, started=0, twicc_pid=None, want_text=want_text)
+    reply = waiter.step()
+    assert reply['outcome'] == 'provider_error'
+    assert reply['line_num'] == 9
+    if want_text:
+        assert reply['text'] == 'unmanaged provider unavailable'
+    else:
+        assert 'text' not in reply
+
+
+def test_old_journal_preserves_unowned_timeout_intermediate(answer_fixture):
+    from twicc.cli._wait_reply import _SessionWait, TIMEOUT
+    f = answer_fixture
+    f.turn(refs=('A1',), first='A1')
+    f.index('A1', 2, 'managed answer')
+    f.index('B1', 9, 'unmanaged intermediate', final=False)
+    waiter = _SessionWait(f.session.id, 2, started=0, twicc_pid=None, want_text=True)
+    assert waiter.step() is None
+    reply = waiter.build_cut_short(TIMEOUT)
+    assert reply['text'] == 'unmanaged intermediate'
+    assert reply['line_num'] == 9
+    assert reply['is_final'] is False
