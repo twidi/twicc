@@ -10,7 +10,7 @@ import pytest
 from tests.test_mcp_events_turns import agent, env, opened, pending  # noqa: F401
 from tests.test_mcp_events_payload import occurrence
 from tests.test_mcp_events_writer import apply
-from tests.test_wait_reply import managed_turn, native_assistant
+from tests.test_wait_reply import api_error, managed_turn, native_assistant
 from twicc.agent.states import AgentState
 from twicc.core.models import LogicalTurn, McpEventSubscription
 from twicc.logical_turn_cleanup_task import purge_logical_turns
@@ -119,6 +119,86 @@ def test_legacy_answer_before_selected_open_turn_keeps_transcript_identity(env):
     assert env.emissions[0].event_id == event_id(env.row.id, "replied", "0:2")
     assert env.payloads()[0]["data"]["reply"]["text"] == "legacy answer"
     assert env.emissions[0].cursor.last_logical_turn_id is None
+
+
+def consume_background_answer(env):
+    turn = managed_turn(env.session, outcome="normal")
+    native_assistant(env.session, 2, "background answer", "a1")
+    env.session.last_line = 2
+    env.session.save(update_fields=["last_line"])
+    env.monitor.arguments = {**env.monitor.arguments, "wait_background": True}
+    env.monitor.wait = env.runtime._new_wait(env.monitor)
+    agent(env, state=AgentState.USER_TURN, at=999, background_work_in_progress={"shells": 1})
+    env.tick()
+    assert not env.emissions
+    assert env.monitor.wait.progress().last_logical_turn_id == str(turn.pk)
+    assert env.monitor.wait.logical_turn_id is None
+    assert env.monitor.last_logical_turn_id is None
+    return turn
+
+
+@pytest.mark.parametrize("outcome", ["replied", "provider_error"])
+def test_background_consumption_does_not_change_later_unmanaged_identity(env, outcome):
+    consumed = consume_background_answer(env)
+    env.registry.remove_agent(env.session.id)
+    if outcome == "replied":
+        native_assistant(env.session, 5, "unmanaged answer", "legacy")
+        expected_text = "unmanaged answer"
+    else:
+        api_error(env.session, 5, terminal=True, text="unmanaged provider unavailable")
+        expected_text = "unmanaged provider unavailable"
+    env.tick()
+    reply = env.payloads()[0]["data"]["reply"]
+    assert (reply["outcome"], reply["text"]) == (outcome, expected_text)
+    assert env.emissions[0].event_id == event_id(env.row.id, outcome, "0:5")
+    assert env.emissions[0].cursor.cursor_line == 5
+    assert env.emissions[0].cursor.last_logical_turn_id == str(consumed.pk)
+
+
+def test_background_consumption_keeps_legacy_identity_before_selected_pending_turn(env):
+    consumed = consume_background_answer(env)
+    selected = managed_turn(env.session, position=2, refs=("b1",), first="b1")
+    native_assistant(env.session, 5, "historical answer", "legacy")
+    native_assistant(env.session, 8, "managed intermediate", "b1")
+    env.registry.remove_agent(env.session.id)
+    wait = env.monitor.wait
+    env.tick()
+    assert wait.logical_turn_id == str(selected.pk)
+    assert env.payloads()[0]["data"]["reply"]["text"] == "historical answer"
+    assert env.emissions[0].event_id == event_id(env.row.id, "replied", "0:5")
+    assert env.emissions[0].cursor.last_logical_turn_id == str(consumed.pk)
+
+
+@pytest.mark.parametrize("outcome", ["normal", "ended", "provider_error"])
+def test_background_consumption_uses_returned_managed_terminal_identity(env, outcome):
+    consume_background_answer(env)
+    returned = managed_turn(env.session, position=2, outcome=outcome, refs=("b1",), first="b1")
+    native_assistant(env.session, 5, "managed answer", "b1")
+    env.session.last_line = 5
+    env.session.save(update_fields=["last_line"])
+    agent(env, state=AgentState.USER_TURN, at=999)
+    env.tick()
+    if outcome == "ended":
+        assert not env.emissions  # The changed transcript end needs another ready snapshot.
+        env.tick()
+    expected_outcome = "replied" if outcome == "normal" else outcome
+    assert env.payloads()[0]["data"]["reply"]["outcome"] == expected_outcome
+    assert env.emissions[0].event_id == event_id(env.row.id, expected_outcome, f"logical_turn:{returned.pk}")
+    assert env.emissions[0].cursor.last_logical_turn_id == str(returned.pk)
+
+
+def test_background_consumption_uses_new_empty_managed_end_identity(env):
+    consume_background_answer(env)
+    returned = managed_turn(env.session, position=2, outcome="normal", refs=(), first=None)
+    LogicalTurn.objects.filter(pk=returned.pk).update(source_floor=2)
+    env.registry.remove_agent(env.session.id)
+    env.runtime._read_monitor_session(env.monitor)
+    wait = env.monitor.wait
+    env.tick()
+    assert wait.logical_turn_id is None
+    assert wait.progress().last_logical_turn_id == str(returned.pk)
+    assert env.payloads()[0]["data"]["reply"]["outcome"] == "ended"
+    assert env.emissions[0].event_id == event_id(env.row.id, "ended", f"logical_turn:{returned.pk}")
 
 
 def test_live_monitor_recovers_through_existing_writer_queue_after_consumed_answer_is_purged(env, monkeypatch):

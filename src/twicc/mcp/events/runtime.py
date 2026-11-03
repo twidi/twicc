@@ -485,6 +485,7 @@ class EventsRuntime:
         info = get_agent_manager_registry().get_agent_info(monitor.session_id)
         self._detect_new_turn(monitor, info)
         previous, had_previous = monitor.session_snapshot, monitor.has_session_snapshot
+        previous_logical_turn_id = monitor.wait.progress().last_logical_turn_id
         reply = monitor.wait.step()
         if reply is None:
             return
@@ -508,6 +509,11 @@ class EventsRuntime:
         progress = monitor.wait.progress()
         managed_consumption = (progress.last_logical_turn_id is not None
                                and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
+        # Earlier silent consumption advances cursors, but cannot own a later
+        # unmanaged result. A selected consumed turn also covers deferred ends.
+        managed_conclusion = (managed_consumption and outcome in ("replied", "provider_error", "ended")
+                              and (progress.last_logical_turn_id != previous_logical_turn_id
+                                   or monitor.wait.logical_turn_id == progress.last_logical_turn_id))
         request = None
         guard_drop = False
         if outcome == "ended":
@@ -551,8 +557,7 @@ class EventsRuntime:
             numbering=snapshot.history_epoch if snapshot is not None else 0,
             last_line=snapshot.last_line if snapshot is not None else 0,
             tick_started_at=tick_started_at, item_timestamp=item_timestamp, pending_request=request,
-            logical_turn_id=(progress.last_logical_turn_id
-                             if managed_consumption and outcome in ("replied", "provider_error", "ended") else None),
+            logical_turn_id=progress.last_logical_turn_id if managed_conclusion else None,
         )
         body = fit_body(occurrence)
         conclusion_time = (item_timestamp or tick_started_at).timestamp()
