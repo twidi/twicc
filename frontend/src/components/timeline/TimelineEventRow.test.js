@@ -711,6 +711,11 @@ test('message rows expand saved text without navigation, filter actions, or read
         assert.ok(toggle, 'the message label is its native toggle control')
         assert.equal(toggle.props.type, 'button', 'native buttons support Enter and Space activation')
         assert.equal(toggle.props.tabindex, undefined, 'the control remains in native keyboard focus order')
+        const [chevron] = byClass(toggle, 'timeline-message-chevron')
+        assert.ok(chevron, 'the chevron follows the message label inside its toggle')
+        assert.equal(chevron.type, 'wa-icon')
+        assert.equal(chevron.props.name, 'chevron-down')
+        assert.equal(byClass(byClass(root, 'timeline-message-preview')[0], 'timeline-message-chevron').length, 0)
         // A native button dispatches a click with detail 0 for Enter/Space activation.
         toggle.props.onClick({ detail: 0 })
         await flush()
@@ -720,20 +725,25 @@ test('message rows expand saved text without navigation, filter actions, or read
         assert.equal(fetch.mock.callCount(), 0)
         assert.deepEqual(sessionLinks(root).map(link => link.props['data-to']), linksBefore)
         assert.equal(onlyControls(root)[0].props['aria-pressed'], 'true')
-        assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+        assert.equal(byClass(toggle, 'timeline-message-chevron')[0], chevron)
+        assert.equal(chevron.props.name, 'chevron-up')
         toggle.props.onClick()
         await flush()
         assert.equal(toggle.props['aria-expanded'], 'false')
         assert.equal(descendants(root, node => node.type === 'article').length, 0)
-        byClass(root, 'timeline-message-chevron')[0].props.onClick()
+        assert.equal(chevron.props.name, 'chevron-down')
+        // Clicking the nested icon bubbles to the same persistent native button.
+        toggle.props.onClick()
         await flush()
         assert.equal(toggle.props['aria-expanded'], 'true')
-        assert.equal(toggle.focused, true, 'the removed chevron transfers focus to the persistent label')
+        assert.equal(chevron.props.name, 'chevron-up')
         const [close] = byClass(root, 'timeline-message-close')
         assert.equal(textOf(close), 'Close message')
         close.props.onClick()
         await flush()
         assert.equal(toggle.props['aria-expanded'], 'false')
+        assert.equal(chevron.props.name, 'chevron-down')
+        assert.equal(toggle.focused, true, 'closing returns focus to the label')
         assert.equal(descendants(root, node => node.type === 'article').length, 0)
         for (const node of descendants(root, () => true)) {
             assert.ok(!String(node.props.title ?? '').includes(event.data.text), 'full text stays out of titles')
@@ -742,6 +752,19 @@ test('message rows expand saved text without navigation, filter actions, or read
     }
 })
 
+
+test('short messages have no label chevron, including while expanded', async t => {
+    for (const kind of ['user_message.sent', 'assistant_message.sent']) {
+        const root = await render(t, [make(kind, { data: { text: 'Short' } })])
+        const [toggle] = byClass(root, 'timeline-message-label')
+        assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+        toggle.props.onClick()
+        await flush()
+        assert.equal(toggle.props['aria-expanded'], 'true')
+        assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+        assert.equal(descendants(root, node => node.type === 'article').length, 1)
+    }
+})
 
 test('a recycled timeline row collapses the previous message before it shows the next event', async t => {
     const context = { sessions, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }

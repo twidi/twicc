@@ -27,71 +27,72 @@ async function mount(t, fields = {}, layout = { width: 300, textWidth: 150 }) {
             else globalThis.ResizeObserver = previous
         })
     }
-    const props = Vue.reactive({ eventId: 1, kind: 'assistant_message.sent', data: { text: '**Saved**\n\nFull text' }, ...fields })
-    const toggles = []
+    const props = Vue.reactive({ eventId: 1, kind: 'assistant_message.sent', data: { text: '**Saved**\n\nFull text' }, expanded: false, ...fields })
+    const toggles = [], moreChanges = []
     const { renderer, root } = makeRenderer(140, node => {
         Object.defineProperties(node, {
             clientWidth: { get: () => layout.width },
             scrollWidth: { get: () => Math.max(layout.width, layout.textWidth) },
         })
     })
-    const app = renderer.createApp({ render: () => Vue.h(Message, { ...props, onToggle: () => toggles.push(true) }) })
+    const app = renderer.createApp({ render: () => Vue.h(Message, { ...props, 'onUpdate:expanded': value => { props.expanded = value }, onToggle: () => toggles.push(true), onMoreChange: value => moreChanges.push(value) }) })
     app.mount(root)
     t.after(() => app.unmount())
     await flush()
-    return { props, root, layout, observers, toggles }
+    return { props, root, layout, observers, toggles, moreChanges }
 }
 
-test('a multiline preview opens with its chevron and closes at the end of the complete Markdown', async t => {
-    const { root, toggles, observers } = await mount(t)
+test('a multiline preview reports more content and closes at the end of the complete Markdown', async t => {
+    const { props, root, toggles, moreChanges } = await mount(t, { contentId: 'saved-message' })
     assert.equal(textOf(byClass(root, 'timeline-message-excerpt')[0]), 'Saved…')
-    assert.equal(articles(root).length, 0)
-    const [chevron] = byClass(root, 'timeline-message-chevron')
-    assert.equal(chevron.props.type, 'button')
-    assert.equal(chevron.props['aria-expanded'], 'false')
-    assert.equal(chevron.props['aria-label'], 'Open message')
-    assert.equal(descendants(chevron, node => node.type === 'wa-icon')[0].props.name, 'chevron-down')
-    chevron.props.onClick()
-    await flush()
+    assert.equal(moreChanges.at(-1), true)
     assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
-    assert.equal(byClass(root, 'timeline-message-excerpt').length, 0)
-    assert.ok(observers.every(observer => observer.target === null), 'removed previews release their resize observer')
+    assert.equal(articles(root).length, 0)
+    props.expanded = true
+    await flush()
+    assert.equal(byClass(root, 'timeline-message-preview')[0].props['aria-hidden'], 'true')
+    assert.equal(moreChanges.at(-1), true)
     assert.equal(articles(root)[0].props['data-markdown-source'], '**Saved**\n\nFull text')
-    assert.equal(regions(root)[0].props.id, chevron.props['aria-controls'])
+    assert.equal(regions(root)[0].props.id, 'saved-message')
     const [close] = byClass(root, 'timeline-message-close')
     assert.equal(textOf(close), 'Close message')
-    assert.ok(descendants(regions(root)[0], node => node === close).length, 'close follows the rendered message inside its region')
+    assert.ok(descendants(regions(root)[0], node => node === close).length, 'close follows the complete text')
     close.props.onClick()
     await flush()
+    assert.equal(props.expanded, false)
     assert.equal(articles(root).length, 0)
     assert.equal(regions(root).length, 0)
-    assert.equal(byClass(root, 'timeline-message-chevron').length, 1)
-    assert.equal(toggles.length, 2)
+    assert.equal(byClass(root, 'timeline-message-preview')[0].props['aria-hidden'], undefined)
+    assert.equal(toggles.length, 1)
 })
 
-test('the chevron follows actual line overflow when the available width changes', async t => {
-    const { root, layout, observers } = await mount(t, { data: { text: 'A single text line' } })
-    assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+test('reported overflow follows available width, including while the message is expanded', async t => {
+    const { props, layout, observers, moreChanges } = await mount(t, { data: { text: 'A single text line' } })
+    assert.equal(moreChanges.at(-1), false)
     layout.width = 100
     observers.at(-1).resize()
     await flush()
-    assert.equal(byClass(root, 'timeline-message-chevron').length, 1)
+    assert.equal(moreChanges.at(-1), true)
+    props.expanded = true
+    await flush()
+    assert.equal(moreChanges.at(-1), true, 'opening keeps the overflow indicator')
     layout.width = 500
     observers.at(-1).resize()
     await flush()
-    assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+    assert.equal(moreChanges.at(-1), false, 'a line that now fits removes the indicator while open')
 })
 
-test('recycling an expanded component resets its expansion and preview measurement', async t => {
-    const { props, root } = await mount(t)
-    byClass(root, 'timeline-message-chevron')[0].props.onClick()
+test('recycling resets expansion and reports whether the new message has more content', async t => {
+    const { props, root, moreChanges } = await mount(t)
+    props.expanded = true
     await flush()
     props.eventId = 2
     props.data = { text: 'Second snapshot' }
     await flush()
+    assert.equal(props.expanded, false)
     assert.equal(byClass(root, 'timeline-message-close').length, 0)
     assert.equal(articles(root).length, 0)
-    assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+    assert.equal(moreChanges.at(-1), false)
     assert.match(textOf(root), /Second snapshot/)
 })
 

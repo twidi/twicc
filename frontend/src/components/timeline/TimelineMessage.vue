@@ -10,7 +10,7 @@ const props = defineProps({
     contentId: { type: String, default: null },
     labelledBy: { type: String, default: null },
 })
-const emit = defineEmits(['toggle'])
+const emit = defineEmits(['toggle', 'more-change'])
 const expanded = defineModel('expanded', { type: Boolean, default: false })
 const vm = computed(() => describeMessageSnapshot(props.kind, props.data))
 const instanceId = useId()
@@ -22,10 +22,11 @@ const hasMore = computed(() => vm.value.hasMoreLines || overflowing.value)
 let observer = null
 
 function measurePreview() {
-    // Compare with the whole preview width, before the chevron takes its space.
     overflowing.value = !!previewRef.value && !!excerptRef.value
         && excerptRef.value.scrollWidth > previewRef.value.clientWidth + 1
 }
+
+watch([() => props.eventId, hasMore], ([, more]) => emit('more-change', more), { immediate: true })
 
 watch(previewRef, element => {
     observer?.disconnect()
@@ -50,17 +51,14 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
 
 <template>
     <div v-if="vm.role" class="timeline-message">
-        <div v-if="!expanded" ref="previewRef" class="timeline-message-preview">
+        <!-- Keep measuring this line when expanded so the label's chevron follows width changes. -->
+        <div
+            ref="previewRef"
+            class="timeline-message-preview"
+            :class="{ 'timeline-message-preview--measurement': expanded }"
+            :aria-hidden="expanded ? 'true' : undefined"
+        >
             <p ref="excerptRef" class="timeline-message-excerpt">{{ vm.excerpt }}</p>
-            <button
-                v-if="vm.expandable && hasMore"
-                type="button"
-                class="timeline-message-control timeline-message-chevron"
-                aria-label="Open message"
-                aria-expanded="false"
-                :aria-controls="regionId"
-                @click="toggle"
-            ><wa-icon name="chevron-down" aria-hidden="true"></wa-icon></button>
         </div>
         <div
             v-if="expanded && vm.expandable"
@@ -78,19 +76,24 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
 
 <style scoped>
 .timeline-message {
+    position: relative;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
 .timeline-message-preview {
-    display: flex;
-    align-items: center;
-    gap: var(--wa-space-2xs);
     min-width: 0;
 }
 
+.timeline-message-preview--measurement {
+    position: absolute;
+    inset-inline: 0;
+    inset-block-start: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 .timeline-message-excerpt {
-    flex: 1 1 auto;
     min-width: 0;
     margin: 0;
     overflow: hidden;
@@ -109,15 +112,6 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
     font: inherit;
     color: var(--wa-color-text-quiet);
     cursor: pointer;
-}
-
-.timeline-message-chevron {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.25em;
-    height: 1.25em;
 }
 
 .timeline-message-close {

@@ -48,6 +48,7 @@ const identity = computed(() => props.row.identity)
 const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
 const hasMessageText = computed(() => isMessage.value && typeof props.row.event.data?.text === 'string' && !!props.row.event.data.text.trim())
 const messageExpanded = ref(false)
+const messageHasMore = ref(false)
 const messageToggleRef = ref(null)
 const messageLabel = computed(() => vm.value.parts.map(part => part.text ?? '').join(''))
 const messageId = `timeline-message-${useId()}`
@@ -129,7 +130,12 @@ function toggleSession() {
                     :aria-expanded="messageExpanded ? 'true' : 'false'"
                     :aria-controls="messageId"
                     @click="messageExpanded = !messageExpanded"
-                >{{ messageLabel }}</button>
+                >{{ messageLabel }}<wa-icon
+                    v-if="messageHasMore"
+                    class="timeline-message-chevron"
+                    :name="messageExpanded ? 'chevron-up' : 'chevron-down'"
+                    aria-hidden="true"
+                ></wa-icon></button>
             </template>
         </TimelineEventLine>
         <TimelineMessage
@@ -142,6 +148,7 @@ function toggleSession() {
             :content-id="messageId"
             :labelled-by="messageLabelId"
             @toggle="focusMessageLabel"
+            @more-change="messageHasMore = $event"
         />
         </div>
     </div>
@@ -229,6 +236,12 @@ function toggleSession() {
 .timeline-message-label:focus-visible {
     outline: var(--wa-focus-ring);
     outline-offset: var(--wa-focus-ring-offset);
+}
+
+.timeline-message-chevron {
+    margin-inline-start: var(--wa-space-2xs);
+    font-size: 0.75em;
+    color: var(--wa-color-text-quiet);
 }
 
 /* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */

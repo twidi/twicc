@@ -250,7 +250,8 @@ Explain stable references, late indexing, and unchanged journal retention in the
 - Consume Task 1's `user_message.sent` and `assistant_message.sent` events through the existing feed serializer, which already returns `kind` and `data`.
 - Produce `describeMessageSnapshot(kind: string, data: object) -> {role: string|null, text: string, excerpt: string, expandable: boolean, hasMoreLines: boolean}` in `messageSnapshot.js`.
 - Produce `TimelineMessage.vue` with `eventId: Number`, `kind: String`, and `data: Object` props. It consumes that view-model and `MarkdownContent`'s `source` prop.
-  Its `expanded` model connects the row's clickable label to its chevron and final close control.
+  Its `expanded` model connects the row's clickable label to the final close control.
+  Its `more-change` event tells the label when to show its chevron, including width changes while expanded.
   Optional `contentId` and `labelledBy` props connect both controls to the complete-text region.
 
 - [ ] **Write failing tests.** Follow existing pure-function and Vue source-contract test patterns.
@@ -275,10 +276,10 @@ Pin row-local expansion reset when `eventId` changes. Verify keyboard expansion 
 - [ ] **Run before implementation.** `cd frontend && node --test src/utils/timeline/messageSnapshot.test.js src/components/timeline/TimelineMessage.test.js`.
 Expected: the new helper/component contract fails.
 - [ ] **Implement the view-model and row body.** Preview the first nonempty plain-text line, without a character cutoff.
-Keep one visual line with CSS ellipsis and show a trailing chevron for additional lines or measured horizontal overflow.
-Use native buttons with `aria-expanded`: the message label toggles expansion, and the chevron opens it.
-Hide the preview and chevron while expanded. Put `Close message` at the end and return focus to the persistent label.
-Measure the available width again on resize. Release the preview's observer when it leaves the DOM.
+Keep one visual line with CSS ellipsis. For additional lines or measured overflow, place a chevron after the message label.
+Use one native label button with `aria-expanded`: its chevron points down when collapsed and up when expanded.
+Hide the preview while expanded. Put `Close message` at the end and return focus to the persistent label.
+Keep an invisible, out-of-flow preview while expanded to measure width changes. Release its observer on unmount.
 Render the complete saved text only while expanded, through the existing `MarkdownContent` component.
 Use `defineAsyncComponent` for that renderer to avoid store/component import cycles. Do not use raw `v-html`.
 Keep full text out of row titles, tooltips, and session navigation. Preserve session, role, and event time.
