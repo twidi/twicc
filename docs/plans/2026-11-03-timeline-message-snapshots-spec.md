@@ -1,0 +1,81 @@
+# Timeline message snapshots
+
+Status: draft for user approval.
+
+## Goal
+
+Read new user messages and assistant final messages from project, workspace, and global timelines.
+Keep the complete message text available without opening the session.
+
+## Agreed scope
+
+- Record new messages only. Do not backfill existing history, initial imports, or recomputations.
+- Use the existing `TimelineEvent` table and its JSON `data` payload.
+- Add no table, message model, retention ledger, or separate journal.
+- Keep the existing confirmed-turn behavior. A displayed final message does not complete the logical turn.
+- Store text snapshots, not thinking, tool calls, tool results, or attachment binaries.
+- The future voice assistant is outside this change. Durable message associations support it later.
+
+## Messages to record
+
+Add one `message.recorded` event per retained message:
+
+- Genuine user-message text, including messages sent while the assistant works.
+- Assistant-message text that the provider identifies as final. Preserve every such message, including several finals in one logical turn.
+- Use the existing provider classification and native message identities. Join split Claude text blocks into one complete message.
+- A missing marker alone does not prove a message is final. Use existing verified final identities where available; do not guess from wording or position.
+- Codex asynchronous questions do not become final messages merely because they carry `final_answer`. Preserve their existing classification.
+- Do not create blank text events for messages without a textual body.
+
+The Conversation display mode is not the selection rule. Its positional summary can hide provider finals and retain intermediate messages.
+
+Record each retained message once its complete text is available, without waiting for logical completion.
+Ingestion may lag provider delivery. Do not capture an earlier message as a substitute.
+Optimistic or failed local sends do not become confirmed message events without source evidence.
+
+## Storage and associations
+
+The existing event columns identify the session, provider, and occurrence time.
+The message event's `data` stores its role (`user` or `assistant`), complete text with Markdown, and source identity for deduplication.
+Keep the full text in this event once. Do not duplicate it in turn events.
+
+The existing turn events carry references to their associated message events.
+A start may have no triggering user message. A logical turn may contain several user messages and several assistant final messages.
+The completion association identifies the ordered messages exchanged during that turn; it does not assert that one answer semantically answers one prompt.
+
+Preserve correct associations when source indexing and turn publication arrive in either order.
+Never attach an earlier or later turn's message by choosing the latest transcript line or closest timestamp.
+Do not require a user message for an automatic turn.
+
+The text and associations remain readable after the logical journal expires: closed intervals after 48 hours and open intervals after seven days.
+Use timeline data for this durable history. Do not extend journal retention.
+Retry, reconnect, restart, and recompute must not duplicate message events or replay old messages as new.
+Message snapshots follow the existing timeline lifecycle. Session source changes do not rewrite their saved text.
+
+## Display
+
+- Show message entries in the existing timeline feed, with session identity, author role, and time.
+- Show an excerpt with access to the complete saved text inside the timeline.
+- The default All view includes the new message entries. Existing scope and visibility rules still apply.
+- Keep message arrival separate from confirmed turn completion, unread state, and completion notifications.
+- Do not change the session's Conversation display mode or add a new display-mode system.
+
+## Acceptance examples
+
+| Case | Expected result |
+| --- | --- |
+| User A, user B during work, final B, final A | Four message entries, in source order within the session; both assistant finals remain visible. |
+| Several provider finals before one confirmed completion | One event per final message and the existing single logical end. |
+| Commentary, thinking, and tools between finals | No message entries for that material. |
+| Claude final split across text records | One complete assistant snapshot. |
+| A turn ends before its final text is indexed | Its eventual message and association remain correct; no earlier answer is substituted. |
+| Automatic turn without a new user message | Assistant messages remain visible; no old prompt is reused as the trigger. |
+| Send fails before a confirmed user source exists | No confirmed user-message event for that attempt. |
+| Journal cleanup, backend restart, or source recompute | Saved message text and associations remain available; no duplicate or historical replay. |
+
+## Approach
+
+Use standalone message events in the existing timeline table, linked to the existing turn events.
+Attaching all text only at `turn.ended` delays useful replies during long work.
+Selecting messages with Conversation mode loses some finals.
+The implementation plan must use the smallest change that meets these behaviors. Do not add generic correlation, relevance scoring, or a second persistence system.
