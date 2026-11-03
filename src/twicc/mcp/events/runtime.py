@@ -552,12 +552,30 @@ class EventsRuntime:
             self._apply_turn(monitor, turn)
             return True
 
+        logical_turn_id = progress.last_logical_turn_id if managed_conclusion else None
+        if (logical_turn_id is None and managed_consumption and outcome == "ended"
+                and reply["line_num"] is not None):
+            # A stopped wait can carry an earlier ignored managed or legacy
+            # answer. Match its native source instead of the latest consumption.
+            cache = monitor.wait.native_cache
+            if cache.scope is not None:
+                consumed_position = LogicalTurn.objects.filter(
+                    session_id=monitor.session_id, pk=progress.last_logical_turn_id,
+                ).values("position")[:1]
+                turns = LogicalTurn.objects.filter(
+                    session_id=monitor.session_id, provider=cache.scope[0],
+                    storage_incarnation=cache.scope[1], history_epoch=cache.scope[2],
+                    outcome="normal", position__lte=consumed_position,
+                ).order_by("-position").only("id", "final_refs")
+                logical_turn_id = next((str(turn.pk) for turn in turns
+                                        if any(reply["line_num"] in cache.final_lines(ref)
+                                               for ref in turn.final_refs)), None)
         occurrence = build_occurrence(
             monitor.id, monitor.session_id, snapshot.title if snapshot is not None else None, reply,
             numbering=snapshot.history_epoch if snapshot is not None else 0,
             last_line=snapshot.last_line if snapshot is not None else 0,
             tick_started_at=tick_started_at, item_timestamp=item_timestamp, pending_request=request,
-            logical_turn_id=progress.last_logical_turn_id if managed_conclusion else None,
+            logical_turn_id=logical_turn_id,
         )
         body = fit_body(occurrence)
         conclusion_time = (item_timestamp or tick_started_at).timestamp()

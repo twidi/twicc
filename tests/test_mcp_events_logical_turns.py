@@ -7,12 +7,12 @@ from uuid import uuid4
 from django.utils import timezone
 import pytest
 
-from tests.test_mcp_events_turns import agent, env, opened, pending  # noqa: F401
+from tests.test_mcp_events_turns import agent, env, opened, pending, stopped_ticks  # noqa: F401
 from tests.test_mcp_events_payload import occurrence
 from tests.test_mcp_events_writer import apply
 from tests.test_wait_reply import api_error, managed_turn, native_assistant
 from twicc.agent.states import AgentState
-from twicc.core.models import LogicalTurn, McpEventSubscription
+from twicc.core.models import LogicalTurn, McpEventSubscription, Session
 from twicc.logical_turn_cleanup_task import purge_logical_turns
 from twicc.mcp.events.catalog import event_id
 from twicc.mcp.events.methods import SubscriptionSnapshot
@@ -199,6 +199,50 @@ def test_background_consumption_uses_new_empty_managed_end_identity(env):
     assert wait.progress().last_logical_turn_id == str(returned.pk)
     assert env.payloads()[0]["data"]["reply"]["outcome"] == "ended"
     assert env.emissions[0].event_id == event_id(env.row.id, "ended", f"logical_turn:{returned.pk}")
+
+
+@pytest.mark.parametrize("ignored_owner", ["managed", "legacy", "earlier_managed"])
+def test_dead_agent_fallback_uses_the_ignored_answer_owner(env, ignored_owner):
+    returned = consumed = consume_background_answer(env)
+    if ignored_owner == "legacy":
+        # Late indexing can expose a historical final before managed coverage.
+        native_assistant(env.session, 1, "late historical answer", "legacy")
+        other_session = Session.objects.create(
+            id="other-session", project=env.session.project, file_path="other-session.jsonl",
+        )
+        foreign = managed_turn(other_session, outcome="normal", refs=("legacy",), first="legacy")
+        LogicalTurn.objects.filter(pk=foreign.pk).update(storage_incarnation=env.session.storage_incarnation)
+        env.tick()
+        assert env.monitor.wait.last_ignored.line_num == 1
+        expected_text, expected_key = "late historical answer", "0:1"
+    else:
+        expected_text, expected_key = "background answer", f"logical_turn:{returned.pk}"
+        if ignored_owner == "earlier_managed":
+            consumed = managed_turn(env.session, position=2, outcome="normal", refs=(), first=None)
+            LogicalTurn.objects.filter(pk=consumed.pk).update(source_floor=2)
+            env.tick()
+            assert env.monitor.wait.progress().last_logical_turn_id == str(consumed.pk)
+    assert not env.emissions
+    env.registry.remove_agent(env.session.id)
+    stopped_ticks(env)
+    reply = env.payloads()[0]["data"]["reply"]
+    assert (reply["outcome"], reply["text"]) == ("ended", expected_text)
+    assert env.emissions[0].event_id == event_id(env.row.id, "ended", expected_key)
+    assert env.emissions[0].cursor.last_logical_turn_id == str(consumed.pk)
+    assert env.emissions[0].cursor.cursor_line == 2
+
+
+@pytest.mark.parametrize("source_change", [
+    {"provider": "codex"}, {"storage_incarnation": "another-source"}, {"history_epoch": 9},
+])
+def test_dead_agent_fallback_requires_matching_managed_source(env, source_change):
+    consumed = consume_background_answer(env)
+    LogicalTurn.objects.filter(pk=consumed.pk).update(**source_change)
+    env.registry.remove_agent(env.session.id)
+    stopped_ticks(env)
+    assert env.payloads()[0]["data"]["reply"]["text"] == "background answer"
+    assert env.emissions[0].event_id == event_id(env.row.id, "ended", "0:2")
+    assert env.emissions[0].cursor.last_logical_turn_id == str(consumed.pk)
 
 
 def test_live_monitor_recovers_through_existing_writer_queue_after_consumed_answer_is_purged(env, monkeypatch):
