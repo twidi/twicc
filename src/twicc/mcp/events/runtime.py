@@ -506,8 +506,7 @@ class EventsRuntime:
             return
         outcome = monitor.tick_outcome = reply["outcome"]
         progress = monitor.wait.progress()
-        managed_consumption = (outcome in ("replied", "provider_error", "ended")
-                               and progress.last_logical_turn_id is not None
+        managed_consumption = (progress.last_logical_turn_id is not None
                                and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
         request = None
         guard_drop = False
@@ -552,7 +551,8 @@ class EventsRuntime:
             numbering=snapshot.history_epoch if snapshot is not None else 0,
             last_line=snapshot.last_line if snapshot is not None else 0,
             tick_started_at=tick_started_at, item_timestamp=item_timestamp, pending_request=request,
-            logical_turn_id=progress.last_logical_turn_id if managed_consumption else None,
+            logical_turn_id=(progress.last_logical_turn_id
+                             if managed_consumption and outcome in ("replied", "provider_error", "ended") else None),
         )
         body = fit_body(occurrence)
         conclusion_time = (item_timestamp or tick_started_at).timestamp()

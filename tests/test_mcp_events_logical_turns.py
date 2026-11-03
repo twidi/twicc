@@ -254,3 +254,34 @@ def test_unrelated_detector_failures_do_not_reset_consumed_progress(env, failure
     assert reply["outcome"] == "wait_failed"
     if failure == "source_changed":
         assert reply["error"] == "Logical turn source changed"
+
+
+@pytest.mark.parametrize("failure", ["source_changed", "selected_missing"])
+def test_background_consumption_keeps_safe_cursor_when_a_later_detector_failure_occurs(env, failure):
+    consumed = managed_turn(env.session, outcome="normal")
+    native_assistant(env.session, 2, "background answer", "a1")
+    env.session.last_line = 2
+    env.session.save(update_fields=["last_line"])
+    selected = managed_turn(env.session, position=2, refs=(), first=None)
+    env.monitor.arguments = {**env.monitor.arguments, "wait_background": True}
+    env.monitor.wait = env.runtime._new_wait(env.monitor)
+    agent(env, state=AgentState.USER_TURN, at=999, background_work_in_progress={"shells": 1})
+    env.tick()
+    assert not env.emissions
+    assert env.monitor.wait.progress().consumed_up_to == 2
+    assert env.monitor.wait.progress().last_logical_turn_id == str(consumed.pk)
+    assert env.monitor.cursor_line == 0
+    assert env.monitor.last_logical_turn_id is None
+    env.tick()
+    assert env.monitor.wait.logical_turn_id == str(selected.pk)
+    if failure == "source_changed":
+        LogicalTurn.objects.filter(pk=selected.pk).update(history_epoch=9)
+    else:
+        LogicalTurn.objects.filter(pk=selected.pk).delete()
+    env.tick()
+    assert env.payloads()[0]["data"]["reply"]["outcome"] == "wait_failed"
+    assert env.emissions[0].cursor.cursor_line == 2
+    assert env.monitor.cursor_line == 2
+    assert env.monitor.wait.since_line_num == 2
+    assert env.emissions[0].event_id == event_id(env.row.id, "wait_failed", "last_line:0:2")
+    assert not any(isinstance(write, LogicalProgressReset) for write in env.writes)
