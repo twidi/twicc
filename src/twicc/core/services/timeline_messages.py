@@ -128,7 +128,7 @@ def _groups(session, records):
 
 def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
                             timeline_since: datetime | None,
-                            verified_final_refs: Sequence[NativeMessageRef] = ()) -> None:
+                            verified_final_refs: Sequence[NativeMessageRef] | None = None) -> None:
     """Capture only new live candidates and their exact Claude message groups."""
     if not new_line_nums:
         return
@@ -140,17 +140,22 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
         rows = SessionItem.objects.filter(session_id=session_id, line_num__in=new_line_nums)
         groups = list(_groups(session, _read(session, rows)))
         helpers = get_provider_helpers(session.provider)
-        needs_proof = session.provider == 'claude_code' and any(
+        needs_proof = (session.provider == 'claude_code' or verified_final_refs) and any(
             group[0][0].kind == ItemKind.ASSISTANT_MESSAGE
             and all(helpers.is_final_assistant_message(parsed) is None for _, parsed, _ in group)
             for group in groups)
         turns = list(LogicalTurn.objects.filter(session_id=session.id)) if saved_groups or needs_proof else []
         saved = _current_saved_refs(session, saved_groups, turns=turns)
+        runtime_proof = set(verified_final_refs or ())
+        # Open Codex journal refs include unverified replacement candidates.
+        # Saved event refs preserve verified proof after runtime cleanup.
         proof = [NativeMessageRef(**ref) for turn in turns
-                 if _same_scope(turn, session) and turn.outcome in (None, 'normal') for ref in turn.final_refs]
+                 if _same_scope(turn, session) and turn.outcome in (None, 'normal') for ref in turn.final_refs
+                 if (session.provider != 'codex' or NativeMessageRef(**ref) in runtime_proof
+                     or turn.outcome == 'normal' and NativeMessageRef(**ref) in saved)]
         for group in groups:
             _capture(session, group, timeline_since=timeline_since,
-                     verified=(*verified_final_refs, *saved, *proof),
+                     verified=(*saved, *proof),
                      eligible=any(ref in saved for _, _, aliases in group for ref in aliases))
     except Exception:
         logger.exception('Timeline message capture failed for %s', session_id)

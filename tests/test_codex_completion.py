@@ -737,3 +737,74 @@ def test_internal_user_observation_has_no_message_reference(text):
         assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == []
         cleanup(agent)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["failed", "interrupted", "completed"])
+@pytest.mark.parametrize("explicit_final", [False, True])
+def test_goal_end_verifies_candidate_only_after_completed_status(status, explicit_final):
+    async def scenario():
+        agent = make_agent()
+        agent._codex = MagicMock()
+        answer = event("item/completed", item=dict(type="agentMessage", id="goal-candidate", text="answer",
+                       phase="final_answer" if explicit_final else None, delivery=None))
+        monitor = SimpleNamespace(stream=lambda: Turn([
+            event("turn/started"), answer, event("turn/completed", status=status),
+        ]).stream(), close=MagicMock())
+        agent._goal_monitor = monitor
+        agent._goal_continuation_active = True
+        await agent._run_goal_continuation(monitor)
+        snapshot = agent.completion_controller.snapshot()
+        native_ref = NativeMessageRef("codex_item", "goal-candidate", "physical-1")
+        assert snapshot.final_refs == (native_ref,)
+        assert snapshot.outcome == {"failed": "provider_error", "interrupted": "ended", "completed": None}[status]
+        assert agent._timeline_refs_for_turn(snapshot) == (
+            [native_ref._asdict()] if explicit_final or status == "completed" else []
+        )
+        cleanup(agent)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", ["failed", "interrupted", "completed"])
+@pytest.mark.parametrize("explicit_final", [False, True])
+def test_replaced_stream_end_verifies_candidate_only_after_completed_status(status, explicit_final):
+    async def scenario():
+        agent = make_agent()
+        replacement = asyncio.create_task(asyncio.Event().wait())
+        agent._turn_task = replacement
+        answer = event("item/completed", item=dict(type="agentMessage", id="replaced-candidate", text="answer",
+                       phase="final_answer" if explicit_final else None, delivery=None))
+        try:
+            await run(agent, [answer, event("turn/completed", status=status)])
+            snapshot = agent.completion_controller.snapshot()
+            native_ref = NativeMessageRef("codex_item", "replaced-candidate", "physical-1")
+            assert snapshot.final_refs == (native_ref,)
+            assert snapshot.outcome is None
+            assert agent._turn_task is replacement
+            assert agent.state == AgentState.ASSISTANT_TURN
+            assert "physical-1" not in agent._completion_turn_outcomes
+            assert agent._timeline_refs_for_turn(snapshot) == (
+                [native_ref._asdict()] if explicit_final or status == "completed" else []
+            )
+        finally:
+            replacement.cancel()
+            await asyncio.gather(replacement, return_exceptions=True)
+            cleanup(agent)
+    asyncio.run(scenario())
+
+
+def test_manager_copies_runtime_message_proof_before_worker_use():
+    from tests.test_completion_publication import Manager
+    async def scenario():
+        agent, manager = make_agent(ephemeral=False), Manager()
+        manager._agents[agent.session_id] = agent
+        first = NativeMessageRef("codex_item", "verified-first", "physical-1")
+        second = NativeMessageRef("codex_item", "verified-second", "physical-2")
+        agent._completion_activity()
+        agent._timeline_observe_message(first, role="assistant")
+        copied = manager.timeline_verified_message_refs(agent.session_id)
+        agent._timeline_observe_message(second, role="assistant")
+        assert copied == (first,)
+        assert manager.timeline_verified_message_refs(agent.session_id) == (first, second)
+        assert manager.timeline_verified_message_refs("absent") is None
+        cleanup(agent)
+    asyncio.run(scenario())

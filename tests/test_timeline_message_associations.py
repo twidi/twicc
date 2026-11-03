@@ -41,7 +41,7 @@ def index(agent, factory, ref, line, text, *, final=True):
         parsed = {"type": "event_msg", "payload": {"type": "item_completed", "thread_id": agent.session_id,
                   "turn_id": ref.turn_id or "physical", "item": {"type": "UserMessage" if user else "AgentMessage",
                   "id": "native-" + ref.native_id if user else ref.native_id,
-                  **({"clientId": ref.native_id} if user else {"phase": "final_answer"}),
+                  **({"clientId": ref.native_id} if user else {"phase": "final_answer" if final else None}),
                   "content": [{"type": "text" if user else "Text", "text": text}]}}}
     SessionItem.objects.create(session_id=agent.session_id, line_num=line,
         kind=ItemKind.USER_MESSAGE if user else ItemKind.ASSISTANT_MESSAGE, timestamp=timezone.now(),
@@ -301,3 +301,99 @@ def test_explicit_hybrid_final_survives_later_unverified_candidate_and_stop(brid
     assert refs(end) == [final]
     assert linked_texts(end) == ["explicit final"]
     assert TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).count() == 1
+
+
+@pytest.mark.parametrize("status", ["failed", "interrupted", "completed"])
+@pytest.mark.parametrize("runtime_available", [True, False])
+def test_live_indexing_uses_verified_replacement_finals_during_open_interval(bridge, content_row_factory, status, runtime_available):
+    from tests.test_codex_completion import make_agent, run, event
+    manager, previous = bridge
+    agent = make_agent(ephemeral=False)
+    agent.session_id, agent.project_id, agent.process_run = previous.session_id, previous.project_id, previous.process_run
+    agent.process_run.state = "user_turn"
+    ProcessRun.objects.filter(pk=agent.process_run.pk).update(state="user_turn")
+    manager._agents[agent.session_id] = agent
+    from types import SimpleNamespace
+    agent._codex = SimpleNamespace(pid=None)
+    final = NativeMessageRef("codex_item", "answer-replaced", "physical-1")
+    async def scenario():
+        token = str(uuid4())
+        agent._completion_input_pending(token)
+        agent._timeline_reserve_input(token, NativeMessageRef("codex_client", token))
+        agent._completion_holds_changed(frozenset({"child"}))
+        replacement = asyncio.create_task(asyncio.Event().wait())
+        agent._turn_task = replacement
+        try:
+            await run(agent, [event("item/completed", thread_id=agent.session_id, item=dict(
+                type="agentMessage", id=final.native_id, phase=None, text="candidate", delivery=None)),
+                event("turn/completed", thread_id=agent.session_id, status=status)])
+            await manager._persist_process_run_transition(agent, AgentState.ASSISTANT_TURN)
+            await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        finally:
+            replacement.cancel()
+            await asyncio.gather(replacement, return_exceptions=True)
+            agent._cancel_completion_timer()
+            agent._cancel_compaction_timeout()
+    asyncio.run(scenario())
+    assert TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED).data["message_refs"]
+    turn = LogicalTurn.objects.get(session_id=agent.session_id)
+    assert turn.outcome is None and turn.final_refs == [final._asdict()]
+    index(agent, content_row_factory, final, 1, "candidate", final=False)
+    runtime_refs = manager.timeline_verified_message_refs(agent.session_id) if runtime_available else None
+    record_indexed_messages(agent.session_id, new_line_nums=[1], verified_final_refs=runtime_refs,
+                            timeline_since=timezone.now() - timedelta(minutes=1))
+    recover_referenced_messages(agent.session_id)
+    messages = list(TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT))
+    assert [message.data["text"] for message in messages] == (["candidate"] if status == "completed" and runtime_available else [])
+
+
+@pytest.mark.parametrize("ending", ["end", "interrupted"])
+def test_open_claude_candidate_waits_for_successful_native_end_proof(bridge, content_row_factory, ending):
+    from tests.test_hybrid_completion import make_agent, observation
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+    manager, previous = bridge
+    agent = make_agent()
+    agent.session_id, agent.project_id, agent.process_run = previous.session_id, previous.project_id, previous.process_run
+    agent.process_run.state = "user_turn"
+    ProcessRun.objects.filter(pk=agent.process_run.pk).update(state="user_turn")
+    Session.objects.filter(pk=agent.session_id).update(provider="claude_code")
+    final = NativeMessageRef("claude_uuid", "answer-candidate")
+    async def scenario():
+        agent.observe_jsonl_observations((observation("user_message", "user"),))
+        await manager._persist_process_run_transition(agent, AgentState.ASSISTANT_TURN)
+        events = ClaudeCodeSessionCompute().extract_completion_observations({"type": "assistant",
+            "uuid": final.native_id, "message": {"content": [{"type": "text", "text": "candidate"}]}}, 1)
+        agent.observe_jsonl_observations(events)
+        assert agent.completion_controller.snapshot().final_refs == ()
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        await asyncio.to_thread(index, agent, content_row_factory, final, 1, "candidate", final=False)
+        await asyncio.to_thread(record_indexed_messages, agent.session_id, new_line_nums=[1],
+                                timeline_since=timezone.now() - timedelta(minutes=1))
+        assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).exists())
+        agent._completion_holds_changed(frozenset({"child"}))
+        agent.observe_jsonl_observations((observation(ending),))
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        agent._cancel_completion_timer()
+    with patch("twicc.providers.claude_code.sessions_watcher.get_watcher") as watcher:
+        watcher.return_value.timeline_since = timezone.now() - timedelta(minutes=1)
+        asyncio.run(scenario())
+    messages = list(TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT))
+    assert [message.data["text"] for message in messages] == (["candidate"] if ending == "end" else [])
+    assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
+
+
+def test_closed_codex_markerless_final_uses_saved_refs_without_runtime(bridge, content_row_factory):
+    manager, agent = bridge
+    final = NativeMessageRef("codex_item", "answer-closed", "physical")
+    async def scenario():
+        agent._completion_activity()
+        agent._completion_provider_ended(final_ref=final)
+        closed = agent.completion_controller.terminate("normal", asyncio.get_running_loop().time())
+        await asyncio.to_thread(manager._store_completion_snapshot_admitted, agent, closed,
+                                state=AgentState.USER_TURN)
+        assert closed.turn_id not in agent._timeline_message_refs
+    asyncio.run(scenario())
+    index(agent, content_row_factory, final, 1, "verified before logical end", final=False)
+    record_indexed_messages(agent.session_id, new_line_nums=[1], timeline_since=timezone.now() + timedelta(days=1))
+    end = TimelineEvent.objects.get(kind=TimelineKind.TURN_ENDED)
+    assert linked_texts(end) == ["verified before logical end"]

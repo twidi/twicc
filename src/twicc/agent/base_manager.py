@@ -25,7 +25,7 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from .exceptions import SendDeliveryError
-from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot
+from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -121,6 +121,13 @@ class BaseAgentManager:
             for agent in self._agents.values()
             if agent.state != AgentState.DEAD
         ]
+
+    def timeline_verified_message_refs(self, session_id: str) -> tuple[NativeMessageRef, ...] | None:
+        """Copy verified interval identities before a live slice enters its worker."""
+        agent = self._agents.get(session_id)
+        if agent is None or agent.ephemeral:
+            return None
+        return tuple(dict.fromkeys(ref for refs in tuple(agent._timeline_message_refs.values()) for ref in tuple(refs)))
 
     def get_agent_info(self, session_id: str) -> AgentInfo | None:
         """Return a snapshot for a single agent, or ``None`` if unknown."""

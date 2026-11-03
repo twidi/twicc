@@ -1662,8 +1662,8 @@ class CodexAgent(BaseAgent):
 
         await self._send_delivery_done.wait()
         if self._turn_task is not None and self._turn_task is not asyncio.current_task():
-            self._completion_record_physical_end(turn_handle.id)
-            self._completion_turn_outcomes.pop(turn_handle.id, None)
+            outcome = self._completion_turn_outcomes.pop(turn_handle.id, "completed")
+            self._completion_record_physical_end(turn_handle.id, timeline_verified=outcome == "completed")
             # A fallback owns the replacement. This stream has drained, but its
             # old completion must not settle or continue the replacement turn.
             return
@@ -2581,7 +2581,9 @@ class CodexAgent(BaseAgent):
                         self._current_turn_ready.clear()
                 await self._handle_stream_event(event)
                 if event.method == "turn/completed":
-                    self._completion_record_physical_end(event.payload.turn.id)
+                    self._completion_record_physical_end(
+                        event.payload.turn.id, timeline_verified=terminal_outcome == "completed",
+                    )
                     self._completion_turn_outcomes.pop(event.payload.turn.id, None)
                 if self.state == AgentState.DEAD:
                     return
