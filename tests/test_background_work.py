@@ -27,6 +27,7 @@ from twicc.core.enums import Provider
 from twicc.core.models import Project, ProcessRun, Session, SessionItem
 from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent, _ShellTask
 from twicc.providers.codex.agent.agent import CodexAgent, _TrackedShell
+from twicc.providers.helpers import AgentSettings
 
 
 def _shell(backgrounded: bool = True) -> _ShellTask:
@@ -44,7 +45,7 @@ def _with_publication_state(agent):
 
 
 def _claude_agent() -> ClaudeCodeAgent:
-    agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
+    agent = ClaudeCodeAgent("claude-1", "p", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), AsyncMock())
     agent.session_id = "claude-1"
     agent.state = AgentState.ASSISTANT_TURN
     agent._live_background_tasks = {}
@@ -62,7 +63,7 @@ def _claude_agent() -> ClaudeCodeAgent:
 
 
 def _codex_agent() -> CodexAgent:
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("codex-1", "p", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), work_dirs=[])
     agent.session_id = "codex-1"
     agent.state = AgentState.USER_TURN
     agent._live_subagents = {}
@@ -466,7 +467,8 @@ class TestPublication:
         )
         # The shell ended meanwhile: the agent runs nothing any more.
         agent.get_info = lambda: stale
-        manager = BaseAgentManager.__new__(BaseAgentManager)
+        manager = BaseAgentManager()
+        manager._agents[agent.session_id] = agent
         manager._persist_process_run_transition = AsyncMock()
         manager._broadcast_info = AsyncMock()
         agent._schedule_background_work_refresh = MagicMock()

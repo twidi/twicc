@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -430,10 +431,12 @@ def test_live_sync_matches_golden_record(scenario, tmp_path, django_capture_on_c
 # in the count fails, so a removed read lowers its budget on purpose. Before the duplicate ``core_session``
 # reads were removed: 51 / 53 / 60 / 52.
 BUDGETS: dict[tuple[str, str], int] = {
-    ("claude_code", "root"): 35,
-    ("codex", "root"): 37,
-    ("claude_code", "child"): 42,
-    ("codex", "child"): 34,
+    # One intentional lookup detects newly admitted unbound logical intervals.
+    # Do not negative-cache this read: a later journal row must be discovered.
+    ("claude_code", "root"): 36,
+    ("codex", "root"): 38,
+    ("claude_code", "child"): 43,
+    ("codex", "child"): 35,
 }
 
 
@@ -448,7 +451,8 @@ def budget_lines(provider: str, session_id: str) -> list[str]:
     return rollout.lines
 
 
-def slice_query_count(provider: str, kind: str, tmp_path: Path) -> tuple[int, list[str]]:
+def slice_query_count(provider: str, kind: str, tmp_path: Path, *, before_slice=None,
+                      commit_callbacks=None) -> tuple[int, list[str]]:
     """The queries of a one-line slice of a root, or of a child whose root file stays empty and unsynced."""
     compute = CodexSessionCompute() if provider == Provider.CODEX else ClaudeCodeSessionCompute()
     root_id, child_id = (ROOT, AGENT_A) if provider == Provider.CODEX else (CLAUDE_ROOT, CLAUDE_CHILD)
@@ -465,11 +469,15 @@ def slice_query_count(provider: str, kind: str, tmp_path: Path) -> tuple[int, li
     path = paths[measured]
     *head, last = budget_lines(provider, measured)
     path.write_text("".join(f"{line}\n" for line in head), encoding="utf-8")
-    compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
+    with commit_callbacks(execute=True) if commit_callbacks else nullcontext():
+        compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
+    if before_slice is not None:
+        before_slice(measured)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"{last}\n")
-    with CaptureQueriesContext(connection) as queries:
-        compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
+    with commit_callbacks(execute=True) if commit_callbacks else nullcontext():
+        with CaptureQueriesContext(connection) as queries:
+            compute.sync_session_slice(measured, path, limits=LiveSyncLimits())
     assert SessionItem.objects.filter(session_id=measured).count() == len(head) + 1
     statements = [query["sql"] for query in queries.captured_queries]
     return len(statements), statements
@@ -483,6 +491,49 @@ BUDGET_CASES = [pytest.param(provider, kind, id=f"{provider}-{kind}")
 def test_one_line_slice_query_budget(provider, kind, tmp_path):
     count, statements = slice_query_count(provider, kind, tmp_path)
     assert count == BUDGETS[(provider, kind)], "\n".join(statements)
+
+
+@pytest.mark.parametrize("provider", ["claude_code", "codex"])
+@pytest.mark.parametrize("unbound", [False, True])
+def test_managed_binding_has_bounded_incremental_slice_cost(
+    provider, unbound, tmp_path, django_capture_on_commit_callbacks,
+):
+    from twicc.core.models import LogicalTurn
+    from twicc.core.services.logical_turn_answers import _BINDING_CACHES, bind_indexed_turn_sources
+
+    identities = []
+
+    def admit(session_id):
+        session = Session.objects.get(pk=session_id)
+        # The warm-up already observed an empty journal. New rows must remain visible.
+        for position in range(1, 33):
+            identities.append(LogicalTurn.objects.create(
+                id=uuid4(), session_id=session_id, provider=provider, run_id=uuid4(), ordinal=1,
+                position=position, source_floor=0, opened_at=timezone.now(),
+                storage_incarnation=None if unbound else session.storage_incarnation,
+                history_epoch=None if unbound else session.history_epoch,
+                first_ref={"kind": "claude_uuid" if provider == "claude_code" else "codex_item",
+                           "native_id": f"not-indexed-{position}", "turn_id": None},
+            ))
+
+    count, statements = slice_query_count(provider, "root", tmp_path, before_slice=admit,
+                                         commit_callbacks=django_capture_on_commit_callbacks)
+    journal_reads = [sql for sql in statements if sql.startswith("SELECT") and 'FROM "core_logicalturn"' in sql]
+    assert len(journal_reads) == 1
+    if not unbound:
+        assert count == BUDGETS[(provider, "root")]
+    else:
+        # One scope read, one incremental item read, and bounded content prefetches.
+        assert BUDGETS[(provider, "root")] < count <= BUDGETS[(provider, "root")] + 6
+        cache = _BINDING_CACHES[identities[0].session_id]
+        watermark = cache.watermark
+        assert watermark > 0
+        with django_capture_on_commit_callbacks(execute=True), CaptureQueriesContext(connection) as queries:
+            bind_indexed_turn_sources(identities[0].session_id)
+        sql = [query["sql"] for query in queries.captured_queries]
+        assert len(sql) == 3, sql  # Journal, scope, empty incremental item slice; never one read per turn.
+        assert any(f'"core_sessionitem"."id" > {watermark}' in query for query in sql)
+        _BINDING_CACHES.pop(identities[0].session_id, None)
 
 
 @pytest.mark.parametrize("provider,kind", BUDGET_CASES)

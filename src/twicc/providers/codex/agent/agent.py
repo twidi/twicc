@@ -862,6 +862,8 @@ class CodexAgent(BaseAgent):
         token = completion_token or str(uuid.uuid4())
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
+        if kwargs.get("shell_notice"):
+            self.completion_controller.note_shell_delivery()
         if not kwargs.get("shell_notice") and parse_hardcoded_command(text) is None:
             self._completion_input_pending(token)
         try:

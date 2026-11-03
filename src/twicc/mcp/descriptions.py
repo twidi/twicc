@@ -36,37 +36,33 @@ update_session_settings.
 
 Asynchronous by default: "sent" only means the agent received the message. Pass wait_reply to wait until the \
 session concludes (an answer, or a pending request only a human can clear) and get the answer back in the same \
-call. The wait covers the turn THIS message triggers, never the previous one. With wait_background, a final \
+call. Accepted sends return wait_token and last_line captured before provider delivery. The wait returns the last relevant indexed answer after confirmed logical completion, initially one second. With wait_background, a final \
 message read while background work runs does not count: the first one read once it has ended does. To check \
 whether a session still runs, read process.state from session or sessions_get.""",
-    "send-messages": """Send the same message to several sessions at once.
+    "send-messages": """Send the same message to several sessions.
 
-Selection: session_ids UNIONED with spawned_by / descendants / siblings / annotation. message may be omitted when \
-attach is given. Output is keyed by session id, with a summary. A per-session failure never fails the batch \
-(exit 0); exit 6 if no session was sent.
+Selection: session_ids UNIONED with spawned_by/descendants/siblings/annotation. message may be omitted with attach. \
+Output: results keyed by session id and a summary. Exit 0 for per-session failures; exit 6 if none was sent.
 
-Asynchronous by default: "sent" only means the agent received the message. Pass wait_reply to wait until the \
-recipients conclude (an answer, or a pending request only a human can clear) and get each answer back; each \
-recipient is waited from its own cursor, never its previous turn. wait_first stops at the first recipient to \
-conclude. With wait_background, a final message read while a \
-recipient's background work runs does not count.
+sent means accepted, not completed. Each accepted send returns wait_token and last_line captured before provider \
+delivery. wait_reply returns each last relevant indexed answer after confirmed logical completion, initially one \
+second. A pending request takes priority over intermediate text. wait_first stops at the first recipient to conclude. \
+wait_background explicitly ignores answers read during background work and continues into later intervals.
 
-Each send starts or resumes an agent (real work, token spend): a batch can cold-start many stopped sessions.""",
-    "session/wait-reply": """Block until a session concludes, past a cursor. Sends nothing.
+Each send starts or resumes an agent and spends tokens.""",
+    "session/wait-reply": """Wait for confirmed logical completion. Sends nothing.
 
-For a session nobody just messaged, or one messaged without wait_reply (then from_line = the send's last_line).
+Initially one second without root activity, pending delivery, or assistant holds. Returns the last relevant indexed \
+answer. A pending request takes priority over intermediate text. Background shells do not extend confirmation; \
+wait_background explicitly ignores answers read during background work and continues into later intervals.
 
-It ends on an answer (the message closing a turn) or a pending request only a human can clear; an answer wins a tie. \
-wait_background: a final read during background work does not count.
+wait_token selects an accepted input and defaults to its stored admission cursor. Explicit from_line or since \
+(ISO 8601), mutually exclusive, stays strict. Otherwise: after the last user message; unindexed sessions: line 0.
 
-Cursor: from_line (a line number, strictly past it) or since (an ISO 8601 instant), mutually exclusive. Omitted: \
-after the last user message. A just-spawned, unindexed session: from line 0.
+outcome: replied, awaiting_user_input, ended, timeout, provider_error, backend_gone, wait_failed. Resume from \
+line_num after replied/provider_error or an ignored background answer; otherwise since_line_num.
 
-outcome: `replied`, `awaiting_user_input`, `ended` (crash, interruption, empty answer), `timeout`, \
-`provider_error`, `backend_gone`, `wait_failed`. To resume, pass as from_line: after `replied` or \
-`provider_error`, its `line_num`; after any other outcome, its `since_line_num`.
-
-Exit 0 answered or blocked, 5 timeout, 2 TwiCC stopped, 1 refusal or broken wait.""",
+Exit 0 answered/blocked, 5 timeout/ended/provider_error, 2 backend gone, 1 refusal/broken wait.""",
     "sessions/wait-reply": """Block until several sessions conclude, each past its own cursor. Sends nothing. One \
 wait_timeout covers the whole batch. Each ends like session_wait_reply. wait_first stops at the first one. \
 wait_background applies per session.

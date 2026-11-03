@@ -109,13 +109,16 @@ def send_message_cmd(
     Pass --wait-reply to keep going until the session concludes — an answer, or
     a pending request only a human can clear — and get that answer back with
     the result, in one call. It waits for the turn THIS
-    message triggers: the reply is matched against a cursor the server reads
-    when the agent takes the message, so the previous turn's closing message
-    is not returned in its place. That is the way to collect an answer; to
+    message triggers: wait_token selects its accepted logical interval. The
+    last_line cursor is captured before provider delivery, including deferred
+    delivery. Confirmed logical completion initially requires one second
+    without root activity, pending delivery, or assistant holds. The wait
+    returns its last relevant indexed answer. A pending request takes priority
+    over intermediate text. That is the way to collect an answer; to
     check whether the session is still running, read `process.state` from
     "twicc session <SESSION_ID>" or "twicc sessions get <SESSION_ID>...".
     With --wait-background, a final message read while background work runs
-    does not count: the first one read once that work has ended is.
+    does not count: the first confirmed logical answer read after it ends does.
     """
     # Lazy imports to keep --help fast (no Django setup until we need it).
     import os

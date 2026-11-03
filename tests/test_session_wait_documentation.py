@@ -55,7 +55,7 @@ CROSS_REFERENCES = {"--wait-reply", "--transition"}
 # of these is a deliberate act: re-read the sentence first, because the last
 # three times the number went up it was `--blocked` written `--wait-blocked`.
 SANCTIONED = {
-    WAIT_DOC_LABEL: {"--wait-reply": 6, "--transition": 0},
+    WAIT_DOC_LABEL: {"--wait-reply": 5, "--transition": 0},
     "SKILLS-AND-CLI.md": {"--wait-reply": 2, "--transition": 0},
     "session wait-reply --help": {"--wait-reply": 3, "--transition": 0},
     "--from-line help": {"--wait-reply": 1, "--transition": 0},
@@ -66,6 +66,30 @@ def _command():
     from twicc.cli import app
 
     return typer.main.get_command(app).commands["session"].commands["wait-reply"]
+
+
+def test_confirmed_completion_contract_and_input_token_are_published():
+    paths = [WAIT_DOC, SKILLS_DIR / "twicc-sessions/wait-reply.md",
+             SKILLS_DIR / "twicc-create-session/wait-reply.md",
+             SKILLS_DIR / "twicc-send-message/SKILL.md",
+             SKILLS_DIR / "twicc-send-messages/SKILL.md"]
+    for path in paths:
+        text = path.read_text()
+        assert "confirmed logical completion" in text, path
+        assert "one-second" in text, path
+        assert "last relevant answer" in text, path
+        assert "pending request takes priority" in text, path
+        assert "wait_token" in text, path
+        assert "first final message past its cursor" not in text, path
+    assert "--wait-token" in _real_options()
+    assert "admission" in _real_help("wait_token")
+    from twicc.mcp.tools import iter_mcp_tools
+
+    tools = {tool.name: tool for tool in iter_mcp_tools()}
+    singular = tools["session_wait_reply"].input_schema
+    assert singular["properties"]["wait_token"]["type"] == "string"
+    assert "wait_token" not in singular.get("required", [])
+    assert "wait_token" not in tools["sessions_wait_reply"].input_schema["properties"]
 
 
 def _real_options() -> set[str]:

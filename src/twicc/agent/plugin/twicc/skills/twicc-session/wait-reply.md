@@ -4,8 +4,12 @@ Wait until a session answers, or blocks on a human. MCP tool: `mcp__twicc__sessi
 
 ## Usage
 
+Managed sessions use **confirmed logical completion**, with an initial **one-second** confirmation interval. New root activity, pending delivery, or an assistant hold cancels confirmation. A pending request takes priority over an intermediate answer. The result contains the **last relevant answer** from the selected logical interval, after indexing. Background shells do not extend ordinary confirmation; explicit `--wait-background` preserves its separate waiting rule. Historical sessions without a logical interval retain transcript waiting.
+
+Accepted creates and sends can return `wait_token`. Use `session <ID> wait-reply --wait-token <TOKEN>` to select that accepted input. Without an explicit cursor, the token uses its stored admission cursor. Explicit `--from-line` or `--since` remains a strict answer boundary. Invalid, rejected, or cross-session tokens return `wait_failed`. Several inputs can share one logical interval. A token identifies acceptance, not guaranteed provider processing of each queued input.
+
 ```bash
-$TWICC session '<SESSION_ID>' wait-reply [--from-line N] [--since INSTANT] [--wait-timeout N] [--no-reply-text] [--wait-background]
+$TWICC session '<SESSION_ID>' wait-reply [--wait-token TOKEN] [--from-line N] [--since INSTANT] [--wait-timeout N] [--no-reply-text] [--wait-background]
 ```
 
 The wait that `--wait-reply` runs on the commands that send, for a session **you did not just message**: spawned earlier, steered from the UI, messaged by someone else, or messaged by you without `--wait-reply`.
@@ -14,7 +18,7 @@ The wait that `--wait-reply` runs on the commands that send, for a session **you
 
 ### The cursor
 
-Only a line strictly past the cursor counts; an answer already past it is returned at once. **Choosing it right is the whole of using this command.**
+Only a line strictly past the cursor counts; a confirmed answer already past it is returned after indexing. **Choosing it right is the whole of using this command.**
 
 | Situation | `--from-line` |
 |---|---|
@@ -28,7 +32,7 @@ Only a line strictly past the cursor counts; an answer already past it is return
 
 - `--wait-timeout` (default 300 s) — caps the wait. An idle session with no answer past the cursor ends with `ended`, but only after a ~5 s flush window: below that, the wait can only report `timeout`.
 - `--no-reply-text` — drop the answer's `text` from the result.
-- `--wait-background` — a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first final message read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `--from-line <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
+- `--wait-background` — a final message read while background work runs behind the agent (`background_work_in_progress` not `null`: a subagent, background shell, Monitor, scheduled wake-up or goal) does not count; the first confirmed logical answer read once that work has ended is the answer. A wait started or resumed after the work ended therefore counts the final messages already written. An idle agent with that work still running keeps the wait open; once a final message was ignored, an alive idle agent keeps it open until the next one comes, however late; a dead agent ends it (`ended`, carrying the ignored answer). Claude Code reopens a turn when a background shell ends. Codex answers after a process ends only if the agent waited for it within its turn: a process it left running on purpose brings no new answer, so such a wait ends in `timeout` with the last answer attached. On `timeout`, the last ignored final message comes back (`line_num`, `text` unless `--no-reply-text`) with the current `background_work_in_progress`; to wait for the next answer, resume with `--from-line <its line_num> --wait-background` (from that `line_num`, not `since_line_num`). A pending request still ends the wait at once and carries no ignored final message: resuming from its `since_line_num` re-reads the final messages already written.
 - A session just spawned, with no indexed transcript yet, is waited on from line 0 (or `--from-line`); `--since` does not apply to it.
 - `session self wait-reply` is refused (exit 1): your own answer cannot come while you wait.
 - `--since` exists here and on `sessions wait-reply`; `--from-line` only here. The sending commands read their cursor server-side.
@@ -50,7 +54,7 @@ With `--wait-background`, a `timeout` that ignored a final message carries the l
 - `ended` — the turn is over and nothing closed it: a crash, an interruption, an empty answer.
 - `timeout`, `provider_error` (quota, outage), `backend_gone`, `wait_failed`.
 
-No flag chooses between an answer and a pending request, and a block is an `outcome`, never a separate field. Both in the same poll: the answer wins.
+No flag chooses between an answer and a pending request, and a block is an `outcome`, never a separate field. A current pending request takes priority over an intermediate answer.
 
 ### Exit codes
 
@@ -59,9 +63,6 @@ No flag chooses between an answer and a pending request, and a block is an `outc
 - `2` — TwiCC stopped.
 - `1` — a local refusal: bad `--from-line` or `--since`, both passed, `--wait-timeout` not > 0, no session and no live process for the id, or the wait itself broke. Read it before retrying.
 
-## Known limit (Claude Code)
-
-A message sent while a Claude session is busy is queued and recorded as a queued command, not a user message. Every wait for an answer — a send's own `--wait-reply` included, with `--from-line` or the default cursor — then returns the running turn's closing message (with `--wait-background`, the first one read once the background work has ended). It usually covers the queued message; rarely, the queued message runs as a turn of its own afterwards, and the wait returned an answer that does not cover it. In an orchestration, message a session once it has finished.
 
 ## Examples
 

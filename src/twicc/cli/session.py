@@ -609,7 +609,12 @@ def workflow(session_id: str, workflow_id: str) -> None:
 
 def wait_reply(session_id: str, *, from_line: int | None = None, since: str | None = None,
                wait_token: str | None = None, timeout: float, want_text: bool = True, wait_background: bool = False) -> None:
-    """Block until the session concludes, past the cursor.
+    """Block until confirmed logical completion, past the strict cursor.
+
+    The initial confirmation interval is one second. Return the last relevant
+    indexed answer. A pending request takes priority over intermediate text.
+    wait_token selects an accepted input and defaults to its admission cursor;
+    explicit from_line or since bounds remain strict.
 
     The same wait ``--wait-reply`` runs on the commands that send, which is
     why it carries the same name: it ends on an answer or on a pending request,

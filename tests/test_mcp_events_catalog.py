@@ -49,12 +49,15 @@ def test_event_contract():
     assert INPUT_SCHEMA["properties"]["since_line_num"]["maximum"] == 2147483647
     assert INPUT_SCHEMA["properties"]["wait_background"]["description"] == (
         "A final message read while background work runs behind the agent (a subagent, background shell, Monitor, "
-        "scheduled wake-up or goal) does not count; the event fires on the first final message read once that work "
+        "scheduled wake-up or goal) does not count; the event fires on the first confirmed logical answer read once that work "
         "has ended. If the agent then starts a new turn, the ignored message is skipped and the new turn's "
         "conclusion is delivered. If no new answer comes and the agent stays idle, no event fires; the ignored "
         "message stays readable with the session content tools (after a server restart it can still be delivered "
         "as replied once the background work has ended). A dead agent fires 'ended' carrying it."
     )
+    assert "confirmed logical completion" in EVENT_DEFINITION["description"]
+    assert "one second" in EVENT_DEFINITION["description"]
+    assert "last relevant indexed answer" in EVENT_DEFINITION["description"]
     assert PAYLOAD_SCHEMA["required"] == ["session_id", "session_title", "reply"]
     assert "additionalProperties" not in PAYLOAD_SCHEMA
     assert PAYLOAD_SCHEMA["properties"]["reply"]["required"] == [
@@ -263,6 +266,16 @@ def test_complete_catalog_matches_authoritative_spec_json():
     # Added after that spec by docs/plans/2026-10-08-bypass-approval-auto-deny-spec.md
     # (§6.3); the historical spec is never edited, so the addition is declared here.
     expected["payloadSchema"]["properties"]["auto_deny_at"] = AUTO_DENY_AT_SCHEMA
+    # The confirmed completion specification (2026-11-02) supersedes only these descriptions.
+    expected["description"] += (
+        " Managed sessions require confirmed logical completion, "
+        "initially one second without root activity, pending delivery, or assistant holds. "
+        "Return the last relevant indexed answer. A pending request takes priority over intermediate text."
+    )
+    background = expected["inputSchema"]["properties"]["wait_background"]
+    background["description"] = background["description"].replace(
+        "first final message", "first confirmed logical answer",
+    )
     assert EVENT_DEFINITION == expected
     assert INPUT_SCHEMA == expected["inputSchema"]
     assert PAYLOAD_SCHEMA == expected["payloadSchema"]

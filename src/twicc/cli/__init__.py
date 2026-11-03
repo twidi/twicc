@@ -565,7 +565,7 @@ def _sessions_wait_reply(
 
     Each concludes the same two ways the singular does — an answer, the
     message closing a turn, or a pending request only a human can clear — and
-    an answer arriving in the same poll wins. --wait-background applies the
+    a current pending request takes priority over intermediate text. --wait-background applies the
     singular's rule to each session: a final message read while background
     work runs behind it does not count, and the first one read once that work
     has ended is returned.
@@ -791,7 +791,7 @@ def _session_wait_reply(
     from_line: int = typer.Option(
         None, "--from-line",
         help=(
-            "Only a line strictly past this one counts, which is what makes "
+            "Only a line strictly past this one counts, including with --wait-token. This makes "
             "a timed-out wait resumable. Pass the `line_num` of an ending "
             "that consumed a line (`replied`, `provider_error`) or the "
             "`since_line_num` of one that did not — resuming a "
@@ -844,16 +844,21 @@ def _session_wait_reply(
     nobody just messaged: one spawned earlier, steered from the UI, or
     messaged by someone else — or one you messaged yourself without
     `--wait-reply` (then pass `--from-line` the `last_line` the send returned).
-    Nothing is sent by this command: pass the cursor, or it defaults to after
-    the last user message.
+    Nothing is sent by this command. A wait_token selects its accepted input.
+    Without an explicit cursor, use its stored admission cursor. Explicit
+    --from-line and --since bounds remain strict. Otherwise the cursor defaults
+    to after the last user message.
 
-    It ends on an answer — the message closing a turn — or on a pending
+    Managed answers require confirmed logical completion: initially one second
+    without root activity, pending delivery, or assistant holds. Return the last
+    relevant indexed answer. Background shells do not extend confirmation.
+    It ends on a confirmed answer or on a pending
     request, a tool approval or a question only a human can clear. Both are
-    "it is no longer my turn to wait"; an answer wins a tie.
+    "it is no longer my turn to wait"; a current pending request takes priority over intermediate text.
 
     --wait-background: a final message read while background work runs
     behind the agent (`background_work_in_progress` not null) does not count;
-    the first final message read once that work has ended is the answer, so a
+    the first confirmed logical answer read once that work has ended is the answer, so a
     wait started or resumed after the work ended counts the final messages
     already written. An idle agent with that work still running keeps the wait
     open; once a final message was ignored, an alive idle agent keeps it open

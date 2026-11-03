@@ -191,12 +191,15 @@ def send_messages_cmd(
 
     Pass --wait-reply to keep going until the recipients conclude — an answer, or
     a pending request only a human can clear — and get each
-    answer back with the result. Each is waited from its own cursor, read when
-    its agent takes the message, so the previous turn's closing message is not
+    answer back with the result. Each accepted input returns wait_token; its
+    last_line cursor is captured before provider delivery, including deferred
+    delivery. Each uses confirmed logical completion, initially after one
+    second without root activity, pending delivery, or assistant holds. It
+    returns the last relevant indexed answer. Thus the previous turn's closing message is not
     returned in its place. --wait-first stops at the first recipient
     to conclude instead of waiting for every one. With --wait-background, a
     final message read while background work runs does not count: each
-    recipient's first final message read once that work has ended is
+    recipient's first confirmed logical answer read once that work has ended is
     returned. That is the way to collect answers; to
     check whether sessions are still running, read `process.state` from
     "twicc sessions get <SESSION_ID>...".

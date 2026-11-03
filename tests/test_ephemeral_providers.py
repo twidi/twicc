@@ -74,7 +74,7 @@ def test_codex_ephemeral_factory_disables_inherited_tools_and_all_persistence(mo
 def test_codex_final_answer_ignores_commentary_children_and_sdk_logging(monkeypatch):
     from twicc.providers.codex.agent import agent as module
 
-    agent = module.CodexAgent.__new__(module.CodexAgent)
+    agent = module.CodexAgent("parent", "p", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), ephemeral=True, work_dirs=[])
     agent.session_id = "parent"
     agent.ephemeral = True
     agent.ephemeral_final_text = ""
@@ -194,7 +194,7 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     from twicc.agent.states import AgentState
     from twicc.providers.codex.agent.agent import CodexAgent
 
-    agent = CodexAgent.__new__(CodexAgent)
+    agent = CodexAgent("parent", "p", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), ephemeral=True, work_dirs=[])
     agent.ephemeral = True
     agent.session_id = "parent"
     agent.state = AgentState.ASSISTANT_TURN
@@ -222,8 +222,13 @@ def test_codex_ephemeral_hold_uses_runtime_status_without_watcher():
     agent._codex = SimpleNamespace(_client=SimpleNamespace(thread_read=read))
 
     async def run():
+        agent._completion_activity()
+        agent._completion_provider_ended()
         assert await agent._try_arm_subagent_hold() is True
         await asyncio.wait_for(agent._ephemeral_subagent_task, 2)
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert agent.completion_controller.candidate() is not None
+        await asyncio.wait_for(agent._completion_timer_task, 2)
         assert agent.state == AgentState.USER_TURN
         assert not agent._live_subagents
 
@@ -240,7 +245,9 @@ def test_ephemeral_provider_state_change_skips_persistent_provider_hooks(monkeyp
         from twicc.providers.codex.agent.manager import CodexAgentManager as Manager
     base = AsyncMock()
     monkeypatch.setattr(BaseAgentManager, "_on_state_change", base)
-    agent = SimpleNamespace(ephemeral=True)
+    from tests.test_claude_completion import make_agent as make_claude
+    from tests.test_codex_completion import make_agent as make_codex
+    agent = make_claude() if provider == "claude_code" else make_codex()
     asyncio.run(Manager()._on_state_change(agent))
     base.assert_awaited_once_with(agent)
 
@@ -322,7 +329,7 @@ def test_codex_factory_cancellation_closes_initialized_transport(monkeypatch):
 def test_codex_ephemeral_file_change_does_not_capture_transcript_diff(monkeypatch):
     from twicc.providers.codex.agent import agent as module
 
-    agent = module.CodexAgent.__new__(module.CodexAgent)
+    agent = module.CodexAgent("parent", "p", "/tmp", AgentSettings(), AsyncMock(), AsyncMock(), ephemeral=True, work_dirs=[])
     agent.ephemeral = True
     agent.session_id = "parent"
     agent._items_by_id = {}

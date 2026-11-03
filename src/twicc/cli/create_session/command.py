@@ -236,7 +236,10 @@ def create_session_cmd(
         False,
         "--wait-reply",
         help=(
-            "Keep going after the session is created, until it concludes. "
+            "Wait for confirmed logical completion after creation: initially one second "
+            "without root activity, pending delivery, or assistant holds. Return the "
+            "last relevant indexed answer. A pending request takes priority over "
+            "intermediate text. Accepted creation can return wait_token for later waiting. "
             "Adds a `reply` block to the result carrying the answer's text, "
             "its `line_num`, and an `outcome` saying what ended the wait: "
             "'replied' (the message closing the turn), 'awaiting_user_input' "

@@ -2255,6 +2255,8 @@ class ClaudeCodeAgent(BaseAgent):
         completion_token = completion_token or str(uuid.uuid4())
         if completion_cursor is not None:
             self._completion_source_floor = completion_cursor
+        if shell_notice:
+            self.completion_controller.note_shell_delivery()
         if not shell_notice and not text.lstrip().startswith("/"):
             self._completion_input_pending(completion_token)
         if not shell_notice:

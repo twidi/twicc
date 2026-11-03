@@ -48,7 +48,9 @@ EVENT_DEFINITION = {
     "name": "session.concluded",
     "description": "A TwiCC session concluded past the cursor: it answered, it is blocked on a question or an "
     "approval, the provider refused the turn, or the turn ended without an answer. Same "
-    "conclusion as the session_wait_reply tool.",
+    "conclusion as the session_wait_reply tool. Managed sessions require confirmed logical completion, "
+    "initially one second without root activity, pending delivery, or assistant holds. Return the last relevant indexed answer. "
+    "A pending request takes priority over intermediate text.",
     "delivery": ["webhook"],
     "inputSchema": {
         "type": "object",
@@ -61,7 +63,7 @@ EVENT_DEFINITION = {
                 "work runs behind the agent (a subagent, "
                 "background shell, Monitor, scheduled "
                 "wake-up or goal) does not count; the "
-                "event fires on the first final message "
+                "event fires on the first confirmed logical answer "
                 "read once that work has ended. If the "
                 "agent then starts a new turn, the "
                 "ignored message is skipped and the new "

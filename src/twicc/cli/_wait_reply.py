@@ -84,8 +84,8 @@ WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaff
 WAIT_BACKGROUND_HELP = (
     "A final message read while background work runs behind the agent "
     "(`background_work_in_progress` not null: a subagent, background shell, "
-    "Monitor, scheduled wake-up or goal) does not count; the first final "
-    "message read once that work has ended is the answer, so a wait started or "
+    "Monitor, scheduled wake-up or goal) does not count; the first confirmed "
+    "logical answer read once that work has ended is the answer, so a wait started or "
     "resumed after the work ended counts the final messages already written. "
     "Once a final message was ignored, an idle agent keeps the wait open until "
     "the next one comes, however late (a dead agent ends it, 'ended'). Claude "
