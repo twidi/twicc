@@ -72,6 +72,9 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 - Point it down while collapsed and up while expanded. Keep it hidden for a message that fits on one line.
 - The label and its chevron form one native toggle button for the complete saved Markdown, including short messages.
 - The collapsed preview is also a native button that opens the message, including short messages.
+- Assistant entries show the existing `TextToSpeechButton` after the label's chevron, or after the label when no chevron appears.
+- Read the complete saved message through the shared speech service. Preserve its availability, playback, cancellation, and error behavior.
+- User entries have no speech button. Speech controls do not expand the message or navigate to the session.
 - While expanded, hide the preview. Put `Close message` after the complete text.
 - Keep native keyboard controls. Move focus to the message label after opening from the preview or closing the message.
 - The default All view includes the new message entries. Existing scope and visibility rules still apply.

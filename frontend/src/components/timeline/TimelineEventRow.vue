@@ -26,6 +26,7 @@ import ProjectBadge from '../project/ProjectBadge.vue'
 import TimelineSessionMention from './TimelineSessionMention.vue'
 import TimelineEventLine from './TimelineEventLine.vue'
 import TimelineMessage from './TimelineMessage.vue'
+import TextToSpeechButton from '../ui/TextToSpeechButton.vue'
 
 const props = defineProps({
     /** An event row of `buildTimelineRows`. */
@@ -136,6 +137,11 @@ function toggleSession() {
                     :name="messageExpanded ? 'chevron-up' : 'chevron-down'"
                     aria-hidden="true"
                 ></wa-icon></button>
+                <TextToSpeechButton
+                    v-if="row.event.kind === 'assistant_message.sent'"
+                    class="timeline-message-speech"
+                    :text="row.event.data.text"
+                />
             </template>
         </TimelineEventLine>
         <TimelineMessage
@@ -242,6 +248,12 @@ function toggleSession() {
     margin-inline-start: var(--wa-space-2xs);
     font-size: 0.75em;
     color: var(--wa-color-text-quiet);
+}
+
+.timeline-message-speech {
+    margin-inline-start: var(--wa-space-xs);
+    vertical-align: middle;
+    --wa-form-control-height: 1.5rem;
 }
 
 /* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */

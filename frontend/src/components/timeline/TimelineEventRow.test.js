@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as Vue from 'vue'
+import { createPinia } from 'pinia'
 import { Message } from '../../../tests/helpers/timelineMessageComponent.js'
+import * as speechModule from '../../stores/textToSpeech.js'
+import { setSpeechPlayerFactory } from '../../utils/speechPlayer.js'
+import { setPcmStreamPlayerFactory } from '../../utils/pcmStreamPlayer.js'
 
 import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
@@ -33,6 +37,10 @@ const Line = compileComponent(new URL('./TimelineEventLine.vue', import.meta.url
     './TimelineSessionMention.vue': Mention,
     './TimelineWordingPart.vue': WordingPart,
 })
+const SpeechButton = compileComponent(new URL('../ui/TextToSpeechButton.vue', import.meta.url), {
+    '../../stores/textToSpeech': speechModule,
+    '../../composables/useToast': { toast: { error(message) { throw new Error(message) } } },
+})
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
     'vue-router': { RouterLink },
     '../../stores/data': { useDataStore: () => dataStore },
@@ -41,6 +49,7 @@ const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url),
     './TimelineSessionMention.vue': Mention,
     './TimelineEventLine.vue': Line,
     './TimelineMessage.vue': Message,
+    '../ui/TextToSpeechButton.vue': SpeechButton,
 })
 
 const sessions = {
@@ -66,7 +75,7 @@ function textOf(node) {
 const sessionLinks = (root) => byClass(root, 'timeline-session').flatMap((mention) => descendants(mention, (n) => n.type === 'a'))
 
 /** `emitted`: the `toggle-session` payloads of the row, in order. */
-async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [] } = {}) {
+async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [], pinia = createPinia() } = {}) {
     const rows = buildTimelineRows(events, { sessions: sessionTable, scope, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
         .filter((row) => row.type === 'event')
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => { node.focused = true } })
@@ -74,6 +83,7 @@ async function render(t, events, { scope = { kind: 'global' }, index = 0, sessio
     const app = renderer.createApp({
         render: () => Vue.h(Row, { row: rows[index], context, sessionFilterId, onToggleSession: (payload) => emitted.push(payload) }),
     })
+    app.use(pinia)
     app.mount(root)
     t.after(() => app.unmount())
     await flush()
@@ -769,6 +779,74 @@ test('short messages have no label chevron, including while expanded', async t =
     }
 })
 
+test('assistant speech reads the full saved message through the shared service without expanding or navigating', async t => {
+    const pinia = createPinia()
+    const store = speechModule.useTextToSpeechStore(pinia)
+    const fields = { model: 'openai/gpt-4o-mini-tts', voice: 'alloy', response_format: 'mp3', speed: null, instructions: '' }
+    store.applyConfig({ config: { active_id: 'voice', configs: [{ id: 'voice', ...fields, validated: fields }] }, key_present: true })
+    const player = () => ({ prime() {}, stop() {} })
+    setSpeechPlayerFactory(player)
+    setPcmStreamPlayerFactory(player)
+    t.after(() => {
+        store.stop()
+        speechModule._resetSpeechForTests()
+        setSpeechPlayerFactory(null)
+        setPcmStreamPlayerFactory(null)
+    })
+    const requests = []
+    store._openSpeech = (body, signal) => {
+        requests.push(body)
+        return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
+    }
+    const emitted = []
+    const text = '**Saved reply**\n\n' + 'Complete text. '.repeat(40)
+    const root = await render(t, [make('assistant_message.sent', { data: { text } })], { pinia, emitted })
+    const [label] = byClass(root, 'timeline-message-label')
+    const [speech] = byClass(root, 'timeline-message-speech')
+    assert.ok(speech, 'assistant messages expose read aloud beside the label and chevron')
+    assert.equal(speech.type, 'wa-button')
+    assert.equal(speech.props['aria-label'], 'Read aloud')
+    assert.equal(speech.parent, label.parent, 'speech is separate from the expansion button')
+    assert.ok(speech.parent.children.indexOf(speech) > speech.parent.children.indexOf(label))
+    const links = sessionLinks(root).map(link => link.props['data-to'])
+    const pending = speech.props.onClick()
+    await flush()
+    assert.equal(requests[0].text, text)
+    assert.equal(requests[0].cache, true)
+    assert.equal(speech.props['aria-label'], 'Cancel the request')
+    assert.equal(descendants(speech, node => node.type === 'wa-spinner').length, 1)
+    assert.equal(label.props['aria-expanded'], 'false')
+    assert.deepEqual(emitted, [])
+    assert.deepEqual(sessionLinks(root).map(link => link.props['data-to']), links)
+    label.props.onClick()
+    await flush()
+    assert.equal(speech.props['aria-label'], 'Cancel the request', 'expansion preserves the shared playback')
+    await speech.props.onClick()
+    await pending
+    await flush()
+    assert.equal(store.status, 'idle')
+    assert.equal(speech.props['aria-label'], 'Read aloud')
+    assert.equal(label.props['aria-expanded'], 'true', 'cancelling speech does not close the message')
+})
+
+test('speech is absent for user messages, malformed messages, and unavailable service', async t => {
+    const pinia = createPinia()
+    const store = speechModule.useTextToSpeechStore(pinia)
+    // A playback stays controllable even if the service becomes unavailable.
+    store.playback = { text: 'Saved', status: 'playing', source: 'message', configId: null }
+    for (const [kind, text] of [['user_message.sent', 'Saved'], ['assistant_message.sent', ' '], ['assistant_message.sent', null]]) {
+        const root = await render(t, [make(kind, { data: { text } })], { pinia })
+        assert.equal(byClass(root, 'timeline-message-speech').length, 0)
+    }
+    const root = await render(t, [make('assistant_message.sent', { data: { text: 'Saved' } })], { pinia })
+    const [speech] = byClass(root, 'timeline-message-speech')
+    assert.equal(byClass(root, 'timeline-message-chevron').length, 0, 'short messages still offer speech without a chevron')
+    assert.equal(speech?.props['aria-label'], 'Stop reading', 'busy playback remains controllable without service availability')
+    await speech.props.onClick()
+    await flush()
+    assert.equal(byClass(root, 'timeline-message-speech').length, 0)
+})
+
 test('a recycled timeline row collapses the previous message before it shows the next event', async t => {
     const context = { sessions, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }
     const rowFor = event => buildTimelineRows([event], { sessions, scope: { kind: 'global' }, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
@@ -776,6 +854,7 @@ test('a recycled timeline row collapses the previous message before it shows the
     const row = Vue.ref(rowFor(make('assistant_message.sent', { data: { text: '**First final**' } })))
     const { renderer, root } = makeRenderer()
     const app = renderer.createApp({ render: () => Vue.h(Row, { row: row.value, context }) })
+    app.use(createPinia())
     app.mount(root)
     t.after(() => app.unmount())
     await flush()

@@ -278,6 +278,9 @@ Expected: the new helper/component contract fails.
 - [ ] **Implement the view-model and row body.** Preview the first nonempty plain-text line, without a character cutoff.
 Keep one visual line with CSS ellipsis. For additional lines or measured overflow, place a chevron after the message label.
 Use one native label button with `aria-expanded`: its chevron points down when collapsed and up when expanded.
+For valid assistant messages, render the existing `TextToSpeechButton` beside that button, after its chevron.
+Pass the complete saved text. Reuse the shared speech service and its availability rules without a separate playback lifecycle.
+Keep speech independent of expansion and navigation. Do not add a speech button to user messages.
 Make the collapsed preview a native open button, including short messages. Move focus to the persistent label after opening from it.
 Hide the preview while expanded. Put `Close message` at the end and return focus to the persistent label.
 Keep an invisible, out-of-flow preview while expanded to measure width changes. Disable its button while hidden.
