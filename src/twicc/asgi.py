@@ -258,16 +258,7 @@ async def broadcast_process_state(info: AgentInfo, *, resync: bool = False) -> N
     clients dropped when it was hidden. The message carries ``resync: true``
     so the frontend restores the state without any notification, and the
     external notifications only move their baseline.
-
-    When transitioning out of assistant_turn (e.g. to user_turn or dead),
-    we delay the broadcast by 1 second to allow the file watcher to sync
-    the final assistant message to the database and broadcast it via WebSocket
-    before the frontend learns that the turn ended. This prevents a brief flash
-    of an intermediate assistant message in conversation display mode.
     """
-    # if info.previous_state == AgentState.ASSISTANT_TURN and info.state != AgentState.ASSISTANT_TURN:
-    #     await asyncio.sleep(1)
-
     if info.extra and info.extra.get("ephemeral"):
         message = serialize_agent_info(info)
         message["type"] = "process_state"

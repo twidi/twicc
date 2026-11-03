@@ -168,6 +168,7 @@ class FakeAgent(StopOriginMixin):
             if with_run else None
         )
         self.kill_reason = None
+        self._completion_pending_publications = {}
 
     def get_pid(self):
         return 123
@@ -359,6 +360,7 @@ def test_hook_fakes_without_a_stop_origin_still_work(project):
         session_id="s1", project_id=project.id, provider=Provider.CODEX, ephemeral=False, process_run=run,
         pending_requests=(), kill_reason="manual", error=None, is_hybrid=False, get_pid=lambda: 1,
         background_work_snapshot=lambda: None, start=AsyncMock(),
+        _completion_pending_publications={},
     )
     die(agent)
     assert columns(rows("process.ended")[0]) == ("user", "ui", None, None)

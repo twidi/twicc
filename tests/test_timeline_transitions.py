@@ -33,10 +33,10 @@ def test_turn_ended_carries_the_background_work_of_the_new_row():
         EventSpec("turn.ended", {"background_work": WORK})]
 
 
-def test_work_changes_while_idle_re_emit_turn_ended_with_the_new_snapshot():
-    assert specs(prev_work=None, new_work=WORK) == [EventSpec("turn.ended", {"background_work": WORK})]
-    assert specs(prev_work=WORK, new_work=OTHER_WORK) == [EventSpec("turn.ended", {"background_work": OTHER_WORK})]
-    assert specs(prev_work=WORK, new_work=None) == [EventSpec("turn.ended", {"background_work": None})]
+def test_work_changes_while_idle_emit_no_turn_boundaries():
+    assert specs(prev_work=None, new_work=WORK) == []
+    assert specs(prev_work=WORK, new_work=OTHER_WORK) == []
+    assert specs(prev_work=WORK, new_work=None) == []
 
 
 def test_work_changes_outside_the_idle_state_emit_nothing():

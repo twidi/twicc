@@ -194,14 +194,13 @@ def process_transition_events(
     """Events of one ``ProcessRun`` change, ends first, then starts.
 
     Pure function of the previous and the new row values (design §6). The
-    background work is not an interval: ``turn.ended`` carries its snapshot, and
-    is emitted again when the snapshot changes while the session stays in
-    ``user_turn``. On a transition to ``dead`` the caller passes
+    background work is not an interval: ``turn.ended`` carries the snapshot at
+    the logical turn boundary. Later metadata changes create no boundary.
+    On a transition to ``dead`` the caller passes
     ``new_awaiting=False`` and ``new_work=None`` (the row forces both), so every
     open inner interval closes; the caller then appends ``process.ended``.
     """
     assistant = AgentState.ASSISTANT_TURN.value
-    user_turn = AgentState.USER_TURN.value
     dead = AgentState.DEAD.value
     ends: list[EventSpec] = []
     starts: list[EventSpec] = []
@@ -212,9 +211,6 @@ def process_transition_events(
         ends.append(EventSpec(TimelineKind.TURN_ENDED, {"background_work": work}))
     elif prev_state != assistant and new_state == assistant:
         starts.append(EventSpec(TimelineKind.TURN_STARTED, {}))
-    elif prev_state == user_turn and new_state == user_turn and prev_work != new_work:
-        # Idle, and the work running behind the agent changed.
-        ends.append(EventSpec(TimelineKind.TURN_ENDED, {"background_work": new_work}))
 
     if prev_awaiting and not new_awaiting:
         ends.append(EventSpec(TimelineKind.AWAITING_INPUT_ENDED, {}))

@@ -33,6 +33,7 @@ def make_agent(project, **kw):
         session_id="s1", project_id=project.id, provider=Provider.CODEX, ephemeral=False,
         process_run=run, pending_requests=(), kill_reason=None, error=None, _work=None, is_hybrid=False,
         get_pid=lambda: 123, background_work_snapshot=lambda: agent._work,
+        _completion_pending_publications={}, _completion_input_receipts={},
         start=AsyncMock(),
     )
     for key, value in kw.items():
@@ -105,17 +106,23 @@ def test_turn_ended_carries_the_background_work_running_behind_the_agent(project
     assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": WORK}
 
 
-def test_background_work_changes_while_idle_re_emit_turn_ended(project):
+def test_background_work_changes_while_idle_preserve_one_logical_turn_end(project):
     agent = make_agent(project)
     manager = _Manager()
     transition(agent, AgentState.ASSISTANT_TURN)
-    agent._work = WORK
     transition(agent, AgentState.USER_TURN)
-    agent._work = None
-    run_with_direct_writes(lambda: manager._persist_background_work(agent, None))
-    run_with_direct_writes(lambda: manager._persist_background_work(agent, None))  # no change: no row
-    rows = list(TimelineEvent.objects.filter(session_id="s1", kind="turn.ended").order_by("id"))
-    assert [r.data for r in rows] == [{"background_work": WORK}, {"background_work": None}]
+    completed = list(TimelineEvent.objects.filter(session_id="s1").order_by("id").values())
+    changed_at = agent.process_run.last_state_change_at
+    shell = {**WORK, "subagents": 0, "shells": 1}
+    for snapshot in (shell, {**shell, "shells": 2}, None, None):
+        agent._work = snapshot
+        run_with_direct_writes(lambda: manager._persist_background_work(agent, snapshot))
+        agent.process_run.refresh_from_db()
+        assert agent.process_run.background_work_in_progress == snapshot
+        assert agent.process_run.last_state_change_at == changed_at
+    assert list(TimelineEvent.objects.filter(session_id="s1").order_by("id").values()) == completed
+    assert kinds("s1") == ["turn.started", "turn.ended"]
+    assert TimelineEvent.objects.get(session_id="s1", kind="turn.ended").data == {"background_work": None}
 
 
 def test_background_work_changes_during_an_assistant_turn_record_nothing(project):

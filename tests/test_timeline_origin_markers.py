@@ -92,7 +92,7 @@ def test_a_follow_up_start_launched_by_the_funnel_is_system_whatever_the_trigger
 
 def _idle_manager(seen, *, start_raises=False, between=None, after=None):
     """A Claude manager with one idle agent whose startup settings (effort) differ from ``HIGH``."""
-    manager = ClaudeCodeAgentManager.__new__(ClaudeCodeAgentManager)
+    manager = ClaudeCodeAgentManager()
     agent = SimpleNamespace(
         session_id="s1", state=AgentState.USER_TURN, agent_settings=LOW, background_shell_count=lambda: 0,
         process_run=None, interrupt_or_kill=AsyncMock(), is_hybrid=False,

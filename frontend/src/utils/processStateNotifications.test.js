@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { getProcessStateNotificationEffects, getUserTurnNotificationText } from './processStateNotifications.js'
+import { isSessionUnread } from './sessions.js'
 
 
 const options = {
@@ -9,6 +10,31 @@ const options = {
     userTurnToastEnabled: true,
     userTurnBrowserEnabled: true,
     pendingRequestBrowserEnabled: true,
+}
+
+
+for (const muted of [false, true]) {
+    test(`confirmed public state controls unread and completion effects (muted: ${muted})`, () => {
+        const session = {
+            last_new_content_at: '2026-11-02T10:00:00Z',
+            last_viewed_at: '2026-11-02T09:00:00Z',
+            mute_on_user_turn: muted,
+        }
+        let previous = { state: 'assistant_turn', pending_requests: [] }
+        let completionCount = 0
+        // Transcript content can arrive before confirmation. The public state stays working.
+        for (const state of ['assistant_turn', 'assistant_turn', 'user_turn', 'user_turn']) {
+            const message = { state, pending_requests: [], mute_on_user_turn: muted }
+            const effects = getProcessStateNotificationEffects(message, previous, options)
+            const completed = state === 'user_turn'
+            assert.equal(isSessionUnread(session, message), completed && !muted)
+            if (effects.showUserTurnToast) completionCount += 1
+            assert.equal(effects.playUserTurnSound, effects.showUserTurnToast)
+            assert.equal(effects.sendUserTurnBrowser, effects.showUserTurnToast)
+            previous = message
+        }
+        assert.equal(completionCount, muted ? 0 : 1)
+    })
 }
 
 

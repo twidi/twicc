@@ -1,17 +1,24 @@
 """Publication admission, commit, stale-state, and reentrant lifecycle contracts."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
+import orjson
 import pytest
 from django.utils import timezone
 
 from twicc.agent.base_agent import BaseAgent
 from twicc.agent.base_manager import BaseAgentManager
+from twicc.agent.completion_types import NativeMessageRef
 from twicc.agent.states import AgentState
-from twicc.core.enums import Provider
-from twicc.core.models import LogicalTurn, ProcessRun, Project, Session, TimelineEvent, TimelineKind
+from twicc.core.enums import ItemKind, Provider
+from twicc.core.models import LogicalTurn, ProcessRun, Project, Session, SessionItem, TimelineEvent, TimelineKind
 from twicc.providers.helpers import AgentSettings
+from tests import content_storage_helpers
+
+content_row_factory = content_storage_helpers.content_row_factory
 
 
 class Agent(BaseAgent):
@@ -108,6 +115,117 @@ def test_valid_claim_commits_before_publication(bridge):
         assert agent.completion_controller.snapshot().outcome == "normal"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("policy", ["visible", "muted", "hidden", "resync"])
+def test_public_completion_sequence_waits_for_confirmation_and_exact_answer(bridge, content_row_factory, policy):
+    from twicc import external_notifications
+    from twicc.asgi import broadcast_process_state
+    from twicc.core.services.logical_turn_answers import resolve_logical_answer
+
+    manager, agent = bridge
+    incarnation = str(uuid4())
+    Session.objects.filter(pk=agent.session_id).update(
+        storage_incarnation=incarnation, history_epoch=1,
+        hidden=policy == "hidden", mute_on_user_turn=policy == "muted",
+    )
+    agent._completion_storage_incarnation = incarnation
+    agent._completion_history_epoch = 1
+    frames, notifications = [], []
+
+    async def send(group, event):
+        assert group == "updates"
+        frames.append(event["data"])
+
+    def index(identity, line, text):
+        parsed = {"type": "event_msg", "payload": {
+            "type": "item_completed", "thread_id": agent.session_id, "turn_id": "native-turn",
+            "item": {"type": "AgentMessage", "id": identity, "phase": "final_answer",
+                     "content": [{"type": "Text", "text": text}]},
+        }}
+        content = content_row_factory(orjson.dumps(parsed).decode(), False)
+        SessionItem.objects.create(
+            session_id=agent.session_id, line_num=line, kind=ItemKind.ASSISTANT_MESSAGE,
+            content="", current_content=content,
+        )
+
+    async def scenario():
+        manager._broadcast_info = Manager._broadcast_info.__get__(manager)
+        manager._broadcast_callback = broadcast_process_state
+        open_candidate(manager, agent)
+        controller = agent.completion_controller
+        intermediate = NativeMessageRef("codex_item", "intermediate", "native-turn")
+        final = NativeMessageRef("codex_item", "final", "native-turn")
+        controller.activity(0.0, first_ref=intermediate)
+        controller.provider_ended(0.0, final_ref=intermediate)
+        stale = controller.candidate()
+        await manager._broadcast_info(agent.get_info())
+        controller.activity(0.2)
+        controller.provider_ended(0.3, final_ref=final)
+        ticket = controller.candidate()
+        await manager._persist_completion(agent, controller.snapshot())
+
+        # The first physical answer indexes late, while the logical turn stays open.
+        await asyncio.to_thread(index, "intermediate", 2, "intermediate answer")
+        row = await asyncio.to_thread(LogicalTurn.objects.get, pk=ticket.turn_id)
+        assert (await asyncio.to_thread(resolve_logical_answer, row, cursor=0)).status == "pending"
+        await manager._confirm_completion(agent, stale)
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert all(frame["state"] != "user_turn" for frame in frames)
+        assert notifications == []
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 0
+
+        await manager._confirm_completion(agent, ticket)
+        completion_frames = [frame for frame in frames if frame["state"] == "user_turn"]
+        assert len(completion_frames) == (0 if policy == "hidden" else 1)
+        if completion_frames:
+            assert completion_frames[0]["mute_on_user_turn"] == (policy == "muted")
+        assert len(notifications) == (0 if policy in {"hidden", "muted"} else 1)
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+        await asyncio.to_thread(row.refresh_from_db)
+        assert row.outcome == "normal"
+        # Confirmation does not turn a missing final identity into an intermediate reply.
+        assert (await asyncio.to_thread(resolve_logical_answer, row, cursor=0)).status == "pending"
+        await asyncio.to_thread(index, "final", 3, "final answer")
+        answer = await asyncio.to_thread(resolve_logical_answer, row, cursor=0)
+        assert answer.status == "replied"
+        assert answer.message.text == "final answer"
+
+        if policy == "resync":
+            await broadcast_process_state(agent.get_info(), resync=True)
+            assert frames[-1]["resync"] is True
+            assert len(notifications) == 1
+            assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+
+        completed = await asyncio.to_thread(lambda: list(TimelineEvent.objects.order_by("id").values()))
+        agent._background_work_callback = manager._persist_background_work
+        shell = {"subagents": 0, "shells": 1, "monitors": 0, "scheduled_wakeup_at": None, "goal": False}
+        for work in (shell, {**shell, "shells": 2}, None):
+            agent.current_background_work = lambda: work
+            await agent._publish_background_work()
+            process = await asyncio.to_thread(ProcessRun.objects.get, pk=agent.process_run.pk)
+            assert process.background_work_in_progress == work
+            assert process.state == "user_turn"
+        assert await asyncio.to_thread(lambda: list(TimelineEvent.objects.order_by("id").values())) == completed
+        metadata_frames = [frame for frame in frames if frame["type"] == "process_background_work"]
+        assert len(metadata_frames) == (0 if policy == "hidden" else 3)
+        if metadata_frames:
+            assert metadata_frames[-1]["background_work_in_progress"] is None
+        assert len(notifications) == (0 if policy in {"hidden", "muted"} else 1)
+
+    settings = {"externalNotificationTargets": [{
+        "url": "json://example.test", "enabled": True, "tested": True, "awayOnly": False,
+    }]}
+    external_notifications._last_seen.pop(agent.session_id, None)
+    try:
+        with patch("twicc.asgi.get_channel_layer", return_value=SimpleNamespace(group_send=send)), \
+                patch("twicc.agent.base_agent.get_channel_layer", return_value=SimpleNamespace(group_send=send)), \
+                patch.object(external_notifications, "read_synced_settings", return_value=settings), \
+                patch.object(external_notifications, "_send", new=lambda urls, title, body: (urls, title, body)), \
+                patch.object(external_notifications, "_spawn", new=notifications.append):
+            asyncio.run(scenario())
+    finally:
+        external_notifications._last_seen.pop(agent.session_id, None)
 
 
 def test_new_activity_after_claim_keeps_old_journal_but_suppresses_old_live_state(bridge):
