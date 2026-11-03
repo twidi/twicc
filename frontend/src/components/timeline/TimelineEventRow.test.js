@@ -69,7 +69,7 @@ const sessionLinks = (root) => byClass(root, 'timeline-session').flatMap((mentio
 async function render(t, events, { scope = { kind: 'global' }, index = 0, sessionTable = sessions, sessionFilterId = null, emitted = [] } = {}) {
     const rows = buildTimelineRows(events, { sessions: sessionTable, scope, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
         .filter((row) => row.type === 'event')
-    const { renderer, root } = makeRenderer()
+    const { renderer, root } = makeRenderer(140, node => { node.focus = () => { node.focused = true } })
     const context = { sessions: sessionTable, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }
     const app = renderer.createApp({
         render: () => Vue.h(Row, { row: rows[index], context, sessionFilterId, onToggleSession: (payload) => emitted.push(payload) }),
@@ -699,16 +699,16 @@ test('the author run rule CSS: in the gap between the icons and the text, from t
 
 test('message rows expand saved text without navigation, filter actions, or read-state changes', async t => {
     const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Message expansion must not request or update a session') })
-    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant final message']]) {
+    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant message']]) {
         const emitted = []
-        const event = make(kind, { data: { text: '**Saved** ' + 'x'.repeat(500) } })
+        const event = make(kind, { data: { text: '**Saved**\n\n' + 'x'.repeat(500) } })
         const root = await render(t, [event], { emitted, sessionFilterId: 's1' })
         assert.equal(textOf(byClass(root, 'timeline-wording')[0]), label)
         assert.equal(textOf(byClass(root, 'timeline-session-title')[0]), 'Fix the build')
         assert.equal(textOf(byClass(root, 'timeline-time')[0]), '14:32')
         const linksBefore = sessionLinks(root).map(link => link.props['data-to'])
-        const [toggle] = descendants(root, node => node.type === 'button' && node.props['aria-expanded'] !== undefined)
-        assert.ok(toggle, 'the existing row contains its saved-message control')
+        const [toggle] = byClass(root, 'timeline-message-label')
+        assert.ok(toggle, 'the message label is its native toggle control')
         assert.equal(toggle.props.type, 'button', 'native buttons support Enter and Space activation')
         assert.equal(toggle.props.tabindex, undefined, 'the control remains in native keyboard focus order')
         // A native button dispatches a click with detail 0 for Enter/Space activation.
@@ -720,6 +720,21 @@ test('message rows expand saved text without navigation, filter actions, or read
         assert.equal(fetch.mock.callCount(), 0)
         assert.deepEqual(sessionLinks(root).map(link => link.props['data-to']), linksBefore)
         assert.equal(onlyControls(root)[0].props['aria-pressed'], 'true')
+        assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
+        toggle.props.onClick()
+        await flush()
+        assert.equal(toggle.props['aria-expanded'], 'false')
+        assert.equal(descendants(root, node => node.type === 'article').length, 0)
+        byClass(root, 'timeline-message-chevron')[0].props.onClick()
+        await flush()
+        assert.equal(toggle.props['aria-expanded'], 'true')
+        assert.equal(toggle.focused, true, 'the removed chevron transfers focus to the persistent label')
+        const [close] = byClass(root, 'timeline-message-close')
+        assert.equal(textOf(close), 'Close message')
+        close.props.onClick()
+        await flush()
+        assert.equal(toggle.props['aria-expanded'], 'false')
+        assert.equal(descendants(root, node => node.type === 'article').length, 0)
         for (const node of descendants(root, () => true)) {
             assert.ok(!String(node.props.title ?? '').includes(event.data.text), 'full text stays out of titles')
             assert.ok(!String(node.props['data-to'] ?? '').includes(event.data.text), 'full text stays out of routes')

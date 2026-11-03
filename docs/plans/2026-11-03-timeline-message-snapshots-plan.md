@@ -248,31 +248,37 @@ Explain stable references, late indexing, and unchanged journal retention in the
 
 **Interfaces:**
 - Consume Task 1's `user_message.sent` and `assistant_message.sent` events through the existing feed serializer, which already returns `kind` and `data`.
-- Produce `describeMessageSnapshot(kind: string, data: object) -> {role: string|null, text: string, excerpt: string, expandable: boolean}` in `messageSnapshot.js`.
+- Produce `describeMessageSnapshot(kind: string, data: object) -> {role: string|null, text: string, excerpt: string, expandable: boolean, hasMoreLines: boolean}` in `messageSnapshot.js`.
 - Produce `TimelineMessage.vue` with `eventId: Number`, `kind: String`, and `data: Object` props. It consumes that view-model and `MarkdownContent`'s `source` prop.
+  Its `expanded` model connects the row's clickable label to its chevron and final close control.
+  Optional `contentId` and `labelledBy` props connect both controls to the complete-text region.
 
 - [ ] **Write failing tests.** Follow existing pure-function and Vue source-contract test patterns.
 
 ```javascript
-test('snapshot keeps full Markdown and bounds the collapsed excerpt', () => {
+test('snapshot keeps full Markdown and previews its first text line', () => {
     const text = '**Reply**\n' + 'x'.repeat(10000)
     const vm = describeMessageSnapshot('assistant_message.sent', { text })
     assert.equal(vm.role, 'assistant')
     assert.equal(vm.text, text)
-    assert.ok(vm.excerpt.length <= 241)
+    assert.equal(vm.excerpt, 'Reply…')
+    assert.equal(vm.hasMoreLines, true)
     assert.equal(vm.expandable, true)
 })
 ```
 
-Pin labels `User message` and `Assistant final message`; derive role only from event kind, separately from event origin.
+Pin labels `User message` and `Assistant message`; derive role only from event kind, separately from event origin.
 Test both kinds, unknown-kind and malformed-payload fallbacks, All inclusion, `messages` filtering, and saved text after source mutation.
 Test project, workspace, global, and hidden-session feed behavior through existing API fixtures.
 Pin row-local expansion reset when `eventId` changes. Verify keyboard expansion and no navigation or read-state action.
 
 - [ ] **Run before implementation.** `cd frontend && node --test src/utils/timeline/messageSnapshot.test.js src/components/timeline/TimelineMessage.test.js`.
 Expected: the new helper/component contract fails.
-- [ ] **Implement the view-model and row body.** Collapse to a plain-text excerpt of at most 240 characters plus an ellipsis.
-Use a native button with `aria-expanded`, labels `Show message` and `Hide message`, and a region tied to that button.
+- [ ] **Implement the view-model and row body.** Preview the first nonempty plain-text line, without a character cutoff.
+Keep one visual line with CSS ellipsis and show a trailing chevron for additional lines or measured horizontal overflow.
+Use native buttons with `aria-expanded`: the message label toggles expansion, and the chevron opens it.
+Hide the preview and chevron while expanded. Put `Close message` at the end and return focus to the persistent label.
+Measure the available width again on resize. Release the preview's observer when it leaves the DOM.
 Render the complete saved text only while expanded, through the existing `MarkdownContent` component.
 Use `defineAsyncComponent` for that renderer to avoid store/component import cycles. Do not use raw `v-html`.
 Keep full text out of row titles, tooltips, and session navigation. Preserve session, role, and event time.

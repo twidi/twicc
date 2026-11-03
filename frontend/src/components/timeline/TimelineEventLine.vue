@@ -48,12 +48,12 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
         <div class="timeline-row-main">
             <!-- The parts of utils/timeline/parts.js. The tags are inline content of the wording, glued to its last
                  word: they wrap together, a tag is never on a line of its own. -->
-            <span class="timeline-wording">
+            <slot name="wording"><span class="timeline-wording">
                 <TimelineWordingPart v-for="(part, index) in wording.lead" :key="index" :part="part" />
                 <span v-if="vm.tags.length" class="timeline-tag-glue">
                     <TimelineWordingPart v-if="wording.last" :part="wording.last" /><template v-for="tag in vm.tags" :key="tag">{{ ' ' }}<wa-tag size="small" variant="neutral" class="timeline-tag">{{ tag }}</wa-tag></template>
                 </span>
-            </span>
+            </span></slot>
             <template v-if="vm.badge">{{ ' ' }}<wa-badge variant="warning" appearance="outlined" class="timeline-badge" :title="vm.badge.title">{{ vm.badge.text }}</wa-badge></template>
             <!-- The author on a line of its own, always one line: a session title is cut with an ellipsis, its full
                  title in the tooltip. A real space before it keeps a copied row readable. -->

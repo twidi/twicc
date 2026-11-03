@@ -238,7 +238,7 @@ function describeKind(event, data, context, author) {
         case 'process.started': return describeProcessStarted(event, data)
         case 'process.ended': return describeProcessEnded(event, data, context)
         case 'user_message.sent': return { icon: 'comment', severity: 'neutral', ...plain('User message') }
-        case 'assistant_message.sent': return { icon: 'robot', severity: 'neutral', ...plain('Assistant final message') }
+        case 'assistant_message.sent': return { icon: 'robot', severity: 'neutral', ...plain('Assistant message') }
         case 'turn.started': return { icon: 'robot', severity: 'neutral', ...plain('Turn started') }
         case 'turn.ended': {
             const badge = describeBackgroundWork(data.background_work)

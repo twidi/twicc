@@ -371,7 +371,7 @@ test('no "automatic" tag when the wording already says it: a known end reason, a
 
 
 test('message labels identify the role from kind, while origin remains a separate author label', () => {
-    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant final message']]) {
+    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant message']]) {
         const vm = describe(kind, { actor: 'external', via: 'mcp_external', actor_name: 'ChatGPT', data: { text: 'Saved secret text' } })
         assert.equal(words(vm), label)
         assert.ok(!vm.tooltip.includes('Saved secret text'))

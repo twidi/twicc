@@ -18,7 +18,7 @@
 // utils/timeline/; this component only shows them. Every string from data is rendered as TEXT with
 // interpolation, never as HTML.
 
-import { computed } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { describeEvent } from '../../utils/timeline/describeEvent'
@@ -46,6 +46,18 @@ const dataStore = useDataStore()
 const vm = computed(() => describeEvent(props.row.event, props.context))
 const identity = computed(() => props.row.identity)
 const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
+const hasMessageText = computed(() => isMessage.value && typeof props.row.event.data?.text === 'string' && !!props.row.event.data.text.trim())
+const messageExpanded = ref(false)
+const messageToggleRef = ref(null)
+const messageLabel = computed(() => vm.value.parts.map(part => part.text ?? '').join(''))
+const messageId = `timeline-message-${useId()}`
+const messageLabelId = `${messageId}-label`
+watch(() => props.row.event.id, () => { messageExpanded.value = false }, { flush: 'sync' })
+
+async function focusMessageLabel() {
+    await nextTick()
+    messageToggleRef.value?.focus?.()
+}
 // A project the store does not know (deleted) is shown as plain text, never as a broken link.
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
 
@@ -107,13 +119,29 @@ function toggleSession() {
             :indented="!row.instance"
             :instance="row.instance"
             :author-run="row.authorRun ?? null"
-        />
+        >
+            <template v-if="hasMessageText" #wording>
+                <button
+                    :id="messageLabelId"
+                    ref="messageToggleRef"
+                    type="button"
+                    class="timeline-wording timeline-message-label"
+                    :aria-expanded="messageExpanded ? 'true' : 'false'"
+                    :aria-controls="messageId"
+                    @click="messageExpanded = !messageExpanded"
+                >{{ messageLabel }}</button>
+            </template>
+        </TimelineEventLine>
         <TimelineMessage
             v-if="isMessage"
+            v-model:expanded="messageExpanded"
             class="timeline-row-message"
             :event-id="row.event.id"
             :kind="row.event.kind"
             :data="row.event.data"
+            :content-id="messageId"
+            :labelled-by="messageLabelId"
+            @toggle="focusMessageLabel"
         />
         </div>
     </div>
@@ -177,6 +205,30 @@ function toggleSession() {
 .timeline-row-message {
     margin-inline-start: calc(var(--timeline-provider-width) + var(--timeline-provider-gap) + 1.25rem + var(--wa-space-s));
     padding-block-end: var(--wa-space-xs);
+}
+
+.timeline-message-label {
+    appearance: none;
+    display: inline;
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    height: auto;
+    font: inherit;
+    line-height: inherit;
+    color: inherit;
+    text-align: start;
+    cursor: pointer;
+}
+
+.timeline-message-label:hover {
+    text-decoration: underline;
+}
+
+.timeline-message-label:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
 }
 
 /* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */

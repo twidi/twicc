@@ -65,7 +65,13 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 ## Display
 
 - Show message entries in the existing timeline feed, with session identity, author role derived from kind, and time.
-- Show an excerpt with access to the complete saved text inside the timeline.
+- Label entries `User message` and `Assistant message`. The assistant selection rule still requires provider finals.
+- Collapse the preview to one visual line, using the first nonempty plain-text line without a character limit.
+- Indicate additional lines with an ellipsis. Clip horizontal overflow to the available width with a CSS ellipsis.
+- Show an end-of-line chevron only when more lines or horizontal overflow remain.
+- The message label toggles the complete saved Markdown, including short messages. The chevron opens it too.
+- While expanded, hide the preview and chevron. Put `Close message` after the complete text.
+- Keep native keyboard controls and return focus to the message label when the chevron disappears or the message closes.
 - The default All view includes the new message entries. Existing scope and visibility rules still apply.
 - Keep message arrival separate from confirmed turn completion, unread state, and completion notifications.
 - Do not change the session's Conversation display mode or add a new display-mode system.
