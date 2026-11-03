@@ -18,10 +18,10 @@ Keep the complete message text available without opening the session.
 
 ## Messages to record
 
-Add one `message.recorded` event per retained message:
+Add one event per retained message, with a distinct kind for each role:
 
-- Genuine user-message text, including messages sent while the assistant works.
-- Assistant-message text that the provider identifies as final. Preserve every such message, including several finals in one logical turn.
+- `user_message.sent`: genuine user-message text, including messages sent while the assistant works.
+- `assistant_message.sent`: assistant-message text that the provider identifies as final. Preserve every such message, including several finals in one logical turn.
 - Use the existing provider classification and native message identities. Join split Claude text blocks into one complete message.
 - A missing marker alone does not prove a message is final. Use existing verified final identities where available; do not guess from wording or position.
 - Codex asynchronous questions do not become final messages merely because they carry `final_answer`. Preserve their existing classification.
@@ -36,7 +36,8 @@ Optimistic or failed local sends do not become confirmed message events without 
 ## Storage and associations
 
 The existing event columns identify the session, provider, and occurrence time.
-The message event's `data` stores its role (`user` or `assistant`), complete text with Markdown, and source identity for deduplication.
+The event kind identifies the role. Do not duplicate it in a JSON `role` field.
+The message event's `data` stores complete text with Markdown and source identity for deduplication.
 Keep the full text in this event once. Do not duplicate it in turn events.
 
 The existing turn events carry references to their associated message events.
@@ -54,7 +55,7 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 
 ## Display
 
-- Show message entries in the existing timeline feed, with session identity, author role, and time.
+- Show message entries in the existing timeline feed, with session identity, author role derived from kind, and time.
 - Show an excerpt with access to the complete saved text inside the timeline.
 - The default All view includes the new message entries. Existing scope and visibility rules still apply.
 - Keep message arrival separate from confirmed turn completion, unread state, and completion notifications.
@@ -64,7 +65,7 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 
 | Case | Expected result |
 | --- | --- |
-| User A, user B during work, final B, final A | Four message entries, in source order within the session; both assistant finals remain visible. |
+| User A, user B during work, final B, final A | Two `user_message.sent` events followed by two `assistant_message.sent` events, in source order within the session. |
 | Several provider finals before one confirmed completion | One event per final message and the existing single logical end. |
 | Commentary, thinking, and tools between finals | No message entries for that material. |
 | Claude final split across text records | One complete assistant snapshot. |

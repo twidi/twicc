@@ -4,7 +4,7 @@
 
 **Goal:** Read new user messages and provider-final assistant messages directly in the existing timelines.
 
-**Architecture:** Save complete text once in `TimelineEvent.data`, under `message.recorded`.
+**Architecture:** Save complete text once in `TimelineEvent.data`, under `user_message.sent` or `assistant_message.sent`.
 Turn events retain stable source references to these message events, including references whose text arrives later.
 Use the existing ingestion, timeline recording, feed, and Markdown components.
 
@@ -20,6 +20,7 @@ Use the existing ingestion, timeline recording, feed, and Markdown components.
 - Keep the existing confirmed-turn behavior. A displayed final message does not complete the logical turn.
 - Store text snapshots, not thinking, tool calls, tool results, or attachment binaries.
 - Keep the full text in this event once. Do not duplicate it in turn events.
+- The event kind identifies the role. Do not duplicate it in a JSON `role` field.
 - Never attach an earlier or later turn's message by choosing the latest transcript line or closest timestamp.
 - Closed journal intervals expire after 48 hours; open intervals expire after seven days. Do not change retention.
 - Keep the checkout on `main`. Preserve unrelated changes. Do not modify `CHANGELOG.md`.
@@ -37,8 +38,8 @@ Use the existing ingestion, timeline recording, feed, and Markdown components.
 
 | Files | Responsibility |
 | --- | --- |
-| `src/twicc/core/models.py`, `src/twicc/core/timeline.py` | New kind and typed JSON payloads. |
-| `src/twicc/core/migrations/0168_timeline_message_kind.py` | Choices-only `AlterField` for the new kind; no new table or column. |
+| `src/twicc/core/models.py`, `src/twicc/core/timeline.py` | Two new kinds and typed JSON payloads. |
+| `src/twicc/core/migrations/0168_timeline_message_kinds.py` | Choices-only `AlterField` for the two new kinds; no new table or column. |
 | `src/twicc/core/services/timeline_messages.py` (new) | Source identity, complete text selection, idempotent recording, and targeted recovery. |
 | `src/twicc/providers/helpers.py`, `src/twicc/providers/{claude_code,codex}/helpers.py` | Provider-specific text, identities, and final classification. |
 | `src/twicc/providers/compute_base.py`, `src/twicc/providers/sessions_watcher.py` | New candidates from live ingestion only; targeted recovery after content publication. |
@@ -52,7 +53,9 @@ Use the existing ingestion, timeline recording, feed, and Markdown components.
 
 ## Shared Decisions
 
-**Payloads.** Add `MessageRecordedData(role: str, text: str, source_refs: list, source_line: int)`.
+**Payloads.** Add `TimelineKind.USER_MESSAGE_SENT = "user_message.sent"` and `TimelineKind.ASSISTANT_MESSAGE_SENT = "assistant_message.sent"`.
+Register both kinds with the same `MessageSentData(text: str, source_refs: list, source_line: int)` payload.
+The kind identifies the role; the JSON payload has no `role` field.
 Each source reference has the existing `NativeMessageRef` shape: `kind`, `native_id`, optional `turn_id`.
 Use `claude_message` as the assistant group identity, `claude_uuid` for users, and `codex_item` for canonical Codex messages.
 Retain all native aliases of a Claude group. Include a timeline-only `codex_client` alias when a user item has `clientId`.
@@ -65,7 +68,7 @@ References match a message event by session and an exact `source_refs` alias.
 They do not require a database event ID before the message exists.
 There is no reference-resolution API or event-update protocol in this change.
 
-**Deduplication.** Compute `msg:` plus a SHA-256 digest of provider, role, and canonical native identity.
+**Deduplication.** Compute `msg:` plus a SHA-256 digest of provider, event kind, and canonical native identity.
 Keep the key below the existing 100-character limit. Do not hash the message text, line number, or mutable storage epoch.
 Write only through `record_event_sync`. Keep existing best-effort timeline failure behavior.
 
@@ -99,7 +102,7 @@ An explicit nonfinal verdict or Codex `delivery=async` prevents final capture.
 - Produce `recover_referenced_messages(session_id: str) -> None` for existing ingestion publication paths; resolve only saved live-turn references.
 - Produce `BaseProviderHelpers.extract_timeline_text_from_parsed(parsed: dict) -> str`, implemented by both providers with verbatim text extraction.
 - Extend `BaseSessionCompute.sync_session_slice(..., limits: LiveSyncLimits, timeline_since: datetime | None = None) -> LiveSyncResult`.
-- Payload consumers receive `data.role`, `data.text`, `data.source_refs`, and `data.source_line`.
+- Payload consumers receive the event kind, `data.text`, `data.source_refs`, and `data.source_line`. They derive the role from kind.
 
 - [ ] **Write failing tests.** Use real persisted provider fixtures and production content readers; fixture helpers below describe test-local setup.
 
@@ -107,6 +110,11 @@ An explicit nonfinal verdict or Codex `delivery=async` prevents final capture.
 def test_records_all_users_and_provider_finals_in_source_order(live_session):
     live_session.append(user("A"), user("B"), final("reply B"), final("reply A"))
     assert live_session.message_texts() == ["A", "B", "reply B", "reply A"]
+    assert live_session.message_kinds() == [
+        "user_message.sent", "user_message.sent",
+        "assistant_message.sent", "assistant_message.sent",
+    ]
+    assert all("role" not in event.data for event in live_session.message_events())
 
 def test_split_claude_message_waits_for_complete_group(live_session):
     live_session.append(claude_block("m1", "**First**", stop_reason=None))
@@ -138,8 +146,9 @@ Keep timeline capture best-effort. Do not block ingestion, force storage restora
 For verified references, resolve only the exact referenced native group. Use the capture boundary unless a saved live-turn reference already proves eligibility.
 Set assistant actor to `agent`; use source evidence for user origin where available, otherwise use the existing unknown-origin convention.
 Do not infer that every `user` role came from the human UI.
-Add the new enum member and optional turn payloads; bump `SCHEMA_VERSION` for the changed payload shapes.
-Generate only the choices migration. Add `messages` to both family registries, with UI label `Messages` and hint `user messages, assistant finals`.
+Add both new enum members and optional turn payloads; bump `SCHEMA_VERSION` for the changed payload shapes.
+Generate only the choices migration. Add both kinds to the `messages` family in both registries.
+Use UI label `Messages` and hint `user messages, assistant finals`.
 - [ ] **Verify.** `uv run pytest tests/test_timeline_messages.py tests/test_watcher_catch_up.py tests/test_timeline_enums_sync.py tests/test_timeline_filters_sync.py tests/test_timeline_filters.py tests/test_timeline_service.py -q`.
 Expected: all pass. `uv run python -m django makemigrations --check --dry-run --settings=twicc.settings_test` reports no model changes.
 - [ ] **Commit scoped Task 1 files.** Subject: `feat(timeline): record new message snapshots`.
@@ -152,7 +161,7 @@ Add a body explaining live-only capture and native identity deduplication, plus 
 
 **Interfaces:**
 - Consume Task 1's two recording functions and `NativeMessageRef` JSON shape.
-- Add `BaseAgent._timeline_observe_message(ref: NativeMessageRef, *, role: str) -> None` for exact root observations.
+- Add `BaseAgent._timeline_observe_message(ref: NativeMessageRef, *, role: str) -> None` for exact root observations. This internal role selects the kind; it is not a JSON field.
 - Add `BaseAgent._timeline_reserve_input(token: str, ref: NativeMessageRef) -> None` for a known transport identity before sending.
 - Extend `record_process_changes(..., message_refs: list | None = None) -> None` and `record_process_ended(..., message_refs: list | None = None) -> None`.
 - Extend `_persist_process_run_transition_admitted(..., message_refs: list | None = None) -> None` to carry the explicitly selected interval's immutable references.
@@ -227,24 +236,25 @@ Explain stable references, late indexing, and unchanged journal retention in the
 **Create tests:** `frontend/src/utils/timeline/messageSnapshot.test.js`, `frontend/src/components/timeline/TimelineMessage.test.js`.
 
 **Interfaces:**
-- Consume Task 1's `message.recorded` payload through the existing feed serializer, which already returns `data`.
-- Produce `describeMessageSnapshot(data: object) -> {role: string|null, text: string, excerpt: string, expandable: boolean}` in `messageSnapshot.js`.
-- Produce `TimelineMessage.vue` with `eventId: Number` and `data: Object` props. It consumes that view-model and `MarkdownContent`'s `source` prop.
+- Consume Task 1's `user_message.sent` and `assistant_message.sent` events through the existing feed serializer, which already returns `kind` and `data`.
+- Produce `describeMessageSnapshot(kind: string, data: object) -> {role: string|null, text: string, excerpt: string, expandable: boolean}` in `messageSnapshot.js`.
+- Produce `TimelineMessage.vue` with `eventId: Number`, `kind: String`, and `data: Object` props. It consumes that view-model and `MarkdownContent`'s `source` prop.
 
 - [ ] **Write failing tests.** Follow existing pure-function and Vue source-contract test patterns.
 
 ```javascript
 test('snapshot keeps full Markdown and bounds the collapsed excerpt', () => {
     const text = '**Reply**\n' + 'x'.repeat(10000)
-    const vm = describeMessageSnapshot({ role: 'assistant', text })
+    const vm = describeMessageSnapshot('assistant_message.sent', { text })
+    assert.equal(vm.role, 'assistant')
     assert.equal(vm.text, text)
     assert.ok(vm.excerpt.length <= 241)
     assert.equal(vm.expandable, true)
 })
 ```
 
-Pin labels `User message` and `Assistant final message`; use role from payload, separately from event origin.
-Test missing/malformed payload fallbacks, default All and `messages` filtering, and preservation of original text after source mutation.
+Pin labels `User message` and `Assistant final message`; derive role only from event kind, separately from event origin.
+Test both kinds, unknown-kind and malformed-payload fallbacks, All inclusion, `messages` filtering, and saved text after source mutation.
 Test project, workspace, global, and hidden-session feed behavior through existing API fixtures.
 Pin row-local expansion reset when `eventId` changes. Verify keyboard expansion and no navigation or read-state action.
 
