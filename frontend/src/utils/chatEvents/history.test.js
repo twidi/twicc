@@ -107,6 +107,22 @@ test('the creation, the turns and the start of a new session have no row; a resu
     assert.deepEqual(f.state.snapshot.events.map(e => e.id), [5, 6])
 })
 
+test('message snapshots have no chat row in initial history or live updates', async () => {
+    const f = fixture(), message = (id, kind) => ({ ...event(id), kind, data: { text: 'Already in the chat' } })
+    await initial(f, [event(1), message(2, 'user_message.sent'), message(3, 'assistant_message.sent')])
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [1])
+
+    f.controller.notifyLatest(402); await tick()
+    f.requests.at(-1).resolve(body([message(401, 'user_message.sent'), message(402, 'assistant_message.sent')], { latest_id: 402 }))
+    await f.controller.idle()
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [1])
+
+    f.controller.notifyLatest(403); await tick()
+    assert.equal(f.requests.at(-1).afterId, 402)
+    f.requests.at(-1).resolve(body([event(403)], { latest_id: 403 })); await f.controller.idle()
+    assert.deepEqual(f.state.snapshot.events.map(e => e.id), [1, 403])
+})
+
 test('a session older than the timeline: its first recorded start is a resume and keeps its row', async () => {
     const f = fixture(), kind = (id, k, data = {}) => ({ ...event(id), kind: k, data })
     await initial(f, [kind(1, 'session.created'), kind(2, 'process.started', { cause: 'resume' })])

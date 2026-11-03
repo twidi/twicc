@@ -1,8 +1,10 @@
 // Complete snapshots for one loaded chat. The Timeline page keeps its progressive feed.
 import { compareNewestFirst, cursorOf } from '../timeline/eventTime.js'
 
-/** Kinds with no row in the chat: turns are the chat's own flow, the creation is its first message. */
-const HIDDEN_KINDS = new Set(['turn.started', 'turn.ended', 'session.created'])
+/** The chat already shows its creation, turn flow, and user/assistant messages. */
+const HIDDEN_KINDS = new Set([
+    'turn.started', 'turn.ended', 'session.created', 'user_message.sent', 'assistant_message.sent',
+])
 /** The process start of a new session is part of its creation; a resume keeps its row. */
 const isCreationStart = event => event.kind === 'process.started' && event.data?.cause === 'new'
 
