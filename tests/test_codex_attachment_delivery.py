@@ -20,6 +20,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from openai_codex import ImageInput, TextInput
+from openai_codex.generated.v2_all import TurnSteerParams, TurnSteerResponse
 
 from twicc.agent import AgentState, SendDeliveryError, send_lanes
 from twicc.core.services.attachments import committer
@@ -199,6 +200,23 @@ def _schedule_recorder(agent: CodexAgent) -> list:
     return scheduled
 
 
+def _native_steer_handle(agent: CodexAgent):
+    request = AsyncMock(return_value=TurnSteerResponse(turn_id="active-turn"))
+    agent._codex._ensure_initialized = AsyncMock()
+    agent._codex._client.request = request
+    return SimpleNamespace(_codex=agent._codex, thread_id=agent.session_id, id="active-turn")
+
+
+def _steered_input(agent: CodexAgent):
+    call = agent._codex._client.request.await_args
+    assert call.args[0] == "turn/steer"
+    assert call.kwargs["response_model"] is TurnSteerResponse
+    params = TurnSteerParams.model_validate(call.args[1])
+    assert (params.thread_id, params.expected_turn_id) == (agent.session_id, "active-turn")
+    assert params.client_user_message_id
+    return [item.root for item in params.input]
+
+
 def test_start_consumes_the_initial_content_once_and_a_later_steer_carries_only_its_text(monkeypatch):
     agent = _make_agent(monkeypatch)
     scheduled = _schedule_recorder(agent)
@@ -214,10 +232,10 @@ def test_start_consumes_the_initial_content_once_and_a_later_steer_carries_only_
     # A later steer of the same turn: its own new text only, no replayed content.
     agent.state = AgentState.ASSISTANT_TURN
     agent._current_turn_ready.set()
-    agent._current_turn = MagicMock(steer=AsyncMock())
+    agent._current_turn = _native_steer_handle(agent)
     assert asyncio.run(agent.send("more")) is True
-    (steered,) = agent._current_turn.steer.await_args.args
-    assert [type(item).__name__ for item in steered] == ["TextInput"]
+    steered = _steered_input(agent)
+    assert [item.type for item in steered] == ["text"]
     assert steered[0].text == "more"
 
 
@@ -249,11 +267,11 @@ def test_mid_turn_steer_carries_the_content(monkeypatch):
     agent = _make_agent(monkeypatch)
     agent.state = AgentState.ASSISTANT_TURN
     agent._current_turn_ready.set()
-    agent._current_turn = MagicMock(steer=AsyncMock())
+    agent._current_turn = _native_steer_handle(agent)
     content = _content("")
     assert asyncio.run(agent.send("", content=content)) is True
-    (steered,) = agent._current_turn.steer.await_args.args
-    assert [type(item).__name__ for item in steered] == ["ImageInput", "ImageInput", "TextInput"]
+    steered = _steered_input(agent)
+    assert [item.type for item in steered] == ["image", "image", "text"]
 
 
 def test_goal_monitor_steer_carries_the_content(monkeypatch):

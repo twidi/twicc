@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from openai_codex.errors import JsonRpcError, TransportClosedError
+from openai_codex.generated.v2_all import TurnSteerParams, TurnSteerResponse
 
 from twicc.agent import AgentState
 from twicc.providers.codex.agent.agent import CodexAgent
@@ -19,11 +20,21 @@ class Turn:
         self.failures = list(failures)
         self.finished = asyncio.Event()
         self.events = []
+        self.thread_id = "thread"
+        self._codex = SimpleNamespace(
+            _ensure_initialized=AsyncMock(), _client=SimpleNamespace(request=self.request),
+        )
 
-    async def steer(self, items):
+    async def request(self, method, params, *, response_model):
+        assert method == "turn/steer"
+        assert response_model is TurnSteerResponse
+        params = TurnSteerParams.model_validate(params)
+        assert (params.thread_id, params.expected_turn_id) == (self.thread_id, self.id)
+        assert params.client_user_message_id
         if self.failures:
             raise self.failures.pop(0)
-        self.deliveries.append((self.id, items))
+        self.deliveries.append((self.id, [item.root for item in params.input]))
+        return TurnSteerResponse(turn_id=self.id)
 
     async def stream(self):
         await self.finished.wait()

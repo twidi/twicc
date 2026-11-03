@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai_codex.generated.v2_all import TurnSteerParams, TurnSteerResponse
 
 from tests.shell_notice_helpers import first_step, run_async
 from twicc.agent.shell_notice import OwnerFacts, ShellOwner
@@ -132,11 +133,17 @@ async def test_hold_break_and_steer_are_external_sends():
     agent._subagent_hold_active = False
     agent._current_turn_ready = asyncio.Event()
     agent._current_turn_ready.set()
-    agent._current_turn = MagicMock(steer=AsyncMock())
+    agent._codex._client.request = AsyncMock(return_value=TurnSteerResponse(turn_id="active"))
+    agent._current_turn = SimpleNamespace(_codex=agent._codex, thread_id=agent.session_id, id="active")
     agent._build_turn_input = AsyncMock(return_value="input")
     agent.mark_shells_noticed(["codex-root:7"])
     assert await agent.send("more") is True
     assert agent._shell_notice_notified == set()
+    method, params = agent._codex._client.request.await_args.args
+    assert method == "turn/steer"
+    params = TurnSteerParams.model_validate(params)
+    assert (params.thread_id, params.expected_turn_id) == (agent.session_id, "active")
+    assert params.client_user_message_id
 
 
 @run_async

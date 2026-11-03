@@ -8,7 +8,7 @@ import pytest
 from openai_codex import AsyncTurnHandle
 from openai_codex._message_router import MessageRouter
 from openai_codex.errors import JsonRpcError, TransportClosedError
-from openai_codex.generated.v2_all import TurnStartedNotification, TurnCompletedNotification
+from openai_codex.generated.v2_all import TurnStartedNotification, TurnCompletedNotification, TurnSteerResponse
 from openai_codex.models import Notification
 
 from twicc.agent import AgentState
@@ -40,7 +40,7 @@ def agent_fixture():
     client = SimpleNamespace(
         register_goal_operation=router.register_goal,
         unregister_goal_operation=router.unregister_goal,
-        turn_steer=AsyncMock(return_value=SimpleNamespace(turn_id="a")),
+        request=AsyncMock(return_value=TurnSteerResponse(turn_id="a")),
         # Since 0.155 an AsyncTurnHandle subscribes on construction. The real
         # client delegates to the router, so mirror that chain here.
         _subscribe_turn_notifications=router.subscribe_turn,
@@ -78,8 +78,11 @@ def test_followup_during_autonomous_goal():
         await agent.run_goal_command("Do the work")
         try:
             assert await asyncio.wait_for(agent.send("Focus on tests"), 0.3) is True
-            assert client.turn_steer.await_args.args[:2] == ("parent", "a")
-            assert client.turn_steer.await_args.args[2][0]["text"] == "Focus on tests"
+            method, params = client.request.await_args.args
+            assert method == "turn/steer"
+            assert (params["threadId"], params["expectedTurnId"]) == ("parent", "a")
+            assert params["input"][0]["text"] == "Focus on tests"
+            assert params["clientUserMessageId"]
         finally:
             await cleanup(agent)
 
@@ -98,7 +101,8 @@ def test_followup_waits_across_continuation_boundary():
             assert not pending.done()
             event(router, "turn/started", "b")
             assert await asyncio.wait_for(pending, 0.5) is True
-            assert client.turn_steer.await_args.args[:2] == ("parent", "b")
+            params = client.request.await_args.args[1]
+            assert (params["threadId"], params["expectedTurnId"]) == ("parent", "b")
         finally:
             pending.cancel()
             await cleanup(agent)
@@ -114,11 +118,11 @@ def test_delivery_failure_is_not_replayed(failure):
         agent, router, client = agent_fixture()
         await agent.run_goal_command("Do the work")
         event(router, "turn/started", "a")
-        client.turn_steer.side_effect = failure
+        client.request.side_effect = failure
         try:
             with pytest.raises((RuntimeError, TransportClosedError)):
                 await asyncio.wait_for(agent.send("Only once"), 0.3)
-            assert client.turn_steer.await_count == 1
+            assert client.request.await_count == 1
         finally:
             await cleanup(agent)
 
@@ -132,7 +136,8 @@ def test_ordinary_steering_still_uses_existing_handle():
         agent._current_turn = AsyncTurnHandle(agent._codex, "parent", "ordinary")
         agent._current_turn_ready.set()
         assert await agent.send("Follow-up") is True
-        assert client.turn_steer.await_args.args[:2] == ("parent", "ordinary")
+        params = client.request.await_args.args[1]
+        assert (params["threadId"], params["expectedTurnId"]) == ("parent", "ordinary")
 
     asyncio.run(run())
 
@@ -175,17 +180,21 @@ def test_explicit_stale_turn_rejection_retries_next_turn_once(message):
         await agent.run_goal_command("Do the work")
         event(router, "turn/started", "a")
 
-        async def rollover(*args):
-            if args[1] == "a":
+        async def rollover(method, params, *, response_model):
+            assert method == "turn/steer"
+            assert response_model is TurnSteerResponse
+            if params["expectedTurnId"] == "a":
                 event(router, "turn/completed", "a")
                 event(router, "turn/started", "b")
                 raise JsonRpcError(-32600, message)
-            return SimpleNamespace(turn_id="b")
+            return TurnSteerResponse(turn_id="b")
 
-        client.turn_steer.side_effect = rollover
+        client.request.side_effect = rollover
         try:
             assert await agent.send("Follow-up") is True
-            assert [call.args[1] for call in client.turn_steer.await_args_list] == ["a", "b"]
+            params = [call.args[1] for call in client.request.await_args_list]
+            assert [request["expectedTurnId"] for request in params] == ["a", "b"]
+            assert params[0]["clientUserMessageId"] == params[1]["clientUserMessageId"]
         finally:
             await cleanup(agent)
 
@@ -226,7 +235,7 @@ def test_goal_ends_while_followup_waits():
         try:
             with pytest.raises(RuntimeError, match="ended"):
                 await asyncio.wait_for(pending, 0.5)
-            assert client.turn_steer.await_count == 0
+            assert client.request.await_count == 0
         finally:
             await cleanup(agent)
 
@@ -242,7 +251,7 @@ def test_missing_next_turn_has_bounded_wait(monkeypatch):
         try:
             with pytest.raises(RuntimeError, match="no active goal turn"):
                 await asyncio.wait_for(agent.send("Follow-up"), 0.5)
-            assert client.turn_steer.await_count == 0
+            assert client.request.await_count == 0
         finally:
             await cleanup(agent)
         assert not router.has_goal("parent")
@@ -322,7 +331,7 @@ def test_replacement_during_slow_stream_processing_keeps_new_goal_route():
             await asyncio.sleep(0.04)
             assert agent.state == AgentState.ASSISTANT_TURN
             assert await asyncio.wait_for(agent.send("For the second goal"), 0.3) is True
-            assert client.turn_steer.await_args.args[1] == "b"
+            assert client.request.await_args.args[1]["expectedTurnId"] == "b"
         finally:
             gate.set()
             await cleanup(agent)
