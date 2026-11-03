@@ -567,7 +567,8 @@ def test_native_acceptance_without_journal_commit_returns_uncertain_without_toke
 
 @pytest.mark.parametrize("restart_mode,outcome", [
     (mode, outcome) for mode in ("inline", "cron") for outcome in ("accepted", "rejected", "uncertain")
-] + [("cron", "cancelled_before_start"), ("cron", "cancelled"), ("cron", "restore_failed")])
+] + [("cron", "cancelled_before_start"), ("cron", "cancelled"), ("cron", "restore_failed"),
+     ("cron", "service_cancelled")])
 def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bridge, monkeypatch, restart_mode, outcome):
     from unittest.mock import AsyncMock
     from tests.test_claude_completion import make_agent
@@ -616,15 +617,16 @@ def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bri
         manager._bind_completion_callbacks(old)
         restart_ready, restart_allowed, manager_returned = (asyncio.Event() for _ in range(3))
         replacements, native_tokens, tasks = [], [], []
+        native_outcome = "accepted" if outcome == "service_cancelled" else outcome
         async def native_send(agent, text, *, completion_token, completion_cursor, **kwargs):
             native_tokens.append(completion_token)
             agent._completion_source_floor = completion_cursor
             agent._completion_input_pending(completion_token)
             agent._completion_activity()
-            agent._completion_input_settled(completion_token, outcome)
-            if outcome != "accepted":
+            agent._completion_input_settled(completion_token, native_outcome)
+            if native_outcome != "accepted":
                 agent._set_state(AgentState.DEAD)
-            return outcome == "accepted"
+            return native_outcome == "accepted"
         def replacement(settings):
             new = Agent(old.session_id, old.project_id, old.cwd, settings)
             new.provider = Provider.CLAUDE_CODE
@@ -672,11 +674,21 @@ def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bri
             assert not manager._lock.locked()
             assert releases == []
             assert not await asyncio.to_thread(LogicalTurnInput.objects.filter(status="accepted").exists)
+            if outcome == "service_cancelled":
+                pending = manager._pending_after_restart[old.session_id]
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+                assert manager._pending_after_restart[old.session_id] is pending
+                assert pending["refs"] == (ref,)
+                assert not tasks[0].done()
+                assert releases == []
+                assert owners == [(ref,)]
             if outcome == "cancelled":
                 assert manager._cancel_cron_restart_task(old.session_id)
             else:
                 restart_allowed.set()
-        result = await asyncio.wait_for(request, 2)
+        result = None if outcome == "service_cancelled" else await asyncio.wait_for(request, 2)
         await asyncio.gather(*tasks, return_exceptions=True)
         for agent in replacements:
             while agent._completion_persist_task is not None:
@@ -691,8 +703,13 @@ def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bri
             return
         [token] = native_tokens
         row = await asyncio.to_thread(LogicalTurnInput.objects.get, pk=token)
-        assert row.status == outcome
-        if outcome == "accepted":
+        assert row.status == native_outcome
+        if outcome == "service_cancelled":
+            receipt = await asyncio.wait_for(manager.wait_for_completion_input(token), 2)
+            assert receipt.admission_cursor == 17
+            assert old.session_id not in manager._pending_after_restart
+            assert releases == [(ref,)]
+        elif outcome == "accepted":
             assert result.success, result
             assert result.status_extra == {"last_line": 17, "wait_token": token}
             assert releases == [(ref,)]

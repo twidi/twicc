@@ -14,6 +14,7 @@ responsibility to translate (e.g. to ``status: failed`` in the watcher).
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import NamedTuple
 from uuid import uuid4
 
@@ -121,15 +122,20 @@ async def send_message_to_session_from_payload(
     """
     refs = attachment_drop.refs_to_release(payload) if release_refs_on_outcome else ()
     keep_refs = False
+
+    def retain_refs() -> None:
+        nonlocal keep_refs
+        keep_refs = True
+
     try:
-        result, keep_refs = await _send(payload)
+        result, keep_refs = await _send(payload, retain_refs=retain_refs)
         return result
     finally:
         if not keep_refs:
             attachment_lifecycle.delivery_release(refs)()
 
 
-async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
+async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[SendMessageResult, bool]:
     """The send itself. The flag is True when the refs must stay (a send not delivered now)."""
     session_id = payload.get("session_id")
     raw_text = payload.get("text") or ""
@@ -283,6 +289,10 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
     from twicc.agent.base_manager import BaseAgentManager
 
     manager_owns_refs = delivered is False
+    if manager_owns_refs:
+        # Commit ownership before awaiting a receipt: caller cancellation must not
+        # release refs still held by the deferred manager.
+        retain_refs()
     deferred = isinstance(manager, BaseAgentManager) and manager.completion_input_is_deferred(completion_token)
     if delivered is False and not deferred:
         return _rejected("session", "send_failed", "The message was not accepted for delivery"), True
