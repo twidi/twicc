@@ -443,3 +443,59 @@ def test_native_user_command_ack_keeps_its_command_semantics(during_root_turn):
         assert agent.completion_controller.snapshot().final_refs == ()
         assert agent.completion_controller.candidate() is None
     asyncio.run(scenario())
+
+
+def test_root_user_refs_survive_start_publication_and_multiple_finals():
+    async def scenario():
+        agent = make_agent()
+        agent.observe_jsonl_observations((observation("user_message", "A"),))
+        first = agent.completion_controller.snapshot()
+        assert agent._timeline_refs_for_turn(first, start=True) == [NativeMessageRef("claude_uuid", "A")._asdict()]
+        agent.observe_jsonl_observations((observation("user_message", "B"), observation("final", "reply-B"),
+            observation("end"), observation("final", "reply-A"), observation("end")))
+        snapshot = agent.completion_controller.snapshot()
+        assert snapshot.turn_id == first.turn_id
+        assert agent._timeline_refs_for_turn(snapshot) == [NativeMessageRef("claude_uuid", name)._asdict()
+                                                        for name in ("A", "B", "reply-B", "reply-A")]
+        assert agent._timeline_refs_for_turn(snapshot, start=True) == agent._timeline_refs_for_turn(first, start=True)
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+def test_hybrid_shell_notice_keeps_completion_facts_without_timeline_user_ref():
+    from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+    from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+    async def scenario():
+        agent = make_agent()
+        parsed = {"type": "user", "uuid": "shell", "message": {
+            "content": [{"type": "text", "text": SHELL_NOTICE_HEADER + ': still running'}]}}
+        events = ClaudeCodeSessionCompute().extract_completion_observations(parsed, 1)
+        agent.observe_jsonl_observations(events)
+        snapshot = agent.completion_controller.snapshot()
+        assert snapshot.first_ref == NativeMessageRef("claude_uuid", "shell")
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert agent._timeline_refs_for_turn(snapshot) == []
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+def test_internal_user_observation_preserves_user_completion_admission():
+    from unittest.mock import Mock
+    async def scenario():
+        results = []
+        for kind in ("user_message", "internal_user_message"):
+            agent = make_agent()
+            agent._completion_input_pending("input")
+            agent._completion_start_token = "input"
+            agent._local_cmd_turn = True
+            agent._clear_all_pendings = Mock()
+            agent.observe_jsonl_observations((observation(kind, "same-native-user"),))
+            snapshot = agent.completion_controller.snapshot()
+            item = agent._completion_inputs["input"]
+            results.append((agent.state, snapshot.first_ref, snapshot.final_refs, snapshot.revision,
+                            item.status, item.turn_id == snapshot.turn_id, agent._completion_start_token,
+                            agent._local_cmd_turn, agent._clear_all_pendings.call_args))
+            agent._cancel_completion_timer()
+        assert results[0] == results[1]
+        assert results[1][4:8] == ("accepted", True, None, False)
+    asyncio.run(scenario())

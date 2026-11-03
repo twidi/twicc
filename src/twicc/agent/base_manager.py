@@ -796,7 +796,12 @@ class BaseAgentManager:
         if agent.ephemeral:
             return True
         try:
-            stored = await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot, state=state)
+            message_refs = agent._timeline_refs_for_turn(snapshot)
+            start_refs = agent._timeline_refs_for_turn(snapshot, start=True)
+            current_start_refs = agent._timeline_process_refs(AgentState.ASSISTANT_TURN)
+            stored = await asyncio.to_thread(self._store_completion_snapshot_admitted, agent, snapshot,
+                                            state=state, message_refs=message_refs, start_refs=start_refs,
+                                            current_start_refs=current_start_refs)
         except Exception:
             for token, item in agent._completion_inputs.items():
                 receipt = agent._completion_input_receipts.get(token)
@@ -831,6 +836,8 @@ class BaseAgentManager:
 
     def _store_completion_snapshot_admitted(
         self, agent: BaseAgent, snapshot: CompletionSnapshot, *, state: AgentState | None = None,
+        message_refs: list | None = None, start_refs: list | None = None,
+        current_start_refs: list | None = None,
     ) -> bool:
         """Compose journal writes on the admitted worker thread, including DEAD."""
         from django.utils import timezone
@@ -838,6 +845,10 @@ class BaseAgentManager:
         from twicc.core.models import LogicalTurn
         from twicc.core.services.logical_turns import bind_turn_input, open_logical_turn, store_turn_snapshot
 
+        message_refs = agent._timeline_refs_for_turn(snapshot) if message_refs is None else message_refs
+        start_refs = agent._timeline_refs_for_turn(snapshot, start=True) if start_refs is None else start_refs
+        current_start_refs = (agent._timeline_process_refs(AgentState.ASSISTANT_TURN)
+                              if current_start_refs is None else current_start_refs)
         opening = agent._completion_openings.get(snapshot.turn_id)
         if opening is None:
             # Direct controller consumers may open before a provider adapter
@@ -863,6 +874,16 @@ class BaseAgentManager:
                 for token, cursor, status in inputs:
                     bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
             stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
+            verified_refs = [ref for ref in snapshot.final_refs if ref._asdict() in message_refs]
+            if stored and verified_refs:
+                from twicc.core.services.timeline_messages import record_verified_messages
+
+                if agent.provider.value == "codex":
+                    from twicc.providers.codex.sessions_watcher import get_watcher
+                else:
+                    from twicc.providers.claude_code.sessions_watcher import get_watcher
+                record_verified_messages(agent.session_id, refs=verified_refs,
+                                         timeline_since=get_watcher().timeline_since)
             # Previously opened rows can expire while native work continues. Their
             # actual completion still owns the public state transition, once.
             if not journal_exists and snapshot.outcome is not None and state is not None:
@@ -872,13 +893,18 @@ class BaseAgentManager:
                     # A newer root interval can finish while its activity
                     # callback waits behind an older publication. Preserve its
                     # start even when that obsolete live snapshot is suppressed.
-                    self._persist_process_run_transition_admitted(agent, AgentState.ASSISTANT_TURN)
+                    self._persist_process_run_transition_admitted(agent, AgentState.ASSISTANT_TURN, message_refs=start_refs)
                 if state != AgentState.USER_TURN:
                     # The old closure remains valid when newer work opens.
                     # Record its end, then restore the newer live boundary
                     # within this same transaction, without a stale broadcast.
-                    self._persist_process_run_transition_admitted(agent, AgentState.USER_TURN)
-                self._persist_process_run_transition_admitted(agent, state)
+                    self._persist_process_run_transition_admitted(agent, AgentState.USER_TURN, message_refs=message_refs)
+                self._persist_process_run_transition_admitted(
+                    agent, state, message_refs=message_refs if state == AgentState.USER_TURN else current_start_refs,
+                )
+                from django.db import transaction
+
+                transaction.on_commit(lambda: agent._timeline_forget_turn(snapshot.turn_id))
                 agent._completion_published_ids.add(snapshot.turn_id)
             elif (state is not None and snapshot.outcome is not None
                   and snapshot.turn_id in agent._completion_pending_publications):
@@ -895,6 +921,10 @@ class BaseAgentManager:
                 }
                 if stored:
                     self._persist_process_run_transition_admitted(agent, state)
+            if stored and state is not None:
+                from twicc.core.services.timeline_messages import recover_referenced_messages
+
+                recover_referenced_messages(agent.session_id)
         agent._completion_opened_ids.add(snapshot.turn_id)
         agent._completion_durable_inputs.update(
             (token, CompletionInput(snapshot.turn_id, cursor, status)) for token, cursor, status in inputs
@@ -1464,8 +1494,12 @@ class BaseAgentManager:
         write = (self._reconcile_dead_completion_admitted
                  if state == AgentState.DEAD and agent._completion_pending_publications
                  else self._persist_process_run_transition_admitted)
+        message_refs = agent._timeline_process_refs(state) if hasattr(agent, "_timeline_process_refs") else None
         try:
-            await run_under_db_write_lock(lambda: asyncio.to_thread(write, agent, state))
+            if write == self._reconcile_dead_completion_admitted:
+                await run_under_db_write_lock(lambda: asyncio.to_thread(write, agent, state))
+            else:
+                await run_under_db_write_lock(lambda: asyncio.to_thread(write, agent, state, message_refs=message_refs))
         except Exception:
             logger.exception("Error persisting process state %s for %s", state.value, agent.session_id)
 
@@ -1480,14 +1514,18 @@ class BaseAgentManager:
                 self._store_completion_snapshot_admitted(agent, snapshot, state=next_state)
             if latest.ordinal and latest.outcome is not None and latest not in pending:
                 self._store_completion_snapshot_admitted(agent, latest)
-            self._persist_process_run_transition_admitted(agent, state)
+            self._persist_process_run_transition_admitted(
+                agent, state, message_refs=agent._timeline_refs_for_turn(latest),
+            )
         for snapshot in (*pending, latest):
             agent._completion_pending_publications.pop(snapshot.turn_id, None)
             agent._completion_published_ids.discard(snapshot.turn_id)
             agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
         agent._completion_last_queued = latest
 
-    def _persist_process_run_transition_admitted(self, agent: BaseAgent, state: AgentState) -> None:
+    def _persist_process_run_transition_admitted(
+        self, agent: BaseAgent, state: AgentState, *, message_refs: list | None = None,
+    ) -> None:
         """Write on the admitted worker thread, including the existing timeline hook.
 
         This implementation never reacquires writer admission. A caller can wrap
@@ -1508,7 +1546,7 @@ class BaseAgentManager:
             awaiting = state != AgentState.DEAD and bool(agent.pending_requests)
             work = None if state == AgentState.DEAD else agent.background_work_snapshot()
             if state == AgentState.DEAD:
-                record_process_ended(agent, previous)
+                record_process_ended(agent, previous, message_refs=message_refs)
                 if not get_provider_helpers(agent.provider).should_keep_dead_process_run(process_run, agent=agent):
                     process_run.delete()
                     agent.process_run = None
@@ -1518,7 +1556,8 @@ class BaseAgentManager:
                 awaiting_user_input=awaiting, background_work_in_progress=work,
             )
             if state != AgentState.DEAD and previous is not None:
-                record_process_changes(agent, previous, new_state=state.value, new_awaiting=awaiting, new_work=work)
+                record_process_changes(agent, previous, new_state=state.value, new_awaiting=awaiting, new_work=work,
+                                       message_refs=message_refs)
             process_run.state = state.value
             process_run.last_state_change_at = now
             process_run.agent_pid = agent.get_pid()

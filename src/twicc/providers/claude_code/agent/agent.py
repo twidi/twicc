@@ -933,6 +933,7 @@ class ClaudeCodeAgent(BaseAgent):
         documents: list[dict] | None,
         *,
         content: AttachmentContent | None = None,
+        message_uuid: str | None = None,
     ) -> AsyncIterator[dict]:
         """Build prompt for SDK query() as an async generator.
 
@@ -958,7 +959,7 @@ class ClaudeCodeAgent(BaseAgent):
             An async iterator yielding a single transport message dict.
         """
         if content is not None:
-            return await self._build_attachment_query_prompt(content)
+            return await self._build_attachment_query_prompt(content, message_uuid=message_uuid)
 
         # Reconcile the dynamic Context block, then fold any queued
         # <twicc:context> block into the user text. This is the single chokepoint
@@ -991,9 +992,11 @@ class ClaudeCodeAgent(BaseAgent):
         if text or not content_blocks:
             content_blocks.append({"type": "text", "text": text})
 
-        return self._single_message_stream(content_blocks)
+        return self._single_message_stream(content_blocks, message_uuid=message_uuid)
 
-    async def _build_attachment_query_prompt(self, content: AttachmentContent) -> AsyncIterator[dict]:
+    async def _build_attachment_query_prompt(
+        self, content: AttachmentContent, *, message_uuid: str | None = None,
+    ) -> AsyncIterator[dict]:
         """The ordered prompt of a composer-attachments message (see ``_build_query_prompt``)."""
         # Built first: a malformed content fails before the one-shot pending
         # context is consumed.
@@ -1005,15 +1008,18 @@ class ClaudeCodeAgent(BaseAgent):
         user_text = apply_goal_instruction(user_text)
         if user_text:
             content_blocks.append({"type": "text", "text": user_text})
-        return self._single_message_stream(content_blocks)
+        return self._single_message_stream(content_blocks, message_uuid=message_uuid)
 
     @staticmethod
-    def _single_message_stream(content_blocks: list[dict]) -> AsyncIterator[dict]:
+    def _single_message_stream(
+        content_blocks: list[dict], *, message_uuid: str | None = None,
+    ) -> AsyncIterator[dict]:
         async def _message_stream() -> AsyncIterator[dict]:
             yield {
                 "type": "user",
                 "message": {"role": "user", "content": content_blocks},
                 "parent_tool_use_id": None,
+                **({"uuid": message_uuid} if message_uuid else {}),
             }
 
         return _message_stream()
@@ -1062,6 +1068,7 @@ class ClaudeCodeAgent(BaseAgent):
             self._completion_source_floor = completion_cursor
         if not prompt.lstrip().startswith("/"):
             self._completion_input_pending(completion_token)
+            self._timeline_reserve_input(completion_token, NativeMessageRef("claude_uuid", completion_token))
         self._note_external_send()
         self._open_main_turn()
 
@@ -1364,7 +1371,9 @@ class ClaudeCodeAgent(BaseAgent):
             attach_elicitation_handler(self._client, self._handle_elicitation_request)
 
             # Build query prompt as async generator (streaming mode)
-            query_prompt = await self._build_query_prompt(prompt, images, documents, content=content)
+            query_prompt = await self._build_query_prompt(
+                prompt, images, documents, content=content, message_uuid=completion_token,
+            )
             await self._client.query(query_prompt)
             self._completion_input_settled(completion_token, "accepted")
 
@@ -1680,6 +1689,26 @@ class ClaudeCodeAgent(BaseAgent):
                 elif message_id:
                     ref = NativeMessageRef("claude_message", message_id)
             self._completion_activity(first_ref=ref)
+            if isinstance(msg, UserMessage) and ref is not None:
+                from twicc.core.enums import ItemKind
+                from twicc.providers.claude_code.compute import ClaudeCodeSessionCompute
+
+                # Apply the source classifier to SDK user echoes too. Tool results
+                # and injected notifications remain completion activity only.
+                content = msg.content if isinstance(msg.content, str) else [
+                    {"type": "text", "text": block.text} if isinstance(block, TextBlock)
+                    else {"type": "tool_result"} if isinstance(block, ToolResultBlock)
+                    else {"type": "unknown"} for block in msg.content
+                ]
+                parsed = {"type": "user", "message": {"content": content}, "origin": msg.origin}
+                from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+                from twicc.context_injection import strip_context_blocks
+                from twicc.providers.helpers import get_provider_helpers
+
+                text = strip_context_blocks(get_provider_helpers(self.provider).extract_timeline_text_from_parsed(parsed))
+                if (ClaudeCodeSessionCompute().compute_item_kind(parsed) == ItemKind.USER_MESSAGE
+                        and not text.lstrip().startswith(SHELL_NOTICE_HEADER)):
+                    self._timeline_observe_message(ref, role="user")
             changed = self.state != previous
             if isinstance(msg, AssistantMessage) and not msg.error:
                 from twicc.providers.helpers import get_provider_helpers
@@ -1691,6 +1720,8 @@ class ClaudeCodeAgent(BaseAgent):
                     self._completion_final_ref = None
                 elif any(isinstance(block, TextBlock) and block.text.strip() for block in msg.content):
                     self._completion_final_ref = ref or NativeMessageRef("unresolved", "")
+                    if final is True and ref is not None:
+                        self._timeline_observe_message(ref, role="assistant")
         if isinstance(msg, ResultMessage) and not msg.is_error:
             # A no-output reply can provide the first actual root evidence.
             if not self.completion_controller.is_open and self._main_turn_open:
@@ -2259,6 +2290,7 @@ class ClaudeCodeAgent(BaseAgent):
             self.completion_controller.note_shell_delivery()
         if not shell_notice and not text.lstrip().startswith("/"):
             self._completion_input_pending(completion_token)
+            self._timeline_reserve_input(completion_token, NativeMessageRef("claude_uuid", completion_token))
         if not shell_notice:
             self._note_external_send()
         self._open_main_turn()
@@ -2278,7 +2310,9 @@ class ClaudeCodeAgent(BaseAgent):
             await self._clear_waiting_label()
 
             # Build query prompt as async generator (streaming mode)
-            query_prompt = await self._build_query_prompt(text, images, documents, content=content)
+            query_prompt = await self._build_query_prompt(
+                text, images, documents, content=content, message_uuid=completion_token,
+            )
             await self._client.query(query_prompt)
             self._completion_input_settled(completion_token, "accepted")
             return True

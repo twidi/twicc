@@ -25,7 +25,7 @@ def _refs(helpers, parsed):
         from twicc.providers.codex.canonical import completed_item
         item = completed_item(parsed)
         if item and item.get('type') == 'UserMessage' and isinstance(item.get('clientId'), str) and item['clientId']:
-            refs.append(NativeMessageRef('codex_client', item['clientId'], (parsed.get('payload') or {}).get('turn_id')))
+            refs.append(NativeMessageRef('codex_client', item['clientId']))
     return [ref for ref in refs if isinstance(ref.native_id, str) and ref.native_id]
 
 
@@ -82,6 +82,10 @@ def _capture(session, records, *, timeline_since, verified=(), eligible=False):
     text = '\n'.join(part for part in parts if part)
     if not text.strip():
         return
+    if user:
+        from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+        if text.lstrip().startswith(SHELL_NOTICE_HEADER):
+            return
     identity = _canonical(session, records[0])
     if identity is None:
         return
@@ -133,11 +137,20 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
         if timeline_since is None and not saved_groups:
             return
         session = Session.objects.get(pk=session_id)
-        saved = _current_saved_refs(session, saved_groups)
         rows = SessionItem.objects.filter(session_id=session_id, line_num__in=new_line_nums)
-        for group in _groups(session, _read(session, rows)):
+        groups = list(_groups(session, _read(session, rows)))
+        helpers = get_provider_helpers(session.provider)
+        needs_proof = session.provider == 'claude_code' and any(
+            group[0][0].kind == ItemKind.ASSISTANT_MESSAGE
+            and all(helpers.is_final_assistant_message(parsed) is None for _, parsed, _ in group)
+            for group in groups)
+        turns = list(LogicalTurn.objects.filter(session_id=session.id)) if saved_groups or needs_proof else []
+        saved = _current_saved_refs(session, saved_groups, turns=turns)
+        proof = [NativeMessageRef(**ref) for turn in turns
+                 if _same_scope(turn, session) and turn.outcome in (None, 'normal') for ref in turn.final_refs]
+        for group in groups:
             _capture(session, group, timeline_since=timeline_since,
-                     verified=(*verified_final_refs, *saved),
+                     verified=(*verified_final_refs, *saved, *proof),
                      eligible=any(ref in saved for _, _, aliases in group for ref in aliases))
     except Exception:
         logger.exception('Timeline message capture failed for %s', session_id)
@@ -163,8 +176,11 @@ def record_verified_messages(session_id: str, *, refs: Sequence[NativeMessageRef
     """Resolve final proof on an already-admitted writer; never guess adjacent text."""
     try:
         session = Session.objects.get(pk=session_id)
-        saved = _current_saved_refs(session, _saved_ref_groups(session_id))
-        _record_refs(session, refs, timeline_since=timeline_since, saved=saved)
+        turns = list(LogicalTurn.objects.filter(session_id=session_id))
+        saved = _current_saved_refs(session, _saved_ref_groups(session_id), turns=turns)
+        invalid = {NativeMessageRef(**ref) for turn in turns if not _same_scope(turn, session)
+                   for ref in ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
+        _record_refs(session, [ref for ref in refs if ref not in invalid], timeline_since=timeline_since, saved=saved)
     except Exception:
         logger.exception('Verified timeline message capture failed for %s', session_id)
 

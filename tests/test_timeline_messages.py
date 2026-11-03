@@ -150,7 +150,7 @@ def test_codex_async_question_and_client_alias(live_session):
         pytest.skip('Codex protocol')
     f.append(f.message('question', 'question?', delivery='async'), f.message('u', 'input', user=True, clientId='client'))
     assert f.texts() == ['input']
-    assert {'kind': 'codex_client', 'native_id': 'client', 'turn_id': 'native-turn'} in f.events()[0].data['source_refs']
+    assert {'kind': 'codex_client', 'native_id': 'client', 'turn_id': None} in f.events()[0].data['source_refs']
 
 
 def test_recovery_reads_only_saved_live_references(live_session):
@@ -467,3 +467,48 @@ def test_delayed_claude_groups_keep_first_source_order(live_session):
     assert len({event.occurred_at for event in events}) == 1
     assert [event.data['source_line'] for event in events] == [1, 2]
     assert f.texts() == ['A1\nA2', 'B1\nB2']
+
+
+def test_markerless_live_group_uses_open_journal_final_proof(live_session):
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude terminal UUID proof')
+    ref = NativeMessageRef('claude_uuid', 'terminal')
+    LogicalTurn.objects.create(id=uuid4(), session_id=f.session.id, provider=f.provider,
+        run_id=uuid4(), ordinal=1, position=1, source_floor=0, opened_at=f.boundary,
+        final_refs=[ref._asdict()])
+    f.append(f.message('first', 'first', message_id='api', final=None))
+    assert f.texts() == []
+    f.append(f.message('terminal', 'last', message_id='api', final=None))
+    assert f.texts() == ['first\nlast']
+    assert not TimelineEvent.objects.filter(kind='turn.ended').exists()
+
+
+def test_startup_metadata_publication_recovers_only_saved_refs(live_session):
+    from queue import Queue
+    from twicc.core.services.session_timeline import record_event_sync
+    f = live_session
+    f.append(f.message('history', 'unreferenced'), f.message('late', 'delayed', final=None), capture=False)
+    kind = 'claude_uuid' if f.provider == 'claude_code' else 'codex_item'
+    ref = NativeMessageRef(kind, 'late', 'native-turn' if f.provider == 'codex' else None)
+    record_event_sync('turn.ended', session_id=f.session.id, actor='agent', data={'message_refs': [ref._asdict()]})
+    # Startup has no live agent or retained journal. Metadata publication makes
+    # the existing exact sources readable and resolves only durable references.
+    queue = Queue()
+    f.compute.compute_session_metadata(f.session.id, queue, 1)
+    messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
+    complete = next(message for message in messages if message['type'] == 'session_complete')
+    assert f.compute.apply_session_complete(complete).outcome == 'applied'
+    assert f.texts() == ['delayed']
+    f.compute.compute_session_metadata(f.session.id, queue, 2)
+    messages = [orjson.loads(queue.get()) for _ in range(queue.qsize())]
+    complete = next(message for message in messages if message['type'] == 'session_complete')
+    assert f.compute.apply_session_complete(complete).outcome == 'applied'
+    assert f.texts() == ['delayed']
+
+
+def test_persisted_shell_notice_does_not_create_user_snapshot(live_session):
+    from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+    f = live_session
+    f.append(f.message('shell-notice', SHELL_NOTICE_HEADER + ': background shell(s) still running', user=True))
+    assert f.texts() == []

@@ -230,3 +230,14 @@ def test_a_second_death_notification_with_a_kept_row_writes_no_second_process_en
 
     record_process_ended(agent, SimpleNamespace(state=AgentState.DEAD.value, awaiting=False, work=None))
     assert kinds("s1").count("process.ended") == 1
+
+
+def test_turn_hook_payloads_keep_explicit_selected_refs(project):
+    from twicc.agent.timeline_hooks import record_process_changes, record_process_ended, ProcessSnapshot
+    selected = [{"kind": "codex_client", "native_id": "selected", "turn_id": None}]
+    agent = make_agent(project)
+    record_process_changes(agent, ProcessSnapshot("user_turn", False, None), new_state="assistant_turn",
+                           new_awaiting=False, new_work=None, message_refs=selected)
+    record_process_ended(agent, ProcessSnapshot("assistant_turn", False, None), message_refs=selected)
+    turns = TimelineEvent.objects.filter(session_id="s1", kind__in=["turn.started", "turn.ended"])
+    assert [row.data["message_refs"] for row in turns] == [selected, selected]

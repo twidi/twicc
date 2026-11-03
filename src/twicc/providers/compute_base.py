@@ -4331,6 +4331,9 @@ class BaseSessionCompute:
                 complete_validated_storage(operation, msg)
             else:
                 finish_storage_result(msg)
+        from twicc.core.services.timeline_messages import recover_referenced_messages
+
+        recover_referenced_messages(session_id)
         return ComputeApplyResult("applied", folded_ancestor_id, title_updated_session_ids, recovered_agent_links)
 
     # ------------------------------------------------------------------

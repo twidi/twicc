@@ -824,7 +824,7 @@ def test_expired_live_turn_accepts_native_steering_and_settles_receipt(bridge, s
         agent._steer_question_submission = AsyncMock()
         token = str(uuid4())
         assert await agent.send("continue", completion_token=token)
-        agent._steer_question_submission.assert_awaited_once_with(handle, [], None)
+        agent._steer_question_submission.assert_awaited_once_with(handle, [], None, completion_token=token)
         receipt = await asyncio.wait_for(agent.wait_for_completion_input(token), timeout=2)
         assert receipt and receipt.status == "accepted"
         while agent._completion_persist_task is not None:

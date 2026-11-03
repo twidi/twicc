@@ -845,15 +845,17 @@ class HybridClaudeAgent(BaseAgent):
                 break
             ref = NativeMessageRef(event.ref_kind, event.native_id) if event.ref_kind else None
             kind = event.kind
-            if kind in ("user_message", "activity", "final", "continuing", "progress"):
+            if kind in ("user_message", "internal_user_message", "activity", "final", "candidate_final", "continuing", "progress"):
                 self._completion_activity(first_ref=ref if event.native_id else None)
-                if kind == "user_message" and self._completion_start_token is not None:
+                if ref is not None and event.native_id and kind in ("user_message", "final"):
+                    self._timeline_observe_message(ref, role="user" if kind == "user_message" else "assistant")
+                if kind in ("user_message", "internal_user_message") and self._completion_start_token is not None:
                     self._completion_input_settled(self._completion_start_token, "accepted")
                     self._completion_start_token = None
                 self._local_cmd_turn = False
-                if kind in ("user_message", "progress"):
+                if kind in ("user_message", "internal_user_message", "progress"):
                     self._clear_all_pendings("reap")
-                if kind == "final":
+                if kind in ("final", "candidate_final"):
                     self._completion_final_ref = ref or NativeMessageRef("unresolved", "")
                 elif kind == "continuing":
                     self._completion_final_ref = None
@@ -868,7 +870,7 @@ class HybridClaudeAgent(BaseAgent):
             elif kind in ("end", "interrupted", "provider_error"):
                 self._local_cmd_turn = False
                 self._clear_all_pendings("reap")
-                self._completion_provider_ended(final_ref=self._completion_final_ref)
+                self._completion_provider_ended(final_ref=self._completion_final_ref, timeline_verified=kind == "end")
                 self._completion_final_ref = None
                 if kind != "end":
                     outcome = "ended" if kind == "interrupted" else "provider_error"

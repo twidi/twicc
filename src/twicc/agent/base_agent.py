@@ -213,11 +213,69 @@ class BaseAgent(StopOriginMixin):
         self._completion_storage_incarnation: str | None = None
         self._completion_history_epoch: int | None = None
         self._completion_committed_snapshot: CompletionSnapshot | None = None
+        # Exact identities only. Text remains in source storage and timeline snapshots.
+        self._timeline_message_refs: dict[str, list[NativeMessageRef]] = {}
+        self._timeline_start_refs: dict[str, NativeMessageRef | None] = {}
+        self._timeline_input_refs: dict[str, NativeMessageRef] = {}
         self._state_revision = 0
 
     # ------------------------------------------------------------------
     # State machine
     # ------------------------------------------------------------------
+
+    def _timeline_observe_message(self, ref: NativeMessageRef, *, role: str) -> None:
+        """Retain one confirmed root identity on its actual logical interval."""
+        if not ref.native_id or ref.kind == "unresolved" or not self.completion_controller.is_open:
+            return
+        turn_id = self.completion_controller.snapshot().turn_id
+        refs = self._timeline_message_refs.setdefault(turn_id, [])
+        if ref not in refs:
+            refs.append(ref)
+        if role == "user" and self.completion_controller.snapshot().first_ref == ref:
+            if self._timeline_start_refs.get(turn_id) is None:
+                self._timeline_start_refs[turn_id] = ref
+
+    def _timeline_reserve_input(self, token: str, ref: NativeMessageRef) -> None:
+        """Reserve the exact outgoing identity; source indexing alone confirms its text."""
+        self._timeline_input_refs[token] = ref
+        self._timeline_bind_inputs()
+
+    def _timeline_bind_inputs(self) -> None:
+        for token, ref in tuple(self._timeline_input_refs.items()):
+            item = self._completion_inputs.get(token)
+            if item is None or item.turn_id is None or item.status == "rejected":
+                continue
+            refs = self._timeline_message_refs.setdefault(item.turn_id, [])
+            if ref not in refs:
+                refs.append(ref)
+            self._timeline_start_refs.setdefault(item.turn_id, ref)
+
+    def _timeline_refs_for_turn(self, snapshot: CompletionSnapshot, *, start: bool = False) -> list:
+        """Copy the selected interval before writer admission can yield."""
+        if start:
+            ref = self._timeline_start_refs.get(snapshot.turn_id)
+            return [ref._asdict()] if ref else []
+        refs = dict.fromkeys(self._timeline_message_refs.get(snapshot.turn_id, ()))
+        return [ref._asdict() for ref in refs if ref.native_id and ref.kind != "unresolved"]
+
+    def _timeline_process_refs(self, state: AgentState) -> list:
+        snapshot = self.completion_controller.snapshot()
+        if snapshot.ordinal and (self.completion_controller.is_open or state != AgentState.ASSISTANT_TURN):
+            return self._timeline_refs_for_turn(snapshot, start=state == AgentState.ASSISTANT_TURN)
+        if state == AgentState.ASSISTANT_TURN:
+            for token, ref in tuple(self._timeline_input_refs.items()):
+                item = self._completion_inputs.get(token)
+                if item is not None and item.turn_id is None and item.status != "rejected":
+                    return [ref._asdict()]
+        return []
+
+    def _timeline_forget_turn(self, turn_id: str) -> None:
+        self._timeline_message_refs.pop(turn_id, None)
+        self._timeline_start_refs.pop(turn_id, None)
+        for token in tuple(self._timeline_input_refs):
+            item = self._completion_inputs.get(token)
+            if item is not None and item.turn_id == turn_id:
+                self._timeline_input_refs.pop(token, None)
 
     def _completion_activity(self, *, first_ref: NativeMessageRef | None = None) -> None:
         """Record actual root work before the provider yields control."""
@@ -239,11 +297,17 @@ class BaseAgent(StopOriginMixin):
         for token, (turn_id, cursor, status) in tuple(self._completion_inputs.items()):
             if turn_id is None and status != "rejected":
                 self._completion_inputs[token] = CompletionInput(snapshot.turn_id, cursor, status)
+        self._timeline_bind_inputs()
+        self._timeline_start_refs.setdefault(snapshot.turn_id, None)
         if self.state != AgentState.ASSISTANT_TURN:
             self._set_state(AgentState.ASSISTANT_TURN)
         self._completion_refresh()
 
-    def _completion_provider_ended(self, *, final_ref: NativeMessageRef | None = None) -> None:
+    def _completion_provider_ended(
+        self, *, final_ref: NativeMessageRef | None = None, timeline_verified: bool = True,
+    ) -> None:
+        if final_ref is not None and timeline_verified:
+            self._timeline_observe_message(final_ref, role="assistant")
         self.completion_controller.provider_ended(asyncio.get_running_loop().time(), final_ref=final_ref)
         self._completion_refresh()
 

@@ -413,13 +413,13 @@ def test_candidate_interrupt_commits_closed_journal_and_user_state_together(brid
         original = manager._persist_process_run_transition_admitted
         observed = []
 
-        def check_transaction(current, state):
+        def check_transaction(current, state, **kwargs):
             from django.db import connection
 
             if state == AgentState.USER_TURN:
                 observed.append(connection.in_atomic_block)
                 assert LogicalTurn.objects.get(pk=ticket.turn_id).outcome == "ended"
-            original(current, state)
+            original(current, state, **kwargs)
 
         with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=check_transaction):
             assert await agent._completion_interrupt_candidate() is True
@@ -665,7 +665,7 @@ def test_failed_confirmation_then_stop_reconciles_claim_before_process_deletion(
         original = manager._persist_process_run_transition_admitted
         checks = []
 
-        def check_before_delete(current, state):
+        def check_before_delete(current, state, **kwargs):
             if state == AgentState.DEAD:
                 from django.db import connection
 
@@ -673,7 +673,7 @@ def test_failed_confirmation_then_stop_reconciles_claim_before_process_deletion(
                 assert LogicalTurn.objects.get(pk=claimed.turn_id).outcome == "normal"
                 if new_activity:
                     assert LogicalTurn.objects.get(pk=latest.turn_id).outcome == "ended"
-            original(current, state)
+            original(current, state, **kwargs)
 
         with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=check_before_delete):
             agent.kill_reason = "manual"
@@ -718,10 +718,10 @@ def test_recovery_rollback_restores_process_mirror_before_retry(bridge, death):
             agent._set_state(AgentState.DEAD)
         original = manager._persist_process_run_transition_admitted
 
-        def reject_second_transition(current, state):
+        def reject_second_transition(current, state, **kwargs):
             if state == AgentState.ASSISTANT_TURN:
                 raise RuntimeError("second transition rolls back")
-            original(current, state)
+            original(current, state, **kwargs)
 
         with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=reject_second_transition):
             if death:

@@ -102,14 +102,14 @@ def test_active_turn_steers_and_opening_rpc_waits_for_handle():
             if not opening:
                 agent._current_turn = handle
                 agent._current_turn_ready.set()
-            send = asyncio.create_task(agent.send("next"))
+            send = asyncio.create_task(agent.send("next", completion_token="input-id"))
             await asyncio.sleep(0)
             if opening:
                 assert not send.done()
                 agent._current_turn = handle
                 agent._current_turn_ready.set()
             assert await send
-            agent._steer_question_submission.assert_awaited_once_with(handle, [], None)
+            agent._steer_question_submission.assert_awaited_once_with(handle, [], None, completion_token="input-id")
             cleanup(agent)
     asyncio.run(scenario())
 
@@ -692,5 +692,48 @@ def test_empty_physical_final_retains_previous_relevant_final(earlier_answer):
                           event('turn/completed')])
         refs = agent.completion_controller.snapshot().final_refs
         assert refs == ((NativeMessageRef('codex_item', 'earlier', 'physical-1'),) if earlier_answer else ())
+        cleanup(agent)
+    asyncio.run(scenario())
+
+
+def test_reserved_client_identity_reaches_start_and_steer():
+    async def scenario():
+        agent = make_agent()
+        agent._thread = SimpleNamespace(turn_with_policy=AsyncMock(return_value=Turn([])))
+        agent._admit_async_question_owner = AsyncMock()
+        agent._untrusted = False
+        handle = await agent._open_turn([], completion_token="start-id")
+        assert agent._thread.turn_with_policy.await_args.kwargs["client_user_message_id"] == "start-id"
+        assert handle.id == "physical-1"
+        from unittest.mock import patch
+        with patch("twicc.providers.codex.agent.agent.steer_with_message_id", new=AsyncMock()) as steer:
+            await agent._steer_question_submission(handle, [], None, completion_token="steer-id")
+            steer.assert_awaited_once_with(handle, [], client_user_message_id="steer-id")
+        cleanup(agent)
+    asyncio.run(scenario())
+
+
+def test_root_user_observation_reuses_reserved_client_alias():
+    async def scenario():
+        agent = make_agent()
+        agent._completion_activity()
+        agent._completion_input_pending("token")
+        reserved = NativeMessageRef("codex_client", "client")
+        agent._timeline_reserve_input("token", reserved)
+        await agent._handle_stream_event(event("item/completed", item=dict(
+            type="userMessage", id="native", client_id="client", delivery=None)))
+        assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == [reserved._asdict()]
+        cleanup(agent)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("text", [":: notice from TwiCC: still running", "<twicc-resume>continue</twicc-resume>"])
+def test_internal_user_observation_has_no_message_reference(text):
+    async def scenario():
+        agent = make_agent()
+        await agent._handle_stream_event(event("item/completed", item=dict(
+            type="userMessage", id="internal", delivery=None,
+            content=[SimpleNamespace(type="text", text=text)])))
+        assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == []
         cleanup(agent)
     asyncio.run(scenario())

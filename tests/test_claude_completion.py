@@ -349,3 +349,62 @@ def test_held_result_does_not_signal_first_user_turn_but_death_unblocks():
         assert agent._first_turn_done_event.is_set()
         assert not agent._first_user_turn_reached
     asyncio.run(scenario())
+
+
+def test_reserved_sdk_uuids_link_inputs_without_user_echoes():
+    from types import SimpleNamespace
+    async def scenario():
+        agent = make_agent()
+        agent._set_state(AgentState.USER_TURN)
+        agent._notify_state_change = AsyncMock()
+        agent._reconcile_context = AsyncMock()
+        sent = []
+        async def query(stream):
+            sent.extend([message async for message in stream])
+        agent._client = SimpleNamespace(query=query)
+        assert await agent.send("A", completion_token="exact-A")
+        assert agent._timeline_process_refs(AgentState.ASSISTANT_TURN) == [NativeMessageRef("claude_uuid", "exact-A")._asdict()]
+        agent._completion_observe_message(answer("answer-A"))
+        assert await agent.send("B", completion_token="exact-B")
+        agent._completion_observe_message(result())
+        snapshot = agent.completion_controller.snapshot()
+        assert [message["uuid"] for message in sent] == ["exact-A", "exact-B"]
+        assert agent._timeline_refs_for_turn(snapshot, start=True) == [NativeMessageRef("claude_uuid", "exact-A")._asdict()]
+        assert agent._timeline_refs_for_turn(snapshot) == [NativeMessageRef("claude_uuid", identity)._asdict()
+                                                        for identity in ("exact-A", "answer-A", "exact-B")]
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+def test_internal_sdk_user_messages_do_not_become_turn_message_refs():
+    from claude_agent_sdk import ToolResultBlock
+    async def scenario():
+        agent = make_agent()
+        agent._completion_observe_message(UserMessage(uuid="tool-result", content=[
+            ToolResultBlock(tool_use_id="tool", content="result"), TextBlock(text="loaded")]))
+        agent._completion_observe_message(UserMessage(uuid="notification", content="wake up",
+            origin={"kind": "task-notification"}))
+        agent._completion_observe_message(UserMessage(uuid="child", content="child", parent_tool_use_id="tool"))
+        assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == []
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+def test_sdk_shell_notice_has_no_user_reference():
+    from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+    async def scenario():
+        agent = make_agent()
+        agent._completion_observe_message(UserMessage(uuid="notice", content=SHELL_NOTICE_HEADER + ': still running'))
+        assert agent._timeline_refs_for_turn(agent.completion_controller.snapshot()) == []
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())
+
+
+def test_explicit_sdk_final_is_retained_before_result_or_stop():
+    async def scenario():
+        agent = make_agent()
+        agent._completion_observe_message(answer("explicit"))
+        closed = agent.completion_controller.terminate("ended", asyncio.get_running_loop().time())
+        assert agent._timeline_refs_for_turn(closed) == [NativeMessageRef("claude_uuid", "explicit")._asdict()]
+        agent._cancel_completion_timer()
+    asyncio.run(scenario())

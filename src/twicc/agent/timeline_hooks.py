@@ -119,7 +119,7 @@ def _end_origin(agent, reason: str) -> RequestOrigin:
 
 @_never_raises
 def record_process_changes(agent, prev: ProcessSnapshot | None, *, new_state: str, new_awaiting: bool,
-                           new_work: dict | None) -> None:
+                           new_work: dict | None, message_refs: list | None = None) -> None:
     """Events of a non-fatal transition (also used for background-work-only changes)."""
     if prev is None or not _enabled(agent):
         return
@@ -129,6 +129,9 @@ def record_process_changes(agent, prev: ProcessSnapshot | None, *, new_state: st
         new_state=new_state, new_awaiting=new_awaiting, new_work=new_work,
         request_type=getattr(pending, "request_type", None), tool_name=getattr(pending, "tool_name", None),
     )
+    specs = [spec._replace(data={**spec.data, "message_refs": message_refs})
+             if spec.kind in (TimelineKind.TURN_STARTED, TimelineKind.TURN_ENDED) else spec
+             for spec in specs]
     # The wait ended because TwiCC denied the request after its delay, not because someone answered.
     auto_denied = any(spec.kind == TimelineKind.AWAITING_INPUT_ENDED for spec in specs) and bool(
         getattr(agent, "auto_denied_request_ids", None),
@@ -149,7 +152,7 @@ def record_process_changes(agent, prev: ProcessSnapshot | None, *, new_state: st
 
 
 @_never_raises
-def record_process_ended(agent, prev: ProcessSnapshot | None) -> None:
+def record_process_ended(agent, prev: ProcessSnapshot | None, *, message_refs: list | None = None) -> None:
     """Close the open turn and wait, then write ``process.ended`` (one ``occurred_at``).
 
     ``provider``, ``cause``, ``twicc_pid`` and ``hybrid`` of the row are inherited
@@ -164,6 +167,8 @@ def record_process_ended(agent, prev: ProcessSnapshot | None) -> None:
         prev_state=prev.state, prev_awaiting=prev.awaiting, prev_work=prev.work,
         new_state=AgentState.DEAD.value, new_awaiting=False, new_work=None,
     )
+    specs = [spec._replace(data={**spec.data, "message_refs": message_refs})
+             if spec.kind == TimelineKind.TURN_ENDED else spec for spec in specs]
     # The rows closed with the end take its origin: the stop caused them.
     _write(agent, specs, occurred_at=now, origin=ended_origin)
     error = getattr(agent, "error", None)

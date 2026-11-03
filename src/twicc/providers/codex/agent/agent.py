@@ -754,9 +754,10 @@ class CodexAgent(BaseAgent):
             self.last_activity = time.time()
             await self._notify_state_change()
 
-    def _completion_record_physical_end(self, turn_id: str) -> None:
+    def _completion_record_physical_end(self, turn_id: str, *, timeline_verified: bool = True) -> None:
         self._completion_holds_changed(self._completion_assistant_holds())
-        self._completion_provider_ended(final_ref=self._completion_finals.pop(turn_id, None))
+        self._completion_provider_ended(final_ref=self._completion_finals.pop(turn_id, None),
+                                        timeline_verified=timeline_verified)
         if self._has_actual_turn_work():
             self._completion_activity()
 
@@ -801,6 +802,9 @@ class CodexAgent(BaseAgent):
         token = completion_token or str(uuid.uuid4())
         if command is None:
             self._completion_input_pending(token)
+            self._timeline_reserve_input(token, NativeMessageRef(
+                "codex_client", submission["client_message_id"] if submission else token,
+            ))
         self._note_external_send()
         self._state_change_callback = on_state_change
         if self._initial_content is not None:
@@ -866,6 +870,10 @@ class CodexAgent(BaseAgent):
             self.completion_controller.note_shell_delivery()
         if not kwargs.get("shell_notice") and parse_hardcoded_command(text) is None:
             self._completion_input_pending(token)
+            submission = kwargs.get("submission")
+            self._timeline_reserve_input(token, NativeMessageRef(
+                "codex_client", submission["client_message_id"] if submission else token,
+            ))
         try:
             accepted = await self._send_input(text, completion_token=token, **kwargs)
         except BaseException as exc:
@@ -927,7 +935,9 @@ class CodexAgent(BaseAgent):
                         result = await monitor.steer(turn_input, client_user_message_id=submission["client_message_id"])
                         await self._finish_question_submission(submission, "accepted", turn_id=result.turn_id)
                     else:
-                        await monitor.steer(turn_input)
+                        await monitor.steer(
+                            turn_input, **({"client_user_message_id": completion_token} if completion_token else {}),
+                        )
                 except TransportClosedError:
                     raise
                 except Exception as e:
@@ -974,7 +984,7 @@ class CodexAgent(BaseAgent):
 
             turn_input = await self._build_turn_input(text, images, content=content)
             try:
-                await self._steer_question_submission(turn_handle, turn_input, submission)
+                await self._steer_question_submission(turn_handle, turn_input, submission, completion_token=completion_token)
             except TransportClosedError:
                 raise
             except Exception as e:
@@ -984,7 +994,9 @@ class CodexAgent(BaseAgent):
                 )
                 if (isinstance(e, JsonRpcError) and e.code in {-32600, -32602}
                     and not (submission and submission.get("provider_delivered"))):
-                    return await self._send_after_rejected_steer(turn_input, submission=submission)
+                    return await self._send_after_rejected_steer(
+                        turn_input, submission=submission, completion_token=completion_token,
+                    )
                 raise RuntimeError(f"Steer failed: {e}") from e
 
             self.last_activity = time.time()
@@ -1001,7 +1013,9 @@ class CodexAgent(BaseAgent):
         )
         return True
 
-    async def _send_after_rejected_steer(self, turn_input: list[InputItem], *, submission: dict | None = None) -> bool:
+    async def _send_after_rejected_steer(
+        self, turn_input: list[InputItem], *, submission: dict | None = None, completion_token: str | None = None,
+    ) -> bool:
         """Try a normal send, then one current-turn steer after explicit rejection.
 
         Reuse the prepared input: context injection consumes pending state.
@@ -1010,14 +1024,19 @@ class CodexAgent(BaseAgent):
         """
         self._send_delivery_done.clear()
         try:
-            return await self._deliver_after_rejected_steer(turn_input, submission=submission)
+            return await self._deliver_after_rejected_steer(turn_input, submission=submission, completion_token=completion_token)
         finally:
             self._send_delivery_done.set()
 
-    async def _deliver_after_rejected_steer(self, turn_input: list[InputItem], *, submission: dict | None = None) -> bool:
+    async def _deliver_after_rejected_steer(
+        self, turn_input: list[InputItem], *, submission: dict | None = None, completion_token: str | None = None,
+    ) -> bool:
         """Resolve delivery while the preceding turn's terminal state is gated."""
         try:
-            turn_handle = await self._open_turn(turn_input, **({"submission": submission} if submission else {}))
+            turn_handle = await self._open_turn(
+                turn_input, **({"submission": submission} if submission else {}),
+                **({"completion_token": completion_token} if completion_token else {}),
+            )
         except TransportClosedError:
             raise
         except Exception as exc:
@@ -1035,7 +1054,7 @@ class CodexAgent(BaseAgent):
             if current_turn is None:
                 raise RuntimeError(f"Cannot retry steer: no active turn after normal send failed: {exc}") from exc
             try:
-                await self._steer_question_submission(current_turn, turn_input, submission)
+                await self._steer_question_submission(current_turn, turn_input, submission, completion_token=completion_token)
             except TransportClosedError:
                 raise
             except Exception as final_exc:
@@ -1118,9 +1137,14 @@ class CodexAgent(BaseAgent):
         }
         await run_under_db_write_lock(lambda: sync_to_async(accept_question_send)(self.session_id, durable))
 
-    async def _steer_question_submission(self, handle, turn_input, submission) -> None:
+    async def _steer_question_submission(
+        self, handle, turn_input, submission, *, completion_token: str | None = None,
+    ) -> None:
         if submission is None:
-            await handle.steer(turn_input)
+            if completion_token is not None:
+                await steer_with_message_id(handle, turn_input, client_user_message_id=completion_token)
+            else:
+                await handle.steer(turn_input)
             return
         submission["delivery_route"] = "steer"
         submission["target_turn_id"] = handle.id
@@ -1443,7 +1467,9 @@ class CodexAgent(BaseAgent):
         await self._record_async_question_facts(recovered)
         self._async_question_pending_owners = not stopped and any(not turns for turns in groups.values())
 
-    async def _open_turn(self, turn_input: list[InputItem], *, submission: dict | None = None) -> AsyncTurnHandle:
+    async def _open_turn(
+        self, turn_input: list[InputItem], *, submission: dict | None = None, completion_token: str | None = None,
+    ) -> AsyncTurnHandle:
         """Open a turn with current settings; leave delivery errors to the caller."""
         effort = self._sdk_effort(self.agent_settings.effort)
         turn_mode = self.agent_settings.permission_mode
@@ -1481,7 +1507,8 @@ class CodexAgent(BaseAgent):
             approval_policy=approval_policy,
             approvals_reviewer=approvals_reviewer,
             sandbox_policy=sandbox_policy,
-            **({"client_user_message_id": submission["client_message_id"]} if submission else {}),
+            **({"client_user_message_id": submission["client_message_id"]} if submission else (
+                {"client_user_message_id": completion_token} if completion_token else {})),
         )
         await self._finish_question_submission(submission, "accepted", turn_id=handle.id)
         await self._link_async_question_turn(handle.id)
@@ -1565,7 +1592,10 @@ class CodexAgent(BaseAgent):
                 if self.state == AgentState.DEAD:
                     raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
                 turn_input = await self._build_turn_input(text, images, content=content)
-                turn_handle = await self._open_turn(turn_input, **({"submission": submission} if submission else {}))
+                turn_handle = await self._open_turn(
+                turn_input, **({"submission": submission} if submission else {}),
+                **({"completion_token": completion_token} if completion_token else {}),
+            )
                 if completion_token is not None:
                     self._completion_input_settled(completion_token, "accepted")
                     self._completion_scheduled_tokens.discard(completion_token)
@@ -1649,7 +1679,7 @@ class CodexAgent(BaseAgent):
         outcome = self._completion_turn_outcomes.pop(turn_handle.id, "completed")
         if outcome in {"interrupted", "failed"}:
             self._actual_root_active = False
-            self._completion_record_physical_end(turn_handle.id)
+            self._completion_record_physical_end(turn_handle.id, timeline_verified=False)
             await self._completion_finish_immediately("ended" if outcome == "interrupted" else "provider_error")
             await self._settle_async_questions(turn_handle.id, outcome=outcome)
             return
@@ -3378,9 +3408,27 @@ class CodexAgent(BaseAgent):
                 turn_id = getattr(payload, "turn_id", None) or getattr(self._current_turn, "id", None)
                 ref = NativeMessageRef("codex_item", identity, turn_id) if identity else None
                 self._completion_activity(first_ref=ref)
+                if ref is not None and getattr(inner, "type", None) == "userMessage":
+                    from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+                    from twicc.context_injection import strip_context_blocks
+                    from twicc.providers.codex.compute import _is_internal_resume_message
+
+                    content = [{"type": "text", "text": getattr(block, "text", "")}
+                               for block in getattr(inner, "content", ()) if getattr(block, "type", None) == "text"]
+                    parsed = {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+                        "type": "UserMessage", "content": content,
+                    }}}
+                    text = strip_context_blocks("".join(block["text"] for block in content))
+                    if not text.lstrip().startswith(SHELL_NOTICE_HEADER) and not _is_internal_resume_message(parsed):
+                        client_id = getattr(inner, "client_id", None)
+                        client_ref = NativeMessageRef("codex_client", client_id) if client_id else None
+                        user_ref = client_ref if client_ref in self._timeline_input_refs.values() else ref
+                        self._timeline_observe_message(user_ref, role="user")
                 if (method == "item/completed" and getattr(inner, "type", None) == "agentMessage"
                         and _enum_value(getattr(inner, "phase", None)) in {None, "final_answer"}):
                     if getattr(inner, "text", ""):
+                        if ref is not None and _enum_value(getattr(inner, "phase", None)) == "final_answer":
+                            self._timeline_observe_message(ref, role="assistant")
                         self._completion_finals[turn_id] = ref or NativeMessageRef("unresolved", "", turn_id)
 
         if method in {"item/started", "item/completed", "turn/completed"} and not getattr(self, "ephemeral", False):

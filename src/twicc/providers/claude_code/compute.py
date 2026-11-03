@@ -2793,11 +2793,17 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
             if verdict is False:
                 return event('continuing')
             if text and text.strip():
-                return (CompletionObservation('final', ref_kind or 'unresolved', native_id, line_num),)
+                return (CompletionObservation('final' if verdict is True else 'candidate_final',
+                                              ref_kind or 'unresolved', native_id, line_num),)
             return event('activity')
         if self.is_tool_result_item(parsed):
             return event('progress')
         if kind == 'user' and self.compute_item_kind(parsed) == ItemKind.USER_MESSAGE:
+            from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER
+            from twicc.context_injection import strip_context_blocks
+
+            if text and strip_context_blocks(text).lstrip().startswith(SHELL_NOTICE_HEADER):
+                return event('internal_user_message')
             return event('user_message')
         return ()
 
