@@ -365,3 +365,27 @@ def test_a_filter_that_can_never_match_still_reads_the_after_id_range(projects, 
     # The range still decides ``truncated``: the client must reload when it overflows.
     monkeypatch.setattr(timeline_feed, "AFTER_ID_CAP", 2)
     assert call(after_id=cursor.id, **params).json()["truncated"] is True
+
+
+@pytest.mark.parametrize("kind", ["user_message.sent", "assistant_message.sent"])
+@pytest.mark.parametrize("scope", ["project", "workspace", "global"])
+def test_saved_messages_follow_current_session_visibility_in_every_scope(projects, kind, scope):
+    from twicc.core.services.session_timeline import record_event_sync
+
+    a, b = projects
+    make_session(a, "message-visible")
+    secret = make_session(a, "message-hidden", hidden=True)
+    data = {"text": "**Saved message**", "source_refs": [{"kind": "codex_item", "native_id": "message"}],
+            "source_line": 1}
+    visible = record_event_sync(kind, session_id="message-visible", project_id=a.id, actor="agent", data=data)
+    hidden = record_event_sync(kind, session_id=secret.id, project_id=a.id, actor="agent", data=data)
+    params = {"project_ids": a.id} if scope == "project" else (
+        {"project_ids": f"{a.id},{b.id}"} if scope == "workspace" else {})
+    for filters in ({}, {"families": "messages"}):
+        assert ids(call(**params, **filters).json()) == [visible.id]
+        assert ids(call(**params, **filters, after_id=0).json()) == [visible.id]
+        assert call(**params, **filters, session=secret.id).json()["events"] == []
+    Session.objects.filter(pk=secret.pk).update(hidden=False)
+    shown = call(**params, families="messages").json()
+    assert ids(shown) == [hidden.id, visible.id]
+    assert shown["events"][0]["data"] == data

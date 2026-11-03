@@ -368,3 +368,14 @@ test('no "automatic" tag when the wording already says it: a known end reason, a
     assert.deepEqual(tagsOf('settings.changed', { ...changes, reason: 'switch-hybrid' }), [])
     assert.deepEqual(tagsOf('settings.changed', { ...changes, reason: '' }), ['automatic'])
 })
+
+
+test('message labels identify the role from kind, while origin remains a separate author label', () => {
+    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant final message']]) {
+        const vm = describe(kind, { actor: 'external', via: 'mcp_external', actor_name: 'ChatGPT', data: { text: 'Saved secret text' } })
+        assert.equal(words(vm), label)
+        assert.ok(!vm.tooltip.includes('Saved secret text'))
+        assert.ok(!vm.author.parts.map(part => part.text ?? '').join('').includes(label))
+        assert.equal(vm.severity, 'neutral')
+    }
+})

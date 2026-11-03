@@ -20,6 +20,7 @@ test('the keys and labels of the global constraints', () => {
         { value: 'sessions', label: 'Sessions', hint: 'created, renamed' },
         { value: 'processes', label: 'Processes', hint: 'started, stopped' },
         { value: 'turns', label: 'Turns', hint: 'started, ended' },
+        { value: 'messages', label: 'Messages', hint: 'user messages, assistant finals' },
         { value: 'waits', label: 'Waiting for you', hint: 'approvals, questions' },
         { value: 'settings', label: 'Settings', hint: 'model, effort, permissions' },
         { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned, detached' },
@@ -164,4 +165,11 @@ test('an unknown value in a list counts nowhere', () => {
     assert.deepEqual(groupPills(bogus, { providerLabel }).map((pill) => pill.group), ['families'])
     const onlyBogus = filters({ providers: ['other'] })
     assert.equal(activeCount(onlyBogus), 0)
+})
+
+
+test('the Messages family serializes without changing the default All view', () => {
+    assert.deepEqual(toQuery(filters({ families: ['messages'] })), { families: 'messages' })
+    assert.equal(createFilters().view, 'all')
+    assert.equal(groupPills(filters({ families: ['messages'] }), { providerLabel })[0].shown[0], 'Messages')
 })

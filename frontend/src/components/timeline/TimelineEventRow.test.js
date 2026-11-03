@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as Vue from 'vue'
+import { Message } from '../../../tests/helpers/timelineMessageComponent.js'
 
 import { declarationsOf } from '../../../tests/helpers/cssDeclarations.js'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
@@ -39,6 +40,7 @@ const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url),
     '../project/ProjectBadge.vue': ProjectBadge,
     './TimelineSessionMention.vue': Mention,
     './TimelineEventLine.vue': Line,
+    './TimelineMessage.vue': Message,
 })
 
 const sessions = {
@@ -692,4 +694,60 @@ test('the author run rule CSS: in the gap between the icons and the text, from t
     // The height the last row's rule leaves for the author line is the line's own height.
     assert.equal(declarationsOf(style, '.timeline-author').get('line-height'), '1.5')
     assert.equal(declarationsOf(style, '.timeline-event-line').get('--timeline-author-height'), 'calc(var(--wa-font-size-xs) * 1.5)')
+})
+
+
+test('message rows expand saved text without navigation, filter actions, or read-state changes', async t => {
+    const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Message expansion must not request or update a session') })
+    for (const [kind, label] of [['user_message.sent', 'User message'], ['assistant_message.sent', 'Assistant final message']]) {
+        const emitted = []
+        const event = make(kind, { data: { text: '**Saved** ' + 'x'.repeat(500) } })
+        const root = await render(t, [event], { emitted, sessionFilterId: 's1' })
+        assert.equal(textOf(byClass(root, 'timeline-wording')[0]), label)
+        assert.equal(textOf(byClass(root, 'timeline-session-title')[0]), 'Fix the build')
+        assert.equal(textOf(byClass(root, 'timeline-time')[0]), '14:32')
+        const linksBefore = sessionLinks(root).map(link => link.props['data-to'])
+        const [toggle] = descendants(root, node => node.type === 'button' && node.props['aria-expanded'] !== undefined)
+        assert.ok(toggle, 'the existing row contains its saved-message control')
+        assert.equal(toggle.props.type, 'button', 'native buttons support Enter and Space activation')
+        assert.equal(toggle.props.tabindex, undefined, 'the control remains in native keyboard focus order')
+        // A native button dispatches a click with detail 0 for Enter/Space activation.
+        toggle.props.onClick({ detail: 0 })
+        await flush()
+        assert.equal(toggle.props['aria-expanded'], 'true')
+        assert.equal(descendants(root, node => node.type === 'article')[0].props['data-markdown-source'], event.data.text)
+        assert.deepEqual(emitted, [])
+        assert.equal(fetch.mock.callCount(), 0)
+        assert.deepEqual(sessionLinks(root).map(link => link.props['data-to']), linksBefore)
+        assert.equal(onlyControls(root)[0].props['aria-pressed'], 'true')
+        for (const node of descendants(root, () => true)) {
+            assert.ok(!String(node.props.title ?? '').includes(event.data.text), 'full text stays out of titles')
+            assert.ok(!String(node.props['data-to'] ?? '').includes(event.data.text), 'full text stays out of routes')
+        }
+    }
+})
+
+
+test('a recycled timeline row collapses the previous message before it shows the next event', async t => {
+    const context = { sessions, labelsFor: () => null, time: { locale: 'en-GB', timeZone: 'UTC' } }
+    const rowFor = event => buildTimelineRows([event], { sessions, scope: { kind: 'global' }, dayKeyOf: () => 'd', dayLabelOf: () => 'Day' })
+        .find(row => row.type === 'event')
+    const row = Vue.ref(rowFor(make('assistant_message.sent', { data: { text: '**First final**' } })))
+    const { renderer, root } = makeRenderer()
+    const app = renderer.createApp({ render: () => Vue.h(Row, { row: row.value, context }) })
+    app.mount(root)
+    t.after(() => app.unmount())
+    await flush()
+    const controls = () => descendants(root, node => node.type === 'button' && node.props['aria-expanded'] !== undefined)
+    const firstControl = controls()[0]
+    firstControl.props.onClick()
+    await flush()
+    assert.equal(descendants(root, node => node.type === 'article').length, 1)
+    row.value = rowFor(make('assistant_message.sent', { data: { text: '**Second final**' } }))
+    await flush()
+    assert.equal(controls()[0], firstControl, 'the row reuses its existing message component')
+    assert.equal(controls()[0].props['aria-expanded'], 'false')
+    assert.equal(descendants(root, node => node.type === 'article').length, 0)
+    assert.match(textOf(root), /Second final/)
+    assert.doesNotMatch(textOf(root), /First final/)
 })

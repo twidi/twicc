@@ -328,11 +328,12 @@ test('the panel lists the three groups in constant order, with the family hints 
     assert.ok(boxes.flat().every((box) => box.props.checked === false))
     // Checking goes through the store's action, and the box shows the store's state.
     boxes[1][1].props.onChange({ target: boxes[1][1] })
-    boxes[0][6].props.onChange({ target: boxes[0][6] })
+    const messageBox = boxes[0].find(box => textOf(byClass(box, 'timeline-filter-option-label')[0]) === 'Messages')
+    messageBox.props.onChange({ target: messageBox })
     await flush()
-    assert.deepEqual(actions, [['toggle', 'p1', 'providers', 'codex'], ['toggle', 'p1', 'families', 'twicc']])
+    assert.deepEqual(actions, [['toggle', 'p1', 'providers', 'codex'], ['toggle', 'p1', 'families', 'messages']])
     assert.equal(boxes[1][1].props.checked, true)
-    assert.equal(boxes[0][6].props.checked, true)
+    assert.equal(messageBox.props.checked, true)
     assert.deepEqual(store.filtersFor('p1').providers, ['codex'])
     // Reset clears the panel.
     const [reset] = descendants(byClass(popoverOf(root), 'timeline-filter-panel-actions')[0], (node) => node.type === 'wa-button')

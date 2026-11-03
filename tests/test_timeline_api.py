@@ -658,3 +658,37 @@ def test_an_instance_family_filter_reads_the_instance_rows_only(busy, scope):
         sql, plan = plan_of(queries[0])
         assert '"session_id" IS NULL' in sql
         assert "idx_timeline_session (session_id=?" in plan and "USE TEMP B-TREE" not in plan, plan
+
+
+@pytest.mark.parametrize("scope", ["project", "workspace", "global"])
+@pytest.mark.parametrize("kind", ["user_message.sent", "assistant_message.sent"])
+def test_message_snapshots_keep_saved_text_in_every_feed_scope(projects, tmp_path, scope, kind):
+    from twicc.core.services.session_timeline import record_event_sync
+
+    a, b, c = projects
+    source = tmp_path / "saved-message.jsonl"
+    source.write_text("Original source text", encoding="utf-8")
+    session = make_session(a, "saved-message", title="Saved session")
+    Session.objects.filter(pk=session.pk).update(file_path=str(source))
+    text = "    indented code\n**Saved Markdown**  \n" + "x" * 10000
+    payload = {"text": text, "source_refs": [{"kind": "codex_item", "native_id": "saved-item", "turn_id": "turn"}],
+               "source_line": 1}
+    saved = record_event_sync(kind, session_id=session.id, project_id=a.id, actor="agent", data=payload,
+                              occurred_at=T0 + timedelta(seconds=2))
+    other = record_event_sync(kind, session_id="other-scope", project_id=c.id, actor="agent", data=payload,
+                              occurred_at=T0 + timedelta(seconds=1))
+    turn = make_event(project=a, session_id=session.id, at=0)
+    source.write_text("Replaced source text", encoding="utf-8")
+    params = {"project_ids": a.id} if scope == "project" else (
+        {"project_ids": f"{a.id},{b.id}"} if scope == "workspace" else {})
+    expected = [saved.id] if scope != "global" else [saved.id, other.id]
+    assert ids(call(**params).json()) == [*expected, turn.id]
+    for extra in ({"families": "messages"}, {"families": "messages", "after_id": 0}):
+        body = call(**params, **extra).json()
+        assert ids(body) == expected  # after_id orders by insertion id, independently of occurrence time
+        event = next(event for event in body["events"] if event["id"] == saved.id)
+        assert event["kind"] == kind and event["data"] == payload
+        assert event["session_id"] == session.id and event["provider"] == "codex"
+        assert event["occurred_at"] == "2026-10-14T10:00:02.000000Z"
+        assert body["sessions"][session.id]["title"] == "Saved session"
+    assert ids(call(**params, families="messages", session=session.id).json()) == [saved.id]

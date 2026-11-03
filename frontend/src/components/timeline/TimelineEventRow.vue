@@ -25,6 +25,7 @@ import { describeEvent } from '../../utils/timeline/describeEvent'
 import ProjectBadge from '../project/ProjectBadge.vue'
 import TimelineSessionMention from './TimelineSessionMention.vue'
 import TimelineEventLine from './TimelineEventLine.vue'
+import TimelineMessage from './TimelineMessage.vue'
 
 const props = defineProps({
     /** An event row of `buildTimelineRows`. */
@@ -44,6 +45,7 @@ const dataStore = useDataStore()
 
 const vm = computed(() => describeEvent(props.row.event, props.context))
 const identity = computed(() => props.row.identity)
+const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
 // A project the store does not know (deleted) is shown as plain text, never as a broken link.
 const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.getProject(identity.value.projectId) : false))
 
@@ -106,6 +108,13 @@ function toggleSession() {
             :instance="row.instance"
             :author-run="row.authorRun ?? null"
         />
+        <TimelineMessage
+            v-if="isMessage"
+            class="timeline-row-message"
+            :event-id="row.event.id"
+            :kind="row.event.kind"
+            :data="row.event.data"
+        />
         </div>
     </div>
 </template>
@@ -162,6 +171,12 @@ function toggleSession() {
 /* No card, but the same content edges as the cards (padding and border): the time column stays one column. */
 .timeline-row--instance .timeline-row-card {
     padding-inline: calc(var(--timeline-card-padding) + 1px);
+}
+
+/* Align the saved message with the event wording. The scroller measures its expanded height normally. */
+.timeline-row-message {
+    margin-inline-start: calc(var(--timeline-provider-width) + var(--timeline-provider-gap) + 1.25rem + var(--wa-space-s));
+    padding-block-end: var(--wa-space-xs);
 }
 
 /* The block header: title truncates first; the project keeps its size up to half the line, then truncates. */

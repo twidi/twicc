@@ -15,6 +15,8 @@ export function compileComponent(url, dependencies = {}) {
         if (names.startsWith('{')) return `const ${names.replace(/\bas\b/g, ':')} = modules[${JSON.stringify(path)}];`
         return `const ${names} = modules[${JSON.stringify(path)}];`
     }).replace(/export function /g, 'function ').replace('export default', 'return')
+    // Resolve explicitly supplied lazy dependencies without loading browser-only components in Node.
+    code = code.replace(/import\(['"]([^'"]+)['"]\)/g, (expression, path) => (modules[path] ? `Promise.resolve(modules[${JSON.stringify(path)}])` : expression))
     return new Function('modules', code)(modules)
 }
 
