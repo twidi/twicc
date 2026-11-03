@@ -48,8 +48,15 @@ test('a multiline preview reports more content and closes at the end of the comp
     assert.equal(moreChanges.at(-1), true)
     assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
     assert.equal(articles(root).length, 0)
-    props.expanded = true
+    const [preview] = byClass(root, 'timeline-message-excerpt')
+    assert.equal(preview.type, 'button', 'the preview supports native keyboard activation')
+    assert.equal(preview.props.type, 'button')
+    assert.equal(preview.props['aria-controls'], 'saved-message')
+    assert.equal(preview.props['aria-expanded'], 'false')
+    preview.props.onClick({ detail: 0 })
     await flush()
+    assert.equal(props.expanded, true)
+    assert.equal(preview.props.disabled, true, 'the hidden measurement control cannot receive focus')
     assert.equal(byClass(root, 'timeline-message-preview')[0].props['aria-hidden'], 'true')
     assert.equal(moreChanges.at(-1), true)
     assert.equal(articles(root)[0].props['data-markdown-source'], '**Saved**\n\nFull text')
@@ -63,7 +70,8 @@ test('a multiline preview reports more content and closes at the end of the comp
     assert.equal(articles(root).length, 0)
     assert.equal(regions(root).length, 0)
     assert.equal(byClass(root, 'timeline-message-preview')[0].props['aria-hidden'], undefined)
-    assert.equal(toggles.length, 1)
+    assert.equal(preview.props.disabled, false)
+    assert.equal(toggles.length, 2)
 })
 
 test('reported overflow follows available width, including while the message is expanded', async t => {
@@ -96,11 +104,12 @@ test('recycling resets expansion and reports whether the new message has more co
     assert.match(textOf(root), /Second snapshot/)
 })
 
-test('short messages have no chevron; controlled expansion still shows their complete Markdown', async t => {
+test('short messages open from their preview without a chevron', async t => {
     const { props, root } = await mount(t, { kind: 'user_message.sent', data: { text: '**Short**' }, expanded: false })
     assert.equal(byClass(root, 'timeline-message-chevron').length, 0)
-    props.expanded = true
+    byClass(root, 'timeline-message-excerpt')[0].props.onClick()
     await flush()
+    assert.equal(props.expanded, true)
     assert.equal(articles(root)[0].props['data-markdown-source'], '**Short**')
     assert.equal(textOf(byClass(root, 'timeline-message-close')[0]), 'Close message')
 })

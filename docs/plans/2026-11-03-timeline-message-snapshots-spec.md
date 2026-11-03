@@ -71,8 +71,9 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 - Show a chevron immediately after the message label only when more lines or horizontal overflow remain.
 - Point it down while collapsed and up while expanded. Keep it hidden for a message that fits on one line.
 - The label and its chevron form one native toggle button for the complete saved Markdown, including short messages.
+- The collapsed preview is also a native button that opens the message, including short messages.
 - While expanded, hide the preview. Put `Close message` after the complete text.
-- Keep native keyboard controls and return focus to the message label when the message closes.
+- Keep native keyboard controls. Move focus to the message label after opening from the preview or closing the message.
 - The default All view includes the new message entries. Existing scope and visibility rules still apply.
 - Keep message arrival separate from confirmed turn completion, unread state, and completion notifications.
 - Do not change the session's Conversation display mode or add a new display-mode system.

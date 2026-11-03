@@ -58,7 +58,17 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
             :class="{ 'timeline-message-preview--measurement': expanded }"
             :aria-hidden="expanded ? 'true' : undefined"
         >
-            <p ref="excerptRef" class="timeline-message-excerpt">{{ vm.excerpt }}</p>
+            <button
+                v-if="vm.expandable"
+                ref="excerptRef"
+                type="button"
+                class="timeline-message-control timeline-message-excerpt"
+                :aria-expanded="String(expanded)"
+                :aria-controls="regionId"
+                :disabled="expanded"
+                @click="toggle"
+            >{{ vm.excerpt }}</button>
+            <p v-else ref="excerptRef" class="timeline-message-excerpt">{{ vm.excerpt }}</p>
         </div>
         <div
             v-if="expanded && vm.expandable"
@@ -94,12 +104,15 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
 }
 
 .timeline-message-excerpt {
+    display: block;
+    width: 100%;
     min-width: 0;
     margin: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--wa-color-text-quiet);
+    text-align: start;
 }
 
 .timeline-message-control {

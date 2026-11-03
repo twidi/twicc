@@ -717,9 +717,12 @@ test('message rows expand saved text without navigation, filter actions, or read
         assert.equal(chevron.props.name, 'chevron-down')
         assert.equal(byClass(byClass(root, 'timeline-message-preview')[0], 'timeline-message-chevron').length, 0)
         // A native button dispatches a click with detail 0 for Enter/Space activation.
-        toggle.props.onClick({ detail: 0 })
+        const [preview] = byClass(root, 'timeline-message-excerpt')
+        assert.equal(preview.type, 'button')
+        preview.props.onClick({ detail: 0 })
         await flush()
         assert.equal(toggle.props['aria-expanded'], 'true')
+        assert.equal(toggle.focused, true, 'opening from the preview moves focus to the visible label')
         assert.equal(descendants(root, node => node.type === 'article')[0].props['data-markdown-source'], event.data.text)
         assert.deepEqual(emitted, [])
         assert.equal(fetch.mock.callCount(), 0)
