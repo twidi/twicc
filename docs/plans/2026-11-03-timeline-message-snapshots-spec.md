@@ -33,6 +33,12 @@ Record each retained message once its complete text is available, without waitin
 Ingestion may lag provider delivery. Do not capture an earlier message as a substitute.
 Optimistic or failed local sends do not become confirmed message events without source evidence.
 
+Preserve each message group's first native timestamp as its event time.
+Within one capture batch, source order breaks equal-time ties.
+Across separate capture batches with strictly equal native timestamps, the existing event-ID arrival tie-break applies.
+A later-completed group can therefore follow an earlier-captured group, even if its first source line precedes it.
+Capture complete messages immediately. Keep the existing feed, cursor, and merge ordering.
+
 ## Storage and associations
 
 The existing event columns identify the session, provider, and occurrence time.
@@ -50,6 +56,9 @@ Do not require a user message for an automatic turn.
 
 The text and associations remain readable after the logical journal expires: closed intervals after 48 hours and open intervals after seven days.
 Use timeline data for this durable history. Do not extend journal retention.
+A live interval can outlast its open journal row.
+Its existing verified runtime identities and opening source scope still authorize immediate capture during a logical hold.
+Keep the current-source, provider, incarnation, epoch, source-floor, new-only, and exact-terminal checks.
 Retry, reconnect, restart, and recompute must not duplicate message events or replay old messages as new.
 Message snapshots follow the existing timeline lifecycle. Session source changes do not rewrite their saved text.
 
@@ -65,7 +74,9 @@ Message snapshots follow the existing timeline lifecycle. Session source changes
 
 | Case | Expected result |
 | --- | --- |
-| User A, user B during work, final B, final A | Two `user_message.sent` events followed by two `assistant_message.sent` events, in source order within the session. |
+| User A, user B during work, final B, final A | Two `user_message.sent` events followed by two `assistant_message.sent` events, in source order within the session, except exact native-time ties across separate capture batches use event-ID arrival order. |
+| Equal-time Claude groups complete in separate batches, B before A | Capture B immediately, then A. Preserve both first native timestamps; event IDs retain arrival order. |
+| Verified markerless final after open-journal cleanup, with a child hold | Capture the complete current-source message immediately, in either source/proof order; keep the logical interval open. |
 | Several provider finals before one confirmed completion | One event per final message and the existing single logical end. |
 | Commentary, thinking, and tools between finals | No message entries for that material. |
 | Claude final split across text records | One complete assistant snapshot. |

@@ -9,6 +9,16 @@ class NativeMessageRef(NamedTuple):
     turn_id: str | None = None
 
 
+class VerifiedMessageRef(NamedTuple):
+    """Runtime timeline proof with the interval's opening source scope."""
+
+    ref: NativeMessageRef
+    provider: str
+    source_floor: int
+    storage_incarnation: str | None
+    history_epoch: int | None
+
+
 class CompletionCandidate(NamedTuple):
     turn_id: str
     revision: int

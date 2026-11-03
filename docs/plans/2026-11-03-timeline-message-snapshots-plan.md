@@ -79,7 +79,11 @@ Previously saved turn references retain eligibility across restart; the new boun
 Batch sync never creates new candidates. It may resolve only exact references already saved by live turns.
 Recomputation selects no messages. Existing pending references may resolve when their current content becomes readable.
 Historical first-discovery files do not qualify by insertion alone.
-Preserve the first source timestamp as `occurred_at`, and source line as metadata. Native source order breaks equal-time capture ties.
+Preserve the first source timestamp as `occurred_at`, and source line as metadata.
+Within one capture batch, native source order breaks equal-time ties.
+Across separate capture batches with strictly equal native timestamps, preserve the existing event-ID arrival tie-break.
+Capture each complete message immediately, even when another group's earlier source prefix is incomplete.
+This bounded exception keeps native timestamps and the existing feed, cursor, and merge ordering.
 
 **Complete text.** Read current content through the existing content-storage readers.
 Use the existing user-message classification after ingestion removes internal context and attachment manifests.
@@ -97,8 +101,8 @@ An explicit nonfinal verdict or Codex `delivery=async` prevents final capture.
 **Tests:** Create `tests/test_timeline_messages.py`; extend `tests/test_timeline_enums_sync.py`, `tests/test_timeline_filters_sync.py`, `tests/test_timeline_filters.py`, and `tests/test_watcher_catch_up.py`.
 
 **Interfaces:**
-- Produce `record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int], timeline_since: datetime | None, verified_final_refs: Sequence[NativeMessageRef] = ()) -> None` in `timeline_messages.py`.
-- Produce `record_verified_messages(session_id: str, *, refs: Sequence[NativeMessageRef], timeline_since: datetime) -> None` for Task 2's already-admitted writer.
+- Produce `record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int], timeline_since: datetime | None, verified_final_refs: Sequence[VerifiedMessageRef] | None = None) -> None` in `timeline_messages.py`.
+- Produce `record_verified_messages(session_id: str, *, refs: Sequence[VerifiedMessageRef], timeline_since: datetime) -> None` for Task 2's already-admitted writer.
 - Produce `recover_referenced_messages(session_id: str) -> None` for existing ingestion publication paths; resolve only saved live-turn references.
 - Produce `BaseProviderHelpers.extract_timeline_text_from_parsed(parsed: dict) -> str`, implemented by both providers with verbatim text extraction.
 - Extend `BaseSessionCompute.sync_session_slice(..., limits: LiveSyncLimits, timeline_since: datetime | None = None) -> LiveSyncResult`.
@@ -218,9 +222,16 @@ Pass the selected references explicitly into existing timeline hooks for normal,
 Leave boot-estimated and pre-rollout turns without invented references.
 Invoke Task 1's exact-reference recorder during native final publication so source-first missing-marker messages become eligible before logical completion.
 Use the watcher's capture boundary for that session, not the agent's send time; expose it through the existing watcher instance.
-For proof-first arrival during a logical hold, live capture consults existing `LogicalTurn.final_refs` in the current source scope.
+For proof-first arrival during a logical hold, live capture also uses copied verified runtime identities.
+Copy each identity with its existing opening provider, source floor, storage incarnation, and history epoch in `VerifiedMessageRef`.
+The runtime copy survives the journal's seven-day cleanup without recreating a row or adding persistence.
+Both live capture and final publication validate this opening scope against the current source.
+Retained `LogicalTurn.final_refs` remain usable under their existing scope and finality rules.
+A missing journal row must not suppress exact verified-message capture or change completion publication results.
 After turn publication, saved final references in timeline data provide durable proof without the logical journal.
-Call `recover_referenced_messages` from `sync_session_slice` and `_apply_session_complete_final`, after current content becomes readable.
+In each live `sync_session_slice`, use the new-line/group recorder to resolve matching pending references.
+Do not run full `recover_referenced_messages` on each live slice.
+Run explicit recovery after turn publication and from `_apply_session_complete_final` when current content becomes readable.
 The latter hook covers initial-sync metadata publication. Recompute can only resolve already saved references, never select a new candidate.
 Resolve only explicit saved live-turn references, deduplicate through the same event keys, and ignore absent sources.
 This completes pending new captures; it does not scan unreferenced transcript messages or create new historical candidates.

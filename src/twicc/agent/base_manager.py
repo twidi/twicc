@@ -25,7 +25,7 @@ from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
 from .exceptions import SendDeliveryError
-from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef
+from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, NativeMessageRef, VerifiedMessageRef
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
@@ -122,12 +122,17 @@ class BaseAgentManager:
             if agent.state != AgentState.DEAD
         ]
 
-    def timeline_verified_message_refs(self, session_id: str) -> tuple[NativeMessageRef, ...] | None:
+    def timeline_verified_message_refs(self, session_id: str) -> tuple[VerifiedMessageRef, ...] | None:
         """Copy verified interval identities before a live slice enters its worker."""
         agent = self._agents.get(session_id)
         if agent is None or agent.ephemeral:
             return None
-        return tuple(dict.fromkeys(ref for refs in tuple(agent._timeline_message_refs.values()) for ref in tuple(refs)))
+        return tuple(
+            VerifiedMessageRef(ref, agent.provider.value, opening[1], opening[2], opening[3])
+            for turn_id, refs in tuple(agent._timeline_message_refs.items())
+            if (opening := agent._completion_openings.get(turn_id)) is not None
+            for ref in tuple(refs)
+        )
 
     def get_agent_info(self, session_id: str) -> AgentInfo | None:
         """Return a snapshot for a single agent, or ``None`` if unknown."""
@@ -882,15 +887,19 @@ class BaseAgentManager:
                     bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
             stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
             verified_refs = [ref for ref in snapshot.final_refs if ref._asdict() in message_refs]
-            if stored and verified_refs:
+            if verified_refs:
                 from twicc.core.services.timeline_messages import record_verified_messages
 
                 if agent.provider.value == "codex":
                     from twicc.providers.codex.sessions_watcher import get_watcher
                 else:
                     from twicc.providers.claude_code.sessions_watcher import get_watcher
-                record_verified_messages(agent.session_id, refs=verified_refs,
-                                         timeline_since=get_watcher().timeline_since)
+                record_verified_messages(
+                    agent.session_id,
+                    refs=[VerifiedMessageRef(ref, agent.provider.value, source_floor, incarnation, epoch)
+                          for ref in verified_refs],
+                    timeline_since=get_watcher().timeline_since,
+                )
             # Previously opened rows can expire while native work continues. Their
             # actual completion still owns the public state transition, once.
             if not journal_exists and snapshot.outcome is not None and state is not None:

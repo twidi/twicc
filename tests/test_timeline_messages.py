@@ -9,7 +9,7 @@ import pytest
 from django.utils import timezone
 
 from tests import content_storage_helpers
-from twicc.agent.completion_types import NativeMessageRef
+from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
 from twicc.core.models import LogicalTurn, Project, Session, TimelineEvent
 from twicc.providers.live_sync import LiveSyncLimits
 
@@ -48,13 +48,14 @@ def live_session(request, tmp_path):
                      'content': [{'type': 'text' if user else 'Text', 'text': text}],
                      'phase': None if final is None else ('final_answer' if final else 'commentary'), **extra}}}
 
-    def append(*records, capture=True, limit=500, since=None):
+    def append(*records, capture=True, limit=500, since=None, verified_final_refs=None):
         with path.open('ab') as stream:
             for record in records:
                 stream.write(orjson.dumps(record) + b'\n')
         while True:
             kwargs = {'timeline_since': boundary if since is None else since} if capture else {}
-            result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(limit), **kwargs)
+            result = compute.sync_session_slice(session.id, path, limits=LiveSyncLimits(limit),
+                verified_final_refs=verified_final_refs, **kwargs)
             if not result.has_more:
                 break
 
@@ -65,6 +66,12 @@ def live_session(request, tmp_path):
     return SimpleNamespace(session=session, path=path, compute=compute, provider=provider, boundary=boundary,
                            message=message, append=append, events=events,
                            texts=lambda: [event.data['text'] for event in events()])
+
+
+def verified(fixture, *refs):
+    session = fixture.session
+    return [VerifiedMessageRef(ref, session.provider, 0, session.storage_incarnation, session.history_epoch)
+            for ref in refs]
 
 
 def test_records_all_users_and_finals_in_source_order(live_session):
@@ -133,13 +140,13 @@ def test_verified_uuid_waits_until_exact_terminal_is_indexed(live_session):
     if f.provider != 'claude_code':
         pytest.skip('Claude group protocol')
     f.append(f.message('prefix', 'first', message_id='api-message', final=None))
-    record_verified_messages(f.session.id, refs=[NativeMessageRef('claude_message', 'api-message')],
+    record_verified_messages(f.session.id, refs=verified(f, NativeMessageRef('claude_message', 'api-message')),
                              timeline_since=f.boundary)
-    record_verified_messages(f.session.id, refs=[NativeMessageRef('claude_uuid', 'terminal')],
+    record_verified_messages(f.session.id, refs=verified(f, NativeMessageRef('claude_uuid', 'terminal')),
                              timeline_since=f.boundary)
     assert f.texts() == []
     f.append(f.message('terminal', 'last', message_id='api-message', final=None))
-    record_verified_messages(f.session.id, refs=[NativeMessageRef('claude_uuid', 'terminal')],
+    record_verified_messages(f.session.id, refs=verified(f, NativeMessageRef('claude_uuid', 'terminal')),
                              timeline_since=f.boundary)
     assert f.texts() == ['first\nlast']
 
@@ -282,7 +289,7 @@ def test_verified_nonfinal_verdict_always_wins(live_session):
     f.append(f.message('nonfinal', 'working', final=False))
     kind = 'claude_uuid' if f.provider == 'claude_code' else 'codex_item'
     record_verified_messages(f.session.id,
-        refs=[NativeMessageRef(kind, 'nonfinal', 'native-turn' if f.provider == 'codex' else None)],
+        refs=verified(f, NativeMessageRef(kind, 'nonfinal', 'native-turn' if f.provider == 'codex' else None)),
         timeline_since=f.boundary)
     assert f.texts() == []
 
@@ -302,7 +309,7 @@ def test_saved_reference_keeps_verified_capture_eligible_after_restart(live_sess
     SessionItem.objects.create(session=f.session, line_num=1, kind=ItemKind.ASSISTANT_MESSAGE,
         timestamp=timezone.now(), message_id='late' if f.provider == 'claude_code' else None,
         content='', current_content=content)
-    record_verified_messages(f.session.id, refs=[ref], timeline_since=timezone.now() + timedelta(days=1))
+    record_verified_messages(f.session.id, refs=verified(f, ref), timeline_since=timezone.now() + timedelta(days=1))
     assert f.texts() == ['delayed']
 
 
@@ -512,3 +519,59 @@ def test_persisted_shell_notice_does_not_create_user_snapshot(live_session):
     f = live_session
     f.append(f.message('shell-notice', SHELL_NOTICE_HEADER + ': background shell(s) still running', user=True))
     assert f.texts() == []
+
+
+def test_separate_slice_equal_timestamps_keep_immediate_capture_arrival_order(live_session):
+    from twicc.core.services.timeline_feed import fetch_feed, parse_request
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude split groups')
+    f.append(f.message('a-prefix', 'A1', message_id='a', final=None),
+             f.message('b-prefix', 'B1', message_id='b', final=None))
+    f.append(f.message('b-final', 'B2', message_id='b'))
+    assert f.texts() == ['B1\nB2']
+    immediate = fetch_feed(parse_request({'session': f.session.id}))
+    assert [event['data']['text'] for event in immediate['events']] == ['B1\nB2']
+    f.append(f.message('a-final', 'A2', message_id='a'))
+    # Separate batches preserve the existing native-time/event-ID feed key.
+    events = list(TimelineEvent.objects.filter(session_id=f.session.id).order_by('occurred_at', 'id'))
+    assert [event.data['text'] for event in events] == ['B1\nB2', 'A1\nA2']
+    assert [event.data['source_line'] for event in events] == [2, 1]
+    assert events[0].occurred_at == events[1].occurred_at
+    from django.utils.dateparse import parse_datetime
+    assert events[0].occurred_at == parse_datetime(f.message('unused', '')['timestamp'])
+    newest = fetch_feed(parse_request({'session': f.session.id, 'limit': '1'}))
+    assert newest['has_more']
+    last = newest['events'][-1]
+    older = fetch_feed(parse_request({'session': f.session.id, 'limit': '1',
+                                     'before': f"{last['occurred_at']},{last['id']}"}))
+    assert [event['data']['text'] for event in newest['events']] == ['A1\nA2']
+    assert [event['data']['text'] for event in older['events']] == ['B1\nB2']
+    assert not older['has_more']
+
+
+def test_live_slice_uses_scoped_runtime_proof_without_journal(live_session):
+    f = live_session
+    f.append(f.message('unrelated', 'working', final=None))
+    f.session.refresh_from_db()
+    ref = NativeMessageRef('claude_uuid' if f.provider == 'claude_code' else 'codex_item',
+                           'runtime-terminal', 'native-turn' if f.provider == 'codex' else None)
+    proof = VerifiedMessageRef(ref, f.provider, 1, f.session.storage_incarnation, f.session.history_epoch)
+    f.append(f.message('runtime-terminal', 'complete runtime final', final=None), verified_final_refs=(proof,))
+    assert f.texts() == ['complete runtime final']
+    assert not LogicalTurn.objects.filter(session_id=f.session.id).exists()
+
+
+def test_verified_publication_batch_keeps_first_source_order(live_session):
+    from twicc.core.services.timeline_messages import record_verified_messages
+    f = live_session
+    if f.provider != 'claude_code':
+        pytest.skip('Claude split groups')
+    f.append(f.message('a-prefix', 'A1', message_id='a', final=None),
+             f.message('b-prefix', 'B1', message_id='b', final=None),
+             f.message('b-final', 'B2', message_id='b', final=None),
+             f.message('a-final', 'A2', message_id='a', final=None))
+    record_verified_messages(f.session.id,
+        refs=verified(f, NativeMessageRef('claude_uuid', 'b-final'), NativeMessageRef('claude_uuid', 'a-final')),
+        timeline_since=f.boundary)
+    assert f.texts() == ['A1\nA2', 'B1\nB2']

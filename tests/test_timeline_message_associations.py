@@ -305,7 +305,8 @@ def test_explicit_hybrid_final_survives_later_unverified_candidate_and_stop(brid
 
 @pytest.mark.parametrize("status", ["failed", "interrupted", "completed"])
 @pytest.mark.parametrize("runtime_available", [True, False])
-def test_live_indexing_uses_verified_replacement_finals_during_open_interval(bridge, content_row_factory, status, runtime_available):
+@pytest.mark.parametrize("expired", [True, False])
+def test_live_indexing_uses_verified_replacement_finals_during_open_interval(bridge, content_row_factory, status, runtime_available, expired):
     from tests.test_codex_completion import make_agent, run, event
     manager, previous = bridge
     agent = make_agent(ephemeral=False)
@@ -338,6 +339,10 @@ def test_live_indexing_uses_verified_replacement_finals_during_open_interval(bri
     assert TimelineEvent.objects.get(kind=TimelineKind.TURN_STARTED).data["message_refs"]
     turn = LogicalTurn.objects.get(session_id=agent.session_id)
     assert turn.outcome is None and turn.final_refs == [final._asdict()]
+    if expired:
+        from twicc.logical_turn_cleanup_task import purge_logical_turns
+        LogicalTurn.objects.filter(pk=turn.pk).update(opened_at=timezone.now() - timedelta(days=8))
+        assert purge_logical_turns(now=timezone.now()) == 1
     index(agent, content_row_factory, final, 1, "candidate", final=False)
     runtime_refs = manager.timeline_verified_message_refs(agent.session_id) if runtime_available else None
     record_indexed_messages(agent.session_id, new_line_nums=[1], verified_final_refs=runtime_refs,
@@ -397,3 +402,162 @@ def test_closed_codex_markerless_final_uses_saved_refs_without_runtime(bridge, c
     record_indexed_messages(agent.session_id, new_line_nums=[1], timeline_since=timezone.now() + timedelta(days=1))
     end = TimelineEvent.objects.get(kind=TimelineKind.TURN_ENDED)
     assert linked_texts(end) == ["verified before logical end"]
+
+
+async def purge_open_interval(manager, agent):
+    from twicc.logical_turn_cleanup_task import purge_logical_turns
+
+    await manager._persist_completion(agent, agent.completion_controller.snapshot())
+    await asyncio.to_thread(lambda: LogicalTurn.objects.update(opened_at=timezone.now() - timedelta(days=8)))
+    assert await asyncio.to_thread(purge_logical_turns, now=timezone.now()) == 1
+    assert not await asyncio.to_thread(LogicalTurn.objects.exists)
+
+
+@pytest.mark.parametrize("provider", [Provider.CODEX, Provider.CLAUDE_CODE])
+@pytest.mark.parametrize("source_first", [True, False])
+def test_verified_markerless_final_after_journal_purge_captures_during_hold(
+    bridge, content_row_factory, provider, source_first,
+):
+    manager, agent = bridge
+    agent.provider = provider
+    Session.objects.filter(pk=agent.session_id).update(provider=provider.value)
+    final = NativeMessageRef("claude_uuid" if provider == Provider.CLAUDE_CODE else "codex_item",
+                             "answer-after-expiry", None if provider == Provider.CLAUDE_CODE else "physical")
+
+    async def scenario():
+        agent._completion_activity()
+        agent._completion_holds_changed(frozenset({"child"}))
+        await purge_open_interval(manager, agent)
+        if source_first:
+            await asyncio.to_thread(index, agent, content_row_factory, final, 1, "verified final after expiry", final=False)
+        agent._completion_provider_ended(final_ref=final)
+        # Capture must work even though persistence cannot update an expired row.
+        assert not await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        if source_first:
+            assert await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+                kind=TimelineKind.ASSISTANT_MESSAGE_SENT).values_list("data__text", flat=True))) == ["verified final after expiry"]
+        else:
+            await asyncio.to_thread(index, agent, content_row_factory, final, 1, "verified final after expiry", final=False)
+        await asyncio.to_thread(record_indexed_messages, agent.session_id, new_line_nums=[1],
+            timeline_since=timezone.now() - timedelta(minutes=1),
+            verified_final_refs=manager.timeline_verified_message_refs(agent.session_id))
+        agent._cancel_completion_timer()
+
+    with patch(f"twicc.providers.{provider.value}.sessions_watcher.get_watcher") as watcher:
+        watcher.return_value.timeline_since = timezone.now() - timedelta(minutes=1)
+        asyncio.run(scenario())
+    assert list(TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).values_list(
+        "data__text", flat=True)) == ["verified final after expiry"]
+    assert not LogicalTurn.objects.exists()
+    assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
+    assert agent.completion_controller.is_open
+
+
+@pytest.mark.parametrize("provider", [Provider.CODEX, Provider.CLAUDE_CODE])
+@pytest.mark.parametrize("invalid", ["provider", "incarnation", "epoch", "floor", "old", "current", "nonfinal"])
+def test_expired_journal_runtime_proof_preserves_source_boundaries(
+    bridge, content_row_factory, provider, invalid,
+):
+    manager, agent = bridge
+    agent.provider = provider
+    Session.objects.filter(pk=agent.session_id).update(provider=provider.value, storage_incarnation="original", history_epoch=1)
+    agent._completion_storage_incarnation = "original"
+    agent._completion_history_epoch = 1
+    agent._completion_source_floor = 1 if invalid == "floor" else 0
+    final = NativeMessageRef("claude_uuid" if provider == Provider.CLAUDE_CODE else "codex_item",
+                             "answer-scoped", None if provider == Provider.CLAUDE_CODE else "physical")
+
+    def source():
+        index(agent, content_row_factory, final, 1, "must not capture", final=False)
+        if invalid == "provider":
+            Session.objects.filter(pk=agent.session_id).update(provider=(
+                "claude_code" if provider == Provider.CODEX else "codex"))
+        elif invalid == "incarnation":
+            Session.objects.filter(pk=agent.session_id).update(storage_incarnation="replacement")
+        elif invalid == "epoch":
+            Session.objects.filter(pk=agent.session_id).update(history_epoch=2)
+        elif invalid == "old":
+            SessionItem.objects.update(timestamp=timezone.now() - timedelta(days=1))
+        elif invalid in {"current", "nonfinal"}:
+            row = SessionItem.objects.get(session_id=agent.session_id, line_num=1)
+            from twicc.core.content_storage.readers import effective_current, load_current
+            load_current([row])
+            parsed = orjson.loads(effective_current(row))
+            if provider == Provider.CLAUDE_CODE:
+                if invalid == "current":
+                    parsed["uuid"] = "replacement-uuid"
+                else:
+                    parsed["message"]["stop_reason"] = "tool_use"
+            elif invalid == "current":
+                parsed["payload"]["item"]["id"] = "replacement-item"
+            else:
+                parsed["payload"]["item"]["phase"] = "commentary"
+            SessionItem.objects.filter(pk=row.pk).update(current_content=content_row_factory(orjson.dumps(parsed).decode(), False))
+
+    async def scenario():
+        agent._completion_activity()
+        agent._completion_holds_changed(frozenset({"child"}))
+        await purge_open_interval(manager, agent)
+        await asyncio.to_thread(source)
+        agent._completion_provider_ended(final_ref=final)
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        await asyncio.to_thread(record_indexed_messages, agent.session_id, new_line_nums=[1],
+            timeline_since=timezone.now() - timedelta(minutes=1),
+            verified_final_refs=manager.timeline_verified_message_refs(agent.session_id))
+        agent._cancel_completion_timer()
+
+    with patch(f"twicc.providers.{provider.value}.sessions_watcher.get_watcher") as watcher:
+        watcher.return_value.timeline_since = timezone.now() - timedelta(minutes=1)
+        asyncio.run(scenario())
+    assert not LogicalTurn.objects.exists()
+    assert not TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).exists()
+    assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()
+
+
+@pytest.mark.parametrize("source_floor", [0, 1])
+def test_expired_journal_claude_proof_waits_for_exact_terminal_group(bridge, content_row_factory, source_floor):
+    manager, agent = bridge
+    agent.provider = Provider.CLAUDE_CODE
+    Session.objects.filter(pk=agent.session_id).update(provider="claude_code")
+    agent._completion_source_floor = source_floor
+    terminal = NativeMessageRef("claude_uuid", "answer-terminal")
+    group = NativeMessageRef("claude_message", "api-answer-terminal")
+
+    def prefix():
+        parsed = {"type": "assistant", "uuid": "answer-prefix", "message": {
+            "id": group.native_id, "role": "assistant", "content": [{"type": "text", "text": "prefix"}]}}
+        SessionItem.objects.create(session_id=agent.session_id, line_num=1, kind=ItemKind.ASSISTANT_MESSAGE,
+            timestamp=timezone.now(), message_id=group.native_id, content="",
+            current_content=content_row_factory(orjson.dumps(parsed).decode(), False))
+
+    async def scenario():
+        agent._completion_activity()
+        agent._completion_holds_changed(frozenset({"child"}))
+        await purge_open_interval(manager, agent)
+        await asyncio.to_thread(prefix)
+        # Neither a group ID nor a terminal UUID that is not indexed proves completion.
+        for ref in (group, terminal):
+            agent._completion_provider_ended(final_ref=ref)
+            await manager._persist_completion(agent, agent.completion_controller.snapshot())
+            await asyncio.to_thread(record_indexed_messages, agent.session_id, new_line_nums=[1],
+                timeline_since=timezone.now() - timedelta(minutes=1),
+                verified_final_refs=manager.timeline_verified_message_refs(agent.session_id))
+            assert not await asyncio.to_thread(lambda: TimelineEvent.objects.filter(
+                kind=TimelineKind.ASSISTANT_MESSAGE_SENT).exists())
+        await asyncio.to_thread(index, agent, content_row_factory, terminal, 2, "terminal", final=False)
+        await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        expected = ["prefix\nterminal"] if source_floor == 0 else []
+        assert await asyncio.to_thread(lambda: list(TimelineEvent.objects.filter(
+            kind=TimelineKind.ASSISTANT_MESSAGE_SENT).values_list("data__text", flat=True))) == expected
+        await asyncio.to_thread(record_indexed_messages, agent.session_id, new_line_nums=[2],
+            timeline_since=timezone.now() - timedelta(minutes=1),
+            verified_final_refs=manager.timeline_verified_message_refs(agent.session_id))
+        agent._cancel_completion_timer()
+
+    with patch("twicc.providers.claude_code.sessions_watcher.get_watcher") as watcher:
+        watcher.return_value.timeline_since = timezone.now() - timedelta(minutes=1)
+        asyncio.run(scenario())
+    assert list(TimelineEvent.objects.filter(kind=TimelineKind.ASSISTANT_MESSAGE_SENT).values_list(
+        "data__text", flat=True)) == (["prefix\nterminal"] if source_floor == 0 else [])
+    assert not LogicalTurn.objects.exists()
+    assert not TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).exists()

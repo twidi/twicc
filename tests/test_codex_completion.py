@@ -799,12 +799,22 @@ def test_manager_copies_runtime_message_proof_before_worker_use():
         manager._agents[agent.session_id] = agent
         first = NativeMessageRef("codex_item", "verified-first", "physical-1")
         second = NativeMessageRef("codex_item", "verified-second", "physical-2")
+        agent._completion_source_floor = 17
+        agent._completion_storage_incarnation = "opening-source"
+        agent._completion_history_epoch = 2
         agent._completion_activity()
         agent._timeline_observe_message(first, role="assistant")
         copied = manager.timeline_verified_message_refs(agent.session_id)
+        agent._completion_source_floor = 30
+        agent._completion_storage_incarnation = "latest-source"
+        agent._completion_history_epoch = 3
         agent._timeline_observe_message(second, role="assistant")
-        assert copied == (first,)
-        assert manager.timeline_verified_message_refs(agent.session_id) == (first, second)
+        assert tuple(proof.ref for proof in copied) == (first,)
+        assert copied[0].provider == "codex"
+        assert copied[0].source_floor == 17
+        assert copied[0].storage_incarnation == "opening-source"
+        assert copied[0].history_epoch == 2
+        assert tuple(proof.ref for proof in manager.timeline_verified_message_refs(agent.session_id)) == (first, second)
         assert manager.timeline_verified_message_refs("absent") is None
         cleanup(agent)
     asyncio.run(scenario())

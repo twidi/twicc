@@ -7,7 +7,7 @@ from datetime import datetime
 
 import orjson
 
-from twicc.agent.completion_types import NativeMessageRef
+from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
 from twicc.core.content_storage.readers import iter_current_items
 from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, SessionType, TimelineEvent, TimelineKind
@@ -128,7 +128,7 @@ def _groups(session, records):
 
 def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
                             timeline_since: datetime | None,
-                            verified_final_refs: Sequence[NativeMessageRef] | None = None) -> None:
+                            verified_final_refs: Sequence[VerifiedMessageRef] | None = None) -> None:
     """Capture only new live candidates and their exact Claude message groups."""
     if not new_line_nums:
         return
@@ -146,16 +146,19 @@ def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],
             for group in groups)
         turns = list(LogicalTurn.objects.filter(session_id=session.id)) if saved_groups or needs_proof else []
         saved = _current_saved_refs(session, saved_groups, turns=turns)
-        runtime_proof = set(verified_final_refs or ())
+        runtime_proof = [proof for proof in verified_final_refs or () if _same_scope(proof, session)]
+        runtime_refs = {proof.ref for proof in runtime_proof}
+        # Opening scope travels with runtime proof after journal cleanup.
         # Open Codex journal refs include unverified replacement candidates.
         # Saved event refs preserve verified proof after runtime cleanup.
         proof = [NativeMessageRef(**ref) for turn in turns
                  if _same_scope(turn, session) and turn.outcome in (None, 'normal') for ref in turn.final_refs
-                 if (session.provider != 'codex' or NativeMessageRef(**ref) in runtime_proof
+                 if (session.provider != 'codex' or NativeMessageRef(**ref) in runtime_refs
                      or turn.outcome == 'normal' and NativeMessageRef(**ref) in saved)]
         for group in groups:
             _capture(session, group, timeline_since=timeline_since,
-                     verified=(*saved, *proof),
+                     verified=(*saved, *proof, *(item.ref for item in runtime_proof
+                                                if group[0][0].line_num > item.source_floor)),
                      eligible=any(ref in saved for _, _, aliases in group for ref in aliases))
     except Exception:
         logger.exception('Timeline message capture failed for %s', session_id)
@@ -172,12 +175,14 @@ def _record_refs(session, refs, *, timeline_since, floor=0, eligible=False, veri
         query = query.filter(message_id__in=[ref.native_id for ref in refs])
     records = (record for record in _read(session, query) if wanted.intersection(record[2]))
     for group in _groups(session, records):
+        if group[0][0].line_num <= floor:
+            continue
         _capture(session, group, timeline_since=timeline_since,
                  verified=refs if verified is None else verified,
                  eligible=eligible or any(ref in saved for _, _, aliases in group for ref in aliases))
 
 
-def record_verified_messages(session_id: str, *, refs: Sequence[NativeMessageRef], timeline_since: datetime) -> None:
+def record_verified_messages(session_id: str, *, refs: Sequence[VerifiedMessageRef], timeline_since: datetime) -> None:
     """Resolve final proof on an already-admitted writer; never guess adjacent text."""
     try:
         session = Session.objects.get(pk=session_id)
@@ -185,7 +190,12 @@ def record_verified_messages(session_id: str, *, refs: Sequence[NativeMessageRef
         saved = _current_saved_refs(session, _saved_ref_groups(session_id), turns=turns)
         invalid = {NativeMessageRef(**ref) for turn in turns if not _same_scope(turn, session)
                    for ref in ([turn.first_ref] if turn.first_ref else []) + turn.final_refs}
-        _record_refs(session, [ref for ref in refs if ref not in invalid], timeline_since=timeline_since, saved=saved)
+        by_floor = {}
+        for proof in refs:
+            if _same_scope(proof, session) and proof.ref not in invalid:
+                by_floor.setdefault(proof.source_floor, []).append(proof.ref)
+        for floor, aliases in by_floor.items():
+            _record_refs(session, aliases, timeline_since=timeline_since, floor=floor, saved=saved)
     except Exception:
         logger.exception('Verified timeline message capture failed for %s', session_id)
 
