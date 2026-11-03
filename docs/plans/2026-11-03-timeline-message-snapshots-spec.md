@@ -1,6 +1,6 @@
 # Timeline message snapshots
 
-Status: draft for user approval.
+Status: approved by the user.
 
 ## Goal
 
