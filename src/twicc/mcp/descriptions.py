@@ -46,13 +46,13 @@ Selection: session_ids UNIONED with spawned_by/descendants/siblings/annotation. 
 sent means accepted, not completed. Each accepted send returns wait_token and last_line captured before provider delivery. For later waits, prefer session_wait_reply per returned token; reuse it after an ordinary timeout for the same input. Without a token, use each last_line as from_line. sessions_wait_reply accepts no tokens; for a batch, use since from before the send.
 
 wait_reply returns the last relevant indexed answer after confirmed logical completion, initially one second. Pending requests take priority over intermediate text. wait_first stops at the first conclusion. wait_background ignores answers during background work and waits for later intervals.""",
-    "session/wait-reply": """Wait for confirmed logical completion. Sends nothing. Prefer create/send wait_token. It selects the input and admission cursor. Reuse it after an ordinary timeout. No token: use last_line as from_line. After a consumed/ignored answer, omit the old token; use line_num as from_line and repeat wait_background if needed.
+    "session/wait-reply": """Wait for confirmed logical completion. Sends nothing. Prefer create/send wait_token: wait_token selects an accepted input using its stored admission cursor. Reuse it after an ordinary timeout for the same input. No token: from_line=last_line. For later work, omit the old token: line_num after replied/provider_error or an ignored background answer; otherwise since_line_num. Repeat wait_background.
 
-from_line/since (ISO 8601): mutually exclusive, strict bounds. No token/bounds: after last user message, or last_line with stale compute; unindexed: 0.
+from_line/since (ISO 8601): mutually exclusive, strict bounds. No token/bounds: after last user message; stale compute: last_line; unindexed: 0.
 
-Confirm after one second without root activity, pending delivery or assistant holds. Return last relevant indexed answer. Pending requests take priority. Shells do not delay confirmation; wait_background ignores answers during background work and waits for later intervals.
+Confirm after one second without root activity, pending delivery, or assistant holds. A pending request takes priority over intermediate text. Return last relevant indexed answer. Shells do not delay confirmation. wait_background skips background answers and waits for later intervals.
 
-outcome: replied, awaiting_user_input, ended, timeout, provider_error, backend_gone, wait_failed. Exit 0 answered/blocked, 5 timeout/ended/provider_error, 2 backend gone, 1 broken/refused.""",
+Exit 0 replied/awaiting_user_input; 5 timeout/ended/provider_error; 2 backend_gone; 1 wait_failed/refused.""",
     "sessions/wait-reply": """Wait for several sessions. Sends nothing. One wait_timeout covers all; wait_first stops at first conclusion. Same completion rules as session_wait_reply; wait_background applies per session.
 
 Selection: listing filters UNIONED with session_ids; an id or filter is required. Hidden included, archived excluded, state=dead refused.
