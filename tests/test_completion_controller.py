@@ -1,5 +1,6 @@
 """Deterministic logical completion facts, without clocks or provider SDKs."""
 
+import logging
 import random
 
 import pytest
@@ -13,6 +14,75 @@ def controller():
     value = CompletionController(run_id="run")
     value.activity(0.0)
     return value
+
+
+@pytest.fixture
+def diagnostic_messages(caplog, monkeypatch):
+    monkeypatch.setattr(logging.getLogger("twicc.agent.completion"), "disabled", False)
+    caplog.set_level(logging.DEBUG, logger="twicc.agent.completion")
+    return caplog
+
+
+@pytest.mark.parametrize("retired_cause", ["released_hold", "rejected_input", "accepted_input"])
+def test_completed_interval_does_not_label_unannounced_restart(controller, diagnostic_messages, retired_cause):
+    controller.provider_ended(0)
+    if retired_cause == "released_hold":
+        controller.set_holds(frozenset({"subagent"}), 0)
+        controller.set_holds(frozenset(), 1)
+    else:
+        controller.input_pending("input", 0)
+        controller.input_settled("input", "rejected" if retired_cause == "rejected_input" else "accepted", 1)
+        if retired_cause == "accepted_input":
+            controller.provider_ended(1)
+    ticket = controller.candidate()
+    assert ticket.deadline == 2
+    closed = controller.claim_due(ticket, 2)
+    assert closed.outcome == "normal"
+    controller.activity(3)
+    assert controller.snapshot().ordinal == closed.ordinal + 1
+    restarts = [record.message for record in diagnostic_messages.records if "root_restart" in record.message]
+    assert len(restarts) == 1
+    assert "cause=unannounced_root" in restarts[0]
+
+
+@pytest.mark.parametrize("active_cause,retired_cause", [
+    ("input", "rejected_input"), ("input", "released_hold"),
+    ("shell", "rejected_input"), ("shell", "released_hold"),
+    ("hold", "rejected_input"),
+])
+def test_retiring_one_cause_preserves_another_announced_restart(
+    controller, diagnostic_messages, active_cause, retired_cause,
+):
+    controller.provider_ended(0)
+    assert controller.claim_due(controller.candidate(), 1).outcome == "normal"
+    if active_cause == "input":
+        controller.input_pending("still-pending", 2)
+    elif active_cause == "shell":
+        controller.note_shell_delivery()
+    else:
+        controller.set_holds(frozenset({"subagent"}), 2)
+    if retired_cause == "rejected_input":
+        controller.input_pending("rejected", 2.1)
+        controller.input_settled("rejected", "rejected", 2.2)
+    else:
+        controller.set_holds(frozenset({"temporary"}), 2.1)
+        controller.set_holds(frozenset(), 2.2)
+    controller.activity(3)
+    restarts = [record.message for record in diagnostic_messages.records if "root_restart" in record.message]
+    assert len(restarts) == 1
+    assert f"cause={active_cause}" in restarts[0]
+
+
+@pytest.mark.parametrize("active_cause", ["hold", "shell"])
+def test_terminal_closure_preserves_unconsumed_hold_or_shell(controller, diagnostic_messages, active_cause):
+    if active_cause == "hold":
+        controller.set_holds(frozenset({"subagent"}), .1)
+    else:
+        controller.note_shell_delivery()
+    assert controller.terminate("ended", 1).outcome == "ended"
+    controller.activity(2)
+    assert any("root_restart" in record.message and f"cause={active_cause}" in record.message
+               for record in diagnostic_messages.records)
 
 
 def test_full_second_is_required(controller):

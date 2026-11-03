@@ -21,11 +21,17 @@ class CompletionController:
         self._input_end_serials: dict[str, int] = {}
         self._end_serial = 0
         self._candidate: CompletionCandidate | None = None
-        self._restart_cause: str | None = None
+        self._restart_causes: dict[tuple[str, str], None] = {}
+
+    def _note_restart_cause(self, cause: str, token: str = "") -> None:
+        # Keep independent announcements until root activity consumes them.
+        key = (cause, token)
+        self._restart_causes.pop(key, None)
+        self._restart_causes[key] = None
 
     def note_shell_delivery(self) -> None:
         """Annotate later root activity without opening or extending an interval."""
-        self._restart_cause = "shell"
+        self._note_restart_cause("shell")
 
     def snapshot(self) -> CompletionSnapshot:
         return self._snapshot
@@ -64,11 +70,11 @@ class CompletionController:
                 str(uuid4()), self.run_id, self._snapshot.ordinal + 1, 0, None, (), None,
             )
             if previous.ordinal:
-                cause = self._restart_cause or ("hold" if self._holds else "unannounced_root")
+                cause = next(reversed(self._restart_causes), ("hold" if self._holds else "unannounced_root", ""))[0]
                 logger.debug("completion root_restart interval=%s revision=%s cause=%s previous_interval=%s",
                              self._snapshot.turn_id, self._snapshot.revision, cause, previous.turn_id)
         self._ended = False
-        self._restart_cause = None
+        self._restart_causes.clear()
         if first_ref is not None and self._snapshot.first_ref is None:
             self._snapshot = self._snapshot._replace(first_ref=first_ref)
         self._changed(now, cause="root")
@@ -89,7 +95,9 @@ class CompletionController:
         if self._holds != holds:
             self._holds = holds
             if holds:
-                self._restart_cause = "hold"
+                self._note_restart_cause("hold")
+            else:
+                self._restart_causes.pop(("hold", ""), None)
             self._changed(now, cause="hold")
 
     def set_awaiting(self, awaiting: bool, now: float) -> None:
@@ -101,7 +109,7 @@ class CompletionController:
         if self._inputs.get(token) == "pending":
             return
         self._inputs[token] = "pending"
-        self._restart_cause = "input"
+        self._note_restart_cause("input", token)
         self._input_end_serials[token] = self._end_serial
         self._changed(now, cause="input")
 
@@ -111,6 +119,8 @@ class CompletionController:
         if token not in self._inputs or self._inputs[token] == status:
             return
         self._inputs[token] = status
+        if status == "rejected":
+            self._restart_causes.pop(("input", token), None)
         if status == "accepted" and self._input_end_serials[token] == self._end_serial:
             # Acceptance invalidates only a result from before this admission.
             # A fast result can arrive before durable acceptance returns.
@@ -141,4 +151,8 @@ class CompletionController:
         # Future input belongs to the next interval. Closed identities remain immutable.
         self._inputs = {}
         self._input_end_serials = {}
+        # Input announcements belong to the closed interval. A shell delivery
+        # or an active hold can still announce root activity after closure.
+        self._restart_causes = {key: None for key in self._restart_causes
+                                if key[0] == "shell" or (key[0] == "hold" and self._holds)}
         return self._snapshot

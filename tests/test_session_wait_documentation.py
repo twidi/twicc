@@ -81,6 +81,11 @@ def test_confirmed_completion_contract_and_input_token_are_published():
         assert "pending request takes priority" in text, path
         assert "wait_token" in text, path
         assert "first final message past its cursor" not in text, path
+    for skill in ("twicc-send-message", "twicc-send-messages"):
+        text = (SKILLS_DIR / skill / "SKILL.md").read_text()
+        assert "an answer arriving in the same poll wins" not in text, skill
+        assert "pending request takes priority over intermediate text" in text, skill
+        assert "An older, already confirmed interval can still return its answer" in text, skill
     assert "--wait-token" in _real_options()
     assert "admission" in _real_help("wait_token")
     from twicc.mcp.tools import iter_mcp_tools
