@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
+import * as Vue from 'vue'
+import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
+import * as rendering from '../../inline-artifacts/rendering.js'
+import * as markdown from '../../utils/markdown.js'
 
 const srcRoot = new URL('../../', import.meta.url)
 const read = (path) => readFileSync(new URL(path, srcRoot), 'utf8')
@@ -13,7 +17,6 @@ const buttonSource = (() => {
         return ''
     }
 })()
-const textContentSource = read('components/session/detail/items/TextContent.vue')
 const compactSummarySource = read('components/session/detail/items/CompactSummary.vue')
 
 const OPT_IN_HOSTS = new Set([
@@ -37,12 +40,35 @@ test('MarkdownContent never touches the speech store itself', () => {
 })
 
 test('only TextContent and CompactSummary opt in', () => {
-    assert.match(textContentSource, /<MarkdownContent[^>]*\sspeakable/)
     assert.match(compactSummarySource, /<MarkdownContent[^>]*\sspeakable/)
     const others = readdirSync(srcRoot, { recursive: true })
         .filter(path => path.endsWith('.vue') && !OPT_IN_HOSTS.has(path))
-        .filter(path => /<MarkdownContent[^>]*\sspeakable/.test(read(path)))
+        .filter(path => /<MarkdownContent[^>]*\s:?speakable/.test(read(path)))
     assert.deepEqual(others, [])
+})
+
+test('chat text enables speech only for assistant messages and keeps user Markdown', async t => {
+    const MarkdownContent = {
+        props: { source: String, speakable: Boolean },
+        setup: props => () => Vue.h('article', { 'data-speakable': props.speakable }, props.source),
+    }
+    const TextContent = compileComponent(new URL('../session/detail/items/TextContent.vue', import.meta.url), {
+        '../../../ui/MarkdownContent.vue': MarkdownContent,
+        '../../../../inline-artifacts/rendering.js': rendering,
+        '../../../../utils/markdown': markdown,
+    })
+    const role = Vue.ref('assistant')
+    const { renderer, root } = makeRenderer()
+    const app = renderer.createApp({ render: () => Vue.h(TextContent, { text: '**Message**', role: role.value }) })
+    app.mount(root)
+    t.after(() => app.unmount())
+    for (const [value, expected] of [['assistant', true], ['user', false], [null, false], ['assistant', true]]) {
+        role.value = value
+        await flush()
+        const [article] = descendants(root, node => node.type === 'article')
+        assert.equal(article.props['data-speakable'], expected, `speech eligibility for ${value}`)
+        assert.equal(article.text, '**Message**', 'the message still renders through MarkdownContent')
+    }
 })
 
 test('a busy speech button stays visible with the toolbar closed', () => {

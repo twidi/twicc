@@ -30,7 +30,7 @@ const tagSlashCommand = computed(() =>
 
 <template>
     <div class="text-content" :role="role">
-        <MarkdownContent :source="displayText" speakable :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
+        <MarkdownContent :source="displayText" :speakable="role === 'assistant'" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
     </div>
 </template>
 
