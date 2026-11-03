@@ -189,5 +189,9 @@ async def cleanup_stale_process_runs() -> int:
     """
     from twicc.providers.db_writer import submit_async_job
 
+    from twicc.logical_turn_cleanup_task import run_logical_turn_cleanup_cycle
+
+    # Expire overdue opens before recovery gives them a fresh closing timestamp.
+    await run_logical_turn_cleanup_cycle(asyncio.Event())
     future = asyncio.get_running_loop().create_future()
     return await submit_async_job(CleanupStaleProcessRunsJob(future=future))

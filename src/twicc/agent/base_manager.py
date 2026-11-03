@@ -814,6 +814,7 @@ class BaseAgentManager:
         process_run = agent.process_run
         values = process_run.__dict__.copy() if process_run is not None else None
         opened_ids = agent._completion_opened_ids.copy()
+        published_ids = agent._completion_published_ids.copy()
         try:
             with transaction.atomic():
                 yield
@@ -825,6 +826,7 @@ class BaseAgentManager:
                 process_run.__dict__.clear()
                 process_run.__dict__.update(values)
             agent._completion_opened_ids = opened_ids
+            agent._completion_published_ids = published_ids
             raise
 
     def _store_completion_snapshot_admitted(
@@ -856,10 +858,16 @@ class BaseAgentManager:
                     ordinal=snapshot.ordinal, source_floor=source_floor,
                     storage_incarnation=incarnation, history_epoch=epoch, opened_at=opened_at,
                 )
-            for token, cursor, status in inputs:
-                bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
+            journal_exists = needs_open or LogicalTurn.objects.filter(pk=snapshot.turn_id).exists()
+            if journal_exists:
+                for token, cursor, status in inputs:
+                    bind_turn_input(token=token, turn_id=snapshot.turn_id, admission_cursor=cursor, status=status)
             stored = store_turn_snapshot(snapshot, closed_at=timezone.now() if snapshot.outcome else None)
-            if stored and state is not None:
+            # Previously opened rows can expire while native work continues. Their
+            # actual completion still owns the public state transition, once.
+            if not journal_exists and snapshot.outcome is not None and state is not None:
+                stored = True
+            if stored and state is not None and snapshot.turn_id not in agent._completion_published_ids:
                 if agent.process_run is not None and agent.process_run.state != AgentState.ASSISTANT_TURN.value:
                     # A newer root interval can finish while its activity
                     # callback waits behind an older publication. Preserve its
@@ -871,6 +879,7 @@ class BaseAgentManager:
                     # within this same transaction, without a stale broadcast.
                     self._persist_process_run_transition_admitted(agent, AgentState.USER_TURN)
                 self._persist_process_run_transition_admitted(agent, state)
+                agent._completion_published_ids.add(snapshot.turn_id)
             elif (state is not None and snapshot.outcome is not None
                   and snapshot.turn_id in agent._completion_pending_publications):
                 # A cancellation-safe writer can commit before its caller sees
@@ -880,7 +889,7 @@ class BaseAgentManager:
                     pk=snapshot.turn_id, run_id=snapshot.run_id, ordinal=snapshot.ordinal,
                     revision=snapshot.revision, outcome=snapshot.outcome, closed_at__isnull=False,
                 ).values("first_ref", "final_refs").first()
-                stored = terminal == {
+                stored = snapshot.turn_id in agent._completion_published_ids or terminal == {
                     "first_ref": snapshot.first_ref._asdict() if snapshot.first_ref else None,
                     "final_refs": [ref._asdict() for ref in snapshot.final_refs],
                 }
@@ -939,6 +948,7 @@ class BaseAgentManager:
                     if not await self._persist_completion_admitted(agent, earlier, state=AgentState.ASSISTANT_TURN):
                         return False
                     agent._completion_pending_publications.pop(earlier.turn_id, None)
+                    agent._completion_published_ids.discard(earlier.turn_id)
                     agent._completion_pending_snapshots.pop(earlier.turn_id, None)
                 state = (AgentState.USER_TURN if agent.completion_controller.snapshot() == snapshot
                          else agent.state)
@@ -965,6 +975,7 @@ class BaseAgentManager:
                 agent._completion_schedule_retry()
                 return False
             agent._completion_pending_publications.pop(snapshot.turn_id, None)
+            agent._completion_published_ids.discard(snapshot.turn_id)
             agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
             if agent.completion_controller.snapshot() != snapshot:
                 agent._completion_refresh()
@@ -1472,6 +1483,7 @@ class BaseAgentManager:
             self._persist_process_run_transition_admitted(agent, state)
         for snapshot in (*pending, latest):
             agent._completion_pending_publications.pop(snapshot.turn_id, None)
+            agent._completion_published_ids.discard(snapshot.turn_id)
             agent._completion_pending_snapshots.pop(snapshot.turn_id, None)
         agent._completion_last_queued = latest
 

@@ -863,3 +863,101 @@ def test_candidate_interrupt_preserves_an_older_admitted_retry(bridge, older_rej
         agent._cancel_completion_timer()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["normal", "ended", "provider_error"])
+def test_expired_live_interval_still_completes_and_next_interval_persists(bridge, outcome):
+    """Expiry must not suppress real completion or reopen its journal on stale retries."""
+    from datetime import timedelta
+    from twicc.logical_turn_cleanup_task import purge_logical_turns
+
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        stale = agent.completion_controller.snapshot()
+        assert await manager._persist_completion(agent, stale)
+        now = timezone.now()
+        await asyncio.to_thread(lambda: LogicalTurn.objects.filter(pk=stale.turn_id).update(opened_at=now - timedelta(days=8)))
+        assert await asyncio.to_thread(purge_logical_turns, now=now) == 1
+        assert not await manager._persist_completion(agent, stale)
+        assert agent.state == AgentState.ASSISTANT_TURN
+        if outcome == "normal":
+            await manager._confirm_completion(agent, ticket)
+        else:
+            closed = agent.completion_controller.terminate(outcome, asyncio.get_running_loop().time())
+            assert await manager._end_completion(agent, closed)
+        assert agent.state == AgentState.USER_TURN
+        assert not agent._completion_pending_publications
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+        agent._completion_activity()
+        agent._cancel_completion_timer()
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        latest = agent.completion_controller.snapshot()
+        assert latest.turn_id != stale.turn_id
+        assert (await asyncio.to_thread(LogicalTurn.objects.get, pk=latest.turn_id)).outcome is None
+        assert not await manager._persist_completion(agent, stale)
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 1
+
+    asyncio.run(scenario())
+
+
+def test_expired_interval_closure_rolls_back_then_retries_once(bridge):
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        assert await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        await asyncio.to_thread(LogicalTurn.objects.all().delete)
+        with patch.object(manager, "_persist_process_run_transition_admitted", side_effect=RuntimeError("rollback")):
+            await manager._confirm_completion(agent, ticket)
+        agent._cancel_completion_timer()
+        assert agent.state == AgentState.ASSISTANT_TURN
+        assert agent.process_run.state == AgentState.ASSISTANT_TURN.value
+        assert await asyncio.to_thread(TimelineEvent.objects.count) == 0
+        closed = agent.completion_controller.snapshot()
+        assert await manager._retry_completion(agent, closed)
+        assert agent.state == AgentState.USER_TURN
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        assert await asyncio.to_thread(lambda: TimelineEvent.objects.filter(kind=TimelineKind.TURN_ENDED).count()) == 1
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_committed_expired_closure_does_not_repeat_public_boundaries(bridge):
+    async def scenario():
+        manager, agent = bridge
+        ticket = open_candidate(manager, agent)
+        assert await manager._persist_completion(agent, agent.completion_controller.snapshot())
+        await asyncio.to_thread(LogicalTurn.objects.all().delete)
+        original = manager._persist_completion_admitted
+
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def committed_then_blocked(current, snapshot, *, state=None):
+            result = await original(current, snapshot, state=state)
+            entered.set()
+            await release.wait()
+            return result
+
+        with patch.object(manager, "_persist_completion_admitted", side_effect=committed_then_blocked):
+            confirmation = asyncio.create_task(manager._confirm_completion(agent, ticket))
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            confirmation.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await confirmation
+        agent._cancel_completion_timer()
+        claimed = agent.completion_controller.snapshot()
+        agent._completion_activity()
+        agent._cancel_completion_timer()
+        assert not await manager._retry_completion(agent, claimed)
+        if agent._completion_tasks:
+            await asyncio.gather(*tuple(agent._completion_tasks))
+        boundaries = await asyncio.to_thread(lambda: list(TimelineEvent.objects.order_by("id").values_list("kind", flat=True)))
+        assert boundaries == [TimelineKind.TURN_ENDED, TimelineKind.TURN_STARTED]
+        assert not agent._completion_pending_publications
+        assert not await asyncio.to_thread(LogicalTurn.objects.filter(pk=claimed.turn_id).exists)
+        manager._broadcast_info.assert_not_awaited()
+
+    asyncio.run(scenario())

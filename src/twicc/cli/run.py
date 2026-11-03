@@ -90,6 +90,7 @@ from twicc.log_retention import log_trim_enabled, trim_log_file  # noqa: E402
 from twicc.orchestrator import get_orchestrator_registry  # noqa: E402
 from twicc.paths import get_backend_log_path, get_data_dir  # noqa: E402
 from twicc.pricing_task import start_price_sync_task, sync_all_providers  # noqa: E402
+from twicc.logical_turn_cleanup_task import start_logical_turn_cleanup_task  # noqa: E402
 from twicc.quota_wakeup_task import start_quota_wakeup_task  # noqa: E402
 from twicc.content_maintenance_task import start_content_maintenance_task  # noqa: E402
 from twicc.peer_purge_task import start_peer_purge_task  # noqa: E402
@@ -287,6 +288,7 @@ async def run_server(port: int):
     # Start before provider watchers can submit live requests. The runner owns
     # no boot scan; initial sync does not request automatic title checks.
     title_auto_task = asyncio.create_task(start_title_auto_task(shutdown_event))
+    logical_turn_cleanup_task = asyncio.create_task(start_logical_turn_cleanup_task(shutdown_event))
     # Back up the data dir root files on each change. Its catch-up scan covers
     # the startup writes made since the startup scan of ``main()``.
     from twicc.data_backups_watcher import run_data_backups_watcher
@@ -430,6 +432,7 @@ async def run_server(port: int):
             # database infrastructure is torn down.
             await _cancel_task(title_auto_task, "Automatic title task")
             stop_timeline_signal()
+            await _cancel_task(logical_turn_cleanup_task, "Logical turn cleanup task")
 
             # Stop cross-provider tasks first. The price sync loop watches
             # ``shutdown_event`` directly (set above by the signal handler),
@@ -548,6 +551,8 @@ async def run_server(port: int):
         # Own partial coordinator startup and provider/configuration failures too.
         try:
             stop_timeline_signal()
+            if not logical_turn_cleanup_task.done():
+                await _cancel_task(logical_turn_cleanup_task, "Logical turn cleanup task")
             if not data_backups_task.done():
                 await _cancel_task(data_backups_task, "Data backups watcher")
         finally:

@@ -203,6 +203,8 @@ class BaseAgent(StopOriginMixin):
         self._completion_retry_deadline: float | None = None
         self._completion_openings: dict[str, Any] = {}
         self._completion_opened_ids: set[str] = set()
+        # Keep committed boundaries only until their pending publication drains.
+        self._completion_published_ids: set[str] = set()
         self._completion_inputs: dict[str, CompletionInput] = {}
         self._completion_input_callback: Callable | None = None
         self._completion_input_receipts: dict[str, asyncio.Future] = {}

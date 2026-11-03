@@ -787,3 +787,59 @@ def test_command_returns_serialized_admission_cursor_without_human_token(answer_
         assert await sync_to_async(LogicalTurnInput.objects.count)() == 0
         assert await sync_to_async(LogicalTurn.objects.count)() == 0
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status,outcome", [("completed", "normal"), ("interrupted", "ended"), ("failed", "provider_error")])
+def test_expired_live_turn_accepts_native_steering_and_settles_receipt(bridge, status, outcome):
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+    from tests.test_codex_completion import make_agent, Turn, run, final, event
+    from twicc.agent.states import AgentState
+    from twicc.core.models import LogicalTurn
+    from twicc.logical_turn_cleanup_task import purge_logical_turns
+    from django.utils import timezone
+
+    async def scenario():
+        manager, previous = bridge
+        agent = make_agent(ephemeral=False)
+        agent._codex = SimpleNamespace(pid=None)
+        agent.session_id = previous.session_id
+        agent.project_id = previous.project_id
+        agent.process_run = previous.process_run
+        manager._agents[agent.session_id] = agent
+        manager._bind_completion_callbacks(agent)
+        agent._set_state(AgentState.ASSISTANT_TURN)
+        agent._completion_activity()
+        while agent._completion_persist_task is not None:
+            await asyncio.sleep(0)
+        expired = agent.completion_controller.snapshot().turn_id
+        now = timezone.now()
+        await asyncio.to_thread(lambda: LogicalTurn.objects.filter(pk=expired).update(opened_at=now - timedelta(days=8)))
+        assert await asyncio.to_thread(purge_logical_turns, now=now) == 1
+        agent._actual_root_active = True
+        handle = Turn([])
+        agent._current_turn = handle
+        agent._current_turn_ready.set()
+        agent._build_turn_input = AsyncMock(return_value=[])
+        agent._steer_question_submission = AsyncMock()
+        token = str(uuid4())
+        assert await agent.send("continue", completion_token=token)
+        agent._steer_question_submission.assert_awaited_once_with(handle, [], None)
+        receipt = await asyncio.wait_for(agent.wait_for_completion_input(token), timeout=2)
+        assert receipt and receipt.status == "accepted"
+        while agent._completion_persist_task is not None:
+            await asyncio.sleep(0)
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        assert not await asyncio.to_thread(LogicalTurnInput.objects.filter(pk=token).exists)
+        await run(agent, [final(thread_id=agent.session_id),
+                          event("turn/completed", thread_id=agent.session_id, status=status)])
+        if status == "completed":
+            await asyncio.wait_for(agent._completion_timer_task, timeout=2)
+        assert agent.state == AgentState.USER_TURN
+        assert agent.completion_controller.snapshot().outcome == outcome
+        assert not agent._completion_pending_publications
+        assert await asyncio.to_thread(LogicalTurn.objects.count) == 0
+        agent._cancel_completion_timer()
+        agent._cancel_compaction_timeout()
+
+    asyncio.run(scenario())

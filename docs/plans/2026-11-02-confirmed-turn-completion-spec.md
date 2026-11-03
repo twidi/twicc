@@ -207,6 +207,18 @@ The absence of a live process must not turn an intermediate final into a success
 
 Update CLI help, MCP descriptions, and relevant skill documentation to describe the changed default completion behavior.
 
+### Live journal cleanup
+
+The logical journal supports live waiting, not permanent history.
+Delete closed intervals 48 hours after `closed_at`.
+Delete still-open intervals 7 days after `opened_at`, including intervals whose agent remains active.
+Delete associated inputs by cascade. Run cleanup at startup and hourly.
+Purge overdue open intervals before boot recovery assigns a closing timestamp.
+Cleanup does not stop agents, publish timeline boundaries, or change unread state.
+Late callbacks cannot recreate deleted intervals or prevent an agent's actual completion.
+The waiting guarantees above apply while the journal is retained.
+Do not add retention tables, durable expiry markers, or guarantees for historical cursors after cleanup.
+
 ## Timeline contract
 
 Record one start and one end per logical assistant interval.

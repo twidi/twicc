@@ -525,6 +525,18 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
             finally:
                 effects.append("check-cancel")
 
+        cleanup_started = asyncio.Event()
+        cleanup_stopped = asyncio.Event()
+
+        async def cleanup(stop_event):
+            cleanup_started.set()
+            try:
+                await stop_event.wait()
+            finally:
+                cleanup_stopped.set()
+
+        monkeypatch.setattr(run, "start_logical_turn_cleanup_task", cleanup)
+
         async def providers_start(shutdown, search_ready):
             effects.append("providers-start")
             runner.request_title_check("live-trigger")
@@ -611,6 +623,8 @@ def test_server_owns_title_runner_before_provider_start_and_until_teardown(
                 await asyncio.wait_for(server_task, timeout=5)
         else:
             await asyncio.wait_for(run.run_server(0), timeout=5)
+        assert cleanup_started.is_set()
+        assert cleanup_stopped.is_set()
         assert asyncio.all_tasks() == before
 
     asyncio.run(scenario())

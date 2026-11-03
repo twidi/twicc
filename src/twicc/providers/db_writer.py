@@ -2420,6 +2420,12 @@ async def _dispatch_async_job(job) -> None:
         CleanupStaleProcessRunsJob,
         _apply_cleanup_stale_process_runs_job,
     )
+    from twicc.logical_turn_cleanup_task import PurgeLogicalTurnsJob, apply_purge_logical_turns_job
+
+    if isinstance(job, PurgeLogicalTurnsJob):
+        await _settle_async_job(job, apply_purge_logical_turns_job, "logical turn cleanup")
+        return
+
     if isinstance(job, CleanupStaleProcessRunsJob):
         await _settle_async_job(
             job, _apply_cleanup_stale_process_runs_job, "process run cleanup",
