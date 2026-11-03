@@ -563,3 +563,142 @@ def test_native_acceptance_without_journal_commit_returns_uncertain_without_toke
         assert "wait_token" not in result.status_extra
         assert not await asyncio.to_thread(LogicalTurnInput.objects.exists)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("restart_mode,outcome", [
+    (mode, outcome) for mode in ("inline", "cron") for outcome in ("accepted", "rejected", "uncertain")
+] + [("cron", "cancelled_before_start"), ("cron", "cancelled"), ("cron", "restore_failed")])
+def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bridge, monkeypatch, restart_mode, outcome):
+    from unittest.mock import AsyncMock
+    from tests.test_claude_completion import make_agent
+    from tests.test_completion_publication import Agent
+    from twicc.agent.states import AgentState
+    from twicc.core.enums import Provider
+    from twicc.core.models import Session
+    from twicc.core.services import send_message
+    from twicc.core.services.attachments import lifecycle, planner, target
+    from twicc.core.services.attachments.types import AttachmentRef
+    from twicc.providers.claude_code import cron_restart
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+
+    _, original = bridge
+    old = make_agent()
+    old.session_id, old.project_id = original.session_id, original.project_id
+    old.ephemeral = False
+    old.process_run = original.process_run
+    old._set_state(AgentState.USER_TURN)
+    manager = ClaudeCodeAgentManager()
+    manager._agents[old.session_id] = old
+    manager._session_has_crons = AsyncMock(return_value=restart_mode == "cron")
+    manager._check_session_writable = AsyncMock()
+    manager._broadcast_agent_state = AsyncMock()
+    Session.objects.filter(pk=old.session_id).update(provider="claude_code", effort="max", last_line=17)
+    helpers = SimpleNamespace(resolve_agent_settings=lambda value: value,
+                              enforce_agent_settings_consistency=lambda value: value)
+    monkeypatch.setattr(send_message, "ensure_provider_running", lambda _: None)
+    monkeypatch.setattr(send_message, "get_provider_helpers", lambda _: helpers)
+    monkeypatch.setattr("twicc.agent.registry.get_agent_manager_registry", lambda: SimpleNamespace(get=lambda _: manager))
+    ref = AttachmentRef("receipt-bucket", str(uuid4()))
+    plan = SimpleNamespace(entries=(SimpleNamespace(ref=ref),))
+    monkeypatch.setattr(target, "resolve_existing_session_plan_target", AsyncMock(return_value=object()))
+    monkeypatch.setattr(planner, "plan_attachments_off_loop", AsyncMock(return_value=plan))
+    manager._commit_attachment_plan = AsyncMock(return_value=SimpleNamespace(user_text="go"))
+    releases, owners = [], []
+    def delivery_release(refs):
+        owners.append(tuple(refs))
+        def release():
+            assert not manager._lock.locked()
+            releases.append(tuple(refs))
+        return release
+    monkeypatch.setattr(lifecycle, "delivery_release", delivery_release)
+
+    async def scenario():
+        manager._bind_completion_callbacks(old)
+        restart_ready, restart_allowed, manager_returned = (asyncio.Event() for _ in range(3))
+        replacements, native_tokens, tasks = [], [], []
+        async def native_send(agent, text, *, completion_token, completion_cursor, **kwargs):
+            native_tokens.append(completion_token)
+            agent._completion_source_floor = completion_cursor
+            agent._completion_input_pending(completion_token)
+            agent._completion_activity()
+            agent._completion_input_settled(completion_token, outcome)
+            if outcome != "accepted":
+                agent._set_state(AgentState.DEAD)
+            return outcome == "accepted"
+        def replacement(settings):
+            new = Agent(old.session_id, old.project_id, old.cwd, settings)
+            new.provider = Provider.CLAUDE_CODE
+            new._set_state(AgentState.USER_TURN)
+            manager._agents[new.session_id] = new
+            manager._bind_completion_callbacks(new)
+            new.send = lambda text, **kwargs: native_send(new, text, **kwargs)
+            replacements.append(new)
+            return new
+        async def inline_restart(session_id, project_id, cwd, text, **kwargs):
+            new = replacement(kwargs["settings"])
+            await new.send(text, **kwargs)
+        manager._restart_after_kill = inline_restart
+        async def restore_crons(session_id, **kwargs):
+            restart_ready.set()
+            await restart_allowed.wait()
+            assert not manager._lock.locked()
+            if outcome == "restore_failed":
+                raise RuntimeError("Provider restart failed")
+            replacement(original.agent_settings._replace(effort="max"))
+        monkeypatch.setattr(cron_restart, "restart_session_crons", restore_crons)
+        async def kill(**kwargs):
+            old._set_state(AgentState.DEAD)
+            if restart_mode == "cron":
+                task = asyncio.create_task(manager._restart_crons_for_session(old.session_id))
+                manager._cron_restart_tasks[old.session_id] = task
+                tasks.append(task)
+                if outcome == "cancelled_before_start":
+                    assert manager._cancel_cron_restart_task(old.session_id)
+        old.interrupt_or_kill = kill
+        original_send = manager.send_to_session
+        async def observe_manager_return(*args, **kwargs):
+            delivered = await original_send(*args, **kwargs)
+            assert delivered is False
+            manager_returned.set()
+            return delivered
+        manager.send_to_session = observe_manager_return
+        request = asyncio.create_task(send_message.send_message_from_drop_payload({
+            "session_id": old.session_id, "text": "go", "attachments": [ref._asdict()],
+        }))
+        await asyncio.wait_for(manager_returned.wait(), 2)
+        if restart_mode == "cron" and outcome != "cancelled_before_start":
+            await asyncio.wait_for(restart_ready.wait(), 2)
+            assert not request.done()
+            assert not manager._lock.locked()
+            assert releases == []
+            assert not await asyncio.to_thread(LogicalTurnInput.objects.filter(status="accepted").exists)
+            if outcome == "cancelled":
+                assert manager._cancel_cron_restart_task(old.session_id)
+            else:
+                restart_allowed.set()
+        result = await asyncio.wait_for(request, 2)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for agent in replacements:
+            while agent._completion_persist_task is not None:
+                await asyncio.sleep(0)
+        if outcome in ("cancelled_before_start", "cancelled", "restore_failed"):
+            assert not native_tokens
+            assert not result.success
+            assert result.errors[0].code == "send_uncertain"
+            assert "wait_token" not in result.status_extra
+            assert releases == []
+            assert owners == [(ref,)]
+            return
+        [token] = native_tokens
+        row = await asyncio.to_thread(LogicalTurnInput.objects.get, pk=token)
+        assert row.status == outcome
+        if outcome == "accepted":
+            assert result.success, result
+            assert result.status_extra == {"last_line": 17, "wait_token": token}
+            assert releases == [(ref,)]
+        else:
+            assert not result.success
+            assert "wait_token" not in result.status_extra
+            assert releases == []
+        assert owners == [(ref,)]
+    asyncio.run(scenario())

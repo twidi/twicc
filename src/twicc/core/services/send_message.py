@@ -280,18 +280,20 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
             return _rejected("attachments", code, attachment_drop.message_with_names(e)), False
         return _rejected("session", code, str(e)), False
 
-    if delivered is False:
-        # Maybe parked by the manager: the parked entry holds the refs and their release.
+    from twicc.agent.base_manager import BaseAgentManager
+
+    manager_owns_refs = delivered is False
+    deferred = isinstance(manager, BaseAgentManager) and manager.completion_input_is_deferred(completion_token)
+    if delivered is False and not deferred:
         return _rejected("session", "send_failed", "The message was not accepted for delivery"), True
 
     status_extra = {"last_line": admission_cursor}
-    from twicc.agent.base_manager import BaseAgentManager
 
     if isinstance(manager, BaseAgentManager):
         try:
             receipt = await manager.wait_for_completion_input(completion_token)
         except RuntimeError as exc:
-            return _rejected("session", getattr(exc, "code", "send_uncertain"), str(exc)), False
+            return _rejected("session", getattr(exc, "code", "send_uncertain"), str(exc)), manager_owns_refs
         if receipt is not None:
             status_extra.update(last_line=receipt.admission_cursor, wait_token=completion_token)
 
@@ -302,4 +304,4 @@ async def _send(payload: dict) -> tuple[SendMessageResult, bool]:
         project_id=session.project_id,
         errors=None,
         status_extra=status_extra,
-    ), False
+    ), manager_owns_refs

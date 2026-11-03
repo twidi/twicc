@@ -21,7 +21,7 @@ from twicc.agent import (
     SendDeliveryError,
 )
 from twicc.agent.exceptions import SessionUnavailableError
-from twicc.agent.completion_types import CompletionSnapshot
+from twicc.agent.completion_types import CompletionInput, CompletionSnapshot
 from twicc.core.enums import Provider
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import system_marker
@@ -147,10 +147,37 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # committed composer attachment ``content``, its ``refs`` and their
         # ``on_delivered`` release (called only once the send is delivered).
         self._pending_after_restart: dict[str, dict] = {}
+        # The service can wait after the old agent dies and before its replacement
+        # exists. Resolve this handoff with the replacement's exact delivery Future.
+        self._deferred_completion_receipts: dict[str, asyncio.Future] = {}
         # Settings a background shell held back, applied once the last one
         # ends (see ``_after_background_work_change``); cancelled at shutdown.
         self._deferred_settings_tasks: dict[str, asyncio.Task[None]] = {}
         self._hybrid_signal_tasks: set[asyncio.Task] = set()
+
+    def completion_input_is_deferred(self, token: str) -> bool:
+        return token in self._deferred_completion_receipts
+
+    def _register_completion_input_receipt(self, token: str, receipt: asyncio.Future) -> None:
+        super()._register_completion_input_receipt(token, receipt)
+        handoff = self._deferred_completion_receipts.get(token)
+        if handoff is not None and not handoff.done():
+            handoff.set_result(receipt)
+
+    def _finish_deferred_completion_handoff(self, token: str | None) -> None:
+        handoff = self._deferred_completion_receipts.get(token)
+        if handoff is not None and not handoff.done():
+            handoff.set_result(None)
+
+    async def wait_for_completion_input(self, token: str) -> CompletionInput | None:
+        handoff = self._deferred_completion_receipts.get(token)
+        if handoff is None:
+            return await super().wait_for_completion_input(token)
+        receipt = await asyncio.shield(handoff)
+        accepted = await asyncio.shield(receipt) if receipt is not None else None
+        if not accepted:
+            raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
+        return accepted
 
     def _ensure_title_publications(self):
         """Configure the shared worker on the manager event loop."""
@@ -607,6 +634,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                     "text": text, "images": images, "documents": documents,
                                     **content_kwargs, **parked_attachments,
                                 }
+                                token = content_kwargs.get("completion_token")
+                                if token is not None:
+                                    self._deferred_completion_receipts[token] = asyncio.get_running_loop().create_future()
                             # _on_state_change(DEAD) fires once DEAD is reached:
                             # - if has_crons: launches cron restart task (which will
                             #   also send pending text after success)
@@ -624,14 +654,17 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                 # The restart performed by the same operation as the apply-settings kill
                                 # is automatic, even inline in a user's send (design 2026-10-14, 5 and 7):
                                 # the marker covers this start only and is restored on return or raise.
-                                with system_marker():
-                                    await self._restart_after_kill(
-                                        session_id, project_id, cwd, pending["text"],
-                                        settings=settings,
-                                        images=pending.get("images"),
-                                        documents=pending.get("documents"),
-                                        **_parked_start_kwargs(pending),
-                                    )
+                                try:
+                                    with system_marker():
+                                        await self._restart_after_kill(
+                                            session_id, project_id, cwd, pending["text"],
+                                            settings=settings,
+                                            images=pending.get("images"),
+                                            documents=pending.get("documents"),
+                                            **_parked_start_kwargs(pending),
+                                        )
+                                finally:
+                                    self._finish_deferred_completion_handoff(pending.get("completion_token"))
                                 release_after_lock = self._parked_release_after_start(session_id, pending)
                             # If has_crons → cron restart task handles it.
                             # Delivery is deferred to after the restart, so this is
@@ -1549,6 +1582,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         """
         task = self._cron_restart_tasks.pop(session_id, None)
         if task is not None and not task.done():
+            # A task cancelled before its first step never runs its finally block.
+            pending = self._pending_after_restart.get(session_id, {})
+            self._finish_deferred_completion_handoff(pending.get("completion_token"))
             task.cancel()
             logger.info("Cancelled cron restart task for session %s", session_id)
             return True
@@ -1566,6 +1602,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         from twicc.providers.claude_code.cron_restart import restart_session_crons
 
         RUNTIME_INITIAL_DELAY = 10  # seconds before first attempt (let API recover)
+        completion_token = self._pending_after_restart.get(session_id, {}).get("completion_token")
 
         try:
             await restart_session_crons(
@@ -1600,6 +1637,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         except Exception as e:
             logger.error("Cron restart task failed for session %s: %s", session_id, e, exc_info=True)
         finally:
+            self._finish_deferred_completion_handoff(completion_token)
             self._cron_restart_tasks.pop(session_id, None)
             # Drop any queued pending content too: if we got here without
             # successfully sending it (cancel/error/no-USER_TURN), we cannot

@@ -739,9 +739,16 @@ class BaseAgentManager:
         return await sync_to_async(lambda: Session.objects.filter(pk=session_id)
                                    .values_list("last_line", flat=True).first())() or 0
 
+    def completion_input_is_deferred(self, token: str) -> bool:
+        return False
+
+    def _register_completion_input_receipt(self, token: str, receipt: asyncio.Future) -> None:
+        self._completion_input_receipts[token] = receipt
+
     def _bind_completion_callbacks(self, agent: BaseAgent) -> None:
-        agent._completion_input_callback = self._completion_input_receipts.__setitem__
-        self._completion_input_receipts.update(agent._completion_input_receipts)
+        agent._completion_input_callback = self._register_completion_input_receipt
+        for token, receipt in agent._completion_input_receipts.items():
+            self._register_completion_input_receipt(token, receipt)
         agent._completion_persist_callback = self._persist_completion
         agent._completion_confirm_callback = self._confirm_completion
         agent._completion_end_callback = self._end_completion
