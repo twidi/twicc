@@ -112,6 +112,15 @@ class CursorWrite(NamedTuple):
     last_logical_turn_id: str | None = None
 
 
+class LogicalProgressReset(NamedTuple):
+    """Clear one expired consumption reference without changing line or time."""
+
+    id: str
+    created_at: datetime
+    numbering: int | None
+    expected_last_logical_turn_id: str
+
+
 class TurnWrite(NamedTuple):
     id: str
     created_at: datetime
@@ -479,16 +488,33 @@ class EventsRuntime:
         reply = monitor.wait.step()
         if reply is None:
             return
+        if (reply["outcome"] == "wait_failed"
+                and reply.get("error") == "Invalid logical progress for this session"
+                and monitor.last_logical_turn_id is not None
+                and str(monitor.wait.after_turn_id) == str(monitor.last_logical_turn_id)
+                and not LogicalTurn.objects.filter(
+                    session_id=monitor.session_id, pk=monitor.last_logical_turn_id,
+                ).exists()):
+            # Retention removes progress independently of this live subscription.
+            # Prepare before posting, then resume on the next tick at the same line.
+            wait = self._new_wait(monitor, reset_logical=True)
+            self.post_write(LogicalProgressReset(
+                *monitor.generation, monitor.numbering, str(monitor.last_logical_turn_id),
+            ))
+            monitor.wait = wait
+            monitor.last_logical_turn_id = None
+            return
         outcome = monitor.tick_outcome = reply["outcome"]
+        progress = monitor.wait.progress()
+        managed_consumption = (outcome in ("replied", "provider_error", "ended")
+                               and progress.last_logical_turn_id is not None
+                               and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
         request = None
         guard_drop = False
         if outcome == "ended":
-            managed_end = monitor.wait.progress().last_logical_turn_id not in (
-                None, str(monitor.last_logical_turn_id),
-            )
-            if not monitor.turn_open and not managed_end:
+            if not monitor.turn_open and not managed_consumption:
                 return True
-            if (not managed_end and monitor.turn_opened_by == "transition"
+            if (not managed_consumption and monitor.turn_opened_by == "transition"
                     and reply["line_num"] is None and info is not None):
                 # The wait loads the provider before it can conclude a row's end.
                 provider = monitor.wait.session.provider if monitor.wait.session is not None else info.provider
@@ -526,6 +552,7 @@ class EventsRuntime:
             numbering=snapshot.history_epoch if snapshot is not None else 0,
             last_line=snapshot.last_line if snapshot is not None else 0,
             tick_started_at=tick_started_at, item_timestamp=item_timestamp, pending_request=request,
+            logical_turn_id=progress.last_logical_turn_id if managed_consumption else None,
         )
         body = fit_body(occurrence)
         conclusion_time = (item_timestamp or tick_started_at).timestamp()
@@ -546,9 +573,6 @@ class EventsRuntime:
             while len(request_order) > 256:
                 request_ids.discard(request_order.popleft())
         else:
-            progress = wait.progress()
-            managed_consumption = (progress.last_logical_turn_id is not None
-                                   and progress.last_logical_turn_id != str(monitor.last_logical_turn_id))
             if outcome == "ended":
                 turn_open = False
                 if snapshot is not None:
@@ -700,6 +724,11 @@ class EventsRuntime:
             }
             if item.cursor_at is not None:
                 values["cursor_at"] = Greatest(F("cursor_at"), Value(item.cursor_at))
+        elif isinstance(item, LogicalProgressReset):
+            rows = rows.filter(
+                numbering=item.numbering, last_logical_turn_id=item.expected_last_logical_turn_id,
+            )
+            values = {"last_logical_turn_id": None}
         elif isinstance(item, TurnWrite):
             values = {name: getattr(item, name) for name in (
                 "turn_open", "turn_started_at", "turn_opened_by", "turn_start_line",

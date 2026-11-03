@@ -9,7 +9,8 @@ from asgiref.sync import sync_to_async
 import pytest
 
 from tests.mcp_events_helpers import FakeClock
-from twicc.core.models import McpConnection, McpEventSubscription, McpOAuthClient
+from twicc.core.models import LogicalTurn, McpConnection, McpEventSubscription, McpOAuthClient
+from twicc.mcp.events import runtime as runtime_module
 from twicc.mcp.events.runtime import CursorWrite, EventsRuntime, RebaseWrite, TurnWrite, WriteBarrier
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -131,3 +132,65 @@ def test_history_rebase_clears_consumed_logical_interval(state):
     ))
     row.refresh_from_db()
     assert row.last_logical_turn_id is None
+
+
+@pytest.mark.parametrize("change", ["none", "id", "generation", "epoch", "logical_reference"])
+def test_logical_progress_reset_matches_exact_subscription_state_and_preserves_cursors(state, change):
+    _, row, runtime = state
+    missing_id, replacement_id = uuid4(), uuid4()
+    McpEventSubscription.objects.filter(pk=row.pk).update(last_logical_turn_id=missing_id)
+    reset = runtime_module.LogicalProgressReset(row.id, row.created_at, row.numbering, str(missing_id))
+    if change == "id":
+        reset = reset._replace(id="other-subscription")
+    elif change == "generation":
+        McpEventSubscription.objects.filter(pk=row.pk).update(created_at=row.created_at + timedelta(seconds=1))
+    elif change == "epoch":
+        McpEventSubscription.objects.filter(pk=row.pk).update(numbering=2)
+    elif change == "logical_reference":
+        McpEventSubscription.objects.filter(pk=row.pk).update(last_logical_turn_id=replacement_id)
+    asyncio.run(apply(runtime, reset))
+    row.refresh_from_db()
+    expected_id = None if change == "none" else replacement_id if change == "logical_reference" else missing_id
+    assert row.last_logical_turn_id == expected_id
+    assert (row.cursor_line, row.cursor_at) == (10, 100.0)
+    assert (row.turn_open, row.turn_started_at, row.turn_opened_by, row.turn_start_line) == (
+        True, 90.0, "initial", 10,
+    )
+
+
+@pytest.mark.parametrize("order", ["old_reset_new", "reset_old_new", "new_reset_old", "reset_new_old"])
+def test_progress_reset_and_delayed_callback_receipts_preserve_newer_logical_progress(state, order):
+    clock, row, runtime = state
+    missing_id, newer_id = uuid4(), uuid4()
+    LogicalTurn.objects.create(
+        id=newer_id, session_id=row.session_id, provider="claude_code", run_id=uuid4(), ordinal=1,
+        position=2, source_floor=10, opened_at=clock.utcnow(), closed_at=clock.utcnow(), outcome="ended",
+    )
+    McpEventSubscription.objects.filter(pk=row.pk).update(last_logical_turn_id=missing_id)
+    writes = {
+        "old": CursorWrite(row.id, row.created_at, 1, 15, 110.0, str(missing_id)),
+        "reset": runtime_module.LogicalProgressReset(row.id, row.created_at, 1, str(missing_id)),
+        "new": CursorWrite(row.id, row.created_at, 1, 20, 120.0, str(newer_id)),
+    }
+    asyncio.run(apply(runtime, *(writes[key] for key in order.split("_"))))
+    row.refresh_from_db()
+    assert row.last_logical_turn_id == newer_id
+    assert (row.cursor_line, row.cursor_at) == (20, 120.0)
+
+
+def test_delayed_purged_callback_cannot_restore_reset_progress_and_none_cursor_does_not_clear(state):
+    _, row, runtime = state
+    missing_id = uuid4()
+    McpEventSubscription.objects.filter(pk=row.pk).update(last_logical_turn_id=missing_id)
+    async def run():
+        await apply(runtime, CursorWrite(row.id, row.created_at, 1, 10, None))
+        saved = await McpEventSubscription.objects.aget(pk=row.pk)
+        assert saved.last_logical_turn_id == missing_id
+        await apply(runtime,
+            runtime_module.LogicalProgressReset(row.id, row.created_at, 1, str(missing_id)),
+            CursorWrite(row.id, row.created_at, 1, 10, 100.0, str(missing_id)),
+        )
+    asyncio.run(run())
+    row.refresh_from_db()
+    assert row.last_logical_turn_id is None
+    assert (row.cursor_line, row.cursor_at) == (10, 100.0)

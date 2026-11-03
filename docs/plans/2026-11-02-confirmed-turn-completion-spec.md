@@ -219,6 +219,16 @@ Late callbacks cannot recreate deleted intervals or prevent an agent's actual co
 The waiting guarantees above apply while the journal is retained.
 Do not add retention tables, durable expiry markers, or guarantees for historical cursors after cleanup.
 
+### MCP conclusion identity and live progress
+
+For managed conclusions, `session.concluded` identifies the consumed logical interval in its event identity.
+Distinct logical intervals remain distinct even without new transcript lines. Retrying the same conclusion keeps its identity.
+Pending actions keep their request identity. Unmanaged conclusions keep their existing transcript identity.
+If a live subscription's consumed logical interval is purged, clear that reference and resume from its existing line cursor.
+Persist this reset only for the matching subscription generation, history epoch, and previous logical reference.
+Do not rewind line cursors, replay consumed answers, emit `wait_failed` for this recoverable case, or clear unrelated failures.
+Reuse the existing subscription row and writer. No new table, field, or retention history is required.
+
 ## Timeline contract
 
 Record one start and one end per logical assistant interval.

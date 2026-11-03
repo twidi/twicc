@@ -122,6 +122,7 @@ def build_occurrence(
     tick_started_at: datetime,
     item_timestamp: datetime | None = None,
     pending_request=None,
+    logical_turn_id: str | None = None,
 ) -> dict:
     """Use detection-time snapshots for identity and occurrence time."""
     outcome = reply["outcome"]
@@ -131,7 +132,10 @@ def build_occurrence(
         key = pending_request.request_id
         timestamp = created_at_iso(pending_request.created_at)
     else:
-        key = f"{numbering}:{line_num}" if line_num is not None else f"last_line:{numbering}:{last_line}"
+        if logical_turn_id is not None:
+            key = f"logical_turn:{logical_turn_id}"
+        else:
+            key = f"{numbering}:{line_num}" if line_num is not None else f"last_line:{numbering}:{last_line}"
         if outcome in ("replied", "provider_error") and item_timestamp is not None:
             timestamp = item_timestamp.isoformat()
     return {
