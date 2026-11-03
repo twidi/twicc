@@ -719,3 +719,71 @@ def test_service_observes_real_claude_restart_receipt_and_manager_owned_refs(bri
             assert releases == []
         assert owners == [(ref,)]
     asyncio.run(scenario())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('answer_fixture', ['codex'], indirect=True)
+@pytest.mark.parametrize('provider,barrier', [('codex', 'gate'), ('codex', 'lock'), ('claude_code', 'lock')])
+def test_command_returns_serialized_admission_cursor_without_human_token(answer_fixture, monkeypatch, provider, barrier):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+    from asgiref.sync import sync_to_async
+    from twicc.agent.states import AgentState
+    from twicc.core.models import Session, LogicalTurn
+    from twicc.core.services import send_message
+    from twicc.providers.codex.agent.manager import CodexAgentManager
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+    from tests.test_claude_completion import make_agent
+    f = answer_fixture
+    Session.objects.filter(pk=f.session.id).update(provider=provider)
+    manager = CodexAgentManager() if provider == 'codex' else ClaudeCodeAgentManager()
+    monkeypatch.setattr(send_message, 'ensure_provider_running', lambda _: None)
+    monkeypatch.setattr(send_message, 'get_provider_helpers', lambda _: SimpleNamespace(
+        resolve_agent_settings=lambda value: value, enforce_agent_settings_consistency=lambda value: value))
+    monkeypatch.setattr('twicc.agent.registry.get_agent_manager_registry', lambda: SimpleNamespace(get=lambda _: manager))
+    async def scenario():
+        blocked, release = asyncio.Event(), asyncio.Event()
+        @asynccontextmanager
+        async def gate(_):
+            blocked.set()
+            await release.wait()
+            yield
+        async def dispatch(*args, **kwargs):
+            # A fast command answer must remain strictly after its returned cursor.
+            await sync_to_async(lambda: Session.objects.filter(pk=f.session.id).update(last_line=9))()
+            return True
+        if provider == 'codex':
+            manager._dispatch_hardcoded_command = AsyncMock(side_effect=dispatch)
+        else:
+            agent = make_agent()
+            agent.session_id = f.session.id
+            agent.ephemeral = False
+            agent._set_state(AgentState.USER_TURN)
+            agent.apply_live_settings = AsyncMock()
+            agent.send = AsyncMock(side_effect=dispatch)
+            manager._agents[f.session.id] = agent
+        if barrier == 'gate':
+            monkeypatch.setattr('twicc.providers.codex.agent.manager.gate_for', gate)
+        else:
+            await manager._lock.acquire()
+        task = asyncio.create_task(send_message.send_message_from_drop_payload({'session_id': f.session.id, 'text': '/compact'}))
+        if barrier == 'gate':
+            await asyncio.wait_for(blocked.wait(), 2)
+        else:
+            async def wait_for_lock_admission():
+                while not manager._lock._waiters:
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(wait_for_lock_admission(), 2)
+            assert not task.done()
+        await sync_to_async(lambda: Session.objects.filter(pk=f.session.id).update(last_line=5))()
+        if barrier == 'gate':
+            release.set()
+        else:
+            manager._lock.release()
+        result = await asyncio.wait_for(task, 2)
+        assert result.success, result.errors
+        assert result.status_extra == {'last_line': 5}
+        assert not manager._completion_input_receipts
+        assert await sync_to_async(LogicalTurnInput.objects.count)() == 0
+        assert await sync_to_async(LogicalTurn.objects.count)() == 0
+    asyncio.run(scenario())

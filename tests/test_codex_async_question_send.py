@@ -95,6 +95,30 @@ def harness(monkeypatch):
     return SimpleNamespace(session=session, agent=agent, manager=manager, send=send)
 
 
+@pytest.fixture
+def completion_harness(harness):
+    """Service sends exercise real completion receipts around native delivery."""
+    from tests.agent_helpers import InitializedAgent
+
+    agent = InitializedAgent(harness.session.id, harness.session.project_id)
+    agent._set_state(AgentState.USER_TURN)
+    agent.apply_agent_settings = AsyncMock()
+
+    async def deliver(text, *, completion_token, completion_cursor, **kwargs):
+        agent._completion_source_floor = completion_cursor
+        agent._completion_input_pending(completion_token)
+        if agent.send.return_value:
+            agent._completion_activity()
+        agent._completion_input_settled(completion_token, 'accepted' if agent.send.return_value else 'rejected')
+        return agent.send.return_value
+
+    agent.send = AsyncMock(side_effect=deliver, return_value=True)
+    harness.manager._bind_completion_callbacks(agent)
+    harness.manager._agents[harness.session.id] = agent
+    harness.agent = agent
+    return harness
+
+
 def snapshot(harness):
     return service.read_question_snapshot(harness.session.id)
 
@@ -709,7 +733,8 @@ def test_cli_private_origin_and_generated_request_id(harness, monkeypatch, comma
 
 
 @pytest.mark.parametrize("origin", ["human", "agent", "internal"])
-def test_payload_service_forwards_private_provenance(harness, monkeypatch, origin):
+def test_payload_service_forwards_private_provenance(completion_harness, monkeypatch, origin):
+    harness = completion_harness
     import twicc.core.services.send_message as sends
     from twicc.agent.registry import get_agent_manager_registry
 
@@ -882,7 +907,8 @@ def test_dead_before_background_start_does_not_open_provider_turn(harness):
     asyncio.run(run())
 
 
-def test_payload_service_does_not_claim_delivery_when_manager_returns_false(harness, monkeypatch):
+def test_payload_service_does_not_claim_delivery_when_manager_returns_false(completion_harness, monkeypatch):
+    harness = completion_harness
     import twicc.core.services.send_message as sends
     from twicc.agent.registry import get_agent_manager_registry
 

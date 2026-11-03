@@ -267,14 +267,19 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
 
     # Legacy managers have no receipt. Managed delivery captures its own immutable
     # boundary inside the gate and lock; use that receipt after native acceptance.
+    # Commands return per-call admission metadata without an input association.
     admission_cursor = await sync_to_async(lambda: Session.objects.filter(pk=session_id)
                                           .values_list("last_line", flat=True).first())() or 0
+    from twicc.agent.base_manager import BaseAgentManager
+
+    completion_admission = {}
     completion_token = str(uuid4())
     try:
         delivered = await manager.send_to_session(
             session_id, session.project_id, project.directory, text,
             settings=effective,
             completion_token=completion_token,
+            **({"completion_admission": completion_admission} if isinstance(manager, BaseAgentManager) else {}),
             **plan_kwargs,
             **({"async_questions": payload.get("async_questions"),
                 "request_id": payload.get("_send_request_id") or str(uuid4()),
@@ -286,8 +291,6 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
             return _rejected("attachments", code, attachment_drop.message_with_names(e)), False
         return _rejected("session", code, str(e)), False
 
-    from twicc.agent.base_manager import BaseAgentManager
-
     manager_owns_refs = delivered is False
     if manager_owns_refs:
         # Commit ownership before awaiting a receipt: caller cancellation must not
@@ -297,7 +300,7 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
     if delivered is False and not deferred:
         return _rejected("session", "send_failed", "The message was not accepted for delivery"), True
 
-    status_extra = {"last_line": admission_cursor}
+    status_extra = {"last_line": completion_admission.get("cursor", admission_cursor)}
 
     if isinstance(manager, BaseAgentManager):
         try:

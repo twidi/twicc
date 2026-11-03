@@ -3380,7 +3380,7 @@ class CodexAgent(BaseAgent):
                 self._completion_activity(first_ref=ref)
                 if (method == "item/completed" and getattr(inner, "type", None) == "agentMessage"
                         and _enum_value(getattr(inner, "phase", None)) in {None, "final_answer"}):
-                    if identity or getattr(inner, "text", ""):
+                    if getattr(inner, "text", ""):
                         self._completion_finals[turn_id] = ref or NativeMessageRef("unresolved", "", turn_id)
 
         if method in {"item/started", "item/completed", "turn/completed"} and not getattr(self, "ephemeral", False):

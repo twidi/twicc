@@ -268,8 +268,12 @@ class CodexAgentManager(BaseAgentManager):
         send_origin: str = "internal",
         completion_token: str | None = None,
         completion_cursor: int | None = None,
+        completion_admission: dict | None = None,
     ) -> bool:
         """Serialize admission, delivery and acceptance with rollout migration.
+
+        ``completion_admission`` receives a command cursor inside the gate and
+        manager lock, before dispatch. It creates no human-input association.
 
         ``attachment_plan`` (composer attachments) is committed here, at entry:
         before the rollout-migration gate, the manager ``_lock`` and the
@@ -280,7 +284,7 @@ class CodexAgentManager(BaseAgentManager):
         """
 
         completion_kwargs = {}
-        completion_admission = {"entered": False}
+        input_admission = {"entered": False}
         staged_agent = self._agents.get(session_id)
         has_input = (parse_hardcoded_command(text) is None and (
             bool(text) or bool(images) or bool(isinstance(async_questions, dict) and async_questions.get("answers"))
@@ -289,12 +293,14 @@ class CodexAgentManager(BaseAgentManager):
                           or isinstance(staged_agent, BaseAgent)):
             completion_token = completion_token or str(uuid4())
             completion_kwargs = {"completion_token": completion_token, "completion_cursor": completion_cursor,
-                                 "_completion_admission": completion_admission}
+                                 "_completion_admission": input_admission}
             if staged_agent is not None and staged_agent.state != AgentState.DEAD:
                 self._check_ephemeral_readonly(session_id)
                 if completion_cursor is not None:
                     staged_agent._completion_source_floor = completion_cursor
                 staged_agent._completion_input_pending(completion_token, staged=True)
+        if completion_admission is not None and parse_hardcoded_command(text) is not None:
+            completion_kwargs["_completion_admission"] = completion_admission
         try:
             self._check_ephemeral_readonly(session_id)
             content = None
@@ -316,14 +322,14 @@ class CodexAgentManager(BaseAgentManager):
                     **_content_kwargs(content), **completion_kwargs,
                 )
                 if (staged_agent is not None and completion_token is not None and has_input
-                        and not completion_admission["entered"]):
+                        and not input_admission["entered"]):
                     staged_agent._completion_input_settled(completion_token, "rejected")
                 return delivered
         except BaseException as exc:
             if staged_agent is not None and completion_token is not None and has_input:
                 from .agent import question_send_failure_status
 
-                status = question_send_failure_status(exc) if completion_admission["entered"] else "rejected"
+                status = question_send_failure_status(exc) if input_admission["entered"] else "rejected"
                 staged_agent._completion_input_settled(completion_token, status)
             raise
 
@@ -543,6 +549,8 @@ class CodexAgentManager(BaseAgentManager):
                 completion_cursor = await self._completion_admission_cursor(session_id)
                 completion_kwargs["completion_cursor"] = completion_cursor
             if command is not None:
+                if _completion_admission is not None:
+                    _completion_admission["cursor"] = await self._completion_admission_cursor(session_id)
                 await self._dispatch_hardcoded_command(
                     session_id, project_id, cwd, command, settings,
                 )

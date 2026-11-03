@@ -124,7 +124,6 @@ def test_actual_registration_fences_prepared_compression(monkeypatch, failure):
 
     from twicc.agent.base_manager import BaseAgentManager
     from twicc.core.content_storage.codec import encode_cold
-    from twicc.core.enums import Provider
     from twicc.core.models import ProcessRun, SessionItem, SessionItemContent
     from twicc.providers import db_writer
 
@@ -167,8 +166,10 @@ def test_actual_registration_fences_prepared_compression(monkeypatch, failure):
     monkeypatch.setattr(manager, '_broadcast_session_updated', noop)
     monkeypatch.setattr(manager, '_on_state_change', noop)
     monkeypatch.setattr(manager, '_ensure_timeout_monitor_running', lambda: None)
-    agent = SimpleNamespace(session_id=root.id, provider=Provider.CODEX, ephemeral=False,
-                            get_pid=lambda: None, start=noop, process_run=None)
+    from tests.agent_helpers import InitializedAgent
+
+    agent = InitializedAgent(root.id, root.project_id)
+    agent.start = noop
     publication = []
 
     def publish():

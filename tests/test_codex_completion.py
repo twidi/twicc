@@ -680,3 +680,17 @@ def test_exceptional_goal_closes_before_settlement_and_cannot_close_new_work(sta
             await asyncio.gather(goal, return_exceptions=True)
             cleanup(agent)
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('earlier_answer', [False, True])
+def test_empty_physical_final_retains_previous_relevant_final(earlier_answer):
+    async def scenario():
+        agent = make_agent()
+        if earlier_answer:
+            await run(agent, [final('earlier'), event('turn/completed')])
+        await run(agent, [event('item/completed', item=dict(type='agentMessage', id='empty', text='', phase='final_answer')),
+                          event('turn/completed')])
+        refs = agent.completion_controller.snapshot().final_refs
+        assert refs == ((NativeMessageRef('codex_item', 'earlier', 'physical-1'),) if earlier_answer else ())
+        cleanup(agent)
+    asyncio.run(scenario())

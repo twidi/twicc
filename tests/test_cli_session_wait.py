@@ -425,13 +425,18 @@ def test_the_mcp_description_carries_the_contract():
     )
 
     assert "Exit 0" in description
-    assert "after `replied` or `provider_error`, its `line_num`" in description
-    assert "after any other outcome, its `since_line_num`" in description
+    assert 'confirmed logical completion' in description
+    assert 'one second without root activity, pending delivery, or assistant holds' in description
+    assert 'pending request takes priority over intermediate text' in description
+    assert 'wait_token selects an accepted input' in description
+    assert 'stored admission cursor' in description
+    assert 'line_num after replied/provider_error or an ignored background answer' in description
+    assert 'otherwise since_line_num' in description
     assert "from_line" in description and "since" in description
     assert "mutually exclusive" in description
     for outcome in ("replied", "ended", "timeout", "provider_error",
                     "backend_gone", "wait_failed", "awaiting_user_input"):
-        assert f"`{outcome}`" in description, outcome
+        assert outcome in description, outcome
     assert "`pending`" not in description
 
 

@@ -243,3 +243,118 @@ def test_claude_sidechain_record_cannot_resolve_root_answer(answer_fixture):
     turn = f.turn(refs=('A2',))
     f.index('A2', 2, 'child answer', sidechain=True)
     assert resolve_logical_answer(turn, cursor=0).status == 'pending'
+
+
+@pytest.mark.parametrize('outcome', ['normal', 'ended'])
+@pytest.mark.parametrize('boundary', ['indexed', 'unindexed', 'wrong_scope'])
+def test_later_native_opening_bounds_closed_empty_interval(answer_fixture, outcome, boundary):
+    from twicc.core.services.logical_turn_answers import select_logical_turn
+    f = answer_fixture
+    older = f.turn(refs=(), first='A0', outcome=outcome)
+    f.index('A0', 2, 'earlier work', final=False)
+    newer = f.turn(refs=('B1',), first='B0', position=2, floor=8)
+    if boundary != 'unindexed':
+        f.index('B0', 8, 'new work', final=False)
+    if boundary == 'wrong_scope':
+        newer.history_epoch += 1
+        newer.save()
+    f.index('B1', 9, 'new answer')
+    selected = select_logical_turn(session_id=f.session.id, cursor=8, wait_token=None)
+    assert selected.pk == (newer.pk if boundary == 'indexed' else older.pk)
+    # A boundary after the cursor cannot establish that the old interval is past.
+    assert select_logical_turn(session_id=f.session.id, cursor=7, wait_token=None).pk == older.pk
+    token = LogicalTurnInput.objects.create(id=uuid4(), turn=older, admission_cursor=0, status='accepted')
+    assert select_logical_turn(session_id=f.session.id, cursor=8, wait_token=str(token.pk)).pk == older.pk
+
+
+def test_later_opening_does_not_replace_unindexed_final(answer_fixture):
+    from twicc.core.services.logical_turn_answers import select_logical_turn
+    f = answer_fixture
+    older = f.turn(refs=('missing',), first='A0')
+    f.index('A0', 2, 'earlier work', final=False)
+    f.turn(refs=('B1',), first='B0', position=2)
+    f.index('B0', 8, 'new work', final=False)
+    assert select_logical_turn(session_id=f.session.id, cursor=8, wait_token=None).pk == older.pk
+
+
+@pytest.mark.parametrize('earlier_answer', [False, True])
+def test_indexed_empty_codex_final_is_known_without_replacing_previous_answer(answer_fixture, earlier_answer):
+    from twicc.core.services.logical_turn_answers import resolve_logical_answer
+    f = answer_fixture
+    if f.provider != 'codex':
+        pytest.skip('Codex empty native final')
+    turn = f.turn(refs=('A1', 'empty') if earlier_answer else ('empty',))
+    if earlier_answer:
+        f.index('A1', 2, 'earlier answer')
+    # The final identity is authoritative until its source record is indexed.
+    assert resolve_logical_answer(turn, cursor=0).status == 'pending'
+    f.index('empty', 5, '')
+    result = resolve_logical_answer(turn, cursor=0)
+    assert result.status == ('replied' if earlier_answer else 'ended')
+    if earlier_answer:
+        assert result.message.text == 'earlier answer'
+        assert resolve_logical_answer(turn, cursor=2).status == 'ended'
+
+
+@pytest.mark.parametrize('outcome', ['normal', 'ended'])
+@pytest.mark.parametrize('opening', ['user', 'assistant'])
+def test_latest_user_default_uses_verified_native_user_opening(answer_fixture, content_row_factory, monkeypatch, outcome, opening):
+    import time
+    from twicc.cli import _wait_reply
+    from twicc.providers.helpers import get_provider_helpers
+    f = answer_fixture
+    f.turn(refs=(), first='A0', outcome=outcome)
+    f.index('A0', 2, 'earlier work', final=False)
+    newer = f.turn(refs=('B1',), first='B-user' if opening == 'user' else 'B1', position=2)
+    if f.provider == 'claude_code':
+        parsed = {'type': 'user', 'uuid': 'B-user', 'message': {'role': 'user', 'content': 'next'}}
+    else:
+        parsed = {'type': 'event_msg', 'payload': {'type': 'item_completed', 'thread_id': f.session.id,
+                  'turn_id': 'native-A', 'item': {'type': 'UserMessage', 'id': 'B-user',
+                  'content': [{'type': 'Text', 'text': 'next'}]}}}
+    content = content_row_factory(orjson.dumps(parsed).decode(), True, f.provider)
+    SessionItem.objects.create(session=f.session, line_num=8, kind=ItemKind.USER_MESSAGE,
+                               content='', current_content=content)
+    f.index('B1', 9, 'new answer')
+    f.session.compute_version = get_provider_helpers(f.provider).current_compute_version
+    f.session.last_line = 9
+    f.session.save(update_fields=['compute_version', 'last_line'])
+    cursor = _wait_reply.default_wait_cursors([f.session])[f.session.id]
+    assert cursor == 8
+    monkeypatch.setattr(_wait_reply, '_agent_activity', lambda *_: _wait_reply._Activity(False, False, None, True))
+    waiter = _wait_reply._SessionWait(f.session.id, cursor, started=time.monotonic(), twicc_pid=None, want_text=True)
+    result = waiter.step()
+    if opening == 'user':
+        assert result['outcome'] == 'replied'
+        assert result['text'] == 'new answer'
+    else:
+        # Proximity cannot associate the user line with the later assistant.
+        assert result['outcome'] == 'ended'
+    token = LogicalTurnInput.objects.create(id=uuid4(), turn=newer, admission_cursor=8, status='accepted')
+    exact = _wait_reply._SessionWait(f.session.id, cursor, started=time.monotonic(), twicc_pid=None,
+                                    want_text=True, wait_token=str(token.pk))
+    assert exact.step()['text'] == 'new answer'
+
+
+@pytest.mark.parametrize('outcome', ['ended', 'provider_error'])
+def test_later_native_opening_bounds_interrupted_unindexed_final(answer_fixture, outcome):
+    from twicc.core.services.logical_turn_answers import select_logical_turn
+    f = answer_fixture
+    older = f.turn(refs=('unindexed-final',), first='A0', outcome=outcome)
+    f.index('A0', 2, 'earlier work', final=False)
+    newer = f.turn(refs=('B1',), first='B0', position=2)
+    f.index('B0', 8, 'later work', final=False)
+    assert select_logical_turn(session_id=f.session.id, cursor=8, wait_token=None).pk == newer.pk
+    token = LogicalTurnInput.objects.create(id=uuid4(), turn=older, admission_cursor=0, status='accepted')
+    assert select_logical_turn(session_id=f.session.id, cursor=8, wait_token=str(token.pk)).pk == older.pk
+
+
+def test_unbound_source_cannot_prove_later_opening(answer_fixture):
+    from twicc.core.services.logical_turn_answers import select_logical_turn
+    f = answer_fixture
+    older = f.turn(refs=(), first='A0')
+    newer = f.turn(refs=(), first='B0', position=2)
+    f.index('B0', 8, 'later work', final=False)
+    Session.objects.filter(pk=f.session.id).update(storage_incarnation=None)
+    LogicalTurn.objects.filter(pk=newer.pk).update(storage_incarnation=None)
+    assert select_logical_turn(session_id=f.session.id, cursor=8, wait_token=None).pk == older.pk

@@ -242,10 +242,8 @@ def test_full_compute_invalidates_warm_owner(cache):
 @pytest.mark.parametrize('entry_point', ['start', 'resume', 'stop'])
 def test_agent_entry_points_invalidate_before_writer_release(cache, entry_point, monkeypatch):
     import asyncio
-    from types import SimpleNamespace
 
     from twicc.agent.base_manager import BaseAgentManager
-    from twicc.core.enums import Provider
     from twicc.providers import db_writer
 
     owner = make_session('owner')
@@ -265,8 +263,10 @@ def test_agent_entry_points_invalidate_before_writer_release(cache, entry_point,
     monkeypatch.setattr(manager, '_broadcast_session_updated', broadcast)
     monkeypatch.setattr(manager, '_on_state_change', noop)
     monkeypatch.setattr(manager, '_ensure_timeout_monitor_running', lambda: None)
-    agent = SimpleNamespace(session_id=owner.id, provider=Provider.CODEX, ephemeral=False,
-                            get_pid=lambda: None, start=noop, process_run=None)
+    from tests.agent_helpers import InitializedAgent
+
+    agent = InitializedAgent(owner.id, owner.project_id)
+    agent.start = noop
 
     async def scenario():
         if entry_point == 'stop':

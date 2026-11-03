@@ -343,7 +343,9 @@ def test_registration_failure_unwinds_only_proven_prelaunch_attachment(context, 
     async def scenario():
         manager = ClaudeCodeAgentManager()
         worker = manager._ensure_title_publications()
-        agent = SimpleNamespace(session_id=row.id, ephemeral=False, provider=Provider.CLAUDE_CODE, get_pid=lambda: None)
+        from tests.agent_helpers import InitializedAgent
+
+        agent = InitializedAgent(row.id, row.project_id, provider=Provider.CLAUDE_CODE)
         try:
             with pytest.raises(RuntimeError, match='registration fails'):
                 await manager._register_and_start(agent, 'prompt', resume=True)

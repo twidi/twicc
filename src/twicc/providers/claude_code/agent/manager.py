@@ -478,6 +478,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         attachment_plan: AttachmentPlan | None = None,
         completion_token: str | None = None,
         completion_cursor: int | None = None,
+        completion_admission: dict | None = None,
     ) -> bool:
         """Send a message to an existing session, applying settings changes as needed.
 
@@ -499,6 +500,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         (``_after_background_work_change``) or the process is stopped. During
         ASSISTANT_TURN, the changes are saved to DB and applied on the next
         USER_TURN transition.
+
+        ``completion_admission`` receives a command cursor before delivery under
+        the manager lock. It creates no human-input receipt or journal row.
 
         Returns:
             ``True`` when a message was synchronously accepted for delivery
@@ -566,6 +570,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         try:
             async with self._lock:
                 self._check_ephemeral_readonly(session_id)
+                if is_command and completion_admission is not None:
+                    completion_admission["cursor"] = await self._completion_admission_cursor(session_id)
                 if has_input and completion_cursor is None and completion_kwargs:
                     completion_cursor = await self._completion_admission_cursor(session_id)
                     content_kwargs["completion_cursor"] = completion_cursor

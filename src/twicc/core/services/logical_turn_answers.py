@@ -143,18 +143,24 @@ def resolve_logical_answer(turn: LogicalTurn, *, cursor: int,
         return LogicalAnswer('ended', None)
     if turn.storage_incarnation is None or turn.history_epoch is None:
         return LogicalAnswer('pending', None)
-    ref = turn.final_refs[-1]
-    if ref['kind'] == 'unresolved' or not ref['native_id']:
-        return LogicalAnswer('pending', None)
-    lines = cache.final_lines(ref)
-    if not lines:
-        return LogicalAnswer('pending', None)
-    if max(lines) <= cursor:
-        return LogicalAnswer('ended', None)
-    message = cache.answer(ref, cursor=cursor)
-    if message is not None and ref['kind'] == 'claude_message':
-        message = message._replace(is_final=True)
-    return LogicalAnswer('replied', message) if message else LogicalAnswer('pending', None)
+    for ref in reversed(turn.final_refs):
+        if ref['kind'] == 'unresolved' or not ref['native_id']:
+            return LogicalAnswer('pending', None)
+        lines = cache.final_lines(ref)
+        if not lines:
+            return LogicalAnswer('pending', None)
+        if max(lines) <= cursor:
+            return LogicalAnswer('ended', None)
+        message = cache.answer(ref, cursor=cursor)
+        if message is not None:
+            if ref['kind'] == 'claude_message':
+                message = message._replace(is_final=True)
+            return LogicalAnswer('replied', message)
+        if turn.provider != 'codex':
+            return LogicalAnswer('pending', None)
+        # An indexed empty Codex final has no eligible text. Earlier physical
+        # turns can still own the logical interval's last relevant answer.
+    return LogicalAnswer('ended', None)
 
 
 def select_logical_turn(*, session_id: str, cursor: int, wait_token: str | None,
@@ -175,8 +181,27 @@ def select_logical_turn(*, session_id: str, cursor: int, wait_token: str | None,
             raise ValueError('Invalid logical progress for this session') from exc
         turns = turns.filter(position__gt=previous.position)
     cache = cache or NativeAnswerCache(session_id)
-    cache.refresh()
+    session = cache.refresh()
+    turns = list(turns)
+    # Only a later native opening in the current bound source can establish
+    # that an empty or exceptional closed interval precedes this cursor.
+    # A normal interval with unresolved final evidence still owns its answer.
+    later_opening_before_cursor = False
+    superseded = set()
+    for turn in reversed(turns):
+        if (later_opening_before_cursor and turn.outcome is not None
+                and (not turn.final_refs or turn.outcome in {'ended', 'provider_error'})):
+            superseded.add(turn.pk)
+        if (session is not None and turn.provider == session.provider
+                and turn.storage_incarnation is not None and turn.history_epoch is not None
+                and turn.storage_incarnation == session.storage_incarnation
+                and turn.history_epoch == session.history_epoch):
+            opening_lines = cache.lines(turn.first_ref)
+            if opening_lines and min(opening_lines) <= cursor:
+                later_opening_before_cursor = True
     for turn in turns:
+        if turn.pk in superseded:
+            continue
         lines = cache.final_lines(turn.final_refs[-1]) if turn.final_refs else []
         if lines and max(lines) <= cursor and turn.outcome is not None:
             continue
