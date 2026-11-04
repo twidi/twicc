@@ -3,42 +3,30 @@ package com.twicc.android
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
-import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.net.http.SslError
 import android.os.Bundle
-import android.os.Environment
-import android.os.Message
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.SslErrorHandler
-import android.webkit.URLUtil
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.webkit.RenderProcessGoneDetail
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.Toast
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
+import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.WebRequestError
+import org.mozilla.geckoview.WebResponse
 import kotlin.math.abs
 
 /** A remote web client. No native JavaScript bridge, background service, or bundled server. */
@@ -49,12 +37,11 @@ class BrowserActivity : Activity() {
     private lateinit var menuButton: Button
     private lateinit var progress: ProgressBar
     private lateinit var errorPanel: LinearLayout
-    private var web: WebView? = null
-    private var cookies: CookieManager? = null
-    private var chooser: ValueCallback<Array<Uri>>? = null
-    private val popups = mutableSetOf<WebView>()
+    private var web: GeckoView? = null
+    private var browser: GeckoSession? = null
+    private var prompts: BrowserPrompts? = null
+    private var canGoBack = false
     private var failed = false
-    private var forceLoading = false
     private var safeUrl = ""
     private var menuX = 1f
     private var menuY = 0.1f
@@ -71,13 +58,6 @@ class BrowserActivity : Activity() {
         menuX = preferences.getFloat("menuX", 1f)
         menuY = preferences.getFloat("menuY", 0.1f)
         buildLayout()
-        val supported = runCatching {
-            WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
-        }.getOrDefault(false)
-        if (!supported) {
-            showError("Update Android System WebView or Chrome to use separate TwiCC instances. Then close and reopen this app.", false)
-            return
-        }
         openWebView()
     }
 
@@ -120,211 +100,139 @@ class BrowserActivity : Activity() {
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionMenu() }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     private fun openWebView(force: Boolean = false) {
         disposeWebView()
         failed = false
+        canGoBack = false
         errorPanel.visibility = View.GONE
         try {
-            if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return showError(
-                "Update Android System WebView or Chrome to use separate TwiCC instances.", false,
-            )
-            val view = WebView(this)
+            val view = GeckoView(this)
+            val page = GeckoSession(GeckoSessionSettings.Builder()
+                .contextId(instance.profileName)
+                .build())
             web = view
-            // Set the profile before touching any WebView API that can initialize a page.
-            WebViewCompat.setProfile(view, instance.profileName)
-            cookies = WebViewCompat.getProfile(view).cookieManager.apply {
-                setAcceptCookie(true)
-                setAcceptThirdPartyCookies(view, true)
+            browser = page
+            prompts = BrowserPrompts(this)
+            page.promptDelegate = prompts
+            page.navigationDelegate = navigationDelegate()
+            page.progressDelegate = progressDelegate()
+            page.contentDelegate = contentDelegate()
+            page.permissionDelegate = object : GeckoSession.PermissionDelegate {
+                override fun onContentPermissionRequest(
+                    session: GeckoSession,
+                    perm: GeckoSession.PermissionDelegate.ContentPermission,
+                ): GeckoResult<Int> {
+                    val autoplay = perm.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE ||
+                        perm.permission == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                    val allowed = browser === session && autoplay && instance.url.allowsNavigation(perm.uri)
+                    return GeckoResult.fromValue(if (allowed)
+                        GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                    else GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY)
+                }
             }
-            view.settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                useWideViewPort = true
-                loadWithOverviewMode = true
-                mediaPlaybackRequiresUserGesture = false
-                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                allowFileAccess = false
-                allowContentAccess = true // System file picker attachments.
-                setSupportMultipleWindows(true)
-                javaScriptCanOpenWindowsAutomatically = false
-                builtInZoomControls = true
-                displayZoomControls = false
-            }
-            WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
-            view.webViewClient = pageClient()
-            view.webChromeClient = chromeClient()
-            view.setDownloadListener { url, agent, disposition, mime, _ ->
-                download(url, agent, disposition, mime)
-            }
+            page.open(BrowserEngine.get(this))
+            view.setSession(page)
             root.addView(view, 0, FrameLayout.LayoutParams(-1, -1))
-            if (force) {
-                view.clearCache(true)
-                forceLoading = true
-                view.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-                view.loadUrl(safeUrl, mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"))
-            } else view.loadUrl(safeUrl)
+            page.load(GeckoSession.Loader().uri(safeUrl).flags(
+                if (force) GeckoSession.LOAD_FLAGS_BYPASS_CACHE else GeckoSession.LOAD_FLAGS_NONE,
+            ))
         } catch (_: RuntimeException) {
             disposeWebView()
-            showError("The WebView could not start. Update Android System WebView or Chrome, then try again.")
+            showError("GeckoView could not start. Close and reopen TwiCC, then try again.")
         }
     }
 
-    private fun pageClient() = object : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (web !== view) return true
-            // Embedded browsers and artifacts own their iframe navigation.
-            if (!request.isForMainFrame) return false
-            val url = request.url.toString()
-            if (instance.url.allowsNavigation(url)) return false
-            openExternal(url)
-            return true
-        }
-
-        override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-            if (web !== view) return
-            if (url != null && !instance.url.allowsNavigation(url)) {
-                view.stopLoading()
-                if (InstanceUrl.canOpenExternally(url)) {
-                    openExternal(url)
-                    view.loadUrl(safeUrl)
-                } else {
-                    showError("This page cannot open inside TwiCC. Retry to return to your server.")
-                }
-                return
+    private fun navigationDelegate() = object : GeckoSession.NavigationDelegate {
+        override fun onLoadRequest(
+            session: GeckoSession,
+            request: GeckoSession.NavigationDelegate.LoadRequest,
+        ): GeckoResult<AllowOrDeny> {
+            if (browser !== session) return GeckoResult.fromValue(AllowOrDeny.DENY)
+            val newWindow = request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW
+            if (!newWindow && instance.url.allowsNavigation(request.uri)) {
+                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
             }
-            failed = false
-            errorPanel.visibility = View.GONE
-            progress.visibility = View.VISIBLE
-            url?.takeIf { instance.url.allowsNavigation(it) }?.let { safeUrl = it }
+            // Subframe requests have a separate delegate method and remain engine-managed.
+            // New windows never create another hidden TwiCC session or audio player.
+            if (!newWindow || request.hasUserGesture) openExternal(request.uri)
+            return GeckoResult.fromValue(AllowOrDeny.DENY)
         }
 
-        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
-            if (web !== view) return
+        override fun onLocationChange(
+            session: GeckoSession,
+            url: String?,
+            perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
+            hasUserGesture: Boolean,
+        ) {
+            if (browser !== session) return
             url?.takeIf { instance.url.allowsNavigation(it) }?.let {
                 safeUrl = it
                 store.rememberPage(instance, it)
             }
         }
 
-        override fun onPageFinished(view: WebView, url: String?) {
-            if (web !== view) return
-            progress.visibility = View.GONE
-            restoreCacheMode()
-            cookies?.flush()
+        override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+            if (browser === session) this@BrowserActivity.canGoBack = canGoBack
         }
 
-        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (web === view && request.isForMainFrame) {
-                showError("Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.")
+        override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
+            if (browser === session) {
+                showError(if (error.category == WebRequestError.ERROR_CATEGORY_SECURITY)
+                    "The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date."
+                else "Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.")
             }
-        }
-
-        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
-            if (web === view && request.isForMainFrame && response.statusCode >= 400) {
-                showError("The server returned HTTP ${response.statusCode}. Check your tunnel or server, then retry.")
-            }
-        }
-
-        override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-            handler.cancel()
-            if (web === view && (error.url == safeUrl || error.url == view.url)) {
-                showError("The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date.")
-            }
-        }
-
-        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            if (web === view) {
-                disposeWebView()
-                showError("Android stopped the WebView. Reload to reconnect to TwiCC.")
-            }
-            return true
+            // Do not install Gecko's privileged certificate-exception error page.
+            return null
         }
     }
 
-    private fun chromeClient() = object : WebChromeClient() {
-        override fun onProgressChanged(view: WebView, newProgress: Int) {
-            if (web !== view) return
-            progress.progress = newProgress
-            progress.visibility = if (newProgress < 100 && !failed) View.VISIBLE else View.GONE
+    private fun progressDelegate() = object : GeckoSession.ProgressDelegate {
+        override fun onPageStart(session: GeckoSession, url: String) {
+            if (browser !== session) return
+            failed = false
+            errorPanel.visibility = View.GONE
+            progress.visibility = View.VISIBLE
+            progress.progress = 0
         }
 
-        override fun onShowFileChooser(
-            view: WebView,
-            callback: ValueCallback<Array<Uri>>,
-            params: FileChooserParams,
-        ): Boolean {
-            chooser?.onReceiveValue(null)
-            chooser = callback
-            return try {
-                @Suppress("DEPRECATION")
-                startActivityForResult(params.createIntent(), FILE_CHOOSER)
-                true
-            } catch (_: ActivityNotFoundException) {
-                chooser = null
-                callback.onReceiveValue(null)
-                toast("No file picker is available.")
-                true
-            }
+        override fun onProgressChange(session: GeckoSession, value: Int) {
+            if (browser !== session) return
+            progress.progress = value
+            progress.visibility = if (value < 100 && !failed) View.VISIBLE else View.GONE
         }
 
-        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
-            if (!isUserGesture) return false
-            if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return false
-            // A temporary WebView captures the destination. It never replaces the main page.
-            val popup = WebView(this@BrowserActivity)
-            WebViewCompat.setProfile(popup, instance.profileName)
-            popups.add(popup)
-            var handled = false
-            fun consume(url: String) {
-                if (handled || url == "about:blank") return
-                handled = true
-                openExternal(url)
-                popup.post { destroyPopup(popup) }
-            }
-            popup.webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    if (request.isForMainFrame) consume(request.url.toString())
-                    return true
-                }
-                override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                    url?.let { consume(it) }
-                }
-                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                    destroyPopup(popup)
-                    return true
-                }
-            }
-            (resultMsg.obj as WebView.WebViewTransport).webView = popup
-            resultMsg.sendToTarget()
-            // Also release popups that never navigate (for example, an empty window.open()).
-            menuButton.postDelayed({ destroyPopup(popup) }, 10_000)
-            return true
+        override fun onPageStop(session: GeckoSession, success: Boolean) {
+            if (browser === session) progress.visibility = View.GONE
         }
+    }
+
+    private fun contentDelegate() = object : GeckoSession.ContentDelegate {
+        override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+            if (browser !== session) { runCatching { response.body?.close() }; return }
+            BrowserDownloads.save(this@BrowserActivity, response)
+        }
+
+        override fun onCrash(session: GeckoSession) = engineStopped(session)
+        override fun onKill(session: GeckoSession) = engineStopped(session)
+    }
+
+    private fun engineStopped(session: GeckoSession) {
+        if (browser !== session) return
+        disposeWebView()
+        showError("Android stopped the Gecko content process. Reload to reconnect to TwiCC.")
     }
 
     private fun refresh(force: Boolean) {
-        // A fresh view prevents stale completion/error callbacks from ending cache bypass early.
-        if (force || web == null) { openWebView(force); return }
-        val view = web ?: return
-        // Stop callbacks from the old load before enabling bypass for the new one.
-        view.stopLoading()
-        restoreCacheMode()
+        // A new session discards stale page callbacks while keeping its persistent storage context.
+        if (force || browser == null) { openWebView(force); return }
         failed = false
         errorPanel.visibility = View.GONE
-        view.loadUrl(safeUrl)
-    }
-
-    private fun restoreCacheMode() {
-        if (forceLoading) {
-            web?.settings?.cacheMode = WebSettings.LOAD_DEFAULT
-            forceLoading = false
-        }
+        browser?.stop()
+        browser?.loadUri(safeUrl)
     }
 
     private fun showError(message: String, canRetry: Boolean = true) {
         failed = true
-        restoreCacheMode()
         progress.visibility = View.GONE
         errorPanel.removeAllViews()
         errorPanel.addView(label(message))
@@ -341,6 +249,7 @@ class BrowserActivity : Activity() {
 
     private fun showMenu() {
         PopupMenu(this, menuButton).apply {
+            menu.add("TwiCC ${BuildConfig.VERSION_NAME} · GeckoView 159").isEnabled = false
             menu.add("${instance.name} — Instances").setOnMenuItemClickListener { manageInstances(); true }
             menu.add("Reload page").setOnMenuItemClickListener { refresh(false); true }
             menu.add("Force refresh (keep login)").setOnMenuItemClickListener {
@@ -400,30 +309,6 @@ class BrowserActivity : Activity() {
         }
     }
 
-    private fun download(url: String, userAgent: String?, disposition: String?, mime: String?) {
-        if (!url.startsWith("https://", ignoreCase = true) || !InstanceUrl.canOpenExternally(url)) {
-            toast("This download needs a browser. Open the page in your browser to save blob or data exports.")
-            return
-        }
-        try {
-            val filename = URLUtil.guessFileName(url, disposition, mime)
-                .replace(Regex("[\\\\/\\p{Cntrl}]"), "_").take(180)
-            val request = DownloadManager.Request(Uri.parse(url))
-                .setTitle(filename)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
-            if (!mime.isNullOrBlank()) request.setMimeType(mime)
-            if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
-            if (instance.url.allowsNavigation(url)) {
-                cookies?.getCookie(url)?.takeIf { it.isNotBlank() }?.let { request.addRequestHeader("Cookie", it) }
-            }
-            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-            toast("Download started. Check Android's Downloads notification.")
-        } catch (_: RuntimeException) {
-            toast("The download could not start. Try opening this page in your browser.")
-        }
-    }
-
     @SuppressLint("ClickableViewAccessibility")
     private fun makeMenuMovable() {
         var downX = 0f
@@ -475,8 +360,7 @@ class BrowserActivity : Activity() {
 
     @Deprecated("Legacy back handling is enabled in the manifest for this Activity.")
     override fun onBackPressed() {
-        val view = web
-        if (view != null && !failed && view.canGoBack()) view.goBack() else manageInstances()
+        if (browser != null && !failed && canGoBack) browser?.goBack() else manageInstances()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -485,45 +369,38 @@ class BrowserActivity : Activity() {
     }
 
     override fun onPause() {
-        cookies?.flush()
         if (::instance.isInitialized) store.rememberPage(instance, safeUrl)
-        web?.onPause()
         super.onPause()
     }
 
-    override fun onResume() {
-        super.onResume()
-        web?.onResume()
+    override fun onStart() {
+        super.onStart()
+        browser?.setActive(true)
+    }
+
+    override fun onStop() {
+        browser?.setActive(false)
+        super.onStop()
     }
 
     @Deprecated("The platform file picker still uses this Activity result API.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == FILE_CHOOSER) {
-            chooser?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data))
-            chooser = null
-        }
-    }
-
-    private fun destroyPopup(popup: WebView) {
-        if (popups.remove(popup)) {
-            popup.stopLoading()
-            popup.destroy()
-        }
+        prompts?.onActivityResult(requestCode, resultCode, data)
     }
 
     private fun disposeWebView() {
-        chooser?.onReceiveValue(null)
-        chooser = null
-        popups.toList().forEach { destroyPopup(it) }
+        val page = browser
+        browser = null // Ignore callbacks from the old session during disposal.
         web?.let { view ->
-            view.stopLoading()
+            view.releaseSession()
             (view.parent as? ViewGroup)?.removeView(view)
-            view.destroy()
         }
         web = null
-        cookies = null
-        forceLoading = false
+        if (page?.isOpen == true) page.close()
+        prompts?.close()
+        prompts = null
+        canGoBack = false
     }
 
     override fun onDestroy() {
@@ -533,7 +410,6 @@ class BrowserActivity : Activity() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
-    companion object { private const val FILE_CHOOSER = 1 }
 }
 
 private fun android.content.res.Configuration.isNightModeActiveCompat(): Boolean =

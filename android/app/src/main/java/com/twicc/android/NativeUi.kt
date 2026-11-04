@@ -25,7 +25,7 @@ fun Activity.fitSystemInsets(root: View) {
         }
 
         // The root reserves this space. Forward zero values, including during animation,
-        // instead of CONSUMED so WebView still receives updates without applying it twice.
+        // instead of CONSUMED so browser views still receive updates without applying it twice.
         fun remainingInsets(insets: WindowInsets): WindowInsets =
             WindowInsets.Builder(insets).setInsets(handledTypes, Insets.NONE).build()
 
@@ -42,7 +42,7 @@ fun Activity.fitSystemInsets(root: View) {
                 insets: WindowInsets,
                 runningAnimations: MutableList<WindowInsetsAnimation>,
             ): WindowInsets {
-                // Keep the WebView layout stable while the keyboard moves. Repeated
+                // Keep the browser layout stable while the keyboard moves. Repeated
                 // resizes make the web renderer lag behind the native animation.
                 return remainingInsets(insets)
             }

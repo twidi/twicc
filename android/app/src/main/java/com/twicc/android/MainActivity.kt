@@ -9,8 +9,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import androidx.webkit.ProfileStore
-import androidx.webkit.WebViewFeature
 
 class MainActivity : Activity() {
     private lateinit var store: InstanceStore
@@ -121,7 +119,7 @@ class MainActivity : Activity() {
     private fun confirmRemove(instance: Instance) {
         AlertDialog.Builder(this)
             .setTitle("Remove ${instance.name}?")
-            .setMessage("Remove this address. Its saved login and Web storage are deleted when the app process next starts. The server is unchanged.")
+            .setMessage("Remove this address and request deletion of its Gecko login and Web storage. The server is unchanged.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Remove") { _, _ ->
                 store.remove(instance)
@@ -133,15 +131,13 @@ class MainActivity : Activity() {
 
     private fun deleteUnusedProfiles() {
         try {
-            if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return
             store.pendingProfileDeletions().forEach { name ->
-                // WebKit forbids deleting a profile loaded in this process, even after destroy().
-                // Keep its tombstone until a cold start. Never reuse its UUID for a new instance.
-                runCatching { ProfileStore.getInstance().deleteProfile(name) }
+                // The browser session is closed before returning to the instance manager.
+                runCatching { BrowserEngine.get(this).storageController.clearDataForSessionContext(name) }
                     .onSuccess { store.profileDeleted(name) }
             }
         } catch (_: RuntimeException) {
-            // A missing WebView provider must not prevent editing saved addresses.
+            // An engine startup failure must not prevent editing saved addresses.
         }
     }
 }

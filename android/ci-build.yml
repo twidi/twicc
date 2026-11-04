@@ -22,12 +22,12 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
       - name: Prepare Android SDK
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-37.2' 'build-tools;36.0.0'
       - name: Test, lint, and build
         run: ./gradlew --no-daemon :policy:test :app:lintDebug :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: twicc-android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
