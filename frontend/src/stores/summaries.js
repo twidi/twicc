@@ -3,12 +3,15 @@ import { reactive } from 'vue'
 
 // Only serializable text/metadata enters Pinia. Each store owns its own transports and interests.
 const runtimes = new WeakMap()
+// Actions can run with a different proxy of the same store as `this` (a caller holding it behind a reactive wrapper),
+// so the transports are keyed by the Pinia instance, never by the store object.
 function runtime(store) {
-    if (!runtimes.has(store)) runtimes.set(store, {
+    const owner = store._p ?? store
+    if (!runtimes.has(owner)) runtimes.set(owner, {
         sequence: 0, runs: new Map(), owners: new Set(), lookups: new Map(), sources: new Map(),
         queued: new Map(), scheduled: false, temporary: null,
     })
-    return runtimes.get(store)
+    return runtimes.get(owner)
 }
 export function summarySourceKey(source) {
     if ('event_id' in source) return `event:${source.event_id}`
