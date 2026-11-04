@@ -248,3 +248,34 @@ test('an active listener sees repeated invalidations while its descriptor remain
     assert.equal(store.descriptorFor(source).source_hash, 'current')
     stop()
 })
+
+for (const withNonmanual of [false, true]) test(`cancel shares pending manual intent ${withNonmanual ? 'and preserves an independent nonmanual subscriber' : 'without acquiring a backend handle'}`, async () => {
+    const { store, wire, calls } = setup()
+    const original = store._fetch
+    let finishLookup
+    store._fetch = (url, options) => url.endsWith('resolve/')
+        ? new Promise(resolve => { finishLookup = resolve })
+        : original(url, options)
+    const first = store.request({ ...source }), second = store.request({ ...source })
+    const nonmanual = withNonmanual ? store.request({ ...source }, { manual: false }) : null
+    await until(() => finishLookup)
+    store.cancel(first.entry)
+    assert.equal(first.entry.state, 'cancelled')
+    assert.equal(second.entry.state, 'cancelled')
+    await Promise.all([assert.rejects(first.ready, /cancelled/), assert.rejects(second.ready, /cancelled/)])
+    finishLookup(json({ sources: [descriptor()] }))
+    if (nonmanual) {
+        await nonmanual.ready
+        assert.equal(nonmanual.entry.state, 'running')
+        wire.send({ revision: 1, state: 'complete', text: 'Independent result', saved_id: 4, result_hash: 'four' })
+        await until(() => nonmanual.entry.state === 'complete')
+        assert.equal(nonmanual.entry.text, 'Independent result')
+        assert.equal(first.entry.state, 'cancelled'); assert.equal(second.entry.state, 'cancelled')
+        assert.equal(calls.filter(call => call.method === 'DELETE').length, 0)
+        nonmanual.release()
+        await until(() => calls.some(call => call.method === 'DELETE'))
+    } else {
+        await tick(); await tick()
+    }
+    assert.equal(calls.filter(call => call.url === '/api/summaries/').length, withNonmanual ? 1 : 0)
+})

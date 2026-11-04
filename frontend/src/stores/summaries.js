@@ -97,7 +97,9 @@ export const useSummariesStore = defineStore('summaries', {
             // A visible entry records errors even if its view never awaits acquisition.
             ready.catch(() => {})
             const owner = { subscription, controller: null, active: true, attached: true,
-                manual: manual && !temporary, resolveReady, rejectReady }
+                manual: manual && !temporary,
+                intentKey: temporary ? null : JSON.stringify([summarySourceKey(source), this.versionFor(source)]),
+                resolveReady, rejectReady }
             rt.owners.add(owner)
             const publicSubscription = {
                 get id() { return owner.controller?.id ?? null },
@@ -260,7 +262,12 @@ export const useSummariesStore = defineStore('summaries', {
             try { await this._fetch(`/api/summaries/${id}/`, { method: 'DELETE' }) } catch { /* Idempotent best effort; the backend bounds abandoned handles. */ }
         },
         cancel(entry) {
-            for (const owner of [...runtime(this).owners]) if (owner.manual && owner.subscription.entry === entry) this._releaseOwner(owner)
+            const owners = [...runtime(this).owners]
+            // Equivalent coordinates share manual intent before their descriptor establishes native identity.
+            const intents = new Set(owners.filter(owner => owner.manual && owner.subscription.entry === entry).map(owner => owner.intentKey))
+            for (const owner of owners) {
+                if (owner.manual && (owner.subscription.entry === entry || (!owner.controller && intents.has(owner.intentKey)))) this._releaseOwner(owner)
+            }
         },
         async loadSaved(savedId) {
             const response = await checked(await this._fetch(`/api/summaries/saved/${savedId}/`))
