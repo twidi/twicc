@@ -1147,6 +1147,10 @@ function handleLinkClick(event) {
 .markdown-body pre {
     padding: 16px;
     overflow-x: auto;
+    /* Tall blocks scroll instead of pushing the message away: half the
+       viewport, but never so short that a block becomes unreadable. */
+    max-height: max(12rem, 50dvh);
+    overflow-y: auto;
     margin-top: 1em;
 }
 .markdown-body .highlight pre, .markdown-body pre, .markdown-body code, .markdown-body tt {
