@@ -17,7 +17,7 @@ import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
 import TextToSpeechButton from './TextToSpeechButton.vue'
 import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
-import { detailsScopes, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
+import { detailsScope, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
 import { toast } from '../../composables/useToast'
@@ -553,11 +553,9 @@ function mermaidTheme() {
 // comes back with the same blocks open and closed, and without a replayed
 // open/close animation. Kept out of the cache: the state changes, the source does not.
 function withRememberedDetails(html, scope) {
-    if (!html.includes('md-details')) return html
     const tmp = document.createElement('div')
     tmp.innerHTML = html
-    applyRememberedDetailsIn(tmp, scope)
-    return tmp.innerHTML
+    return applyRememberedDetailsIn(tmp, scope) ? tmp.innerHTML : html
 }
 
 // wa-show / wa-hide bubble up from every wa-details below, including those of
@@ -577,7 +575,6 @@ async function renderDocument(input, { isCurrent }) {
     const cacheEntries = new Map()
     const occurrences = new Map()
     const result = []
-    const scopes = detailsScopes(raw.map(block => block.hash))
     for (const [i, block] of raw.entries()) {
         if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
         if (block.type === 'inline-artifact') {
@@ -592,7 +589,13 @@ async function renderDocument(input, { isCurrent }) {
         if (!isCurrent() || html === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
         const n = occurrences.get(block.hash) ?? 0
         occurrences.set(block.hash, n + 1)
-        result.push({ key: `${block.hash}:${n}`, html: withRememberedDetails(html, scopes[i]), scope: scopes[i] })
+        // Nothing below runs for a block without a `<details>`.
+        if (html.includes('md-details')) {
+            const scope = detailsScope(raw, i)
+            result.push({ key: `${block.hash}:${n}`, html: withRememberedDetails(html, scope), scope })
+        } else {
+            result.push({ key: `${block.hash}:${n}`, html })
+        }
     }
     return { blocks: result, cacheEntries }
 }

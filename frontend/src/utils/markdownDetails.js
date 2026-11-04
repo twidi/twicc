@@ -39,6 +39,9 @@ function isCodeIndented(state, line) {
 }
 
 function detailsBlock(state, startLine, endLine, silent) {
+    // Hot path: this rule is tried at every line start of every message. Bail
+    // on the first character, before slicing anything.
+    if (state.src.charCodeAt(state.bMarks[startLine] + state.tShift[startLine]) !== 0x3C /* < */) return false
     if (isCodeIndented(state, startLine)) return false
     const first = lineText(state, startLine).trim()
     const opener = OPENER_RE.exec(first)

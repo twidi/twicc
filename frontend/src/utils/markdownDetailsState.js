@@ -25,14 +25,12 @@ const MAX_ENTRIES = 500
 // to the end.
 const openByKey = new Map()
 
-/** Scope of each block: the hash of every block before it, in order. */
-export function detailsScopes(blockHashes) {
-    let scope = ''
-    return blockHashes.map((hash) => {
-        const current = scope
-        scope = hashString(`${scope}\n${hash ?? ''}`)
-        return current
-    })
+/**
+ * Scope of the block at `index`: the hash of every block before it. Computed
+ * only for a block that holds a details, never for the others.
+ */
+export function detailsScope(blocks, index) {
+    return hashString(blocks.slice(0, index).map(block => block.hash ?? '').join('\n'))
 }
 
 /** Key of one details element. */
@@ -78,11 +76,15 @@ export function forEachDetails(root, scope, callback) {
 
 /** Impose the remembered state on the details of a detached block. */
 export function applyRememberedDetailsIn(root, scope) {
+    if (openByKey.size === 0) return false
+    let changed = false
     forEachDetails(root, scope, (details, key) => {
         const open = recalledDetailsOpen(key)
         if (open === undefined) return
         details.toggleAttribute('open', open)
+        changed = true
     })
+    return changed
 }
 
 /**
