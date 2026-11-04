@@ -18,8 +18,13 @@ automatically. An available text-to-speech config is required. The pressed
 button means that this timeline listens for new messages.
 
 - Listening uses the timeline's scope: all projects, a workspace, a project,
-  or one worktree. It ignores every display filter, including the selected
-  view and session filter.
+  or one worktree. Muted sessions are hidden and skipped by default. Select
+  **Filters → Show muted sessions** to display and read them in that timeline.
+  Other display filters, including the selected view and session filter, do
+  not affect listening.
+- Turning off **Show muted sessions** removes their queued messages. The
+  reading already selected can finish. Turning it on does not replay messages
+  skipped while it was off. Manual reading remains available in muted sessions.
 - Listening continues when you navigate to another page, switch application
   tabs, or open a session. Only one timeline listens per browser tab.
 - The timeline button in the rail shows a small speaker while listening is

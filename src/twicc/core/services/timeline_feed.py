@@ -43,6 +43,10 @@ rows from its range in Python and names the sessions hidden or shown again insid
 ``shown_sessions``), so an open list drops or merges them in place. Instance rows always stay; a visible row that
 only cites a hidden session (``actor_ref``, ``data.spawned_by``) stays too.
 
+Muted sessions follow the same visibility mechanism unless ``include_muted=1``.
+The existing visibility lists then also describe ``muted.started`` and ``muted.ended`` changes.
+Session references include ``mute_on_user_turn`` for consumers such as automatic speech.
+
 A filter that can never match (``timeline_filters.can_match``: the view and the checked families leave no kind) reads
 no page: its queries would walk the whole scope for nothing. Its ``after_id`` fetch still reads the range, for
 ``truncated`` and the two session lists.
@@ -200,12 +204,13 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
 
 
 def visible_sessions_q(*, include_muted: bool = False) -> Q:
-    """The rows of no session hidden NOW (``Session.hidden`` at read time, not at the time of the event).
+    """Exclude hidden sessions and, by default, muted sessions by their current state.
 
     One uncorrelated subquery, read once through the partial index ``idx_session_hidden``. Django guards the
     nullable column (``NOT (session_id IN (...) AND session_id IS NOT NULL)``): an instance row (``session_id IS
     NULL``) survives, where a bare ``NOT IN`` would be NULL for it as soon as one session is hidden. The comparison
     sits under a ``NOT``, so it never drives an index: each page query keeps its own index choice.
+    A second uncorrelated subquery excludes muted sessions unless explicitly included.
     """
     visible = ~Q(session_id__in=Session.objects.filter(hidden=True).values("id"))
     if include_muted:
@@ -337,8 +342,8 @@ def excluded_session_ids(session_ids: set[str], *, include_muted: bool) -> set[s
 class AfterResult(NamedTuple):
     events: list[TimelineEvent]
     truncated: bool
-    hidden_sessions: list[str]  # a ``hidden.started`` row in the range, hidden now
-    shown_sessions: list[str]  # a ``hidden.ended`` row in the range, visible now
+    hidden_sessions: list[str]  # an excluded session with a visibility-start row in the range
+    shown_sessions: list[str]  # an included session with a visibility-end row in the range
 
 
 def _fetch_after(request: FeedRequest) -> AfterResult:

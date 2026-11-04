@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Read new `assistant_message.sent` events from one selected timeline, independently of navigation and display filters.
+**Goal:** Read new `assistant_message.sent` events from one selected timeline, independently of navigation and other display filters.
 
 **Architecture:** Keep the existing global TTS player and timeline feed. Add one in-memory listening store that owns a feed and a pending queue. Add spoken names through the common backend part-source path, outside text adaptation.
 
@@ -17,7 +17,7 @@ The unchecked steps below preserve the reviewed execution template. They do not 
 ## Global Constraints
 
 - Read only existing `assistant_message.sent` events and their complete saved text.
-- Ignore all timeline display filters.
+- Ignore timeline display filters except the per-page **Show muted sessions** option.
 - Keep one automatic listening scope per browser tab.
 - Keep listening state and pending messages in memory.
 - Add no database table, migration, durable queue, language detector, new text-model call, or new audio player.
@@ -213,7 +213,7 @@ Do not split out a generic scheduler, event bus, persistent delivery system, or 
   Preserve the serialized fetch chain, `latest_id` safety, hidden-session handling, pagination cursors, and coalesced invalidation.
   Do not add a new backend timeline endpoint, WebSocket payload, polling interval, or feed implementation.
   Empty project IDs retain their existing global meaning; null still means no scope.
-  Do not send new display filters for speech. Task 4 always supplies `{}`.
+  Do not send ordinary display filters for speech. The muted-session refinement below supersedes the original empty query.
 
 - [ ] **Step 4: Run feed and composable regression tests.**
 
@@ -251,7 +251,7 @@ Do not split out a generic scheduler, event bus, persistent delivery system, or 
   | `one second late is accepted but more than five seconds late is rejected` | After 40 starts, accept 39 and 35; reject 34; watermark stays 40 after 39 |
   | `tolerance is applied at admission not at dequeue` | Accepted messages survive a long manual reading |
   | `selected preparation is never reordered` | 39 arriving during preparation of 40 does not abort 40 |
-  | `display filters and navigation do not affect listening` | Only scope IDs and empty query reach the feed; no component ownership |
+  | `display filters and navigation do not affect listening` | Only scope IDs and muted metadata query reach the feed; no component ownership |
   | `manual playback preempts only the current automatic message` | A aborted, B/C retained; manual speech runs before B/C |
   | `context follows project and session identity` | Initial both; same neither; session change session; moved session project; both change both |
   | `manual audio and failed automatic speech reset context` | Full next announcement; failed manual start without audio does not itself establish context |
@@ -309,7 +309,7 @@ Do not split out a generic scheduler, event bus, persistent delivery system, or 
   Observe actual manual `playing` state to invalidate context. Also invalidate context after automatic failure or interruption.
   Show existing error toasts once per failed reading. Continue after message errors; disable on unavailable TTS or `REFUSED` browser playback.
 
-  Recompute scope with the same facts as `TimelinePanel.vue`, without its filters or active-page flag.
+  Recompute scope with the same facts as `TimelinePanel.vue`, without its other filters or active-page flag.
   Retain each existing member's activation boundary. Record current time as the boundary for newly joined projects.
   Purge queued entries that leave scope. After bootstrap, seed replacement scope with its previous live cursor.
   During unfinished bootstrap, restart first-page synchronization with the original activation boundary and retained seen-ID set.
@@ -381,7 +381,7 @@ Do not split out a generic scheduler, event bus, persistent delivery system, or 
   Use the same audio icon vocabulary as existing TTS buttons. Do not add a separate global control.
   Keep the rail button a navigation action. Its audio overlay is decorative; the dynamic label supplies accessible meaning.
   Reuse `createRailScopeNavigation` and workspace ID helpers. Preserve current empty-workspace query handling.
-  Explain navigation independence, ignored display filters, manual priority, native-date cutoff, and five-second late tolerance in help.
+  Explain navigation independence, muted inclusion, ignored other filters, manual priority, native-date cutoff, and five-second late tolerance in help.
   Do not change `TextToSpeechButton.vue` unless its existing stop behavior cannot use Task 4's ownership handling.
 
 - [ ] **Step 4: Run UI tests and production build.**
@@ -469,3 +469,27 @@ The plan includes each correction and its targeted test.
 Both reviewers found no blocking issues in the second round.
 Self-review checked specification coverage, cross-task signatures, file paths, task dependencies, and test ownership.
 No product code, server state, dependency, or user configuration changed during planning.
+
+## Muted-session refinement
+
+The user subsequently requests one exception to display-filter independence:
+exclude muted sessions by default, and let **Show muted sessions** govern display and automatic speech.
+
+1. Add a false-by-default `includeMuted` option to the existing per-page filter store.
+   Reuse the Filters checkbox style, active count, removable pill, Reset, and Clear all.
+   Send `include_muted=1` only when enabled for display.
+2. Extend the existing timeline endpoint without changing CLI timeline selection.
+   Exclude current muted sessions on initial, before, and live reads unless explicitly included.
+   Reuse `hidden_sessions` and `shown_sessions` for removal and backfill after mute changes.
+   Always exclude hidden sessions. Expose `mute_on_user_turn` in the existing session side table.
+   Explicitly include muted sessions in manually opened session event history, which shares this endpoint.
+3. Let automatic speech observe muted metadata through its existing feed with `include_muted=1`.
+   Admit and retain muted messages only when the listening page's `includeMuted` is enabled.
+   Read this one option reactively after navigation; ignore all other display filters.
+   Purge excluded pending messages on checkbox and mute changes, preserving selected and manual readings.
+   Mark skipped events seen so enabling inclusion does not replay them.
+4. Cover default exclusion, pagination, opt-in, hidden precedence, live mute/unmute, and invalid parameters.
+   Cover the checkbox, per-page state, reset/removal, metadata-only mute, queue purge, and no replay.
+   Update help and specification. Run targeted regressions and the production frontend build.
+
+This refinement adds no table, migration, player, endpoint, polling loop, or language-model request.

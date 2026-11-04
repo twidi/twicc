@@ -14,7 +14,7 @@ Reuse the existing timeline feed and global TTS service. Make the smallest chang
 - Do not infer finals, reconstruct messages, or read commentary, tools, thinking, or user messages.
 - Support the existing global, workspace, project, and worktree timeline scopes.
 - Reuse existing scope membership and hidden-session rules.
-- Ignore all timeline display filters. Changing a view, provider filter, or session filter never changes automatic listening.
+- Ignore timeline display filters except **Show muted sessions**. Changing a view, provider filter, or session filter never changes automatic listening.
 - Keep one automatic listening scope per browser tab. Different tabs do not coordinate playback.
 - Keep listening state and pending messages in memory. A reload or logout disables listening and clears the queue.
 - Add no database table, migration, durable queue, language detector, new model call, or new audio player.
@@ -59,6 +59,22 @@ Do not add a second global listening indicator or a separate global listening co
 
 ## Message eligibility and ordering
 
+### Muted sessions
+
+Muted sessions are excluded from timeline display and automatic speech by default.
+The existing Filters panel has an unchecked **Show muted sessions** checkbox.
+This option belongs to each timeline page and has the same lifetime as its existing filters.
+Filter count, a removable pill, Reset, and Clear all include this option.
+Hidden sessions remain excluded even when this option is checked.
+
+Automatic speech follows the listening timeline's option, including after navigation.
+Checking it permits future qualifying messages from muted sessions. It does not replay skipped messages.
+Unchecking it, or muting a session while it is unchecked, removes that session's pending messages.
+A reading already selected for preparation can finish. Manual reading remains unchanged.
+Unmuting a session permits subsequent qualifying messages without replaying skipped ones.
+
+### Arrivals and ordering
+
 Use new live timeline events, including ordinary live catch-up after a connection interruption.
 Do not use rendered rows as the arrival signal.
 Pagination, historical backfill, or showing a previously hidden session must not replay existing messages.
@@ -68,6 +84,7 @@ A candidate must satisfy all these conditions:
 
 - Its kind is `assistant_message.sent`, with nonempty saved text.
 - It belongs to the listening scope and is visible under existing hidden-session rules.
+- Its session is not muted, unless **Show muted sessions** is checked for the listening timeline.
 - Its `occurred_at` is strictly after the activation time.
 - Its event ID has not already been accepted during this activation.
 - Its date is no more than five seconds behind the automatic playback time watermark, if one exists.
@@ -178,7 +195,7 @@ Browser or operating-system suspension remains subject to existing browser audio
 
 Extend the global TTS service with a small automatic-listening coordinator.
 Reuse timeline scope resolution, live invalidation, incremental fetching, event snapshots, and session metadata.
-The coordinator must work independently of timeline display and its filters.
+The coordinator works independently of timeline display and all filters except its page's muted-session option.
 Reuse the existing rail action and navigation helpers.
 Add context speech through the common TTS pipeline rather than duplicating either audio backend.
 
@@ -207,7 +224,10 @@ These approved behavior choices complete the agreed requirements.
 | A 10:30:01 event arrives while activation initializes | Retain and read it once |
 | A 10:29:59 message finishes capture after activation | Exclude it because its native event date precedes activation |
 | Navigate from the enabled timeline into a session | Continue collecting and reading new messages |
-| Change any timeline display filter | Listening scope, queue, and playback remain unchanged |
+| Change another timeline display filter | Listening scope, queue, and playback remain unchanged |
+| Leave Show muted sessions unchecked | Exclude muted sessions from display and automatic speech |
+| Check Show muted sessions | Display muted sessions and permit their future qualifying speech |
+| Uncheck Show muted sessions | Remove queued muted-session speech; selected reading can finish |
 | Receive 10:30:40, then 10:30:39 while both remain pending | Read 39, then 40 |
 | Receive 10:30:39 while 10:30:40 is already preparing | Complete preparation and read 40, then 39; do not restart preparation |
 | Start 10:30:40, then receive 10:30:39 | Read 39 after 40; keep the watermark at 40 |

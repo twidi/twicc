@@ -116,7 +116,7 @@ function sessionOf(filters) {
  *
  * @param {TimelineFilters} filters
  * @returns {Object<string, string>} `view` (unless `all`), `families`, `provider`, `authors` (comma lists in
- *   constant order; omitted when empty or complete), `session` (the id).
+ *   constant order; omitted when empty or complete), `session` (the id), `include_muted` (only when enabled).
  */
 export function toQuery(filters) {
     const query = {}

@@ -274,6 +274,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
             enqueue(runFirst)
             return
         }
+        // The server also uses these visibility lists for muted sessions when they are excluded.
         removeSessions(body.hidden_sessions)
         // The edge of the window is the pagination cursor, not the tail: a removal may have taken the tail away.
         const floor = positionOfCursor(state.pageCursor)

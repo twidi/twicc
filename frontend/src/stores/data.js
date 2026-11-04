@@ -1587,7 +1587,8 @@ export const useDataStore = defineStore('data', {
 
     actions: {
         ...createSessionEventHistoryActions({ fetchPage: async ({ sessionId, before, afterId, signal }) => {
-            const response = await apiFetch(buildTimelineUrl({ query: { session: sessionId, view: 'without_turns' }, limit: 100, before, afterId }), { signal })
+            // Opening a session keeps its full event history, independently of timeline display preferences.
+            const response = await apiFetch(buildTimelineUrl({ query: { session: sessionId, view: 'without_turns', include_muted: '1' }, limit: 100, before, afterId }), { signal })
             if (!response.ok) throw new Error(`Session event request failed (${response.status})`)
             return response.json()
         } }),
