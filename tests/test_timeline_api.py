@@ -457,9 +457,21 @@ def test_the_side_table_holds_every_cited_session_by_event_by_actor_ref_and_by_s
     sessions = call().json()["sessions"]
     assert set(sessions) == {"s1", "boss", "parent"}
     assert sessions["s1"] == {"title": "Mine", "project_id": a.id, "provider": "codex", "hidden": False,
-                              "archived": True, "mute_on_user_turn": False}
+                              "archived": True, "mute_on_user_turn": False, "pinned": None}
     assert sessions["boss"]["provider"] == "claude_code"
     assert sessions["parent"]["title"] is None
+
+
+def test_session_side_table_state_is_current_without_changing_historical_events(projects):
+    session = make_session(projects[0], "s1")
+    make_event("archived.started", project=projects[0], session_id="s1", actor="user", via="ui")
+    before = call(include_muted="1").json()
+    Session.objects.filter(pk=session.pk).update(archived=True, mute_on_user_turn=True, pinned="workspace")
+    after = call(include_muted="1").json()
+    assert before["events"] == after["events"]
+    assert after["sessions"]["s1"]["archived"] is True
+    assert after["sessions"]["s1"]["mute_on_user_turn"] is True
+    assert after["sessions"]["s1"]["pinned"] == "workspace"
 
 
 def test_a_user_actor_ref_is_not_looked_up_as_a_session(projects):

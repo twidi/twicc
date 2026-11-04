@@ -407,7 +407,7 @@ def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
     ordered = sorted(session_ids)
     for start in range(0, len(ordered), SESSION_LOOKUP_CHUNK):
         rows = Session.objects.filter(id__in=ordered[start:start + SESSION_LOOKUP_CHUNK]).values(
-            "id", "title", "project_id", "provider", "hidden", "archived", "mute_on_user_turn",
+            "id", "title", "project_id", "provider", "hidden", "archived", "mute_on_user_turn", "pinned",
         )
         for row in rows:
             table[row["id"]] = {
@@ -417,6 +417,7 @@ def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
                 "hidden": bool(row["hidden"]),
                 "archived": bool(row["archived"]),
                 "mute_on_user_turn": bool(row["mute_on_user_turn"]),
+                "pinned": row["pinned"],
             }
     return table
 

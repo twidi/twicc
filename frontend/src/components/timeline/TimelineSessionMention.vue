@@ -5,7 +5,7 @@
 //
 // The `mention` comes from utils/timeline/sessions.js, which already decided link or not. The block header
 // uses `truncate`: the provider icon in a fixed box, the title on one line with an ellipsis and the full
-// title as tooltip. No state marker (archived, hidden) is shown: the current state is not an event.
+// title as tooltip. Only block headers supply current session state for the leading status icons.
 
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -15,6 +15,8 @@ import ProviderIcon from '../ui/ProviderIcon.vue'
 const props = defineProps({
     /** See `sessionMention` in utils/timeline/sessions.js. */
     mention: { type: Object, required: true },
+    /** Current session state, supplied only by the block header. Never inferred from an event. */
+    sessionState: { type: Object, default: null },
     /** One line with an ellipsis, the full title as tooltip, the icon in a fixed box (the block header). */
     truncate: { type: Boolean, default: false },
     /** One line with an ellipsis and the full title as tooltip, the icon inline (the "by <session>" author line). */
@@ -36,6 +38,11 @@ const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention
             <ProviderIcon v-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
         </span>
         <ProviderIcon v-else-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
+        <span v-if="sessionState && (sessionState.archived || sessionState.mute_on_user_turn || sessionState.pinned)" class="timeline-session-states">
+            <wa-icon v-if="sessionState.archived" name="box-archive" label="Archived" title="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
+            <wa-icon v-if="sessionState.mute_on_user_turn" name="bell-slash" label="Muted" title="Muted" class="session-state-icon timeline-session-state--muted"></wa-icon>
+            <wa-icon v-if="sessionState.pinned" name="thumbtack" label="Pinned" title="Pinned" class="session-state-icon timeline-session-state--pinned"></wa-icon>
+        </span>
         <RouterLink v-if="location" :to="location" class="timeline-session-title" :title="tooltip">{{ mention.title }}</RouterLink>
         <span v-else class="timeline-session-title timeline-session-title--plain" :title="tooltip">{{ mention.title }}</span>
     </span>
@@ -53,6 +60,23 @@ const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention
 .timeline-session-icon {
     flex-shrink: 0;
     align-self: center;
+}
+
+.timeline-session-states {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: var(--wa-space-2xs);
+    font-size: 0.75em;
+}
+
+.timeline-session-state--muted {
+    color: var(--wa-color-warning-60);
+}
+
+.timeline-session-state--pinned {
+    color: var(--wa-color-yellow-80);
+    transform: rotate(30deg);
 }
 
 .timeline-session-title {

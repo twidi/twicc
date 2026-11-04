@@ -11,7 +11,9 @@
  * @property {string|null} project_id
  * @property {string|null} provider
  * @property {boolean} hidden - Read for the link rule only.
- * @property {boolean} archived - Sent by the API; the timeline does not show it (the current state is not an event).
+ * @property {boolean} archived - Current state, shown separately in block headers.
+ * @property {boolean} mute_on_user_turn - Current mute state.
+ * @property {string|null} pinned - Current pin mode.
  */
 
 /**

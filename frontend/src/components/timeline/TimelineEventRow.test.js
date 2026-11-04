@@ -20,7 +20,8 @@ const ProviderIcon = { props: ['provider'], setup: (props) => () => Vue.h('i', {
 const ProjectBadge = { props: ['projectId'], setup: (props) => () => Vue.h('b', props.projectId) }
 
 const knownProjects = new Set(['p1'])
-const dataStore = { getProject: (id) => (knownProjects.has(id) ? { id } : null) }
+const loadedSessions = Vue.reactive({})
+const dataStore = { getProject: (id) => (knownProjects.has(id) ? { id } : null), getSession: id => loadedSessions[id] }
 const route = { name: 'project', params: { projectId: 'p1' }, query: {} }
 
 const Mention = compileComponent(new URL('./TimelineSessionMention.vue', import.meta.url), {
@@ -298,18 +299,42 @@ test('the "Only this session" CSS: a native button reset, never copied, hidden u
     assert.ok(!text.has('position'))
 })
 
-test('the header carries no state marker: a hidden and archived session is plain text, an archived one keeps its link', async (t) => {
-    const stateIcon = (n) => n.type === 'wa-icon' && ['box-archive', 'eye-slash', 'thumbtack'].includes(n.props.name)
+test('current state icons precede the header title without changing session links', async (t) => {
+    const stateIcons = root => descendants(byClass(root, 'timeline-row-header')[0], n => n.type === 'wa-icon'
+        && ['box-archive', 'bell-slash', 'thumbtack'].includes(n.props.name))
     const hidden = await render(t, [make('turn.started', { session_id: 'secret', provider: 'claude_code' })])
     assert.equal(sessionLinks(hidden).length, 0)
     assert.equal(textOf(byClass(hidden, 'timeline-session-title--plain')[0]), 'Hidden one')
-    assert.equal(descendants(hidden, stateIcon).length, 0)
-    assert.equal(byClass(hidden, 'timeline-marker').length, 0)
-    const archivedOnly = { s1: { ...sessions.s1, archived: true } }
-    const archived = await render(t, [make('turn.started')], { sessionTable: archivedOnly })
-    assert.equal(sessionLinks(archived).length, 1)
-    assert.equal(descendants(archived, stateIcon).length, 0)
-    assert.equal(byClass(archived, 'timeline-marker').length, 0)
+    assert.deepEqual(stateIcons(hidden).map(n => n.props.name), ['box-archive'])
+    const current = { s1: { ...sessions.s1, archived: true, mute_on_user_turn: true, pinned: 'workspace' } }
+    const root = await render(t, [make('turn.started')], { sessionTable: current })
+    assert.equal(sessionLinks(root).length, 1)
+    assert.deepEqual(stateIcons(root).map(n => [n.props.name, n.props.label]),
+        [['box-archive', 'Archived'], ['bell-slash', 'Muted'], ['thumbtack', 'Pinned']])
+    const [mention] = byClass(root, 'timeline-session')
+    const elements = mention.children.filter(n => !String(n.type).startsWith('#'))
+    assert.ok(elements.indexOf(byClass(root, 'timeline-session-states')[0]) < elements.indexOf(sessionLinks(root)[0]))
+})
+
+test('header state follows live session changes while the historical event stays unchanged', async (t) => {
+    loadedSessions.s1 = { archived: false, mute_on_user_turn: false, pinned: null }
+    t.after(() => { delete loadedSessions.s1 })
+    const root = await render(t, [make('archived.started')], {
+        sessionTable: { s1: { ...sessions.s1, archived: true } },
+    })
+    const headerIcons = () => byClass(byClass(root, 'timeline-row-header')[0], 'session-state-icon')
+    const eventLine = byClass(root, 'timeline-event-line')[0]
+    assert.equal(headerIcons().length, 0, 'loaded current state wins over an older response')
+    const originalText = textOf(eventLine)
+    assert.equal(byClass(eventLine, 'timeline-row-icon')[0].props.name, 'box-archive')
+    Object.assign(loadedSessions.s1, { archived: true, mute_on_user_turn: true, pinned: 'all' })
+    await flush()
+    assert.equal(headerIcons().length, 3)
+    Object.assign(loadedSessions.s1, { archived: false, mute_on_user_turn: false, pinned: null })
+    await flush()
+    assert.equal(headerIcons().length, 0)
+    assert.equal(textOf(eventLine), originalText)
+    assert.equal(byClass(eventLine, 'timeline-row-icon')[0].props.name, 'box-archive')
 })
 
 test('a session with no entry shows its id as plain text', async (t) => {

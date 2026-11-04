@@ -6,7 +6,7 @@
 //   instance:    icon | wording (semibold)                                       | time
 // The header line is the head row's own first line; every event line of a session sits at the same indent,
 // under the start of the title. The time is a fixed right column; long text wraps in its own column.
-// The current state of a session (archived, hidden, pinned) is not shown: it is not an event.
+// The header shows current archived, muted and pinned state. Event lines keep their historical meaning.
 //
 // A session block is a card with the look of the Orchestration tab's agent cards (the block-card tokens of
 // styles/surfaces.css), without their state border. The scroller renders one item per event row, so each
@@ -66,6 +66,8 @@ const knownProject = computed(() => (identity.value?.projectId ? !!dataStore.get
 // "Only this session" (filters design section 3.4), on the head row of a session block. Pressed when the timeline is
 // restricted to this session: pressed again, it shows every session.
 const sessionId = computed(() => props.row.event.session_id)
+const currentSessionState = computed(() => dataStore.getSession(sessionId.value)
+    ?? props.context.sessions?.[sessionId.value] ?? null)
 const onlyThisSession = computed(() => props.sessionFilterId !== null && props.sessionFilterId === sessionId.value)
 // The name stays "Only this session" in both states (a toggle button's label never changes with its state, WAI-ARIA
 // APG): `aria-pressed` carries the state. The tooltip says what a click does.
@@ -95,7 +97,7 @@ function toggleSession() {
                  a copy gets them. Between flex or grid items (the title and the project, the header and the event line,
                  the main column and the time) they render nothing and a copy puts a line break there anyway: they only
                  keep the text content of the row readable. -->
-            <TimelineSessionMention :mention="identity.mention" truncate class="timeline-row-title" /><!--
+            <TimelineSessionMention :mention="identity.mention" :session-state="currentSessionState" truncate class="timeline-row-title" /><!--
                 No real space around it: a copy skips it (user-select: none), the space before the project is enough.
                 --><button
                 type="button"
