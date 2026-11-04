@@ -70,15 +70,20 @@ export const useTimelineFiltersStore = defineStore('timelineFilters', {
             filters[group] = toggleValue(filters[group], value, GROUP_ORDERS[group])
         },
 
-        /** @param {'families'|'providers'|'authors'} group */
+        /** @param {'families'|'providers'|'authors'|'includeMuted'} group */
         clearGroup(pageId, group) {
-            this.ensure(pageId)[group] = []
+            this.ensure(pageId)[group] = group === 'includeMuted' ? false : []
         },
 
-        /** Clear the three panel groups. The view and the session filter stay. */
+        setIncludeMuted(pageId, included) {
+            this.ensure(pageId).includeMuted = !!included
+        },
+
+        /** Clear the panel groups and muted inclusion. The view and the session filter stay. */
         resetPanel(pageId) {
             const filters = this.ensure(pageId)
             for (const group of Object.keys(GROUP_ORDERS)) filters[group] = []
+            filters.includeMuted = false
         },
 
         /** @param {{id: string, title: (string|null)}} session */

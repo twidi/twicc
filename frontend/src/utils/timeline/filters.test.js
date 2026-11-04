@@ -40,7 +40,7 @@ test('the keys and labels of the global constraints', () => {
 
 test('createFilters returns a fresh default each call', () => {
     const first = createFilters()
-    assert.deepEqual(first, { view: 'all', families: [], providers: [], authors: [], session: null })
+    assert.deepEqual(first, { view: 'all', families: [], providers: [], authors: [], session: null, includeMuted: false })
     first.families.push('turns')
     assert.deepEqual(createFilters().families, [])
 })
@@ -146,6 +146,14 @@ test('groupPills: the session falls back to the short id', () => {
 
 test('groupPills: no pill without a checked value nor a session', () => {
     assert.deepEqual(groupPills(filters({ view: 'without_turns' }), { providerLabel }), [])
+})
+
+test('muted sessions are opt-in and have a removable filter pill', () => {
+    assert.equal(createFilters().includeMuted, false)
+    const selected = filters({ includeMuted: true })
+    assert.equal(toQuery(selected).include_muted, '1')
+    assert.equal(activeCount(selected), 1)
+    assert.equal(groupPills(selected, { providerLabel })[0].group, 'includeMuted')
 })
 
 test('a session without an id is no session filter, everywhere', () => {

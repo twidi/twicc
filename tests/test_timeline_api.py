@@ -457,7 +457,7 @@ def test_the_side_table_holds_every_cited_session_by_event_by_actor_ref_and_by_s
     sessions = call().json()["sessions"]
     assert set(sessions) == {"s1", "boss", "parent"}
     assert sessions["s1"] == {"title": "Mine", "project_id": a.id, "provider": "codex", "hidden": False,
-                              "archived": True}
+                              "archived": True, "mute_on_user_turn": False}
     assert sessions["boss"]["provider"] == "claude_code"
     assert sessions["parent"]["title"] is None
 

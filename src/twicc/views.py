@@ -3496,6 +3496,7 @@ async def timeline(request):
         authors: Comma-separated "Done by" values (``unknown``, ``automatic``, ``you``, ``agent_cli_mcp``,
                  ``external_mcp``, ``session_agent``).
         session: A session id: only its rows, instance events excluded.
+        include_muted: ``1`` includes muted sessions; ``0`` (default) excludes them. Hidden sessions stay excluded.
         In each comma list, empty items are dropped and a list naming every value is no filter; an unknown
         value or view: 400. The filters apply to the first page, ``before`` pages and ``after_id``.
         limit: Page size, 1..100 (default 50, larger values are capped to 100); anything else: 400.

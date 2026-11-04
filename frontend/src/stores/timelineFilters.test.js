@@ -103,6 +103,21 @@ test('an action never writes into the shared default', () => {
     assert.deepEqual(store.filtersFor('q'), createFilters())
 })
 
+test('muted inclusion belongs to one page and resets with panel filters', () => {
+    const store = useTimelineFiltersStore()
+    store.setIncludeMuted('p', true)
+    assert.equal(store.filtersFor('p').includeMuted, true)
+    assert.equal(store.filtersFor('q').includeMuted, false)
+    store.resetPanel('p')
+    assert.equal(store.filtersFor('p').includeMuted, false)
+    store.setIncludeMuted('p', true)
+    store.clearGroup('p', 'includeMuted')
+    assert.equal(store.filtersFor('p').includeMuted, false)
+    store.setIncludeMuted('p', true)
+    store.clearAll('p')
+    assert.equal(store.filtersFor('p').includeMuted, false)
+})
+
 test('a fresh Pinia starts empty: the filters are never persisted', () => {
     useTimelineFiltersStore().toggle('p', 'families', 'turns')
     setActivePinia(createPinia())

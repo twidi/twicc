@@ -360,6 +360,12 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                                 ><span class="timeline-filter-option-text"><span class="timeline-filter-option-label"><ProviderIcon v-if="option.provider" :provider="option.provider" class="timeline-filter-option-icon" />{{ option.label }}</span><span v-if="option.hint" class="timeline-filter-option-hint">{{ option.hint }}</span></span></wa-checkbox>
                             </div>
                         </div>
+                        <wa-checkbox
+                            size="small"
+                            class="timeline-filter-option timeline-filter-include-muted"
+                            :checked="filters.includeMuted"
+                            @change="store.setIncludeMuted(props.pageId, $event.target.checked)"
+                        >Show muted sessions</wa-checkbox>
                         <div class="timeline-filter-panel-actions">
                             <wa-button size="small" appearance="plain" @click="resetPanel">Reset</wa-button>
                         </div>

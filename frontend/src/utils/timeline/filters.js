@@ -65,13 +65,14 @@ const GROUPS = [
  * @property {string[]} families - Checked `FAMILIES` values.
  * @property {string[]} providers - Checked `PROVIDERS` values.
  * @property {string[]} authors - Checked `AUTHORS` values.
+ * @property {boolean} includeMuted - Include muted sessions in this timeline and its automatic speech.
  * @property {({id: string, title: (string|null)}|null)} session - The session filter, with the title captured
  *   when it was set (section 3.4).
  */
 
 /** @returns {TimelineFilters} The unfiltered state: a new object on each call. */
 export function createFilters() {
-    return { view: DEFAULT_VIEW, families: [], providers: [], authors: [], session: null }
+    return { view: DEFAULT_VIEW, families: [], providers: [], authors: [], session: null, includeMuted: false }
 }
 
 /**
@@ -127,6 +128,7 @@ export function toQuery(filters) {
     }
     const session = sessionOf(filters)
     if (session) query.session = session.id
+    if (filters.includeMuted) query.include_muted = '1'
     return query
 }
 
@@ -145,6 +147,7 @@ export function queryKey(query) {
  */
 export function activeCount(filters) {
     return GROUPS.reduce((count, { group, order }) => count + checkedValues(filters[group], order).length, 0)
+        + (filters.includeMuted ? 1 : 0)
 }
 
 function pill(group, label, values) {
@@ -158,7 +161,7 @@ function pill(group, label, values) {
 
 /**
  * @typedef {Object} FilterPill
- * @property {'families'|'providers'|'authors'|'session'} group
+ * @property {'families'|'providers'|'authors'|'includeMuted'|'session'} group
  * @property {string} label - `Events`, `Provider`, `Done by` or `Session`.
  * @property {string[]} values - Every value label, in constant order.
  * @property {string[]} shown - The first value labels the pill shows.
@@ -182,6 +185,7 @@ export function groupPills(filters, { providerLabel }) {
         const labelOf = valueLabels ? (value) => valueLabels[value] : providerLabel
         if (values.length) pills.push(pill(group, label, values.map(labelOf)))
     }
+    if (filters.includeMuted) pills.push(pill('includeMuted', 'Sessions', ['Muted included']))
     const session = sessionOf(filters)
     if (session) {
         pills.push(pill('session', 'Session', [session.title || String(session.id).slice(0, SHORT_ID_LENGTH)]))

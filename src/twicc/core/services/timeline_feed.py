@@ -97,6 +97,7 @@ class FeedRequest(NamedTuple):
     before: tuple[datetime, int] | None  # (occurred_at in UTC, id)
     after_id: int | None
     filter: TimelineFilter = TimelineFilter()
+    include_muted: bool = False
 
 
 def format_occurred_at(value: datetime) -> str:
@@ -183,7 +184,10 @@ def parse_request(params: Mapping[str, str]) -> FeedRequest:
         after_id = _integer("after_id", params["after_id"])
         if not 0 <= after_id <= MAX_EVENT_ID:
             raise FeedError("after_id must be between 0 and 2**63 - 1.")
-    return FeedRequest(project_ids, limit, before, after_id, flt)
+    include_muted = params.get("include_muted", "0")
+    if include_muted not in ("0", "1"):
+        raise FeedError("include_muted must be 0 or 1.")
+    return FeedRequest(project_ids, limit, before, after_id, flt, include_muted == "1")
 
 
 def before_condition(before: tuple[datetime, int]) -> RawSQL:
@@ -195,7 +199,7 @@ def before_condition(before: tuple[datetime, int]) -> RawSQL:
     )
 
 
-def visible_sessions_q() -> Q:
+def visible_sessions_q(*, include_muted: bool = False) -> Q:
     """The rows of no session hidden NOW (``Session.hidden`` at read time, not at the time of the event).
 
     One uncorrelated subquery, read once through the partial index ``idx_session_hidden``. Django guards the
@@ -203,7 +207,11 @@ def visible_sessions_q() -> Q:
     NULL``) survives, where a bare ``NOT IN`` would be NULL for it as soon as one session is hidden. The comparison
     sits under a ``NOT``, so it never drives an index: each page query keeps its own index choice.
     """
-    return ~Q(session_id__in=Session.objects.filter(hidden=True).values("id"))
+    visible = ~Q(session_id__in=Session.objects.filter(hidden=True).values("id"))
+    if include_muted:
+        return visible
+    # Keep hidden exclusion last so its indexed lookup follows the other page predicates.
+    return ~Q(session_id__in=Session.objects.filter(mute_on_user_turn=True).values("id")) & visible
 
 
 def _page_querysets(request: FeedRequest) -> list:
@@ -213,7 +221,7 @@ def _page_querysets(request: FeedRequest) -> list:
     and the filters reject a row before its subquery probe. As the first term, it added about half to the long scan
     of a filter that matches few rows; as the last one, nothing measurable.
     """
-    return [queryset.filter(visible_sessions_q()) for queryset in _scoped_querysets(request)]
+    return [queryset.filter(visible_sessions_q(include_muted=request.include_muted)) for queryset in _scoped_querysets(request)]
 
 
 def _scoped_querysets(request: FeedRequest) -> list:
@@ -311,13 +319,16 @@ def _after_queryset(request: FeedRequest):
     return queryset.order_by("id")[: AFTER_ID_CAP + 1]
 
 
-def hidden_session_ids(session_ids: set[str]) -> set[str]:
-    """The ids of ``session_ids`` whose session is hidden now (an id with no row is not hidden)."""
+def excluded_session_ids(session_ids: set[str], *, include_muted: bool) -> set[str]:
+    """Sessions excluded now: always hidden, and muted unless explicitly included."""
     hidden: set[str] = set()
     ordered = sorted(session_ids)
     for start in range(0, len(ordered), SESSION_LOOKUP_CHUNK):
         hidden.update(
-            Session.objects.filter(id__in=ordered[start:start + SESSION_LOOKUP_CHUNK], hidden=True)
+            Session.objects.filter(
+                Q(hidden=True) if include_muted else Q(hidden=True) | Q(mute_on_user_turn=True),
+                id__in=ordered[start:start + SESSION_LOOKUP_CHUNK],
+            )
             .order_by().values_list("id", flat=True)
         )
     return hidden
@@ -346,13 +357,19 @@ def _fetch_after(request: FeedRequest) -> AfterResult:
     rows = list(queryset if match is None else queryset.values_list("id", "session_id", "kind", named=True))
     truncated = len(rows) > AFTER_ID_CAP
     rows = rows[:AFTER_ID_CAP]
-    hidden = hidden_session_ids({row.session_id for row in rows if row.session_id})
+    hidden = excluded_session_ids({row.session_id for row in rows if row.session_id}, include_muted=request.include_muted)
+    hide_kinds = {TimelineKind.HIDDEN_STARTED}
+    show_kinds = {TimelineKind.HIDDEN_ENDED}
+    if not request.include_muted:
+        hide_kinds.add(TimelineKind.MUTED_STARTED)
+        show_kinds.add(TimelineKind.MUTED_ENDED)
+    # Reuse the feed's existing remove/backfill lists for mute visibility changes too.
     hidden_sessions = sorted({
-        row.session_id for row in rows if row.kind == TimelineKind.HIDDEN_STARTED and row.session_id in hidden
+        row.session_id for row in rows if row.kind in hide_kinds and row.session_id in hidden
     })
     shown_sessions = sorted({
         row.session_id for row in rows
-        if row.kind == TimelineKind.HIDDEN_ENDED and row.session_id and row.session_id not in hidden
+        if row.kind in show_kinds and row.session_id and row.session_id not in hidden
     })
     rows = [row for row in rows if row.session_id not in hidden]
     if not can_match(request.filter):
@@ -385,7 +402,7 @@ def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
     ordered = sorted(session_ids)
     for start in range(0, len(ordered), SESSION_LOOKUP_CHUNK):
         rows = Session.objects.filter(id__in=ordered[start:start + SESSION_LOOKUP_CHUNK]).values(
-            "id", "title", "project_id", "provider", "hidden", "archived",
+            "id", "title", "project_id", "provider", "hidden", "archived", "mute_on_user_turn",
         )
         for row in rows:
             table[row["id"]] = {
@@ -394,6 +411,7 @@ def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
                 "provider": row["provider"],
                 "hidden": bool(row["hidden"]),
                 "archived": bool(row["archived"]),
+                "mute_on_user_turn": bool(row["mute_on_user_turn"]),
             }
     return table
 

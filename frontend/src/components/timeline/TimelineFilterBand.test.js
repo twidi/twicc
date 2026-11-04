@@ -441,6 +441,23 @@ test('the panel lists the three groups in constant order, with the family hints 
     assert.ok(boxes.flat().every((box) => box.props.checked === false))
 })
 
+test('show muted sessions is off by default and follows its page filter', async (t) => {
+    const { root, store } = await mount(t)
+    const [box] = byClass(root, 'timeline-filter-include-muted')
+    assert.equal(box.props.checked, false)
+    assert.equal(textOf(box), 'Show muted sessions')
+    box.checked = true
+    box.props.onChange({ target: box, currentTarget: box })
+    await flush()
+    assert.equal(store.filtersFor('p1').includeMuted, true)
+    assert.equal(store.filtersFor('other').includeMuted, false)
+    assert.equal(box.props.checked, true)
+    const remove = removeOf(root, 'Sessions')
+    remove.props.onClick()
+    await flush()
+    assert.equal(box.props.checked, false)
+})
+
 test('the panel content scrolls inside a short window', () => {
     const panel = declarationsOf(STYLE, '.timeline-filter-panel')
     assert.equal(panel.get('max-height'), 'calc(100dvh - 8rem)')
