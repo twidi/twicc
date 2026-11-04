@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { Notivue, Notification, lightTheme, slateTheme } from 'notivue'
 import { useWebSocket, versionMismatchDetected } from './composables/useWebSocket'
 import { useDataStore } from './stores/data'
+import { useWorkspacesStore } from './stores/workspaces'
+import { useTimelineSpeechStore } from './stores/timelineSpeech'
 import { useSettingsStore } from './stores/settings'
 import { useAuthStore } from './stores/auth'
 import { COLOR_SCHEME, PROCESS_STATE } from './constants'
@@ -83,6 +85,8 @@ if (isAppReady.value) {
 
 // Load initial data and connect WebSocket when authenticated
 const dataStore = useDataStore()
+const timelineSpeech = useTimelineSpeechStore()
+timelineSpeech.initialize({ dataStore, workspacesStore: useWorkspacesStore(), connectionStatus: wsStatus })
 
 // Load app data and open the WS only once the app is actually ready
 // (auth OK AND not on the /login page). The combined `isAppReady`
@@ -754,6 +758,7 @@ onMounted(() => {
     window.addEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 onBeforeUnmount(() => {
+    timelineSpeech.dispose()
     document.removeEventListener('keydown', handleGlobalKeydown, { capture: true })
     document.removeEventListener('keyup', handleGlobalKeyup, { capture: true })
     window.removeEventListener('blur', handleWindowBlur)

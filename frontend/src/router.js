@@ -181,6 +181,8 @@ router.afterEach((to) => {
 // The login page has no rail: the audio of a private message must not keep playing there.
 router.afterEach(async (to) => {
     if (to.name !== 'login') return
+    const { useTimelineSpeechStore } = await import('./stores/timelineSpeech')
+    useTimelineSpeechStore().disable()
     const { useTextToSpeechStore } = await import('./stores/textToSpeech')
     useTextToSpeechStore().stop()
 })
