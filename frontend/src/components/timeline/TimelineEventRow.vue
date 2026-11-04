@@ -142,6 +142,7 @@ function toggleSession() {
                 <TextToSpeechButton
                     v-if="row.event.kind === 'assistant_message.sent'"
                     class="timeline-message-speech"
+                    appearance="plain"
                     :text="row.event.data.text"
                 />
             </template>
