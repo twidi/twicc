@@ -18,6 +18,8 @@
 // utils/timeline/; this component only shows them. Every string from data is rendered as TEXT with
 // interpolation, never as HTML.
 
+import { useTextToSpeechStore } from '../../stores/textToSpeech'
+import { useMessageSummary } from '../../composables/useMessageSummary.js'
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
@@ -43,12 +45,22 @@ const emit = defineEmits({
 })
 
 const dataStore = useDataStore()
+const speech = useTextToSpeechStore()
 
 const vm = computed(() => describeEvent(props.row.event, props.context))
 const identity = computed(() => props.row.identity)
 const isMessage = computed(() => ['user_message.sent', 'assistant_message.sent'].includes(props.row.event.kind))
 const hasMessageText = computed(() => isMessage.value && typeof props.row.event.data?.text === 'string' && !!props.row.event.data.text.trim())
 const messageExpanded = ref(false)
+const summary = useMessageSummary(() => props.row.event.kind === 'assistant_message.sent'
+    ? { event_id: props.row.event.id } : null)
+const reading = computed(() => (summary.identity && speech.statusForSummary(summary.identity) !== 'idle')
+    || speech.statusForText(props.row.event.data?.text) !== 'idle')
+async function summarize() {
+    messageExpanded.value = true
+    await summary.summarize()
+}
+
 const messageHasMore = ref(false)
 const messageToggleRef = ref(null)
 const messageLabel = computed(() => vm.value.parts.map(part => part.text ?? '').join(''))
@@ -143,8 +155,15 @@ function toggleSession() {
                     v-if="row.event.kind === 'assistant_message.sent'"
                     class="timeline-message-speech"
                     appearance="plain"
-                    :text="row.event.data.text"
+                    :text="summary.view === 'summary' ? (summary.entry?.text || '') : row.event.data.text"
+                    :original-text="row.event.data.text"
+                    :summary-ref="summary.view === 'summary' ? summary.playbackReference : null"
+                    :summary-identity="summary.identity"
+                    :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"
+                    @summary-changed="summary.refreshSaved"
                 />
+                <wa-button v-if="summary.available" size="small" appearance="plain" title="Summarize message" @click="summarize">{{ summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize' }}</wa-button>
+                <wa-button v-if="summary.view === 'summary'" size="small" appearance="plain" @click="summary.showOriginal">Original</wa-button>
             </template>
         </TimelineEventLine>
         <TimelineMessage
@@ -152,6 +171,7 @@ function toggleSession() {
             v-model:expanded="messageExpanded"
             class="timeline-row-message"
             :event-id="row.event.id"
+            :summary="summary"
             :kind="row.event.kind"
             :data="row.event.data"
             :content-id="messageId"

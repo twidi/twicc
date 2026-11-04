@@ -29,6 +29,7 @@ import '../../styles/github-markdown-themes.css'
 
 const props = defineProps({
     inlineContext: { type: Object, default: null },
+    summaryContext: { type: Object, default: null },
     source: {
         type: String,
         required: true
@@ -823,7 +824,7 @@ function handleLinkClick(event) {
 </script>
 
 <template>
-    <div class="markdown-content-wrapper">
+    <div class="markdown-content-wrapper" :class="{ 'message-summary-hidden': summaryContext?.hidden }">
         <wa-details v-if="showTocDetails" class="markdown-toc" summary="Table of contents">
             <ul class="markdown-toc-list">
                 <li
@@ -871,11 +872,14 @@ function handleLinkClick(event) {
                     <wa-icon name="copy"></wa-icon>
                 </wa-button>
                 <TextToSpeechButton v-if="speakable" :text="source" />
+                <wa-button v-if="summaryContext?.available" size="small" :title="summaryContext.entry?.text || summaryContext.descriptor?.saved || summaryContext.descriptor?.previous ? 'Show summary' : 'Summarize message'" aria-label="Summarize message" @click="summaryContext.summarize">
+                    <wa-icon name="compress"></wa-icon>
+                </wa-button>
             </wa-button-group>
         </div>
-        <pre v-if="showRaw" class="markdown-raw">{{ source }}</pre>
+        <pre v-if="showRaw && !summaryContext?.hidden" class="markdown-raw">{{ source }}</pre>
         <div
-            v-show="!showRaw"
+            v-show="!showRaw || summaryContext?.hidden"
             ref="container"
             class="markdown-body"
             v-highlight="highlightTerms"
@@ -902,7 +906,7 @@ function handleLinkClick(event) {
                         v-bind="artifactPlacement(block)"
                     />
                 </template>
-                <div v-else class="markdown-block" v-html="block.html"></div>
+                <div v-else v-show="!summaryContext?.hidden" class="markdown-block" v-html="block.html"></div>
             </template>
         </div>
     </div>
@@ -937,6 +941,11 @@ function handleLinkClick(event) {
 .markdown-content-wrapper {
     position: relative;
 }
+
+/* Keep inline artifacts and an active original reading available in Summary view. */
+.message-summary-hidden > .markdown-toolbar { visibility: hidden; }
+.message-summary-hidden > .markdown-toolbar:has(.markdown-toolbar-speech--busy) { visibility: visible; }
+.message-summary-hidden > .markdown-toolbar wa-button:not(.markdown-toolbar-speech--busy) { display: none; }
 
 /* -- Table of contents (opt-in, preview panes) ----------------------- */
 .markdown-toc {

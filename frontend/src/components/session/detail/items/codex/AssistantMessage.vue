@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, nextTick, onMounted } from 'vue'
+import { MESSAGE_SUMMARY_CONTEXT } from '../../../../../composables/useMessageSummary.js'
+import { computed, inject, ref, nextTick, onMounted } from 'vue'
 import { useDataStore } from '../../../../../stores/data'
 import { useDetailsClosing } from '../../../../../composables/useDetailsClosing'
 import { segmentInlineTextContext } from '../../../../../inline-artifacts/rendering.js'
@@ -28,6 +29,7 @@ const props = defineProps({
 // Codex Plan-mode final answers carry a ``<proposed_plan>`` block — see
 // ``providers/codex/proposedPlan.js`` for the tag contract and the split
 // semantics (streaming-tolerant). No block → plain assistant text, untouched.
+const summary = inject(MESSAGE_SUMMARY_CONTEXT, null)
 const segments = computed(() => splitProposedPlan(props.text, props.inlineContext ?? {}))
 
 const dataStore = useDataStore()
@@ -87,7 +89,7 @@ function onAfterHide() {
                 <strong class="items-details-summary-name">Proposed plan</strong>
             </span>
             <div v-if="isOpen || isClosing()" class="proposed-plan-body">
-                <MarkdownContent :source="segments.plan" :inline-context="segmentInlineTextContext(inlineContext, segments.planOffset)" />
+                <MarkdownContent :source="segments.plan" :summary-context="summary" :inline-context="segmentInlineTextContext(inlineContext, segments.planOffset)" />
             </div>
         </wa-details>
         <TextContent v-if="segments.after" :text="segments.after" :inline-context="segmentInlineTextContext(inlineContext, segments.afterOffset)" role="assistant" />

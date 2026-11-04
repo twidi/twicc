@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { MESSAGE_SUMMARY_CONTEXT } from '../../../../composables/useMessageSummary.js'
+import { computed, inject } from 'vue'
 import MarkdownContent from '../../../ui/MarkdownContent.vue'
 import { displayInlineText } from '../../../../inline-artifacts/rendering.js'
 import { LEADING_SLASH_COMMAND_RE } from '../../../../utils/markdown'
@@ -17,6 +18,9 @@ const props = defineProps({
     }
 })
 
+const summary = inject(MESSAGE_SUMMARY_CONTEXT, null)
+const summaryContext = computed(() => props.role === 'assistant' ? summary : null)
+
 const display = computed(() => displayInlineText(props.text, props.inlineContext))
 const displayText = computed(() => display.value.source)
 
@@ -30,7 +34,7 @@ const tagSlashCommand = computed(() =>
 
 <template>
     <div class="text-content" :role="role">
-        <MarkdownContent :source="displayText" :speakable="role === 'assistant'" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
+        <MarkdownContent :source="displayText" :summary-context="summaryContext" :speakable="role === 'assistant'" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
     </div>
 </template>
 

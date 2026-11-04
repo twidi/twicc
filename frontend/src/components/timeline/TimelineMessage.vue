@@ -2,8 +2,11 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { describeMessageSnapshot } from '../../utils/timeline/messageSnapshot'
 
+import MessageSummary from '../session/detail/items/MessageSummary.vue'
+
 const MarkdownContent = defineAsyncComponent(() => import('../ui/MarkdownContent.vue'))
 const props = defineProps({
+    summary: { type: Object, default: null },
     eventId: { type: Number, required: true },
     kind: { type: String, required: true },
     data: { type: Object, default: null },
@@ -78,7 +81,8 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
             :aria-label="labelledBy ? undefined : 'Message'"
             class="timeline-message-body"
         >
-            <MarkdownContent :source="vm.text" />
+            <MessageSummary v-if="summary?.view === 'summary'" :summary="summary" :speech="false" />
+            <MarkdownContent v-else :source="vm.text" />
             <button type="button" class="timeline-message-control timeline-message-close" @click="toggle">Close message</button>
         </div>
     </div>

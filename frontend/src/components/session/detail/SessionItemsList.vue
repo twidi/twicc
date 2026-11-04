@@ -1,6 +1,7 @@
 <script setup>
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
+import { createMessageSummaryVisit, MESSAGE_SUMMARY_VISIT } from '../../../composables/useMessageSummary.js'
 import { computed, watch, ref, reactive, shallowReactive, provide, nextTick, inject, onMounted, onBeforeUnmount, onActivated, onDeactivated, unref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { collectMissingScrollerLines, sameScrollerLoadCandidates } from '../../../utils/scrollerLoadWindow.js'
@@ -1859,6 +1860,9 @@ async function processDroppedFile(file) {
 // Search highlight terms provided to child components (MarkdownContent uses them)
 const searchHighlightTerms = ref([])
 provide('searchHighlightTerms', searchHighlightTerms)
+
+provide(MESSAGE_SUMMARY_VISIT, createMessageSummaryVisit(lineNum =>
+    scrollToLineNum(lineNum, { align: 'start', highlight: false })))
 
 // File-link resolution for MarkdownContent rendered inside the session items
 // list. Classification reads the current session/project roots lazily so that

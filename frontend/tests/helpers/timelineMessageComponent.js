@@ -11,4 +11,5 @@ const MarkdownContent = {
 export const Message = compileComponent(new URL('../../src/components/timeline/TimelineMessage.vue', import.meta.url), {
     '../../utils/timeline/messageSnapshot': messageSnapshot,
     '../ui/MarkdownContent.vue': MarkdownContent,
+    '../session/detail/items/MessageSummary.vue': { render: () => null },
 })

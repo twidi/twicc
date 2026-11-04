@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref, provide, inject, unref } from 'vue'
 import { INLINE_ARTIFACT_CONTEXT } from '../../../inline-artifacts/context.js'
+import { useMessageSummary, MESSAGE_SUMMARY_CONTEXT, MESSAGE_SUMMARY_VISIT } from '../../../composables/useMessageSummary.js'
+import MessageSummary from './items/MessageSummary.vue'
 import { STREAMING_BLOCK_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { useStreamingPublication } from '../../../composables/useStreamingPublication.js'
 import { PROVIDER, SYNTHETIC_ITEM, DISPLAY_MODE } from '../../../constants'
@@ -150,6 +152,15 @@ const entryType = computed(() => props.content?.type || 'unknown')
 
 const sessionProvider = computed(() => dataStore.getSession(props.sessionId)?.provider)
 
+// Eligibility and native grouping come only from the backend descriptor.
+const summaryVisit = inject(MESSAGE_SUMMARY_VISIT, null)
+const summary = useMessageSummary(() => {
+    if (!summaryVisit || props.kind !== 'assistant_message' || props.syntheticKind || props.content?.syntheticKind
+        || !Number.isInteger(props.lineNum) || props.lineNum < 1) return null
+    return { session_id: props.sessionId, line_num: props.lineNum }
+}, summaryVisit)
+provide(MESSAGE_SUMMARY_CONTEXT, summary)
+
 // Only persisted assistant rows from the owning regular session carry publication coordinates.
 const providedInlineContext = inject(INLINE_ARTIFACT_CONTEXT, null)
 const inlineContext = computed(() => {
@@ -269,6 +280,7 @@ function toggleJsonView() {
 
         <!-- Formatted view based on kind -->
         <template v-else>
+            <MessageSummary v-if="summary.isHost" :summary="summary" />
             <BackgroundWorkStatus v-if="isBackgroundWorkStatus" :lines="content?.lines || []" />
             <template v-else-if="sessionProvider === PROVIDER.CLAUDE_CODE">
                 <ClaudeCodeMessage
