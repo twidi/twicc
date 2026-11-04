@@ -16,8 +16,12 @@ const props = defineProps({
         type: String,
         required: true,
     },
+    summaryRef: { type: [Object, Function], default: null },
+    summaryIdentity: { type: Object, default: null },
+    originalText: { type: String, default: null },
 })
 
+const emit = defineEmits(['summary-changed'])
 const store = useTextToSpeechStore()
 
 const TITLES = {
@@ -26,7 +30,10 @@ const TITLES = {
     playing: 'Stop reading',
 }
 
-const status = computed(() => store.statusForText(props.text))
+const status = computed(() => {
+    const summary = props.summaryIdentity ? store.statusForSummary(props.summaryIdentity) : 'idle'
+    return summary !== 'idle' ? summary : store.statusForText(props.originalText ?? props.text)
+})
 const title = computed(() => TITLES[status.value])
 
 async function onClick() {
@@ -34,7 +41,11 @@ async function onClick() {
         store.stop()
         return
     }
-    const result = await store.play(props.text)
+    const reference = props.summaryRef
+    const result = await (reference
+        ? store.playSummary(typeof reference === 'function' ? Promise.resolve().then(() => reference()) : reference, { identity: props.summaryIdentity })
+        : store.play(props.text))
+    if (result.summaryChanged) emit('summary-changed', result.savedId)
     if (!result.ok && !result.aborted) toast.error(result.error, { duration: 4000 })
     if (!result.ok) return
     // An error can still come after the sound started (the stream broke). The toast is an

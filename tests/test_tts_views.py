@@ -2657,3 +2657,54 @@ def test_non_string_announcement_is_400_without_pump(client, adaptation, kind, a
     assert response.json() == {"error": "'announcement' must be a string"}
     assert adaptation.sources == []
     assert adaptation.calls == []
+
+
+def test_saved_summary_bypasses_adaptation_and_checks_exact_body_before_audio(client, upstream, monkeypatch):
+    import hashlib
+    from twicc.summaries import service
+    text = 'Exact previous-policy summary.'
+    saved = {'id': 8, 'text': text, 'result_hash': hashlib.sha256(text.encode()).hexdigest()}
+    monkeypatch.setattr(service, 'load_saved_summary', lambda saved_id: saved.copy())
+    monkeypatch.setattr(views, '_stored_adapt_choice', lambda: 'openrouter')
+    monkeypatch.setattr(views, 'resolve_engine', lambda *_: pytest.fail('Summary invokes adaptation'))
+    async def scenario():
+        payload = {k: v for k, v in CACHED_PAYLOAD.items() if k != 'text'}
+        payload.update(saved_summary_id=8, summary_result_hash=saved['result_hash'])
+        upstream.pump.send('set_headers', 'audio/mpeg', None)
+        upstream.pump.send('append', b'audio')
+        upstream.pump.send('finish')
+        response = await client.post(SPEECH_PATH, payload, content_type='application/json')
+        assert response.status_code == 200
+        assert upstream.pump.calls[0][0].text == text
+        assert upstream.pump_args[0][0] == [text]
+        saved.update(text='Replacement B.', result_hash=hashlib.sha256(b'Replacement B.').hexdigest())
+        mismatch = await client.post(SPEECH_PATH, payload, content_type='application/json')
+        assert mismatch.status_code == 409
+        assert mismatch.json()['summary_changed'] is True
+        assert len(upstream.pump.calls) == 1
+        payload['summary_result_hash'] = saved['result_hash']
+        upstream.pump.send('set_headers', 'audio/mpeg', None)
+        upstream.pump.send('append', b'new audio')
+        upstream.pump.send('finish')
+        refreshed = await client.post(SPEECH_PATH, payload, content_type='application/json')
+        assert refreshed.status_code == 200
+        assert upstream.pump.calls[-1][0].text == 'Replacement B.'
+        assert len(upstream.pump.calls) == 2
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('patch', [
+    {'summary_id': 'missing', 'saved_summary_id': 1},
+    {'saved_summary_id': 1},
+    {'summary_id': ''},
+    {'summary_id': 'x', 'config_id': 'test'},
+    {'summary_id': 'x', 'text': 'Do not read original'},
+])
+def test_summary_request_rejects_ambiguous_or_test_sources(client, upstream, patch):
+    async def scenario():
+        payload = {k: v for k, v in VALID_PAYLOAD.items() if k != 'text'}
+        async with asyncio.timeout(1):
+            response = await client.post(SPEECH_PATH, {**payload, **patch}, content_type='application/json')
+        assert response.status_code == 400
+        assert not upstream.pump.calls
+    asyncio.run(scenario())

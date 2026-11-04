@@ -139,3 +139,44 @@ for (const status of ['loading', 'playing']) {
         assert.ok(focused === button)
     })
 }
+
+test('summary button retains stop access after switching to original and reports changed saved results', async t => {
+    const identity = { sourceKey: 'message:x', sourceHash: 'hash', variant: 'summary' }
+    const selected = Vue.ref(true)
+    const calls = []
+    const tts = Vue.reactive({
+        available: true,
+        statusForText: () => 'idle',
+        summaryStatus: 'idle',
+        statusForSummary: value => { assert.deepEqual(value, identity); return tts.summaryStatus },
+        playSummary: async (ref, options) => {
+            calls.push(['play', ref, options])
+            return { ok: false, summaryChanged: true, savedId: 7, error: 'Changed' }
+        },
+        stop: () => { calls.push(['stop']); tts.summaryStatus = 'idle' },
+        play: () => assert.fail('Summary selection must not read the original'),
+    })
+    const Button = compileComponent(new URL('./TextToSpeechButton.vue', import.meta.url), {
+        '../../stores/textToSpeech': { useTextToSpeechStore: () => tts },
+        '../../composables/useToast': { toast: { error: () => {} } },
+    })
+    const reference = { saved_id: 7, result_hash: 'a'.repeat(64) }
+    const changes = []
+    const { renderer, root } = makeRenderer()
+    const app = renderer.createApp({ render: () => Vue.h(Button, {
+        text: 'Original', summaryIdentity: identity, summaryRef: selected.value ? reference : null,
+        onSummaryChanged: value => changes.push(value),
+    }) })
+    app.mount(root)
+    t.after(() => app.unmount())
+    const [button] = descendants(root, node => node.type === 'wa-button')
+    await button.props.onClick()
+    assert.equal(calls[0][0], 'play')
+    assert.deepEqual(changes, [7])
+    tts.summaryStatus = 'playing'
+    selected.value = false
+    await flush()
+    assert.equal(button.props['aria-label'], 'Stop reading')
+    await button.props.onClick()
+    assert.deepEqual(calls.at(-1), ['stop'])
+})

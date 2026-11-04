@@ -1291,3 +1291,68 @@ test('a fresh store is not available (share pages never feed it)', () => {
     setActivePinia(createPinia())
     assert.equal(useTextToSpeechStore().available, false)
 })
+
+// Summary references use the same player and reserve ownership before acquisition.
+const SUMMARY_IDENTITY = { sourceKey: 'message:one', sourceHash: 'a'.repeat(64), variant: 'summary' }
+
+test('summary reserves and primes synchronously, then sends only an authoritative reference', async () => {
+    let acquire
+    const reference = new Promise(resolve => { acquire = resolve })
+    const bodies = []
+    store._openSpeech = async body => { bodies.push(body); return opened() }
+    const pending = store.playSummary(reference, { identity: SUMMARY_IDENTITY, announcement: 'Project.' })
+    assert.equal(store.statusForSummary({ ...SUMMARY_IDENTITY }), 'loading')
+    assert.ok(log.includes('prime') && log.includes('pcm-prime'))
+    assert.equal(bodies.length, 0)
+    assert.deepEqual(await store.play('queued', { owner: 'listener' }), { ...ABORTED, busy: true })
+    acquire({ id: 'summary-handle' })
+    await until(() => fakePlayer.calls.length === 1)
+    assert.equal(bodies[0].summary_id, 'summary-handle')
+    assert.equal(bodies[0].announcement, 'Project.')
+    assert.equal('text' in bodies[0], false)
+    assert.equal('skip_adaptation' in bodies[0], false)
+    fakePlayer.handlers.onPlaying()
+    assert.equal((await pending).ok, true)
+    assert.equal(store.statusForSummary(SUMMARY_IDENTITY), 'playing')
+    assert.equal(store.statusForText('summary-handle'), 'idle')
+    store.stop()
+})
+
+test('stop resolves a pending summary immediately and obsolete acquisition never opens speech', async () => {
+    let acquire
+    const pending = store.playSummary(new Promise(resolve => { acquire = resolve }), { identity: SUMMARY_IDENTITY })
+    store.stop()
+    assert.deepEqual(await pending, ABORTED)
+    acquire({ id: 'late' })
+    await settle()
+    assert.equal(log.includes('open'), false)
+})
+
+test('saved summary hash mismatch returns a refresh result and never plays replacement audio', async () => {
+    let body
+    store._openSpeech = async value => { body = value; return jsonResponse(409, { error: 'The saved summary changed', summary_changed: true, saved_id: 7 }) }
+    const result = await store.playSummary({ saved_id: 7, result_hash: 'b'.repeat(64) }, { identity: SUMMARY_IDENTITY })
+    assert.equal(body.saved_summary_id, 7)
+    assert.equal(body.summary_result_hash, 'b'.repeat(64))
+    assert.equal(result.ok, false)
+    assert.equal(result.summaryChanged, true)
+    assert.equal(result.savedId, 7)
+    assert.equal(fakePlayer.calls.length, 0)
+    assert.equal(store.status, 'idle')
+})
+
+test('refused or rejected summary reference never falls back to original speech', async () => {
+    for (const reference of [{}, { id: 'x', saved_id: 1 }, Promise.reject(new Error('Unavailable'))]) {
+        const result = await store.playSummary(reference, { identity: SUMMARY_IDENTITY })
+        assert.equal(result.ok, false)
+        assert.equal(result.aborted, undefined)
+    }
+    assert.equal(log.includes('open'), false)
+})
+
+test('script validation conflict does not claim the saved summary changed', async () => {
+    store._openSpeech = async () => jsonResponse(409, { error: 'This script config is not validated' })
+    const result = await store.playSummary({ saved_id: 7, result_hash: 'b'.repeat(64) }, { identity: SUMMARY_IDENTITY })
+    assert.equal(result.ok, false)
+    assert.equal(result.summaryChanged, undefined)
+})

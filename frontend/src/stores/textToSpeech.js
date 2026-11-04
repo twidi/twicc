@@ -99,14 +99,14 @@ function isAbortError(error) {
     return error?.name === 'AbortError'
 }
 
-async function errorMessageOf(response) {
+async function speechErrorOf(response) {
     try {
         const data = await response.json()
-        if (typeof data?.error === 'string' && data.error) return data.error
+        if (typeof data?.error === 'string' && data.error) return { error: data.error, summaryChanged: data.summary_changed === true }
     } catch {
         // Not a JSON body: fall back to the status.
     }
-    return `Request failed (${response.status})`
+    return { error: `Request failed (${response.status})` }
 }
 
 /** The backend's ending answer `{ state, error }`, or null: a failed request, a non-2xx answer, another body. */
@@ -152,7 +152,7 @@ function primePlayers() {
  * Resolves `{ ok: true, ended }` when the sound starts (`ended` resolves the end result),
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
-async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '' }) {
+async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '', summaryRef = null, identity = null }) {
     cancelPlayback(store)
     const mine = ++generation
 
@@ -160,7 +160,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     primePlayers()
     playbackStore = store
     if (typeof window !== 'undefined') installPageHideRelease(window)
-    store.playback = { text, status: 'loading', source, configId, owner }
+    store.playback = { text, status: 'loading', source, configId, owner, ...(identity ? { identity } : {}) }
 
     let opened
     try {
@@ -168,8 +168,25 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
         // A settings test names its config: the backend keeps the run as its last test.
         // A script config names itself: the backend runs the command stored for it.
         // A platform that buffers the audio asks for it in one go: pacing would only delay it.
+        let reference = null
+        if (source === 'summary') {
+            const cancelled = new Promise(resolve => { abortPending = () => resolve(ABORTED) })
+            reference = await Promise.race([Promise.resolve(summaryRef), cancelled])
+            if (generation !== mine || reference === ABORTED) return ABORTED
+            abortPending = null
+            const live = typeof reference?.id === 'string' && reference.id.trim()
+            const saved = Number.isInteger(reference?.saved_id) && reference.saved_id > 0
+                && /^[0-9a-f]{64}$/.test(reference?.result_hash)
+            if ((!live && !saved) || (reference?.id !== undefined && reference?.saved_id !== undefined)) {
+                backToIdle(store, mine)
+                return { ok: false, error: 'The summary is no longer available' }
+            }
+        }
         const body = {
-            text,
+            ...(reference ? reference.id
+                ? { summary_id: reference.id }
+                : { saved_summary_id: reference.saved_id, summary_result_hash: reference.result_hash }
+                : { text }),
             ...fields,
             cache: useCache,
             ...(configId ? { config_id: configId } : {}),
@@ -181,10 +198,11 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
         const response = await store._openSpeech(body, controller.signal)
         if (!response.ok) {
             if (generation !== mine) return ABORTED
-            const error = await errorMessageOf(response)
+            const failure = await speechErrorOf(response)
             if (generation !== mine) return ABORTED
             backToIdle(store, mine)
-            return { ok: false, error }
+            return { ok: false, error: failure.error, ...(source === 'summary' && reference?.saved_id && response.status === 409 && failure.summaryChanged
+                ? { summaryChanged: true, savedId: reference.saved_id } : {}) }
         }
         const data = await response.json()
         if (typeof data?.audio_id !== 'string' || typeof data?.content_type !== 'string') throw new TypeError('Bad speech answer')
@@ -201,7 +219,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     }
     controller = null
     currentAudio = { id: opened.audioId, store }
-    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId, owner }, resolveStart))
+    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId, owner, ...(identity ? { identity } : {}) }, resolveStart))
 }
 
 function backToIdle(store, mine) {
@@ -212,7 +230,7 @@ function backToIdle(store, mine) {
 }
 
 /** Play the open audio with the player of its type and platform, then run the ending step. */
-function playOpened(store, mine, { audioId, contentType }, { text, source, configId, owner }, resolveStart) {
+function playOpened(store, mine, { audioId, contentType }, { text, source, configId, owner, identity }, resolveStart) {
     let started = false
     let finishing = false
     let resolveEnded
@@ -240,7 +258,7 @@ function playOpened(store, mine, { audioId, contentType }, { text, source, confi
         onPlaying() {
             if (generation !== mine || started || finishing) return
             started = true
-            store.playback = { text, status: 'playing', source, configId, owner }
+            store.playback = { text, status: 'playing', source, configId, owner, ...(identity ? { identity } : {}) }
             resolveStart({ ok: true, ended })
         },
         onEnded() {
@@ -321,6 +339,15 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             state.playback.source === 'message' && state.playback.text === text ? state.playback.status : 'idle'
         ),
 
+        /** A snapshot identity keeps summary status stable across views and reference acquisition. */
+        statusForSummary: (state) => (identity) => {
+            const current = state.playback.identity
+            return state.playback.source === 'summary' && current && identity
+                && Object.keys(current).length === Object.keys(identity).length
+                && Object.keys(current).every(key => current[key] === identity[key])
+                ? state.playback.status : 'idle'
+        },
+
         /** The state of a selection playback for this text: 'idle' | 'loading' | 'playing'. */
         statusForSelection: (state) => (text) => (
             state.playback.source === 'selection' && state.playback.text === text ? state.playback.status : 'idle'
@@ -342,7 +369,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this.keyPresent = Boolean(payload?.key_present)
             this.envPath = payload?.env_path ?? ''
             // Another device edited, deactivated or deleted the active config, or the key is gone.
-            if ((this.playback.source === 'message' || this.playback.source === 'selection') && !this.available) this.stop()
+            if ((['message', 'selection', 'summary'].includes(this.playback.source)) && !this.available) this.stop()
         },
 
         /** The full config the backend stores: every write carries all of it (a missing key resets it). */
@@ -485,6 +512,22 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             const fields = speechFieldsOf(config)
             const scriptId = kindOf(fields) === 'script' ? config.id : null
             return startPlayback(this, text, fields, { useCache: true, source: origin ? 'selection' : 'message', scriptId, origin, owner, announcement })
+        },
+
+        /** Reserve the shared player before awaiting an authoritative live or saved summary reference. */
+        playSummary(summaryRef, { identity, owner = null, announcement = '' } = {}) {
+            // A rejected acquisition is still observed when this player cannot accept ownership.
+            Promise.resolve(summaryRef).catch(() => {})
+            if (owner !== null && this.status !== 'idle') return Promise.resolve({ ...ABORTED, busy: true })
+            const config = this.activeConfig
+            if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
+            if (!identity || typeof identity !== 'object') return Promise.resolve({ ok: false, error: 'A summary identity is required' })
+            const fields = speechFieldsOf(config)
+            const scriptId = kindOf(fields) === 'script' ? config.id : null
+            return startPlayback(this, null, fields, {
+                useCache: true, source: 'summary', scriptId, owner, announcement,
+                summaryRef, identity: { ...identity },
+            })
         },
 
         /**

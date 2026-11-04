@@ -5,7 +5,8 @@ when a non-empty normalized announcement precedes the message. The request is th
 :class:`~twicc.tts.openrouter.SpeechRequest`, or a :class:`~twicc.tts.script.ScriptSpeechRequest`
 (its command among them: a changed command misses the cache). ``adapted_by`` is the engine that
 adapted the text (``"haiku"``, ``"luna"``, ``"openrouter"``), ``"direct"`` for a simple text that
-TwiCC cleaned itself (no engine ran), or None for a text read as written (a reading that fell back
+TwiCC cleaned itself (no engine ran), ``"summary"`` for exact server-resolved saved summary
+text (temporary or incomplete summaries never share these entries), or None for a text read as written (a reading that fell back
 to it among them). One process-wide instance: :data:`speech_cache`.
 """
 

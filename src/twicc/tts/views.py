@@ -30,7 +30,10 @@ from channels.layers import get_channel_layer
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 
+from twicc.core.models import MessageSummary
 from twicc.paths import get_env_path
+from twicc.summaries import service as summaries
+from twicc.summaries.speech import SummaryParts
 from twicc.tts.adapt import (
     OPENROUTER_ENGINE,
     TEST_TEXT_KEEP_CHARS,
@@ -90,6 +93,7 @@ AUDIO_GONE = "The audio is no longer available"
 AUDIO_CUT = "The audio stopped before the end"
 # The cache name of a directly read text (no engine ran): never an engine name.
 DIRECT_ENGINE = "direct"
+SUMMARY_ENGINE = "summary"
 NOTHING_TO_SAY = "There is nothing to read aloud in this text"
 
 # The status of a speech that failed upstream (OpenRouter) or in its script: "Failed
@@ -199,12 +203,37 @@ def _opened(stream: AudioStream) -> JsonResponse:
     return JsonResponse({"audio_id": stream.id, "content_type": stream.content_type})
 
 
+def _summary_reference(data: object) -> dict | None:
+    """Validate only public handles; client metadata never authorizes a bypass."""
+    if not isinstance(data, dict):
+        return None
+    live, saved = 'summary_id' in data, 'saved_summary_id' in data
+    if not live and not saved:
+        if 'summary_result_hash' in data:
+            raise ValueError("'summary_result_hash' requires 'saved_summary_id'")
+        return None
+    if (live and saved) or 'text' in data or 'config_id' in data:
+        raise ValueError('A summary needs exactly one reference, without text or a configuration test')
+    if live:
+        handle = data['summary_id']
+        if not isinstance(handle, str) or not handle.strip() or 'summary_result_hash' in data:
+            raise ValueError("'summary_id' must be a non-empty handle")
+        return {'id': handle}
+    saved_id, result_hash = data['saved_summary_id'], data.get('summary_result_hash')
+    if type(saved_id) is not int or saved_id < 1:
+        raise ValueError("'saved_summary_id' must be a positive integer")
+    if not isinstance(result_hash, str) or re.fullmatch('[0-9a-f]{64}', result_hash) is None:
+        raise ValueError("'summary_result_hash' must be the saved result fingerprint")
+    return {'saved_id': saved_id, 'result_hash': result_hash}
+
+
 async def tts_speech(request):
     """POST /api/tts/speech/ — open a speech.
 
     Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?, announcement?}``,
     or for a script config ``{kind: "script", text, script_id, <its six fields>, config_id?, cache?, buffered?, announcement?}``
-    (:func:`_open_script_speech`).
+    (:func:`_open_script_speech`). A summary replaces ``text`` with ``summary_id``, or
+    ``saved_summary_id`` plus the exact ``summary_result_hash``. Configuration tests reject summaries.
     Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
     A text without speech is a 400, without upstream call. A text longer than its
@@ -233,8 +262,24 @@ async def tts_speech(request):
             data = orjson.loads(body)
         except orjson.JSONDecodeError:
             return _error("Invalid JSON", 400)
+        try:
+            summary = _summary_reference(data)
+        except ValueError as error:
+            return _error(str(error), 400)
+        if summary is not None:
+            if 'saved_id' in summary:
+                try:
+                    # One row read captures the exact body and its fingerprint atomically.
+                    saved = await sync_to_async(summaries.load_saved_summary)(summary['saved_id'])
+                except MessageSummary.DoesNotExist:
+                    return _error('The saved summary is no longer available', 404)
+                if saved['result_hash'] != summary['result_hash']:
+                    return _error('The saved summary changed. Refresh it before reading.', 409,
+                                  summary_changed=True, saved_id=summary['saved_id'])
+                summary = saved
+            data = {**data, 'text': summary.get('text', 'Summary')}
         if isinstance(data, dict) and data.get("kind") == "script":
-            return await _open_script_speech(data)
+            return await _open_script_speech(data, summary=summary)
         try:
             speech_request = parse_speech_request(data)
             origin = _origin(data)
@@ -264,6 +309,7 @@ async def tts_speech(request):
             lambda sink, parts, paced: pump_speech(speech_request, api_key, sink, parts, paced=paced),
             api_key,
             origin=origin,
+            summary=summary,
         )
     except Exception:
         # Not BaseException: a CancelledError (client disconnect) must propagate.
@@ -271,7 +317,7 @@ async def tts_speech(request):
         return _error(SPEECH_FAILED, 500)
 
 
-async def _open_script_speech(data: dict) -> JsonResponse:
+async def _open_script_speech(data: dict, *, summary: dict | None = None) -> JsonResponse:
     """The open step of a script config: it runs the command stored in tts.json for ``script_id``.
 
     The six script fields of the body serve only a settings test (``config_id`` equal to
@@ -325,6 +371,7 @@ async def _open_script_speech(data: dict) -> JsonResponse:
         ),
         None,
         origin=origin,
+        summary=summary,
     )
 
 
@@ -339,6 +386,7 @@ async def _open_speech(
     api_key: str | None,
     *,
     origin: str | None = None,
+    summary: dict | None = None,
 ) -> JsonResponse:
     """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*;
     the pump paces a split reading only), awaited until its headers arrive.
@@ -365,41 +413,61 @@ async def _open_speech(
         return _error(str(error), 400)
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
-    choice = await sync_to_async(_stored_adapt_choice)()
-    cleaned = None
-    if choice != "off" and config_id is None:
-        cleaned = await sync_to_async(direct_text)(speech_request.text, origin)
-        if cleaned is not None and not has_speech(cleaned):
-            return _error(NOTHING_TO_SAY, 400)
-    direct = cleaned is not None
-    if direct:
-        engine, adapt_reason = None, None
-        label["adapted"] = "direct"
+    summary_source = None
+    if summary is not None:
+        label['adapted'] = SUMMARY_ENGINE
+        if 'text' in summary:
+            parts = split(speech_request)
+        else:
+            try:
+                reader = await summaries.acquire_summary_reader(summary['id'])
+            except summaries.SummaryGone:
+                return _error('The summary is no longer available', 410)
+            summary_source = SummaryParts(reader, *limits(speech_request))
+            parts = summary_source
+        source, adapt_reason, direct = None, None, False
+        engine, then = None, None
     else:
-        engine, adapt_reason = resolve_engine(choice, speech_request.text)
-    then = fallback_engine(engine) if engine == OPENROUTER_ENGINE else None
-    if engine is None and not direct:
-        label["adapted"] = "no"
-        label["adapt_reason"] = adapt_reason
+        choice = await sync_to_async(_stored_adapt_choice)()
+        cleaned = None
+        if choice != "off" and config_id is None:
+            cleaned = await sync_to_async(direct_text)(speech_request.text, origin)
+            if cleaned is not None and not has_speech(cleaned):
+                return _error(NOTHING_TO_SAY, 400)
+        direct = cleaned is not None
+        if direct:
+            engine, adapt_reason = None, None
+            label["adapted"] = "direct"
+        else:
+            engine, adapt_reason = resolve_engine(choice, speech_request.text)
+        then = fallback_engine(engine) if engine == OPENROUTER_ENGINE else None
+        if engine is None and not direct:
+            label["adapted"] = "no"
+            label["adapt_reason"] = adapt_reason
+        parts = split(speech_request._replace(text=cleaned) if direct else speech_request)
+        source = None
+        if engine is not None:
+            source = AdaptedParts(
+                speech_request.text, engine, *limits(speech_request), fallback=parts, label=label, then=then
+            )
     if use_cache:
-        names = [DIRECT_ENGINE] if direct else [None] if engine is None else [engine.name]
+        if summary is not None:
+            names = [SUMMARY_ENGINE]
+        else:
+            names = [DIRECT_ENGINE] if direct else [None] if engine is None else [engine.name]
         if then is not None:
             names.append(then.name)
+        cache_request = _summary_cache_request(speech_request, summary_source) if summary_source else speech_request
         for name in names:
-            key = (speech_request, name, announcement) if announcement else (speech_request, name)
-            cached = speech_cache.get(key)
+            key = (cache_request, name, announcement) if announcement else (cache_request, name)
+            cached = speech_cache.get(key) if cache_request is not None else None
             if cached is not None:
+                if summary_source is not None:
+                    await summary_source.aclose()
                 if name is not None:
-                    # A cache hit builds no source (which sets it otherwise): the audio is of this engine.
                     label["adapted"] = name
                 return _opened(stream_from_bytes(cached.content, cached.content_type, label=label))
     buffered = data.get("buffered") is True
-    parts = split(speech_request._replace(text=cleaned) if direct else speech_request)
-    source = None
-    if engine is not None:
-        source = AdaptedParts(
-            speech_request.text, engine, *limits(speech_request), fallback=parts, label=label, then=then
-        )
     pump_parts = parts if source is None else source
     if announcement and has_speech(announcement):
         prefix = split(speech_request._replace(text=announcement))
@@ -411,7 +479,8 @@ async def _open_speech(
         label=label,
         on_end=_end_steps(
             speech_request, api_key, config_id, use_cache, source, adapt_reason,
-            cache_name=DIRECT_ENGINE if direct else None, announcement=announcement,
+            cache_name=SUMMARY_ENGINE if summary is not None else DIRECT_ENGINE if direct else None,
+            announcement=announcement, summary_source=summary_source,
         ),
     )
     try:
@@ -419,17 +488,31 @@ async def _open_speech(
     except SpeechError as error:
         # The stream is failed, and logged, already: only drop its id.
         release_stream(stream.id)
+        if summary_source is not None:
+            await summary_source.reader.aclose()
         extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
         return _error(error.message, SPEECH_ERROR_STATUS, **extra)
     except asyncio.CancelledError:
         # A client disconnect: stop the upstream call.
         release_stream(stream.id, outcome="cancelled")
+        if summary_source is not None:
+            await summary_source.reader.aclose()
         raise
     except Exception:
         # The pump's own error: its task logged it with its traceback already.
         release_stream(stream.id)
+        if summary_source is not None:
+            await summary_source.reader.aclose()
         return _error(SPEECH_FAILED, 500)
     return _opened(stream)
+
+
+def _summary_cache_request(speech_request, source):
+    """Only an exact, complete durable summary can share saved-summary audio."""
+    snapshot = source.reader.snapshot
+    if snapshot['state'] != 'complete' or snapshot['saved_id'] is None:
+        return None
+    return speech_request._replace(text=snapshot['text'])
 
 
 def _stored_adapt_choice() -> str | None:
@@ -470,6 +553,7 @@ def _end_steps(
     adapt_reason: str | None,
     cache_name: str | None = None,
     announcement: str = "",
+    summary_source: SummaryParts | None = None,
 ):
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
@@ -490,8 +574,10 @@ def _end_steps(
         if use_cache and stream.data:
             try:
                 adapted_by = cache_name or (None if source is None else source.adapted_by)
-                key = (speech_request, adapted_by, announcement) if announcement else (speech_request, adapted_by)
-                speech_cache.set(key, CachedAudio(bytes(stream.data), stream.content_type))
+                cache_request = _summary_cache_request(speech_request, summary_source) if summary_source else speech_request
+                if cache_request is not None:
+                    key = (cache_request, adapted_by, announcement) if announcement else (cache_request, adapted_by)
+                    speech_cache.set(key, CachedAudio(bytes(stream.data), stream.content_type))
             except Exception:
                 logger.exception("TTS audio could not be cached")
         if config_id:
