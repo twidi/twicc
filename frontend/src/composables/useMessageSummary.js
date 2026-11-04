@@ -1,4 +1,4 @@
-import { computed, inject, markRaw, nextTick, onScopeDispose, reactive, toValue, watch } from 'vue'
+import { computed, inject, markRaw, nextTick, onScopeDispose, reactive, shallowRef, toValue, watch } from 'vue'
 import { summarySourceKey, useSummariesStore } from '../stores/summaries.js'
 import { useSettingsStore } from '../stores/settings.js'
 import { useTextToSpeechStore } from '../stores/textToSpeech.js'
@@ -8,8 +8,8 @@ export const MESSAGE_SUMMARY_CONTEXT = Symbol('message-summary')
 export const MESSAGE_SUMMARY_VISIT = Symbol('message-summary-visit')
 
 // The list owns these choices for this visit, independently of virtualized row lifetimes.
-export function createMessageSummaryVisit(reveal = () => {}) {
-    return { groups: reactive(new Map()), reveal }
+export function createMessageSummaryVisit(reveal = () => {}, holdScroll = () => {}) {
+    return { groups: reactive(new Map()), reveal, holdScroll }
 }
 
 export function useMessageSummary(sourceRequest, visit = null) {
@@ -22,7 +22,17 @@ export function useMessageSummary(sourceRequest, visit = null) {
     const source = computed(() => toValue(sourceRequest))
     const owned = new Set()
     let operation = 0
-    const descriptor = computed(() => source.value ? store.descriptorFor(source.value) : null)
+    const fresh = computed(() => source.value ? store.descriptorFor(source.value) : null)
+    // Any session event clears the store descriptor until the next lookup answers.
+    // Keep the last answer for that window: only a different answer can change what the row shows.
+    const retained = shallowRef(null)
+    watch(fresh, current => {
+        if (current) retained.value = { key: summarySourceKey(source.value), descriptor: current }
+    }, { immediate: true, flush: 'sync' })
+    const descriptor = computed(() => {
+        if (fresh.value || !source.value) return fresh.value
+        return retained.value?.key === summarySourceKey(source.value) ? retained.value.descriptor : null
+    })
     const group = computed(() => {
         const d = descriptor.value
         if (!d?.source_key) return null
@@ -70,15 +80,15 @@ export function useMessageSummary(sourceRequest, visit = null) {
         owned.clear()
     }
     watch(() => [source.value && summarySourceKey(source.value), source.value && store.versionFor(source.value)], ([key], previous) => {
-        operation++
         if (previous && previous[0] !== key) {
+            operation++
             releaseOwned()
             if (!sharedVisit) scope.groups.clear()
         }
         if (source.value) void store.resolve([source.value])
     }, { immediate: true, flush: 'sync' })
     // A policy change keeps an explicitly displayed completed snapshot available.
-    watch(descriptor, current => {
+    watch(descriptor, (current, previous) => {
         if (!current) { releaseOwned(); return }
         const target = group.value, old = target?.requested?.entry
         if (old?.state === 'complete' && old.descriptor?.policy_key !== current.policy_key
@@ -87,6 +97,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
                 policy_key: old.descriptor.policy_key, previousPolicy: true }
         }
         if (target?.saved) target.saved.previousPolicy = target.saved.policy_key !== current.policy_key
+        if (previous && (previous.source_hash !== current.source_hash || previous.policy_key !== current.policy_key)) releaseOwned()
     }, { flush: 'sync' })
     watch(() => generation.value?.state, state => {
         if (state === 'complete' && group.value) group.value.saved = null
@@ -143,7 +154,12 @@ export function useMessageSummary(sourceRequest, visit = null) {
         await summarize()
     }
     async function regenerate() { if (!generationAvailable.value) return; if (group.value) group.value.view = 'summary'; await request(true) }
-    function showOriginal() { if (group.value) group.value.view = 'original' }
+    function showOriginal() {
+        if (!group.value) return
+        // The original is usually longer: what the user looks at must not move.
+        if (group.value.view !== 'original') scope.holdScroll()
+        group.value.view = 'original'
+    }
     function cancel() { if (generation.value) store.cancel(generation.value) }
     async function refreshSaved(savedId) { await loadSaved(savedId, !!entry.value?.previousPolicy) }
 
@@ -151,6 +167,8 @@ export function useMessageSummary(sourceRequest, visit = null) {
         descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference,
         loading: computed(() => !!group.value?.loading),
         error: computed(() => group.value?.error ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),
+        // Original view included: the switch stays once the message has a summary to go back to.
+        hasSummary: computed(() => view.value === 'summary' || !!(entry.value?.text || descriptor.value?.saved || descriptor.value?.previous)),
         isHost: computed(() => !!descriptor.value && source.value?.line_num === descriptor.value.first_line),
         hidden: computed(() => view.value === 'summary' && !!descriptor.value?.text_lines?.includes(source.value?.line_num)),
         summarize, regenerate, showOriginal, showPrevious, showCurrent, cancel, refreshSaved,

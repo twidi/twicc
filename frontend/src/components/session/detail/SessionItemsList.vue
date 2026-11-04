@@ -1861,8 +1861,13 @@ async function processDroppedFile(file) {
 const searchHighlightTerms = ref([])
 provide('searchHighlightTerms', searchHighlightTerms)
 
-provide(MESSAGE_SUMMARY_VISIT, createMessageSummaryVisit(lineNum =>
-    scrollToLineNum(lineNum, { align: 'start', highlight: false })))
+provide(MESSAGE_SUMMARY_VISIT, createMessageSummaryVisit(
+    lineNum => scrollToLineNum(lineNum, { align: 'start', highlight: false }),
+    () => {
+        noteScrollIntent()
+        scrollerRef.value?.holdScrollPosition()
+    },
+))
 
 // File-link resolution for MarkdownContent rendered inside the session items
 // list. Classification reads the current session/project roots lazily so that

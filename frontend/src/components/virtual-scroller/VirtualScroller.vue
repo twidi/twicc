@@ -187,6 +187,13 @@ const containerRef = ref(null)
 const sentinelRef = ref(null)
 
 /**
+ * Generation of the running holdScrollPosition(), 0 when none runs. Removes the
+ * .at-bottom class meanwhile, so the container behaves as it does away from the bottom.
+ */
+const scrollHold = ref(0)
+let scrollHoldCount = 0
+
+/**
  * Whether the initial DOM measurement has completed.
  * Visibility notifications must wait for this measurement.
  */
@@ -460,6 +467,20 @@ let containerObserver = null
  * active while the user is near the bottom.
  */
 let sentinelObserver = null
+
+/**
+ * Keep the scroll position through a content change the caller is about to make.
+ * Near the bottom, native anchoring would pin the sentinel: growing content would
+ * push what the user looks at up, out of the viewport. The hold covers the layouts
+ * of the change; the sentinel observer then reports the new distance to the bottom.
+ */
+function holdScrollPosition() {
+    const hold = ++scrollHoldCount
+    scrollHold.value = hold
+    nextTick(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (scrollHold.value === hold) scrollHold.value = 0
+    })))
+}
 
 onMounted(() => {
     if (containerRef.value) {
@@ -754,6 +775,7 @@ defineExpose({
     scrollToTop,
     scrollToBottom,
     scrollToEdge,
+    holdScrollPosition,
     getScrollState,
     getScrollRevision,
     getVisibleRange,
@@ -782,7 +804,7 @@ defineExpose({
     <div
         ref="containerRef"
         class="virtual-scroller"
-        :class="{ 'at-bottom': isAtBottomRef }"
+        :class="{ 'at-bottom': isAtBottomRef && !scrollHold }"
         @scroll.passive="onScroll"
     >
         <!-- Optional content placed before everything else (e.g. a list's gliding ink,

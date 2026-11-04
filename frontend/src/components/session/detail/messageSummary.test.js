@@ -66,15 +66,54 @@ test('saved summaries load without generation; original is default and backgroun
 })
 
 test('view survives virtualized unmount; recycled coordinates and source replacement reset bindings immediately', async t => {
-    const { bindings, visible, sources, store, root, setDescriptor, invalidate } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    const { bindings, visible, sources, store, root, setDescriptor } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
     await bindings[1].summarize(); visible.value = false; await flush(); visible.value = true; await flush()
     assert.equal(bindings[0].view, 'summary')
     sources[1] = { session_id: 'other', line_num: 2 }; await flush()
     assert.equal(bindings[1].view, 'original')
     setDescriptor(descriptor({ source_key: 'new-history', source_hash: 'new-hash' }))
+    store.invalidate({ type: 'session_updated', session_id: 's' })
+    assert.equal(bindings[0].view, 'summary', 'an unanswered lookup never changes the view')
+    await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
+    assert.equal(bindings[0].view, 'original'); assert.doesNotMatch(textOf(root), /Saved A/)
+})
+
+test('session events never swap a displayed summary back to the original', async t => {
+    const { bindings, root, store, sources } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    await bindings[0].summarize(); await flush()
     const key = summarySourceKey(sources[0]); store.descriptors[key] = null; store.lookupVersions[key]++
-    assert.equal(bindings[0].hidden, false, 'invalid descriptor cannot hide current original')
-    await invalidate(); assert.equal(bindings[0].view, 'original'); assert.doesNotMatch(textOf(root), /Saved A/)
+    assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].hidden, true); assert.equal(bindings[0].isHost, true)
+    assert.equal(bindings[0].available, true); assert.equal(descendants(root, n => n.type === 'original').length, 0)
+    await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
+    assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].entry.text, 'Saved A')
+})
+
+test('a session event during the saved summary load keeps the loaded text', async t => {
+    const { bindings, invalidate } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    const loading = bindings[0].summarize(); await invalidate(); await loading; await flush()
+    assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].entry.text, 'Saved A')
+})
+
+test('the summary switch stays available in the original view and reloads on demand', async t => {
+    const { bindings } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    assert.equal(bindings[0].view, 'original'); assert.equal(bindings[0].hasSummary, true)
+    await bindings[0].summarize(); bindings[0].showOriginal(); await flush()
+    assert.equal(bindings[0].view, 'original'); assert.equal(bindings[0].hasSummary, true)
+    await bindings[0].summarize(); assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].entry.text, 'Saved A')
+})
+
+test('leaving the summary holds the scroll position, once', async t => {
+    const { bindings, visit } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    const views = []
+    visit.holdScroll = () => views.push(bindings[0].view)
+    await bindings[0].summarize(); await flush()
+    bindings[0].showOriginal(); bindings[0].showOriginal(); await flush()
+    assert.deepEqual(views, ['summary'], 'held before the view changes, and only for a real change')
+})
+
+test('a message without any summary offers no switch', async t => {
+    const { bindings } = await setup(t)
+    assert.equal(bindings[0].available, true); assert.equal(bindings[0].hasSummary, false)
 })
 
 test('mounted ineligible source refreshes after completion and repeated null invalidation', async t => {
@@ -203,7 +242,7 @@ test('active rows observe repeated invalidation while descriptors are null and r
     const lookups = []
     store._fetch = async (_url, options) => { const held = deferred(); lookups.push({ ...held, sources: JSON.parse(options.body).sources }); return held.promise }
     store.invalidate({ type: 'process_state', session_id: 's' }); await flush()
-    assert.equal(bindings[0].available, false); assert.equal(lookups.length, 1)
+    assert.equal(bindings[0].available, true, 'the toolbar keeps its button during the lookup'); assert.equal(lookups.length, 1)
     store.invalidate({ type: 'session_updated', session_id: 's' }); await flush()
     assert.equal(lookups.length, 2)
     lookups[1].resolve({ ok: true, json: async () => ({ sources: lookups[1].sources.map(() => descriptor({ eligible: false })) }) }); await flush()

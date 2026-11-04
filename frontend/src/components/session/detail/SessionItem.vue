@@ -280,7 +280,7 @@ function toggleJsonView() {
 
         <!-- Formatted view based on kind -->
         <template v-else>
-            <MessageSummaryView v-if="summary.isHost && summary.view === 'summary'" :summary="summary" />
+            <MessageSummaryView v-if="summary.isHost && summary.hasSummary" :summary="summary" />
             <BackgroundWorkStatus v-if="isBackgroundWorkStatus" :lines="content?.lines || []" />
             <template v-else-if="sessionProvider === PROVIDER.CLAUDE_CODE">
                 <ClaudeCodeMessage

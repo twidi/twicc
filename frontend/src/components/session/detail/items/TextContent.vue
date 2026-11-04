@@ -15,6 +15,11 @@ const props = defineProps({
     role: {
         type: String,
         default: null
+    },
+    // This text is the summary of the message (see MessageSummaryView).
+    summaryActive: {
+        type: Boolean,
+        default: false
     }
 })
 
@@ -34,7 +39,7 @@ const tagSlashCommand = computed(() =>
 
 <template>
     <div class="text-content" :role="role">
-        <MarkdownContent :source="displayText" :summary-context="summaryContext" :speakable="role === 'assistant'" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
+        <MarkdownContent :source="displayText" :summary-context="summaryContext" :summary-active="summaryActive" :speakable="role === 'assistant'" :inline-context="display.inlineContext" :tag-slash-command="tagSlashCommand" />
     </div>
 </template>
 
