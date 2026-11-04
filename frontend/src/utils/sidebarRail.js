@@ -14,7 +14,10 @@ export const RAIL_ITEM_DEFINITIONS = [
         label: state => state.isMac ? 'Full-text search (⌘⇧F)' : 'Full-text search (Ctrl+Shift+F)',
         group: 'top',
     },
-    { id: 'timeline', icon: 'clock-rotate-left', label: 'All Projects timeline', group: 'top' },
+    {
+        id: 'timeline', icon: 'clock-rotate-left', group: 'top',
+        label: state => state.listeningTimelineLabel ? `Listening timeline: ${state.listeningTimelineLabel}` : 'All Projects timeline',
+    },
     {
         id: 'speech',
         icon: 'volume-up',

@@ -9,6 +9,21 @@ import {
 
 const state = { mode: 'sessions', sidebarOpen: true, peerConfigured: true, inboxCount: 3, isMac: false, speechStatus: 'idle' }
 
+test('the timeline label identifies the listening destination independently of playback', () => {
+    for (const speechStatus of ['idle', 'loading', 'playing']) {
+        const items = resolveRailItems({ ...state, speechStatus, listeningTimelineLabel: 'My workspace' })
+        const timeline = items.find(item => item.id === 'timeline')
+        assert.equal(timeline.label, 'Listening timeline: My workspace')
+        assert.equal(timeline.icon, 'clock-rotate-left')
+        assert.equal(timeline.active, undefined, 'the destination remains navigation, not a toggle')
+        assert.equal(items.filter(item => item.id === 'timeline').length, 1)
+    }
+    for (const listeningTimelineLabel of [undefined, null, '']) {
+        const timeline = resolveRailItems({ ...state, listeningTimelineLabel }).find(item => item.id === 'timeline')
+        assert.equal(timeline.label, 'All Projects timeline')
+    }
+})
+
 test('resolves the shipped items with the specified icons, labels and groups', () => {
     const items = resolveRailItems(state)
     assert.deepEqual(items.map(({ id, icon, label, group }) => ({ id, icon, label, group })), [

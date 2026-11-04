@@ -17,6 +17,9 @@ import ProcessActivityIndicator from '../ui/ProcessActivityIndicator.vue'
 import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
+import { useTimelineSpeechStore } from '../../stores/timelineSpeech'
+import { ALL_PROJECTS_ID } from '../../constants.js'
+import { extractWorkspaceId, isWorkspaceProjectId } from '../../utils/workspaceIds.js'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
 import AppTooltip, { onTooltipDismissal } from '../ui/AppTooltip.vue'
 import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
@@ -34,6 +37,7 @@ const props = defineProps({
 const emit = defineEmits(['new-session', 'home', 'select-mode', 'search', 'palette', 'inbox', 'toggle-sidebar'])
 const settingsStore = useSettingsStore()
 const tts = useTextToSpeechStore()
+const speech = useTimelineSpeechStore()
 const store = useDataStore()
 const workspacesStore = useWorkspacesStore()
 const { recentProjects, recentWorkspaces } = useRailRecentProjects(store, workspacesStore, settingsStore)
@@ -162,13 +166,19 @@ const items = computed(() => resolveRailItems({
     inboxCount: props.inboxCount,
     isMac: settingsStore.isMac,
     speechStatus: tts.status,
+    listeningTimelineLabel: speech.activePageId ? speech.activeLabel : null,
 }))
 const top = computed(() => items.value.filter(item => item.group === 'top'))
 const bottom = computed(() => items.value.filter(item => item.group === 'bottom'))
 
 function activate(item) {
     if (item.id === 'sessions' || item.id === 'artifacts') emit('select-mode', item.id)
-    else if (item.id === 'timeline') return navigateScope('all-projects')
+    else if (item.id === 'timeline') {
+        const pageId = speech.activePageId
+        if (!pageId || pageId === ALL_PROJECTS_ID) return navigateScope('all-projects')
+        if (isWorkspaceProjectId(pageId)) return navigateScope('workspace', extractWorkspaceId(pageId))
+        return navigateScope('project', pageId)
+    }
     else if (item.id === 'toggle') emit('toggle-sidebar')
     else if (item.id === 'speech') return stopSpeech()
     else emit(item.id)
@@ -197,6 +207,10 @@ async function stopSpeech() {
                     @click="activate(item)"
                 >
                     <wa-icon :name="item.icon" />
+                    <wa-icon
+                        v-if="item.id === 'timeline' && speech.activePageId"
+                        name="volume-up" class="rail-timeline-audio" aria-hidden="true"
+                    />
                 </button>
                 <AppTooltip :for="`sidebar-rail-${item.id}`" placement="right">{{ item.label }}</AppTooltip>
             </template>
@@ -594,6 +608,18 @@ async function stopSpeech() {
 
 .rail-speech--playing {
     color: var(--wa-color-success-60);
+}
+
+.rail-timeline-audio {
+    position: absolute;
+    inset-inline-end: 0.1rem;
+    bottom: 0.15rem;
+    padding: 0.1rem;
+    border-radius: 50%;
+    background: var(--wa-color-surface-default);
+    color: var(--wa-color-brand-on-quiet);
+    font-size: 0.65rem;
+    pointer-events: none;
 }
 
 /* An opacity cascade, no movement: it stays under reduced motion, like the other status

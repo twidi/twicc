@@ -11,6 +11,39 @@ There are two kinds of configs:
 - **OpenRouter**: a speech model of OpenRouter, with its voices.
 - **Script**: a shell command of your own, which turns the text into audio.
 
+## Read new timeline messages
+
+Use the **speaker button beside Timeline** to read new assistant messages
+automatically. An available text-to-speech config is required. The pressed
+button means that this timeline listens for new messages.
+
+- Listening uses the timeline's scope: all projects, a workspace, a project,
+  or one worktree. It ignores every display filter, including the selected
+  view and session filter.
+- Listening continues when you navigate to another page, switch application
+  tabs, or open a session. Only one timeline listens per browser tab.
+- The timeline button in the rail shows a small speaker while listening is
+  enabled. Its label identifies the listening timeline. Click it to open
+  that timeline without changing listening.
+- Messages must have a native message date **strictly after the activation
+  click**. Existing history does not play when you enable listening.
+- Late arrivals remain eligible up to **five seconds** behind the latest
+  message whose reading starts. Exactly five seconds remains eligible.
+  Accepted messages stay queued until their turn.
+- Manual reading has priority. Automatic reading waits while a manual request
+  or playback runs. The rail's timeline speaker stays visible during this wait
+  and between messages.
+- Click the pressed timeline speaker to disable listening and clear its queue.
+  This stops its automatic reading and leaves unrelated manual reading running.
+  Enabling another timeline clears the previous timeline's queue.
+- The existing rail **Stop reading aloud** button and the message's **Stop
+  reading** button stop the current reading. During automatic reading, they
+  also disable listening and clear its queue.
+- Listening and its queue stay in memory. A page reload clears them.
+
+Automatic reading uses the active text-to-speech config and the existing text
+adaptation setting. Project and session announcements bypass text adaptation.
+
 ## Test, confirm, activate
 
 **Test** reads the test text aloud with the config, then asks **"Did you hear

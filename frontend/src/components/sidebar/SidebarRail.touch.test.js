@@ -2,8 +2,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
-import { parse } from '@vue/compiler-sfc'
+import { parse, compileTemplate } from '@vue/compiler-sfc'
+import * as Vue from 'vue'
+import { renderToString } from '@vue/server-renderer'
 import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
+import { createRailScopeNavigation } from '../../utils/railScopeNavigation.js'
+import { resolveRailItems } from '../../utils/sidebarRail.js'
+import { ALL_PROJECTS_ID } from '../../constants.js'
+import { extractWorkspaceId, isWorkspaceProjectId } from '../../utils/workspaceIds.js'
 
 const source = readFileSync(new URL('./SidebarRail.vue', import.meta.url), 'utf8')
 const tooltipEntry = readFileSync(new URL('../../../node_modules/@awesome.me/webawesome/dist-cdn/components/tooltip/tooltip.js', import.meta.url), 'utf8')
@@ -11,7 +17,21 @@ const chunk = tooltipEntry.match(/from "(\.\.\/\.\.\/chunks\/[^"\n]+)"/)[1]
 const tooltipSource = readFileSync(new URL(chunk, new URL('../../../node_modules/@awesome.me/webawesome/dist-cdn/components/tooltip/tooltip.js', import.meta.url)), 'utf8')
 const focusBody = tooltipSource.match(/this.handleFocus = \(\) => \{([\s\S]*?)\n    \};/)[1]
 
-function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }) {
+async function renderTimeline(items, speech) {
+    const { descriptor } = parse(source)
+    const compiled = compileTemplate({ source: descriptor.template.content, filename: 'SidebarRail.vue', id: 'rail', compilerOptions: { mode: 'function' } })
+    assert.deepEqual(compiled.errors, [])
+    const render = runInNewContext(`(function() { ${compiled.code} })()`, { Vue })
+    const app = Vue.createSSRApp({ render, data: () => ({
+        top: items.filter(item => item.id === 'timeline'), bottom: [], speech,
+        rows: [], railRows: [], recentProjects: [], recentWorkspaces: [], hasCentralContent: false,
+    }) })
+    app.component('AppTooltip', { setup: (_, { slots }) => () => Vue.h('span', { 'data-tooltip': true }, slots.default?.()) })
+    app.config.warnHandler = () => {}
+    return renderToString(app)
+}
+
+function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }, { speech = { activePageId: null, activeLabel: '' }, realNavigation = false } = {}) {
     t.mock.timers.enable({ apis: ['setTimeout'] })
     const document = new EventTarget()
     const listeners = new Map()
@@ -27,20 +47,28 @@ function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }) {
         remove(type, listener, options)
     }
     const pushed = []
+    const router = {
+        currentRoute: { value: { fullPath: '/sessions' } },
+        resolve: target => ({ fullPath: JSON.stringify(target) }),
+        push: target => { pushed.push(target); router.currentRoute.value.fullPath = JSON.stringify(target) },
+    }
     const watchers = []
     let globalDismiss
     let unmount
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
-    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide, activate})`, {
+    const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide, activate, items})`, {
         document, Map, createRailSessionLongPress,
+        ALL_PROJECTS_ID, extractWorkspaceId, isWorkspaceProjectId, resolveRailItems,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
         useSettingsStore: () => ({ isTouchDevice }), useSessionTreeExpansionStore: () => ({ state: { explicit: {} } }),
         useSessionTreeAncestors: () => {}, useDataStore: () => ({}),
-        useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => ({ push: route => pushed.push(route) }),
+        useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => realNavigation ? router : ({ push: route => pushed.push(route) }),
         useRailRecentProjects: () => ({ recentProjects: { value: [] }, recentWorkspaces: { value: [] } }),
-        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => tts, nextTick: () => Promise.resolve(), createRailScopeNavigation: () => (kind, id) => pushed.push(id === undefined ? kind : `${kind}:${id}`),
+        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => tts, useTimelineSpeechStore: () => speech,
+        nextTick: () => Promise.resolve(),
+        createRailScopeNavigation: router => realNavigation ? createRailScopeNavigation(router, () => {}) : (kind, id) => pushed.push(id === undefined ? kind : `${kind}:${id}`),
         useRailActiveSessions: () => ({ rows: { value: [] }, treeCandidates: { value: [] } }), sessionRouteLocation: session => session.id,
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),
@@ -190,7 +218,7 @@ test('stopping the speech indicator hands its keyboard focus to New session', as
         const name = !focused ? 'not focused' : focusVisible ? 'keyboard focus' : 'mouse focus'
         await t.test(name, async t => {
             const calls = []
-            const tts = { status: 'playing', stop() { calls.push('stop') } }
+            const tts = { status: 'playing', stop(...args) { assert.deepEqual(args, []); calls.push('stop') } }
             const f = fixture(t, false, tts)
             const speech = { id: 'sidebar-rail-speech', matches: selector => selector === ':focus-visible' && focusVisible }
             const newSession = { id: 'sidebar-rail-new-session', focus() { calls.push('focus') } }
@@ -214,3 +242,45 @@ test('timeline action opens the All Projects root through scope navigation', t =
     f.api.activate({ id: 'timeline' })
     assert.deepEqual(f.pushed, ['all-projects'])
 })
+
+test('the listening destination survives idle or manual speech and disappears only when listening stops', async t => {
+    const speech = { activePageId: 'ws:one', activeLabel: 'Workspace one' }
+    const tts = { status: 'idle', stop() {} }
+    const f = fixture(t, false, tts, { speech })
+    for (const status of ['idle', 'loading', 'playing']) {
+        tts.status = status
+        const item = f.api.items.value.find(item => item.id === 'timeline')
+        assert.equal(item.label, 'Listening timeline: Workspace one')
+        const html = await renderTimeline(f.api.items.value, speech)
+        assert.match(html, /aria-label="Listening timeline: Workspace one"/)
+        assert.match(html, /class="rail-timeline-audio" aria-hidden="true"/)
+        assert.match(html, /data-tooltip="true"[^>]*>Listening timeline: Workspace one<\/span>/)
+        assert.equal((html.match(/<button\b/g) ?? []).length, 1, 'one navigation control')
+        assert.doesNotMatch(html, /aria-pressed/)
+    }
+    speech.activePageId = null
+    speech.activeLabel = ''
+    assert.equal(f.api.items.value.find(item => item.id === 'timeline').label, 'All Projects timeline')
+    const html = await renderTimeline(f.api.items.value, speech)
+    assert.match(html, /aria-label="All Projects timeline"/)
+    assert.doesNotMatch(html, /rail-timeline-audio/)
+})
+
+for (const [pageId, label, expected] of [
+    [null, '', { name: 'projects-all', query: { workspace: '' } }],
+    [ALL_PROJECTS_ID, 'All projects', { name: 'projects-all', query: { workspace: '' } }],
+    ['ws:workspace-one', 'Workspace one', { name: 'projects-all', query: { workspace: 'workspace-one' } }],
+    ['project-one', 'Project one', { name: 'project', params: { projectId: 'project-one' }, query: { workspace: '' } }],
+    ['worktree-one', 'Worktree one', { name: 'project', params: { projectId: 'worktree-one' }, query: { workspace: '' } }],
+]) {
+    test(`the timeline rail destination opens ${pageId ?? 'the default global scope'} without toggling listening`, async t => {
+        const speech = { activePageId: pageId, activeLabel: label,
+            enable() { assert.fail('navigation cannot enable listening') },
+            disable() { assert.fail('navigation cannot disable listening') },
+        }
+        const f = fixture(t, false, { status: 'idle', stop() { assert.fail('navigation cannot stop speech') } }, { speech, realNavigation: true })
+        await f.api.activate({ id: 'timeline' })
+        assert.deepEqual(JSON.parse(JSON.stringify(f.pushed)), [expected])
+        assert.equal(speech.activePageId, pageId)
+    })
+}

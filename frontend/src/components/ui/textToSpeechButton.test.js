@@ -111,3 +111,31 @@ test('an error after the sound started still toasts, unless aborted', () => {
         /result\.ended\.then\(end => \{\s*if \(!end\.ok && !end\.aborted\) toast\.error\(end\.error, \{ duration: 4000 \}\)/,
     )
 })
+
+for (const status of ['loading', 'playing']) {
+    test(`the message ${status} stop calls public tts.stop synchronously and preserves its focused button`, async t => {
+        const calls = []
+        const tts = Vue.reactive({ available: true, status, statusForText: text => {
+            assert.equal(text, 'Original message')
+            return tts.status
+        }, stop: (...args) => { calls.push(['stop', ...args]); tts.status = 'idle' }, play: () => assert.fail('a busy button cannot start speech') })
+        const Button = compileComponent(new URL('./TextToSpeechButton.vue', import.meta.url), {
+            '../../stores/textToSpeech': { useTextToSpeechStore: () => tts },
+            '../../composables/useToast': { toast: { error: () => assert.fail('a stop cannot toast') } },
+        })
+        let focused = null
+        const { renderer, root } = makeRenderer(40, element => { element.focus = () => { focused = element } })
+        const app = renderer.createApp({ render: () => Vue.h(Button, { text: 'Original message' }) })
+        app.mount(root)
+        t.after(() => app.unmount())
+        const [button] = descendants(root, node => node.type === 'wa-button')
+        button.focus()
+        const pending = button.props.onClick()
+        assert.deepEqual(calls, [['stop']], 'no owner argument: the player handles automatic ownership')
+        await pending
+        await flush()
+        assert.equal(button.props['aria-label'], 'Read aloud')
+        assert.ok(descendants(root, node => node.type === 'wa-button')[0] === button)
+        assert.ok(focused === button)
+    })
+}

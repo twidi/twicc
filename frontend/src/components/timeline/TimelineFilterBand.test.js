@@ -53,7 +53,7 @@ const assertSameList = (actual, expected, message = 'not the same nodes') => ass
 // The panel width, then the content widths: the title, the gaps, the views (full or short labels), the Filters
 // button (with its label or its icon only) and its count. The line and the views + button line answer their
 // `scrollWidth` / `clientWidth` from them, by level, as the browser lays them out (see the band's styles).
-const MODEL = { title: 80, gap: 16, viewsFull: 330, viewsShort: 170, buttonFull: 90, buttonIcon: 40, count: 24 }
+const MODEL = { title: 80, speech: 40, titleGap: 8, gap: 16, viewsFull: 330, viewsShort: 170, buttonFull: 90, buttonIcon: 40, count: 24 }
 
 function levelOf(root) {
     const [line] = byClass(root, 'timeline-filter-line')
@@ -70,11 +70,12 @@ function widthsOf(element, root, width) {
     const hasCount = byClass(root, 'timeline-filter-count').length > 0
     const controls = (compact ? MODEL.viewsShort : MODEL.viewsFull) + MODEL.gap
         + (compact ? MODEL.buttonIcon : MODEL.buttonFull) + (hasCount ? MODEL.count : 0)
-    const all = MODEL.title + MODEL.gap + controls
+    const heading = MODEL.title + MODEL.titleGap + MODEL.speech
+    const all = heading + MODEL.gap + controls
     if (isLine) return { scroll: level === 'line' ? Math.max(width, all) : width, client: width }
     // The views + button line: shrinkable and visible on the `line` level (its content overflows it), a full row
     // that clips on `stacked`, a full row that wraps on `compact`.
-    if (level === 'line') return { scroll: controls, client: Math.max(0, Math.min(controls, width - MODEL.title - MODEL.gap)) }
+    if (level === 'line') return { scroll: controls, client: Math.max(0, Math.min(controls, width - heading - MODEL.gap)) }
     if (level === 'stacked') return { scroll: Math.max(width, controls), client: width }
     return { scroll: width, client: width }
 }
@@ -138,7 +139,7 @@ const Elsewhere = { setup: () => () => Vue.h('section', 'a session') }
  * another view (it is deactivated, not unmounted). Returns the root, the store, its recorded actions, the focus
  * log and the props.
  */
-async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false, keepAlive = false, stickyBand = true } = {}) {
+async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), bands = 1, width = 1000, resizeObserver = false, keepAlive = false, stickyBand = true, available = true, activePageId = null } = {}) {
     controllerCalls = []
     // The band reads the focused element when the panel closes.
     setGlobal(t, 'document', { activeElement: null })
@@ -146,9 +147,17 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     const observers = resizeObserver ? installResizeObserver(t) : []
     const store = useTimelineFiltersStore(pinia)
     const actions = []
+    const speechActions = []
+    const tts = Vue.reactive({ available })
+    const speech = Vue.reactive({ activePageId,
+        enable(...args) { speechActions.push(['enable', ...args]); this.activePageId = args[0] },
+        disable(...args) { speechActions.push(['disable', ...args]); this.activePageId = null },
+    })
     store.$onAction(({ name, args }) => { if (name !== 'filtersFor' && name !== 'ensure') actions.push([name, ...args]) })
     const Band = compileComponent(new URL('./TimelineFilterBand.vue', import.meta.url), {
         '../../stores/timelineFilters': { useTimelineFiltersStore: () => store },
+        '../../stores/textToSpeech': { useTextToSpeechStore: () => tts },
+        '../../stores/timelineSpeech': { useTimelineSpeechStore: () => speech },
         '../../providers': providers,
         '../../utils/timeline/filters': filtersModule,
         '../../utils/timeline/panelController': spiedController,
@@ -226,7 +235,7 @@ async function mount(t, { pageId = 'p1', active = true, pinia = createPinia(), b
     }
     const setShown = async (value) => { shown.value = value; await flush() }
     const unmount = () => { app.unmount(); mounted = false }
-    return { root, store, actions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog, frames, runFrames, setShown, unmount }
+    return { root, store, actions, tts, speech, speechActions, focusLog, blurLog, props, bandRefs, observers, resize, view, levelLog, frames, runFrames, setShown, unmount }
 }
 
 const popoverOf = (root) => descendants(root, (node) => node.type === 'wa-popover')[0]
@@ -241,7 +250,7 @@ const removeOf = (root, label) => byClass(root, 'timeline-filter-pill')
 test('the band line: the title, the four views bound to the store, the Filters button', async (t) => {
     const { root, store, actions } = await mount(t)
     const [line] = byClass(root, 'timeline-filter-line')
-    assert.deepEqual(elementsOf(line).map(classesOf), ['timeline-filter-title', 'timeline-filter-controls'])
+    assert.deepEqual(elementsOf(line).map(classesOf), ['timeline-filter-heading', 'timeline-filter-controls'])
     assert.equal(textOf(byClass(line, 'timeline-filter-title')[0]), 'Timeline')
     const [views] = byClass(root, 'timeline-filter-views')
     assert.ok(byClass(views, 'segmented-control').length === 1, 'the views are a SegmentedControl')
@@ -264,6 +273,94 @@ test('the band line: the title, the four views bound to the store, the Filters b
     assert.deepEqual(actions, [['setView', 'p1', 'waits_problems']])
     assert.equal(group.props['.value'] ?? group.props.value, 'waits_problems')
     assert.equal(store.filtersFor('p1').view, 'waits_problems')
+})
+
+test('the native speech toggle follows the title and exposes its action and pressed state', async (t) => {
+    const { root, speech } = await mount(t)
+    const [heading] = byClass(root, 'timeline-filter-heading')
+    assert.ok(heading, 'the title and toggle share a group')
+    const [title, button] = elementsOf(heading)
+    assert.equal(classesOf(title), 'timeline-filter-title')
+    assert.equal(button.type, 'button')
+    assert.equal(button.props.type, 'button')
+    assert.equal(button.props['aria-pressed'], false)
+    assert.equal(button.props['aria-label'], 'Read new assistant messages aloud')
+    assert.equal(button.props.title, button.props['aria-label'])
+    assert.equal(descendants(button, node => node.type === 'wa-icon')[0].props.name, 'volume-up')
+    assert.equal(descendants(button, node => node.type === 'wa-icon')[0].props['aria-hidden'], 'true')
+    speech.activePageId = 'p1'
+    await flush()
+    assert.equal(button.props['aria-pressed'], true)
+    assert.equal(button.props['aria-label'], 'Stop reading new assistant messages aloud')
+    speech.activePageId = 'p2'
+    await flush()
+    assert.equal(button.props['aria-pressed'], false, 'another timeline listens independently')
+})
+
+test('speech activation calls enable synchronously with only pageId and ignores all display filters', async (t) => {
+    const { root, store, speechActions, actions, props } = await mount(t)
+    store.setView('p1', 'waits_problems')
+    store.toggle('p1', 'providers', 'codex')
+    store.setSession('p1', { id: 's1', title: 'One' })
+    await flush()
+    actions.length = 0
+    const [button] = byClass(root, 'timeline-speech-toggle')
+    assert.ok(button, 'the toggle exists')
+    button.props.onClick()
+    assert.deepEqual(speechActions, [['enable', 'p1']], 'the action runs before the click returns')
+    assert.deepEqual(actions, [], 'listening does not change display filters')
+    await flush()
+    button.props.onClick()
+    assert.deepEqual(speechActions, [['enable', 'p1'], ['disable']])
+    props.pageId = 'p2'
+    await flush()
+    button.props.onClick()
+    assert.deepEqual(speechActions.at(-1), ['enable', 'p2'])
+})
+
+test('unavailable speech cannot enable listening; an active toggle can still stop', async (t) => {
+    const { root, speech, speechActions } = await mount(t, { available: false })
+    const [button] = byClass(root, 'timeline-speech-toggle')
+    assert.ok(button, 'the toggle exists')
+    assert.equal(button.props.disabled, true)
+    button.props.onClick()
+    assert.deepEqual(speechActions, [], 'the handler also guards availability')
+    speech.activePageId = 'p1'
+    await flush()
+    assert.equal(button.props.disabled, false)
+    button.props.onClick()
+    assert.deepEqual(speechActions, [['disable']])
+})
+
+test('the title and toggle stay together in every layout with the same focused button', async (t) => {
+    const { root, resize, speech, focusLog } = await mount(t, { resizeObserver: true, width: 650 })
+    const [button] = byClass(root, 'timeline-speech-toggle')
+    assert.ok(button, 'the toggle exists')
+    button.focus()
+    for (const [width, level] of [[650, 'line'], [500, 'stacked'], [300, 'compact']]) {
+        await resize(width)
+        assert.equal(levelOf(root), level)
+        assertSame(byClass(root, 'timeline-speech-toggle')[0], button)
+        assertSame(button.parent, byClass(root, 'timeline-filter-heading')[0])
+    }
+    speech.activePageId = 'p1'
+    await flush()
+    assertSame(globalThis.document.activeElement, button)
+    assertSameList(focusLog, [button])
+})
+
+test('the native toggle uses the theme control size and focus ring', () => {
+    const button = declarationsOf(STYLE, '.timeline-speech-toggle')
+    assert.equal(button.get('width'), 'var(--wa-form-control-height)')
+    assert.equal(button.get('height'), 'var(--wa-form-control-height)')
+    assert.equal(button.get('font-size'), 'var(--wa-font-size-s)')
+    const focused = declarationsOf(STYLE, '.timeline-speech-toggle:focus-visible')
+    assert.equal(focused.get('outline'), 'var(--wa-focus-ring)')
+    assert.equal(focused.get('outline-offset'), 'var(--wa-focus-ring-offset)')
+    const heading = declarationsOf(STYLE, '.timeline-filter-heading')
+    assert.equal(heading.get('display'), 'flex')
+    assert.equal(heading.get('flex'), 'none')
+    assert.equal(heading.get('gap'), 'var(--wa-space-xs)')
 })
 
 test('the Filters button shows the count of checked panel values only when there is one', async (t) => {
@@ -618,14 +715,14 @@ test('source pin: the band does not use v-popover-focus-fix (it would undo the f
 })
 
 // ── Layout levels ──────────────────────────────────────────────────────────────────────────────────────────
-// With the model: line content 532 px (title 80 + 16 + views 330 + 16 + button 90), views + button 436 px with
+// With the model: line content 580 px (title 80 + 8 + toggle 40 + 16 + views 330 + 16 + button 90), views + button 436 px with
 // full labels, 226 px in compact.
 
 test('the lines and their children are observed', async (t) => {
     const { root, observers } = await mount(t, { resizeObserver: true })
     assert.equal(observers.length, 1)
     const expected = [
-        byClass(root, 'timeline-filter-line')[0], byClass(root, 'timeline-filter-controls')[0],
+        byClass(root, 'timeline-filter-line')[0], byClass(root, 'timeline-filter-heading')[0], byClass(root, 'timeline-filter-controls')[0],
         byClass(root, 'segmented-control')[0], filtersButtonOf(root),
     ]
     assert.equal(observers[0].targets.length, expected.length)
@@ -635,22 +732,22 @@ test('the lines and their children are observed', async (t) => {
 test('line to stacked when the line overflows, stacked to compact when the views line overflows; back at the records', async (t) => {
     const { root, resize } = await mount(t, { resizeObserver: true, width: 600 })
     assert.equal(levelOf(root), 'line')
-    await resize(532)
+    await resize(580)
     assert.equal(levelOf(root), 'line', 'it fits exactly')
-    await resize(531)
+    await resize(579)
     assert.equal(levelOf(root), 'stacked')
     await resize(436)
     assert.equal(levelOf(root), 'stacked', 'the views line fits exactly')
     await resize(435)
     assert.equal(levelOf(root), 'compact')
-    // Back: compact -> stacked at the views line record (436), stacked -> line at the line record (532).
+    // Back: compact -> stacked at the views line record (436), stacked -> line at the line record (580).
     await resize(435.5)
     assert.equal(levelOf(root), 'compact')
     await resize(436)
     assert.equal(levelOf(root), 'stacked')
-    await resize(531)
+    await resize(579)
     assert.equal(levelOf(root), 'stacked')
-    await resize(532)
+    await resize(580)
     assert.equal(levelOf(root), 'line')
 })
 
@@ -667,7 +764,7 @@ test('a down-then-up sequence writes no record on the way down', async (t) => {
     await resize(500)
     await resize(400)
     assert.equal(levelOf(root), 'compact')
-    // compact -> stacked at 450: nothing recorded, so the way back to `line` still needs the line record (532): the
+    // compact -> stacked at 450: nothing recorded, so the way back to `line` still needs the line record (580): the
     // band goes to `stacked` and stays there (no record of 450 that would send it to `line` and back).
     levelLog.length = 0
     await resize(450)
@@ -677,18 +774,18 @@ test('a down-then-up sequence writes no record on the way down', async (t) => {
     assert.equal(levelOf(root), 'compact', 'up again, at the overflow of the full labels')
     await resize(436)
     assert.equal(levelOf(root), 'stacked', 'the record is still 436, not a width seen on the way down')
-    await resize(531)
+    await resize(579)
     assert.equal(levelOf(root), 'stacked')
-    await resize(532)
+    await resize(580)
     assert.equal(levelOf(root), 'line')
 })
 
 test('the count appearing at a fixed width moves the level, the count disappearing moves it back', async (t) => {
-    const { root, store } = await mount(t, { resizeObserver: true, width: 540 })
+    const { root, store } = await mount(t, { resizeObserver: true, width: 590 })
     assert.equal(levelOf(root), 'line')
     store.toggle('p1', 'families', 'turns')
     await flush()
-    assert.equal(levelOf(root), 'stacked', '556 px with the count')
+    assert.equal(levelOf(root), 'stacked', '604 px with the count')
     store.clearGroup('p1', 'families')
     await flush()
     assert.equal(levelOf(root), 'line')
@@ -735,7 +832,7 @@ test('a frame still asked at unmount is cancelled', async (t) => {
 
 test('a second measure before the render of a level change reads nothing (the DOM is still the previous level)', async (t) => {
     const { root, observers, view, frames, levelLog } = await mount(t, { resizeObserver: true, width: 600 })
-    // 440 px: the line overflows (532), the views line with full labels fits (436): `stacked`. Read on the DOM of
+    // 440 px: the line overflows (580), the views line with full labels fits (436): `stacked`. Read on the DOM of
     // the `line` level, the views line would look overflowing (its content overflows its shrunk box) and the band
     // would wrongly go to `compact`.
     view.width = 440
@@ -797,8 +894,8 @@ test('the declarations of each level', () => {
     assert.equal(declarationsOf(STYLE, '.timeline-filter-line--stacked').get('flex-wrap'), 'wrap')
     assert.equal(declarationsOf(STYLE, '.timeline-filter-line--compact').get('flex-wrap'), 'wrap')
 
-    assert.equal(declarationsOf(STYLE, '.timeline-filter-line--stacked .timeline-filter-title').get('flex-basis'), '100%')
-    assert.equal(declarationsOf(STYLE, '.timeline-filter-line--compact .timeline-filter-title').get('flex-basis'), '100%')
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-line--stacked .timeline-filter-heading').get('flex-basis'), '100%')
+    assert.equal(declarationsOf(STYLE, '.timeline-filter-line--compact .timeline-filter-heading').get('flex-basis'), '100%')
 
     const controls = declarationsOf(STYLE, '.timeline-filter-controls')
     assert.equal(controls.get('display'), 'flex')

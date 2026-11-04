@@ -1,18 +1,20 @@
 <script setup>
 // TimelineFilterBand.vue - The content of the Timeline tab's sticky band (filters design sections 3.1 to 3.3):
-// the "Timeline" title, the views (a segmented control), the Filters button and its panel (a wa-popover of
+// the "Timeline" title and speech toggle, the views (a segmented control), the Filters button and its panel (a wa-popover of
 // checkboxes), then the active filter pills and "Clear all".
 //
 // The filters live in the per-page store (stores/timelineFilters.js): read through `filtersFor`, changed only
 // through its actions. The panel's close and focus behaviour is the pure panel controller
 // (utils/timeline/panelController.js), which explains why the band does not use `v-popover-focus-fix`.
 //
-// Three layout levels, measured (spec 3.1): `line` (title, views and button on one line), `stacked` (the title on
+// Three layout levels, measured (spec 3.1): `line` (heading, views and button on one line), `stacked` (the heading on
 // its own row), `compact` (short view labels, the button's label visually hidden; the button wraps under the
 // views when it still does not fit). Nothing scrolls sideways.
 
 import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, useId, watch } from 'vue'
 import { useTimelineFiltersStore } from '../../stores/timelineFilters'
+import { useTimelineSpeechStore } from '../../stores/timelineSpeech'
+import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { getProviderHelpers } from '../../providers'
 import { AUTHORS, FAMILIES, PROVIDERS, VIEWS, activeCount, groupPills } from '../../utils/timeline/filters'
 import { createPanelController, panelMaxHeight } from '../../utils/timeline/panelController'
@@ -33,6 +35,10 @@ const props = defineProps({
 })
 
 const store = useTimelineFiltersStore()
+const speech = useTimelineSpeechStore()
+const tts = useTextToSpeechStore()
+const listening = computed(() => speech.activePageId === props.pageId)
+const speechLabel = computed(() => listening.value ? 'Stop reading new assistant messages aloud' : 'Read new assistant messages aloud')
 const filters = computed(() => store.filtersFor(props.pageId))
 const count = computed(() => activeCount(filters.value))
 
@@ -62,6 +68,7 @@ function isChecked(group, value) {
 
 const rootRef = ref(null)
 const lineRef = ref(null)
+const headingRef = ref(null)
 const controlsRef = ref(null)
 const viewsRef = ref(null)
 const buttonRef = ref(null)
@@ -160,6 +167,11 @@ function focusSessionPill() {
 defineExpose({ focusFiltersButton, focusSessionPill })
 
 // ── Actions ────────────────────────────────────────────────────────────────────────────────────────────────
+
+function toggleSpeech() {
+    if (listening.value) speech.disable()
+    else if (tts.available) speech.enable(props.pageId)
+}
 
 function setView(view) {
     store.setView(props.pageId, view)
@@ -272,7 +284,7 @@ onMounted(() => {
     if (typeof ResizeObserver === 'undefined') return
     observer = new ResizeObserver(scheduleMeasure)
     // The lines AND their children: a child that grows (a label) does not always resize its line.
-    for (const element of [lineRef.value, controlsRef.value, viewsRef.value?.$el, buttonRef.value]) {
+    for (const element of [lineRef.value, headingRef.value, controlsRef.value, viewsRef.value?.$el, buttonRef.value]) {
         if (element) observer.observe(element)
     }
 })
@@ -290,7 +302,18 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 <template>
     <div ref="rootRef" class="timeline-filter-band">
         <div ref="lineRef" :class="['timeline-filter-line', `timeline-filter-line--${layout}`]">
-            <span class="timeline-filter-title">Timeline</span>
+            <div ref="headingRef" class="timeline-filter-heading">
+                <span class="timeline-filter-title">Timeline</span>
+                <button
+                    type="button"
+                    class="timeline-speech-toggle"
+                    :aria-pressed="listening"
+                    :aria-label="speechLabel"
+                    :title="speechLabel"
+                    :disabled="!tts.available && !listening"
+                    @click="toggleSpeech"
+                ><wa-icon name="volume-up" aria-hidden="true"></wa-icon></button>
+            </div>
             <div ref="controlsRef" class="timeline-filter-controls">
                 <SegmentedControl
                     ref="viewsRef"
@@ -402,11 +425,53 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
     color: var(--wa-color-text-quiet);
 }
 
-.timeline-filter-line--stacked .timeline-filter-title {
+.timeline-filter-heading {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--wa-space-xs);
+}
+
+.timeline-speech-toggle {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--wa-form-control-height);
+    height: var(--wa-form-control-height);
+    padding: 0;
+    border: 0;
+    border-radius: var(--wa-form-control-border-radius);
+    background: transparent;
+    color: var(--wa-color-text-quiet);
+    font: inherit;
+    font-size: var(--wa-font-size-s);
+    cursor: pointer;
+}
+
+.timeline-speech-toggle:focus-visible {
+    outline: var(--wa-focus-ring);
+    outline-offset: var(--wa-focus-ring-offset);
+}
+
+.timeline-speech-toggle:hover:not(:disabled) {
+    background: var(--wa-color-neutral-fill-quiet);
+}
+
+.timeline-speech-toggle[aria-pressed="true"] {
+    background: var(--wa-color-brand-fill-quiet);
+    color: var(--wa-color-brand-on-quiet);
+}
+
+.timeline-speech-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.timeline-filter-line--stacked .timeline-filter-heading {
     flex-basis: 100%;
 }
 
-.timeline-filter-line--compact .timeline-filter-title {
+.timeline-filter-line--compact .timeline-filter-heading {
     flex-basis: 100%;
 }
 
