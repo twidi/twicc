@@ -16,13 +16,14 @@ test('resolves the shipped items with the specified icons, labels and groups', (
         { id: 'sessions', icon: 'comments', label: 'Sessions', group: 'top' },
         { id: 'artifacts', icon: 'shapes', label: 'Artifacts', group: 'top' },
         { id: 'search', icon: 'magnifying-glass', label: 'Full-text search (Ctrl+Shift+F)', group: 'top' },
+        { id: 'timeline', icon: 'clock-rotate-left', label: 'All Projects timeline', group: 'top' },
         { id: 'new-session', icon: 'plus', label: 'New session', group: 'bottom' },
         { id: 'palette', icon: 'bars-staggered', label: 'Open command palette (Ctrl+K)', group: 'bottom' },
         { id: 'inbox', icon: 'envelope', label: 'Peer inbox', group: 'bottom' },
         { id: 'settings', icon: 'gear', label: 'Settings', group: 'bottom' },
         { id: 'toggle', icon: 'angles-left', label: 'Close sidebar (Alt+Shift+B)', group: 'bottom' },
     ])
-    assert.deepEqual(items.map(item => item.id), ['home', 'sessions', 'artifacts', 'search', 'new-session', 'palette', 'inbox', 'settings', 'toggle'])
+    assert.deepEqual(items.map(item => item.id), ['home', 'sessions', 'artifacts', 'search', 'timeline', 'new-session', 'palette', 'inbox', 'settings', 'toggle'])
     assert.ok(items.every(item => item.visibleWhen === 'always' && item.disabled === false))
     assert.equal(items.find(item => item.id === 'inbox').badge, 3)
     assert.ok(items.filter(item => item.id !== 'inbox').every(item => !Object.hasOwn(item, 'badge')))
@@ -108,6 +109,7 @@ test('session search is visible only in Sessions, with either sidebar state', ()
     for (const mode of ['home', 'sessions', 'artifacts']) for (const sidebarOpen of [false, true]) {
         const items = resolveRailItems({ ...state, mode, sidebarOpen })
         assert.equal(items.some(item => item.id === 'search'), mode === 'sessions')
+        assert.equal(items.some(item => item.id === 'timeline'), true)
         assert.equal(items.some(item => item.id === 'palette'), true)
     }
 })
@@ -116,8 +118,8 @@ test('Home preserves navigation and global actions without sidebar controls', ()
     for (const peerConfigured of [false, true]) {
         const items = resolveRailItems({ mode: 'home', peerConfigured, inboxCount: 3, isMac: false })
         assert.deepEqual(items.map(item => item.id), peerConfigured
-            ? ['home', 'sessions', 'artifacts', 'new-session', 'palette', 'inbox', 'settings']
-            : ['home', 'sessions', 'artifacts', 'new-session', 'palette', 'settings'])
+            ? ['home', 'sessions', 'artifacts', 'timeline', 'new-session', 'palette', 'inbox', 'settings']
+            : ['home', 'sessions', 'artifacts', 'timeline', 'new-session', 'palette', 'settings'])
         assert.equal(items.find(item => item.id === 'home').label, 'Home')
         if (peerConfigured) assert.equal(items.find(item => item.id === 'inbox').badge, 3)
     }

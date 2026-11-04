@@ -168,6 +168,7 @@ const bottom = computed(() => items.value.filter(item => item.group === 'bottom'
 
 function activate(item) {
     if (item.id === 'sessions' || item.id === 'artifacts') emit('select-mode', item.id)
+    else if (item.id === 'timeline') return navigateScope('all-projects')
     else if (item.id === 'toggle') emit('toggle-sidebar')
     else if (item.id === 'speech') return stopSpeech()
     else emit(item.id)

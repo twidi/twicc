@@ -40,7 +40,7 @@ function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }) {
         useSessionTreeAncestors: () => {}, useDataStore: () => ({}),
         useRoute: () => ({ params: {}, fullPath: '/sessions' }), useRouter: () => ({ push: route => pushed.push(route) }),
         useRailRecentProjects: () => ({ recentProjects: { value: [] }, recentWorkspaces: { value: [] } }),
-        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => tts, nextTick: () => Promise.resolve(), createRailScopeNavigation: () => (kind, id) => pushed.push(`${kind}:${id}`),
+        useWorkspacesStore: () => ({}), useTextToSpeechStore: () => tts, nextTick: () => Promise.resolve(), createRailScopeNavigation: () => (kind, id) => pushed.push(id === undefined ? kind : `${kind}:${id}`),
         useRailActiveSessions: () => ({ rows: { value: [] }, treeCandidates: { value: [] } }), sessionRouteLocation: session => session.id,
         onTooltipDismissal: callback => { globalDismiss = callback; return () => { globalDismiss = null } },
         onBeforeUnmount: callback => { unmount = callback }, watch: (_, callback) => watchers.push(callback),
@@ -206,4 +206,11 @@ test('stopping the speech indicator hands its keyboard focus to New session', as
             assert.deepEqual(calls, handOff ? ['stop', 'tick', 'focus'] : ['stop', 'tick'])
         })
     }
+})
+
+
+test('timeline action opens the All Projects root through scope navigation', t => {
+    const f = fixture(t)
+    f.api.activate({ id: 'timeline' })
+    assert.deepEqual(f.pushed, ['all-projects'])
 })
