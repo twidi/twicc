@@ -53,6 +53,8 @@ class MessageSentData(NamedTuple):
     text: str
     source_refs: list
     source_line: int
+    storage_incarnation: str | None = None
+    history_epoch: int | None = None
 
 
 class TurnStartedData(NamedTuple):

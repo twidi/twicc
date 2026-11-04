@@ -10,6 +10,24 @@ def test_agent_share_settings_default_off():
     assert SYNCED_SETTINGS_DEFAULTS["allowAgentArtifactShares"] is False
 
 
+def test_summary_defaults_and_model_normalization_preserve_stored_choice(temp_settings):
+    from twicc.cli.settings._keys import classify_key, parse_value
+    from twicc.summaries.sources import normalize_summary_model
+
+    assert ss.SYNCED_SETTINGS_DEFAULTS['summaryModel'] == 'auto'
+    assert ss.SYNCED_SETTINGS_DEFAULTS['timelineSummaryEnabled'] is True
+    assert classify_key('summaryModel') == classify_key('timelineSummaryEnabled') == 'generic'
+    assert parse_value('timelineSummaryEnabled', 'false') is False
+    for value in ('auto', 'haiku', 'luna', 'openrouter'):
+        assert normalize_summary_model(value) == value
+    for value in ('off', 'invalid', None, [], True):
+        assert normalize_summary_model(value) == 'auto'
+    temp_settings.write_text('{"summaryModel":"off"}')
+    assert normalize_summary_model(ss.read_synced_settings()['summaryModel']) == 'auto'
+    assert ss.read_synced_settings()['summaryModel'] == 'off'
+    assert temp_settings.read_text() == '{"summaryModel":"off"}'
+
+
 @pytest.fixture
 def temp_settings(tmp_path, monkeypatch):
     path = tmp_path / "settings.json"

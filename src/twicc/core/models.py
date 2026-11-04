@@ -1566,6 +1566,25 @@ class UsageSnapshot(models.Model):
         return self.seven_day_resets_at - timedelta(days=7)
 
 
+class MessageSummary(models.Model):
+    """One successful result for a native message snapshot and generation policy."""
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="message_summaries")
+    source_key = models.CharField(max_length=100)
+    source_hash = models.CharField(max_length=64)
+    policy_key = models.CharField(max_length=100)
+    requested_model = models.CharField(max_length=20)
+    engine = models.CharField(max_length=50)
+    text = models.TextField()
+    metadata = models.JSONField(default=dict)
+    completed_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=["session", "source_key", "source_hash", "policy_key"], name="uniq_message_summary_source_policy",
+        )]
+
+
 class LogicalTurn(models.Model):
     """Durable assistant interval, independent of disposable process and session rows."""
 

@@ -8,51 +8,15 @@ from datetime import datetime
 import orjson
 
 from twicc.agent.completion_types import NativeMessageRef, VerifiedMessageRef
-from twicc.core.content_storage.readers import iter_current_items
 from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, SessionType, TimelineEvent, TimelineKind
+from twicc.core.services.message_sources import _canonical, _groups, _read
 from twicc.core.services.session_timeline import record_event_sync
 from twicc.providers.helpers import get_provider_helpers
 from twicc.request_origin import RequestOrigin, SYSTEM_ORIGIN, origin_from_payload
 
 logger = logging.getLogger(__name__)
 _MESSAGE_KINDS = (TimelineKind.USER_MESSAGE_SENT, TimelineKind.ASSISTANT_MESSAGE_SENT)
-
-
-def _refs(helpers, parsed):
-    refs = list(helpers.completion_record_refs(parsed))
-    if helpers.provider == 'codex':
-        from twicc.providers.codex.canonical import completed_item
-        item = completed_item(parsed)
-        if item and item.get('type') == 'UserMessage' and isinstance(item.get('clientId'), str) and item['clientId']:
-            refs.append(NativeMessageRef('codex_client', item['clientId']))
-    return [ref for ref in refs if isinstance(ref.native_id, str) and ref.native_id]
-
-
-def _read(session, query):
-    helpers = get_provider_helpers(session.provider)
-    for item in iter_current_items(query.order_by('line_num'), 128, 8 * 1024 * 1024):
-        parsed = helpers.parse_item_content(item)
-        if not parsed:
-            continue
-        if session.provider == 'claude_code' and not isinstance(parsed.get('message'), dict):
-            continue
-        if session.provider == 'codex':
-            if not isinstance(parsed.get('payload'), dict):
-                continue
-            thread = (parsed.get('payload') or {}).get('thread_id')
-            if thread is not None and thread != session.id:
-                continue
-        refs = _refs(helpers, parsed)
-        if refs:
-            yield item, parsed, refs
-
-
-def _canonical(session, record):
-    item, parsed, refs = record
-    kind = 'claude_message' if session.provider == 'claude_code' and parsed.get('type') == 'assistant' else (
-        'claude_uuid' if session.provider == 'claude_code' else 'codex_item')
-    return next((ref for ref in refs if ref.kind == kind), None)
 
 
 def _saved_input_origins(session):
@@ -122,31 +86,8 @@ def _capture(session, records, *, timeline_since, verified=(), eligible=False, i
                       occurred_at=first.timestamp, origin=origin or RequestOrigin('external' if user else 'agent'),
                       dedupe_key='msg:' + digest,
                       data={'text': text, 'source_refs': [ref._asdict() for ref in aliases],
-                            'source_line': first.line_num})
-
-
-def _groups(session, records):
-    groups = {}
-    for record in records:
-        identity = _canonical(session, record)
-        if identity is not None:
-            groups.setdefault((identity.kind, identity.native_id), []).append(record)
-    hydrated = []
-    for (kind, identity), group in groups.items():
-        if kind != 'claude_message':
-            hydrated.append(group[:1])
-            continue
-        seen = set()
-        complete = []
-        for record in _read(session, SessionItem.objects.filter(session_id=session.id, message_id=identity)):
-            uuid = next((ref.native_id for ref in record[2] if ref.kind == 'claude_uuid'), None)
-            if uuid is None or uuid not in seen:
-                complete.append(record)
-            if uuid is not None:
-                seen.add(uuid)
-        if complete:
-            hydrated.append(complete)
-    yield from sorted(hydrated, key=lambda group: group[0][0].line_num)
+                            'source_line': first.line_num, 'storage_incarnation': session.storage_incarnation,
+                            'history_epoch': session.history_epoch})
 
 
 def record_indexed_messages(session_id: str, *, new_line_nums: Sequence[int],

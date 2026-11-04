@@ -105,6 +105,14 @@ def test_markdown_is_verbatim_and_empty_content_is_absent(live_session):
     assert f.texts() == [text, text]
 
 
+def test_new_snapshots_preserve_source_incarnation(live_session):
+    f = live_session
+    f.append(f.message('answer', 'answer'))
+    f.session.refresh_from_db()
+    assert f.events()[0].data['storage_incarnation'] == f.session.storage_incarnation
+    assert f.events()[0].data['history_epoch'] == f.session.history_epoch
+
+
 def test_nonfinal_and_unknown_assistants_are_not_selected(live_session):
     f = live_session
     f.append(f.message('commentary', 'working', final=False), f.message('unknown', 'unknown', final=None))

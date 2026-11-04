@@ -20,6 +20,8 @@ NOTIFICATION_KEYS = frozenset({"externalNotificationTargets"})
 # get an entry here — ``tests/test_settings_cli.py`` enforces this so the help
 # never drifts out of sync.
 GENERIC_KEY_DESCRIPTIONS: dict[str, str] = {
+    "summaryModel": "Model used for message summaries: auto, haiku, luna, or openrouter. Invalid values use auto.",
+    "timelineSummaryEnabled": "Summarize eligible timeline messages automatically before speech; manual summaries remain available.",
     "titleGenerationEnabled": "Enable title suggestions and automatic title generation.",
     "titleAutoApply": "Generate first titles and update automatic titles in the backend (requires titleGenerationEnabled).",
     "titleSuggestionModel": (
