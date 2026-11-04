@@ -9,6 +9,7 @@ import { sessionMention } from '../utils/timeline/sessions.js'
 import { extractWorkspaceId } from '../utils/workspaceIds.js'
 import { REFUSED } from '../utils/speechOutcome.js'
 import { useTextToSpeechStore } from './textToSpeech.js'
+import { useTimelineFiltersStore } from './timelineFilters.js'
 
 // Each Pinia instance owns one coordinator. Requests, tokens and listeners stay outside reactive state.
 const coordinators = new WeakMap()
@@ -16,6 +17,7 @@ const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z
 
 function createCoordinator(store, { dataStore, workspacesStore, connectionStatus, eventTarget }) {
     const tts = useTextToSpeechStore()
+    const filters = useTimelineFiltersStore()
     let active = null
     const current = activation => active === activation
     const count = activation => { store.pendingCount = activation.pending.length }
@@ -44,8 +46,18 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             || event.id <= (activation.shown.get(event.session_id) ?? -1)
     }
 
+    function includeMuted() {
+        return filters.filtersFor(store.activePageId).includeMuted
+    }
+
+    function muted(activation, event) {
+        return dataStore.getSession(event.session_id)?.mute_on_user_turn === true
+            || activation.feed?.state.sessions[event.session_id]?.mute_on_user_turn === true
+    }
+
     function purge(activation) {
-        activation.pending = activation.pending.filter(event => activation.boundaries.has(event.project_id) && !hidden(activation, event))
+        activation.pending = activation.pending.filter(event => activation.boundaries.has(event.project_id)
+            && !hidden(activation, event) && (includeMuted() || !muted(activation, event)))
         count(activation)
     }
 
@@ -133,6 +145,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             const boundary = activation.boundaries.get(event.project_id)
             if (event.kind !== 'assistant_message.sent' || typeof event.data?.text !== 'string' || !event.data.text.trim()
                 || !boundary || event.occurred_at <= boundary || hidden(activation, event)
+                || (!includeMuted() && muted(activation, event))
                 || (activation.watermark && event.occurred_at < shiftEventTime(activation.watermark, -5000))) continue
             activation.pending.push(event)
         }
@@ -193,7 +206,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 feed.refresh()
             },
         })
-        feed.setScope(scope.projectIds, {}, { afterId })
+        // Observe mute changes even while excluded, without replaying messages when inclusion changes.
+        feed.setScope(scope.projectIds, { include_muted: '1' }, { afterId })
         // Scope reset clears metadata; retain known titles before fresh responses merge over them.
         feed.state.sessions = { ...previous?.state.sessions }
         // A replacement bootstrap must inherit the reconnect refresh discarded with its previous feed.
@@ -224,7 +238,10 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         watch(() => {
             // Reading the count tracks queue replacement; session flags remain independent of view ownership.
             void store.pendingCount
-            return active?.pending.map(event => dataStore.getSession(event.session_id)?.hidden) ?? []
+            return [includeMuted(), active?.pending.map(event => {
+                const session = dataStore.getSession(event.session_id)
+                return [session?.hidden, session?.mute_on_user_turn]
+            }) ?? []]
         }, () => { if (active) purge(active) }, { flush: 'sync' }),
         tts.$onAction(({ name, args }) => {
             if (name !== 'stop' || !active || tts.playback.owner !== active.token) return

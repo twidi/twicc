@@ -166,7 +166,7 @@ test('slow activation preserves all click-time arrivals and live overlap', async
     assert.equal(new Set(h.opens.map(({ body }) => body.text)).size, 57)
     assert.equal(h.endings.length, 57)
     assert.equal(h.releases.length, 57)
-    assert.ok(h.requests.every(request => Object.keys(request.query).length === 0))
+    assert.ok(h.requests.every(request => request.query.include_muted === '1' && Object.keys(request.query).length === 1))
     assert.equal(h.replies.length, 0)
 })
 

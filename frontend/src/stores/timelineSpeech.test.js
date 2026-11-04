@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
 import { reactive, ref, watch } from 'vue'
 import { useTimelineSpeechStore } from './timelineSpeech.js'
+import { useTimelineFiltersStore } from './timelineFilters.js'
 import { useTextToSpeechStore, _resetSpeechForTests } from './textToSpeech.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
@@ -78,6 +79,7 @@ function setup() {
         getAllProjectIds(id) { return this.workspaces[id]?.ids ?? [] },
     })
     const status = ref('OPEN'), target = new ListenerTarget(), store = useTimelineSpeechStore()
+    const filters = useTimelineFiltersStore()
     store._now = () => now
     store._fetchPage = params => {
         requests.push(params)
@@ -93,7 +95,7 @@ function setup() {
     }
     cleanups.push(() => { store.dispose(); tts.stop(); store.$dispose(); tts.$dispose() })
     return {
-        store, tts, data, workspaces, status, target, opens, requests, replies, errors, emit,
+        store, filters, tts, data, workspaces, status, target, opens, requests, replies, errors, emit,
         now(value) { now = value }, get primes() { return primeCount },
         async enable(events = [], pageId = 'p', extra = {}) { replies.push(page(events, extra)); store.enable(pageId); await settle() },
         async live(events, extra = {}) { replies.push(page(events, extra)); emit('twicc:timeline-changed', Math.max(1, ...events.map(event => event.id), extra.latest_id ?? 0)); await settle() },
@@ -166,12 +168,81 @@ test('display filters and navigation do not affect listening', async () => {
     const h = setup()
     await h.enable([], 'ws:w')
     assert.equal(h.store.activeLabel, 'Workspace')
-    assert.deepEqual(h.requests[0], { projectIds: ['p'], query: {}, before: null, afterId: null })
+    assert.deepEqual(h.requests[0], { projectIds: ['p'], query: { include_muted: '1' }, before: null, afterId: null })
     h.data.currentProjectId = 'q'
     h.data.filters = { session: 'other', kind: 'user_message.sent' }
     await h.live([message(1)])
     assert.equal(h.opens[0].text, 'Message 1')
     assert.equal(h.store.activePageId, 'ws:w')
+})
+
+test('muted session messages are skipped by default using feed metadata', async () => {
+    const h = setup()
+    await h.enable([message(1)], 'p', { sessions: { s: { title: 'Muted', mute_on_user_turn: true } } })
+    assert.equal(h.opens.length, 0)
+    assert.equal(h.store.pendingCount, 0)
+})
+
+test('muted inclusion follows the listening timeline and does not replay skipped messages', async () => {
+    const h = setup()
+    h.filters.setIncludeMuted('other', true)
+    await h.enable([message(1)], 'p', { sessions: { s: { title: 'Muted', mute_on_user_turn: true } } })
+    assert.equal(h.opens.length, 0)
+    h.filters.setIncludeMuted('p', true)
+    await settle()
+    assert.equal(h.opens.length, 0, 'enabling inclusion does not replay skipped messages')
+    h.data.currentProjectId = 'other'
+    await h.live([message(2)], { sessions: { s: { title: 'Muted', mute_on_user_turn: true } } })
+    assert.equal(h.opens[0].text, 'Message 2')
+})
+
+test('disabling muted inclusion purges its queue while keeping manual audio and other messages', async () => {
+    const h = setup()
+    h.filters.setIncludeMuted('p', true)
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    await h.enable([message(1), message(2, 2, 'p', 'other')], 'p', {
+        sessions: { s: { title: 'Muted', mute_on_user_turn: true }, other: { title: 'Other', mute_on_user_turn: false } },
+    })
+    assert.equal(h.store.pendingCount, 2)
+    h.filters.setIncludeMuted('p', false)
+    assert.equal(h.store.pendingCount, 1)
+    assert.equal(h.tts.status, 'playing')
+    await h.end()
+    assert.equal(h.opens.at(-1).text, 'Message 2')
+})
+
+test('muting a session removes queued messages without interrupting the current reading', async () => {
+    const h = setup()
+    await h.enable([message(1), message(2)])
+    await h.start()
+    h.data.sessions.s = { hidden: false, mute_on_user_turn: true }
+    assert.equal(h.store.pendingCount, 0)
+    assert.equal(h.tts.status, 'playing')
+    await h.end()
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.store.activePageId, 'p')
+})
+
+test('live mute metadata purges queued speech for sessions absent from the data store', async () => {
+    const h = setup()
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    await h.enable([message(1)])
+    await h.live([{ ...message(2), kind: 'muted.started', data: {} }], {
+        sessions: { s: { title: 'Session', mute_on_user_turn: true } },
+    })
+    assert.equal(h.store.pendingCount, 0)
+    await h.end()
+    assert.equal(h.opens.length, 1)
+})
+
+test('muted inclusion does not block subsequent messages after unmute', async () => {
+    const h = setup()
+    await h.enable([message(1)], 'p', { sessions: { s: { title: 'Muted', mute_on_user_turn: true } } })
+    await h.live([message(2)], { sessions: { s: { title: 'Session', mute_on_user_turn: false } } })
+    assert.equal(h.opens.length, 1)
+    assert.equal(h.opens[0].text, 'Message 2')
 })
 
 test('manual playback preempts only the current automatic message', async () => {
