@@ -7,6 +7,7 @@ import { fromAsyncCodeToHtml } from '@shikijs/markdown-it/async'
 import { codeToHtml } from 'shiki'
 import DOMPurify from 'dompurify'
 import { installColonBlocks } from './markdownColonBlocks.js'
+import { installDetailsBlocks } from './markdownDetails.js'
 import { hashString } from './hash.js'
 
 // Configure markdown-it with all features enabled
@@ -91,6 +92,9 @@ md.renderer.rules.slash_command_tag = (tokens, idx) =>
 
 // Colon blocks (`:: line` / `::: container`) — see utils/markdownColonBlocks.js.
 installColonBlocks(md)
+
+// Collapsible `<details>` / `<summary>` blocks — see utils/markdownDetails.js.
+installDetailsBlocks(md)
 
 // Hide HTML comments (`<!-- ... -->`) from the rendered output.
 //
@@ -228,7 +232,7 @@ md.use(
 // Configure DOMPurify to allow shiki's output (style attributes + CSS variables)
 // and mermaid SVG output
 const DOMPURIFY_CONFIG = {
-    ADD_TAGS: ['svg', 'path', 'g', 'circle', 'rect', 'line', 'polyline', 'polygon',
+    ADD_TAGS: ['wa-details', 'svg', 'path', 'g', 'circle', 'rect', 'line', 'polyline', 'polygon',
                'text', 'tspan', 'defs', 'clipPath', 'marker', 'foreignObject',
                'use', 'symbol', 'desc', 'title', 'image', 'pattern',
                'linearGradient', 'radialGradient', 'stop', 'ellipse'],
@@ -241,7 +245,7 @@ const DOMPURIFY_CONFIG = {
                'opacity', 'fill-opacity', 'stroke-opacity', 'stroke-dasharray',
                'stroke-linecap', 'stroke-linejoin', 'preserveAspectRatio',
                'aria-roledescription', 'role', 'aria-label', 'tabindex',
-               'target', 'rel'],
+               'target', 'rel', 'slot', 'open'],
     // Allow data: URIs for mermaid inline images
     ALLOW_DATA_ATTR: true,
 }

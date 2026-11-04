@@ -17,6 +17,7 @@ import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
 import TextToSpeechButton from './TextToSpeechButton.vue'
 import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
+import { detailsScopes, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 import { useSettingsStore } from '../../stores/settings'
 import { vHighlight } from '../../directives/vHighlight.js'
 import { toast } from '../../composables/useToast'
@@ -546,6 +547,29 @@ function mermaidTheme() {
     return mermaidThemeFor(settingsStore._effectiveColorScheme)
 }
 
+// The cached HTML holds each `<details>` as its source wrote it. What the user
+// toggled is imposed on the way out, on a detached node, so a re-render (every
+// streaming frame, or the streaming block turning into the final message)
+// comes back with the same blocks open and closed, and without a replayed
+// open/close animation. Kept out of the cache: the state changes, the source does not.
+function withRememberedDetails(html, scope) {
+    if (!html.includes('md-details')) return html
+    const tmp = document.createElement('div')
+    tmp.innerHTML = html
+    applyRememberedDetailsIn(tmp, scope)
+    return tmp.innerHTML
+}
+
+// wa-show / wa-hide bubble up from every wa-details below, including those of
+// nested content: only the toggle of a markdown `<details>` itself counts.
+function handleDetailsToggle(event) {
+    const details = event.target
+    if (!details.matches?.('wa-details.md-details')) return
+    const block = details.closest('.markdown-block')
+    if (!block) return
+    rememberDetailsToggle(block, details, event.type === 'wa-show')
+}
+
 async function renderDocument(input, { isCurrent }) {
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     const { blocks: raw, env } = splitMarkdownBlocks(input.source, { inlineArtifacts: !!input.inlineContext, ...input.inlineContext })
@@ -553,6 +577,7 @@ async function renderDocument(input, { isCurrent }) {
     const cacheEntries = new Map()
     const occurrences = new Map()
     const result = []
+    const scopes = detailsScopes(raw.map(block => block.hash))
     for (const [i, block] of raw.entries()) {
         if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
         if (block.type === 'inline-artifact') {
@@ -567,7 +592,7 @@ async function renderDocument(input, { isCurrent }) {
         if (!isCurrent() || html === MARKDOWN_RENDER_CANCELLED) return MARKDOWN_RENDER_CANCELLED
         const n = occurrences.get(block.hash) ?? 0
         occurrences.set(block.hash, n + 1)
-        result.push({ key: `${block.hash}:${n}`, html })
+        result.push({ key: `${block.hash}:${n}`, html: withRememberedDetails(html, scopes[i]), scope: scopes[i] })
     }
     return { blocks: result, cacheEntries }
 }
@@ -884,6 +909,8 @@ function handleLinkClick(event) {
             class="markdown-body"
             v-highlight="highlightTerms"
             @click="handleLinkClick"
+            @wa-show="handleDetailsToggle"
+            @wa-hide="handleDetailsToggle"
         >
             <template v-for="block in blocks" :key="block.key">
                 <template v-if="block.type === 'inline-artifact'">
@@ -906,7 +933,7 @@ function handleLinkClick(event) {
                         v-bind="artifactPlacement(block)"
                     />
                 </template>
-                <div v-else v-show="!summaryContext?.hidden" class="markdown-block" v-html="block.html"></div>
+                <div v-else v-show="!summaryContext?.hidden" class="markdown-block" :data-details-scope="block.scope" v-html="block.html"></div>
             </template>
         </div>
     </div>
@@ -1088,6 +1115,15 @@ function handleLinkClick(event) {
     background: none;
     color: inherit;
     font-size: 1em;
+}
+
+/* Collapsible `<details>` block (utils/markdownDetails.js): a wa-details, so the arrow and the
+   motion are the app's own. Only the spacing around it is set here. */
+.markdown-body .md-details {
+    margin: 1em 0;
+}
+.markdown-body .md-details > :last-child {
+    margin-bottom: 0;
 }
 
 /* Leading /command of a user message, rendered as a tag (the slash_command_tag

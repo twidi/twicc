@@ -9,6 +9,7 @@ import { createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED } from '../.
 import { INLINE_ARTIFACT_CONTEXT } from '../../inline-artifacts/context.js'
 import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
+import { detailsScopes, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 
 const source = readFileSync(process.env.TWICC_MARKDOWN_TEST_SOURCE ?? new URL('./MarkdownContent.vue', import.meta.url), 'utf8')
 const start = source.indexOf('const blocks = ref([])')
@@ -33,6 +34,7 @@ function harness(t, options = {}) {
         useMarkdownRenderEligibility: () => ({ eligible }),
         createMarkdownRenderCoordinator, MARKDOWN_RENDER_CANCELLED,
         markdownReferenceContextKey, markdownBlockCacheKey,
+        detailsScopes, applyRememberedDetailsIn, rememberDetailsToggle,
         extractHeadings: () => [], extractBlockquoteSources: () => [], hashString: x => x,
         fileLinks: null, rewriteContentMediaUrl: null,
         toast: { error: (...args) => errors.push(args) }, emit: (...args) => { emitted.push(args); options.onEmit?.(props) },
@@ -54,7 +56,7 @@ test('superseded highlighter stops before another block and retains complete out
     h.props.source = 'old'; await flush()
     h.props.source = 'held|obsolete'; await flush()
     h.props.source = 'latest|final'; await flush()
-    assert.deepEqual(h.blocks.value, [{ key: 'old:0', html: '<p>old</p>' }])
+    assert.deepEqual(h.blocks.value, [{ key: 'old:0', html: '<p>old</p>', scope: '' }])
     held.resolve('<p>held</p>'); await flush()
     assert.deepEqual(h.calls, ['old', 'held', 'latest', 'final'])
     assert.deepEqual(h.blocks.value.map(x => x.html), ['<p>latest</p>', '<p>final</p>'])
