@@ -1,6 +1,6 @@
 # Automatic timeline text-to-speech
 
-Status: adversarial specification review complete. Awaiting user approval. Not approved for implementation.
+Status: approved and implemented. Targeted verification passes. Live browser and audio validation remains pending.
 
 ## Goal
 
@@ -191,9 +191,9 @@ Rejected alternatives:
 
 Choose exact code boundaries during implementation planning. Do not turn this feature into a generic playback scheduler.
 
-## Specification defaults for user review
+## Approved specification defaults
 
-These small behavior choices complete the agreed requirements. They remain proposals until this specification is approved.
+These approved behavior choices complete the agreed requirements.
 
 - If the scope becomes empty or disappears, disable listening. Do not create a second suspended-listening state.
 - A message-level stop of automatic speech disables listening, like the rail stop. Do not immediately read the next message.
@@ -238,4 +238,4 @@ Both reviewed behavior, requirement consistency, and minimal reuse. Implementati
 The first round found one issue: ordering before audible playback could require restarting an existing TTS preparation.
 The correction limits sorting to pending messages and preserves a reading already selected for preparation.
 The second round found no blocking specification issues or regressions.
-The additional behavior defaults remain explicit proposals for user approval.
+The user subsequently approves implementation, including the additional behavior defaults.

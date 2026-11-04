@@ -10,7 +10,9 @@
 
 **Spec:** [2026-11-04-timeline-auto-tts-spec.md](2026-11-04-timeline-auto-tts-spec.md). Read both documents before execution.
 
-**Status:** Adversarial plan review complete. Awaiting user review; implementation has not started.
+**Status:** Approved and implemented. Targeted verification passes. Live browser and audio validation remains pending.
+
+The unchecked steps below preserve the reviewed execution template. They do not represent current task status.
 
 ## Global Constraints
 
@@ -27,9 +29,9 @@
 - Follow `AGENTS.md` and `AGENTS.local.md`. Stay in the current checkout and preserve unrelated changes.
 - Do not install packages, restart servers, run migrations, update CHANGELOG, or modify provider skills for this feature.
 - Write code, UI copy, comments, and documents in English.
-- During future execution, maintain the task list with `update_plan`. Commit each completed task using explicit file paths only.
+- During execution, maintain the task list with `update_plan`. Commit each completed task using explicit file paths only.
 - Commit subjects use `type(scope): lowercase summary`. Include a body and the executor's exact current model trailer.
-- Do not execute commit commands during this planning task. Do not stage unrelated documents already in `docs/plans/`.
+- Historical planning restriction: do not execute commit commands during planning. Do not stage unrelated documents already in `docs/plans/`.
 
 ## Review Focus
 
@@ -441,13 +443,16 @@ Do not split out a generic scheduler, event bus, persistent delivery system, or 
 - [ ] **Step 4: Commit integration tests and directly related corrections only.** Subject: `test(timeline): cover automatic speech ownership and catch-up`.
   Record targeted verification in the commit body and include the model trailer.
 
-## Execution handoff
+## Historical execution handoff
+
+This handoff records the planning-stage instructions. The user subsequently authorizes implementation, and all six tasks are implemented.
+Live browser and audio validation remains pending because browser tooling fails before page access.
 
 - Tasks run in order: 1 → 2 → 3 → 4 → 5 → 6. Do not run concurrent implementers against shared files.
 - Read the spec defaults before implementation: empty-scope disable, automatic message-level stop, and preparation selection order.
-- The user must review this plan before implementation. This request authorizes writing and reviewing the plan only.
-- For every future task, run its verification before its commit and stage only that task's named files.
-- Preserve the reviewed spec and this plan together in version control when execution is authorized; do not stage unrelated planning files.
+- The initial planning request authorizes writing and reviewing the plan only. The user reviews the plan before authorizing implementation.
+- For every implementation task, run its verification before its commit and stage only that task's named files.
+- Preserve the reviewed spec and this plan together in version control after implementation approval; do not stage unrelated planning files.
 - Report actual checks and any browser-validation limits. Remind the user about the required backend restart; do not perform it unasked.
 
 ## Plan review record

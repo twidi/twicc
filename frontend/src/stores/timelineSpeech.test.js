@@ -291,6 +291,35 @@ test('first live message uses newly received session metadata', async () => {
     assert.equal(h.opens[0].announcement, 'Project. Received title.')
 })
 
+test('scope replacement retains session titles for pending messages', async () => {
+    const h = setup()
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    await h.enable([message(1)], 'ws:w')
+    h.replies.push(page([], { sessions: {}, latest_id: 1 }))
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    assert.equal(h.requests.at(-1).afterId, 1)
+    assert.equal(h.store.pendingCount, 1)
+    assert.equal(h.opens.length, 1)
+    await h.end()
+    assert.equal(h.opens.at(-1).text, 'Message 1')
+    assert.equal(h.opens.at(-1).announcement, 'Project. Session.')
+})
+
+test('scope replacement uses the latest session title for pending messages', async () => {
+    const h = setup()
+    const manual = h.tts.play('Manual')
+    await settle(); await h.start(); await manual
+    await h.enable([message(1)], 'ws:w')
+    h.replies.push(page([], { sessions: { s: { title: 'Updated title', project_id: 'p', hidden: false } }, latest_id: 1 }))
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    assert.equal(h.store.pendingCount, 1)
+    assert.equal(h.opens.length, 1)
+    await h.end()
+    assert.equal(h.opens.at(-1).text, 'Message 1')
+    assert.equal(h.opens.at(-1).announcement, 'Project. Updated title.')
+})
+
 test('disconnect retains pending readings until successful catch-up', async () => {
     const h = setup(), held = deferred()
     await h.enable([message(2), message(1)])

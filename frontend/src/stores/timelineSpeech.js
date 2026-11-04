@@ -194,6 +194,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             },
         })
         feed.setScope(scope.projectIds, {}, { afterId })
+        // Scope reset clears metadata; retain known titles before fresh responses merge over them.
+        feed.state.sessions = { ...previous?.state.sessions }
         // A replacement bootstrap must inherit the reconnect refresh discarded with its previous feed.
         if (!activation.caughtUp && connectionStatus.value === 'OPEN') feed.refresh()
     }
