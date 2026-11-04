@@ -3,10 +3,17 @@ import test from 'node:test'
 
 import {
     ARROW, ESTIMATED_MARK, compareNewestFirst, cssStringOf, cursorOf, formatClock, formatFullTime, parseOccurredAt,
-    splitFirstLine, timeColumnSamples, timeColumnSizer, truncateText,
+    shiftEventTime, splitFirstLine, timeColumnSamples, timeColumnSizer, truncateText,
 } from './eventTime.js'
 
 const event = (occurred_at, id) => ({ occurred_at, id })
+
+test('shiftEventTime shifts integer milliseconds and preserves sub-millisecond precision', () => {
+    assert.equal(shiftEventTime('2026-11-04T10:30:40.123456Z', -5000), '2026-11-04T10:30:35.123456Z')
+    assert.equal(shiftEventTime('2026-11-04T00:00:00.000999Z', -1), '2026-11-03T23:59:59.999999Z')
+    assert.equal(shiftEventTime('2026-12-31T23:59:59.999001Z', 1), '2027-01-01T00:00:00.000001Z')
+    assert.equal(shiftEventTime('2026-11-04T10:30:40.123456Z', 0), '2026-11-04T10:30:40.123456Z')
+})
 
 test('newest first: the later time sorts first, the higher id breaks ties', () => {
     const rows = [

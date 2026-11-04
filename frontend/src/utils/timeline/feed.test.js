@@ -92,13 +92,14 @@ function createServer(initial = [], { pageSize = PAGE } = {}) {
     }
 }
 
-function setup(initial = [], options) {
+function setup(initial = [], { onPage, ...options } = {}) {
     const server = createServer(initial, options)
     const liveErrors = []
     const feed = createTimelineFeed({
         fetchPage: (params) => server.fetchPage(params),
         state: createFeedState(),
         onLiveError: (error) => liveErrors.push(error),
+        onPage,
     })
     return { server, feed, state: feed.state, liveErrors }
 }
@@ -108,6 +109,158 @@ const kinds = (server) => server.calls.map((c) => (c.afterId !== null ? `after:$
 
 // Ids 1..5, increasing in time: the newest is 5.
 const five = () => [1, 2, 3, 4, 5].map((id) => event(id, at(id)))
+
+test('page observer sees accepted raw arrivals even outside the rendered window', async () => {
+    const pages = []
+    const { server, feed, state } = setup(five(), {
+        onPage: ({ phase, body }) => pages.push({ phase, body, title: state.sessions.s1.title, rows: ids(state) }),
+    })
+    feed.setScope([])
+    await feed.idle()
+    server.commit(event(6, at(1)))
+    feed.notifyLatest(6)
+    await feed.idle()
+    assert.deepEqual(pages.map(({ phase }) => phase), ['first', 'live'])
+    assert.deepEqual(pages[1].body.events.map(({ id }) => id), [6])
+    assert.equal(pages[1].title, pages[1].body.sessions.s1.title, 'titles merge before live notification')
+    assert.deepEqual(pages[1].rows, [5, 4], 'the callback precedes the display merge')
+    assert.deepEqual(ids(state), [5, 4], 'the old-date arrival stays outside the loaded window')
+    assert.equal(state.liveCursor, 6)
+})
+
+test('observer distinguishes first before live and visibility backfill', async () => {
+    const pages = []
+    const rows = Array.from({ length: 7 }, (_, i) => event(i + 1, at(i + 1), { session_id: i ? 's1' : 's2' }))
+    const { server, feed, state } = setup(rows, {
+        onPage: ({ phase, body }) => pages.push({ phase, body, rows: ids(state) }),
+    })
+    const bodies = []
+    const original = server.fetchPage.bind(server)
+    server.fetchPage = async (params) => {
+        const body = await original(params)
+        bodies.push(body)
+        return body
+    }
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    feed.loadMore()
+    await feed.idle()
+    server.setHidden('s2', false, 8, at(8))
+    feed.notifyLatest(8)
+    await feed.idle()
+    assert.deepEqual(pages.map(({ phase }) => phase), ['first', 'before', 'live', 'backfill'])
+    assert.deepEqual(pages.map(({ rows }) => rows), [[7, 6], [7, 6, 5, 4], [7, 6, 5, 4], [8, 7, 6, 5, 4]])
+    for (const [index, page] of pages.entries()) assert.equal(page.body, bodies[index], 'the endpoint body is unchanged')
+    assert.deepEqual(pages[3].body.events.map(({ id }) => id), [8, 1], 'backfill exposes rows outside the window')
+    assert.deepEqual(ids(state), [8, 7, 6, 5, 4])
+})
+
+test('stale scope responses never notify observers', async () => {
+    const pages = []
+    const { server, feed } = setup([event(1, at(1)), event(2, at(2), { project_id: 'p2' })], {
+        onPage: (page) => pages.push(page),
+    })
+    server.hold()
+    feed.setScope(['p1'])
+    await started()
+    feed.setScope(['p2'])
+    await started()
+    server.release()
+    await started()
+    await feed.idle()
+    assert.equal(pages.length, 1)
+    assert.equal(pages[0].phase, 'first')
+    assert.deepEqual(pages[0].body.events.map(({ id }) => id), [2])
+})
+
+test('truncation callback can dispose before reset', async () => {
+    const pages = []
+    const { server, feed, state } = setup(five(), {
+        onPage: (page) => {
+            pages.push(page)
+            if (page.body.truncated) feed.dispose()
+        },
+    })
+    feed.setScope([])
+    await feed.idle()
+    for (let id = 6; id <= 506; id += 1) server.commit(event(id, at(id)))
+    feed.notifyLatest(506)
+    await feed.idle()
+    assert.deepEqual(pages.map(({ phase }) => phase), ['first', 'live'])
+    assert.equal(pages[1].body.truncated, true)
+    assert.equal(pages[1].body.events.length, 500)
+    assert.equal(state.sessions.s1.title, pages[1].body.sessions.s1.title)
+    assert.deepEqual(kinds(server), ['first', 'after:5'], 'disposal prevents the historical reset request')
+    assert.deepEqual([ids(state), state.liveCursor, state.status], [[5, 4], 5, 'ready'])
+})
+
+test('scope reseed fetches incrementally from the preserved cursor', async () => {
+    const pages = []
+    const { server, feed, state } = setup(five(), { onPage: (page) => pages.push(page) })
+    feed.setScope(['p1'])
+    await feed.idle()
+    const afterId = state.liveCursor
+    server.commit(event(6, at(6), { project_id: 'p2' }))
+    feed.setScope(['p2'], {}, { afterId })
+    assert.deepEqual([state.status, state.liveCursor], ['ready', 5])
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    assert.deepEqual(server.calls[1], { projectIds: ['p2'], query: {}, before: null, afterId: 5 })
+    assert.deepEqual(pages.map(({ phase }) => phase), ['first', 'live'])
+    assert.deepEqual([ids(state), state.liveCursor, state.pageCursor, state.hasMore], [[6], 6, null, false])
+})
+
+test('a zero seed fetches the global scope incrementally and a null scope still sends nothing', async () => {
+    const { server, feed, state } = setup([event(1, at(1))])
+    feed.setScope(null, {}, { afterId: 0 })
+    await feed.idle()
+    assert.deepEqual([state.status, server.calls.length], ['idle', 0])
+    feed.setScope([], {}, { afterId: 0 })
+    await feed.idle()
+    assert.deepEqual(server.calls, [{ projectIds: [], query: {}, before: null, afterId: 0 }])
+    assert.deepEqual([ids(state), state.liveCursor], [[1], 1])
+})
+
+test('an explicit seed can reset an unchanged scope without loading history', async () => {
+    const { server, feed, state } = setup(five())
+    feed.setScope([])
+    await feed.idle()
+    server.commit(event(6, at(6)))
+    feed.setScope([], {}, { afterId: 5 })
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    assert.deepEqual(ids(state), [6])
+})
+
+test('a live observer can dispose before display changes or backfill scheduling', async () => {
+    const { server, feed, state } = setup(five(), {
+        onPage: ({ phase }) => { if (phase === 'live') feed.dispose() },
+    })
+    feed.setScope([])
+    await feed.idle()
+    server.setHidden('s2', false, 6, at(6))
+    feed.notifyLatest(6)
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:5'])
+    assert.deepEqual([ids(state), state.liveCursor], [[5, 4], 5])
+})
+
+test('a backfill observer can dispose before the next backfill page', async () => {
+    const rows = [1, 2, 3].map((id) => event(id, at(id), { session_id: 's2' }))
+    const { server, feed, state } = setup([...rows, event(4, at(4))], {
+        onPage: ({ phase }) => { if (phase === 'backfill') feed.dispose() },
+    })
+    server.hidden.add('s2')
+    feed.setScope([])
+    await feed.idle()
+    server.setHidden('s2', false, 5, at(5))
+    feed.notifyLatest(5)
+    await feed.idle()
+    assert.deepEqual(kinds(server), ['first', 'after:4', 'first'])
+    assert.deepEqual(server.calls.at(-1).query, { session: 's2' })
+    assert.deepEqual(ids(state), [5, 4, 3], 'the accepted page merges before its observer runs')
+})
 
 test('pausing defers queued pagination and live work in their original order', async () => {
     const { server, feed, state } = setup(five())

@@ -45,6 +45,18 @@ export function parseOccurredAt(text) {
 }
 
 /**
+ * Shift a canonical wire timestamp by integer milliseconds, preserving its three sub-millisecond digits.
+ *
+ * @param {string} timestamp - `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+ * @param {number} deltaMs - An integer number of milliseconds.
+ * @returns {string}
+ */
+export function shiftEventTime(timestamp, deltaMs) {
+    const shifted = new Date(parseOccurredAt(timestamp) + deltaMs).toISOString()
+    return shifted.slice(0, -1) + timestamp.slice(-4)
+}
+
+/**
  * Clock time in the browser locale, hour and minute ("14:32").
  *
  * @param {number} ms

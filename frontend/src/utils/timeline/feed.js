@@ -120,8 +120,10 @@ function feedKeyOf(projectIds, query) {
  *   Resolves with the response body of `GET /api/timeline/`; rejects on any failure.
  * @param {FeedState} [options.state]
  * @param {(error: *) => void} [options.onLiveError] - A failed `after_id` fetch is silent: the next signal retries.
+ * @param {(page: {phase: 'first'|'before'|'live'|'backfill', body: Object}) => void} [options.onPage]
+ *   Receives accepted endpoint bodies. Live pages notify after session metadata merges, before display filtering.
  */
-export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiveError = () => {} }) {
+export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiveError = () => {}, onPage = () => {} }) {
     let generation = 0
     let chain = Promise.resolve()
     let disposed = false
@@ -197,6 +199,8 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         state.liveCursor = body.latest_id ?? null
         state.status = 'ready'
         loadPending = false
+        onPage({ phase: 'first', body })
+        if (stale(gen)) return
         // A signal that arrived while the page loaded was not consumed (see runLive): replay it, unless a
         // queued live task already will.
         const deferred = liveInfo.force || (liveInfo.latest !== null && liveInfo.latest > (state.liveCursor ?? 0))
@@ -236,6 +240,7 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         state.hasMore = body.has_more === true && body.events.length > 0
         state.loadingMore = false
         loadPending = false
+        onPage({ phase: 'before', body })
     }
 
     async function runLive(gen) {
@@ -258,6 +263,9 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
             return
         }
         if (stale(gen)) return
+        mergeSessions(body.sessions)
+        onPage({ phase: 'live', body })
+        if (stale(gen)) return
         if (body.truncated === true) {
             // Too much happened to patch the list: start again from the first page.
             reset()
@@ -270,7 +278,6 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         // The edge of the window is the pagination cursor, not the tail: a removal may have taken the tail away.
         const floor = positionOfCursor(state.pageCursor)
         state.events = mergeEvents(state.events, body.events, { hasMore: state.hasMore, live: true, floor })
-        mergeSessions(body.sessions)
         if (body.latest_id !== null && body.latest_id !== undefined && body.latest_id > cursor) state.liveCursor = body.latest_id
         const backfills = new Set(failedBackfills)
         failedBackfills = new Set()
@@ -322,6 +329,8 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         const rows = floor ? body.events.filter((event) => compareNewestFirst(event, floor) <= 0) : body.events
         state.events = mergeEvents(state.events, rows, { hasMore: false, live: false })
         mergeSessions(body.sessions)
+        onPage({ phase: 'backfill', body })
+        if (stale(gen)) return
         // The oldest row of the page, in one pass.
         const last = body.events.reduce((oldest, event) => (!oldest || compareNewestFirst(event, oldest) > 0 ? event : oldest), null)
         if (body.has_more !== true || !last) return
@@ -338,11 +347,11 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         enqueue(runLive)
     }
 
-    function setScope(projectIds, nextQuery) {
+    function setScope(projectIds, nextQuery, { afterId = null } = {}) {
         if (disposed) return
         const filterQuery = nextQuery ?? {} // null or undefined: no filter
         const key = feedKeyOf(projectIds, filterQuery)
-        if (key === scopeKey) return
+        if (key === scopeKey && afterId === null) return
         scopeKey = key
         scope = projectIds === null ? null : [...projectIds]
         query = { ...filterQuery }
@@ -350,6 +359,12 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
         chain = Promise.resolve()
         reset()
         if (scope === null) return
+        if (afterId !== null) {
+            state.status = 'ready'
+            state.liveCursor = afterId
+            requestLive({ force: true })
+            return
+        }
         state.status = 'loading'
         loadPending = true
         // A hidden scope may load its initial page, but never its follow-up work.
@@ -416,10 +431,12 @@ export function createTimelineFeed({ fetchPage, state = createFeedState(), onLiv
          * to load yet or at all" (projects not loaded, empty workspace, unknown project): no request is sent,
          * whatever the query. The SET is compared, not the order, and the query by `queryKey`, not its key
          * order: an unchanged set with an equal query keeps everything. Any other change reloads the first page.
+         * A non-null `afterId` seed resets the feed and fetches incrementally without loading history.
          *
          * @param {string[]|null} projectIds
          * @param {Object<string, string>|null} [query] - The `toQuery` parameters every request of this scope carries;
          *   null or omitted means no filter.
+         * @param {{afterId?: number|null}} [options] - An optional live cursor seed.
          */
         setScope,
         /** Pause queued work while hidden. An in-flight response may finish; its follow-ups wait for resume. */
