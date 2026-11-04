@@ -443,3 +443,37 @@ test('initialization is idempotent and disposal removes all owned listeners', as
     assert.equal(h.store.activePageId, null)
     assert.equal(h.requests.length, 1)
 })
+
+test('completed empty bootstrap seeds replacement catch-up from zero', async () => {
+    const h = setup()
+    await h.enable([], 'ws:w', { latest_id: null })
+    h.now(CLICK + 20_000)
+    h.replies.push(params => Promise.resolve(params.afterId === 0
+        ? page([message(3), message(2), message(1)])
+        : page([message(3), message(2)], { has_more: true })))
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    assert.equal(h.requests[1].afterId, 0)
+    assert.equal(h.opens[0].text, 'Message 1')
+    assert.equal(h.store.pendingCount, 2)
+    assert.equal(h.requests.length, 2)
+})
+
+test('unfinished bootstrap replacement retains the reconnect catch-up obligation', async () => {
+    const h = setup(), original = deferred(), catchUp = deferred(), before = deferred()
+    cleanups.push(() => { original.resolve(page()); catchUp.resolve(page()); before.resolve(page()) })
+    h.replies.push(() => original.promise)
+    h.store.enable('ws:w'); await settle()
+    h.status.value = 'CLOSED'; h.status.value = 'OPEN'
+    const followUp = params => params.afterId === null ? before.promise : catchUp.promise
+    h.replies.push(page([message(3)], { has_more: true }), followUp, followUp)
+    h.workspaces.workspaces.w.ids = ['p', 'q']; await settle()
+    assert.equal(h.store.activePageId, 'ws:w')
+    assert.equal(h.opens.length, 0)
+    assert.equal(h.requests.some(params => params.afterId === 3), true)
+    original.resolve(page([message(2)]))
+    before.resolve(page([message(1), message(0)])); await settle()
+    assert.equal(h.opens.length, 0)
+    catchUp.resolve(page([message(4)])); await settle()
+    assert.equal(h.opens[0].text, 'Message 1')
+    assert.equal(h.store.pendingCount, 2)
+})

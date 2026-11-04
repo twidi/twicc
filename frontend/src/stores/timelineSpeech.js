@@ -164,7 +164,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         activation.scopeKey = key
         purge(activation)
         const previous = activation.feed
-        const afterId = activation.bootstrap ? null : previous?.state.liveCursor ?? null
+        const afterId = activation.bootstrap ? null : previous?.state.liveCursor ?? 0
         activation.unbind?.()
         previous?.dispose()
         let responseEpoch = null
@@ -194,6 +194,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             },
         })
         feed.setScope(scope.projectIds, {}, { afterId })
+        // A replacement bootstrap must inherit the reconnect refresh discarded with its previous feed.
+        if (!activation.caughtUp && connectionStatus.value === 'OPEN') feed.refresh()
     }
 
     const subscriptions = [
