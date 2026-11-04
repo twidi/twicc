@@ -2,7 +2,7 @@
 import { computed, ref, provide, inject, unref } from 'vue'
 import { INLINE_ARTIFACT_CONTEXT } from '../../../inline-artifacts/context.js'
 import { useMessageSummary, MESSAGE_SUMMARY_CONTEXT, MESSAGE_SUMMARY_VISIT } from '../../../composables/useMessageSummary.js'
-import MessageSummary from './items/MessageSummary.vue'
+import MessageSummaryView from './items/MessageSummaryView.vue'
 import { STREAMING_BLOCK_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { useStreamingPublication } from '../../../composables/useStreamingPublication.js'
 import { PROVIDER, SYNTHETIC_ITEM, DISPLAY_MODE } from '../../../constants'
@@ -280,7 +280,7 @@ function toggleJsonView() {
 
         <!-- Formatted view based on kind -->
         <template v-else>
-            <MessageSummary v-if="summary.isHost" :summary="summary" />
+            <MessageSummaryView v-if="summary.isHost && summary.view === 'summary'" :summary="summary" />
             <BackgroundWorkStatus v-if="isBackgroundWorkStatus" :lines="content?.lines || []" />
             <template v-else-if="sessionProvider === PROVIDER.CLAUDE_CODE">
                 <ClaudeCodeMessage

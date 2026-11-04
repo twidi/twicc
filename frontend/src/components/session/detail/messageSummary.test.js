@@ -96,7 +96,7 @@ test('previous policy remains visible during failed regeneration and saved misma
 test('provider boundary opts in persisted assistant rows only and Markdown keeps block-scoped original controls', () => {
     const item = read('./SessionItem.vue'), text = read('./items/TextContent.vue'), markdown = read('../../ui/MarkdownContent.vue')
     assert.match(item, /useMessageSummary/); assert.match(item, /props\.kind !== 'assistant_message'/); assert.match(item, /props\.syntheticKind/)
-    assert.equal((item.match(/<MessageSummary\b/g) || []).length, 1)
+    assert.equal((item.match(/<MessageSummaryView\b/g) || []).length, 1)
     assert.match(text, /MESSAGE_SUMMARY_CONTEXT/)
     assert.match(markdown, /summaryContext/); assert.match(markdown, /:text="source"/); assert.match(markdown, /@click="copySource"/)
     assert.match(markdown, /block\.type === 'inline-artifact'/)
@@ -275,13 +275,15 @@ test('the actual Markdown toolbar disables new generation and preserves saved-su
     const render = new Function('Vue', `${code}; return render`)(Vue)
     const { renderer, root } = makeRenderer(140, node => { node.style = {} })
     const app = renderer.createApp({ render, setup: () => ({ summaryContext: bindings[0], showToolbar: true, toolbarOpen: false,
-        showTocDetails: false, showRaw: false, speakable: false, source: 'Original block', blocks: [], highlightTerms: [],
+        showTocDetails: false, showRaw: false, speakable: false, summaryActive: false, summaryHidden: false,
+        summaryButtonTitle: Vue.computed(() => !bindings[0].canSummarize ? bindings[0].generationUnavailableReason
+            : bindings[0].entry?.text || bindings[0].descriptor?.saved || bindings[0].descriptor?.previous ? 'Show summary' : 'Summarize message'), source: 'Original block', blocks: [], highlightTerms: [],
         toggleToolbar() {}, toggleRaw() {}, copySource() {}, handleLinkClick() {},
     }) })
     app.component('TextToSpeechButton', { render: () => null }); app.component('InlineArtifactBlock', { render: () => null })
     app.directive('highlight', {}); app.mount(root); t.after(() => app.unmount())
     settings.enabledProviders = []; await flush()
-    const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize message')[0]
+    const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /No summary engine/)
     store.descriptors[summarySourceKey(sources[0])] = descriptor({ saved: { id: 7, result_hash: 'result-a' } }); await flush()
     assert.equal(action().props.disabled, false); assert.equal(action().props.title, 'Show summary')

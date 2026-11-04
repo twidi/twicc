@@ -31,6 +31,8 @@ import '../../styles/github-markdown-themes.css'
 const props = defineProps({
     inlineContext: { type: Object, default: null },
     summaryContext: { type: Object, default: null },
+    // This instance renders the summary itself: it stays visible and its summary button leaves the summary view.
+    summaryActive: { type: Boolean, default: false },
     source: {
         type: String,
         required: true
@@ -639,6 +641,16 @@ onScopeDispose(() => {
 
 const showRaw = ref(false)
 
+// The original text hides while its message shows the summary, except in the instance rendering the summary.
+const summaryHidden = computed(() => !!props.summaryContext?.hidden && !props.summaryActive)
+const summaryButtonTitle = computed(() => {
+    const summary = props.summaryContext
+    if (!summary) return ''
+    if (props.summaryActive) return 'Show original message'
+    if (!summary.canSummarize) return summary.generationUnavailableReason
+    return summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize message'
+})
+
 const toolbar = ref(null)
 const toolbarToggle = ref(null)
 const { opened: toolbarOpen, toggle: toggleToolbar, close: closeToolbar } = useMarkdownToolbar(toolbar, toolbarToggle)
@@ -852,7 +864,7 @@ function handleLinkClick(event) {
 </script>
 
 <template>
-    <div class="markdown-content-wrapper" :class="{ 'message-summary-hidden': summaryContext?.hidden }">
+    <div class="markdown-content-wrapper" :class="{ 'message-summary-hidden': summaryHidden }">
         <wa-details v-if="showTocDetails" class="markdown-toc" summary="Table of contents">
             <ul class="markdown-toc-list">
                 <li
@@ -899,15 +911,31 @@ function handleLinkClick(event) {
                 >
                     <wa-icon name="copy"></wa-icon>
                 </wa-button>
-                <TextToSpeechButton v-if="speakable" :text="source" />
-                <wa-button v-if="summaryContext?.available" size="small" :disabled="!summaryContext.canSummarize" :title="!summaryContext.canSummarize ? summaryContext.generationUnavailableReason : summaryContext.entry?.text || summaryContext.descriptor?.saved || summaryContext.descriptor?.previous ? 'Show summary' : 'Summarize message'" aria-label="Summarize message" @click="summaryContext.summarize">
+                <TextToSpeechButton
+                    v-if="speakable"
+                    :text="source"
+                    :summary-ref="summaryActive ? summaryContext.playbackReference : null"
+                    :summary-identity="summaryActive ? summaryContext.identity : null"
+                    @summary-changed="summaryActive && summaryContext.refreshSaved($event)"
+                />
+                <wa-button
+                    v-if="summaryContext?.available"
+                    size="small"
+                    :variant="summaryActive ? 'brand' : 'neutral'"
+                    appearance="filled"
+                    :disabled="!summaryActive && !summaryContext.canSummarize"
+                    :title="summaryButtonTitle"
+                    :aria-label="summaryButtonTitle"
+                    :aria-pressed="summaryActive"
+                    @click="summaryActive ? summaryContext.showOriginal() : summaryContext.summarize()"
+                >
                     <wa-icon name="compress"></wa-icon>
                 </wa-button>
             </wa-button-group>
         </div>
-        <pre v-if="showRaw && !summaryContext?.hidden" class="markdown-raw">{{ source }}</pre>
+        <pre v-if="showRaw && !summaryHidden" class="markdown-raw">{{ source }}</pre>
         <div
-            v-show="!showRaw || summaryContext?.hidden"
+            v-show="!showRaw || summaryHidden"
             ref="container"
             class="markdown-body"
             v-highlight="highlightTerms"
@@ -936,7 +964,7 @@ function handleLinkClick(event) {
                         v-bind="artifactPlacement(block)"
                     />
                 </template>
-                <div v-else v-show="!summaryContext?.hidden" class="markdown-block" :data-details-scope="block.scope" v-html="block.html"></div>
+                <div v-else v-show="!summaryHidden" class="markdown-block" :data-details-scope="block.scope" v-html="block.html"></div>
             </template>
         </div>
     </div>
