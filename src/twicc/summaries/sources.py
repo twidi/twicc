@@ -7,12 +7,12 @@ import orjson
 from markdown_it import MarkdownIt
 
 from twicc.agent.completion_types import NativeMessageRef
-from twicc.context_injection import strip_context_blocks
+from twicc.context_injection import _CONTEXT_BLOCK_RE, _INSTRUCTION_BLOCK_RE
 from twicc.core.enums import ItemKind
 from twicc.core.models import LogicalTurn, Session, SessionItem, TimelineEvent, TimelineKind
 from twicc.core.services.message_sources import _canonical, _groups, _read
 from twicc.inline_artifacts.publications import (
-    _colon_block, _comment_block, _comment_inline, parse_inline_artifact_blocks,
+    _code_ranges, _colon_block, _comment_block, _comment_inline, _line_offsets, parse_inline_artifact_blocks,
 )
 from twicc.providers.helpers import get_provider_helpers
 
@@ -58,7 +58,20 @@ class SummarySource(NamedTuple):
 def _input_text(text: str) -> str:
     for block in reversed(parse_inline_artifact_blocks(text)):
         text = text[:block.start] + text[block.end:]
-    return strip_context_blocks(text)
+    # Match controls against a same-length view that hides literal code tags.
+    # Keep non-whitespace masks so code cannot become a leading context prefix.
+    parts, cursor = [], 0
+    for start, end in _code_ranges(text, _MARKDOWN.parse(text), _line_offsets(text)):
+        parts.extend((text[cursor:start], '\x00' * (end - start)))
+        cursor = end
+    parts.append(text[cursor:])
+    masked = ''.join(parts)
+    for pattern in (_CONTEXT_BLOCK_RE, _INSTRUCTION_BLOCK_RE):
+        for match in reversed(list(pattern.finditer(masked))):
+            start, end = match.span()
+            text = text[:start] + text[end:]
+            masked = masked[:start] + masked[end:]
+    return text
 
 
 def _token_text(tokens):

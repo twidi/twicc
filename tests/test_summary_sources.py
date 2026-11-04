@@ -218,6 +218,62 @@ def test_counting_excludes_control_markup_and_keeps_visible_labels():
     assert content_text('`<twicc:inline-artifact id="chart"/>`') == '<twicc:inline-artifact id="chart"/>'
 
 
+@pytest.mark.parametrize('wrapper', ['```xml\n{}\n```', '~~~xml\n{}\n~~~', '`{}`', '``{}``', '    {}',
+                                   ':: `{}`', '::: `{}`\n:::'])
+@pytest.mark.parametrize('tag', ['instruction', 'context'])
+def test_literal_control_tags_in_code_remain_in_counts_and_generation_input(wrapper, tag):
+    from twicc.summaries.sources import content_text, resolve_source
+
+    code = f'<twicc:{tag}>' + 'x' * 1000 + f'</twicc:{tag}>'
+    text = wrapper.format(code)
+    result = resolve_source({'text': text, 'purpose': 'selection'})
+    assert result.canonical_text == result.input_text == text
+    assert content_text(text) == code
+    assert result.content_chars == len(code)
+
+
+def test_real_control_blocks_are_removed_around_literal_code():
+    from twicc.summaries.sources import content_text, resolve_source
+
+    literal = '<twicc:instruction>' + 'x' * 1000 + '</twicc:instruction>'
+    text = ('<twicc:context>private context</twicc:context>\n\n'
+            f'```xml\n{literal}\n```\n\n'
+            'Visible <twicc:instruction>private `code` instruction</twicc:instruction>')
+    result = resolve_source({'text': text, 'purpose': 'selection'})
+    assert result.canonical_text == text
+    assert literal in result.input_text
+    assert 'private' not in result.input_text
+    assert content_text(text) == literal + ' Visible'
+
+
+def test_literal_opening_tag_does_not_hide_a_later_real_instruction():
+    from twicc.summaries.sources import resolve_source
+
+    text = '`<twicc:instruction>` Visible <twicc:instruction>private</twicc:instruction>'
+    assert resolve_source({'text': text, 'purpose': 'selection'}).input_text == '`<twicc:instruction>` Visible'
+
+
+def test_control_removal_preserves_fence_and_prose_line_boundaries():
+    from twicc.summaries.sources import content_text, resolve_source
+
+    text = '```xml\nliteral code\n```\n\n<twicc:instruction>private</twicc:instruction>\n\nVisible'
+    result = resolve_source({'text': text, 'purpose': 'selection'})
+    assert '```\n' in result.input_text
+    assert content_text(text) == 'literal code Visible'
+
+
+def test_stored_code_message_keeps_summary_eligibility(live_session):
+    f = live_session
+    text = '```xml\n<twicc:instruction>' + 'x' * 1000 + '</twicc:instruction>\n```'
+    # Store the provider record directly: this test targets the summary boundary.
+    SessionItem.objects.create(session=f.session, line_num=1, kind='assistant_message',
+        message_id='code' if f.provider == 'claude_code' else None,
+        content=orjson.dumps(f.message('code', text)).decode())
+    result = resolve(f.session)
+    assert result.eligible and result.content_chars > 1000
+    assert result.input_text == result.canonical_text == text
+
+
 @pytest.mark.parametrize('source', [{}, {'text': '', 'purpose': 'selection'}, {'text': 'x'},
     {'session_id': 'x', 'line_num': True}, {'event_id': 0}, {'event_id': 1, 'text': 'x', 'purpose': 'test'}])
 def test_invalid_sources_are_rejected(source):

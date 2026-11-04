@@ -160,12 +160,8 @@ def _is_escaped(text, position):
     return (position - preceding - 1) % 2 == 1
 
 
-def _comment_ranges(text, tokens, offsets):
-    """Find comment boundaries outside Markdown code spans and code blocks.
-
-    Comment scopes can cross paragraph boundaries, including blank lines and
-    unterminated comments. Native inline parsing owns code delimiter boundaries.
-    """
+def _code_ranges(text, tokens, offsets):
+    """Return source offsets for Markdown code blocks and literal inline code."""
     code_ranges = []
     for token in tokens:
         if not token.map:
@@ -173,14 +169,25 @@ def _comment_ranges(text, tokens, offsets):
         start, end = (offsets[line] for line in token.map)
         if token.type in ("fence", "code_block"):
             code_ranges.append((start, end))
-        elif token.type == "inline":
+        elif token.type in ("inline", "colon_line", "container_open"):
+            if token.type != "inline":
+                end = offsets[token.map[0] + 1]
             if _TAG.fullmatch(text[start:end].strip()):
                 code_ranges.append((start, end))
                 continue
             children = []
             _MARKDOWN.inline.parse(text[start:end], _MARKDOWN, {}, children)
             code_ranges.extend(_source_code_ranges(children, start))
-    code_ranges.sort()
+    return sorted(code_ranges)
+
+
+def _comment_ranges(text, tokens, offsets):
+    """Find comment boundaries outside Markdown code spans and code blocks.
+
+    Comment scopes can cross paragraph boundaries, including blank lines and
+    unterminated comments. Native inline parsing owns code delimiter boundaries.
+    """
+    code_ranges = _code_ranges(text, tokens, offsets)
     ranges = []
     pos = 0
     code_index = 0
