@@ -49,6 +49,7 @@ onBeforeUnmount(close)
         <template v-if="store.temporary">
             <blockquote class="source-excerpt">{{ excerpt }}</blockquote>
             <SummaryContent :entry="store.temporary.entry" :retry-disabled="!generation.available" :retry-unavailable-reason="generation.unavailableReason" @cancel="cancel" @retry="retry" />
+            <wa-button v-if="generation.lookupFailed" size="small" :title="generation.unavailableReason" @click="generation.retryLookup">Retry availability check</wa-button>
         </template>
         <div slot="footer" class="dialog-actions">
             <wa-button size="small" :disabled="!store.temporary?.entry.text" @click="copy">Copy</wa-button>

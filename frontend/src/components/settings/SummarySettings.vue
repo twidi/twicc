@@ -14,7 +14,7 @@ const speech = useTextToSpeechStore()
 const summaries = useSummariesStore()
 const enabled = computed(() => new Set(settings.enabledProviders))
 const testText = ref('')
-const generation = useTemporarySummaryGeneration(() => ({ text: testText.value, purpose: 'test' }), settings, speech, summaries)
+const generation = useTemporarySummaryGeneration(() => ({ text: testText.value.trim(), purpose: 'test' }), settings, speech, summaries)
 const effective = computed(() => effectiveAdapt(settings.summaryModel === 'auto' ? null : settings.summaryModel, enabled.value, speech.keyPresent))
 const choices = computed(() => {
     const agent = effectiveAdapt(null, enabled.value, speech.keyPresent)
@@ -57,6 +57,7 @@ onBeforeUnmount(() => { subscription.value?.release() })
         <small>On by default. Manual summaries remain available when this is off.</small>
         <wa-textarea label="Temporary test text" :value="testText" :rows="5" @input="testText = $event.target.value"></wa-textarea>
         <wa-button size="small" :disabled="!testText.trim() || !generation.available" :title="!generation.available ? generation.unavailableReason : undefined" @click="runTest">Test summary</wa-button>
+        <wa-button v-if="generation.lookupFailed" size="small" :title="generation.unavailableReason" @click="generation.retryLookup">Retry availability check</wa-button>
         <small>Test text and results are discarded when this section closes.</small>
         <SummaryContent v-if="subscription" :entry="subscription.entry" :retry-disabled="!generation.available" :retry-unavailable-reason="generation.unavailableReason" @cancel="cancelTest" @retry="runTest" />
         <div v-if="subscription" class="test-provenance">

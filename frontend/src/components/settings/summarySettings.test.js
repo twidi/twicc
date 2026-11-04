@@ -138,3 +138,43 @@ test('OpenRouter-only temporary tests use source lookup, abort obsolete reads, a
     app.unmount(); assert.equal(lookups[2].signal.aborted, true)
     lookups[2].finish(true); await flush(); assert.deepEqual(summaries.descriptors, {})
 })
+
+test('settings retries unknown availability evidence and checks the exact trimmed generation input', async t => {
+    const settings = settingsForTest(); settings.summaryModel = 'openrouter'; settings.enabledProviders = []
+    const lookups = [], requests = []
+    const summaries = {
+        async resolve(sources) { lookups.push(sources); return lookups.length === 1 ? [{}] : [{ openrouter_eligible: true }] },
+        request(source) { requests.push(source); return { entry: Vue.reactive({ state: 'complete', text: 'Result' }), release() {} } },
+    }
+    const { app, root } = mount(settings, { keyPresent: true }, summaries); t.after(() => app.unmount())
+    const input = ` ${' '.repeat(60001)}Short test text   `
+    descendants(root, n => n.type === 'wa-textarea')[0].props.onInput({ target: { value: input } }); await flush()
+    assert.deepEqual(lookups[0], [{ text: 'Short test text', purpose: 'test' }])
+    assert.equal(button(root, 'Test summary').props.disabled, true)
+    button(root, 'Test summary').props.onClick(); assert.equal(requests.length, 0)
+    const recheck = button(root, 'Retry availability check'); assert.ok(recheck)
+    recheck.props.onClick(); await flush()
+    assert.deepEqual(lookups[1], lookups[0]); assert.equal(button(root, 'Test summary').props.disabled, false)
+    button(root, 'Test summary').props.onClick(); await flush()
+    assert.deepEqual(requests, [{ text: 'Short test text', purpose: 'test' }])
+})
+
+test('settings aborts an obsolete explicit recheck and ignores its late availability result', async t => {
+    const settings = settingsForTest(); settings.summaryModel = 'openrouter'; settings.enabledProviders = []
+    const lookups = []
+    const summaries = { resolve(sources, options) { return new Promise((resolve, reject) => lookups.push({ source: sources[0], signal: options.signal, resolve, reject })) } }
+    const { app, root } = mount(settings, { keyPresent: true }, summaries); t.after(() => app.unmount())
+    const textarea = descendants(root, n => n.type === 'wa-textarea')[0]
+    textarea.props.onInput({ target: { value: 'Original source' } }); await flush()
+    lookups[0].reject(new Error('Network unavailable')); await flush()
+    const recheck = button(root, 'Retry availability check'); assert.ok(recheck)
+    recheck.props.onClick(); await flush()
+    assert.equal(button(root, 'Test summary').props.disabled, true)
+    textarea.props.onInput({ target: { value: 'Replacement source' } }); await flush()
+    assert.equal(lookups[1].signal.aborted, true)
+    lookups[1].resolve([{ openrouter_eligible: true }]); await flush()
+    assert.equal(button(root, 'Test summary').props.disabled, true)
+    lookups[2].resolve([{ openrouter_eligible: false }]); await flush()
+    assert.equal(button(root, 'Test summary').props.disabled, true)
+    assert.equal(button(root, 'Retry availability check'), undefined)
+})

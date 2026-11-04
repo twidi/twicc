@@ -116,7 +116,9 @@ const showSummary = computed(() => !props.persistent && ['rendered', 'file'].inc
 const summaryGeneration = useTemporarySummaryGeneration(() => showSummary.value
     ? { text: props.selectedText, purpose: 'selection' } : null, settingsStore, speechStore, summariesStore)
 function summarize() {
-    if (!showSummary.value || !summaryGeneration.value.available) return
+    if (!showSummary.value) return
+    if (summaryGeneration.value.lookupFailed) { summaryGeneration.value.retryLookup(); return }
+    if (!summaryGeneration.value.available) return
     const text = props.selectedText
     summariesStore.openTemporary(text)
     props.clearSourceSelection?.()
@@ -613,16 +615,16 @@ defineExpose({ isExpanded: expanded })
                 variant="neutral"
                 appearance="filled"
                 size="small"
-                aria-label="Summarize selection"
-                :disabled="!summaryGeneration.available"
-                :title="summaryGeneration.available ? 'Summarize selection' : summaryGeneration.unavailableReason"
+                :aria-label="summaryGeneration.lookupFailed ? 'Retry summary availability' : 'Summarize selection'"
+                :disabled="!summaryGeneration.available && !summaryGeneration.lookupFailed"
+                :title="summaryGeneration.lookupFailed ? `Retry summary availability: ${summaryGeneration.unavailableReason}` : summaryGeneration.available ? 'Summarize selection' : summaryGeneration.unavailableReason"
                 @mousedown.prevent
                 @pointerdown="tapFallback.down('summary', $event)"
                 @pointerup="onTapUp('summary', $event)"
                 @pointercancel="tapFallback.cancel()"
                 @click.stop="onCollapsedClick('summary')"
             >
-                <wa-icon name="compress"></wa-icon>
+                <wa-icon :name="summaryGeneration.lookupFailed ? 'rotate-right' : 'compress'"></wa-icon>
             </wa-button>
         </div>
 

@@ -163,9 +163,10 @@ test('shared summary content identifies interrupted partial text and a restarted
 
 test('selection generation action stays visible but disables with a reason when no engine can run', async t => {
     const settings = Vue.reactive({ isTouchDevice: true, summaryModel: 'auto', enabledProviders: [] }), calls = [], lookups = []
+    let networkAttempts = 0
     const speech = Vue.reactive({ keyPresent: true, available: false, statusForSelection: () => 'idle' })
     const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url), {
-        '../../../stores/summaries': { useSummariesStore: () => ({ openTemporary: text => calls.push(text), resolve: async sources => { lookups.push(sources); return [{ openrouter_eligible: sources[0].text !== 'Long selection' }] } }) },
+        '../../../stores/summaries': { useSummariesStore: () => ({ openTemporary: text => calls.push(text), resolve: async sources => { lookups.push(sources); if (sources[0].text === 'Network source' && ++networkAttempts === 1) throw new Error('Network unavailable'); return [{ openrouter_eligible: sources[0].text !== 'Long selection' }] } }) },
         '../../../stores/codeComments': { formatComment: () => '' }, '../../../stores/settings': { useSettingsStore: () => settings },
         '../../../composables/useMediaPreview': { isOpen: Vue.ref(false), openMediaPreview() {} },
         '../../../composables/useToast': { toast: { error() {}, success() {} } },
@@ -179,7 +180,7 @@ test('selection generation action stays visible but disables with a reason when 
     const props = Vue.reactive({ selectedText: 'Captured selection', readOrigin: 'file', position: { left: 10, top: 20 }, clearSourceSelection() {} })
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Component, props) })
     app.mount(root); t.after(() => { app.unmount(); globalThis.window = originalWindow; globalThis.document = originalDocument })
-    const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize selection')[0]
+    const action = () => descendants(root, n => n.type === 'wa-button' && ['Summarize selection', 'Retry summary availability'].includes(n.props['aria-label']))[0]
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /No summary engine/)
     action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, [])
     props.readOrigin = null; await flush(); settings.summaryModel = 'openrouter'; await flush()
@@ -189,6 +190,13 @@ test('selection generation action stays visible but disables with a reason when 
     props.selectedText = 'Long selection'; await flush()
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /source.*OpenRouter|OpenRouter.*source/)
     action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, ['Captured selection'])
+    props.selectedText = 'Network source'; await flush()
+    assert.equal(action().props['aria-label'], 'Retry summary availability')
+    assert.equal(action().props.disabled, false); assert.match(action().props.title, /Network unavailable/)
+    action().props.onClick({ stopPropagation() {} }); await flush()
+    assert.equal(networkAttempts, 2); assert.deepEqual(calls, ['Captured selection'])
+    assert.equal(action().props['aria-label'], 'Summarize selection')
+    action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, ['Captured selection', 'Network source'])
 })
 test('selection Retry disables without an engine while the captured panel remains open', async t => {
     let retries = 0
@@ -200,4 +208,42 @@ test('selection Retry disables without an engine while the captured panel remain
     const retry = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry')[0]
     assert.equal(retry.props.disabled, true); assert.match(retry.props.title, /No summary engine/)
     retry.props.onClick(); assert.equal(retries, 0); assert.ok(store.temporary)
+})
+
+test('captured selection retries a failed availability lookup before enabling generation', async t => {
+    const settings = Vue.reactive({ summaryModel: 'openrouter', enabledProviders: [] }), lookups = []
+    let retries = 0
+    const store = Vue.reactive({ temporary: { id: 'one', source: { text: 'Captured selection', purpose: 'selection' }, entry: { state: 'failed', text: 'Retained partial', error: 'stalled' } },
+        resolve(sources, options) { return new Promise((resolve, reject) => lookups.push({ sources, signal: options.signal, resolve, reject })) },
+        temporaryReference: () => Promise.resolve({ id: 'handle' }), closeTemporary() {}, retryTemporary() { retries++ },
+    })
+    const root = await mountDialog(t, store, { available: false, keyPresent: true, statusForSummary: () => 'idle', statusForText: () => 'idle' }, settings)
+    lookups[0].reject(new Error('Network unavailable')); await flush()
+    const retry = () => descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry')[0]
+    const recheck = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry availability check')[0]
+    assert.ok(recheck, 'the captured panel offers explicit availability recovery')
+    assert.equal(retry().props.disabled, true); retry().props.onClick(); assert.equal(retries, 0)
+    recheck.props.onClick(); await flush()
+    assert.equal(lookups.length, 2); assert.equal(lookups[0].signal.aborted, true)
+    assert.equal(retry().props.disabled, true); retry().props.onClick(); assert.equal(retries, 0)
+    assert.equal(store.temporary.source.text, 'Captured selection'); assert.equal(store.temporary.entry.text, 'Retained partial')
+    lookups[1].resolve([{ openrouter_eligible: true }]); await flush()
+    assert.equal(retry().props.disabled, false); retry().props.onClick(); assert.equal(retries, 1)
+})
+
+test('a recovered availability check that confirms an unavailable source keeps selection Retry disabled', async t => {
+    let lookups = 0, retries = 0
+    const store = Vue.reactive({ temporary: { id: 'one', source: { text: 'Long captured source', purpose: 'selection' }, entry: { state: 'failed', text: 'Retained' } },
+        async resolve() { if (++lookups === 1) throw new Error('Offline'); return [{ openrouter_eligible: false }] },
+        temporaryReference: () => Promise.resolve({ id: 'handle' }), closeTemporary() {}, retryTemporary() { retries++ },
+    })
+    const root = await mountDialog(t, store, { available: false, keyPresent: true, statusForSummary: () => 'idle', statusForText: () => 'idle' },
+        { summaryModel: 'openrouter', enabledProviders: [] })
+    await flush()
+    const recheck = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry availability check')[0]
+    assert.ok(recheck); recheck.props.onClick(); await flush()
+    const retry = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry')[0]
+    assert.equal(retry.props.disabled, true); retry.props.onClick(); assert.equal(retries, 0)
+    assert.equal(lookups, 2); assert.equal(store.temporary.source.text, 'Long captured source')
+    assert.equal(descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry availability check').length, 0)
 })
