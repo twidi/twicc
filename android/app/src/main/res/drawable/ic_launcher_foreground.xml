@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the existing robot artwork inside the adaptive icon's 66/108 safe area. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="19.444444%">
+    <bitmap
+        android:src="@drawable/twicc_robot"
+        android:gravity="fill"
+        android:filter="true" />
+</inset>
