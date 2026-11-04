@@ -175,7 +175,8 @@ class _SummaryRun:
         return {'revision': self.revision, 'state': self.state, 'text': self.text,
                 'engine': self.engine.name if self.engine else None, 'fallback_reason': self.fallback_reason,
                 'first_text_ms': self.first_text_ms, 'total_ms': self.total_ms,
-                'error': self.error, 'saved_id': self.saved_id}
+                'error': self.error, 'saved_id': self.saved_id,
+                'result_hash': _result_hash(self.text) if self.saved_id is not None else None}
 
     def wake(self):
         event, self.changed = self.changed, asyncio.Event()

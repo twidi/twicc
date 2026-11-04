@@ -51,6 +51,7 @@ async function loadComponent() {
             stop() {},
         })
     `)
+    const summariesStub = dataModule(`export const useSummariesStore = () => ({ openTemporary() {} })`)
     const selectionReadStub = dataModule(`
         export const READ_TITLES = { idle: 'Read aloud', loading: 'Cancel the request', playing: 'Stop reading' }
         export const readIcon = status => (status === 'idle' ? 'volume-up' : 'stop')
@@ -68,6 +69,7 @@ async function loadComponent() {
         .replace("from '../../../composables/useMediaPreview'", `from '${mediaPreviewStub}'`)
         .replace("from '../../../composables/useToast'", `from '${toastStub}'`)
         .replace("from '../../../stores/textToSpeech'", `from '${speechStoreStub}'`)
+        .replace("from '../../../stores/summaries'", `from '${summariesStub}'`)
         .replace("from '../../../utils/selectionRead'", `from '${selectionReadStub}'`)
         .replace("from '../../../utils/touchTapFallback'", `from '${touchTapFallbackStub}'`)
 

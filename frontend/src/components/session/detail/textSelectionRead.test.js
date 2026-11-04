@@ -55,13 +55,13 @@ test('the other widgets pass no origin', () => {
 test('the collapsed buttons route touch taps through the tap fallback', () => {
     assert.match(widget, /createTouchTapFallback\(\)/)
     const collapsed = widget.slice(widget.indexOf('<div v-if="!expanded" class="tsc-collapsed">'), widget.indexOf('<!-- Expanded'))
-    for (const id of ['expand', 'copy', 'read']) {
+    for (const id of ['expand', 'copy', 'read', 'summary']) {
         assert.ok(collapsed.includes(`@pointerdown="tapFallback.down('${id}', $event)"`), id)
         assert.ok(collapsed.includes(`@pointerup="onTapUp('${id}', $event)"`), id)
         assert.ok(collapsed.includes(`@click.stop="onCollapsedClick('${id}')"`), id)
     }
-    assert.equal(collapsed.match(/@pointercancel="tapFallback\.cancel\(\)"/g).length, 3)
-    assert.equal(collapsed.match(/@mousedown\.prevent/g).length, 3)
+    assert.equal(collapsed.match(/@pointercancel="tapFallback\.cancel\(\)"/g).length, 4)
+    assert.equal(collapsed.match(/@mousedown\.prevent/g).length, 4)
     const expandedPart = widget.slice(widget.indexOf('<!-- Expanded'))
     assert.ok(!expandedPart.includes('tapFallback'))
 })

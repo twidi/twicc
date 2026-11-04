@@ -10,6 +10,7 @@ import { useSettingsStore } from '../../../stores/settings'
 import { isOpen as mediaPreviewOpen, openMediaPreview } from '../../../composables/useMediaPreview'
 import { toast } from '../../../composables/useToast'
 import { useTextToSpeechStore } from '../../../stores/textToSpeech'
+import { useSummariesStore } from '../../../stores/summaries'
 import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead'
 import { createTouchTapFallback } from '../../../utils/touchTapFallback'
 
@@ -99,7 +100,7 @@ const expanded = ref(false)
 // Some browsers (Firefox for Android) sometimes drop the `click` after a touch tap.
 // The collapsed buttons run their action from the pointer events in that case.
 const tapFallback = createTouchTapFallback()
-const collapsedActions = { expand: () => expand(), copy: () => copy(), read: () => read() }
+const collapsedActions = { expand: () => expand(), copy: () => copy(), read: () => read(), summary: () => summarize() }
 function onTapUp(id, event) {
     tapFallback.up(id, event, collapsedActions[id])
 }
@@ -108,6 +109,16 @@ function onCollapsedClick(id) {
 }
 
 // Read button: a view of the app-wide speech store for this selection.
+const summariesStore = useSummariesStore()
+const showSummary = computed(() => !props.persistent && ['rendered', 'file'].includes(props.readOrigin) && !!props.selectedText.trim())
+function summarize() {
+    if (!showSummary.value) return
+    const text = props.selectedText
+    summariesStore.openTemporary(text)
+    props.clearSourceSelection?.()
+    close()
+}
+
 const speechStore = useTextToSpeechStore()
 const readStatus = computed(() => speechStore.statusForSelection(props.selectedText))
 const readBusy = computed(() => readStatus.value !== 'idle')
@@ -592,6 +603,22 @@ defineExpose({ isExpanded: expanded })
                 @click.stop="onCollapsedClick('read')"
             >
                 <wa-icon :name="readIcon(readStatus)"></wa-icon>
+            </wa-button>
+            <wa-button
+                v-if="showSummary"
+                class="tsc-trigger"
+                variant="neutral"
+                appearance="filled"
+                size="small"
+                aria-label="Summarize selection"
+                title="Summarize selection"
+                @mousedown.prevent
+                @pointerdown="tapFallback.down('summary', $event)"
+                @pointerup="onTapUp('summary', $event)"
+                @pointercancel="tapFallback.cancel()"
+                @click.stop="onCollapsedClick('summary')"
+            >
+                <wa-icon name="compress"></wa-icon>
             </wa-button>
         </div>
 

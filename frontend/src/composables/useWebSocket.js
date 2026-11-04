@@ -1,3 +1,4 @@
+import { useSummariesStore } from '../stores/summaries'
 import { refreshStatisticsSessions } from './statisticsRefresh.js'
 import { handleAgentEvent } from '../utils/agentLinkIndex'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
@@ -1118,6 +1119,8 @@ export function useWebSocket() {
     }
 
     function handleMessage(msg) {
+        // Synchronous invalidation precedes source updates and component rendering.
+        useSummariesStore().invalidate(msg)
         switch (msg.type) {
             case 'server_version':
                 console.log(`[TwiCC] Server version: ${msg.version}`)
@@ -1500,6 +1503,8 @@ export function useWebSocket() {
                 })
                 break
             }
+            case 'summary_saved':
+                break
             case 'session_removed':
                 store.removeSession(msg.session_id)
                 break

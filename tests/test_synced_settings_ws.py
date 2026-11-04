@@ -102,3 +102,39 @@ def test_idless_rejection_keeps_the_legacy_error_frame(monkeypatch):
     frames = _frames(monkeypatch, result, request_id=None)
     assert [frame["type"] for frame in frames] == ["synced_settings_updated", "error"]
     assert frames[1]["code"] == "invalid_synced_settings"
+
+
+def test_summary_settings_use_the_ordinary_merge_and_broadcast(monkeypatch, tmp_path):
+    import twicc.synced_settings as synced
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(synced, "get_synced_settings_path", lambda: path)
+    synced._cache.clear()
+    path.write_text('{"disabledProviders":[]}')
+    frames = []
+
+    class Layer:
+        async def group_send(self, group, frame):
+            assert group == "updates"
+            frames.append(frame["data"])
+
+    # Keep unrelated provider orchestration idle while exercising the real settings merge.
+    monkeypatch.setattr(settings_mutation, "get_channel_layer", lambda: Layer())
+    try:
+        defaults = synced.read_synced_settings()
+        assert defaults["summaryModel"] == "auto"
+        assert defaults["timelineSummaryEnabled"] is True
+        result = async_to_sync(settings_mutation.update_synced_settings)({
+            "summaryModel": "openrouter", "timelineSummaryEnabled": False,
+        })
+        assert result.status == "accepted"
+        stored = synced.read_synced_settings()
+        assert stored["summaryModel"] == "openrouter"
+        assert stored["timelineSummaryEnabled"] is False
+        assert frames[-1] == {
+            "type": "synced_settings_updated",
+            "settings": {"summaryModel": "openrouter", "timelineSummaryEnabled": False},
+            "version": result.version,
+        }
+    finally:
+        synced._cache.clear()

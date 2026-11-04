@@ -164,6 +164,7 @@ export const PROVIDER = {
 export const SYNCED_SETTINGS_KEYS = new Set([
     'defaultProvider', 'defaultLayoutId', 'disabledProviders', 'orchestrationDisabledProviders',
     'titleGenerationEnabled', 'titleAutoApply',
+    'summaryModel', 'timelineSummaryEnabled',
     'titleSuggestionModel', 'titleSystemPrompt', 'autoUnpinOnArchive',
     'worktreeDirectoryTemplate',
     'terminalUseTmux', 'terminalTmuxConfigPath',

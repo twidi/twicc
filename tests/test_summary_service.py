@@ -65,6 +65,7 @@ def test_two_handles_share_live_progress_and_release_independently(service, sour
         gate.set()
         final = [item async for item in reader][-1]
         assert final['state'] == 'complete' and final['saved_id'] is not None
+        assert final['result_hash'] == hashlib.sha256(final['text'].encode()).hexdigest()
         assert await sync_to_async(MessageSummary.objects.count)() == 1
         saved = await sync_to_async(service.load_saved_summary)(final['saved_id'])
         assert saved['result_hash'] == hashlib.sha256(saved['text'].encode()).hexdigest()

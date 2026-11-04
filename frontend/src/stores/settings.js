@@ -98,6 +98,8 @@ export const SETTINGS_SCHEMA = {
     titleGenerationEnabled: null,
     titleAutoApply: null,
     titleSuggestionModel: null,
+    summaryModel: null,
+    timelineSummaryEnabled: null,
     titleSystemPrompt: null,
     autoUnpinOnArchive: null,
     worktreeDirectoryTemplate: null,
@@ -158,6 +160,8 @@ const SETTINGS_VALIDATORS = {
     titleGenerationEnabled: (v) => typeof v === 'boolean',
     titleAutoApply: (v) => typeof v === 'boolean',
     titleSuggestionModel: (v) => resolveTitleSuggestionModel(v) === v,
+    summaryModel: (v) => ['auto', 'haiku', 'luna', 'openrouter'].includes(v),
+    timelineSummaryEnabled: (v) => typeof v === 'boolean',
     titleSystemPrompt: (v) => typeof v === 'string' && v.includes('{text}'),
     showCosts: (v) => typeof v === 'boolean',
     extraUsageOnlyWhenNeeded: (v) => typeof v === 'boolean',
@@ -490,6 +494,12 @@ export const useSettingsStore = defineStore('settings', {
     },
 
     actions: {
+        setSummaryModel(value) {
+            if (SETTINGS_VALIDATORS.summaryModel(value)) this.summaryModel = value
+        },
+        setTimelineSummaryEnabled(value) {
+            if (SETTINGS_VALIDATORS.timelineSummaryEnabled(value)) this.timelineSummaryEnabled = value
+        },
         /**
          * Set the default provider used when starting a fresh session.
          * @param {string} provider - One of the registered provider keys.
@@ -1289,6 +1299,8 @@ export function initSettings() {
             titleGenerationEnabled: store.titleGenerationEnabled,
             titleAutoApply: store.titleAutoApply,
             titleSuggestionModel: store.getTitleSuggestionModel,
+            summaryModel: store.summaryModel,
+            timelineSummaryEnabled: store.timelineSummaryEnabled,
             titleSystemPrompt: store.titleSystemPrompt,
             showCosts: store.showCosts,
             extraUsageOnlyWhenNeeded: store.extraUsageOnlyWhenNeeded,

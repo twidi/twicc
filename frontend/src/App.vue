@@ -29,6 +29,7 @@ import HybridAnnouncementDialog from './components/app/HybridAnnouncementDialog.
 import TelemetryNoticeDialog from './components/app/TelemetryNoticeDialog.vue'
 import HelpDialog from './components/help/HelpDialog.vue'
 import GlobalMediaPreview from './components/media/GlobalMediaPreview.vue'
+import SelectionSummaryDialog from './components/ui/SelectionSummaryDialog.vue'
 import ProjectTrustDialog from './components/project/ProjectTrustDialog.vue'
 import ProjectEditDialog from './components/project/ProjectEditDialog.vue'
 import WorktreeDialog from './components/project/WorktreeDialog.vue'
@@ -832,6 +833,7 @@ const toastTheme = computed(() => {
          (and any other "open this media fullscreen" call site that doesn't
          own its own MediaPreviewDialog instance). -->
     <GlobalMediaPreview />
+    <SelectionSummaryDialog v-if="isAppReady" />
     <!-- Single app-wide help dialog, driven by the help store (showHelp() /
          helpStore.maybeAutoShow()). Renders help/<key>.md pages. -->
     <HelpDialog v-if="isAppReady" />
