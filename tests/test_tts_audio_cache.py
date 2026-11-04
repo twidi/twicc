@@ -89,3 +89,22 @@ def test_setting_a_key_again_replaces_it_and_clear_empties_the_cache():
     cache.clear()
     assert cache.get(_key("a")) is None
     assert cache.total_bytes == 0
+
+
+def test_announcement_entries_share_retention_and_stay_separate():
+    clock = FakeClock()
+    cache = AudioCache(max_bytes=8, ttl=10, now=clock)
+    request = _key("Message.")
+    cache.set((request, "haiku"), _audio(b"body"))
+    cache.set((request, "haiku", "Project. Session."), _audio(b"both"))
+    assert cache.get((request, "haiku")) == _audio(b"body")
+    assert cache.get((request, "haiku", "Project. Session.")) == _audio(b"both")
+    assert cache.get((request, "haiku", "Different session.")) is None
+    assert cache.get((request, None, "Project. Session.")) is None
+    cache.set((request, "haiku", "Different session."), _audio(b"new!"))
+    assert cache.get((request, "haiku")) is None
+    assert cache.total_bytes == 8
+    clock.t = 10
+    assert cache.get((request, "haiku", "Project. Session.")) is None
+    assert cache.get((request, "haiku", "Different session.")) is None
+    assert cache.total_bytes == 0

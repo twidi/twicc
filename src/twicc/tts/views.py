@@ -58,7 +58,7 @@ from twicc.tts.openrouter import (
     pump_speech,
     schedule_cost_log,
 )
-from twicc.tts.part_source import PartSource
+from twicc.tts.part_source import PartSource, PrefixedParts, as_part_source
 from twicc.tts.parts import adapted_limits as speech_adapted_limits
 from twicc.tts.parts import has_speech, speech_parts
 from twicc.tts.script import ScriptSpeechRequest, pump_script_speech, script_parts
@@ -202,8 +202,8 @@ def _opened(stream: AudioStream) -> JsonResponse:
 async def tts_speech(request):
     """POST /api/tts/speech/ — open a speech.
 
-    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?}``,
-    or for a script config ``{kind: "script", text, script_id, <its six fields>, config_id?, cache?, buffered?}``
+    Body: ``{text, model, voice, response_format, speed, instructions, config_id?, cache?, buffered?, announcement?}``,
+    or for a script config ``{kind: "script", text, script_id, <its six fields>, config_id?, cache?, buffered?, announcement?}``
     (:func:`_open_script_speech`).
     Answer: ``{"audio_id", "content_type"}``, once the upstream headers arrived.
 
@@ -356,7 +356,13 @@ async def _open_speech(
     label tells which (``adapted``, ``adapt_reason``), never the text. The cache key is
     ``(request, engine name or None)``; with OpenRouter, a cached reading of ``then`` plays when no
     OpenRouter one is cached, so that a re-read stays instant while OpenRouter keeps failing.
+    An optional plain announcement is split separately and precedes the message source. It stays
+    outside text cleaning and adaptation. Its normalized text extends the cache key when non-empty.
     """
+    try:
+        announcement = _optional_string(data, "announcement")
+    except ValueError as error:
+        return _error(str(error), 400)
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
     choice = await sync_to_async(_stored_adapt_choice)()
@@ -380,7 +386,8 @@ async def _open_speech(
         if then is not None:
             names.append(then.name)
         for name in names:
-            cached = speech_cache.get((speech_request, name))
+            key = (speech_request, name, announcement) if announcement else (speech_request, name)
+            cached = speech_cache.get(key)
             if cached is not None:
                 if name is not None:
                     # A cache hit builds no source (which sets it otherwise): the audio is of this engine.
@@ -393,13 +400,18 @@ async def _open_speech(
         source = AdaptedParts(
             speech_request.text, engine, *limits(speech_request), fallback=parts, label=label, then=then
         )
+    pump_parts = parts if source is None else source
+    if announcement and has_speech(announcement):
+        prefix = split(speech_request._replace(text=announcement))
+        if prefix:
+            pump_parts = PrefixedParts(prefix, as_part_source(speech_request.text, pump_parts))
     paced = not buffered
     stream = start_stream(
-        lambda sink: pump(sink, parts if source is None else source, paced),
+        lambda sink: pump(sink, pump_parts, paced),
         label=label,
         on_end=_end_steps(
             speech_request, api_key, config_id, use_cache, source, adapt_reason,
-            cache_name=DIRECT_ENGINE if direct else None,
+            cache_name=DIRECT_ENGINE if direct else None, announcement=announcement,
         ),
     )
     try:
@@ -457,6 +469,7 @@ def _end_steps(
     source: AdaptedParts | None,
     adapt_reason: str | None,
     cache_name: str | None = None,
+    announcement: str = "",
 ):
     """The ``on_end`` of a speech: once its audio is complete, cache it, record the test run, look up the cost.
 
@@ -477,7 +490,8 @@ def _end_steps(
         if use_cache and stream.data:
             try:
                 adapted_by = cache_name or (None if source is None else source.adapted_by)
-                speech_cache.set((speech_request, adapted_by), CachedAudio(bytes(stream.data), stream.content_type))
+                key = (speech_request, adapted_by, announcement) if announcement else (speech_request, adapted_by)
+                speech_cache.set(key, CachedAudio(bytes(stream.data), stream.content_type))
             except Exception:
                 logger.exception("TTS audio could not be cached")
         if config_id:

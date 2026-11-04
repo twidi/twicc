@@ -44,6 +44,29 @@ class StaticParts:
         self._parts.clear()
 
 
+class PrefixedParts:
+    """Plain speech parts before a body source, with the body's lifetime."""
+
+    def __init__(self, prefix: Sequence[str], body: PartSource) -> None:
+        self._prefix = deque(prefix)
+        self._body = body
+        self._has_prefix = bool(self._prefix)
+
+    @property
+    def split(self) -> bool | None:
+        # A spoken prefix and the message require separate audio parts.
+        return True if self._has_prefix else self._body.split
+
+    async def next_part(self) -> str | None:
+        if self._prefix:
+            return self._prefix.popleft()
+        return await self._body.next_part()
+
+    async def aclose(self) -> None:
+        self._prefix.clear()
+        await self._body.aclose()
+
+
 def as_part_source(text: str, parts: Sequence[str] | PartSource | None) -> PartSource:
     """The source a pump pulls its parts from: *parts* itself, or a static source of the parts
     (None: *text* alone, in one part)."""

@@ -1800,12 +1800,14 @@ class Adaptation:
         # Each call takes the next answer: a list of text deltas, or an exception to raise.
         self.answers: list = []
         self.calls: list[str] = []
+        self.prompts: list[str] = []
         self.pulled: list[list[str]] = []
         self.sources: list = []
         self.paced: list[bool] = []
 
     async def open_stream(self, engine, prompt):
         self.calls.append(engine.name)
+        self.prompts.append(prompt)
         answer = self.answers.pop(0)
         if isinstance(answer, BaseException):
             raise answer
@@ -2514,3 +2516,148 @@ def test_the_open_step_logs_no_text(client, adaptation, direct_reading, views_lo
     for message in messages:
         for text in ("Hello", "world", "[](x)"):
             assert text not in message
+
+
+# --- Context spoken before a message --------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+@pytest.mark.parametrize("path", ["direct", "off", "adapted", "fallback"])
+def test_announcement_precedes_message(client, adaptation, direct_reading, kind, path):
+    if kind == "script":
+        _store_script()
+    text = SIMPLE if path == "direct" else TABLE
+    body = {**(SCRIPT_READ if kind == "script" else VALID_PAYLOAD), "text": text}
+    expected = CLEANED if path == "direct" else text
+    if path == "off":
+        _store_adapt("off")
+    elif path == "adapted":
+        adaptation.answers.append(["Adapted message."])
+        expected = "Adapted message."
+    elif path == "fallback":
+        adaptation.answers.append(RuntimeError("Adaptation unavailable"))
+    asyncio.run(_read_through(client, {**body, "announcement": "  Project. Session.  "}))
+    assert adaptation.pulled == [["Project. Session.", expected]]
+    assert adaptation.calls == ([] if path in ("direct", "off") else ["haiku"])
+    assert adaptation.sources[0].split is True
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+def test_announcement_outside_adaptation(client, adaptation, kind):
+    if kind == "script":
+        _store_script()
+    body = SCRIPT_READ if kind == "script" else VALID_PAYLOAD
+    adaptation.answers.append(["Adapted message."])
+    asyncio.run(_read_through(client, {**body, "announcement": "Project. Session."}))
+    assert adaptation.prompts == [adapt.ADAPT_PROMPT.format(text=body["text"])]
+    assert "Project. Session." not in adaptation.prompts[0]
+    assert adaptation.pulled == [["Project. Session.", "Adapted message."]]
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+@pytest.mark.parametrize("path", ["direct", "off", "adapted", "fallback"])
+def test_announcement_cache_isolation(client, adaptation, direct_reading, openrouter_key, kind, path):
+    fields = _store_script() if kind == "script" else None
+    body = {**(SCRIPT_CACHED_READ if kind == "script" else CACHED_PAYLOAD),
+            "text": SIMPLE if path == "direct" else TABLE}
+    request = ScriptSpeechRequest(body["text"], **fields) if fields else parse_speech_request(body)
+    engine = {"direct": "direct", "off": None, "adapted": "haiku", "fallback": "haiku"}[path]
+    if path == "off":
+        _store_adapt("off")
+    elif path == "fallback":
+        _store_adapt("openrouter")
+
+    def queue_answer():
+        if path == "fallback":
+            adaptation.answers.append(OpenRouterTextError("http", 500))
+        if path in ("adapted", "fallback"):
+            adaptation.answers.append(["Adapted message."])
+
+    async def scenario():
+        queue_answer()
+        first_id = await _read_through(client, {**body, "announcement": "  Project. Session.  "})
+        first_audio = await _body(await _read(client, first_id))
+        repeated_id = await _read_through(client, {**body, "announcement": "Project. Session."})
+        repeated_announcement_uses_cache = (
+            len(adaptation.pulled) == 1 and await _body(await _read(client, repeated_id)) == first_audio
+        )
+        assert repeated_announcement_uses_cache is True
+        assert speech_cache.get((request, engine, "Project. Session.")) is not None
+        if path == "fallback":
+            fallback_cache_uses_actual_engine_and_announcement = (
+                speech_cache.get((request, "openrouter", "Project. Session.")) is None
+                and speech_cache.get((request, "haiku")) is None
+            )
+            assert fallback_cache_uses_actual_engine_and_announcement is True
+
+        queue_answer()
+        await _read_through(client, {**body, "announcement": "Different session."})
+        changed_announcement_calls_pump = len(adaptation.pulled) == 2
+        assert changed_announcement_calls_pump is True
+        assert adaptation.pulled[-1][0] == "Different session."
+
+        queue_answer()
+        await _read_through(client, body)
+        omitted_announcement_does_not_play_previous_prefix = (
+            len(adaptation.pulled) == 3 and "Project. Session." not in adaptation.pulled[-1]
+            and "Different session." not in adaptation.pulled[-1]
+        )
+        assert omitted_announcement_does_not_play_previous_prefix is True
+        assert speech_cache.get((request, engine)) is not None
+        # An empty or whitespace announcement keeps the existing two-field key.
+        for announcement in ("", " \n "):
+            await _read_through(client, {**body, "announcement": announcement})
+        assert len(adaptation.pulled) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+def test_announcement_fallback_to_original_cache(client, adaptation, kind):
+    fields = _store_script() if kind == "script" else None
+    body = SCRIPT_CACHED_READ if kind == "script" else CACHED_PAYLOAD
+    request = ScriptSpeechRequest(body["text"], **fields) if fields else parse_speech_request(body)
+    adaptation.answers.append(RuntimeError("Adaptation unavailable"))
+
+    async def scenario():
+        await _read_through(client, {**body, "announcement": "Project. Session."})
+        assert speech_cache.get((request, None, "Project. Session.")) is not None
+        assert speech_cache.get((request, "haiku", "Project. Session.")) is None
+        assert speech_cache.get((request, None)) is None
+        _store_adapt("off")
+        await _read_through(client, {**body, "announcement": "Project. Session."})
+        assert adaptation.pulled == [["Project. Session.", body["text"]]]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("path", ["direct", "off", "adapted", "fallback"])
+def test_long_announcement_respects_script_limits(client, adaptation, direct_reading, path):
+    _store_script(max_chars=30)
+    announcement = "Long project title. " * 20 + "Long session title. " * 20
+    if path == "off":
+        _store_adapt("off")
+    elif path == "adapted":
+        adaptation.answers.append(["Adapted message."])
+    elif path == "fallback":
+        adaptation.answers.append(RuntimeError("Adaptation unavailable"))
+    text = SIMPLE if path == "direct" else TABLE
+    asyncio.run(_read_through(client, {**SCRIPT_READ, "text": text, "announcement": announcement}))
+    parts = adaptation.pulled[0]
+    assert len(parts) > 2
+    assert all(0 < len(part) <= 30 for part in parts)
+    assert " ".join(parts[:-1]).split() == announcement.split()
+    assert parts[-1] == (CLEANED if path == "direct" else "Adapted message." if path == "adapted" else text)
+
+
+@pytest.mark.parametrize("announcement", [None, 3, True, ["Project"], {"project": "Project"}])
+@pytest.mark.parametrize("kind", ["openrouter", "script"])
+def test_non_string_announcement_is_400_without_pump(client, adaptation, kind, announcement):
+    if kind == "script":
+        _store_script()
+    body = SCRIPT_READ if kind == "script" else VALID_PAYLOAD
+    response = asyncio.run(_open(client, {**body, "announcement": announcement}))
+    assert response.status_code == 400
+    assert response.json() == {"error": "'announcement' must be a string"}
+    assert adaptation.sources == []
+    assert adaptation.calls == []

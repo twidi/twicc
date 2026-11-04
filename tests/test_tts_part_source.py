@@ -50,3 +50,72 @@ def test_as_part_source():
             assert as_part_source("The text.", source) is source
 
     asyncio.run(scenario())
+
+
+def test_prefixed_parts_preserves_body_and_closes_it():
+    from twicc.tts.part_source import PrefixedParts
+
+    async def scenario():
+        body = StaticParts(["Body one.", "Body two."])
+        prefix = ["Project.", "Session."]
+        source = PrefixedParts(prefix, body)
+        prefix.append("Added later.")
+        assert isinstance(source, PartSource)
+        assert source.split is True
+        assert [await source.next_part() for _ in range(5)] == [
+            "Project.", "Session.", "Body one.", "Body two.", None,
+        ]
+        await source.aclose()
+
+        body = StaticParts(["Never read."])
+        source = PrefixedParts(["Project."], body)
+        await source.aclose()
+        assert await source.next_part() is None
+        assert await body.next_part() is None
+
+        for parts in (["One."], ["One.", "Two."]):
+            body = StaticParts(parts)
+            source = PrefixedParts([], body)
+            assert source.split is body.split
+            assert await source.next_part() == "One."
+            await source.aclose()
+            assert await body.next_part() is None
+
+    asyncio.run(scenario())
+
+
+def test_prefixed_parts_closes_body_adaptation(monkeypatch):
+    from twicc.tts import adapt
+    from twicc.tts.part_source import PrefixedParts
+
+    async def scenario():
+        async with asyncio.timeout(5):
+            started = asyncio.Event()
+            closed = asyncio.Event()
+
+            async def open_stream(engine, prompt):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                    yield "Unused."
+                finally:
+                    closed.set()
+
+            monkeypatch.setattr(adapt, "_open_stream", open_stream)
+            engine = adapt.OPENROUTER_ENGINE
+            body = adapt.AdaptedParts("Body.", engine, 100, 100, fallback=["Body."], label={})
+            source = PrefixedParts(["Project."], body)
+            await source.aclose()
+            assert await body.next_part() is None
+            assert not started.is_set()
+
+            body = adapt.AdaptedParts("Body.", engine, 100, 100, fallback=["Body."], label={})
+            source = PrefixedParts([], body)
+            assert source.split is None
+            pending = asyncio.create_task(source.next_part())
+            await started.wait()
+            await source.aclose()
+            assert await pending is None
+            assert closed.is_set()
+
+    asyncio.run(scenario())
