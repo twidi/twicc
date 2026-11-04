@@ -339,27 +339,28 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     @wa-after-hide="onPopoverAfterHide"
                 >
                     <div class="timeline-filter-panel" :style="panelRoom ? { maxHeight: `${panelRoom}px` } : null">
-                        <div
-                            v-for="entry in PANEL_GROUPS"
-                            :key="entry.group"
-                            class="timeline-filter-group"
-                            role="group"
-                            :aria-labelledby="entry.labelId"
-                        >
-                            <div :id="entry.labelId" class="timeline-filter-group-label">{{ entry.label }}</div>
-                            <div class="timeline-filter-options">
-                                <!-- The hint is part of the label (small, quiet, right under it), not the checkbox's own
-                                     `hint`, which sits apart under the control. -->
-                                <wa-checkbox
-                                    v-for="option in entry.options"
-                                    :key="option.value"
-                                    size="small"
-                                    class="timeline-filter-option"
-                                    :checked="isChecked(entry.group, option.value)"
-                                    @change="toggle(entry.group, option.value)"
-                                ><span class="timeline-filter-option-text"><span class="timeline-filter-option-label"><ProviderIcon v-if="option.provider" :provider="option.provider" class="timeline-filter-option-icon" />{{ option.label }}</span><span v-if="option.hint" class="timeline-filter-option-hint">{{ option.hint }}</span></span></wa-checkbox>
+                        <template v-for="entry in PANEL_GROUPS" :key="entry.group">
+                            <div
+                                class="timeline-filter-group"
+                                role="group"
+                                :aria-labelledby="entry.labelId"
+                            >
+                                <div :id="entry.labelId" class="timeline-filter-group-label">{{ entry.label }}</div>
+                                <div class="timeline-filter-options">
+                                    <!-- The hint is part of the label (small, quiet, right under it), not the checkbox's own
+                                         `hint`, which sits apart under the control. -->
+                                    <wa-checkbox
+                                        v-for="option in entry.options"
+                                        :key="option.value"
+                                        size="small"
+                                        class="timeline-filter-option"
+                                        :checked="isChecked(entry.group, option.value)"
+                                        @change="toggle(entry.group, option.value)"
+                                    ><span class="timeline-filter-option-text"><span class="timeline-filter-option-label"><ProviderIcon v-if="option.provider" :provider="option.provider" class="timeline-filter-option-icon" />{{ option.label }}</span><span v-if="option.hint" class="timeline-filter-option-hint">{{ option.hint }}</span></span></wa-checkbox>
+                                </div>
                             </div>
-                        </div>
+                            <wa-divider class="timeline-filter-divider"></wa-divider>
+                        </template>
                         <wa-checkbox
                             size="small"
                             class="timeline-filter-option timeline-filter-include-muted"
@@ -567,6 +568,11 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-xs);
+}
+
+.timeline-filter-divider {
+    --spacing: 0;
+    flex: none;
 }
 
 .timeline-filter-group-label {
