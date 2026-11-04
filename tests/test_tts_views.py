@@ -1938,11 +1938,11 @@ def test_an_adapted_script_reading_gets_an_adapted_source(client, adaptation, re
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "script"])
-@pytest.mark.parametrize("case", ["off", "too_long", "no_provider"])
+@pytest.mark.parametrize("case", ["off", "no_provider"])
 def test_a_reading_not_adapted_gets_todays_parts_and_says_why(
     client, adaptation, recorded_sources, streams_log, kind, case
 ):
-    text = "word " * 2401 if case == "too_long" else VALID_PAYLOAD["text"]  # 12,005 characters
+    text = VALID_PAYLOAD["text"]
     if kind == "script":
         _store_script(max_chars=300)
         body = {**SCRIPT_READ, "max_chars": 300, "text": text}
@@ -2398,12 +2398,9 @@ def test_off_reads_as_written_without_the_decision(client, adaptation, direct_re
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "script"])
-@pytest.mark.parametrize("case", ["too_long", "no_provider"])
-def test_direct_comes_before_the_limit_and_the_engine(client, adaptation, direct_reading, streams_log, kind, case):
-    text = "word " * 2601 if case == "too_long" else SIMPLE  # 13,005 characters
-    text = text.strip()
-    if case == "no_provider":
-        adaptation.running = set()
+def test_direct_comes_before_the_engine(client, adaptation, direct_reading, streams_log, kind):
+    text = SIMPLE.strip()
+    adaptation.running = set()
     if kind == "script":
         _store_script()
         body = {**SCRIPT_READ, "text": text}
@@ -2413,10 +2410,9 @@ def test_direct_comes_before_the_limit_and_the_engine(client, adaptation, direct
     assert adaptation.calls == []
     [line] = _speech_lines(streams_log)
     assert " adapted=direct " in line
-    assert "too_long" not in line
     assert "no_provider" not in line
     # The parts cut the text where whitespace falls: compare the words.
-    assert " ".join(adaptation.pulled[0]).split() == (text if case == "too_long" else CLEANED).split()
+    assert " ".join(adaptation.pulled[0]).split() == CLEANED.split()
 
 
 def test_a_settings_test_always_adapts(client, adaptation, direct_reading):

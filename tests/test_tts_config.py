@@ -367,7 +367,7 @@ def test_last_test_keeps_the_adaptation_fields():
     assert _normalized_last_test(not_adapted) == not_adapted
 
 
-@pytest.mark.parametrize("reason", ["off", "no_provider", "too_long", "failed", "stalled", "empty", "refused"])
+@pytest.mark.parametrize("reason", ["off", "no_provider", "failed", "stalled", "empty", "refused"])
 def test_last_test_keeps_every_adapt_reason(reason):
     assert _normalized_last_test({**LAST_TEST, "adapt_reason": reason})["adapt_reason"] == reason
 

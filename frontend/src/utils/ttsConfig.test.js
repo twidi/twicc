@@ -672,7 +672,6 @@ test('ttsAdaptationFacts: why the text was not adapted', () => {
     const reasons = {
         off: 'the option is off',
         no_provider: 'no Claude or Codex provider is running',
-        too_long: 'the text is too long',
         failed: 'the model failed',
         stalled: 'the model did not answer in time',
         empty: 'the model gave no text',
@@ -701,7 +700,7 @@ test('ttsAdaptationFacts: the engine that failed is named', () => {
         'Not adapted: Claude Haiku 5.5 failed (the model gave no text)',
     )
     // No engine ran for these reasons: the wording stays.
-    for (const [reason, text] of [['off', 'the option is off'], ['too_long', 'the text is too long'], ['no_provider', 'no Claude or Codex provider is running']]) {
+    for (const [reason, text] of [['off', 'the option is off'], ['no_provider', 'no Claude or Codex provider is running']]) {
         assert.equal(ttsAdaptationFacts({ ...run, adapt_engine: 'haiku', adapt_reason: reason }), `Not adapted: ${text}`)
     }
     // An unknown engine is not named.

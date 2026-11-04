@@ -77,8 +77,10 @@ Speech section: **Adapt the text for speech** with three choices: the Claude mod
     becomes its site;
   - drops the Markdown syntax and decorative symbols;
   - answers with the adapted text only: plain text, no preamble, no comment.
-- **Size limit**: a text longer than a fixed limit (a few thousand words; the model's output limit
-  must hold the whole adaptation) is read without adaptation.
+- **Size limit**: the agents (Haiku, Luna) have none: a message an agent wrote fits its output.
+  OpenRouter's model holds the text and its adaptation in one 65.5K-token context, so a text over
+  `OPENROUTER_ADAPT_MAX_CHARS` (60,000 characters) goes to the first running agent instead.
+  (This replaces an earlier fixed 12,000-character limit for every engine.)
 
 ## The hermetic streaming mode
 

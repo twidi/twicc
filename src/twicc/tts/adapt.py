@@ -49,9 +49,9 @@ OPENROUTER_FIRST_TEXT_SECONDS = 5.0
 OPENROUTER_NEXT_TEXT_SECONDS = 5.0
 # The HTTP statuses of an OpenRouter call refused for its key or its account (wrong key, no credits).
 _REFUSED_STATUSES = frozenset({401, 402, 403})
-# The longest text adapted (the model's output limit must hold the whole adaptation); a longer one
-# is read as written.
-ADAPT_MAX_CHARS = 12_000
+# The longest text OpenRouter adapts: its model holds 65.5K tokens for the text and its adaptation
+# together (32.8K output at most). A longer text goes to an agent, which has no such limit.
+OPENROUTER_ADAPT_MAX_CHARS = 60_000
 # The adapted text kept in the last test record.
 TEST_TEXT_KEEP_CHARS = 4_000
 
@@ -141,16 +141,14 @@ _tasks: set[asyncio.Task] = set()
 
 def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | None]:
     """The engine that adapts ``text`` for the stored ``choice``, else why the text is read as
-    written (``"off"``, ``"too_long"``, ``"no_provider"``). A chosen agent whose provider does not
-    run gives way to the other one; no choice takes the first agent whose provider runs. OpenRouter
-    needs only the OpenRouter key, no provider: without the key, an OpenRouter choice resolves as no
-    choice."""
+    written (``"off"``, ``"no_provider"``). A chosen agent whose provider does not run gives way to
+    the other one; no choice takes the first agent whose provider runs. OpenRouter needs only the
+    OpenRouter key, no provider: without the key, or for a text beyond its limit, an OpenRouter
+    choice resolves as no choice."""
     if choice == "off":
         return None, "off"
-    if len(text) > ADAPT_MAX_CHARS:
-        return None, "too_long"
     if choice == OPENROUTER_ENGINE.name:
-        if openrouter_key_set():
+        if openrouter_key_set() and len(text) <= OPENROUTER_ADAPT_MAX_CHARS:
             return OPENROUTER_ENGINE, None
         choice = None
     chosen = _ENGINES_BY_NAME.get(choice)

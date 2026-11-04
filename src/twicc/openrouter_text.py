@@ -40,7 +40,7 @@ class TextModel(NamedTuple):
     options: dict
 
 
-QWEN_MODEL = TextModel("qwen/qwen3.8-27b", "Cerebras", {"reasoning": {"effort": "none"}, "max_tokens": 8000})
+QWEN_MODEL = TextModel("qwen/qwen3.8-27b", "Cerebras", {"reasoning": {"effort": "none"}})
 
 # The model behind the "OpenRouter" choice, for titles and for the speech adaptation.
 # A change also edits OPENROUTER_MODEL_DESCRIPTION (frontend/src/constants.js) and the help page.

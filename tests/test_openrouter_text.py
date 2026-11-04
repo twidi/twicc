@@ -104,7 +104,7 @@ async def _call(mode, prompt="hi", **kwargs):
 def test_the_qwen_model():
     assert QWEN_MODEL.model == "qwen/qwen3.8-27b"
     assert QWEN_MODEL.provider == "Cerebras"
-    assert QWEN_MODEL.options == {"reasoning": {"effort": "none"}, "max_tokens": 8000}
+    assert QWEN_MODEL.options == {"reasoning": {"effort": "none"}}
 
 
 def test_the_openrouter_choice_runs_the_qwen_model():
@@ -147,7 +147,7 @@ def test_the_request_forces_the_provider_and_sends_the_options(mock_openrouter, 
     assert body["provider"] == {"order": ["Cerebras"], "allow_fallbacks": False}
     assert body["usage"] == {"include": True}
     assert body["reasoning"] == {"effort": "none"}
-    assert body["max_tokens"] == 8000
+    assert "max_tokens" not in body
     assert body["messages"] == [{"role": "user", "content": "hi"}]
     assert body["stream"] is (mode == "stream")
 

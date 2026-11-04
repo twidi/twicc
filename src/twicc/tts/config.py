@@ -29,7 +29,7 @@ ADAPT_CHOICES = (*ADAPT_ENGINES, "off")
 # Why a reading was not adapted, or why OpenRouter failed before an agent took over (in the log
 # line and the last test). ``refused``: OpenRouter refused the call (no key, a wrong key, no
 # credits).
-ADAPT_REASONS = ("off", "no_provider", "too_long", "failed", "stalled", "empty", "refused")
+ADAPT_REASONS = ("off", "no_provider", "failed", "stalled", "empty", "refused")
 
 
 def empty_tts_config() -> dict:

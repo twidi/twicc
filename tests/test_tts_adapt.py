@@ -16,7 +16,7 @@ from twicc.openrouter_text import OpenRouterTextError, TextModel
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.tts import adapt
 from twicc.tts.adapt import (
-    ADAPT_MAX_CHARS,
+    OPENROUTER_ADAPT_MAX_CHARS,
     ADAPT_PROMPT,
     ADAPT_STOPPED,
     OPENROUTER_ENGINE,
@@ -150,7 +150,7 @@ def test_the_prompt_frames_the_text():
     assert ADAPT_PROMPT.startswith("You rewrite a text so that a speech engine can read it aloud.")
     assert ADAPT_PROMPT.endswith("\n\n<text>\n{text}\n</text>")
     assert ADAPT_PROMPT.count("{text}") == 1
-    assert (ADAPT_MAX_CHARS, adapt.TEST_TEXT_KEEP_CHARS) == (12_000, 4_000)
+    assert (OPENROUTER_ADAPT_MAX_CHARS, adapt.TEST_TEXT_KEEP_CHARS) == (60_000, 4_000)
     assert ADAPT_STOPPED == "The text adaptation stopped before the end"
 
 
@@ -228,10 +228,11 @@ def test_engine_resolution(monkeypatch):
     assert resolve_engine("off", text) == (None, "off")
 
     running = {Provider.CLAUDE_CODE, Provider.CODEX}
-    assert resolve_engine(None, "x" * ADAPT_MAX_CHARS) == (HAIKU, None)
-    assert resolve_engine(None, "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
-    assert resolve_engine("luna", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
-    assert resolve_engine("off", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "off")
+    # An agent has no size limit.
+    long_text = "x" * (OPENROUTER_ADAPT_MAX_CHARS + 1)
+    assert resolve_engine(None, long_text) == (HAIKU, None)
+    assert resolve_engine("luna", long_text) == (LUNA, None)
+    assert resolve_engine("off", long_text) == (None, "off")
 
 
 def test_open_stream_dispatches_to_the_engine(monkeypatch):
@@ -687,7 +688,7 @@ def test_openrouter_resolves_only_with_the_key(monkeypatch):
     # With the key, OpenRouter needs no provider.
     for running in (set(), {Provider.CLAUDE_CODE}, {Provider.CLAUDE_CODE, Provider.CODEX}):
         assert resolve_engine("openrouter", text) == (OPENROUTER_ENGINE, None)
-    assert resolve_engine("openrouter", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+    assert resolve_engine("openrouter", "x" * OPENROUTER_ADAPT_MAX_CHARS) == (OPENROUTER_ENGINE, None)
     assert resolve_engine("off", text) == (None, "off")
     # No choice never takes OpenRouter.
     running = {Provider.CLAUDE_CODE}
@@ -701,7 +702,18 @@ def test_openrouter_resolves_only_with_the_key(monkeypatch):
     assert resolve_engine("openrouter", text) == (LUNA, None)
     running = set()
     assert resolve_engine("openrouter", text) == (None, "no_provider")
-    assert resolve_engine("openrouter", "x" * (ADAPT_MAX_CHARS + 1)) == (None, "too_long")
+    assert resolve_engine("openrouter", "x" * (OPENROUTER_ADAPT_MAX_CHARS + 1)) == (None, "no_provider")
+
+
+def test_openrouter_gives_a_too_long_text_to_an_agent(monkeypatch):
+    running = {Provider.CODEX}
+    monkeypatch.setattr(adapt, "is_provider_running", lambda provider: provider in running)
+    monkeypatch.setattr(adapt, "openrouter_key_set", lambda: True)
+    long_text = "x" * (OPENROUTER_ADAPT_MAX_CHARS + 1)
+
+    assert resolve_engine("openrouter", long_text) == (LUNA, None)
+    running = set()
+    assert resolve_engine("openrouter", long_text) == (None, "no_provider")
 
 
 def test_fallback_engine(monkeypatch):

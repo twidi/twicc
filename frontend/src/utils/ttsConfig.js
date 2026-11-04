@@ -357,7 +357,6 @@ export const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVID
 const ADAPT_REASON_TEXTS = {
     off: 'the option is off',
     no_provider: 'no Claude or Codex provider is running',
-    too_long: 'the text is too long',
     failed: 'the model failed',
     stalled: 'the model did not answer in time',
     empty: 'the model gave no text',
