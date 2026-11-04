@@ -153,7 +153,6 @@ function primePlayers() {
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
 async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '' }) {
-    if (owner !== null && store.status !== 'idle') return { ...ABORTED, busy: true }
     cancelPlayback(store)
     const mine = ++generation
 
@@ -480,6 +479,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
          * An owned read starts only when idle. The announcement leaves the original message identity unchanged.
          */
         play(text, { origin = null, owner = null, announcement = '' } = {}) {
+            if (owner !== null && this.status !== 'idle') return Promise.resolve({ ...ABORTED, busy: true })
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
             const fields = speechFieldsOf(config)

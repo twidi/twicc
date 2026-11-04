@@ -188,6 +188,24 @@ test('owned play waits rather than replacing busy manual speech', async () => {
     assert.deepEqual(await manual, ABORTED)
 })
 
+test('owned play reports busy during a manual settings test without an active config', async () => {
+    store.applyConfig(payload({ activeId: null }))
+    store._openSpeech = abortableRequest('open')
+    const manual = store.playWith('settings preview', FIELDS, { configId: 'c1' })
+    const playback = { ...store.playback }
+    const before = [...log]
+    assert.equal(store.activeConfig, null)
+    assert.equal(store.status, 'loading')
+    assert.deepEqual(await store.play('automatic', { owner: 'listener-a' }), { ok: false, aborted: true, busy: true })
+    assert.deepEqual(store.playback, playback)
+    assert.deepEqual(log, before)
+    assert.equal(log.filter(entry => entry === 'open').length, 1)
+    store.stop()
+    assert.deepEqual(await manual, ABORTED)
+    assert.deepEqual(await store.play('automatic', { owner: 'listener-a' }), { ok: false, error: 'No active text-to-speech config' })
+    assert.deepEqual(await store.play('manual'), { ok: false, error: 'No active text-to-speech config' })
+})
+
 test('owned play cannot replace playing speech, including its own owner', async () => {
     const pending = store.play('first', { owner: 'listener-a' })
     await until(() => fakePlayer.handlers)
