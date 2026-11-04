@@ -55,6 +55,9 @@ background JavaScript, WebSocket connections, or audio playback.
   updating Firefox or Android System WebView does not update bundled Gecko.
 - Build: JDK **17**, Gradle **9.6.0**, AGP **9.4.0**, Kotlin **2.4.20**, SDK
   Platform **37.2**, Build Tools **36.0.0**. `minSdk = 29`, `targetSdk = 35`.
+- Build script: **Bash** and **`sha256sum`** (GNU coreutils), both available on `PATH`.
+- SDK setup: Android SDK command-line tools provide `sdkmanager`.
+  Network access is required to download the SDK, Gradle, and dependencies.
 - AndroidX WebKit **1.14.0** belongs only to the WebView flavor. GeckoView
   belongs only to the Gecko flavor. Dependencies are pinned.
 - No Play Store account is required to build and install debug APKs.
