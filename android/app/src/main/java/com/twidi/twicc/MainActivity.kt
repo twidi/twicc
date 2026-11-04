@@ -1,5 +1,6 @@
-package com.twicc.android
+package com.twidi.twicc
 
+import com.twidi.twicc.browser.EngineProvider
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -119,7 +120,7 @@ class MainActivity : Activity() {
     private fun confirmRemove(instance: Instance) {
         AlertDialog.Builder(this)
             .setTitle("Remove ${instance.name}?")
-            .setMessage("Remove this address and request deletion of its Gecko login and Web storage. The server is unchanged.")
+            .setMessage("Remove this address and request deletion of its login and Web storage in each engine. The server is unchanged.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Remove") { _, _ ->
                 store.remove(instance)
@@ -131,10 +132,9 @@ class MainActivity : Activity() {
 
     private fun deleteUnusedProfiles() {
         try {
-            store.pendingProfileDeletions().forEach { name ->
+            store.pendingProfileDeletions(BuildConfig.FLAVOR).forEach { name ->
                 // The browser session is closed before returning to the instance manager.
-                runCatching { BrowserEngine.get(this).storageController.clearDataForSessionContext(name) }
-                    .onSuccess { store.profileDeleted(name) }
+                if (EngineProvider.engine.requestStorageDeletion(this, name)) store.profileDeleted(name, BuildConfig.FLAVOR)
             }
         } catch (_: RuntimeException) {
             // An engine startup failure must not prevent editing saved addresses.

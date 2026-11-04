@@ -1,4 +1,4 @@
-package com.twicc.android
+package com.twidi.twicc
 
 import java.net.URI
 import java.util.Locale

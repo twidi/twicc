@@ -1,4 +1,4 @@
-package com.twicc.android
+package com.twidi.twicc
 
 /** Use server and document-provider names only as names, never as paths. */
 object FileNames {

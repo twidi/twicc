@@ -1,4 +1,4 @@
-package com.twicc.android
+package com.twidi.twicc
 
 import android.app.Activity
 import android.graphics.Insets

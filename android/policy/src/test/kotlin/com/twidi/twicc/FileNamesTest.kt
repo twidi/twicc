@@ -1,4 +1,4 @@
-package com.twicc.android
+package com.twidi.twicc
 
 import org.junit.Assert.*
 import org.junit.Test

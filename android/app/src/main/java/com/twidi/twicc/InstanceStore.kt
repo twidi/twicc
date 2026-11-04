@@ -1,4 +1,4 @@
-package com.twicc.android
+package com.twidi.twicc
 
 import android.content.Context
 import org.json.JSONArray
@@ -68,17 +68,19 @@ class InstanceStore(context: Context) {
     }
 
     fun deferProfileDeletion(instance: Instance) {
-        val pending = preferences.getStringSet("removedProfiles", emptySet()).orEmpty().toMutableSet()
-        pending.add(instance.profileName)
-        preferences.edit().putStringSet("removedProfiles", pending).remove("page-${instance.id}").apply()
+        val edit = preferences.edit().remove("page-${instance.id}")
+        // Keep an independent tombstone until each build has requested its own storage cleanup.
+        listOf("gecko", "webview").forEach { engine ->
+            edit.putStringSet("removedProfiles-$engine", pendingProfileDeletions(engine) + instance.profileName)
+        }
+        edit.apply()
     }
 
-    fun pendingProfileDeletions(): Set<String> = preferences.getStringSet("removedProfiles", emptySet()).orEmpty().toSet()
+    fun pendingProfileDeletions(engine: String): Set<String> =
+        preferences.getStringSet("removedProfiles-$engine", emptySet()).orEmpty().toSet()
 
-    fun profileDeleted(name: String) {
-        val pending = pendingProfileDeletions().toMutableSet()
-        pending.remove(name)
-        preferences.edit().putStringSet("removedProfiles", pending).apply()
+    fun profileDeleted(name: String, engine: String) {
+        preferences.edit().putStringSet("removedProfiles-$engine", pendingProfileDeletions(engine) - name).apply()
     }
 
     private fun write(instances: List<Instance>) {

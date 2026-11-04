@@ -3,17 +3,22 @@ plugins {
 }
 
 android {
-    namespace = "com.twicc.android"
+    namespace = "com.twidi.twicc"
     compileSdk {
         version = release(37) { minorApiLevel = 2 }
     }
 
     defaultConfig {
-        applicationId = "com.twicc.android"
+        applicationId = "com.twidi.twicc"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.2.0"
+        versionCode = 8
+        versionName = "0.3.0"
+    }
+    flavorDimensions += "engine"
+    productFlavors {
+        create("webview") { dimension = "engine" }
+        create("gecko") { dimension = "engine" }
     }
     buildFeatures { buildConfig = true }
     splits {
@@ -38,6 +43,7 @@ android {
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 dependencies {
-    implementation("org.mozilla.geckoview:geckoview:159.0.20261102144711")
+    "geckoImplementation"("org.mozilla.geckoview:geckoview:159.0.20261102144711")
+    "webviewImplementation"("androidx.webkit:webkit:1.14.0")
     implementation(project(":policy"))
 }
