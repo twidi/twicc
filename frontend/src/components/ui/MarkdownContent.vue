@@ -872,7 +872,7 @@ function handleLinkClick(event) {
                     <wa-icon name="copy"></wa-icon>
                 </wa-button>
                 <TextToSpeechButton v-if="speakable" :text="source" />
-                <wa-button v-if="summaryContext?.available" size="small" :title="summaryContext.entry?.text || summaryContext.descriptor?.saved || summaryContext.descriptor?.previous ? 'Show summary' : 'Summarize message'" aria-label="Summarize message" @click="summaryContext.summarize">
+                <wa-button v-if="summaryContext?.available" size="small" :disabled="!summaryContext.canSummarize" :title="!summaryContext.canSummarize ? summaryContext.generationUnavailableReason : summaryContext.entry?.text || summaryContext.descriptor?.saved || summaryContext.descriptor?.previous ? 'Show summary' : 'Summarize message'" aria-label="Summarize message" @click="summaryContext.summarize">
                     <wa-icon name="compress"></wa-icon>
                 </wa-button>
             </wa-button-group>

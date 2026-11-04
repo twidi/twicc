@@ -51,6 +51,7 @@ async function loadComponent() {
             stop() {},
         })
     `)
+    const summaryGenerationStub = dataModule(`export const useTemporarySummaryGeneration = () => ({ __v_isRef: true, value: { available: true, unavailableReason: '' } })`)
     const summariesStub = dataModule(`export const useSummariesStore = () => ({ openTemporary() {} })`)
     const selectionReadStub = dataModule(`
         export const READ_TITLES = { idle: 'Read aloud', loading: 'Cancel the request', playing: 'Stop reading' }
@@ -70,6 +71,7 @@ async function loadComponent() {
         .replace("from '../../../composables/useToast'", `from '${toastStub}'`)
         .replace("from '../../../stores/textToSpeech'", `from '${speechStoreStub}'`)
         .replace("from '../../../stores/summaries'", `from '${summariesStub}'`)
+        .replace("from '../../../composables/useTemporarySummaryGeneration'", `from '${summaryGenerationStub}'`)
         .replace("from '../../../utils/selectionRead'", `from '${selectionReadStub}'`)
         .replace("from '../../../utils/touchTapFallback'", `from '${touchTapFallbackStub}'`)
 

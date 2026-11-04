@@ -18,11 +18,11 @@ async function copy() {
     <section class="message-summary" aria-label="Message summary">
         <template v-if="summary.view === 'summary'">
             <strong>Summary</strong>
-            <SummaryContent v-if="summary.entry" :entry="summary.entry" show-original @show-original="summary.showOriginal" @retry="summary.regenerate" @cancel="summary.cancel" />
+            <SummaryContent v-if="summary.entry" :entry="summary.entry" :retry-disabled="!summary.generationAvailable" :retry-unavailable-reason="summary.generationUnavailableReason" show-original @show-original="summary.showOriginal" @retry="summary.regenerate" @cancel="summary.cancel" />
             <div v-else>
                 <p v-if="summary.loading" role="status">Loading summary…</p>
                 <wa-button size="small" @click="summary.showOriginal">Show original</wa-button>
-                <wa-button v-if="summary.error" size="small" @click="summary.summarize">Retry</wa-button>
+                <wa-button v-if="summary.error" size="small" :disabled="!summary.canSummarize" :title="!summary.canSummarize ? summary.generationUnavailableReason : undefined" @click="summary.summarize">Retry</wa-button>
             </div>
             <wa-callout v-if="summary.error" variant="danger">{{ summary.error }}</wa-callout>
             <template v-if="summary.entry && summary.generation && summary.entry !== summary.generation">

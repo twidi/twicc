@@ -1,5 +1,8 @@
 import { computed, inject, markRaw, nextTick, onScopeDispose, reactive, toValue, watch } from 'vue'
 import { summarySourceKey, useSummariesStore } from '../stores/summaries.js'
+import { useSettingsStore } from '../stores/settings.js'
+import { useTextToSpeechStore } from '../stores/textToSpeech.js'
+import { summaryGenerationAvailability } from '../utils/ttsConfig.js'
 
 export const MESSAGE_SUMMARY_CONTEXT = Symbol('message-summary')
 export const MESSAGE_SUMMARY_VISIT = Symbol('message-summary-visit')
@@ -11,6 +14,9 @@ export function createMessageSummaryVisit(reveal = () => {}) {
 
 export function useMessageSummary(sourceRequest, visit = null) {
     const store = useSummariesStore()
+    const settings = useSettingsStore(), speech = useTextToSpeechStore()
+    const routing = computed(() => summaryGenerationAvailability(settings.summaryModel, settings.enabledProviders, speech.keyPresent,
+        descriptor.value?.openrouter_eligible))
     const sharedVisit = visit ?? inject(MESSAGE_SUMMARY_VISIT, null)
     const scope = sharedVisit ?? createMessageSummaryVisit()
     const source = computed(() => toValue(sourceRequest))
@@ -35,6 +41,10 @@ export function useMessageSummary(sourceRequest, visit = null) {
     const entry = computed(() => group.value?.saved ?? generation.value)
     const view = computed(() => group.value?.view ?? 'original')
     const available = computed(() => !!descriptor.value && !!(descriptor.value.eligible || descriptor.value.saved || descriptor.value.previous))
+    const generationAvailable = computed(() => !!descriptor.value?.eligible && routing.value.available)
+    const generationUnavailableReason = computed(() => !routing.value.available ? routing.value.unavailableReason
+        : descriptor.value?.unavailable_reason || (!descriptor.value?.eligible ? 'This source is unavailable for summary generation.' : ''))
+    const canSummarize = computed(() => available.value && !!(entry.value || descriptor.value.saved || descriptor.value.previous || generationAvailable.value))
     const identity = computed(() => descriptor.value ? {
         sourceKey: descriptor.value.source_key, sourceHash: descriptor.value.source_hash, variant: 'summary',
     } : null)
@@ -99,7 +109,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         }
     }
     async function request(regenerate) {
-        if (!descriptor.value?.eligible || !group.value) return
+        if (!group.value || ((regenerate || generation.value?.state !== 'running') && !generationAvailable.value)) return
         const target = group.value
         target.error = null
         const subscription = store.request({ ...source.value }, { manual: true, regenerate })
@@ -107,7 +117,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         try { await subscription.ready } catch { /* The shared entry exposes the acquisition error. */ }
     }
     async function summarize() {
-        if (!available.value) return
+        if (!canSummarize.value) return
         const target = group.value, d = descriptor.value
         target.view = 'summary'
         // Reveal after rendering the new height. The existing navigator owns scroll intent and anchoring.
@@ -132,13 +142,13 @@ export function useMessageSummary(sourceRequest, visit = null) {
         group.value.saved = null
         await summarize()
     }
-    async function regenerate() { if (group.value) group.value.view = 'summary'; await request(true) }
+    async function regenerate() { if (!generationAvailable.value) return; if (group.value) group.value.view = 'summary'; await request(true) }
     function showOriginal() { if (group.value) group.value.view = 'original' }
     function cancel() { if (generation.value) store.cancel(generation.value) }
     async function refreshSaved(savedId) { await loadSaved(savedId, !!entry.value?.previousPolicy) }
 
     return reactive({
-        descriptor, entry, generation, view, available, identity, playbackReference,
+        descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference,
         loading: computed(() => !!group.value?.loading),
         error: computed(() => group.value?.error ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),
         isHost: computed(() => !!descriptor.value && source.value?.line_num === descriptor.value.first_line),

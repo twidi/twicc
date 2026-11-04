@@ -4,7 +4,7 @@ import test from 'node:test'
 import * as Vue from 'vue'
 import { createPinia } from 'pinia'
 import { Message } from '../../../tests/helpers/timelineMessageComponent.js'
-import * as messageSummaryModule from '../../composables/useMessageSummary.js'
+import { messageSummaryModule } from '../../../tests/helpers/messageSummaryHarness.js'
 import * as speechModule from '../../stores/textToSpeech.js'
 import { setSpeechPlayerFactory } from '../../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../../utils/pcmStreamPlayer.js'
@@ -45,7 +45,7 @@ const SpeechButton = compileComponent(new URL('../ui/TextToSpeechButton.vue', im
 })
 const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
     'vue-router': { RouterLink },
-    '../../composables/useMessageSummary.js': messageSummaryModule,
+    '../../composables/useMessageSummary.js': messageSummaryModule(),
     '../../stores/textToSpeech': speechModule,
     '../../stores/data': { useDataStore: () => dataStore },
     '../../utils/timeline/describeEvent': describeEventModule,

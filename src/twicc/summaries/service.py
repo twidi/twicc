@@ -20,7 +20,7 @@ from django.utils import timezone
 from twicc.core.models import MessageSummary, Session
 from twicc.openrouter_text import OPENROUTER_TEXT_MODEL, OpenRouterTextError
 from twicc.providers.codex.title_suggest import TITLE_MODEL
-from twicc.providers.text_calls import Engine, fallback_engine, resolve_engine, step_limits, stream_text
+from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS, Engine, fallback_engine, resolve_engine, step_limits, stream_text
 from twicc.providers.text_calls import _openrouter_reason
 from twicc.summaries.sources import SummarySource, normalize_summary_model, resolve_source
 from twicc.synced_settings import read_synced_settings
@@ -97,6 +97,7 @@ def _prepare(source_request: dict):
     descriptor = {'source_key': source.source_key, 'source_hash': source.source_hash, 'policy_key': policy,
                   'session_id': source.session_id, 'first_line': source.first_line, 'text_lines': list(source.text_lines),
                   'content_chars': source.content_chars, 'eligible': source.eligible,
+                  'openrouter_eligible': len(source.input_text) <= OPENROUTER_ADAPT_MAX_CHARS,
                   'unavailable_reason': source.unavailable_reason,
                   'saved': _saved_metadata(saved) if saved else None,
                   'previous': _saved_metadata(previous) if previous else None,

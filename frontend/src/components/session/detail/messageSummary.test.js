@@ -4,13 +4,17 @@ import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useSummariesStore, summarySourceKey } from '../../../stores/summaries.js'
+import { messageSummaryModule } from '../../../../tests/helpers/messageSummaryHarness.js'
+import { PROVIDER } from '../../../constants.js'
+import { useTextToSpeechStore } from '../../../stores/textToSpeech.js'
 import { compileComponent, descendants, flush, makeRenderer, deferred } from '../../../../tests/helpers/scrollerComponentHarness.js'
 
 const descriptor = (fields = {}) => ({ session_id: 's', source_key: 'native', source_hash: 'hash', policy_key: 'p', first_line: 12, text_lines: [12, 14], eligible: true, saved: null, previous: null, ...fields })
 const textOf = node => node.type === '#comment' ? '' : `${node.text || ''}${node.children.map(textOf).join('')}`
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 async function setup(t, initial = descriptor()) {
-    const module = await import('../../../composables/useMessageSummary.js')
+    const settings = Vue.reactive({ summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] })
+    const module = messageSummaryModule(settings)
     setActivePinia(createPinia()); const store = useSummariesStore(), calls = [], gate = deferred()
     let current = initial
     store._fetch = async (url, options) => {
@@ -27,7 +31,7 @@ async function setup(t, initial = descriptor()) {
     const Summary = compileComponent(new URL('./items/MessageSummary.vue', import.meta.url), {
         '../../../../stores/textToSpeech': { useTextToSpeechStore: () => ({ statusForSummary: () => 'idle' }) },
         '../../../../composables/useToast': { toast: { success() {}, error() {} } },
-        '../../../ui/SummaryContent.vue': { props: ['entry'], setup: p => () => Vue.h('summary-body', p.entry.text) },
+        '../../../ui/SummaryContent.vue': compileComponent(new URL('../../ui/SummaryContent.vue', import.meta.url)),
         '../../../ui/TextToSpeechButton.vue': { props: ['text', 'summaryRef', 'summaryIdentity'], setup: p => () => Vue.h('speech', { ...p }) },
     })
     const Row = { props: ['index'], setup(p) {
@@ -38,7 +42,7 @@ async function setup(t, initial = descriptor()) {
     const { renderer, root } = makeRenderer()
     const app = renderer.createApp({ render: () => Vue.h('chat', [visible.value ? Vue.h(Row, { index: 0 }) : null, Vue.h('tool', 'tool output'), Vue.h('thinking', 'reasoning'), Vue.h('media', 'image'), Vue.h(Row, { index: 1 })]) })
     app.mount(root); t.after(() => { gate.resolve(); app.unmount() }); await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
-    return { module, store, calls, visit, bindings, sources, visible, root, gate, setDescriptor(value) { current = value }, async invalidate() { for (const source of sources) { const key = summarySourceKey(source); store.descriptors[key] = null; store.lookupVersions[key] = (store.lookupVersions[key] || 0) + 1 }; await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush() } }
+    return { module, settings, store, calls, visit, bindings, sources, visible, root, gate, setDescriptor(value) { current = value }, async invalidate() { for (const source of sources) { const key = summarySourceKey(source); store.descriptors[key] = null; store.lookupVersions[key] = (store.lookupVersions[key] || 0) + 1 }; await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush() } }
 }
 
 test('two rows share one canonical host; a later action targets the native message and retains unrelated content', async t => {
@@ -153,7 +157,7 @@ test('a pending Read cannot substitute an authoritatively acquired different sou
 })
 
 test('Codex before/plan/after segments consume one row context and create no additional summary host', async t => {
-    const module = await import('../../../composables/useMessageSummary.js')
+    const module = messageSummaryModule()
     const rendering = await import('../../../inline-artifacts/rendering.js')
     const markdown = await import('../../../utils/markdown.js')
     const plan = await import('../../../providers/codex/proposedPlan.js')
@@ -180,7 +184,7 @@ test('Codex before/plan/after segments consume one row context and create no add
 })
 
 test('the actual SessionItem source gate excludes synthetic, user, tool, reasoning and compact rows', async () => {
-    const module = await import('../../../composables/useMessageSummary.js')
+    const module = messageSummaryModule()
     const source = read('./SessionItem.vue'), start = source.indexOf('const summaryVisit ='), end = source.indexOf('// Only persisted assistant rows', start)
     const props = { kind: 'assistant_message', sessionId: 's', lineNum: 12, content: null, syntheticKind: null }
     let visit = module.createMessageSummaryVisit()
@@ -219,4 +223,67 @@ test('previous-policy results remain explicitly accessible beside a current resu
     await bindings[0].showCurrent(); assert.equal(bindings[0].entry.text, 'Current policy body')
     await bindings[0].regenerate(); await bindings[0].showPrevious()
     assert.equal(bindings[0].generation.state, 'running'); assert.equal(bindings[0].entry.text, 'Previous policy body')
+})
+
+
+test('message generation and Retry disable without an engine while saved display and speech stay available', async t => {
+    const { settings, bindings, calls, root } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    settings.enabledProviders = []; await flush()
+    assert.equal(bindings[0].generationAvailable, false)
+    await bindings[0].summarize(); await flush()
+    assert.equal(bindings[0].entry.text, 'Saved A')
+    assert.deepEqual(bindings[0].playbackReference(), { saved_id: 7, result_hash: 'result-a' })
+    const retry = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry')[0]
+    assert.equal(retry.props.disabled, true); assert.match(retry.props.title, /No summary engine/)
+    await bindings[0].regenerate()
+    assert.equal(calls.filter(([url]) => url === '/api/summaries/').length, 0)
+})
+test('message controller uses requested model routing and key state only for new generation', async t => {
+    const { settings, bindings, calls } = await setup(t)
+    settings.enabledProviders = []; await flush()
+    assert.equal(bindings[0].canSummarize, false)
+    await bindings[0].summarize(); assert.equal(bindings[0].view, 'original')
+    assert.equal(calls.filter(([url]) => url === '/api/summaries/').length, 0)
+    const speech = useTextToSpeechStore(); speech.keyPresent = true; await flush()
+    assert.equal(bindings[0].generationAvailable, false, 'Auto does not select OpenRouter')
+    settings.summaryModel = 'openrouter'; await flush()
+    assert.equal(bindings[0].generationAvailable, true)
+    speech.keyPresent = false; settings.enabledProviders = [PROVIDER.CODEX]; settings.summaryModel = 'haiku'; await flush()
+    assert.equal(bindings[0].generationAvailable, true, 'unavailable Haiku falls back to enabled Luna')
+})
+
+test('an over-limit OpenRouter source disables generation without agents but keeps saved access', async t => {
+    const { settings, bindings, calls } = await setup(t, descriptor({ openrouter_eligible: false, saved: { id: 7, result_hash: 'result-a' } }))
+    settings.summaryModel = 'openrouter'; settings.enabledProviders = []; useTextToSpeechStore().keyPresent = true
+    await flush()
+    assert.equal(bindings[0].generationAvailable, false)
+    assert.match(bindings[0].generationUnavailableReason, /source.*OpenRouter|OpenRouter.*source/)
+    await bindings[0].summarize(); assert.equal(bindings[0].entry.text, 'Saved A')
+    await bindings[0].regenerate(); assert.equal(calls.filter(([url]) => url === '/api/summaries/').length, 0)
+    settings.enabledProviders = [PROVIDER.CODEX]; await flush()
+    assert.equal(bindings[0].generationAvailable, true, 'the existing enabled agent handles the long source')
+})
+
+test('the actual Markdown toolbar disables new generation and preserves saved-summary access', async t => {
+    const { parse, compileTemplate } = await import('@vue/compiler-sfc')
+    const { settings, bindings, store, sources } = await setup(t)
+    const compiled = compileTemplate({ source: parse(read('../../ui/MarkdownContent.vue')).descriptor.template.content,
+        filename: 'MarkdownContent.vue', id: 'summary-toolbar', compilerOptions: { isCustomElement: tag => tag.startsWith('wa-') } })
+    assert.deepEqual(compiled.errors, [])
+    const code = compiled.code.replace(/import \{([^}]+)\} from "vue"/g, (_, names) => `const {${names.replace(/ as /g, ': ')}} = Vue`)
+        .replace('export function render', 'function render')
+    const render = new Function('Vue', `${code}; return render`)(Vue)
+    const { renderer, root } = makeRenderer(140, node => { node.style = {} })
+    const app = renderer.createApp({ render, setup: () => ({ summaryContext: bindings[0], showToolbar: true, toolbarOpen: false,
+        showTocDetails: false, showRaw: false, speakable: false, source: 'Original block', blocks: [], highlightTerms: [],
+        toggleToolbar() {}, toggleRaw() {}, copySource() {}, handleLinkClick() {},
+    }) })
+    app.component('TextToSpeechButton', { render: () => null }); app.component('InlineArtifactBlock', { render: () => null })
+    app.directive('highlight', {}); app.mount(root); t.after(() => app.unmount())
+    settings.enabledProviders = []; await flush()
+    const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize message')[0]
+    assert.equal(action().props.disabled, true); assert.match(action().props.title, /No summary engine/)
+    store.descriptors[summarySourceKey(sources[0])] = descriptor({ saved: { id: 7, result_hash: 'result-a' } }); await flush()
+    assert.equal(action().props.disabled, false); assert.equal(action().props.title, 'Show summary')
+    await action().props.onClick(); await flush(); assert.equal(bindings[0].entry.text, 'Saved A')
 })

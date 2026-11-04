@@ -397,6 +397,16 @@ export function effectiveAdapt(stored, enabledProviders, keyPresent = false) {
     return Object.keys(ADAPT_PROVIDERS).find(engine => enabled.has(ADAPT_PROVIDERS[engine])) ?? 'off'
 }
 
+/** Summary generation follows the existing engine routing, independently of saved text and audio. */
+export function summaryGenerationAvailability(model, enabledProviders, keyPresent = false, openrouterEligible = true) {
+    const requested = model === 'auto' ? null : model
+    const engine = effectiveAdapt(requested, enabledProviders, keyPresent && openrouterEligible)
+    return { engine, available: engine !== 'off', unavailableReason: engine === 'off'
+        ? (requested === 'openrouter' && keyPresent && !openrouterEligible
+            ? 'This source exceeds the OpenRouter text limit. Enable Claude or Codex for summary generation.'
+            : 'No summary engine is available. Enable Claude or Codex, or configure and select OpenRouter.') : '' }
+}
+
 /**
  * The adaptation switch options: the agents, OpenRouter, then Off. An engine that cannot run (its
  * provider disabled, or no OpenRouter key) stays shown, disabled, with the reason as its title.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import * as Vue from 'vue'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
-import * as messageSummaryModule from '../../composables/useMessageSummary.js'
+import { messageSummaryModule } from '../../../tests/helpers/messageSummaryHarness.js'
 import * as rendering from '../../inline-artifacts/rendering.js'
 import * as markdown from '../../utils/markdown.js'
 
@@ -55,7 +55,7 @@ test('chat text enables speech only for assistant messages and keeps user Markdo
     }
     const TextContent = compileComponent(new URL('../session/detail/items/TextContent.vue', import.meta.url), {
         '../../../ui/MarkdownContent.vue': MarkdownContent,
-        '../../../../composables/useMessageSummary.js': messageSummaryModule,
+        '../../../../composables/useMessageSummary.js': messageSummaryModule(),
         '../../../../inline-artifacts/rendering.js': rendering,
         '../../../../utils/markdown': markdown,
     })

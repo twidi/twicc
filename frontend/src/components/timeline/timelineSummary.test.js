@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../tests/helpers/scrollerComponentHarness.js'
+import { PROVIDER } from '../../constants.js'
+import { messageSummaryModule } from '../../../tests/helpers/messageSummaryHarness.js'
 import * as snapshot from '../../utils/timeline/messageSnapshot.js'
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 test('timeline summary expands directly, preserves view through collapse, and resets on another event', async t => {
@@ -34,12 +36,13 @@ test('timeline assistant label keeps whole-message Summarize beside active-varia
 test('the actual row opens Summary from collapsed, passes exact saved references, and resets on recycled event', async t => {
     const { createPinia, setActivePinia } = await import('pinia')
     const { useSummariesStore } = await import('../../stores/summaries.js')
-    const module = await import('../../composables/useMessageSummary.js')
+    const settings = Vue.reactive({ summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] })
+    const module = messageSummaryModule(settings)
     setActivePinia(createPinia()); const store = useSummariesStore(), calls = [], busy = Vue.ref(false)
-    let holdSaved = null, finishSaved
+    let holdSaved = null, finishSaved, withSaved = true
     store._fetch = async (url, options) => {
         calls.push(url)
-        if (url.includes('resolve')) return { ok: true, json: async () => ({ sources: JSON.parse(options.body).sources.map(() => ({ session_id: 's', source_key: 'native', source_hash: 'hash', policy_key: 'p', eligible: true, saved: { id: 7, result_hash: 'body-hash' } })) }) }
+        if (url.includes('resolve')) return { ok: true, json: async () => ({ sources: JSON.parse(options.body).sources.map(() => ({ session_id: 's', source_key: 'native', source_hash: 'hash', policy_key: 'p', eligible: true, saved: withSaved ? { id: 7, result_hash: 'body-hash' } : null })) }) }
         if (holdSaved) await holdSaved
         return { ok: true, json: async () => ({ id: 7, source_key: 'native', source_hash: 'hash', policy_key: 'p', result_hash: 'body-hash', text: 'Saved summary' }) }
     }
@@ -85,4 +88,14 @@ test('the actual row opens Summary from collapsed, passes exact saved references
     await flush()
     assert.equal(descendants(root, n => n.type === 'speech')[0].props.disabled, false, 'an original reading retains Stop while the saved body loads')
     finishSaved(); await pending
+    settings.enabledProviders = []; await flush()
+    const savedAction = descendants(root, n => n.type === 'wa-button' && n.props.title === 'Summarize message')[0]
+    assert.equal(savedAction.props.disabled, false, 'saved access stays enabled without a generation engine')
+    assert.deepEqual(descendants(root, n => n.type === 'speech')[0].props.summaryRef(), { saved_id: 7, result_hash: 'body-hash' })
+    withSaved = false
+    props.row = { event: { id: 3, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Unsummarized snapshot' } } }
+    await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
+    const action = descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize message')[0]
+    assert.equal(action.props.disabled, true); assert.match(action.props.title, /No summary engine/)
+    await action.props.onClick(); assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
 })

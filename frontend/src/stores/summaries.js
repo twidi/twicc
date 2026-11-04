@@ -46,7 +46,9 @@ export const useSummariesStore = defineStore('summaries', {
             return Object.values(this.entries).findLast(entry => entry.descriptor && variantKey(entry.descriptor) === variantKey(descriptor)
                 && (entry.state !== 'complete' || entry.result_hash === descriptor.saved?.result_hash)) ?? null
         },
-        resolve(sources) {
+        resolve(sources, { signal } = {}) {
+            // Temporary source evidence belongs only to its caller, never the retained message caches.
+            if (sources.some(source => 'text' in source)) return this._resolveTemporary(sources, signal)
             const rt = runtime(this)
             const promises = sources.map(source => {
                 const key = summarySourceKey(source)
@@ -64,6 +66,12 @@ export const useSummariesStore = defineStore('summaries', {
                 queueMicrotask(() => this._flushLookups())
             }
             return Promise.all(promises)
+        },
+        async _resolveTemporary(sources, signal) {
+            const response = await checked(await this._fetch('/api/summaries/resolve/', { ...post({ sources }), signal }))
+            const results = (await response.json()).sources
+            if (!Array.isArray(results) || results.length !== sources.length) throw new Error('Invalid summary lookup response')
+            return results
         },
         async _flushLookups() {
             const rt = runtime(this), queued = [...rt.queued.values()]
@@ -319,9 +327,22 @@ export const useSummariesStore = defineStore('summaries', {
             reference.catch(() => {})
             return reference
         },
+        cancelTemporary() {
+            if (!this.temporary) return
+            // Release the transport, but keep this panel's captured source and visible partial text.
+            const entry = { ...this.temporary.entry, source: { ...this.temporary.entry.source } }
+            const rt = runtime(this)
+            rt.temporary?.release(); rt.temporary = null
+            if (entry.state === 'running') entry.state = 'cancelled'
+            this.temporary.entry = entry
+        },
         closeTemporary() {
             const rt = runtime(this)
             rt.temporary?.release(); rt.temporary = null
+            if (this.temporary) {
+                this.temporary.entry.text = ''; this.temporary.entry.source.text = ''
+                this.temporary.source.text = ''
+            }
             this.temporary = null
         },
     },

@@ -279,3 +279,30 @@ for (const withNonmanual of [false, true]) test(`cancel shares pending manual in
     }
     assert.equal(calls.filter(call => call.url === '/api/summaries/').length, withNonmanual ? 1 : 0)
 })
+
+test('temporary Cancel releases generation but retains captured source and partial result until Close', async () => {
+    const { store, wire, calls } = setup()
+    const sub = store.openTemporary('Captured source'); await sub.ready
+    wire.send({ revision: 1, state: 'running', text: 'Partial sentence.' }); await until(() => sub.entry.text)
+    const id = store.temporary.id
+    store.cancelTemporary()
+    assert.equal(store.temporary.id, id); assert.equal(store.temporary.source.text, 'Captured source')
+    assert.equal(store.temporary.entry.text, 'Partial sentence.'); assert.equal(store.temporary.entry.state, 'cancelled')
+    await until(() => calls.some(call => call.method === 'DELETE'))
+    assert.equal(Object.keys(store.entries).length, 0)
+    const cancelledEntry = store.temporary.entry, capturedSource = store.temporary.source
+    store.closeTemporary(); assert.equal(store.temporary, null)
+    assert.equal(cancelledEntry.text, ''); assert.equal(cancelledEntry.source.text, ''); assert.equal(capturedSource.text, '')
+})
+
+test('temporary Cancel before acquisition retains its source and releases a late backend handle', async () => {
+    const { store, calls } = setup(); let finish
+    const original = store._fetch
+    store._fetch = (url, options) => url === '/api/summaries/' ? new Promise(resolve => { finish = resolve }) : original(url, options)
+    const sub = store.openTemporary('Pending selection'); await until(() => finish)
+    store.cancelTemporary(); await assert.rejects(sub.ready, /cancelled/)
+    finish(json({ id: 'late', descriptor: null }))
+    await until(() => calls.some(call => call.method === 'DELETE' && call.url.endsWith('/late/')))
+    assert.equal(store.temporary.source.text, 'Pending selection'); assert.equal(store.temporary.entry.state, 'cancelled')
+    store.closeTemporary()
+})

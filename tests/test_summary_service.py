@@ -4,6 +4,7 @@ import hashlib
 
 import pytest
 from asgiref.sync import sync_to_async
+from django.utils import timezone
 
 from tests import test_timeline_messages
 
@@ -490,3 +491,31 @@ def test_large_openrouter_choice_routes_native_timeline_source_intact_to_enabled
 
     resolve_source_hash = resolve_source({'event_id': event.id}).source_hash
     asyncio.run(scenario())
+
+
+def test_descriptors_expose_openrouter_source_limit_without_disabling_saved_access(service, source, monkeypatch):
+    from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS
+    from twicc.summaries.sources import _resolved
+
+    monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'openrouter'})
+    short = _resolved(key=source.source_key, text='é' * OPENROUTER_ADAPT_MAX_CHARS, session_id=source.session_id)
+    long = _resolved(key=source.source_key, text='é' * (OPENROUTER_ADAPT_MAX_CHARS + 1), session_id=source.session_id)
+    monkeypatch.setattr(service, 'resolve_source', lambda request: short if request['text'] == 'short' else long)
+    _, policy = service._policy()
+    MessageSummary.objects.create(session_id=source.session_id, source_key=long.source_key,
+        source_hash=long.source_hash, policy_key=policy, requested_model='openrouter', engine='luna', text='Saved summary', completed_at=timezone.now())
+    descriptors = service.resolve_sources([{'text': 'short'}, {'text': 'long'}])
+    assert descriptors[0]['openrouter_eligible'] is True
+    assert descriptors[1]['openrouter_eligible'] is False
+    assert descriptors[1]['eligible'] is True and descriptors[1]['saved']['id']
+    assert service._runs == {} and service._handles == {}
+
+
+def test_openrouter_source_limit_uses_cleaned_input_not_normalized_content(service, monkeypatch):
+    from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS
+
+    # Whitespace contributes to routing input even when the visible content count is small.
+    text = 'Visible.' + ' ' * OPENROUTER_ADAPT_MAX_CHARS
+    descriptor = service.resolve_sources([{'text': text, 'purpose': 'selection'}])[0]
+    assert descriptor['content_chars'] == 8
+    assert descriptor['openrouter_eligible'] is False

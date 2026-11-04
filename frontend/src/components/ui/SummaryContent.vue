@@ -3,6 +3,8 @@ import { computed } from 'vue'
 const props = defineProps({
     entry: { type: Object, required: true },
     showOriginal: { type: Boolean, default: false },
+    retryDisabled: { type: Boolean, default: false },
+    retryUnavailableReason: { type: String, default: '' },
 })
 defineEmits(['cancel', 'retry', 'show-original'])
 const paragraphs = computed(() => (props.entry.text || '').split(/\n\s*\n/).filter(text => text.trim()))
@@ -11,6 +13,8 @@ const paragraphs = computed(() => (props.entry.text || '').split(/\n\s*\n/).filt
 <template>
     <section class="summary-content" aria-label="Summary" :aria-busy="entry.state === 'running'">
         <small v-if="entry.previousPolicy">Previous policy</small>
+        <small v-if="entry.state === 'failed' && entry.text" role="status">Interrupted. Partial summary.</small>
+        <small v-if="entry.revision > 1 && entry.fallback_reason" role="status">Summary restarted after fallback.</small>
         <div class="summary-text" aria-live="polite" aria-atomic="true">
             <p v-for="(paragraph, index) in paragraphs" :key="index">{{ paragraph }}</p>
         </div>
@@ -21,7 +25,7 @@ const paragraphs = computed(() => (props.entry.text || '').split(/\n\s*\n/).filt
         <small v-else-if="entry.state === 'cancelled'">Summary cancelled.</small>
         <div class="summary-actions">
             <wa-button v-if="entry.state === 'running'" size="small" @click="$emit('cancel')">Cancel</wa-button>
-            <wa-button v-else size="small" @click="$emit('retry')">Retry</wa-button>
+            <wa-button v-else size="small" :disabled="retryDisabled" :title="retryDisabled ? retryUnavailableReason : undefined" @click="!retryDisabled && $emit('retry')">Retry</wa-button>
             <wa-button v-if="showOriginal" size="small" appearance="plain" @click="$emit('show-original')">Show original</wa-button>
         </div>
     </section>

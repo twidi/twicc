@@ -13,6 +13,7 @@ import { useTextToSpeechStore } from '../../../stores/textToSpeech'
 import { useSummariesStore } from '../../../stores/summaries'
 import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead'
 import { createTouchTapFallback } from '../../../utils/touchTapFallback'
+import { useTemporarySummaryGeneration } from '../../../composables/useTemporarySummaryGeneration'
 
 const props = defineProps({
     /** The text the user selected in the session view. In persistent mode: the
@@ -110,16 +111,18 @@ function onCollapsedClick(id) {
 
 // Read button: a view of the app-wide speech store for this selection.
 const summariesStore = useSummariesStore()
+const speechStore = useTextToSpeechStore()
 const showSummary = computed(() => !props.persistent && ['rendered', 'file'].includes(props.readOrigin) && !!props.selectedText.trim())
+const summaryGeneration = useTemporarySummaryGeneration(() => showSummary.value
+    ? { text: props.selectedText, purpose: 'selection' } : null, settingsStore, speechStore, summariesStore)
 function summarize() {
-    if (!showSummary.value) return
+    if (!showSummary.value || !summaryGeneration.value.available) return
     const text = props.selectedText
     summariesStore.openTemporary(text)
     props.clearSourceSelection?.()
     close()
 }
 
-const speechStore = useTextToSpeechStore()
 const readStatus = computed(() => speechStore.statusForSelection(props.selectedText))
 const readBusy = computed(() => readStatus.value !== 'idle')
 const showRead = computed(() => canShowRead({
@@ -611,7 +614,8 @@ defineExpose({ isExpanded: expanded })
                 appearance="filled"
                 size="small"
                 aria-label="Summarize selection"
-                title="Summarize selection"
+                :disabled="!summaryGeneration.available"
+                :title="summaryGeneration.available ? 'Summarize selection' : summaryGeneration.unavailableReason"
                 @mousedown.prevent
                 @pointerdown="tapFallback.down('summary', $event)"
                 @pointerup="onTapUp('summary', $event)"

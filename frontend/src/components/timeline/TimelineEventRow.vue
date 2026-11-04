@@ -162,7 +162,7 @@ function toggleSession() {
                     :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"
                     @summary-changed="summary.refreshSaved"
                 />
-                <wa-button v-if="summary.available" size="small" appearance="plain" title="Summarize message" @click="summarize">{{ summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize' }}</wa-button>
+                <wa-button v-if="summary.available" size="small" appearance="plain" :disabled="!summary.canSummarize" :title="!summary.canSummarize ? summary.generationUnavailableReason : 'Summarize message'" aria-label="Summarize message" @click="summarize">{{ summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize' }}</wa-button>
                 <wa-button v-if="summary.view === 'summary'" size="small" appearance="plain" @click="summary.showOriginal">Original</wa-button>
             </template>
         </TimelineEventLine>
