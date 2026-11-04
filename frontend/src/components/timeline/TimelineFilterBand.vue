@@ -459,7 +459,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 
 .timeline-speech-toggle[aria-pressed="true"] {
     background: var(--wa-color-brand-fill-quiet);
-    color: var(--wa-color-brand-on-quiet);
+    color: var(--wa-color-success-60);
 }
 
 .timeline-speech-toggle:disabled {

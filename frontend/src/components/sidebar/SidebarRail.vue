@@ -617,7 +617,7 @@ async function stopSpeech() {
     padding: 0.1rem;
     border-radius: 50%;
     background: var(--wa-color-surface-default);
-    color: var(--wa-color-brand-on-quiet);
+    color: var(--wa-color-success-60);
     font-size: 0.65rem;
     pointer-events: none;
 }
