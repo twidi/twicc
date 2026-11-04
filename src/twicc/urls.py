@@ -17,6 +17,7 @@ from .share import views_assets as share_views_assets
 from .peer import inbound_views as peer_inbound_views
 from .peer import owner_views as peer_owner_views
 from .tts import views as tts_views
+from .summaries import views as summary_views
 from .uploads import views as upload_views
 
 from .mcp.owner_views import management as mcp_management
@@ -43,6 +44,11 @@ urlpatterns = [
     path("api/search/", views.search_sessions),
     path("api/usage-history/", views.usage_history),
     path("api/external-notifications/test/", views.external_notifications_test),
+    # Shared message summaries and temporary selection summaries.
+    path("api/summaries/resolve/", summary_views.summaries_resolve),
+    path("api/summaries/", summary_views.summaries_open),
+    path("api/summaries/saved/<int:saved_id>/", summary_views.summary_saved),
+    path("api/summaries/<str:summary_id>/", summary_views.summary_detail),
     # Text to speech: open a speech, then read, end or release its audio by id; the model suggestions.
     path("api/tts/speech/", tts_views.tts_speech),
     path("api/tts/audio/<str:audio_id>/", tts_views.tts_audio),

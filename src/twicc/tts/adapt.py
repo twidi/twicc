@@ -20,38 +20,31 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
-from typing import NamedTuple
 
-from twicc.core.enums import Provider
-from twicc.openrouter_text import (
+from twicc.core.enums import Provider  # noqa: F401 - compatibility re-export
+from twicc.openrouter_text import (  # noqa: F401 - compatibility patch points
     OPENROUTER_TEXT_MODEL,
     OpenRouterTextError,
     openrouter_key_set,
     stream_openrouter_text,
 )
-from twicc.providers.claude_code.hermetic import stream_hermetic_claude
-from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex
-from twicc.providers.codex.title_suggest import TITLE_MODEL
+# Re-exports retain the existing adaptation imports and patch points.
+from twicc.providers import text_calls
+from twicc.providers.text_calls import (  # noqa: F401
+    Engine, ENGINES, OPENROUTER_ENGINE, OPENROUTER_ADAPT_MAX_CHARS,
+    FIRST_TEXT_SECONDS, NEXT_TEXT_SECONDS,
+    OPENROUTER_FIRST_TEXT_SECONDS, OPENROUTER_NEXT_TEXT_SECONDS,
+)
+from twicc.providers.claude_code.hermetic import stream_hermetic_claude  # noqa: F401 - compatibility patch points
+from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex  # noqa: F401 - compatibility patch points
+from twicc.providers.codex.title_suggest import TITLE_MODEL  # noqa: F401 - compatibility patch points
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
-from twicc.providers.state import is_provider_running
+from twicc.providers.state import is_provider_running  # noqa: F401 - compatibility patch points
 from twicc.tts.openrouter import SpeechError
 from twicc.tts.parts import PartSplitter, has_speech
 
 logger = logging.getLogger(__name__)
 
-# The longest wait for the first adapted text (a hermetic call's start includes the model's process
-# start), then for each next piece of it.
-FIRST_TEXT_SECONDS = 30.0
-NEXT_TEXT_SECONDS = 15.0
-# The same for OpenRouter: its first text comes in under a second, and a failed call still leaves
-# the time for an agent to adapt the text.
-OPENROUTER_FIRST_TEXT_SECONDS = 5.0
-OPENROUTER_NEXT_TEXT_SECONDS = 5.0
-# The HTTP statuses of an OpenRouter call refused for its key or its account (wrong key, no credits).
-_REFUSED_STATUSES = frozenset({401, 402, 403})
-# The longest text OpenRouter adapts: its model holds 65.5K tokens for the text and its adaptation
-# together (32.8K output at most). A longer text goes to an agent, which has no such limit.
-OPENROUTER_ADAPT_MAX_CHARS = 60_000
 # The adapted text kept in the last test record.
 TEST_TEXT_KEEP_CHARS = 4_000
 
@@ -118,20 +111,6 @@ Answer with the rewritten text only, written in one go: plain text, no preamble,
 </text>"""
 
 
-class Engine(NamedTuple):
-    """A model that adapts a text: its setting name and the provider that runs it (None for a model
-    called on OpenRouter)."""
-
-    name: str
-    provider: Provider | None
-
-
-# The agents, in the default order: the first one whose provider runs adapts the text.
-ENGINES = (Engine("haiku", Provider.CLAUDE_CODE), Engine("luna", Provider.CODEX))
-_ENGINES_BY_NAME = {engine.name: engine for engine in ENGINES}
-# The OpenRouter text model: chosen only, never in the default order.
-OPENROUTER_ENGINE = Engine("openrouter", None)
-
 # A Markdown heading mark at a line start: a model sometimes keeps one despite the prompt.
 _HEADING_MARK = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
 
@@ -140,65 +119,24 @@ _tasks: set[asyncio.Task] = set()
 
 
 def resolve_engine(choice: str | None, text: str) -> tuple[Engine | None, str | None]:
-    """The engine that adapts ``text`` for the stored ``choice``, else why the text is read as
-    written (``"off"``, ``"no_provider"``). A chosen agent whose provider does not run gives way to
-    the other one; no choice takes the first agent whose provider runs. OpenRouter needs only the
-    OpenRouter key, no provider: without the key, or for a text beyond its limit, an OpenRouter
-    choice resolves as no choice."""
-    if choice == "off":
-        return None, "off"
-    if choice == OPENROUTER_ENGINE.name:
-        if openrouter_key_set() and len(text) <= OPENROUTER_ADAPT_MAX_CHARS:
-            return OPENROUTER_ENGINE, None
-        choice = None
-    chosen = _ENGINES_BY_NAME.get(choice)
-    candidates = ENGINES if chosen is None else (chosen, *(engine for engine in ENGINES if engine != chosen))
-    for engine in candidates:
-        if is_provider_running(engine.provider):
-            return engine, None
-    return None, "no_provider"
+    return text_calls._resolve_engine(choice, text, globals())
 
 
 def fallback_engine(engine: Engine) -> Engine | None:
-    """The agent that adapts the text when ``engine`` fails before its first part: for OpenRouter,
-    the first agent whose provider runs; else (or when none runs) None."""
-    if engine != OPENROUTER_ENGINE:
-        return None
-    for agent in ENGINES:
-        if is_provider_running(agent.provider):
-            return agent
-    return None
+    return text_calls._fallback_engine(engine, globals())
 
 
 def _step_limits(engine: Engine) -> tuple[float, float]:
-    """The longest waits for the first text of ``engine``'s call, then for each next piece (read at
-    call time)."""
-    if engine == OPENROUTER_ENGINE:
-        return OPENROUTER_FIRST_TEXT_SECONDS, OPENROUTER_NEXT_TEXT_SECONDS
-    return FIRST_TEXT_SECONDS, NEXT_TEXT_SECONDS
+    return text_calls._step_limits(engine, globals())
 
 
 def _openrouter_reason(error: OpenRouterTextError) -> str:
-    """The adaptation reason of a failed OpenRouter call: ``"refused"`` for its key or its account,
-    else ``"failed"``."""
-    if error.reason == "no_key" or error.status in _REFUSED_STATUSES:
-        return "refused"
-    return "failed"
+    return text_calls._openrouter_reason(error)
 
 
 async def _open_stream(engine: Engine, prompt: str) -> AsyncIterator[str]:
-    """The streamed call of ``engine``: the text deltas of its answer. OpenRouter streams over HTTP,
-    an agent in a hermetic call. The Codex preparation runs on the first step, so that the caller's
-    time limit for the first text bounds it too."""
-    if engine == OPENROUTER_ENGINE:
-        stream = stream_openrouter_text(OPENROUTER_TEXT_MODEL, prompt)
-    elif engine.provider == Provider.CLAUDE_CODE:
-        stream = stream_hermetic_claude(prompt, model="haiku")
-    else:
-        plan = await prepare_hermetic_codex(TITLE_MODEL)
-        stream = stream_hermetic_codex(plan, prompt, effort="low")
-    async with aclosing(stream):
-        async for delta in stream:
+    async with aclosing(text_calls._stream_text(engine, prompt, globals())) as deltas:
+        async for delta in deltas:
             yield delta
 
 

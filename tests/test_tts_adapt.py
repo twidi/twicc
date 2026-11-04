@@ -997,3 +997,21 @@ def test_the_agent_after_openrouter_keeps_its_own_limits(fake_call, monkeypatch)
     assert source.adapt_reason is None
     assert (source.fallback_from, source.fallback_reason) == ("openrouter", "failed")
     assert source.adapted_text == "Hello there."
+
+
+def test_shared_text_calls_keep_adaptation_engine_types_limits_and_dispatch(monkeypatch):
+    from twicc.providers import text_calls
+    assert adapt.Engine is text_calls.Engine
+    assert adapt.ENGINES is text_calls.ENGINES
+    assert adapt.OPENROUTER_ENGINE is text_calls.OPENROUTER_ENGINE
+    monkeypatch.setattr(text_calls, 'is_provider_running', lambda provider: provider == LUNA.provider)
+    assert text_calls.resolve_engine('auto', 'source') == (LUNA, None)
+    assert text_calls.fallback_engine(OPENROUTER_ENGINE) == LUNA
+    assert text_calls.step_limits(LUNA) == (30.0, 15.0)
+    async def claude(prompt, *, model):
+        assert prompt == 'shared prompt' and model == 'haiku'
+        yield 'shared answer'
+    monkeypatch.setattr(text_calls, 'stream_hermetic_claude', claude)
+    async def scenario():
+        assert [part async for part in text_calls.stream_text(HAIKU, 'shared prompt')] == ['shared answer']
+    asyncio.run(scenario())
