@@ -9,6 +9,7 @@ This file is shared by Claude (`CLAUDE.md`) and Codex (`AGENTS.md`). Lines marke
 - **Quality:** use the best standards. The only allowed shortcut: tests and linting are not mandatory.
 - **Never implement without an explicit invitation.** An explanation of requirements is not an invitation. Ask questions, then wait.
 - **Preserve user changes.** The checkout can contain uncommitted changes you did not make. Do not revert, overwrite, move or clean them.
+- **No working-tree-wide git commands on a shared checkout.** Several agents and the user can work in the same checkout at the same time. A command that changes the whole tree removes their files from disk for a while, or for good. Never run `git stash`, `git checkout -- <path>`, `git restore`, `git reset --hard`, `git clean`, or `git checkout <ref>` to switch branches. To compare with `HEAD`, use `git show <ref>:<path>`, `git diff`, or a temporary `git worktree` outside the checkout. Do these only on explicit request.
 - **Rebase:** never on a remote branch (`origin/main`, …) unless asked. Rebase on the local branch.
 - **Language:** write all artifacts in English: code, UI strings, comments, names, docs (incl. `docs/plans/`). French is for live chat only.
 - **Plans and specs location:** write every spec, design and implementation plan in `docs/plans/`, whatever skill produces it (Superpowers or other). Never write in `docs/superpowers/`. This overrides the skill's default path.
