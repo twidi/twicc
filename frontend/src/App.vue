@@ -86,8 +86,9 @@ if (isAppReady.value) {
 
 // Load initial data and connect WebSocket when authenticated
 const dataStore = useDataStore()
+const settingsStore = useSettingsStore()
 const timelineSpeech = useTimelineSpeechStore()
-timelineSpeech.initialize({ dataStore, workspacesStore: useWorkspacesStore(), connectionStatus: wsStatus })
+timelineSpeech.initialize({ dataStore, workspacesStore: useWorkspacesStore(), connectionStatus: wsStatus, settingsStore })
 
 // Load app data and open the WS only once the app is actually ready
 // (auth OK AND not on the /login page). The combined `isAppReady`
@@ -112,7 +113,6 @@ watch(isAppReady, async (ready) => {
 }, { immediate: true })
 
 // Sync display mode to body data attribute
-const settingsStore = useSettingsStore()
 const displayMode = computed(() => settingsStore.getDisplayMode)
 
 // Set initial value and watch for changes

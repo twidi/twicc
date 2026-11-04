@@ -5,9 +5,12 @@ import hashlib
 import pytest
 from asgiref.sync import sync_to_async
 
+from tests import test_timeline_messages
+
 from twicc.core.models import MessageSummary, Project, Session
 from twicc.summaries.sources import SummarySource
 
+live_session = test_timeline_messages.live_session
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -449,4 +452,41 @@ def test_successful_regeneration_replaces_body_hash_and_retained_purge_clears_sa
         await service.release_summary(first.id)
         await service.release_summary(second.id)
         await service.release_summary(retained.id)
+    asyncio.run(scenario())
+
+
+def test_large_openrouter_choice_routes_native_timeline_source_intact_to_enabled_agent(service, live_session, monkeypatch):
+    from twicc.core.enums import Provider
+    from twicc.providers import text_calls
+    from twicc.summaries.sources import resolve_source
+
+    text = 'First native source. ' + 'é' * 60_001 + '\nLast native source.'
+    live_session.append(live_session.message('large-summary', text))
+    event = live_session.events()[0]
+    monkeypatch.setattr(service, 'resolve_source', resolve_source)
+    monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'openrouter'})
+    monkeypatch.setattr(service, 'resolve_engine', text_calls.resolve_engine)
+    monkeypatch.setattr(text_calls, 'openrouter_key_set', lambda: True)
+    monkeypatch.setattr(text_calls, 'is_provider_running', lambda provider: provider == Provider.CODEX)
+    calls = []
+
+    async def stream(engine, prompt):
+        calls.append((engine, prompt))
+        yield 'A complete timeline-only summary.'
+
+    monkeypatch.setattr(service, 'stream_text', stream)
+
+    async def scenario():
+        handle = await service.acquire_summary({'event_id': event.id})
+        final = await terminal(service, handle)
+        assert final['state'] == 'complete' and final['saved_id'] is not None
+        assert len(calls) == 1 and calls[0][0].name == 'luna'
+        assert calls[0][1] == service.SUMMARY_PROMPT.format(text=text)
+        saved = await sync_to_async(service.load_saved_summary)(final['saved_id'])
+        assert saved['text'] == 'A complete timeline-only summary.'
+        assert saved['requested_model'] == 'openrouter'
+        assert saved['source_hash'] == resolve_source_hash
+        await service.release_summary(handle.id)
+
+    resolve_source_hash = resolve_source({'event_id': event.id}).source_hash
     asyncio.run(scenario())

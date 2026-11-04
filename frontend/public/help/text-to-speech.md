@@ -46,8 +46,58 @@ button means that this timeline listens for new messages.
   also disable listening and clear its queue.
 - Listening and its queue stay in memory. A page reload clears them.
 
-Automatic reading uses the active text-to-speech config and the existing text
-adaptation setting. Project and session announcements bypass text adaptation.
+Automatic reading uses the active text-to-speech config. In **Settings →
+Summaries**, **Read summaries in timeline speech** controls automatic summaries.
+It is on by default. Eligible messages contain at least **1,000 content
+characters**. Shorter messages use the existing text adaptation setting.
+Project and session announcements keep their usual wording.
+
+TwiCC prepares up to two queued text summaries while another reading plays.
+It generates audio only when a message reaches its turn. A selected reading
+keeps its settings until it finishes. Turning the switch off releases unneeded
+preparation and makes pending messages use their originals. A failed summary
+shows an error and skips that message. Listening continues with the next message.
+
+## Summarize a message or selection
+
+Use **Summarize** on an eligible assistant message in chat or a timeline message
+view. The threshold counts the complete logical message, including its code and
+text blocks. It excludes embedded artifact payloads and control markup.
+The summary targets about one third of the source, with a maximum of 140 words.
+
+Message summaries are saved. Chat, timeline views, and automatic listening share
+the same result when the source and model policy match. Automatic preparation
+also saves successful summaries. An older policy result remains available as
+**Previous policy**. Regeneration replaces a result only after success.
+
+Use **Original** and **Summary** to select the visible text. Copy and **Read
+aloud** use that view. Original chat speech keeps its original block scope.
+Original timeline speech uses the assembled timeline snapshot. Manual speech
+interrupts automatic speech and works independently of the automatic summary
+switch. The usual project and session announcements never identify a summary.
+
+Select text and use **Summarize** in the selection actions for a temporary
+summary. Its dialog supports Copy, Read aloud, Retry, Cancel, and Close. Closing
+the dialog releases its generation and stops its matching reading. Selection
+summaries and the settings test are never saved as message summaries.
+
+Summary text appears as it streams. Speech starts from available summary parts
+without a second adaptation call. If generation fails after speech starts,
+playback stops with an error. TwiCC does not replay the original or save a
+partial summary.
+
+### Summary model
+
+Choose **Auto**, **Claude Haiku 5.5**, **GPT-6 Luna**, or **OpenRouter** in
+**Settings → Summaries**. Auto selects an enabled running agent, Claude first,
+then Codex. An unavailable selected agent gives way to the other agent.
+
+OpenRouter uses the existing OpenRouter text model and key. Its calls are paid
+on your OpenRouter account. Without the key, or above **60,000 source
+characters**, TwiCC selects an enabled agent. It keeps the full source.
+If OpenRouter fails before summary speech commits, an enabled agent can replace
+its provisional text. Without an available model, summarization shows an error.
+The automatic timeline switch does not disable manual summaries.
 
 ## Test, confirm, activate
 

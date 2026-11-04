@@ -5,6 +5,7 @@ import { ref } from 'vue'
 import { ALL_PROJECTS_ID } from '../constants.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
+import { useSummariesStore } from './summaries.js'
 import { useTimelineSpeechStore } from './timelineSpeech.js'
 import { useTextToSpeechStore, _resetSpeechForTests } from './textToSpeech.js'
 
@@ -73,6 +74,8 @@ function setup(t, fields = OPENROUTER) {
     tts._fetchAudio = () => assert.fail('Desktop MP3 must not download buffered audio')
     tts._fetchEnding = async id => { endings.push(id); return json({ state: 'complete', error: null }) }
     tts._releaseAudio = async id => { releases.push(id) }
+    const summaries = useSummariesStore()
+    summaries._fetch = async (_url, options) => json({ sources: JSON.parse(options.body).sources.map(() => ({ eligible: false })) })
     const store = useTimelineSpeechStore(), target = new EventTarget()
     let now = CLICK
     store._now = () => now
@@ -106,7 +109,7 @@ function setup(t, fields = OPENROUTER) {
         target.dispatchEvent(event)
     }
     return {
-        store, tts, plays, opens, releases, endings, requests, replies, speechReplies, emit,
+        store, tts, summaries, plays, opens, releases, endings, requests, replies, speechReplies, emit,
         setNow(value) { now = value },
         async enable(events = [], pageId = 'p') {
             replies.push(page(events))
@@ -321,4 +324,42 @@ test('announcements follow audible context through backend request payloads', as
             assert.equal(h.releases.length, 6)
         })
     }
+})
+
+
+// Real feed, summary subscriptions, player ownership and request bodies share one activation.
+test('streamed summary speech failure reports once and continues without replaying the source', async t => {
+    const h = setup(t), wires = new Map(), deletes = [], errors = []
+    const descriptor = id => ({ source_key: `native-${id}`, source_hash: `hash-${id}`, policy_key: 'auto',
+        session_id: 's', eligible: true, saved: null })
+    h.store._showError = error => errors.push(error)
+    h.summaries._fetch = async (url, options = {}) => {
+        if (options.method === 'DELETE') { deletes.push(url); return new Response(null, { status: 204 }) }
+        const body = options.body && JSON.parse(options.body)
+        if (url.endsWith('resolve/')) return json({ sources: body.sources.map(source => descriptor(source.event_id)) })
+        if (url === '/api/summaries/') return json({ id: `summary-${body.source.event_id}`,
+            descriptor: descriptor(body.source.event_id), state: 'running' })
+        return new Response(new ReadableStream({ start(controller) { wires.set(url, controller) } }))
+    }
+    await h.enable([message(1), message(2)])
+    await until(() => h.plays.length === 1 && wires.size === 2)
+    assert.equal(h.opens[0].body.summary_id, 'summary-1')
+    assert.equal(h.opens[0].body.text, undefined)
+    assert.equal(h.opens[0].body.announcement, 'Project. First session.')
+    await h.start()
+    wires.get('/api/summaries/summary-1/').enqueue(new TextEncoder().encode(JSON.stringify({
+        state: 'failed', revision: 1, text: 'Usable first sentence.', error: 'The summary stopped before the end', saved_id: null,
+    }) + '\n'))
+    wires.get('/api/summaries/summary-1/').close()
+    h.tts._fetchEnding = async id => json(id === 'audio-1'
+        ? { state: 'failed', error: 'The summary stopped before the end' } : { state: 'complete' })
+    await h.end()
+    await until(() => h.plays.length === 2)
+    assert.deepEqual(h.opens.map(({ body }) => body.summary_id), ['summary-1', 'summary-2'])
+    assert.equal(h.opens[1].body.announcement, 'Project. First session.')
+    assert.ok(h.opens.every(({ body }) => !('text' in body)))
+    assert.deepEqual(errors, ['The summary stopped before the end'])
+    assert.equal(h.store.activePageId, 'p')
+    await until(() => deletes.includes('/api/summaries/summary-1/'))
+    assert.equal(Object.values(h.summaries.entries).find(entry => entry.descriptor.source_key === 'native-1').saved_id, null)
 })
