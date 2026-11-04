@@ -1,6 +1,7 @@
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
+import { watch } from 'vue'
 
 import { audioUrl, installPageHideRelease, useTextToSpeechStore, _resetSpeechForTests } from './textToSpeech.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
@@ -175,6 +176,206 @@ beforeEach(() => {
 
 // ── Opening ──────────────────────────────────────────────
 
+test('owned play waits rather than replacing busy manual speech', async () => {
+    store._openSpeech = abortableRequest('open')
+    const manual = store.play('manual')
+    const owned = store.play('automatic', { owner: 'listener-a' })
+    assert.equal(log.filter(entry => entry === 'open').length, 1)
+    assert.equal(store.playback.owner, null)
+    assert.equal(store.playback.text, 'manual')
+    assert.deepEqual(await owned, { ok: false, aborted: true, busy: true })
+    store.stop()
+    assert.deepEqual(await manual, ABORTED)
+})
+
+test('owned play cannot replace playing speech, including its own owner', async () => {
+    const pending = store.play('first', { owner: 'listener-a' })
+    await until(() => fakePlayer.handlers)
+    fakePlayer.handlers.onPlaying()
+    const first = await pending
+    const before = [...log]
+    for (const owner of ['listener-a', 'listener-b']) {
+        const next = store.play('next', { owner })
+        assert.deepEqual(log, before)
+        assert.deepEqual(await next, { ok: false, aborted: true, busy: true })
+    }
+    assert.deepEqual(log, before)
+    assert.equal(store.playback.owner, 'listener-a')
+    assert.equal(store.playback.text, 'first')
+    store.stop()
+    assert.deepEqual(await first.ended, ABORTED)
+})
+
+test('manual replacement never publishes an intermediate idle playback', async () => {
+    const first = await startPlaying('first')
+    store._openSpeech = abortableRequest('replacement')
+    const states = []
+    const unwatch = watch(() => store.playback, state => states.push({ ...state }), { flush: 'sync' })
+    const next = store.play('next')
+    unwatch()
+    assert.deepEqual(states, [{ text: 'next', status: 'loading', source: 'message', configId: null, owner: null }])
+    assert.deepEqual(await first.ended, ABORTED)
+    assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
+    store.stop()
+    assert.deepEqual(await next, ABORTED)
+})
+
+for (const [name, replace, source, configId] of [
+    ['message', () => store.play('manual'), 'message', null],
+    ['selection', () => store.play('manual', { origin: 'rendered' }), 'selection', null],
+    ['settings test', () => store.playWith('manual', FIELDS, { configId: 'c1' }), 'test', 'c1'],
+]) {
+    test(`a manual ${name} atomically replaces owned speech`, async () => {
+        const pending = store.play('automatic', { owner: 'listener-a' })
+        await until(() => fakePlayer.handlers)
+        fakePlayer.handlers.onPlaying()
+        const first = await pending
+        store._openSpeech = abortableRequest('replacement')
+        const states = []
+        const unwatch = watch(() => store.playback, state => states.push({ ...state }), { flush: 'sync' })
+        const next = replace()
+        unwatch()
+        assert.deepEqual(states, [{ text: 'manual', status: 'loading', source, configId, owner: null }])
+        assert.deepEqual(await first.ended, ABORTED)
+        assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
+        store.stop()
+        assert.deepEqual(await next, ABORTED)
+    })
+}
+
+test('guarded stop leaves another owner and manual speech untouched', async () => {
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    await until(() => fakePlayer.handlers)
+    fakePlayer.handlers.onPlaying()
+    const automatic = await pending
+    const before = [...log]
+    store.stop({ owner: 'listener-b' })
+    assert.deepEqual(log, before)
+    assert.equal(store.playback.owner, 'listener-a')
+    assert.equal(store.status, 'playing')
+    assert.deepEqual(released, [])
+    store.stop({ owner: 'listener-a' })
+    assert.deepEqual(await automatic.ended, ABORTED)
+    assert.equal(store.playback.owner, null)
+    assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
+
+    const manual = await startPlaying('manual')
+    const beforeManual = [...log]
+    store.stop({ owner: 'listener-a' })
+    assert.deepEqual(log, beforeManual)
+    assert.equal(store.playback.owner, null)
+    assert.equal(store.status, 'playing')
+    assert.equal(released.length, 1)
+    store.stop()
+    assert.deepEqual(await manual.ended, ABORTED)
+})
+
+test('guarded stop does not abort a loading request for another owner', async () => {
+    let signal
+    store._openSpeech = (body, requestSignal) => {
+        signal = requestSignal
+        return abortableRequest('open')(body, signal)
+    }
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    const before = [...log]
+    store.stop({ owner: 'listener-b' })
+    assert.equal(signal.aborted, false)
+    assert.deepEqual(log, before)
+    assert.equal(store.status, 'loading')
+    store.stop({ owner: 'listener-a' })
+    assert.deepEqual(await pending, ABORTED)
+    assert.equal(store.playback.owner, null)
+})
+
+test('priming an idle listener reuses players and priming busy speech is a no-op', async () => {
+    let mediaCreated = 0
+    let pcmCreated = 0
+    setSpeechPlayerFactory(() => { mediaCreated += 1; return fakePlayer })
+    setPcmStreamPlayerFactory(() => { pcmCreated += 1; return fakePcmPlayer })
+    store.prime()
+    store.prime()
+    assert.deepEqual(log, ['prime', 'pcm-prime', 'prime', 'pcm-prime'])
+    assert.equal(store.status, 'idle')
+    assert.equal(store.playback.owner, null)
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    const loadingLog = [...log]
+    store.prime()
+    assert.deepEqual(log, loadingLog)
+    assert.deepEqual(log.filter(entry => entry.includes('prime')), ['prime', 'pcm-prime', 'prime', 'pcm-prime', 'prime', 'pcm-prime'])
+    await until(() => fakePlayer.handlers)
+    fakePlayer.handlers.onPlaying()
+    const result = await pending
+    const playingLog = [...log]
+    store.prime()
+    assert.deepEqual(log, playingLog)
+    assert.equal(mediaCreated, 1)
+    assert.equal(pcmCreated, 1)
+    assert.deepEqual(released, [])
+    fakePlayer.handlers.onEnded()
+    assert.deepEqual(await result.ended, { ok: true })
+    assert.equal(store.playback.owner, null)
+})
+
+for (const config of [makeConfig(), makeScriptConfig()]) {
+    test(`announcement request preserves original text identity and owner through loading and playing (${config.kind ?? 'openrouter'})`, async () => {
+        store.applyConfig(payload({ configs: [config], activeId: config.id }))
+        let sent
+        let resolveOpen
+        store._openSpeech = (body) => {
+            sent = body
+            assert.equal(store.status, 'loading')
+            assert.equal(store.playback.owner, 'listener-a')
+            return new Promise(resolve => { resolveOpen = resolve })
+        }
+        const pending = store.play('Original message', { owner: 'listener-a', announcement: 'Project, Session.' })
+        assert.equal(sent.announcement, 'Project, Session.')
+        assert.equal(sent.text, 'Original message')
+        assert.equal(store.playback.source, 'message')
+        assert.equal(store.statusForText('Original message'), 'loading')
+        assert.equal(store.statusForText('Project, Session. Original message'), 'idle')
+        resolveOpen(opened())
+        await until(() => fakePlayer.handlers)
+        fakePlayer.handlers.onPlaying()
+        const result = await pending
+        assert.equal(store.playback.owner, 'listener-a')
+        assert.equal(store.statusForText('Original message'), 'playing')
+        assert.equal(store.statusForText('Project, Session. Original message'), 'idle')
+        fakePlayer.handlers.onEnded()
+        assert.deepEqual(await result.ended, { ok: true })
+        assert.equal(store.playback.owner, null)
+    })
+}
+
+test('an owned opening failure clears its owner', async () => {
+    store._openSpeech = async () => jsonResponse(502, { error: 'Speech failed' })
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    assert.equal(store.playback.owner, 'listener-a')
+    assert.deepEqual(await pending, { ok: false, error: 'Speech failed' })
+    assert.equal(store.playback.owner, null)
+    assert.equal(store.status, 'idle')
+})
+
+test('an owned playback failure clears its owner', async () => {
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    await until(() => fakePlayer.handlers)
+    assert.equal(store.playback.owner, 'listener-a')
+    fakePlayer.handlers.onError('refused')
+    assert.deepEqual(await pending, { ok: false, error: REFUSED })
+    assert.equal(store.playback.owner, null)
+    assert.equal(store.status, 'idle')
+})
+
+test('an owned empty audio clears its owner', async () => {
+    const pending = store.play('automatic', { owner: 'listener-a' })
+    await until(() => fakePlayer.handlers)
+    assert.equal(store.playback.owner, 'listener-a')
+    fakePlayer.handlers.onEnded()
+    const result = await pending
+    assert.deepEqual(await result.ended, { ok: true })
+    assert.equal(store.playback.owner, null)
+    assert.equal(store.status, 'idle')
+})
+
 test('primes the player before the request starts', async () => {
     await startPlaying()
     assert.deepEqual(log.filter(entry => !entry.endsWith('stop')), ['prime', 'pcm-prime', 'open', 'playUrl'])
@@ -242,7 +443,7 @@ test('stop during loading resolves as aborted without error', async () => {
 test('ignores a response that lands after a newer play', async () => {
     const resolvers = []
     store._openSpeech = (body, signal) => new Promise(resolve => { resolvers.push({ text: body.text, signal, resolve }) })
-    const first = store.play('a')
+    const first = store.play('a', { owner: 'listener-a' })
     assert.equal(resolvers[0].signal.aborted, false)
     const second = store.play('b')
     assert.equal(resolvers[0].signal.aborted, true)
@@ -257,6 +458,7 @@ test('ignores a response that lands after a newer play', async () => {
     assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
     assert.deepEqual(fakePlayer.calls, [{ url: '/api/tts/audio/b1/' }])
     assert.equal(store.playback.text, 'b')
+    assert.equal(store.playback.owner, null)
     assert.equal(store.status, 'playing')
 })
 
@@ -569,7 +771,7 @@ test('an ending answer that lands after a stop changes nothing', async () => {
     // One release only: the stop's.
     assert.deepEqual(released.map(([audioId]) => audioId), ['a1'])
     assert.equal(store.status, 'idle')
-    assert.deepEqual(store.playback, { text: null, status: 'idle', source: null, configId: null })
+    assert.deepEqual(store.playback, { text: null, status: 'idle', source: null, configId: null, owner: null })
 })
 
 test('the ending request has a timeout; a timed-out request is no answer', async () => {

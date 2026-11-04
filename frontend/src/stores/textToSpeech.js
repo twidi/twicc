@@ -121,6 +121,30 @@ async function readEnding(store, audioId) {
     }
 }
 
+/** Cancel playback resources without publishing a state between two readings. */
+function cancelPlayback(store) {
+    generation += 1
+    controller?.abort()
+    controller = null
+    fetchController?.abort()
+    fetchController = null
+    if (currentAudio) store._releaseAudio(currentAudio.id)
+    currentAudio = null
+    player?.stop()
+    pcmPlayer?.stop()
+    const abort = abortPending
+    abortPending = null
+    abort?.()
+}
+
+/** Reuse the app's two players and unlock both output types inside a user gesture. */
+function primePlayers() {
+    player ??= createSpeechPlayer()
+    pcmPlayer ??= createPcmStreamPlayer()
+    player.prime()
+    pcmPlayer.prime()
+}
+
 /**
  * Stop the current playback, then read `text` aloud with `fields`. Never rejects.
  * Every `await` is followed by a generation check: a newer play or a stop owns the state.
@@ -128,18 +152,16 @@ async function readEnding(store, audioId) {
  * Resolves `{ ok: true, ended }` when the sound starts (`ended` resolves the end result),
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
-async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null }) {
-    store.stop()
+async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '' }) {
+    if (owner !== null && store.status !== 'idle') return { ...ABORTED, busy: true }
+    cancelPlayback(store)
     const mine = ++generation
 
-    player ??= createSpeechPlayer()
-    pcmPlayer ??= createPcmStreamPlayer()
     // Synchronous, inside the click: later playback on the element and the context is user-activated.
-    player.prime()
-    pcmPlayer.prime()
+    primePlayers()
     playbackStore = store
     if (typeof window !== 'undefined') installPageHideRelease(window)
-    store.playback = { text, status: 'loading', source, configId }
+    store.playback = { text, status: 'loading', source, configId, owner }
 
     let opened
     try {
@@ -154,6 +176,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
             ...(configId ? { config_id: configId } : {}),
             ...(scriptId ? { script_id: scriptId } : {}),
             ...(origin ? { origin } : {}),
+            ...(announcement ? { announcement } : {}),
             ...(buffersSending(requestedFormat(fields), currentPlatform()) ? { buffered: true } : {}),
         }
         const response = await store._openSpeech(body, controller.signal)
@@ -179,18 +202,18 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     }
     controller = null
     currentAudio = { id: opened.audioId, store }
-    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId }, resolveStart))
+    return new Promise(resolveStart => playOpened(store, mine, opened, { text, source, configId, owner }, resolveStart))
 }
 
 function backToIdle(store, mine) {
     if (generation !== mine) return
-    store.playback = { text: null, status: 'idle', source: null, configId: null }
+    store.playback = { text: null, status: 'idle', source: null, configId: null, owner: null }
     // The click primed the PCM context: suspend it until the next playback.
     pcmPlayer?.stop()
 }
 
 /** Play the open audio with the player of its type and platform, then run the ending step. */
-function playOpened(store, mine, { audioId, contentType }, { text, source, configId }, resolveStart) {
+function playOpened(store, mine, { audioId, contentType }, { text, source, configId, owner }, resolveStart) {
     let started = false
     let finishing = false
     let resolveEnded
@@ -218,7 +241,7 @@ function playOpened(store, mine, { audioId, contentType }, { text, source, confi
         onPlaying() {
             if (generation !== mine || started || finishing) return
             started = true
-            store.playback = { text, status: 'playing', source, configId }
+            store.playback = { text, status: 'playing', source, configId, owner }
             resolveStart({ ok: true, ended })
         },
         onEnded() {
@@ -281,7 +304,8 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         models: [], // [{ id, name, voices: [string], pricing: { prompt, completion } }] from OpenRouter
         modelsStatus: 'idle', // 'idle' | 'loading' | 'loaded' | 'failed'
         // source: 'message' | 'selection' | 'test' | null; configId: the config a settings test is about, else null.
-        playback: { text: null, status: 'idle', source: null, configId: null },
+        // owner: an automatic listener's activation token, or null for manual speech and idle.
+        playback: { text: null, status: 'idle', source: null, configId: null, owner: null },
     }),
 
     getters: {
@@ -444,16 +468,23 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
 
         // ── Playback ─────────────────────────────────────
 
+        /** Unlock the existing players for listening activation without interrupting a reading. */
+        prime() {
+            if (this.status !== 'idle') return
+            primePlayers()
+        },
+
         /**
          * Read a message aloud with the active config (the backend may answer from its cache).
          * With an `origin` ('rendered' | 'file'), the text is a selection: the body carries the origin.
+         * An owned read starts only when idle. The announcement leaves the original message identity unchanged.
          */
-        play(text, { origin = null } = {}) {
+        play(text, { origin = null, owner = null, announcement = '' } = {}) {
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
             const fields = speechFieldsOf(config)
             const scriptId = kindOf(fields) === 'script' ? config.id : null
-            return startPlayback(this, text, fields, { useCache: true, source: origin ? 'selection' : 'message', scriptId, origin })
+            return startPlayback(this, text, fields, { useCache: true, source: origin ? 'selection' : 'message', scriptId, origin, owner, announcement })
         },
 
         /**
@@ -468,21 +499,12 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         /**
          * Abort the in-flight requests or stop the audio, and release the audio. Safe on a cold app.
          * The pending start or end resolves ABORTED, without an ending request.
+         * A non-null owner stops only its own reading; null stops any reading.
          */
-        stop() {
-            generation += 1
-            controller?.abort()
-            controller = null
-            fetchController?.abort()
-            fetchController = null
-            if (currentAudio) this._releaseAudio(currentAudio.id)
-            currentAudio = null
-            player?.stop()
-            pcmPlayer?.stop()
-            const abort = abortPending
-            abortPending = null
-            abort?.()
-            this.playback = { text: null, status: 'idle', source: null, configId: null }
+        stop({ owner = null } = {}) {
+            if (owner !== null && this.playback.owner !== owner) return
+            cancelPlayback(this)
+            this.playback = { text: null, status: 'idle', source: null, configId: null, owner: null }
         },
 
         // ── Network (lazy api.js import: node --test cannot resolve its imports) ──
