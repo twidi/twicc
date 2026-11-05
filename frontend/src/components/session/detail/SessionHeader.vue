@@ -264,6 +264,16 @@ const canStopProcess = computed(() => {
     return ps && !ps.synthetic && ps.state && ps.state !== PROCESS_STATE.DEAD
 })
 
+// The archive button next to Interrupt / Stop: the last, most impactful step (it stops the process,
+// then archives). Main sessions only: a subagent has nothing to archive.
+const canArchiveWithProcess = computed(() =>
+    props.mode === 'session'
+    && !!canStopProcess.value
+    && !session.value?.archived
+    && !session.value?.draft
+    && !session.value?.ephemeral
+)
+
 // Check if this is a background agent that can be stopped
 const canStopAgent = computed(() => {
     if (props.mode !== 'subagent') return false
@@ -660,6 +670,19 @@ defineExpose({
                     <wa-icon :name="stoppingProcess ? 'skull-crossbones' : 'ban'" :label="stoppingProcess ? 'Force kill' : 'Stop'"></wa-icon>
                 </wa-button>
                 <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-compact-stop-button`">{{ stoppingProcess ? 'Force kill' : `Stop the ${providerLabel} process` }}</AppTooltip>
+
+                <wa-button
+                    v-if="canArchiveWithProcess"
+                    :id="`session-header-${sessionId}-compact-archive-button`"
+                    variant="neutral"
+                    appearance="plain"
+                    size="small"
+                    class="compact-live-button reduced-height"
+                    @click.stop="handleArchive"
+                >
+                    <wa-icon name="box-archive" label="Archive"></wa-icon>
+                </wa-button>
+                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-compact-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
             </div>
 
             <!-- Panel toggle (compact height only): the tools icon says there is more, the chevron says
@@ -1029,6 +1052,19 @@ defineExpose({
                     </wa-button>
 
                     <wa-button
+                        v-if="canArchiveWithProcess"
+                        :id="`session-header-${sessionId}-process-archive-button`"
+                        variant="neutral"
+                        appearance="outlined"
+                        size="small"
+                        class="stop-button reduced-height"
+                        @click="handleArchive"
+                    >
+                        <wa-icon slot="start" auto-width name="box-archive"></wa-icon>
+                        Archive
+                    </wa-button>
+
+                    <wa-button
                         v-if="canStopAgent"
                         :id="`session-header-${sessionId}-stop-agent-button`"
                         variant="danger"
@@ -1049,6 +1085,7 @@ defineExpose({
                      outside the button group so they do not take part in its joined layout. -->
                 <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">Interrupt the current turn (keeps the session alive)</AppTooltip>
                 <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? 'Force kill' : `Stop the ${providerLabel} process` }}</AppTooltip>
+                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-process-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
                 <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">Stop this agent</AppTooltip>
             </div>
 
