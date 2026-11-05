@@ -29,22 +29,23 @@ function fakeBrowser() {
     return () => { globalThis.document = originalDocument; globalThis.window = originalWindow }
 }
 
+const CAPTURED = 'Captured selection. '.repeat(30)
 test('selection summary opens in the panel, captures the text and keeps the selection', async t => {
     const calls = []
     const body = { props: ['text'], setup: p => { calls.push(['body', p.text]); return () => Vue.h('summary-body') } }
     const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url),
         selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
     const restoreBrowser = fakeBrowser()
-    const props = Vue.reactive({ selectedText: 'Captured selection', readOrigin: 'rendered', position: { left: 10, top: 20 }, clearSourceSelection() { calls.push(['clear']) } })
+    const props = Vue.reactive({ selectedText: 'Captured selection. '.repeat(30), readOrigin: 'rendered', position: { left: 10, top: 20 }, clearSourceSelection() { calls.push(['clear']) } })
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => {} }); const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, onClose: () => calls.push(['close']) }) }); app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
     const button = descendants(root, node => node.type === 'wa-button' && node.props['aria-label'] === 'Summarize selection')[0]
     assert.ok(button); button.props.onClick({ stopPropagation() {} }); await flush()
-    assert.deepEqual(calls, [['body', 'Captured selection']])
-    props.selectedText = 'Another selection'; await flush()
+    assert.deepEqual(calls, [['body', CAPTURED]])
+    props.selectedText = 'Another selection. '.repeat(30); await flush()
     assert.equal(descendants(root, node => node.type === 'summary-body').length, 1)
     assert.equal(descendants(root, node => node.type === 'wa-textarea').length, 0, 'no comment field in the summary panel')
     assert.equal(descendants(root, node => String(node.props.class).includes('tsc-quote')).length, 0, 'the highlighted selection replaces the quote')
-    assert.deepEqual(calls, [['body', 'Captured selection']], 'the summarized text is the one of the click')
+    assert.deepEqual(calls, [['body', CAPTURED]], 'the summarized text is the one of the click')
 })
 test('summary action is limited to rendered/file selections and uses touch fallback', () => {
     const source = read('./TextSelectionComment.vue')
@@ -53,11 +54,8 @@ test('summary action is limited to rendered/file selections and uses touch fallb
     assert.match(source, /@pointerdown="tapFallback\.down\('summary', \$event\)"/)
     assert.match(source, /@pointerup="onTapUp\('summary', \$event\)"/)
 })
-test('no dialog remains and shared content renders plain paragraphs with an explicit previous-policy label', () => {
+test('no dialog remains and no unused summary content component', () => {
     assert.doesNotMatch(read('../../../App.vue'), /SelectionSummaryDialog/)
-    const content = read('../../ui/SummaryContent.vue')
-    assert.match(content, /<p\b/); assert.doesNotMatch(content, /MarkdownContent|v-html/)
-    assert.match(content, /Previous policy/)
 })
 
 const bodyDeps = (store, speech, settings, Button) => ({
@@ -148,28 +146,16 @@ test('Cancel retains the captured source and the panel for Regenerate; closing d
     assert.equal(store.temporary, null); assert.equal(releases.length, 2)
 })
 
-test('shared summary content identifies interrupted partial text and a restarted fallback revision', async t => {
-    const Component = compileComponent(new URL('../../ui/SummaryContent.vue', import.meta.url))
-    const entry = Vue.reactive({ state: 'failed', text: 'Usable partial sentence.', error: 'stalled', revision: 1 })
-    const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Component, { entry }) })
-    app.mount(root); t.after(() => app.unmount())
-    assert.match(textOf(root), /Interrupted/); assert.match(textOf(root), /Usable partial sentence/)
-    Object.assign(entry, { state: 'running', text: 'Replacement text', error: null, revision: 2, fallback_reason: 'stalled' })
-    await Vue.nextTick()
-    assert.match(textOf(root), /Summary restarted/); assert.match(textOf(root), /Replacement text/)
-    assert.doesNotMatch(textOf(root), /Interrupted|Usable partial sentence/)
-})
-
-
+const LONG = 'Long selection. '.repeat(40), NETWORK = 'Network source. '.repeat(40)
 test('selection generation action stays visible but disables with a reason when no engine can run', async t => {
     const settings = Vue.reactive({ isTouchDevice: true, summaryModel: 'auto', enabledProviders: [] }), calls = [], lookups = []
     let networkAttempts = 0
     const speech = Vue.reactive({ keyPresent: true, available: false, statusForSelection: () => 'idle' })
-    const store = { resolve: async sources => { lookups.push(sources); if (sources[0].text === 'Network source' && ++networkAttempts === 1) throw new Error('Network unavailable'); return [{ openrouter_eligible: sources[0].text !== 'Long selection' }] } }
+    const store = { resolve: async sources => { lookups.push(sources); if (sources[0].text === NETWORK && ++networkAttempts === 1) throw new Error('Network unavailable'); return [{ openrouter_eligible: sources[0].text !== LONG }] } }
     const body = { props: ['text'], setup: p => { calls.push(p.text); return () => null } }
     const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url), selectionWidgetDeps(store, settings, speech, body))
     const restoreBrowser = fakeBrowser()
-    const props = Vue.reactive({ selectedText: 'Captured selection', readOrigin: 'file', position: { left: 10, top: 20 }, clearSourceSelection() {} })
+    const props = Vue.reactive({ selectedText: 'Captured selection. '.repeat(30), readOrigin: 'file', position: { left: 10, top: 20 }, clearSourceSelection() {} })
     const widget = Vue.ref(0) // The owner mounts a new widget for each selection.
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => {} }); const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, key: widget.value }) })
     app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
@@ -179,18 +165,31 @@ test('selection generation action stays visible but disables with a reason when 
     props.readOrigin = null; await flush(); settings.summaryModel = 'openrouter'; await flush()
     assert.equal(lookups.length, 0, 'excluded selection contexts do not send temporary source text')
     props.readOrigin = 'file'; await flush(); assert.equal(action().props.disabled, false)
-    action().props.onClick({ stopPropagation() {} }); await flush(); assert.deepEqual(calls, ['Captured selection'])
-    widget.value++; props.selectedText = 'Long selection'; await flush()
+    action().props.onClick({ stopPropagation() {} }); await flush(); assert.deepEqual(calls, [CAPTURED])
+    widget.value++; props.selectedText = LONG; await flush()
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /source.*OpenRouter|OpenRouter.*source/)
-    action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, ['Captured selection'])
-    props.selectedText = 'Network source'; await flush()
+    action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, [CAPTURED])
+    props.selectedText = NETWORK; await flush()
     assert.equal(action().props['aria-label'], 'Retry summary availability')
     assert.equal(action().props.disabled, false); assert.match(action().props.title, /Network unavailable/)
     action().props.onClick({ stopPropagation() {} }); await flush()
-    assert.equal(networkAttempts, 2); assert.deepEqual(calls, ['Captured selection'])
+    assert.equal(networkAttempts, 2); assert.deepEqual(calls, [CAPTURED])
     assert.equal(action().props['aria-label'], 'Summarize selection')
-    action().props.onClick({ stopPropagation() {} }); await flush(); assert.deepEqual(calls, ['Captured selection', 'Network source'])
+    action().props.onClick({ stopPropagation() {} }); await flush(); assert.deepEqual(calls, [CAPTURED, NETWORK])
 })
+test('a selection shorter than a message minimum offers no summary action', async t => {
+    const body = { props: ['text'], render: () => null }
+    const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url),
+        selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
+    const restoreBrowser = fakeBrowser()
+    const props = Vue.reactive({ selectedText: 'x'.repeat(499), readOrigin: 'rendered', position: { left: 10, top: 20 } })
+    const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Component, props) }); app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
+    const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize selection')[0]
+    assert.equal(action(), undefined)
+    props.selectedText = 'x'.repeat(500); await flush(); assert.ok(action())
+    props.selectedText = ('word ' + '\n ').repeat(300); await flush(); assert.ok(action(), 'whitespace runs count as one character')
+})
+
 const linkNamed = (root, name) => descendants(root, n => n.type === 'a' && textOf(n) === name)[0]
 
 test('selection Regenerate disappears without an engine while the captured panel remains open', async t => {

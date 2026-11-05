@@ -116,7 +116,10 @@ const summariesStore = useSummariesStore()
 // The selection the panel summarizes, captured at the click. Null: the panel comments.
 const summarySource = ref(null)
 const speechStore = useTextToSpeechStore()
-const showSummary = computed(() => !props.persistent && ['rendered', 'file'].includes(props.readOrigin) && !!props.selectedText.trim())
+// Same minimum as a message (MIN_CONTENT_CHARS in summaries/sources.py): a shorter selection has nothing to summarize.
+const SUMMARY_MIN_CHARS = 500
+const showSummary = computed(() => !props.persistent && ['rendered', 'file'].includes(props.readOrigin)
+    && props.selectedText.trim().replace(/\s+/g, ' ').length >= SUMMARY_MIN_CHARS)
 const summaryGeneration = useTemporarySummaryGeneration(() => showSummary.value
     ? { text: props.selectedText, purpose: 'selection' } : null, settingsStore, speechStore, summariesStore)
 function summarize() {

@@ -1,48 +1,35 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
-import { useSummariesStore } from '../../stores/summaries'
 import { adaptOptions, effectiveAdapt, adaptHint } from '../../utils/ttsConfig'
 import { OPENROUTER_MODEL_DESCRIPTION, TITLE_SUGGESTION_MODEL_LABELS } from '../../constants'
-import { useTemporarySummaryGeneration } from '../../composables/useTemporarySummaryGeneration'
 import SegmentedControl from '../ui/SegmentedControl.vue'
-import SummaryContent from '../ui/SummaryContent.vue'
 
 const settings = useSettingsStore()
 const speech = useTextToSpeechStore()
-const summaries = useSummariesStore()
 const enabled = computed(() => new Set(settings.enabledProviders))
-const testText = ref('')
-const generation = useTemporarySummaryGeneration(() => ({ text: testText.value.trim(), purpose: 'test' }), settings, speech, summaries)
+// The stored choice is never rewritten here: the control shows the engine that really runs, which is the
+// first enabled agent while nothing was chosen ('auto').
 const effective = computed(() => effectiveAdapt(settings.summaryModel === 'auto' ? null : settings.summaryModel, enabled.value, speech.keyPresent))
-const choices = computed(() => {
-    const agent = effectiveAdapt(null, enabled.value, speech.keyPresent)
-    const label = TITLE_SUGGESTION_MODEL_LABELS[agent]
-    return [{ value: 'auto', label: label ? `Auto · ${label}` : 'Auto', disabled: agent === 'off' },
-        ...adaptOptions(enabled.value, speech.keyPresent).filter(option => option.value !== 'off')]
-})
-const choice = computed(() => settings.summaryModel === 'auto' || effective.value === 'off' ? 'auto' : effective.value)
+const choices = computed(() => adaptOptions(enabled.value, speech.keyPresent)
+    .filter(option => option.value !== 'off')
+    .map(option => option.value === 'openrouter' && !option.disabled
+        ? { ...option, title: `${option.label}: ${OPENROUTER_MODEL_DESCRIPTION}` } : option))
+const choice = computed(() => effective.value === 'off' ? '' : effective.value)
 const hints = computed(() => adaptHint(effective.value, enabled.value, speech.keyPresent))
 const displacedPreference = computed(() => settings.summaryModel !== 'auto' && settings.summaryModel !== effective.value
     ? choices.value.find(option => option.value === settings.summaryModel) : null)
-const subscription = shallowRef(null)
-function runTest() {
-    const text = testText.value.trim()
-    if (!text || !generation.value.available) return
-    subscription.value?.release()
-    subscription.value = summaries.request({ text, purpose: 'test' }, { manual: false })
-}
-function cancelTest() { subscription.value?.release() }
-onBeforeUnmount(() => { subscription.value?.release() })
 </script>
 
 <template>
     <div class="summary-settings">
         <h3>Summaries</h3>
-        <p>Messages need at least 1,000 content characters. Summaries target one third of the source, up to 140 words.</p>
+        <p>Messages and selections need at least 500 content characters. Summaries target one third of the source, up to 140 words.</p>
         <label>Summary model</label>
-        <SegmentedControl :model-value="choice" :options="choices" label="Summary model" @update:model-value="settings.setSummaryModel($event)" />
+        <div class="summary-model-row">
+            <SegmentedControl :model-value="choice" :options="choices" label="Summary model" @update:model-value="settings.setSummaryModel($event)" />
+        </div>
         <small v-if="displacedPreference">
             Stored preference: {{ displacedPreference.label }}. {{ displacedPreference.title }}.
             Effective engine: {{ TITLE_SUGGESTION_MODEL_LABELS[effective] || 'Unavailable' }}.
@@ -55,23 +42,15 @@ onBeforeUnmount(() => { subscription.value?.release() })
             Read summaries in timeline speech
         </wa-switch>
         <small>On by default. Manual summaries remain available when this is off.</small>
-        <wa-textarea label="Temporary test text" :value="testText" :rows="5" @input="testText = $event.target.value"></wa-textarea>
-        <wa-button size="small" :disabled="!testText.trim() || !generation.available" :title="!generation.available ? generation.unavailableReason : undefined" @click="runTest">Test summary</wa-button>
-        <wa-button v-if="generation.lookupFailed" size="small" :title="generation.unavailableReason" @click="generation.retryLookup">Retry availability check</wa-button>
-        <small>Test text and results are discarded when this section closes.</small>
-        <SummaryContent v-if="subscription" :entry="subscription.entry" :retry-disabled="!generation.available" :retry-unavailable-reason="generation.unavailableReason" @cancel="cancelTest" @retry="runTest" />
-        <div v-if="subscription" class="test-provenance">
-            <small v-if="subscription.entry.engine">Engine: {{ TITLE_SUGGESTION_MODEL_LABELS[subscription.entry.engine] || subscription.entry.engine }}</small>
-            <small v-if="subscription.entry.first_text_ms != null">First text: {{ subscription.entry.first_text_ms }} ms</small>
-            <small v-if="subscription.entry.total_ms != null">Duration: {{ subscription.entry.total_ms }} ms</small>
-            <small v-if="subscription.entry.fallback_reason">Fallback: {{ subscription.entry.fallback_reason }}</small>
-        </div>
     </div>
 </template>
 
 <style scoped>
 .summary-settings { display: flex; flex-direction: column; gap: var(--wa-space-s); }
-.test-provenance { display: flex; flex-direction: column; gap: var(--wa-space-xs); }
+/* The segmented control keeps its content width and its one row of segments, as in the speech settings. */
+.summary-model-row { display: flex; flex-wrap: wrap; align-items: center; }
+.summary-model-row > .segmented-control { flex: none; max-width: 100%; }
+.summary-model-row :deep(wa-radio-group::part(form-control-input)) { flex-wrap: wrap; }
 p { margin: 0; }
 small { color: var(--wa-color-text-quiet); }
 </style>

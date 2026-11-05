@@ -146,7 +146,6 @@ watch(() => props.positionAnchor, applyAnchor)
 
 function onPopoverAfterHide() {
     benchmarkTaskStore.resetTransientControls()
-    if (activeSection.value === 'summaries') activeSection.value = 'general'
     popoverOpen = false
     applyAnchor()
 }
