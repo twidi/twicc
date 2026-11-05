@@ -182,4 +182,33 @@ class TtsConnectionTest {
         high.reconciled(); assertEquals(1200L, high.failed())
     }
 
+    @Test fun cancelledBeforeAudioCallRegistrationNeverOpensTheResponse() = fixture { server, c, _ ->
+        c.cancelAudio(resource()) // Cancellation wins before the loader registers its call.
+        assertThrows(java.io.InterruptedIOException::class.java) { c.openAudio(resource()) { true } }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun audioCancellationDuringRegistrationKeepsTheControlSocketUsable() = fixture { server, c, creds ->
+        val received = LinkedBlockingQueue<String>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) { received.offer(text) }
+        }))
+        c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
+        assertNotNull(received.poll(5, TimeUnit.SECONDS))
+        val registered = java.util.concurrent.CountDownLatch(1)
+        val cancelled = java.util.concurrent.CountDownLatch(1)
+        val errors = LinkedBlockingQueue<Throwable>()
+        val worker = Thread {
+            try { c.openAudio(resource()) { registered.countDown(); cancelled.await(5, TimeUnit.SECONDS); true }.close() }
+            catch (error: Throwable) { errors.offer(error) }
+        }
+        worker.start(); assertTrue(registered.await(5, TimeUnit.SECONDS))
+        c.cancelAudio(resource()); cancelled.countDown()
+        assertTrue(errors.poll(5, TimeUnit.SECONDS) is java.io.InterruptedIOException)
+        worker.join(1000)
+        assertEquals(1, server.requestCount) // Only the existing WebSocket handshake.
+        assertTrue(c.send(mapOf("protocol" to 1, "type" to "ping", "seq" to 2)))
+        assertEquals("ping", TtsJson.decode(received.poll(5, TimeUnit.SECONDS)!!)["type"])
+    }
+
 }

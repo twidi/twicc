@@ -231,4 +231,32 @@ class TtsServicePolicyTest {
         assertFalse(h.owner.dispatch(TtsCommand.Reconnect).accepted)
         assertFalse(h.events.contains("export"))
     }
+    @Test fun playerAuthorizationLossStopsListeningButStaleGenerationCannotStopReplacement() {
+        val h = Harness(); h.listen(); h.connect(); h.manual()
+        val old = h.owner.snapshot().playback
+        h.manual("replacement")
+        val current = h.owner.snapshot().playback
+        h.owner.feedback(old.readingId!!, old.generation, PlayerSignal.AuthorizationLost)
+        assertNotNull(h.owner.snapshot().listening)
+        assertEquals(current.readingId, h.owner.snapshot().playback.readingId)
+        h.owner.feedback(current.readingId!!, current.generation, PlayerSignal.AuthorizationLost)
+        assertNull(h.owner.snapshot().listening)
+        assertEquals("error", h.owner.snapshot().sessionStatus)
+        assertEquals("unauthorized", h.owner.snapshot().error!!["code"])
+        assertTrue(h.socket.closed); assertTrue(h.stopped)
+    }
+
+    @Test fun bufferingAndResumeNeverCreateASecondStartedCommand() {
+        val h = Harness(); h.manual(); h.connect()
+        val p = h.owner.snapshot().playback
+        h.owner.feedback(p.readingId!!, p.generation, PlayerSignal.Resumed)
+        assertEquals("loading", h.owner.snapshot().playback.status)
+        h.owner.feedback(p.readingId!!, p.generation, PlayerSignal.Started)
+        h.owner.feedback(p.readingId!!, p.generation, PlayerSignal.Buffering)
+        assertEquals("loading", h.owner.snapshot().playback.status)
+        h.owner.feedback(p.readingId!!, p.generation, PlayerSignal.Resumed)
+        assertEquals("playing", h.owner.snapshot().playback.status)
+        assertEquals(1, h.socket.sent.count { it["type"] == "started" })
+    }
+
 }

@@ -236,14 +236,16 @@ class TtsConnection(
     private fun audioKey(resource: AudioResource) = "${resource.sessionId}/${resource.audioId}"
     /** Cancels an opening or streaming body immediately, without stopping the control socket. */
     fun cancelAudio(resource: AudioResource) { audioCalls.remove(audioKey(resource))?.cancel() }
-    fun openAudio(resource: AudioResource): TtsAudioStream {
+    fun openAudio(resource: AudioResource, isCancelled: () -> Boolean = { false }): TtsAudioStream {
         val call = client.newCall(resourceRequest(resource))
         val key = audioKey(resource)
         if (audioCalls.putIfAbsent(key, call) != null) throw IOException("This audio resource is already open")
         var response: okhttp3.Response? = null
         try {
+            if (isCancelled()) throw java.io.InterruptedIOException("Speech audio opening cancelled")
             response = call.execute()
             validate(response)
+            if (isCancelled()) throw java.io.InterruptedIOException("Speech audio opening cancelled")
             val body = response.body ?: throw IOException("TTS audio is empty")
             // Detect a tunnel that returns HTML with a misleading media content type, without consuming audio bytes.
             val source = body.source()

@@ -242,9 +242,11 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             is TtsCommand.PlayerFeedback -> {
                 if (command.readingId != playback.readingId || command.generation != playback.generation) return emptyList()
                 when (val signal = command.signal) {
-                    PlayerSignal.Buffering -> playback = playback.copy(phase = "buffering")
+                    PlayerSignal.Buffering -> playback = playback.copy(phase = "buffering", status = "loading")
                     PlayerSignal.Started -> if (!playback.started) { playback = playback.copy(started = true, phase = "playing", status = "playing"); queue("started", readingFields()) }
+                    PlayerSignal.Resumed -> if (playback.started) playback = playback.copy(phase = "playing", status = "playing")
                     PlayerSignal.Settling -> playback = playback.copy(phase = "settling")
+                    PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.")
                     is PlayerSignal.Ended -> {
                         finish(signal.ok, signal.error)
                         queue("finished", readingFields() + mapOf("outcome" to if (signal.ok) "complete" else "failed", "error" to signal.error))

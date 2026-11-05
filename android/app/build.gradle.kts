@@ -28,6 +28,7 @@ android {
             res.srcDir("src/ttsBoundary/res")
         }
     }
+    sourceSets.getByName("androidTest").assets.srcDir("../../tests/fixtures/native_tts_audio")
     buildFeatures { buildConfig = true }
     splits {
         abi {
@@ -59,6 +60,7 @@ dependencies {
     testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     implementation(project(":policy"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.media3:media3-exoplayer:1.9.0")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     androidTestImplementation("androidx.test:runner:1.6.2")

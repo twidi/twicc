@@ -26,7 +26,9 @@ class AudioResource(val instanceId: String, val sessionId: String, val resumeSec
 sealed interface PlayerSignal {
     data object Buffering : PlayerSignal
     data object Started : PlayerSignal
+    data object Resumed : PlayerSignal
     data object Settling : PlayerSignal
+    data object AuthorizationLost : PlayerSignal
     data class Ended(val ok: Boolean, val error: String? = null) : PlayerSignal
 }
 sealed interface TtsCommand {
