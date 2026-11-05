@@ -22,6 +22,7 @@ import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { useMessageSummary } from '../../composables/useMessageSummary.js'
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { SUMMARY_MIN_CHARS } from '../../constants'
+import { SUMMARY_ICON_SRC } from '../../utils/summaryIcon'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { describeEvent } from '../../utils/timeline/describeEvent'
@@ -178,7 +179,7 @@ function toggleSession() {
                     :aria-pressed="summary.view === 'summary'"
                     @click="toggleSummary"
                 >
-                    <wa-icon name="compress"></wa-icon>
+                    <wa-icon :src="SUMMARY_ICON_SRC"></wa-icon>
                 </wa-button>
             </template>
         </TimelineEventLine>

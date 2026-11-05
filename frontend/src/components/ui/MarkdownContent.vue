@@ -20,6 +20,7 @@ import { hashString } from '../../utils/hash.js'
 import { detailsScope, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 import { useSettingsStore } from '../../stores/settings'
 import { SUMMARY_MIN_CHARS } from '../../constants'
+import { SUMMARY_ICON_SRC } from '../../utils/summaryIcon'
 import { vHighlight } from '../../directives/vHighlight.js'
 import { toast } from '../../composables/useToast'
 import { openMediaPreview } from '../../composables/useMediaPreview'
@@ -926,7 +927,7 @@ function handleLinkClick(event) {
                     :aria-pressed="summaryActive"
                     @click="summaryActive ? summaryContext.showOriginal() : summaryContext.summarize()"
                 >
-                    <wa-icon name="compress"></wa-icon>
+                    <wa-icon :src="SUMMARY_ICON_SRC"></wa-icon>
                 </wa-button>
             </wa-button-group>
         </div>

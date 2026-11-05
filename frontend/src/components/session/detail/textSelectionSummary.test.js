@@ -21,6 +21,7 @@ const selectionWidgetDeps = (store, settings, speech, body) => ({
     '../../../composables/useTemporarySummaryGeneration': temporaryGeneration,
     '../../../utils/selectionRead': selectionRead, '../../../utils/touchTapFallback': touch,
     '../../../constants': constants, './SelectionSummaryBody.vue': body,
+    '../../../utils/summaryIcon': { SUMMARY_ICON_SRC: 'summary.svg' },
 })
 function fakeBrowser() {
     const originalWindow = globalThis.window, originalDocument = globalThis.document

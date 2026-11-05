@@ -56,7 +56,7 @@ test('the actual row opens Summary from collapsed, passes exact saved references
         '../../composables/useMessageSummary.js': module,
         '../../stores/textToSpeech': { useTextToSpeechStore: () => ({ statusForText: () => busy.value ? 'playing' : 'idle', statusForSummary: () => 'idle' }) },
         'vue-router': { RouterLink: { render: () => null } },
-        '../../constants': { SUMMARY_MIN_CHARS: 500 }, '../../stores/data': { useDataStore: () => ({ getSession: () => null, getProject: () => null }) },
+        '../../constants': { SUMMARY_MIN_CHARS: 500 }, '../../utils/summaryIcon': { SUMMARY_ICON_SRC: 'summary.svg' }, '../../stores/data': { useDataStore: () => ({ getSession: () => null, getProject: () => null }) },
         '../../utils/timeline/describeEvent': { describeEvent: () => ({ severity: 'info', kind: 'assistant_message.sent', parts: [{ text: 'Sent a message' }] }) },
         '../project/ProjectBadge.vue': { render: () => null }, './TimelineSessionMention.vue': { render: () => null },
         './TimelineEventLine.vue': { setup: (_, { slots }) => () => Vue.h('event-line', slots.wording?.()) },

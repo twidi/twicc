@@ -55,6 +55,7 @@ async function loadComponent() {
     const summariesStub = dataModule(`export const useSummariesStore = () => ({ openTemporary() {} })`)
     const summaryBodyStub = dataModule(`export default {}`)
     const constantsStub = dataModule(`export const SUMMARY_MIN_CHARS = 500`)
+    const summaryIconStub = dataModule(`export const SUMMARY_ICON_SRC = 'summary.svg'`)
     const selectionReadStub = dataModule(`
         export const READ_TITLES = { idle: 'Read aloud', loading: 'Cancel the request', playing: 'Stop reading' }
         export const readIcon = status => (status === 'idle' ? 'volume-up' : 'stop')
@@ -75,6 +76,7 @@ async function loadComponent() {
         .replace("from '../../../stores/summaries'", `from '${summariesStub}'`)
         .replace("from './SelectionSummaryBody.vue'", `from '${summaryBodyStub}'`)
         .replace("from '../../../constants'", `from '${constantsStub}'`)
+        .replace("from '../../../utils/summaryIcon'", `from '${summaryIconStub}'`)
         .replace("from '../../../composables/useTemporarySummaryGeneration'", `from '${summaryGenerationStub}'`)
         .replace("from '../../../utils/selectionRead'", `from '${selectionReadStub}'`)
         .replace("from '../../../utils/touchTapFallback'", `from '${touchTapFallbackStub}'`)

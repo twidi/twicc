@@ -16,6 +16,7 @@ import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead
 import { createTouchTapFallback } from '../../../utils/touchTapFallback'
 import { useTemporarySummaryGeneration } from '../../../composables/useTemporarySummaryGeneration'
 import { SUMMARY_MIN_CHARS } from '../../../constants'
+import { SUMMARY_ICON_SRC } from '../../../utils/summaryIcon'
 import SelectionSummaryBody from './SelectionSummaryBody.vue'
 
 const props = defineProps({
@@ -634,7 +635,8 @@ defineExpose({ isExpanded: expanded })
                 @pointercancel="tapFallback.cancel()"
                 @click.stop="onCollapsedClick('summary')"
             >
-                <wa-icon :name="summaryGeneration.lookupFailed ? 'rotate-right' : 'compress'"></wa-icon>
+                <wa-icon v-if="summaryGeneration.lookupFailed" name="rotate-right"></wa-icon>
+                <wa-icon v-else :src="SUMMARY_ICON_SRC"></wa-icon>
             </wa-button>
         </div>
 
