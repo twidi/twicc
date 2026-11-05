@@ -35,8 +35,8 @@ Ordinary universal APK SHA-256 values before experimental replacement:
 
 | Engine | SHA-256 |
 | --- | --- |
-| WebView | `0ffcacac055ab701570e619dc260dffd5d3ce41a6ac7b91a7ea818ae40ce953f` |
-| Gecko | `2735453a8bdcc0a04fe25659959f3d5625e30c8db0602b663aef99eb6a033bd8` |
+| WebView | `481aea10faa3a2a726f399eb7b0a3c0053602964b4c4390f3b5edc61144821ca` |
+| Gecko | `e3ae7db7c22508c1f5fe3ba91d129db8c6cc44f2f246a41b5655ca6ed7f8a668` |
 
 Final experimental APKs use version `0.5.0`, code `11`.
 Both signatures use certificate SHA-256 `f7e055086fb9bfedf06ed622e65283a3d383d89cecc2cdd860a33f1221ce6b6a`.
@@ -44,24 +44,78 @@ Manifest checks confirm the shared identity, SDK bounds, cleartext rejection, an
 The service declares `mediaPlayback|specialUse` (`0x40000002`).
 Delivery APKs omit test `networkSecurityConfig`, fixture CA/key/audio, and page-adapter test assets.
 Generated `BuildConfig.NATIVE_TTS` is true in both experimental builds.
-The delivery universal Gecko APK then WebView APK each install successfully with `adb -s emulator-5580 install -r`.
-Package inspection after each replacement confirms version `0.5.0`, code `11`. No uninstall or app data clear occurs.
+Before final review corrections, prior universal Gecko and WebView APKs install with `adb -s emulator-5580 install -r`.
+Those prior installs confirm version `0.5.0`, code `11`; no uninstall or app data clear occurs.
+Prior installed universal SHA-256 values:
+
+- WebView: `272ac65bed283c10cbea541b4deba3bc74c1eee712dc4c116e6ee504a11a9644`.
+- Gecko: `621caeb265a0a92181fcae486b2d9c1c83b439b9bfaab7aaf9989a8f1bf6760e`.
+
+The table below identifies the **corrected APKs** built from the sources committed with this validation update.
+These corrected APKs are not installed or device-tested in this fix wave. The reused version does not identify exact bytes.
 
 | APK path | SHA-256 |
 | --- | --- |
-| `android/dist/webview/app-webview-arm64-v8a-debug.apk` | `272ac65bed283c10cbea541b4deba3bc74c1eee712dc4c116e6ee504a11a9644` |
-| `android/dist/webview/app-webview-armeabi-v7a-debug.apk` | `272ac65bed283c10cbea541b4deba3bc74c1eee712dc4c116e6ee504a11a9644` |
-| `android/dist/webview/app-webview-universal-debug.apk` | `272ac65bed283c10cbea541b4deba3bc74c1eee712dc4c116e6ee504a11a9644` |
-| `android/dist/webview/app-webview-x86_64-debug.apk` | `272ac65bed283c10cbea541b4deba3bc74c1eee712dc4c116e6ee504a11a9644` |
-| `android/dist/gecko/app-gecko-arm64-v8a-debug.apk` | `f0d11dba9c6cc8e194e822d17aa352c3dd18f2a003f50b7c8467b12adee14147` |
-| `android/dist/gecko/app-gecko-armeabi-v7a-debug.apk` | `a72308126a70d68da03d3c489cff774edbb909ee62d495ad65df24caa1fad65d` |
-| `android/dist/gecko/app-gecko-universal-debug.apk` | `621caeb265a0a92181fcae486b2d9c1c83b439b9bfaab7aaf9989a8f1bf6760e` |
-| `android/dist/gecko/app-gecko-x86_64-debug.apk` | `23e752fff00b20a3e66b6ce5e4ff77b9633be659653159e78e0bd61b67077399` |
+| `android/dist/webview/app-webview-arm64-v8a-debug.apk` | `c429639fd0163dabeab7ab0d4bba86c7c00c5cb7eafb8fee039c2383f4eab053` |
+| `android/dist/webview/app-webview-armeabi-v7a-debug.apk` | `c429639fd0163dabeab7ab0d4bba86c7c00c5cb7eafb8fee039c2383f4eab053` |
+| `android/dist/webview/app-webview-universal-debug.apk` | `c429639fd0163dabeab7ab0d4bba86c7c00c5cb7eafb8fee039c2383f4eab053` |
+| `android/dist/webview/app-webview-x86_64-debug.apk` | `c429639fd0163dabeab7ab0d4bba86c7c00c5cb7eafb8fee039c2383f4eab053` |
+| `android/dist/gecko/app-gecko-arm64-v8a-debug.apk` | `fff5720adcd11c1a46c9b853f08acc70bce08f5dbc8d3323e2c42822728866cb` |
+| `android/dist/gecko/app-gecko-armeabi-v7a-debug.apk` | `a79a37acecca0a77b0cd23a25b4800fc7b85375684d3687e7d92991fad670d64` |
+| `android/dist/gecko/app-gecko-universal-debug.apk` | `2c403e6deb286b241448f056b1ab4f171c1a3a1bc871f17b6466c5e17dc6bd96` |
+| `android/dist/gecko/app-gecko-x86_64-debug.apk` | `891119090e5f701db5453eec1c24282336389b24abb91495a4a8d7aa6f8683a3` |
 
-The first experimental Gecko build fails with an internal Kotlin FIR `ClassCastException` during overlapping build/edit work.
-A serial run with stable sources passes in 57 seconds. The serial WebView run passes in 48 seconds.
-No tool or dependency changes address this compiler failure. Both final runs retain all tests and lint.
-Common policy tests pass 41 cases. App unit tests pass 45 cases per flavor: **131 total**, zero failures/errors/skips.
+The prior integration wave records a Kotlin FIR `ClassCastException` during overlapping build/edit work.
+Its stable serial reruns pass without tool or dependency changes.
+This final fix wave uses serial Android builds with stable native sources.
+Ordinary builds pass: WebView in 65 seconds, Gecko in 66 seconds.
+Experimental builds pass: WebView in 64 seconds, Gecko in 68 seconds.
+Every build runs tests, lint, and assembly.
+Common policy tests pass 47 cases. App tests pass 47 cases per flavor: **141 unique JVM tests**, zero failures/errors/skips.
+
+## Final review corrections
+
+The final review identifies three Important defects. This fix wave corrects all three.
+
+- **I1:** the backend sends `selection_rejected` with the selected reading ID and generation.
+  Native releases only a matching unopened automatic loading reservation, without a user failure.
+  After visibility filtering, the backend offers the next candidate after the disposition.
+  Resume repeats a lost disposition, while an in-flight selection retains its reservation.
+- **I2:** native records actual audible end at `PlayerSignal.Settling`, before the ending HTTP request completes.
+  Android injects `SystemClock.elapsedRealtime`; deep sleep counts. JVM tests inject a deterministic clock.
+  A selected command freezes `silence_reset` only when elapsed silence exceeds 180,000 ms.
+  The backend validates the optional strict boolean and freezes its full announcement before preparation.
+  An omitted field means false. Exactly 180,000 ms does not reset context. No timer starts playback.
+- **I3:** `tts_unavailable` disables the listener and automatic work, preserving unrelated manual playback.
+  Delayed automatic summary errors retain their selected reading ID and generation.
+  Native ignores stale reading errors in direct frames and state snapshots.
+  Session-wide `unauthorized` and `session_lost` behavior remains unchanged.
+
+The shared JSON disposition fixture is asserted against actual backend frames and consumed by native contract tests.
+Coverage connects rejected selection, reserved playback, and admission of the next candidate.
+It also connects delayed automatic errors and listener configuration loss to preserved manual playback.
+Policy coverage includes manual replacement, Skip, new activation, old generation, opened audio, and old connection guards.
+Silence tests cover 180,000 ms, 180,001 ms, a held ending response, preparation/replay freeze, and stale/inaudible player feedback.
+Backend preparation tests retain audible-start context and manual/failure invalidation.
+An asynchronous selection-stop regression also covers configuration loss with yielding summary-reader cleanup.
+`disable` cancels other selection tasks while allowing its current selection to finish stop/error/disposition cleanup.
+The existing epoch fences listener failures across a newer activation reserved during yielding reader cleanup.
+The regression checks the new descriptor during cleanup and completed initialization afterward.
+The listener lock serializes initialization; it cannot complete a newer initialization while the old selection holds that lock.
+
+The fixes change selection, error ownership, and context calculation only.
+They change no network lifetime, foreground lifetime, wake-lock behavior, or player output.
+The prior thirty-minute WebView diagnostic remains evidence for that earlier binary only.
+No new thirty-minute diagnostic runs for this fix wave. No Gecko or physical-phone long-duration claim is added.
+The corrected delivery keeps version `0.5.0`, code `11`, as the same pre-handoff experimental build.
+
+Minor dispositions remain explicit:
+
+- **M1 deferred:** Gecko principal-capture failure diagnosis/recovery remains nonblocking experimental maintenance.
+- **M2 corrected:** the synthetic Markdown toolbar test supplies `SUMMARY_ICON_SRC` and checks its icon binding.
+  Production icon paths and Vue warning handling remain unchanged. The covering test produces no undefined-icon warning.
+- **M3 deferred:** existing frontend chunk/dynamic-import and Android/Gradle deprecation warnings remain maintenance work.
+  No warning-free validation claim applies.
 
 ## Current implementation repairs
 
@@ -100,7 +154,9 @@ uv run pytest tests/test_native_tts_protocol.py tests/test_native_tts_sessions.p
   tests/test_tts_part_source.py tests/test_summary_speech.py -q
 ```
 
-Result: **443 passed in 23.18 seconds**.
+Final-fix result: **466 passed in 22.82 seconds**. The required list runs once after final backend sources stabilize.
+Earlier 464- and 465-test runs precede the final selection-stop cleanup and activation-fence regressions.
+The prior integrated result is 443 passed in 23.18 seconds.
 The added script-prefix regression first fails at the `len(part) <= 30` assertion.
 Its short fitting-prefix case already passes before the repair.
 The independent announcement-only baseline reproduction reports 24 failures and 10 passes.
@@ -131,7 +187,8 @@ This record distinguishes those earlier checks from new service/engine integrati
 | --- | --- | --- |
 | `open`, `resume` | `TtsController` → `NativeTtsConsumer`/registry | `native_protocol.parse_native_command`; sequence, secret, replay, session-loss tests in protocol/sessions/transport suites |
 | `listen`, `set_muted`, `disable` | Native policy → session/timeline coordinator | Scope/activation validation; disable clears automatic work; timeline and native-policy tests |
-| `manual`, `select` | Native reservation → backend preparation | Reading/generation/source validation; replacement/Skip/Stop all release readers and audio; sessions/timeline tests |
+| `manual`, `select` | Native reservation → backend preparation | Reading/generation/source validation; strict optional frozen `silence_reset`; replacement/Skip/Stop all release readers and audio; sessions/timeline tests |
+| `selection_rejected` | Backend selection/resume → native reservation | Exact reading/generation; only unopened automatic loading reservations release; next candidate follows disposition; shared producer/consumer fixture and policy tests |
 | `started`, `finished` | Real player → owner/policy → backend | Reading/generation guards; audible output and drain/ending stay distinct; policy and real-player integration tests |
 | `skip`, `stop_all` | Page/notification → native policy → backend | Immediate local cancellation; retained sequence replay before resume; policy, transport, and notification tests |
 | `ping`, `pong` | Native heartbeat ↔ authenticated consumer | Protocol and acknowledged-sequence checks; authorization reload; transport tests |
@@ -172,7 +229,12 @@ export ANDROID_AVD_HOME=/absolute/path/to/test-avds
 Install compatible APKs sequentially with `adb -s emulator-5580 install -r`.
 Do not uninstall the app to switch engines. Engine cookie stores remain separate.
 
-## New integration evidence
+## Prior integration evidence (before final corrections)
+
+These device runs precede I1–I3 corrections and the corrected delivery hashes above.
+They remain earlier engine/service evidence. They do not establish a device pass for the corrected APK bytes.
+No short integration or permission/Settings device run repeats in the final fix wave.
+
 
 The existing `TtsPlatformBoundaryTest` gains narrow TTS integration cases, using the real service, transport, and player.
 Its local HTTPS/WSS fixture replaces backend/provider responses only.
@@ -238,7 +300,11 @@ Backend reader reconstruction remains separately verified by `test_manual_summar
 The descriptorless temporary source/model path remains covered by native-session and summary-service tests.
 The local device fixture does not run a paid summary engine or a complete Django server.
 
-## Thirty-minute screen-off diagnostic
+## Prior thirty-minute screen-off diagnostic
+
+This diagnostic precedes the final corrections. It is not a new-binary pass.
+The fix wave changes no foreground, network, or wake-lock lifetime and does not repeat this diagnostic.
+
 
 The anchor is `TtsPlatformBoundaryTest#screenOffArrivalAfterThirtySilentMinutes`.
 Run it explicitly; it is a long diagnostic, not a normal short suite:

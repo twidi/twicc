@@ -90,7 +90,8 @@ class TtsSnapshotCache {
 class TtsServiceOwner(private val platform: TtsServicePlatform,
     private val transportFactory: (TtsCredentials) -> TtsTransport = ::NativeTtsTransport,
     private val outputFactory: () -> TtsPlaybackOutput = ::UnavailableTtsOutput,
-    private val cache: TtsSnapshotCache = TtsSnapshotCache()) {
+    private val cache: TtsSnapshotCache = TtsSnapshotCache(),
+    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private var controller: TtsController? = null
     private var source: TtsActivationSource? = null
     private var instanceId = ""
@@ -110,7 +111,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     fun configure(value: TtsActivationSource): Boolean {
         if (active && instanceId != value.instanceId) return false
         if (instanceId != value.instanceId || controller == null) {
-            controller = TtsController(value.instanceId); instanceId = value.instanceId; document = null
+            controller = TtsController(value.instanceId, elapsedMs = elapsedMs); instanceId = value.instanceId; document = null
         }
         source = value; instanceName = value.name
         return true
@@ -124,7 +125,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     fun dispatch(command: TtsCommand): Acceptance {
         if (command is TtsCommand.SwitchInstance && command.instanceId != instanceId) {
             if (active) internal(TtsCommand.AuthorizationLost("The active instance changed."))
-            controller = TtsController(command.instanceId); instanceId = command.instanceId
+            controller = TtsController(command.instanceId, elapsedMs = elapsedMs); instanceId = command.instanceId
             source = null; document = null
             cache.publish(controller!!.snapshot(), mirrorOnly = true)
             return Acceptance(true)

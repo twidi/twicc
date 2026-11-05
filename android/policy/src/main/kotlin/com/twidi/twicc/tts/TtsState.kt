@@ -3,7 +3,10 @@ package com.twidi.twicc.tts
 import java.util.UUID
 
 /** All calls run on the service's single state owner. Nothing survives process death. */
-class TtsController(private var instanceId: String, private val newId: () -> String = { UUID.randomUUID().toString() }) {
+class TtsController(private var instanceId: String, private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    // Preserve the original trailing newId lambda constructor.
+    constructor(instanceId: String, newId: () -> String) : this(instanceId, newId, { System.nanoTime() / 1_000_000 })
     private val clientId = newId()
     private var owner: DocumentOwner? = null
     private var revision = 0L
@@ -25,6 +28,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     private var openingFrame: TtsFrame? = null
     private var status = "idle"
     private var playback = NativePlayback()
+    private var audibleEndedAt: Long? = null
     private var listening: NativeListening? = null
     private var pendingCount = 0
     private var error: TtsFrame? = null
@@ -216,16 +220,22 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                             if (retained.isEmpty()) {
                                 pendingCount = (f["pending_count"] as? Number)?.toInt() ?: 0
                                 configuration = f["configuration_available"] as? Boolean
-                                error = f["error"] as? TtsFrame
+                                val incomingError = f["error"] as? TtsFrame
+                                if (incomingError == null) error = null
+                                // Reading errors from an older selection cannot own a replacement.
+                                else if (incomingError["reading_id"] == null || matches(incomingError)) error = incomingError
                                 if (f.containsKey("listening") && f["listening"] == null) listening = null
                             }
                             val serverError = f["error"] as? TtsFrame
                             if (serverError != null) handleError(serverError)
                         }
                     }
+                    "selection_rejected" -> if (matches(f) && playback.automatic && playback.phase == "loading" &&
+                        playback.audioId == null && resource == null) cancel()
                     "candidate" -> if (ready && stopSeq == null && playback.readingId == null && listening?.activationId == f["activation_id"]) {
                         reserve(null, f["identity"] as? TtsFrame, "message", f["text"] as? String ?: "", null, true)
-                        queue("select", readingFields() + mapOf("event_id" to f["event_id"]))
+                        queue("select", readingFields() + mapOf("event_id" to f["event_id"],
+                            "silence_reset" to (audibleEndedAt?.let { elapsedMs() - it > 180000L } ?: false)))
                     }
                     "audio" -> if (ready && stopSeq == null && matches(f) && resource == null && sessionId != null) {
                         val audioId = f["audio_id"] as? String
@@ -249,7 +259,10 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     PlayerSignal.Buffering -> playback = playback.copy(phase = "buffering", status = "loading")
                     PlayerSignal.Started -> if (!playback.started) { playback = playback.copy(started = true, phase = "playing", status = "playing"); queue("started", readingFields()) }
                     PlayerSignal.Resumed -> if (playback.started) playback = playback.copy(phase = "playing", status = "playing")
-                    PlayerSignal.Settling -> playback = playback.copy(phase = "settling")
+                    PlayerSignal.Settling -> {
+                        if (playback.started && playback.phase != "settling") audibleEndedAt = elapsedMs()
+                        playback = playback.copy(phase = "settling")
+                    }
                     PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.")
                     is PlayerSignal.Ended -> {
                         finish(signal.ok, signal.error)
@@ -287,7 +300,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         val code = f["code"] as? String ?: "failed"
         val message = f["message"] as? String ?: "Speech failed"
         if (code in setOf("unauthorized", "session_lost")) terminate(code, message)
-        else if (code in setOf("catchup_incomplete", "scope_unavailable")) {
+        else if (code in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable")) {
             listening?.let { queue("disable", mapOf("activation_id" to it.activationId)) }
             listening = null; pendingCount = 0; if (playback.automatic) cancel(); error = mapOf("code" to code, "message" to message)
         } else if (f["reading_id"] == null || matches(f)) {

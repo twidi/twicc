@@ -18,6 +18,7 @@ from twicc.tts.streams import stream_from_bytes
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.django_db(transaction=True)]
 CLICK = datetime(2026, 11, 4, 10, 30, tzinfo=UTC)
+DISPOSITIONS = orjson.loads((Path(__file__).parent / 'fixtures/native_tts_dispositions.json').read_bytes())
 FIELDS = {'model': 'tts', 'voice': 'voice', 'response_format': 'mp3', 'speed': None, 'instructions': ''}
 
 
@@ -334,7 +335,8 @@ async def test_two_unsaved_summary_preparations_and_saved_results_bypass_slots(h
     await h.registry.shutdown()
 
 
-async def test_selected_summary_freezes_config_adapt_and_announcement(harness, fake_summaries, monkeypatch):
+@pytest.mark.parametrize('silence_reset', [False, True])
+async def test_selected_summary_freezes_config_adapt_and_announcement(harness, fake_summaries, monkeypatch, silence_reset):
     h = harness
     h.policy['summary'] = True
     script = {'id': 'script', 'kind': 'script', 'command': 'old-command', 'output': 'stream',
@@ -354,7 +356,8 @@ async def test_selected_summary_freezes_config_adapt_and_announcement(harness, f
             closed.append(reference['handle_id'])
         return SimpleNamespace(id='reader', aclose=close)
     monkeypatch.setattr(native_sessions.summaries, 'retain_summary_for_speech', retain)
-    await h.listener.select(first.id, str(uuid4()), 1)
+    h.listener.context = ('p', 's')
+    await h.listener.select(first.id, str(uuid4()), 1, silence_reset=silence_reset)
     await entered.wait()
     selected_handle = h.listener.preparations[first.id]['handle'].id
     h.policy.update(entry={**script, 'command': 'new-command'}, adapt='off', summary=False)
@@ -365,7 +368,7 @@ async def test_selected_summary_freezes_config_adapt_and_announcement(harness, f
     body, options = h.opened[-1]
     assert options['_policy']['entry']['command'] == 'old-command'
     assert options['_policy']['adapt'] == 'haiku'
-    assert body['announcement'] == 'Project. Session.'
+    assert body['announcement'] == ('Project. Session.' if silence_reset else '')
     await finish(h)
     assert selected_handle in fake_summaries.released
     assert closed == [selected_handle]
@@ -729,3 +732,206 @@ async def test_disabled_overflow_consumed_before_reactivation_keeps_future_arriv
         assert h.opened == []
     finally:
         await h.registry.shutdown()
+
+
+@pytest.mark.parametrize('refresh_first', [False, True])
+@pytest.mark.parametrize('change', ['hidden', 'muted', 'scope'])
+async def test_invalidated_selection_terminates_reservation_and_offers_next(harness, refresh_first, change):
+    h = harness
+    first = await event(1)
+    await Session.objects.acreate(id='next', project_id='q', provider='codex', title='Next', file_path='/tmp/next.jsonl')
+    second = await event(2, project='q', session='next')
+    active = activation('workspace', 'w')
+    h.workspaces['workspaces'][0]['projectIds'] = ['p', 'q']
+    await h.listener.enable(active)
+    if change == 'hidden':
+        await Session.objects.filter(pk='s').aupdate(hidden=True)
+    elif change == 'muted':
+        await Session.objects.filter(pk='s').aupdate(mute_on_user_turn=True)
+    else:
+        h.workspaces['workspaces'][0]['projectIds'] = ['q']
+    if refresh_first:
+        await h.listener.refresh()
+    h.session._frames.clear()
+    reading = DISPOSITIONS['rejected']['reading_id']
+    await h.listener.select(first.id, reading, 1)
+    if h.listener._refresh_task:
+        await h.listener._refresh_task
+    dispositions = [f for f in h.session._frames if f['type'] == 'selection_rejected']
+    assert dispositions == [DISPOSITIONS['rejected']]
+    assert h.session.error is None
+    assert h.session.playback is None
+    assert h.session._candidate['event_id'] == second.id
+    frames = list(h.session._frames)
+    offers = [i for i, f in enumerate(frames) if f['type'] == 'candidate' and f['event_id'] == second.id]
+    assert offers and offers[-1] > frames.index(dispositions[0])
+    await select(h, second, 2)
+    assert h.session.playback['text'] == 'Message 2'
+    await h.registry.shutdown()
+
+
+@pytest.mark.parametrize(('silence_reset', 'expected'), [(False, ''), (True, 'Project. Session.')])
+async def test_announcement_uses_native_silence_fact(harness, silence_reset, expected):
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation()); await select(h, first)
+    await finish(h)
+    second = await event(51)
+    await h.listener.refresh()
+    await h.listener.select(second.id, str(uuid4()), 2, silence_reset=silence_reset)
+    await h.session.preparation
+    assert h.opened[-1][0]['announcement'] == expected
+    await h.registry.shutdown()
+
+
+async def test_delayed_summary_descriptor_failure_keeps_selected_reading_scope(harness, monkeypatch):
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation())
+    h.policy['summary'] = True
+    h.listener.preparations[first.id] = {'descriptor': {'error': 'Summary is unavailable'},
+        'source': None, 'handle': None, 'watcher': None}
+    h.listener._summary_policy = (True, None)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = h.listener._release_preparation
+    async def delayed_release(event_id):
+        entered.set()
+        await release.wait()
+        await original(event_id)
+    monkeypatch.setattr(h.listener, '_release_preparation', delayed_release)
+    automatic = DISPOSITIONS['summary_error']['reading_id']
+    selection = asyncio.create_task(h.listener.select(first.id, automatic, 1))
+    await entered.wait()
+    manual = str(uuid4())
+    await h.session.apply({'protocol': 1, 'type': 'manual', 'seq': 1, 'reading_id': manual, 'generation': 2,
+        'request': {'kind': 'text', 'source': 'message', 'text': 'Manual', 'speech': {'text': 'Manual'}}})
+    await h.session.preparation
+    release.set(); await selection
+    failure = next(f for f in h.session._frames if f['type'] == 'error')
+    assert failure == DISPOSITIONS['summary_error']
+    assert h.session.playback['reading_id'] == manual
+    await h.registry.shutdown()
+
+
+async def test_configuration_loss_does_not_release_manual_resource(harness):
+    h = harness
+    await h.listener.enable(activation())
+    manual = str(uuid4())
+    await h.session.apply({'protocol': 1, 'type': 'manual', 'seq': 1, 'reading_id': manual, 'generation': 1,
+        'request': {'kind': 'text', 'source': 'message', 'text': 'Manual', 'speech': {'text': 'Manual'}}})
+    await h.session.preparation
+    before = h.session.playback.copy()
+    h.policy['entry'] = None
+    await h.listener.refresh()
+    assert h.session.listening is None
+    assert h.session.playback == before
+    assert before['audio_id'] in h.session.owned_audio
+    assert h.session.error['code'] == 'tts_unavailable'
+    assert next(f for f in h.session._frames if f['type'] == 'error') == DISPOSITIONS['listener_error']
+    await h.registry.shutdown()
+
+
+async def test_resume_does_not_reject_an_inflight_selection(harness):
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation())
+    reading = str(uuid4())
+    async with h.listener._lock:
+        await h.session.apply({'protocol': 1, 'type': 'select', 'seq': 1, 'event_id': first.id,
+                               'reading_id': reading, 'generation': 1})
+        await h.session.reconcile([], {'reading_id': reading, 'generation': 1, 'audio_id': None,
+                                      'phase': 'loading', 'started': False})
+        assert not any(f['type'] == 'selection_rejected' for f in h.session._frames)
+    await asyncio.gather(*list(h.listener._tasks))
+    await h.registry.shutdown()
+
+
+async def test_superseded_automatic_preparation_exception_preserves_manual(harness, monkeypatch):
+    from twicc.tts.service import SpeechError
+    h = harness
+    first = await event(1)
+    await h.listener.enable(activation())
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = native_sessions.open_speech
+    async def delayed_failure(body, **options):
+        if body['text'] == 'Message 1':
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+            raise SpeechError('Late automatic failure', 424)
+        return await original(body, **options)
+    monkeypatch.setattr(native_sessions, 'open_speech', delayed_failure)
+    await h.listener.select(first.id, str(uuid4()), 1)
+    await entered.wait()
+    automatic_task = h.session.preparation
+    manual = str(uuid4())
+    await h.session.apply({'protocol': 1, 'type': 'manual', 'seq': 1, 'reading_id': manual, 'generation': 2,
+        'request': {'kind': 'text', 'source': 'message', 'text': 'Manual', 'speech': {'text': 'Manual'}}})
+    await h.session.preparation
+    release.set(); await automatic_task
+    assert h.session.playback['reading_id'] == manual
+    assert h.session.playback['audio_id'] in h.session.owned_audio
+    assert not any(f['type'] == 'error' for f in h.session._frames)
+    await h.registry.shutdown()
+
+
+async def test_selection_configuration_loss_finishes_its_own_stop_cleanup(harness, fake_summaries, monkeypatch):
+    h = harness
+    h.policy['summary'] = True
+    first = await event(1)
+    await h.listener.enable(activation())
+    original = native_timeline.summaries.release_summary
+    async def release_reader(handle_id):
+        # Reader cleanup can yield while another service reader releases.
+        await asyncio.sleep(0)
+        await original(handle_id)
+    monkeypatch.setattr(native_timeline.summaries, 'release_summary', release_reader)
+    h.policy['entry'] = None
+    reading = str(uuid4())
+    await h.session.apply({'protocol': 1, 'type': 'select', 'seq': 1, 'event_id': first.id,
+                           'reading_id': reading, 'generation': 1})
+    selection = h.listener._selections[(reading, 1)][1]
+    await asyncio.gather(selection, return_exceptions=True)
+    assert h.session.error and h.session.error['code'] == 'tts_unavailable'
+    assert h.session.playback is None and h.session.listening is None
+    assert not h.listener.pending and not h.listener.preparations and not fake_summaries.handles
+    assert any(f['type'] == 'selection_rejected' and f['reading_id'] == reading for f in h.session._frames)
+    assert h.opened == []
+    await h.registry.shutdown()
+
+
+async def test_old_selection_stop_cannot_fail_new_activation_during_reader_cleanup(harness, fake_summaries, monkeypatch):
+    h = harness
+    h.policy['summary'] = True
+    first = await event(1)
+    await h.listener.enable(activation())
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = native_timeline.summaries.release_summary
+    async def release_reader(handle_id):
+        entered.set()
+        await release.wait()
+        await original(handle_id)
+    monkeypatch.setattr(native_timeline.summaries, 'release_summary', release_reader)
+    entry = h.policy['entry']
+    h.policy['entry'] = None
+    reading = str(uuid4())
+    await h.session.apply({'protocol': 1, 'type': 'select', 'seq': 1, 'event_id': first.id,
+                           'reading_id': reading, 'generation': 1})
+    selection = h.listener._selections[(reading, 1)][1]
+    await entered.wait()
+    h.policy['entry'] = entry
+    new_activation = activation()
+    await h.session.apply({'protocol': 1, 'type': 'listen', 'seq': 2, **new_activation})
+    assert h.session.listening['activation_id'] == new_activation['activation_id']
+    assert not h.listener._caught_up  # Initialization waits for the old selection lock.
+    release.set()
+    await selection
+    await asyncio.gather(*list(h.listener._tasks))
+    assert h.listener._caught_up
+    assert h.session.listening['activation_id'] == new_activation['activation_id']
+    assert h.session.error is None
+    assert not any(f['type'] == 'error' for f in h.session._frames)
+    assert h.session.playback is None and h.opened == []
+    await h.registry.shutdown()

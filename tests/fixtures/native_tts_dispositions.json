@@ -1,0 +1,5 @@
+{
+  "rejected": {"protocol":1,"type":"selection_rejected","reading_id":"00000000-0000-0000-0000-000000000003","generation":1},
+  "summary_error": {"protocol":1,"type":"error","code":"summary_unavailable","message":"Summary is unavailable","reading_id":"00000000-0000-0000-0000-000000000003","generation":1},
+  "listener_error": {"protocol":1,"type":"error","code":"tts_unavailable","message":"Text-to-speech is unavailable. Check the active configuration."}
+}

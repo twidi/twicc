@@ -122,7 +122,7 @@ class TimelineListener:
             await self.disable()
         elif kind == 'select':
             key = (command['reading_id'], command['generation'])
-            task = self._spawn(self.select(command['event_id'], *key))
+            task = self._spawn(self.select(command['event_id'], *key, silence_reset=command.get('silence_reset', False)))
             self._selections[key] = (command['event_id'], task)
             task.add_done_callback(lambda completed: self._selections.pop(key, None))
         elif kind == 'ping':
@@ -399,7 +399,20 @@ class TimelineListener:
         await self.session.offer_candidate({'activation_id': self.active['activation_id'], 'event_id': event['id'],
                                             'identity': identity, 'text': event['data']['text']})
 
-    async def select(self, event_id: int, reading_id: str, generation: int):
+    async def select(self, event_id: int, reading_id: str, generation: int, *, silence_reset=False):
+        completed = False
+        try:
+            await self._select(event_id, reading_id, generation, silence_reset=silence_reset)
+            completed = True
+        finally:
+            # A candidate reserves native playback before storage revalidation.
+            # Every unowned selection must release that exact reservation.
+            if not self.session._matches({'reading_id': reading_id, 'generation': generation}):
+                self.session.reject_selection(reading_id, generation)
+                if completed and self._caught_up:
+                    await self._offer()
+
+    async def _select(self, event_id: int, reading_id: str, generation: int, *, silence_reset=False):
         async with self._lock:
             if (not self.active or not self._caught_up or not self.pending or self.pending[0]['id'] != event_id
                     or self.session.playback is not None or generation <= self.session.generation):
@@ -433,10 +446,10 @@ class TimelineListener:
                 await self.reconnect()
                 return
             names = []
-            if self.context is None or self.context[0] != event['project_id']:
+            if silence_reset or self.context is None or self.context[0] != event['project_id']:
                 project = projects.get(event['project_id'])
                 names.append(_project_name(project) if project else event['project_id'])
-            if self.context is None or self.context[1] != event['session_id']:
+            if silence_reset or self.context is None or self.context[1] != event['session_id']:
                 names.append(table.get(event['session_id'], {}).get('title') or str(event['session_id'])[:8])
             speech = {'announcement': ' '.join(f'{name}.' for name in names), 'cache': True}
             if entry['kind'] == 'script':
@@ -451,7 +464,7 @@ class TimelineListener:
                 self.pending.pop(0)
                 await self._release_preparation(event_id)
                 self.context = None
-                await self.session.fail('summary_unavailable', descriptor['error'])
+                await self.session.fail('summary_unavailable', descriptor['error'], reading_id=reading_id, generation=generation)
                 await self._offer()
                 return
             if descriptor.get('eligible'):
@@ -508,13 +521,17 @@ class TimelineListener:
             await self.refresh()
 
     async def _stop(self, code, message):
+        epoch = self._epoch
         await self.disable()
-        await self.session.fail(code, message)
+        # Reader cleanup can yield to a newly reserved listening activation.
+        if self._epoch == epoch and self.active is None:
+            await self.session.fail(code, message)
 
     async def disable(self):
         self.active = None
         for _, task in self._selections.values():
-            task.cancel()
+            if task is not asyncio.current_task():
+                task.cancel()
         self._selections.clear()
         self.pending = []
         self.session._candidate = None

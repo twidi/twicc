@@ -185,6 +185,10 @@ class NativeSession:
                 if not self._reconciling:
                     self._emit({'type': 'candidate', **candidate})
 
+    def reject_selection(self, reading_id: str, generation: int) -> None:
+        """Release only the native candidate reservation, without a user failure."""
+        self._emit({'type': 'selection_rejected', 'reading_id': reading_id, 'generation': generation})
+
     async def fail(self, code: str, message: str, **extra) -> None:
         async with self._lock:
             self.error = {'code': code, 'message': message, **extra}
@@ -327,6 +331,12 @@ class NativeSession:
             if connection_id is not None and connection_id != self.connection_id:
                 raise SessionLost
             self._frames.clear()
+            # A disconnected disposition is not retained. Re-send it after replay,
+            # except while that exact asynchronous selection can still reserve.
+            if (current and current.get('audio_id') is None and not self._matches(current)
+                    and (current['reading_id'], current['generation'])
+                    not in getattr(self.coordinator, '_selections', {})):
+                self.reject_selection(current['reading_id'], current['generation'])
             if self.playback and self.playback.get('audio_id'):
                 audio_id = self.playback['audio_id']
                 if get_stream(audio_id) is None:

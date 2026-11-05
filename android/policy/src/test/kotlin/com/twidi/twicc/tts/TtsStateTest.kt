@@ -298,4 +298,97 @@ class TtsStateTest {
         assertEquals(ids[2], c.snapshot().results.first().readingId)
     }
 
+    private fun candidate(c: TtsController, id: Int = 1) = c.dispatch(TtsCommand.ServerFrame("socket",
+        mapOf("protocol" to 1, "type" to "candidate", "activation_id" to c.snapshot().listening!!.activationId, "event_id" to id)))
+    private fun rejected(p: NativePlayback) = mapOf("protocol" to 1, "type" to "selection_rejected",
+        "reading_id" to p.readingId, "generation" to p.generation)
+    @Test fun rejectedSelectionReleasesOnlyItsUnopenedAutomaticReservation() {
+        val c = controller(); listen(c); opened(c); candidate(c)
+        val old = c.snapshot().playback
+        c.dispatch(TtsCommand.ServerFrame("socket", rejected(old)))
+        assertNull(c.snapshot().playback.readingId)
+        assertNull(c.snapshot().error); assertTrue(c.snapshot().results.isEmpty())
+        assertNotNull(c.snapshot().listening)
+        candidate(c, 2)
+        assertNotEquals(old.readingId, c.snapshot().playback.readingId)
+        assertTrue(audio(c).any { it is TtsEffect.Prepare })
+    }
+    @Test fun staleSelectionDispositionsPreserveManualSkipNewActivationAndOpenedAudio() {
+        for (replacement in listOf("manual", "skip", "activation", "audio", "generation", "connection")) {
+            val c = controller(); listen(c); opened(c); candidate(c)
+            val old = c.snapshot().playback
+            when (replacement) {
+                "manual" -> manual(c)
+                "skip" -> { c.dispatch(TtsCommand.Skip); candidate(c, 2) }
+                "activation" -> { listen(c); candidate(c, 2) }
+                "audio" -> audio(c)
+                "connection" -> c.dispatch(TtsCommand.TransportOpened("other"))
+            }
+            val before = c.snapshot().playback
+            val frame = if (replacement == "generation") rejected(old) + mapOf("generation" to old.generation - 1) else rejected(old)
+            c.dispatch(TtsCommand.ServerFrame("socket", frame))
+            assertEquals(replacement, before, c.snapshot().playback)
+        }
+    }
+    @Test fun ttsUnavailableStopsListenerWithoutCancellingManualAudio() {
+        val c = controller(); listen(c); opened(c); manual(c); audio(c)
+        val before = c.snapshot().playback
+        val effects = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error",
+            "code" to "tts_unavailable", "message" to "Configuration is unavailable")))
+        assertEquals(before, c.snapshot().playback); assertNull(c.snapshot().listening)
+        assertTrue(effects.none { it is TtsEffect.Cancel || it is TtsEffect.Release })
+        assertTrue(c.snapshot().results.isEmpty())
+    }
+    @Test fun delayedAutomaticErrorDoesNotFailManualReplacement() {
+        val c = controller(); listen(c); opened(c); candidate(c)
+        val old = c.snapshot().playback
+        manual(c); audio(c)
+        val before = c.snapshot().playback
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error",
+            "code" to "summary_unavailable", "message" to "Summary is unavailable", "reading_id" to old.readingId, "generation" to old.generation)))
+        assertEquals(before, c.snapshot().playback); assertNull(c.snapshot().error)
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state", "revision" to 5,
+            "ack_seq" to 4, "error" to mapOf("code" to "summary_unavailable", "message" to "Late failure",
+                "reading_id" to old.readingId, "generation" to old.generation))))
+        assertEquals(before, c.snapshot().playback); assertNull(c.snapshot().error)
+        assertTrue(c.snapshot().results.isEmpty())
+    }
+
+    @Test fun silenceFactUsesStrictMonotonicAudibleEndBeforeEndingSettlement() {
+        for ((delay, reset) in listOf(180000L to false, 180001L to true)) {
+            var now = 1000L
+            val c = TtsController("instance", elapsedMs = { now }); c.dispatch(TtsCommand.AttachDocument(owner))
+            listen(c); opened(c); candidate(c)
+            val reading = c.snapshot().playback
+            c.dispatch(TtsCommand.PlayerFeedback(reading.readingId!!, reading.generation, PlayerSignal.Started))
+            now = 90000L
+            c.dispatch(TtsCommand.PlayerFeedback(reading.readingId, reading.generation, PlayerSignal.Settling))
+            now += delay // The ending HTTP result stays blocked throughout this wait.
+            c.dispatch(TtsCommand.PlayerFeedback(reading.readingId, reading.generation, PlayerSignal.Ended(true)))
+            val selected = candidate(c, 2).filterIsInstance<TtsEffect.Send>().single().frame
+            assertEquals(reset, selected["silence_reset"])
+            now += 300000L
+            c.dispatch(TtsCommand.PlayerFeedback(reading.readingId, reading.generation, PlayerSignal.Settling))
+            val resume = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+            val retained = (resume["commands"] as List<*>).filterIsInstance<Map<*, *>>().last { it["type"] == "select" }
+            assertEquals(selected, retained) // Preparation and replay preserve the selected fact.
+        }
+    }
+    @Test fun inaudibleOrStalePlayerSettlementCannotResetSilenceClock() {
+        var now = 1000L
+        val c = TtsController("instance", elapsedMs = { now }); c.dispatch(TtsCommand.AttachDocument(owner))
+        listen(c); opened(c); candidate(c)
+        val first = c.snapshot().playback
+        c.dispatch(TtsCommand.PlayerFeedback(first.readingId!!, first.generation, PlayerSignal.Started))
+        c.dispatch(TtsCommand.PlayerFeedback(first.readingId, first.generation, PlayerSignal.Settling))
+        c.dispatch(TtsCommand.PlayerFeedback(first.readingId, first.generation, PlayerSignal.Ended(true)))
+        candidate(c, 2); val inaudible = c.snapshot().playback
+        now += 180001L
+        c.dispatch(TtsCommand.PlayerFeedback(first.readingId, first.generation, PlayerSignal.Settling))
+        c.dispatch(TtsCommand.PlayerFeedback(inaudible.readingId!!, inaudible.generation, PlayerSignal.Settling))
+        c.dispatch(TtsCommand.PlayerFeedback(inaudible.readingId, inaudible.generation, PlayerSignal.Ended(true)))
+        val next = candidate(c, 3).filterIsInstance<TtsEffect.Send>().single().frame
+        assertEquals(true, next["silence_reset"])
+    }
+
 }

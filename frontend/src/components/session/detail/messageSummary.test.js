@@ -343,12 +343,13 @@ test('the actual Markdown toolbar disables new generation and preserves saved-su
     const render = new Function('Vue', `${code}; return render`)(Vue)
     const { renderer, root } = makeRenderer(140, node => { node.style = {} })
     const app = renderer.createApp({ render, setup: () => ({ summaryContext: bindings[0], showToolbar: true, toolbarOpen: false,
-        showTocDetails: false, showRaw: false, speakable: false, summaryActive: false, summaryHidden: false,
+        SUMMARY_ICON_SRC: 'summary-icon-fixture.svg', showTocDetails: false, showRaw: false, speakable: false, summaryActive: false, summaryHidden: false,
         showSummaryButton: true, summaryButtonTitle: Vue.computed(() => bindings[0].toggleTitle), source: 'Original block', blocks: [], highlightTerms: [],
         toggleToolbar() {}, toggleRaw() {}, copySource() {}, handleLinkClick() {},
     }) })
     app.component('TextToSpeechButton', { render: () => null }); app.component('InlineArtifactBlock', { render: () => null })
     app.directive('highlight', {}); app.mount(root); t.after(() => app.unmount())
+    assert.equal(descendants(root, n => n.type === 'wa-icon' && n.props.src === 'summary-icon-fixture.svg').length, 1)
     settings.enabledProviders = []; await flush()
     const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /No summary engine/)

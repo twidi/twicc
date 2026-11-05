@@ -571,3 +571,14 @@ async def test_descriptorless_temporary_reader_cancels_with_native_owner(monkeyp
         assert not service._handles
     finally:
         await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_resume_repeats_terminal_disposition_for_unowned_selection():
+    registry = native_sessions.NativeSessionRegistry()
+    session = registry.open(str(uuid4()), ('cookie', 'fp'))
+    current = {'reading_id': str(uuid4()), 'generation': 1, 'audio_id': None, 'phase': 'loading', 'started': False}
+    await session.reconcile([], current)
+    assert next(f for f in drain_frames(session) if f['type'] == 'selection_rejected') == {
+        'protocol': 1, 'type': 'selection_rejected', 'reading_id': current['reading_id'], 'generation': 1}
+    await registry.shutdown()

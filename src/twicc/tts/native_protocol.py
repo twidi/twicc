@@ -21,7 +21,7 @@ _FIELDS = {
     'set_muted': {'activation_id', 'include_muted'},
     'disable': {'activation_id'},
     'manual': {'reading_id', 'generation', 'request'},
-    'select': {'event_id', 'reading_id', 'generation'},
+    'select': {'event_id', 'reading_id', 'generation', 'silence_reset'},
     'started': {'reading_id', 'generation'},
     'finished': {'reading_id', 'generation', 'outcome', 'error'},
     'skip': {'reading_id', 'generation'},
@@ -171,6 +171,8 @@ def parse_native_command(data: object) -> dict:
             raise ValueError('Invalid boundary timestamp') from None
     elif kind == 'select':
         _integer(data.get('event_id'), 'event_id')
+        if 'silence_reset' in data and type(data['silence_reset']) is not bool:
+            raise ValueError('silence_reset must be boolean')
     elif kind == 'finished':
         if data.get('outcome') not in ('complete', 'failed', 'aborted'):
             raise ValueError('Invalid reading outcome')

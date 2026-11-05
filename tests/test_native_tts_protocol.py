@@ -112,3 +112,15 @@ def test_descriptorless_summary_is_strictly_temporary(summary):
     with pytest.raises(ValueError):
         parse_native_command(frame('manual', reading_id=str(uuid4()), generation=1,
             request={'kind': 'summary', 'speech': {}, 'identity': None, 'text': '', 'summary': summary}))
+
+
+@pytest.mark.parametrize('silence_reset', [False, True])
+def test_selection_accepts_frozen_native_silence_fact(silence_reset):
+    command = frame('select', event_id=1, reading_id=str(uuid4()), generation=1, silence_reset=silence_reset)
+    assert parse_native_command(command)['silence_reset'] is silence_reset
+
+
+@pytest.mark.parametrize('silence_reset', [None, 0, 1, 'true', []])
+def test_selection_rejects_non_boolean_silence_fact(silence_reset):
+    with pytest.raises(ValueError):
+        parse_native_command(frame('select', event_id=1, reading_id=str(uuid4()), generation=1, silence_reset=silence_reset))

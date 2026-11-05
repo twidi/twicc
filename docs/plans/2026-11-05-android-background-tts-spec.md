@@ -53,6 +53,24 @@ Do not create separate copies of timeline selection rules in Gecko and WebView, 
 
 The Android service owns the actual playback state, manual-versus-automatic arbitration, and audible completion.
 The backend must receive enough playback feedback to preserve existing ordering, announcements, and cancellation semantics.
+
+Native records audible end at player settling, before the ending HTTP result arrives.
+Use Android `SystemClock.elapsedRealtime` so deep sleep counts toward silence.
+The existing `select` command freezes optional boolean `silence_reset` when silence exceeds 180,000 ms.
+Exactly 180,000 ms does not reset context. An omitted field means false; other types are invalid.
+The backend freezes the required announcement before asynchronous preparation.
+No silence timer starts playback.
+
+The server sends `selection_rejected` with `reading_id` and `generation` when a candidate cannot reserve backend playback.
+Native releases only its matching automatic loading reservation without opened audio.
+Visibility filtering produces no user failure. The next eligible candidate can reserve playback.
+Resume repeats a lost terminal disposition after retained commands reconcile.
+Manual replacements, Skip, new activations, old generations, and old connections retain their guards.
+
+Reading errors include their selected `reading_id` and `generation`, including delayed summary preparation errors.
+Listener errors `catchup_incomplete`, `scope_unavailable`, and `tts_unavailable` stop listening and automatic work.
+They preserve unrelated manual speech. Global `unauthorized` and `session_lost` errors stop the session.
+
 Successful generation, delivery, and audible completion are different events.
 
 The frontend controls the service and mirrors its state. It does not run a competing Android automatic-reading coordinator.
