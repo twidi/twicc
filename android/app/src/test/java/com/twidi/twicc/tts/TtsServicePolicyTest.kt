@@ -1,0 +1,195 @@
+package com.twidi.twicc.tts
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class TtsServicePolicyTest {
+    private class Harness(val cache: TtsSnapshotCache = TtsSnapshotCache()) {
+        val events = mutableListOf<String>()
+        var blocked: TtsActionError? = null
+        var battery = true
+        var wake = false
+        var foreground = false
+        var stopped = false
+        val timers = mutableListOf<Pair<Long, () -> Unit>>()
+        var exported: ((Result<List<TtsCookie>>) -> Unit)? = null
+        val socket = Socket()
+        val platform = object : TtsServicePlatform {
+            override fun notificationError() = blocked
+            override fun batteryExempt() = battery
+            override fun foreground(snapshot: NativeTtsSnapshot, epoch: String) { events += "foreground"; foreground = true }
+            override fun update(snapshot: NativeTtsSnapshot, epoch: String) { events += "notification" }
+            override fun wakeLock(held: Boolean) { wake = held }
+            override fun stop() { foreground = false; stopped = true }
+            override fun enqueue(block: () -> Unit) = block()
+            override fun after(delayMillis: Long, block: () -> Unit) { timers += delayMillis to block }
+            override fun worker(block: () -> Unit) = block()
+        }
+        val owner = TtsServiceOwner(platform, { events += "connection"; socket },
+            { object : TtsPlaybackOutput {
+                override fun prepare(resource: AudioResource, connection: TtsTransport, feedback: (PlayerSignal) -> Unit) { events += "prepare" }
+                override fun play(readingId: String, generation: Long) {}
+                override fun cancel(readingId: String, generation: Long) { events += "cancel" }
+                override fun close() {}
+            } }, cache)
+        val document = DocumentOwner("instance", "page", 1)
+        fun configure() {
+            owner.configure(TtsActivationSource("instance", "Test", "https://example.test") { _, callback ->
+                events += "export"; exported = callback
+            })
+        }
+        init { configure(); owner.dispatch(TtsCommand.AttachDocument(document)) }
+        fun manual(id: String = "operation"): Acceptance { configure(); return owner.dispatch(TtsCommand.Manual(document, id,
+            mapOf("kind" to "text", "source" to "message", "text" to "Hello", "identity" to null,
+                "config_id" to "config", "speech" to mapOf("text" to "Hello")))) }
+        fun listen() = owner.dispatch(TtsCommand.Listen(document, ListeningScope("global", null), false, "2026-11-05T10:00:00.000000Z"))
+        fun connect() {
+            exported!!(Result.success(emptyList()))
+            socket.event(TtsConnectionEvent.Opened("connection"))
+            socket.event(TtsConnectionEvent.Frame("connection", mapOf("protocol" to 1, "type" to "opened_session",
+                "session_id" to "session", "resume_secret" to "secret", "revision" to 1)))
+        }
+    }
+    private class Socket : TtsTransport {
+        override var event: (TtsConnectionEvent) -> Unit = {}
+        val sent = mutableListOf<TtsFrame>()
+        var closed = false
+        override fun connect(handshake: TtsFrame): String { sent += handshake; return "connection" }
+        override fun send(frame: TtsFrame): Boolean { sent += frame; return true }
+        override fun reconciled(connectionId: String) {}
+        override fun cancelAudio(resource: AudioResource) {}
+        override fun release(resource: AudioResource) {}
+        override fun close() { closed = true }
+        override val connection: TtsConnection? = null
+    }
+    @Test fun blockedNotificationChannelRejectsActivation() {
+        val h = Harness(); h.blocked = TtsActionError("notifications_blocked", "Enable speech notifications", "notification_settings")
+        val acceptance = h.manual()
+        assertFalse(acceptance.accepted)
+        assertEquals("notification_settings", acceptance.error!!.action)
+        assertFalse(h.foreground); assertFalse(h.wake)
+        assertFalse(h.events.contains("export")); assertFalse(h.events.contains("connection"))
+        assertEquals("idle", h.owner.snapshot().sessionStatus)
+    }
+    @Test fun foregroundPrecedesAcceptedExportAndSurvivesDocumentReplacement() {
+        val h = Harness(); assertTrue(h.manual().accepted)
+        assertTrue(h.events.indexOf("foreground") < h.events.indexOf("export"))
+        assertTrue(h.wake)
+        h.owner.dispatch(TtsCommand.AttachDocument(h.document.copy(generation = 2)))
+        h.connect()
+        assertEquals("connected", h.owner.snapshot().sessionStatus)
+        assertTrue(h.foreground)
+    }
+    @Test fun listeningRequiresExemptionButManualDoesNot() {
+        val h = Harness(); h.battery = false
+        val rejected = h.listen()
+        assertFalse(rejected.accepted); assertEquals("battery_settings", rejected.error!!.action)
+        assertFalse(h.events.contains("export")); assertFalse(h.wake)
+        assertTrue(h.manual().accepted)
+    }
+    @Test fun silentListeningAndReconnectKeepForegroundAndWakeLock() {
+        val h = Harness(); assertTrue(h.listen().accepted); h.connect()
+        h.socket.event(TtsConnectionEvent.Lost("connection", 1000))
+        assertEquals("reconnecting", h.owner.snapshot().sessionStatus)
+        assertTrue(h.foreground); assertTrue(h.wake)
+    }
+    @Test fun stopAllDuringExportCannotOpenLateSessionAndStopsWithinFiveSeconds() {
+        val h = Harness(); h.manual(); val oldExport = h.exported!!
+        assertTrue(h.owner.dispatch(TtsCommand.StopAll).accepted)
+        assertFalse(h.wake)
+        val timer = h.timers.single { it.first == 5000L }
+        timer.second()
+        oldExport(Result.success(emptyList()))
+        assertFalse(h.events.contains("connection")); assertTrue(h.stopped); assertFalse(h.foreground)
+        assertEquals("stopped", h.owner.snapshot().sessionStatus)
+    }
+    @Test fun oldStopTimerAndNotificationCannotStopNewActivation() {
+        val h = Harness(); h.manual(); val oldEpoch = h.owner.sessionEpoch!!
+        h.owner.dispatch(TtsCommand.StopAll)
+        val timer = h.timers.single { it.first == 5000L }.second
+        timer(); h.manual("new-operation")
+        assertNotEquals(oldEpoch, h.owner.sessionEpoch)
+        timer()
+        assertFalse(h.owner.notificationCommand(oldEpoch, TtsCommand.StopAll).accepted)
+        assertEquals("new-operation", h.owner.snapshot().playback.operationId)
+        assertTrue(h.foreground)
+    }
+    @Test fun controlsLostDuringHeartbeatStopAndRejectLateTransportCallbacks() {
+        val h = Harness(); h.listen(); h.connect()
+        val callback = h.socket.event
+        h.blocked = TtsActionError("notifications_blocked", "Enable speech notifications", "notification_settings")
+        callback(TtsConnectionEvent.HeartbeatDue("connection"))
+        assertTrue(h.socket.closed); assertTrue(h.stopped); assertFalse(h.wake)
+        callback(TtsConnectionEvent.Opened("connection"))
+        assertEquals("error", h.owner.snapshot().sessionStatus)
+    }
+    @Test fun controlsDisabledDuringExportPreventOpeningTheSession() {
+        val h = Harness(); h.manual()
+        h.blocked = TtsActionError("notifications_blocked", "Enable speech notifications", "notification_settings")
+        h.exported!!(Result.success(emptyList()))
+        assertFalse(h.events.contains("connection"))
+        assertFalse(h.foreground); assertFalse(h.wake)
+        assertEquals("error", h.owner.snapshot().sessionStatus)
+    }
+    @Test fun instanceSwitchInvalidatesPendingExport() {
+        val h = Harness(); h.manual(); val callback = h.exported!!
+        h.owner.dispatch(TtsCommand.SwitchInstance("other"))
+        callback(Result.success(emptyList()))
+        assertFalse(h.events.contains("connection")); assertFalse(h.wake)
+    }
+    @Test fun switchingInstanceKeepsTerminalResultsWithTheirSourceInstance() {
+        val h = Harness(); h.manual()
+        h.owner.dispatch(TtsCommand.SwitchInstance("other"))
+        assertEquals("other", h.owner.snapshot().instanceId)
+        assertTrue(h.owner.snapshot().results.isEmpty())
+        assertEquals("operation", h.cache.snapshot("instance").results.single().operationId)
+        assertFalse(h.foreground)
+    }
+    @Test fun terminalResultsStayBoundedAcrossFreshActivations() {
+        val h = Harness()
+        repeat(66) { index ->
+            h.manual("operation-$index")
+            h.owner.dispatch(TtsCommand.StopAll)
+            h.timers.last { it.first == 5000L }.second()
+        }
+        assertEquals(64, h.cache.snapshot("instance").results.size)
+        assertEquals("operation-2", h.cache.snapshot("instance").results.first().operationId)
+        assertEquals("operation-65", h.cache.snapshot("instance").results.last().operationId)
+    }
+    @Test fun delayedOldConnectionAndPlayerFeedbackCannotReviveCanceledWork() {
+        val h = Harness(); h.manual(); h.connect()
+        val callback = h.socket.event
+        val reading = h.owner.snapshot().playback
+        h.owner.dispatch(TtsCommand.StopAll)
+        h.timers.last { it.first == 5000L }.second()
+        h.manual("fresh")
+        callback(TtsConnectionEvent.Frame("connection", mapOf("protocol" to 1, "type" to "opened_session", "session_id" to "old", "resume_secret" to "old")))
+        h.owner.feedback(reading.readingId!!, reading.generation, PlayerSignal.Started)
+        assertEquals("fresh", h.owner.snapshot().playback.operationId)
+        assertFalse(h.owner.snapshot().playback.started)
+        assertEquals("starting", h.owner.snapshot().sessionStatus)
+    }
+
+    @Test fun stoppedResultCacheSurvivesOwnerDestructionAndNextActivation() {
+        val h = Harness(); h.manual(); h.connect()
+        val reading = h.owner.snapshot().playback
+        h.owner.feedback(reading.readingId!!, reading.generation, PlayerSignal.Started)
+        h.owner.feedback(reading.readingId!!, reading.generation, PlayerSignal.Ended(true))
+        assertTrue(h.foreground)
+        h.timers.single { it.first == 5000L }.second()
+        h.owner.destroy()
+        assertEquals(true, h.cache.snapshot("instance").results.single().ended["ok"])
+        assertNull(h.cache.snapshot("instance").listening)
+        assertEquals("idle", h.cache.snapshot("instance").playback.status)
+        val nextService = Harness(h.cache)
+        nextService.manual("next")
+        assertEquals("operation", nextService.owner.snapshot().results.single().operationId)
+        assertEquals("next", nextService.owner.snapshot().playback.operationId)
+    }
+    @Test fun stalePageAndInternalCommandsCannotClaimAcceptance() {
+        val h = Harness()
+        assertFalse(h.owner.dispatch(TtsCommand.Manual(h.document.copy(generation = 0), "old", emptyMap())).accepted)
+        assertFalse(h.owner.dispatch(TtsCommand.Reconnect).accepted)
+        assertFalse(h.events.contains("export"))
+    }
+}

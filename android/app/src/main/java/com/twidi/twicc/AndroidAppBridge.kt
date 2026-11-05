@@ -22,7 +22,10 @@ class AndroidAppBridge(
             if (id.isEmpty() || id.length > 96 || request.opt("protocol") != 1) return reply("Unsupported Android protocol.")
             val command = AppCommand.fromWire(request.optString("command")) ?: return reply("Unknown Android command.")
             when (command) {
-                AppCommand.GET_STATE -> return reply(state = state())
+                AppCommand.GET_STATE -> return reply(state = state().apply {
+                    // Capability stays absent until the common player and integration gates pass.
+                    if (!has("capabilities")) put("capabilities", JSONObject())
+                })
                 AppCommand.MENU_VISIBILITY -> {
                     val owner = request.opt("owner") as? String ?: return reply("Missing menu owner.")
                     val visible = request.opt("visible") as? Boolean ?: return reply("Missing menu visibility.")

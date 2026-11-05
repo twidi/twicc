@@ -3,6 +3,12 @@ package com.twidi.twicc
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.Context
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import com.twidi.twicc.tts.*
+import java.util.UUID
 import android.graphics.Color
 import android.os.Bundle
 import android.os.SystemClock
@@ -45,6 +51,17 @@ class BrowserActivity : Activity() {
     private val menuLease = AppMenuLease()
     private var documentGeneration = 0
     private val expireMenu = Runnable { updateNativeMenu() }
+    private var ttsBinder: TtsService.LocalBinder? = null
+    private var ttsBound = false
+    private var ttsSource: TtsActivationSource? = null
+    private lateinit var ttsDocument: DocumentOwner
+    private val ttsConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            ttsBinder = binder as TtsService.LocalBinder
+            attachNativeTtsDocument()
+        }
+        override fun onServiceDisconnected(name: ComponentName) { ttsBinder = null }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +73,9 @@ class BrowserActivity : Activity() {
             ?: "${instance.address}/"
         buildLayout()
         appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction)
+        ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()
+        ttsBound = bindService(Intent(this, TtsService::class.java), ttsConnection, Context.BIND_AUTO_CREATE)
     }
 
     private fun buildLayout() {
@@ -224,6 +243,10 @@ class BrowserActivity : Activity() {
 
     private fun resetWebMenu() {
         documentGeneration++
+        if (::instance.isInitialized) {
+            ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
+            attachNativeTtsDocument()
+        }
         menuLease.reset()
         if (::root.isInitialized) root.removeCallbacks(expireMenu)
         if (::menuButton.isInitialized) updateNativeMenu()
@@ -252,6 +275,7 @@ class BrowserActivity : Activity() {
 
     private fun switchInstance(target: Instance) {
         if (target.id == instance.id) return
+        TtsService.stopForInstance(instance.id)
         store.rememberPage(instance, safeUrl)
         store.select(target)
         disposeBrowser()
@@ -312,8 +336,33 @@ class BrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        ttsSource?.let { ttsBinder?.detachSource(it) }
+        if (ttsBound) { unbindService(ttsConnection); ttsBound = false }
+        ttsBinder = null
         disposeBrowser()
         super.onDestroy()
+    }
+
+    private fun attachNativeTtsDocument() {
+        val binder = ttsBinder ?: return
+        val page = browser ?: return
+        val source = TtsActivationSource(instance.id, instance.name, instance.address, page::exportTtsCookies)
+        if (binder.configure(source)) {
+            ttsSource = source
+            binder.dispatch(TtsCommand.AttachDocument(ttsDocument))
+        }
+    }
+
+    /** Task 8 uses these methods after validating the current top-level bridge request. */
+    fun nativeTtsDocumentOwner(): DocumentOwner = ttsDocument
+    fun nativeTtsSnapshot(): NativeTtsSnapshot = ttsBinder?.snapshot() ?: TtsService.cachedSnapshot(instance.id)
+    fun dispatchNativeTts(command: TtsCommand): Acceptance {
+        if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
+            TtsNotification.visiblePreflight(this, command is TtsCommand.Listen)?.let { return Acceptance(false, error = it) }
+            attachNativeTtsDocument()
+        }
+        return ttsBinder?.dispatch(command) ?: Acceptance(false,
+            error = TtsActionError("initializing", "Native speech is initializing. Try again."))
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()

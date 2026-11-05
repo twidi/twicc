@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TwiCC</string>
+    <string name="tts_channel">Timeline speech</string>
+    <string name="tts_notification_title">%1$s · Speech</string>
+    <string name="tts_preparing">Preparing</string>
+    <string name="tts_reading">Reading</string>
+    <string name="tts_waiting">Waiting</string>
+    <string name="tts_reconnecting">Reconnecting</string>
+    <string name="tts_stopping">Stopping</string>
+    <string name="tts_skip">Skip</string>
+    <string name="tts_stop_all">Stop all</string>
+    <string name="tts_notifications_required">Enable speech notifications to use background Skip and Stop all controls. Then start speech again.</string>
+    <string name="tts_battery_required">Allow unrestricted battery use for timeline listening with the screen off. Then enable listening again. Manual speech works without this exemption, but long silent waits have weaker guarantees.</string>
+    <string name="tts_settings_title">Speech settings required</string>
+    <string name="tts_open_settings">Open Settings</string>
 </resources>

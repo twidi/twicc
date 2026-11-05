@@ -1,6 +1,8 @@
 package com.twidi.twicc
 
 import com.twidi.twicc.browser.EngineProvider
+import com.twidi.twicc.tts.TtsService
+import com.twidi.twicc.tts.TtsNotification
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -30,9 +32,23 @@ class MainActivity : Activity() {
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        if (routeSpeechNotification(intent)) return
         if (savedInstanceState == null && !intent.getBooleanExtra("manage", false)) {
             store.last()?.let { open(it) }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        routeSpeechNotification(intent)
+    }
+
+    private fun routeSpeechNotification(intent: Intent): Boolean {
+        if (intent.action != TtsNotification.ACTION_REOPEN) return false
+        val id = intent.getStringExtra(TtsNotification.EXTRA_INSTANCE) ?: return true
+        if (TtsService.isCurrentSession(intent.getStringExtra(TtsNotification.EXTRA_EPOCH), id)) store.find(id)?.let { open(it) }
+        return true
     }
 
     override fun onResume() {
@@ -69,6 +85,7 @@ class MainActivity : Activity() {
     }
 
     private fun open(instance: Instance) {
+        store.last()?.takeIf { it.id != instance.id }?.let { TtsService.stopForInstance(it.id) }
         store.select(instance)
         startActivity(Intent(this, BrowserActivity::class.java).putExtra("instance", instance.id))
     }
@@ -103,6 +120,7 @@ class MainActivity : Activity() {
                 try {
                     val saved = store.save(previous, name.text.toString(), address.text.toString())
                     if (previous != null && saved.id != previous.id) {
+                        TtsService.stopForInstance(previous.id)
                         store.deferProfileDeletion(previous)
                         deleteUnusedProfiles()
                     }
@@ -123,6 +141,7 @@ class MainActivity : Activity() {
             .setMessage("Remove this address and request deletion of its login and Web storage in each engine. The server is unchanged.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Remove") { _, _ ->
+                TtsService.stopForInstance(instance.id)
                 store.remove(instance)
                 store.deferProfileDeletion(instance)
                 deleteUnusedProfiles()

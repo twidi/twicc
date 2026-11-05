@@ -1,36 +1,98 @@
 package com.twidi.twicc.tts
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import java.util.concurrent.Executors
 
-/** Foreground ownership begins at a visible user activation, before credential export or network waits. */
+/** Plain Service: listening and settling retain foreground ownership independently of player inactivity. */
 class TtsService : Service() {
+    private val handler = Handler(Looper.getMainLooper())
+    private val workers = Executors.newCachedThreadPool()
+    private lateinit var notification: TtsNotification
+    private lateinit var wakeLock: PowerManager.WakeLock
+    private lateinit var owner: TtsServiceOwner
+    private val binder = LocalBinder()
+    private var foreground = false
+
+    inner class LocalBinder : Binder() {
+        fun configure(source: TtsActivationSource): Boolean { checkOwner(); return owner.configure(source) }
+        fun detachSource(source: TtsActivationSource) { checkOwner(); owner.detachSource(source) }
+        fun dispatch(command: TtsCommand): Acceptance { checkOwner(); return owner.dispatch(command) }
+        fun snapshot(): NativeTtsSnapshot { checkOwner(); return owner.snapshot() }
+    }
+    private fun checkOwner() = check(Looper.myLooper() == Looper.getMainLooper()) { "TTS commands require the service main looper" }
     override fun onCreate() {
         super.onCreate()
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "Live timeline speech", NotificationManager.IMPORTANCE_LOW))
-        val notification = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
-            .setContentTitle("TwiCC speech")
-            .setContentText("Waiting for assistant messages")
-            .setOngoing(true).build()
-        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
-            if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-        startForeground(1001, notification, types)
+        notification = TtsNotification(this)
+        val power = getSystemService(PowerManager::class.java)
+        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TwiCC:NativeTts").apply { setReferenceCounted(false) }
+        owner = TtsServiceOwner(object : TtsServicePlatform {
+            override fun notificationError() = notification.error()
+            override fun batteryExempt() = power.isIgnoringBatteryOptimizations(packageName)
+            override fun foreground(snapshot: NativeTtsSnapshot, epoch: String) {
+                // Binding never starts work. The visible activation grants started-service lifetime now.
+                startForegroundService(Intent(this@TtsService, TtsService::class.java).setAction(ACTION_ACTIVATE).putExtra(TtsNotification.EXTRA_EPOCH, epoch))
+                val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                    if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+                startForeground(TtsNotification.ID, notification.build(snapshot, epoch, owner.instanceName), types)
+                foreground = true
+            }
+            override fun update(snapshot: NativeTtsSnapshot, epoch: String) { notification.update(snapshot, epoch, owner.instanceName) }
+            override fun wakeLock(held: Boolean) {
+                if (held && !wakeLock.isHeld) wakeLock.acquire()
+                if (!held && wakeLock.isHeld) wakeLock.release()
+            }
+            override fun stop() {
+                if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
+                foreground = false
+                stopSelf()
+            }
+            override fun enqueue(block: () -> Unit) { handler.post(block) }
+            override fun after(delayMillis: Long, block: () -> Unit) { handler.postDelayed(block, delayMillis) }
+            override fun worker(block: () -> Unit) { workers.execute(block) }
+        }, cache = cache)
+        current = this
     }
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_NOT_STICKY
-    override fun onBind(intent: Intent?): IBinder? = null
-
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val epoch = intent?.getStringExtra(TtsNotification.EXTRA_EPOCH)
+        when (intent?.action) {
+            TtsNotification.ACTION_SKIP -> owner.notificationCommand(epoch.orEmpty(), TtsCommand.Skip)
+            TtsNotification.ACTION_STOP_ALL -> owner.notificationCommand(epoch.orEmpty(), TtsCommand.StopAll)
+        }
+        // An old PendingIntent can instantiate an idle Service, but it never activates foreground or a session.
+        if (!foreground) stopSelfResult(startId)
+        return START_NOT_STICKY
+    }
+    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onDestroy() {
+        owner.destroy()
+        handler.removeCallbacksAndMessages(null)
+        workers.shutdown()
+        if (current === this) current = null
+        super.onDestroy()
+    }
     companion object {
-        private const val CHANNEL = "twicc-tts"
-        /** Call only from the current visible user action. Never restart after process death. */
-        fun start(context: Context) { context.startForegroundService(Intent(context, TtsService::class.java)) }
+        private const val ACTION_ACTIVATE = "com.twidi.twicc.tts.ACTIVATE"
+        private val cache = TtsSnapshotCache()
+        private var current: TtsService? = null
+        private var documentGeneration = 0L
+        fun nextDocumentGeneration(): Long = ++documentGeneration
+        fun cachedSnapshot(instanceId: String): NativeTtsSnapshot = cache.snapshot(instanceId)
+        fun isCurrentSession(epoch: String?, instanceId: String): Boolean = epoch != null &&
+            current?.owner?.sessionEpoch == epoch && current?.owner?.snapshot()?.instanceId == instanceId
+        /** Actual switch/removal/logout hooks run on the Activity's main looper. */
+        fun stopForInstance(instanceId: String) {
+            current?.let { service ->
+                if (service.owner.snapshot().instanceId == instanceId)
+                    service.owner.dispatch(TtsCommand.AuthorizationLost("The active instance was closed. Start speech again to continue."))
+            }
+        }
     }
 }
