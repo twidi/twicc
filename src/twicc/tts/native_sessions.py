@@ -313,6 +313,7 @@ class NativeSession:
         finally:
             self._reconciling = False
         started = None
+        expired = None
         async with self._lock:
             if connection_id is not None and connection_id != self.connection_id:
                 raise SessionLost
@@ -321,6 +322,7 @@ class NativeSession:
                 audio_id = self.playback['audio_id']
                 if get_stream(audio_id) is None:
                     old = self._cancel_reading()
+                    expired = old
                     self.error = {'code': 'audio_expired', 'message': 'The audio expired before playback',
                                   'reading_id': old['reading_id'], 'generation': old['generation']}
                     self._emit({'type': 'error', **self.error})
@@ -334,6 +336,8 @@ class NativeSession:
             if (self._candidate and self.playback is None and self.listening
                     and self._candidate.get('activation_id') == self.listening['activation_id']):
                 self._emit({'type': 'candidate', **self._candidate})
+        if expired and self.coordinator:
+            await self.coordinator.finished(expired, 'failed')
         if started and self.coordinator:
             await self.coordinator.started(started)
 

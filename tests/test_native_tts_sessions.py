@@ -495,3 +495,42 @@ async def test_queued_old_connection_command_cannot_mutate_after_replacement():
     assert session.ack_seq == 0
     assert session.connection_id == new_connection
     await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_expired_automatic_audio_finishes_once_and_offers_next_candidate(monkeypatch):
+    from twicc.tts.streams import release_stream
+    stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
+    prepare = AsyncMock(return_value=OpenedSpeech(stream.id, stream.content_type))
+    monkeypatch.setattr(native_sessions, 'open_speech', prepare)
+    registry = native_sessions.NativeSessionRegistry()
+    session = registry.open(str(uuid4()), ('cookie', 'fp'))
+    activation_id = str(uuid4())
+    session.listening = {'activation_id': activation_id}
+    terminal = []
+    class Coordinator:
+        async def finished(self, reading, outcome):
+            terminal.append((reading['reading_id'], outcome))
+            # This acquires the session lock. A locked callback deadlocks here.
+            await session.offer_candidate({'activation_id': activation_id, 'event_id': 18,
+                                           'identity': None, 'text': 'Next candidate'})
+        async def close(self):
+            pass
+    session.coordinator = Coordinator()
+    selection = command('select', 1, event_id=17, reading_id=str(uuid4()), generation=1)
+    await session.select_reading(selection, manual()['request'], {'identity': None})
+    await settle(session)
+    drain_frames(session)
+    release_stream(stream.id)
+    await asyncio.wait_for(session.reconcile([], None), timeout=1)
+    frames = drain_frames(session)
+    assert terminal == [(selection['reading_id'], 'failed')]
+    assert [frame['code'] for frame in frames if frame['type'] == 'error'] == ['audio_expired']
+    assert [frame['event_id'] for frame in frames if frame['type'] == 'candidate'] == [18]
+    assert all(frame['type'] != 'audio' for frame in frames)
+    assert session.snapshot()['playback'] is None
+    await session.reconcile([], None)
+    await session.apply(command('finished', 2, reading_id=selection['reading_id'], generation=1, outcome='failed'))
+    assert terminal == [(selection['reading_id'], 'failed')]
+    assert prepare.await_count == 1
+    await registry.shutdown()

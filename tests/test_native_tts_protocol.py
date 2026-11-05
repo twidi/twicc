@@ -68,3 +68,28 @@ def test_rejects_noncanonical_string_identity():
         parse_native_command(frame('manual', reading_id=str(uuid4()), generation=1,
                                    request={'kind': 'text', 'source': 'message', 'identity': 'message:1',
                                             'text': 'Text', 'speech': {'text': 'Text'}}))
+
+
+def test_listen_accepts_existing_worktree_scope():
+    command = frame('listen', activation_id=str(uuid4()), page_id='worktree-project',
+                    scope={'kind': 'worktree', 'id': 'worktree-project'},
+                    include_muted=False, boundary='2026-11-05T12:00:00.000000Z')
+    assert parse_native_command(command)['scope'] == {'kind': 'worktree', 'id': 'worktree-project'}
+
+
+def test_manual_preserves_temporary_summary_identity_with_null_source_key():
+    identity = {'sourceKey': None, 'sourceHash': 'a' * 64, 'variant': 'summary'}
+    command = frame('manual', reading_id=str(uuid4()), generation=1,
+                    request={'kind': 'summary', 'speech': {}, 'identity': identity, 'text': 'Summary',
+                             'summary': {'source': {'text': 'Source text', 'purpose': 'selection'},
+                                         'source_key': None, 'source_hash': 'a' * 64, 'policy_key': 'policy:frozen'}})
+    assert parse_native_command(command)['request']['identity'] == identity
+
+
+@pytest.mark.parametrize('member', ['sourceHash', 'variant'])
+def test_temporary_identity_rejects_null_nonkey_members(member):
+    identity = {'sourceKey': None, 'sourceHash': 'a' * 64, 'variant': 'summary', member: None}
+    with pytest.raises(ValueError):
+        parse_native_command(frame('manual', reading_id=str(uuid4()), generation=1,
+                                   request={'kind': 'summary', 'speech': {}, 'identity': identity, 'text': 'Summary',
+                                            'summary': {'saved_id': 1, 'result_hash': 'a' * 64}}))

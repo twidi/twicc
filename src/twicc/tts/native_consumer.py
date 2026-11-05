@@ -84,13 +84,13 @@ class NativeTtsConsumer(AsyncJsonWebsocketConsumer):
                     session = registry.resume(command['session_id'], command['resume_secret'], binding)
                     if command['ack_seq'] > session.ack_seq:
                         raise ValueError('Resume acknowledges an unknown command')
+                    if command['seq'] <= session.ack_seq:
+                        raise ValueError('Resume sequence must follow the server acknowledgement')
                     self.native_session = session
                     self.connection_id = session.attach()
                     await session.reconcile(command['commands'], command['current'], connection_id=self.connection_id)
                     # The resume command itself follows all replayed commands.
                     if not session.closed:
-                        if command['seq'] <= session.ack_seq:
-                            raise ValueError('Resume sequence must follow retained commands')
                         session.ack_seq = command['seq']
                         session.publish_state()
                 else:

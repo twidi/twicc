@@ -276,3 +276,81 @@ async def test_native_socket_reconnect_replays_stop_before_current_audio(setting
     assert native_sessions.registry.get(opened['session_id']) is None
     await resumed.disconnect()
     await native_sessions.registry.shutdown()
+
+
+async def test_stale_resume_sequence_preserves_owner_connection_state_and_writer(settings):
+    settings.TWICC_PASSWORD_HASH = ''
+    owner, rejected = await socket(), await socket()
+    await owner.connect()
+    await owner.send_json_to({'protocol': 1, 'type': 'open', 'seq': 10, 'client_id': str(uuid4())})
+    opened = await owner.receive_json_from()
+    await owner.receive_json_from()
+    session = native_sessions.registry.get(opened['session_id'])
+    connection_id, snapshot = session.connection_id, session.snapshot()
+    try:
+        await rejected.connect()
+        await rejected.send_json_to({'protocol': 1, 'type': 'resume', 'seq': 2, 'session_id': session.id,
+                                     'resume_secret': session.secret, 'ack_seq': 1, 'commands': [], 'current': None})
+        assert (await rejected.receive_json_from())['code'] == 'invalid_command'
+        assert session.connection_id == connection_id
+        assert session.snapshot() == snapshot
+        await owner.send_json_to({'protocol': 1, 'type': 'ping', 'seq': 11})
+        assert (await owner.receive_json_from())['type'] == 'pong'
+        assert (await owner.receive_json_from())['ack_seq'] == 11
+        assert session.connection_id == connection_id
+    finally:
+        await rejected.disconnect()
+        await owner.disconnect()
+        await native_sessions.registry.shutdown()
+
+
+async def test_socket_accepts_existing_worktree_listen_scope(settings):
+    settings.TWICC_PASSWORD_HASH = ''
+    comm = await socket()
+    await comm.connect()
+    await comm.send_json_to({'protocol': 1, 'type': 'open', 'seq': 1, 'client_id': str(uuid4())})
+    await comm.receive_json_from()
+    await comm.receive_json_from()
+    try:
+        await comm.send_json_to({'protocol': 1, 'type': 'listen', 'seq': 2, 'activation_id': str(uuid4()),
+                                 'scope': {'kind': 'worktree', 'id': 'worktree-project'}, 'page_id': 'worktree-project',
+                                 'include_muted': False, 'boundary': '2026-11-05T12:00:00.000000Z'})
+        frame = await comm.receive_json_from()
+        assert frame['type'] == 'state'
+        assert frame['ack_seq'] == 2
+    finally:
+        await comm.disconnect()
+        await native_sessions.registry.shutdown()
+
+
+async def test_socket_reserves_temporary_summary_identity_with_null_key(settings, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+    from tests.test_native_tts_sessions import manual
+    from twicc.tts.service import OpenedSpeech
+    from twicc.tts.streams import stream_from_bytes
+    settings.TWICC_PASSWORD_HASH = ''
+    reader = Mock(id='independent-summary', aclose=AsyncMock())
+    monkeypatch.setattr(native_sessions.summaries, 'retain_summary_for_speech', AsyncMock(return_value=reader))
+    stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
+    monkeypatch.setattr(native_sessions, 'open_speech', AsyncMock(return_value=OpenedSpeech(stream.id, stream.content_type)))
+    comm = await socket()
+    await comm.connect()
+    await comm.send_json_to({'protocol': 1, 'type': 'open', 'seq': 1, 'client_id': str(uuid4())})
+    await comm.receive_json_from()
+    await comm.receive_json_from()
+    identity = {'sourceKey': None, 'sourceHash': 'a' * 64, 'variant': 'summary'}
+    reading = manual(2)
+    reading['request'].update(kind='summary', identity=identity,
+                              summary={'source': {'text': 'Source', 'purpose': 'selection'},
+                                       'source_key': None, 'source_hash': 'a' * 64, 'policy_key': 'policy:frozen'})
+    try:
+        await comm.send_json_to(reading)
+        while True:
+            frame = await comm.receive_json_from()
+            assert frame['type'] != 'error'
+            if frame['type'] == 'audio':
+                assert frame['identity'] == identity
+                break
+    finally:
+        await comm.disconnect()
+        await native_sessions.registry.shutdown()

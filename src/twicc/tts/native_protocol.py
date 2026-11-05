@@ -62,6 +62,8 @@ def _request(value):
         if set(identity) != {'sourceKey', 'sourceHash', 'variant'}:
             raise ValueError('Invalid reading identity')
         for key in identity:
+            if key == 'sourceKey' and identity[key] is None:
+                continue
             _string(identity[key], f'identity {key}', 4096)
     elif identity is not None:
         raise ValueError('identity must be an object or null')
@@ -146,7 +148,7 @@ def parse_native_command(data: object) -> dict:
         _request(data.get('request'))
     elif kind == 'listen':
         scope = data.get('scope')
-        if not isinstance(scope, dict) or set(scope) != {'kind', 'id'} or scope['kind'] not in ('global', 'project', 'workspace'):
+        if not isinstance(scope, dict) or set(scope) != {'kind', 'id'} or scope['kind'] not in ('global', 'project', 'workspace', 'worktree'):
             raise ValueError('Invalid listening scope')
         if scope['kind'] == 'global':
             if scope['id'] is not None:
