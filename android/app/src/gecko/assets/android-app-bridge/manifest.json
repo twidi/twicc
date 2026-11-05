@@ -1,0 +1,13 @@
+{
+  "manifest_version": 2,
+  "name": "TwiCC Android app bridge",
+  "version": "1.0",
+  "browser_specific_settings": { "gecko": { "id": "twicc-android-bridge@twidi.com" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "content_scripts": [{
+    "matches": ["https://*/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }]
+}

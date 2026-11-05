@@ -1,17 +1,20 @@
 package com.twidi.twicc
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.SystemClock
+import org.json.JSONArray
+import org.json.JSONObject
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.util.TypedValue
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupMenu
@@ -24,14 +27,13 @@ import com.twidi.twicc.platform.BrowserDownloads
 import com.twidi.twicc.platform.DownloadSource
 import com.twidi.twicc.platform.ExternalLinks
 import com.twidi.twicc.platform.NativeRequests
-import kotlin.math.abs
 
-/** A remote web client. No native JavaScript bridge, background service, or bundled server. */
+/** Remote web client with a small, origin-scoped app command bridge. */
 class BrowserActivity : Activity() {
     private lateinit var instance: Instance
     private lateinit var store: InstanceStore
     private lateinit var root: FrameLayout
-    private lateinit var menuButton: Button
+    private lateinit var menuButton: ImageButton
     private lateinit var progress: ProgressBar
     private lateinit var errorPanel: LinearLayout
     private var browser: BrowserSession? = null
@@ -39,8 +41,10 @@ class BrowserActivity : Activity() {
     private var canGoBack = false
     private var failed = false
     private var safeUrl = ""
-    private var menuX = 1f
-    private var menuY = 0.1f
+    private lateinit var appBridge: AndroidAppBridge
+    private val menuLease = AppMenuLease()
+    private var documentGeneration = 0
+    private val expireMenu = Runnable { updateNativeMenu() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,10 +54,8 @@ class BrowserActivity : Activity() {
             ?.takeIf { instance.url.allowsNavigation(it) }
             ?: store.page(instance)
             ?: "${instance.address}/"
-        val preferences = getPreferences(MODE_PRIVATE)
-        menuX = preferences.getFloat("menuX", 1f)
-        menuY = preferences.getFloat("menuY", 0.1f)
         buildLayout()
+        appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction)
         openBrowser()
     }
 
@@ -75,25 +77,20 @@ class BrowserActivity : Activity() {
             visibility = View.GONE
         }
         root.addView(progress, FrameLayout.LayoutParams(-1, dp(3), Gravity.TOP))
-        menuButton = Button(this).apply {
-            text = "⋮"
-            textSize = 24f
-            setTextColor(Color.WHITE)
-            setPadding(0, 0, 0, 0)
-            minWidth = 0
-            minHeight = 0
-            elevation = dp(6).toFloat()
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(65, 65, 83))
-            }
-            alpha = 0.9f
-            contentDescription = "TwiCC menu for ${instance.name}. Drag to move."
+        menuButton = ImageButton(this).apply {
+            setImageResource(R.drawable.twicc_robot)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            val ripple = TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true)
+            setBackgroundResource(ripple.resourceId)
+            contentDescription = "Android app menu for ${instance.name}"
             setOnClickListener { showMenu() }
         }
-        root.addView(menuButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START))
-        makeMenuMovable()
-        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionMenu() }
+        root.addView(menuButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(3)
+            topMargin = dp(3)
+        })
     }
 
     private fun openBrowser(force: Boolean = false) {
@@ -123,6 +120,7 @@ class BrowserActivity : Activity() {
             return decision
         }
         override fun onPageStarted(url: String) {
+            resetWebMenu()
             failed = false
             errorPanel.visibility = View.GONE
             progress.progress = 0
@@ -145,6 +143,7 @@ class BrowserActivity : Activity() {
             disposeBrowser()
             showError("Android stopped the browser engine. Reload to reconnect to TwiCC.")
         }
+        override fun onAppMessage(message: String): String = appBridge.receive(message)
         override fun onDownload(source: DownloadSource) { BrowserDownloads.save(this@BrowserActivity, source) }
     }
 
@@ -157,6 +156,7 @@ class BrowserActivity : Activity() {
 
     private fun showError(message: String, canRetry: Boolean = true) {
         failed = true
+        resetWebMenu()
         progress.visibility = View.GONE
         errorPanel.removeAllViews()
         errorPanel.addView(label(message))
@@ -174,7 +174,14 @@ class BrowserActivity : Activity() {
     private fun showMenu() {
         PopupMenu(this, menuButton).apply {
             menu.add("TwiCC ${BuildConfig.VERSION_NAME} · ${EngineProvider.engine.displayName}").isEnabled = false
-            menu.add("${instance.name} — Instances").setOnMenuItemClickListener { manageInstances(); true }
+            store.all().forEach { saved ->
+                menu.add(saved.name).apply {
+                    isCheckable = true
+                    isChecked = saved.id == instance.id
+                    setOnMenuItemClickListener { switchInstance(saved); true }
+                }
+            }
+            menu.add("Manage instances").setOnMenuItemClickListener { manageInstances(); true }
             menu.add("Reload page").setOnMenuItemClickListener { refresh(false); true }
             menu.add("Force refresh (keep login)").setOnMenuItemClickListener {
                 AlertDialog.Builder(this@BrowserActivity)
@@ -194,6 +201,64 @@ class BrowserActivity : Activity() {
         }
     }
 
+    private fun appState(): JSONObject = JSONObject()
+        .put("version", BuildConfig.VERSION_NAME)
+        .put("engine", EngineProvider.engine.displayName)
+        .put("activeInstanceId", instance.id)
+        .put("instances", JSONArray().apply {
+            store.all().forEach { saved -> put(JSONObject()
+                .put("id", saved.id).put("name", saved.name).put("address", saved.address)) }
+        })
+
+    private fun reportWebMenu(owner: String, visible: Boolean) {
+        menuLease.report(owner, visible && !failed, SystemClock.uptimeMillis())
+        updateNativeMenu()
+        root.removeCallbacks(expireMenu)
+        val remaining = menuLease.remainingMs(SystemClock.uptimeMillis())
+        if (remaining > 0) root.postDelayed(expireMenu, remaining)
+    }
+
+    private fun updateNativeMenu() {
+        menuButton.visibility = if (!failed && menuLease.isVisible(SystemClock.uptimeMillis())) View.GONE else View.VISIBLE
+    }
+
+    private fun resetWebMenu() {
+        documentGeneration++
+        menuLease.reset()
+        if (::root.isInitialized) root.removeCallbacks(expireMenu)
+        if (::menuButton.isInitialized) updateNativeMenu()
+    }
+
+    private fun queueAppAction(command: AppCommand, instanceId: String?): String? {
+        val target = if (command == AppCommand.SWITCH_INSTANCE)
+            store.find(instanceId) ?: return "This instance is no longer saved." else null
+        val source = browser ?: return "The browser session is closed."
+        val generation = documentGeneration
+        // Return the transport reply before a navigation can destroy its document.
+        root.post {
+            if (browser !== source || documentGeneration != generation || isFinishing) return@post
+            when (command) {
+                AppCommand.SWITCH_INSTANCE -> target?.let { switchInstance(it) }
+                AppCommand.MANAGE_INSTANCES -> manageInstances()
+                AppCommand.RELOAD -> refresh(false)
+                AppCommand.FORCE_REFRESH -> refresh(true)
+                AppCommand.SERVER_HOME -> { safeUrl = "${instance.address}/"; refresh(false) }
+                AppCommand.OPEN_IN_BROWSER -> openExternal(safeUrl)
+                else -> Unit
+            }
+        }
+        return null
+    }
+
+    private fun switchInstance(target: Instance) {
+        if (target.id == instance.id) return
+        store.rememberPage(instance, safeUrl)
+        store.select(target)
+        disposeBrowser()
+        startActivity(Intent(this, BrowserActivity::class.java).putExtra("instance", target.id))
+        finish()
+    }
+
     private fun manageInstances() {
         disposeBrowser()
         startActivity(Intent(this, MainActivity::class.java)
@@ -203,55 +268,6 @@ class BrowserActivity : Activity() {
     }
 
     private fun openExternal(url: String) = ExternalLinks.open(this, url)
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun makeMenuMovable() {
-        var downX = 0f
-        var downY = 0f
-        var startX = 0
-        var startY = 0
-        var moved = false
-        menuButton.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX; downY = event.rawY
-                    val layout = menuButton.layoutParams as FrameLayout.LayoutParams
-                    startX = layout.leftMargin; startY = layout.topMargin
-                    moved = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (abs(event.rawX - downX) + abs(event.rawY - downY) > dp(8)) moved = true
-                    if (moved) {
-                        val availableX = maxOf(0, root.width - root.paddingLeft - root.paddingRight - dp(48))
-                        val availableY = maxOf(0, root.height - root.paddingTop - root.paddingBottom - dp(48))
-                        menuX = if (availableX == 0) 0f else (startX + event.rawX - downX).coerceIn(0f, availableX.toFloat()) / availableX
-                        menuY = if (availableY == 0) 0f else (startY + event.rawY - downY).coerceIn(0f, availableY.toFloat()) / availableY
-                        positionMenu()
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) menuButton.performClick()
-                    else getPreferences(MODE_PRIVATE).edit().putFloat("menuX", menuX).putFloat("menuY", menuY).apply()
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> true
-                else -> false
-            }
-        }
-    }
-
-    private fun positionMenu() {
-        val x = (maxOf(0, root.width - root.paddingLeft - root.paddingRight - dp(48)) * menuX.coerceIn(0f, 1f)).toInt()
-        val y = (maxOf(0, root.height - root.paddingTop - root.paddingBottom - dp(48)) * menuY.coerceIn(0f, 1f)).toInt()
-        val layout = menuButton.layoutParams as FrameLayout.LayoutParams
-        if (layout.leftMargin != x || layout.topMargin != y) {
-            layout.leftMargin = x
-            layout.topMargin = y
-            menuButton.layoutParams = layout
-        }
-    }
 
     @Deprecated("Legacy back handling is enabled in the manifest for this Activity.")
     override fun onBackPressed() {
@@ -285,6 +301,7 @@ class BrowserActivity : Activity() {
     }
 
     private fun disposeBrowser() {
+        resetWebMenu()
         val page = browser
         browser = null
         (page?.view?.parent as? ViewGroup)?.removeView(page.view)

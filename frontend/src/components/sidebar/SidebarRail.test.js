@@ -61,7 +61,8 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
     assert.equal(attrs(nav)['aria-label'], 'Main navigation')
     const [card] = children(nav)
     assert.equal(attrs(card).class, 'panel-card')
-    const [top, firstDivider, spacer, secondDivider, bottom] = children(card)
+    const [androidMenu, top, firstDivider, spacer, secondDivider, bottom] = children(card)
+    assert.equal(androidMenu.tag, 'AndroidAppMenuAnchor')
     for (const divider of [firstDivider, secondDivider]) {
         assert.equal(divider.tag, 'wa-divider')
         assert.equal(attrs(divider)['v-if'], 'hasCentralContent')

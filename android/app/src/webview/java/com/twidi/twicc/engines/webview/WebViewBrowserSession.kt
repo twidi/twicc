@@ -7,7 +7,10 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Message
 import android.webkit.*
+import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import com.twidi.twicc.AndroidAppPolicy
 import com.twidi.twicc.BuildConfig
 import com.twidi.twicc.Instance
 import com.twidi.twicc.NavigationDecision
@@ -25,6 +28,7 @@ internal class WebViewBrowserSession(
     override val view = WebView(activity)
     private lateinit var cookies: CookieManager
     private var closed = false
+    private var appListenerAdded = false
     private var forceLoading = false
     private var safeUrl = "${instance.address}/"
     private val pending = mutableSetOf<PendingRequest>()
@@ -51,6 +55,7 @@ internal class WebViewBrowserSession(
                 builtInZoomControls = true
                 displayZoomControls = false
             }
+            configureAppBridge()
             WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
             view.webViewClient = pageClient()
             view.webChromeClient = chromeClient()
@@ -63,6 +68,17 @@ internal class WebViewBrowserSession(
                 }
             }
         } catch (error: RuntimeException) { close(); throw error }
+    }
+
+    private fun configureAppBridge() {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(view, "TwiccAndroid", setOf(instance.address)) { _, message, origin, mainFrame, reply ->
+                if (!closed && message.type == WebMessageCompat.TYPE_STRING &&
+                    AndroidAppPolicy.acceptsFrame(instance.url, origin.toString(), mainFrame))
+                    message.data?.let { reply.postMessage(events.onAppMessage(it)) }
+            }
+            appListenerAdded = true
+        }
     }
 
     private fun pageClient() = object : WebViewClient() {
@@ -204,6 +220,7 @@ internal class WebViewBrowserSession(
         pending.clear()
         popups.toList().forEach { destroyPopup(it) }
         if (::cookies.isInitialized) cookies.flush()
+        if (appListenerAdded) WebViewCompat.removeWebMessageListener(view, "TwiccAndroid")
         view.stopLoading()
         view.destroy()
     }

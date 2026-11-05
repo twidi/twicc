@@ -14,5 +14,6 @@ interface BrowserEvents {
     fun onHistoryChanged(canGoBack: Boolean)
     fun onFailure(message: String)
     fun onRendererStopped()
+    fun onAppMessage(message: String): String
     fun onDownload(source: DownloadSource)
 }

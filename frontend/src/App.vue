@@ -54,6 +54,7 @@ import { PROJECT_DETAIL_ROUTES, TERMINAL_ROUTES, WORKFLOW_ROUTES } from './utils
 import { toggleSearchInActiveCodeMirror } from './composables/useCodeMirror'
 import { useSessionSwitcher } from './composables/useSessionSwitcher'
 import BrandLogo from './components/ui/BrandLogo.vue'
+import AndroidAppMenu from './components/sidebar/AndroidAppMenu.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -792,6 +793,8 @@ const toastTheme = computed(() => {
 </script>
 
 <template>
+    <AndroidAppMenu :force-fixed="isConnecting" />
+
     <!-- Provider activation: non-dismissible first-run / recovery dialog -->
     <ProviderActivationDialog v-if="isAppReady" />
 

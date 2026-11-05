@@ -26,6 +26,7 @@ import { createRailSessionLongPress } from '../../utils/railSessionLongPress.js'
 import SettingsPopover from '../app/SettingsPopover.vue'
 import PeerInboxBadge from '../peer/PeerInboxBadge.vue'
 import NewSessionProjectPicker from '../project/NewSessionProjectPicker.vue'
+import AndroidAppMenuAnchor from './AndroidAppMenuAnchor.vue'
 
 const props = defineProps({
     mode: { type: String, required: true, validator: value => ['home', 'sessions', 'artifacts'].includes(value) },
@@ -200,6 +201,7 @@ async function stopSpeech() {
 <template>
     <nav aria-label="Main navigation" class="sidebar-rail">
         <div class="panel-card">
+            <AndroidAppMenuAnchor />
             <template v-for="item in top" :key="item.id">
                 <button
                     :id="`sidebar-rail-${item.id}`" type="button" class="rail-button"
@@ -401,6 +403,13 @@ async function stopSpeech() {
     min-height: 0;
     margin-block: var(--panel-gap);
     margin-inline-start: var(--panel-gap);
+}
+
+/* Android adds a control. Keep all controls reachable at any available height. */
+.panel-card:has(.android-app-menu-host) {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
 }
 
 .rail-spacer {

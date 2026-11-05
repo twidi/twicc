@@ -35,7 +35,7 @@ background JavaScript, WebSocket connections, or audio playback.
 - The application ID is **`com.twidi.twicc`** for both engines.
 - WebView/Gecko builds replace each other with `adb install -r`, if their
   signing certificates match and their version codes permit the update.
-- Instance addresses, names, last pages, and menu position remain across engine
+- Instance addresses, names, and last pages remain across engine
   replacement. Cookies, localStorage, and IndexedDB are **engine-specific**.
   Sign in separately in each engine. Switching back restores that engine's data.
 - Removing an instance queues storage deletion separately for both engines.
@@ -138,7 +138,8 @@ android/app/src/
   main/
     AndroidManifest.xml, res/                 shared app identity and resources
     java/com/twidi/twicc/
-      BrowserActivity.kt                     layout, menu, navigation policy, Back
+      BrowserActivity.kt                     layout, fixed robot fallback, navigation, Back
+      AndroidAppBridge.kt                    versioned app commands and state
       MainActivity.kt, InstanceStore.kt       instance manager and preferences
       NativeUi.kt                            system bars and keyboard layout
       browser/                               engine/session/event contracts
@@ -149,7 +150,14 @@ android/app/src/
   gecko/java/com/twidi/twicc/
     browser/EngineProvider.kt                flavor factory
     engines/gecko/                           runtime, sessions, Gecko delegates/uploads
-android/policy/                              shared JVM URL/filename/navigation rules
+android/app/src/gecko/assets/
+  android-app-bridge/                        built-in top-level WebExtension transport
+android/policy/                              shared JVM URL/filename/navigation/bridge rules
+frontend/src/components/sidebar/
+  AndroidAppMenu.vue                         one app-wide Web menu
+  AndroidAppMenuAnchor.vue                   rail anchor before Home
+frontend/src/utils/androidAppClient.js         shared Web RPC client
+frontend/src/utils/androidMenuPlacement.js     rail registration and fixed placement
 ```
 
 The two factories have the same qualified name. Gradle compiles exactly one.
@@ -172,17 +180,38 @@ Add an optional name and a server origin, for example
 and fragments are rejected. Internationalized hostnames use ASCII/punycode.
 Each instance UUID gets its own persistent WebView profile or Gecko context.
 The port is part of the origin. Renaming preserves storage; changing an address
-creates a new UUID. The last safe same-origin URL is restored after relaunch.
+creates a new UUID. The last safe same-origin URL is saved separately for each instance. Switching
+instances and relaunching the app restore that instance's saved page.
 
-The movable **⋮** menu provides:
+Inside the Android app, the **TwiCC robot before Home** opens an app menu
+rendered by the server frontend. Without a visible rail, the robot stays at the
+**top left** and opens the same Web menu. This includes login and connecting
+screens. One app-wide menu moves between a registered rail anchor and its fixed
+position. Menu state and its confirmation dialog stay in the same component.
+The menu is absent in an ordinary browser. Its empty rail anchor creates no gap.
+It provides:
 
 - Version and engine name.
-- Instance manager.
+- All saved instances, with an active marker and direct switching.
+- **Manage instances**, which opens the native instance manager.
 - Normal reload.
 - **Force refresh (keep login):** replace the browser view/session and bypass
   resource cache. Cookies, localStorage, and IndexedDB remain. Unsaved text can
   be lost. This does not unregister service workers; TwiCC has none currently.
 - Server home and Open in browser.
+
+A fixed native **TwiCC robot at the top left** provides the same actions as a
+fallback. It respects Android system-bar insets. It remains available on load
+errors, older frontends, or when the Web menu is unavailable. A visible Web menu renews a six-second native lease every two seconds.
+If the lease expires, the native button returns. A stopped JavaScript thread can
+therefore delay the fallback by up to six seconds. The robot is not draggable.
+
+The bridge accepts only predefined commands from the current instance's HTTPS
+origin and top-level frame. WebView uses an origin-scoped AndroidX Web message
+listener. Gecko uses a bundled WebExtension and a session-scoped native message
+delegate. Both use the same versioned protocol and shared native dispatcher.
+No general-purpose JavaScript interface is exposed. If a transport is unavailable,
+normal navigation and the native menu remain available.
 
 Back uses browser history, then returns to the instance manager. Rotation keeps
 the session. Process death restores the URL, not unsaved in-memory work.
@@ -225,12 +254,17 @@ JavaScript is injected. Rendering and scrolling can differ by engine.
 1. Install one flavor, add two instances, and sign in. Check isolation by port.
 2. Replace it with the other flavor. Check native settings remain. Sign in again.
 3. Switch back. Check the first engine's cookies/preferences return.
-4. Test internal/external/new-window links, embedded artifacts, Back, and rotation.
-5. Force refresh. Check login/preferences remain and unsaved-state confirmation.
-6. Upload one/multiple files. Cancel the picker, retry, and verify names/bytes.
-7. Download an authenticated attachment and verify its bytes/name in Downloads.
-8. Test foreground normal/streaming TTS, scrolling, and keyboard transitions.
-9. Stop the tunnel and retry. Check invalid certificates cannot be bypassed.
-10. Rename/change/remove an instance. Switch engines and check cleanup behavior.
+4. Check the robot appears before Home. Open the Web menu and check its active marker.
+   Switch instances, navigate each, stop/relaunch, and check both saved URLs.
+   Hide the rail or open the login page. Check the Web menu stays at the top left.
+   Show the rail again. Check one robot returns before Home.
+   Open an unreachable instance. Check the native robot opens its fallback menu.
+5. Test internal/external/new-window links, embedded artifacts, Back, and rotation.
+6. Force refresh. Check login/preferences remain and unsaved-state confirmation.
+7. Upload one/multiple files. Cancel the picker, retry, and verify names/bytes.
+8. Download an authenticated attachment and verify its bytes/name in Downloads.
+9. Test foreground normal/streaming TTS, scrolling, and keyboard transitions.
+10. Stop the tunnel and retry. Check invalid certificates cannot be bypassed.
+11. Rename/change/remove an instance. Switch engines and check cleanup behavior.
 
 Run these checks on a physical phone to validate fluidity and TwiCC streaming TTS.

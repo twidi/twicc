@@ -6,6 +6,8 @@ import com.twidi.twicc.BuildConfig
 import com.twidi.twicc.Instance
 import com.twidi.twicc.browser.*
 import com.twidi.twicc.platform.NativeRequests
+import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.WebExtension
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import java.io.File
@@ -14,6 +16,10 @@ import java.io.File
 internal object GeckoEngine : BrowserEngine {
     override val displayName = "GeckoView 159"
     private var runtime: GeckoRuntime? = null
+    private var appExtension: GeckoResult<WebExtension>? = null
+    fun appExtension(context: Context): GeckoResult<WebExtension> = appExtension ?: runtime(context)
+        .webExtensionController.ensureBuiltIn("resource://android/assets/android-app-bridge/", "twicc-android-bridge@twidi.com")
+        .also { appExtension = it }
     fun runtime(context: Context): GeckoRuntime {
         runtime?.let { return it }
         File(context.cacheDir, "gecko-uploads").deleteRecursively()

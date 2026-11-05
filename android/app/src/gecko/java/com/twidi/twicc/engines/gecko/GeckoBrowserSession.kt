@@ -1,6 +1,7 @@
 package com.twidi.twicc.engines.gecko
 
 import android.app.Activity
+import com.twidi.twicc.AndroidAppPolicy
 import com.twidi.twicc.Instance
 import com.twidi.twicc.NavigationDecision
 import com.twidi.twicc.NavigationRequest
@@ -19,6 +20,8 @@ internal class GeckoBrowserSession(
     private val page = GeckoSession(GeckoSessionSettings.Builder().contextId(instance.profileName).build())
     private val prompts = GeckoPrompts(activity, requests)
     private var closed = false
+    private var bridgeReady = false
+    private var queuedLoad: Pair<String, Boolean>? = null
 
     init {
         try {
@@ -71,10 +74,28 @@ internal class GeckoBrowserSession(
             }
             page.open(GeckoEngine.runtime(activity))
             view.setSession(page)
+            GeckoEngine.appExtension(activity).accept({ extension ->
+                if (!closed && extension != null) {
+                    page.webExtensionController.setMessageDelegate(extension, object : WebExtension.MessageDelegate {
+                        override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
+                            if (closed || sender.session !== page ||
+                                sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT ||
+                                !AndroidAppPolicy.acceptsFrame(instance.url, sender.url, sender.isTopLevel)) return null
+                            return GeckoResult.fromValue(events.onAppMessage(message.toString()))
+                        }
+                    }, "twicc_android")
+                }
+                if (!closed) finishBridgeSetup()
+            }, { if (!closed) finishBridgeSetup() })
         } catch (error: RuntimeException) { close(); throw error }
+    }
+    private fun finishBridgeSetup() {
+        bridgeReady = true
+        queuedLoad?.let { (url, bypassCache) -> queuedLoad = null; load(url, bypassCache) }
     }
     override fun load(url: String, bypassCache: Boolean) {
         if (closed) return
+        if (!bridgeReady) { queuedLoad = url to bypassCache; return }
         page.stop()
         page.load(GeckoSession.Loader().uri(url).flags(if (bypassCache) GeckoSession.LOAD_FLAGS_BYPASS_CACHE else GeckoSession.LOAD_FLAGS_NONE))
     }
@@ -83,6 +104,7 @@ internal class GeckoBrowserSession(
     override fun close() {
         if (closed) return
         closed = true
+        queuedLoad = null
         view.releaseSession()
         if (page.isOpen) page.close()
         prompts.close()
