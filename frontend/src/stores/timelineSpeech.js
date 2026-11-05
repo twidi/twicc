@@ -18,6 +18,53 @@ const coordinators = new WeakMap()
 const CONTEXT_SILENCE_MS = 3 * 60 * 1000
 const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z', '000Z')
 
+/** Native mode has no Web feed, summary preparation, or playback coordinator. */
+function createNativeCoordinator(store, { dataStore, workspacesStore }) {
+    const tts = useTextToSpeechStore(), filters = useTimelineFiltersStore(), client = tts.nativeClient()
+    let activationId = null, unwatchMuted = null, lastError = null
+    function mirror(snapshot) {
+        const listening = snapshot?.listening
+        if (listening?.activationId !== activationId) {
+            unwatchMuted?.(); unwatchMuted = null
+            activationId = listening?.activationId ?? null
+            if (listening) {
+                // Restore this scope, even when the reloaded page opens another route.
+                filters.setIncludeMuted(listening.pageId, listening.includeMuted)
+                unwatchMuted = watch(() => filters.filtersFor(listening.pageId).includeMuted,
+                    value => { void client.setMuted(value) }, { flush: 'sync' })
+            }
+        }
+        store.activePageId = listening?.pageId ?? null
+        store.activeLabel = listening?.scope?.label ?? ''
+        store.pendingCount = snapshot?.pendingCount ?? 0
+        const error = snapshot?.error
+        const key = error ? JSON.stringify(error) : null
+        // Manual controls consume their own operation result. Background listener errors have no control promise.
+        if (key && key !== lastError && !error.reading_id) store._showError(error.message)
+        lastError = key
+    }
+    mirror(tts.nativeSnapshot)
+    const unwatch = watch(() => tts.nativeSnapshot, mirror, { flush: 'sync' })
+    return {
+        async enable(pageId) {
+            if (!tts.available) return
+            const scope = resolveTimelineScope({ pageId, allProjectsId: ALL_PROJECTS_ID,
+                projectsLoaded: dataStore.projectsLoaded,
+                workspaceOf: id => workspacesStore.getWorkspaceById(id) ? { allProjectIds: workspacesStore.getAllProjectIds(id) } : null,
+                projectOf: id => dataStore.getProject(id), projectScopeIds: id => dataStore.getProjectScopeIds(id) })
+            if (scope.state !== 'ready') return
+            const id = scope.kind === 'global' ? null : scope.kind === 'workspace' ? extractWorkspaceId(pageId) : scope.projectId
+            const label = scope.kind === 'global' ? 'All projects' : scope.kind === 'workspace'
+                ? workspacesStore.getWorkspaceById(id)?.name ?? '' : dataStore.getProjectDisplayName(pageId)
+            const accepted = await client.listen({ pageId, scope: { kind: scope.kind, id, label },
+                includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()) })
+            if (!accepted?.accepted) store._showError(accepted?.error?.message || 'Native listening could not start')
+        },
+        disable() { void client.disable() },
+        dispose() { unwatchMuted?.(); unwatch() },
+    }
+}
+
 function createCoordinator(store, { dataStore, workspacesStore, connectionStatus, eventTarget, settingsStore }) {
     const tts = useTextToSpeechStore()
     const filters = useTimelineFiltersStore()
@@ -368,7 +415,8 @@ export const useTimelineSpeechStore = defineStore('timelineSpeech', {
     actions: {
         initialize({ dataStore, workspacesStore, connectionStatus, eventTarget = window, settingsStore = null }) {
             if (coordinators.has(this)) return
-            coordinators.set(this, createCoordinator(this, { dataStore, workspacesStore, connectionStatus, eventTarget, settingsStore }))
+            const create = useTextToSpeechStore().nativeMode ? createNativeCoordinator : createCoordinator
+            coordinators.set(this, create(this, { dataStore, workspacesStore, connectionStatus, eventTarget, settingsStore }))
         },
         enable(pageId) { coordinators.get(this)?.enable(pageId) },
         disable() { coordinators.get(this)?.disable() },

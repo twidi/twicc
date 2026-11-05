@@ -195,7 +195,7 @@ function activate(item) {
 async function stopSpeech() {
     const focused = document.activeElement
     const hadFocus = focused?.id === 'sidebar-rail-speech' && !!focused.matches?.(':focus-visible')
-    tts.stop()
+    tts.skip()
     if (!hadFocus) return
     await nextTick()
     document.getElementById('sidebar-rail-new-session')?.focus()

@@ -162,6 +162,7 @@ function toggleSession() {
                     appearance="plain"
                     :text="summary.view === 'summary' ? (summary.entry?.text || '') : row.event.data.text"
                     :original-text="row.event.data.text"
+                    :native-speech-request="summary.view === 'summary' ? summary.nativeSpeechRequest : null"
                     :summary-ref="summary.view === 'summary' ? summary.playbackReference : null"
                     :summary-identity="summary.identity"
                     :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"

@@ -1103,7 +1103,7 @@ export function useWebSocket() {
         // (e.g., transient WS issue, not a real auth problem)
         await authStore.checkAuthOnce()
         if (authStore.needsLogin) {
-            authStore.handleUnauthorized()
+            await authStore.handleUnauthorized()
             // Lazy import to avoid circular dependency
             // (router imports views → views import components → components import useWebSocket)
             const { router } = await import('../router')

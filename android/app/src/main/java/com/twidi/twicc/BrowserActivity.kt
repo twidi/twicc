@@ -72,7 +72,10 @@ class BrowserActivity : Activity() {
             ?: store.page(instance)
             ?: "${instance.address}/"
         buildLayout()
-        appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction)
+        val ttsBridge = com.twidi.twicc.tts.NativeTtsBridge(
+            { BuildConfig.NATIVE_TTS && browser?.nativeTtsSupported == true },
+            ::nativeTtsDocumentOwner, ::nativeTtsSnapshot, ::dispatchNativeTts)
+        appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction, ttsBridge::receive)
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()
         ttsBound = bindService(Intent(this, TtsService::class.java), ttsConnection, Context.BIND_AUTO_CREATE)
@@ -224,6 +227,9 @@ class BrowserActivity : Activity() {
         .put("version", BuildConfig.VERSION_NAME)
         .put("engine", EngineProvider.engine.displayName)
         .put("activeInstanceId", instance.id)
+        .put("capabilities", JSONObject().apply {
+            if (BuildConfig.NATIVE_TTS && browser?.nativeTtsSupported == true) put("nativeTts", 1)
+        })
         .put("instances", JSONArray().apply {
             store.all().forEach { saved -> put(JSONObject()
                 .put("id", saved.id).put("name", saved.name).put("address", saved.address)) }

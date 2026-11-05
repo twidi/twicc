@@ -152,6 +152,10 @@ export const useAuthStore = defineStore('auth', {
          * Log out and clear session.
          */
         async logout() {
+            const { useTextToSpeechStore } = await import('./textToSpeech.js')
+            const { useTimelineSpeechStore } = await import('./timelineSpeech.js')
+            useTimelineSpeechStore().disable()
+            await useTextToSpeechStore().stopAll()
             try {
                 await fetch('/api/auth/logout/', { method: 'POST' })
             } catch (e) {
@@ -164,10 +168,13 @@ export const useAuthStore = defineStore('auth', {
          * Called when a 401 response is received from any API call.
          * Redirects to login.
          */
-        handleUnauthorized() {
+        async handleUnauthorized() {
             if (this.authenticated !== false) {
                 this.authenticated = false
             }
+            // A real authorization loss stops the owner before navigation. A visit to /login alone does not.
+            const { useTextToSpeechStore } = await import('./textToSpeech.js')
+            await useTextToSpeechStore().stopAll()
         },
     },
 })

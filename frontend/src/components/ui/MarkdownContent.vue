@@ -912,6 +912,7 @@ function handleLinkClick(event) {
                 <TextToSpeechButton
                     v-if="speakable"
                     :text="source"
+                    :native-speech-request="summaryActive ? summaryContext.nativeSpeechRequest : null"
                     :summary-ref="summaryActive ? summaryContext.playbackReference : null"
                     :summary-identity="summaryActive ? summaryContext.identity : null"
                     @summary-changed="summaryActive && summaryContext.refreshSaved($event)"

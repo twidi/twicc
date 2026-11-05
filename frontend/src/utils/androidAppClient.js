@@ -1,5 +1,6 @@
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
+const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.manual', 'tts.listen', 'tts.set_muted', 'tts.disable', 'tts.skip', 'tts.stop_all'])
 
 /** The page uses one client for either native transport. No user-agent detection. */
 export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
@@ -30,6 +31,12 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
             if (closed) return Promise.reject(new Error('Android client is closed.'))
             const id = `${prefix}-${++sequence}`
             const request = { ...args, protocol: 1, id, command }
+            let encoded
+            try {
+                encoded = JSON.stringify(request)
+                const limit = TTS_COMMANDS.has(command) ? 12 * 1024 * 1024 : 16 * 1024
+                if (new TextEncoder().encode(encoded).byteLength > limit) return Promise.reject(new Error('The Android request is too large.'))
+            } catch (error) { return Promise.reject(error) }
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     pending.delete(id)
@@ -37,7 +44,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
                 }, timeoutMs)
                 pending.set(id, { resolve, reject, timer })
                 try {
-                    if (proxy) proxy.postMessage(JSON.stringify(request))
+                    if (proxy) proxy.postMessage(encoded)
                     else target.postMessage({ channel: REQUEST_CHANNEL, request }, target.location.origin)
                 } catch (error) {
                     clearTimeout(timer)

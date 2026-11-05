@@ -21,13 +21,20 @@ store.openTemporary(props.text)
 
 const generation = useTemporarySummaryGeneration(() => store.temporary?.source, settings, speech, store)
 const entry = computed(() => store.temporary?.entry)
-const identity = computed(() => ({ selectionId: store.temporary?.id, variant: 'summary' }))
+const identity = computed(() => speech.nativeMode
+    ? { sourceKey: null, sourceHash: entry.value?.descriptor?.source_hash ?? '', variant: 'summary' }
+    : { selectionId: store.temporary?.id, variant: 'summary' })
+const nativeSpeechRequest = computed(() => {
+    const descriptor = entry.value?.descriptor, source = store.temporary?.source
+    return descriptor && source ? { source: { ...source }, source_key: descriptor.source_key,
+        source_hash: descriptor.source_hash, policy_key: descriptor.policy_key } : null
+})
 const reading = computed(() => !!store.temporary && speech.statusForSummary(identity.value) !== 'idle')
 const summaryReference = computed(() => store.temporary ? store.temporaryReference() : null)
 const speakable = computed(() => reading.value || ['running', 'complete'].includes(entry.value?.state))
 
 watch(() => store.temporary?.id, (_id, previousId) => {
-    if (previousId && speech.statusForSummary({ selectionId: previousId, variant: 'summary' }) !== 'idle') speech.stop()
+    if (!speech.nativeMode && previousId && speech.statusForSummary({ selectionId: previousId, variant: 'summary' }) !== 'idle') speech.stop()
 }, { flush: 'sync' })
 watch(() => entry.value?.text, () => emit('content-change'), { flush: 'post' })
 
@@ -52,7 +59,7 @@ async function copy() {
     }
 }
 onBeforeUnmount(() => {
-    stopReading()
+    if (!speech.nativeMode) stopReading()
     store.closeTemporary()
 })
 </script>
@@ -94,6 +101,7 @@ onBeforeUnmount(() => {
             <TextToSpeechButton
                 v-if="speakable"
                 :text="entry?.text ?? ''"
+                :native-speech-request="nativeSpeechRequest"
                 :summary-ref="summaryReference"
                 :summary-identity="identity"
             />

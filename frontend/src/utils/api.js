@@ -42,7 +42,7 @@ export async function apiFetch(url, options) {
  */
 export async function handleUnauthorized() {
     const authStore = useAuthStore()
-    authStore.handleUnauthorized()
+    await authStore.handleUnauthorized()
     const router = await getRouter()
     const currentPath = router.currentRoute.value.fullPath
     if (router.currentRoute.value.name !== 'login') {

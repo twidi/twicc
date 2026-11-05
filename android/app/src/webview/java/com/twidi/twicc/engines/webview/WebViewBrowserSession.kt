@@ -81,7 +81,7 @@ internal class WebViewBrowserSession(
             WebViewCompat.addWebMessageListener(view, "TwiccAndroid", setOf(instance.address)) { _, message, origin, mainFrame, reply ->
                 if (!closed && message.type == WebMessageCompat.TYPE_STRING &&
                     AndroidAppPolicy.acceptsFrame(instance.url, origin.toString(), mainFrame))
-                    message.data?.let { reply.postMessage(events.onAppMessage(it)) }
+                    message.data?.let { reply.postMessage(com.twidi.twicc.AndroidAppBridge.frameError(it) ?: events.onAppMessage(it)) }
             }
             appListenerAdded = true
         }
@@ -210,6 +210,9 @@ internal class WebViewBrowserSession(
             view.loadUrl(url, mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"))
         } else view.loadUrl(url)
     }
+    override val nativeTtsSupported: Boolean
+        get() = WebViewFeature.isFeatureSupported(WebViewFeature.GET_COOKIE_INFO)
+
     override fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
         val accepted = runCatching {
             check(!closed && instance.url.allowsNavigation(safeUrl)) { "The browser document is unavailable." }

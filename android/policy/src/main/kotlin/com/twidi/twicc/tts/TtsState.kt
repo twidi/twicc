@@ -137,7 +137,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 if (!valid(command.owner) || stopSeq != null) return emptyList()
                 activate()
                 listening?.let { queue("disable", mapOf("activation_id" to it.activationId)); if (playback.automatic) cancel() }
-                val next = NativeListening(newId(), command.owner.pageId, command.scope, command.boundary, command.includeMuted)
+                val next = NativeListening(newId(), command.pageId, command.scope, command.boundary, command.includeMuted)
                 listening = next; pendingCount = 0
                 queue("listen", mapOf("activation_id" to next.activationId, "scope" to next.scope.wire(),
                     "page_id" to next.pageId, "include_muted" to next.includeMuted, "boundary" to next.boundary))

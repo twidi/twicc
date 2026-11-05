@@ -23,7 +23,7 @@ import {
  * WebSocket sync) and the single playback of the app.
  *
  * One playback at a time. It is owned by no view: it survives every in-app navigation and
- * stops only on a page reload or when the app goes to the login page (see router.js).
+ * Web playback stops on page reload or the login page. Native playback remains in the Android service.
  *
  * A playback opens the speech on the backend (an audio id), plays the audio while the backend
  * still streams it, asks the backend how the audio ended, then releases the audio id.
@@ -46,6 +46,7 @@ let abortPending = null
 let pageHideTargets = new WeakSet()
 // The model list loads: only the latest call applies its result.
 let modelsGeneration = 0
+const nativeClients = new WeakMap()
 
 const ABORTED = Object.freeze({ ok: false, aborted: true })
 const BACKEND_STATES = new Set(['complete', 'failed', 'running', 'unknown'])
@@ -152,7 +153,27 @@ function primePlayers() {
  * Resolves `{ ok: true, ended }` when the sound starts (`ended` resolves the end result),
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
-async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '', summaryRef = null, identity = null }) {
+async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '', summaryRef = null, identity = null, nativeRequest = null }) {
+    if (store.nativeNegotiating) return { ok: false, error: 'Native speech is initializing. Try again.' }
+    const native = nativeClients.get(store)?.client
+    if (store.nativeMode) {
+        if (!native) return { ok: false, error: 'Native speech is unavailable. Reopen this page.' }
+        if (source === 'summary' && !nativeRequest) return { ok: false, error: 'The summary is no longer available' }
+        const speech = { ...fields, cache: useCache, ...(source !== 'summary' ? { text } : {}),
+            ...(configId ? { config_id: configId } : {}), ...(scriptId ? { script_id: scriptId } : {}),
+            ...(origin ? { origin } : {}), ...(announcement ? { announcement } : {}) }
+        const loading = { text, status: 'loading', source, configId, owner, identity }
+        store.playback = loading
+        const pending = native.manual({ kind: source === 'summary' ? 'summary' : 'text', speech,
+            ...(source === 'summary' ? { summary: JSON.parse(JSON.stringify(nativeRequest)) } : { source }),
+            identity, text: text ?? '', config_id: configId })
+        loading.operationId = pending.operationId
+        const result = await pending
+        if (!result.ok && store.playback.operationId === pending.operationId && store.status === 'loading') {
+            store.playback = { text: null, status: 'idle', source: null, configId: null, owner: null }
+        }
+        return result
+    }
     cancelPlayback(store)
     const mine = ++generation
 
@@ -312,6 +333,7 @@ async function playBuffered(store, mine, url, format, handlers) {
 
 export const useTextToSpeechStore = defineStore('textToSpeech', {
     state: () => ({
+        nativeMode: false, nativeNegotiating: false, nativeSnapshot: null,
         configs: [],
         activeId: null,
         keyPresent: false,
@@ -329,7 +351,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         activeConfig: (state) => state.configs.find(config => config.id === state.activeId) ?? null,
 
         /** True when the active config is validated, and the key is present (a script config needs none). */
-        available: (state) => isTtsAvailable({ keyPresent: state.keyPresent, configs: state.configs, activeId: state.activeId }),
+        available: (state) => !state.nativeNegotiating && isTtsAvailable({ keyPresent: state.keyPresent, configs: state.configs, activeId: state.activeId }),
 
         /** The global playback state: 'idle' | 'loading' | 'playing'. */
         status: (state) => state.playback.status,
@@ -355,6 +377,44 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
     },
 
     actions: {
+        async attachNative(client) {
+            this.nativeNegotiating = true
+            const previous = nativeClients.get(this)
+            previous?.unsubscribe?.()
+            const unsubscribe = client.subscribe(snapshot => this.applyNativeSnapshot(snapshot))
+            const entry = { client, unsubscribe }
+            nativeClients.set(this, entry)
+            const supported = await client.attach()
+            if (nativeClients.get(this) !== entry) return null
+            this.nativeMode = supported
+            if (this.nativeMode) this.applyNativeSnapshot(client.state())
+            this.nativeNegotiating = false
+            return this.nativeMode
+        },
+        applyNativeSnapshot(snapshot) {
+            if (!snapshot || (this.nativeSnapshot && snapshot.revision <= this.nativeSnapshot.revision)) return
+            this.nativeSnapshot = snapshot
+            const playback = snapshot.playback ?? { status: 'idle' }
+            this.playback = { text: playback.text ?? null, source: playback.source ?? null,
+                configId: playback.configId ?? null, identity: playback.identity ?? null,
+                readingId: playback.readingId ?? null, phase: playback.phase,
+                status: playback.status ?? 'idle', owner: playback.automatic ? snapshot.listening?.activationId : null }
+        },
+        nativeClient() { return nativeClients.get(this)?.client },
+        detachNative() {
+            const entry = nativeClients.get(this)
+            entry?.unsubscribe?.(); entry?.client.detach()
+            nativeClients.delete(this)
+            this.nativeNegotiating = false
+        },
+        async stopAll() {
+            if (this.nativeMode || this.nativeNegotiating) return nativeClients.get(this)?.client.stopAll()
+            this.stop()
+        },
+        skip() {
+            if (this.nativeMode) return nativeClients.get(this)?.client.skip()
+            this.stop()
+        },
         /**
          * Apply the state received from the bootstrap or the WebSocket.
          * @param {{ config: { active_id, configs, test_text, adapt }, key_present: boolean, env_path: string }} payload
@@ -496,7 +556,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
 
         /** Unlock the existing players for listening activation without interrupting a reading. */
         prime() {
-            if (this.status !== 'idle') return
+            if (this.nativeMode || this.nativeNegotiating || this.status !== 'idle') return
             primePlayers()
         },
 
@@ -515,9 +575,9 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         },
 
         /** Reserve the shared player before awaiting an authoritative live or saved summary reference. */
-        playSummary(summaryRef, { identity, owner = null, announcement = '' } = {}) {
+        playSummary(summaryRef, { identity, owner = null, announcement = '', nativeRequest = null } = {}) {
             // A rejected acquisition is still observed when this player cannot accept ownership.
-            Promise.resolve(summaryRef).catch(() => {})
+            if (typeof summaryRef !== 'function') Promise.resolve(summaryRef).catch(() => {})
             if (owner !== null && this.status !== 'idle') return Promise.resolve({ ...ABORTED, busy: true })
             const config = this.activeConfig
             if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
@@ -526,7 +586,8 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             const scriptId = kindOf(fields) === 'script' ? config.id : null
             return startPlayback(this, null, fields, {
                 useCache: true, source: 'summary', scriptId, owner, announcement,
-                summaryRef, identity: { ...identity },
+                summaryRef: this.nativeMode ? null : typeof summaryRef === 'function' ? Promise.resolve().then(summaryRef) : summaryRef,
+                nativeRequest, identity: { ...identity },
             })
         },
 
@@ -546,6 +607,11 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
          */
         stop({ owner = null } = {}) {
             if (owner !== null && this.playback.owner !== owner) return
+            if (this.nativeMode) {
+                const readingId = this.playback.readingId
+                void nativeClients.get(this)?.client.skip(readingId, this.playback.operationId)
+                return
+            }
             cancelPlayback(this)
             this.playback = { text: null, status: 'idle', source: null, configId: null, owner: null }
         },

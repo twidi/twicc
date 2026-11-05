@@ -92,6 +92,14 @@ export function useMessageSummary(sourceRequest, visit = null) {
             return { id: subscription.id }
         })
     })
+    const nativeSpeechRequest = computed(() => {
+        const selected = entry.value, expected = descriptor.value
+        const savedId = selected?.saved_id ?? selected?.id
+        if (savedId && selected.result_hash) return { saved_id: savedId, result_hash: selected.result_hash }
+        if (!selected || !expected || !source.value) return null
+        return { source: { ...source.value }, source_key: expected.source_key,
+            source_hash: expected.source_hash, policy_key: expected.policy_key }
+    })
     function releaseOwned() {
         for (const subscription of owned) subscription.release()
         owned.clear()
@@ -190,7 +198,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
     async function refreshSaved(savedId) { await loadSaved(savedId) }
 
     return reactive({
-        descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference,
+        descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference, nativeSpeechRequest,
         running, toggleTitle,
         loading: computed(() => !!group.value?.loading),
         error: computed(() => group.value?.error ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),

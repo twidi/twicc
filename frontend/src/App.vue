@@ -6,6 +6,8 @@ import { useWebSocket, versionMismatchDetected } from './composables/useWebSocke
 import { useDataStore } from './stores/data'
 import { useWorkspacesStore } from './stores/workspaces'
 import { useTimelineSpeechStore } from './stores/timelineSpeech'
+import { useTextToSpeechStore } from './stores/textToSpeech'
+import { getNativeTtsClient } from './utils/nativeTtsClient.js'
 import { useSettingsStore } from './stores/settings'
 import { useAuthStore } from './stores/auth'
 import { COLOR_SCHEME, PROCESS_STATE } from './constants'
@@ -88,7 +90,19 @@ if (isAppReady.value) {
 const dataStore = useDataStore()
 const settingsStore = useSettingsStore()
 const timelineSpeech = useTimelineSpeechStore()
-timelineSpeech.initialize({ dataStore, workspacesStore: useWorkspacesStore(), connectionStatus: wsStatus, settingsStore })
+const textToSpeech = useTextToSpeechStore()
+const workspaces = useWorkspacesStore()
+let speechDisposed = false
+function attachSpeechMirror() {
+    void textToSpeech.attachNative(getNativeTtsClient()).then(supported => {
+        if (!speechDisposed && supported !== null) timelineSpeech.initialize({ dataStore, workspacesStore: workspaces, connectionStatus: wsStatus, settingsStore })
+    })
+}
+attachSpeechMirror()
+function restoreSpeechMirror(event) { if (event.persisted) attachSpeechMirror() }
+window.addEventListener('pageshow', restoreSpeechMirror)
+window.addEventListener('pagehide', detachSpeechMirror)
+function detachSpeechMirror() { textToSpeech.detachNative() }
 
 // Load app data and open the WS only once the app is actually ready
 // (auth OK AND not on the /login page). The combined `isAppReady`
@@ -759,7 +773,11 @@ onMounted(() => {
     window.addEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 onBeforeUnmount(() => {
+    speechDisposed = true
     timelineSpeech.dispose()
+    detachSpeechMirror()
+    window.removeEventListener('pagehide', detachSpeechMirror)
+    window.removeEventListener('pageshow', restoreSpeechMirror)
     document.removeEventListener('keydown', handleGlobalKeydown, { capture: true })
     document.removeEventListener('keyup', handleGlobalKeyup, { capture: true })
     window.removeEventListener('blur', handleWindowBlur)

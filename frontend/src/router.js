@@ -178,12 +178,13 @@ router.afterEach((to) => {
     }
 })
 
-// The login page has no rail: the audio of a private message must not keep playing there.
+// Web playback stops on the login route. Native Stop all belongs to actual logout or authorization loss.
 router.afterEach(async (to) => {
     if (to.name !== 'login') return
+    const { useTextToSpeechStore } = await import('./stores/textToSpeech')
+    if (useTextToSpeechStore().nativeMode) return
     const { useTimelineSpeechStore } = await import('./stores/timelineSpeech')
     useTimelineSpeechStore().disable()
-    const { useTextToSpeechStore } = await import('./stores/textToSpeech')
     useTextToSpeechStore().stop()
 })
 

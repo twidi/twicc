@@ -45,3 +45,12 @@ test('ordinary browser times out and closing a client releases pending requests'
     f.client.close()
     await assert.rejects(pending, /closed/i)
 })
+for (const webview of [false, true]) test(`UTF8 command bounds preserve large TTS and explicitly reject large menu frames (${webview})`, async () => {
+    const f = fixture(webview)
+    const pending = f.client.request('tts.manual', { request: { text: 'é'.repeat(20000) } })
+    assert.equal(f.sent[0].request.text.length, 20000)
+    f.reply({ protocol: 1, id: f.sent[0].id, ok: true, state: { accepted: true } }); await pending
+    await assert.rejects(f.client.request('menuVisibility', { padding: 'é'.repeat(8192) }), /too large/)
+    await assert.rejects(f.client.request('tts.manual', { request: { text: 'é'.repeat(6 * 1024 * 1024) } }), /too large/)
+    assert.equal(f.sent.length, 1); f.client.close()
+})

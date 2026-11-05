@@ -108,7 +108,8 @@ internal class GeckoBrowserSession(
                                 return GeckoResult.fromValue("{}")
                             }
                             if (nativeApp != "twicc_android") return null
-                            return GeckoResult.fromValue(events.onAppMessage(message.toString()))
+                            val text = message.toString()
+                            return GeckoResult.fromValue(com.twidi.twicc.AndroidAppBridge.frameError(text) ?: events.onAppMessage(text))
                         }
                     }
                     page.webExtensionController.setMessageDelegate(extension, delegate, "twicc_android")
@@ -128,6 +129,8 @@ internal class GeckoBrowserSession(
         page.stop()
         page.load(GeckoSession.Loader().uri(url).flags(if (bypassCache) GeckoSession.LOAD_FLAGS_BYPASS_CACHE else GeckoSession.LOAD_FLAGS_NONE))
     }
+    override val nativeTtsSupported: Boolean get() = true
+
     override fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
         val id = documentId
         if (closed || id == null || urls.isEmpty() || urls.any { !instance.url.allowsNavigation(it) }) {

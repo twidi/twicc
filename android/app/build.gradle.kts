@@ -12,6 +12,7 @@ android {
         applicationId = "com.twidi.twicc"
         minSdk = 29
         targetSdk = 35
+        buildConfigField("boolean", "NATIVE_TTS", (providers.gradleProperty("nativeTts").orNull == "true").toString())
         versionCode = 10
         versionName = "0.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

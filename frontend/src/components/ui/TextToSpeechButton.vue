@@ -17,6 +17,7 @@ const props = defineProps({
         required: true,
     },
     summaryRef: { type: [Object, Function], default: null },
+    nativeSpeechRequest: { type: Object, default: null },
     summaryIdentity: { type: Object, default: null },
     originalText: { type: String, default: null },
 })
@@ -43,7 +44,7 @@ async function onClick() {
     }
     const reference = props.summaryRef
     const result = await (reference
-        ? store.playSummary(typeof reference === 'function' ? Promise.resolve().then(() => reference()) : reference, { identity: props.summaryIdentity })
+        ? store.playSummary(reference, { identity: props.summaryIdentity, nativeRequest: props.nativeSpeechRequest })
         : store.play(props.text))
     if (result.summaryChanged) emit('summary-changed', result.savedId)
     if (!result.ok && !result.aborted) toast.error(result.error, { duration: 4000 })
