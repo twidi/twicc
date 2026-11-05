@@ -30,17 +30,18 @@ class Reader:
         self.closed = True
 
 
-def test_parts_stream_before_completion_and_commit_only_body():
+def test_prefix_waits_for_the_first_summary_part_and_commits_with_it():
     from twicc.summaries.speech import SummaryParts
     from twicc.tts.part_source import PrefixedParts
     async def scenario():
         reader = Reader()
         body = SummaryParts(reader, 30, 15)
-        source = PrefixedParts(['Project name.'], body)
-        assert await source.next_part() == 'Project name.'
-        assert not reader.committed
+        source = PrefixedParts('Project name.', body)
+        pending = asyncio.create_task(source.next_part())
+        await asyncio.sleep(0)
+        assert not pending.done() and not reader.committed
         reader.send('First sentence. Remaining text.')
-        assert await source.next_part() == 'First sentence.'
+        assert await pending == 'Project name.\n\nFirst sentence.'
         assert reader.committed and source.split
         reader.send('First sentence. Remaining text. Last.', 'complete')
         assert await source.next_part() == 'Remaining text. Last.'

@@ -59,7 +59,7 @@ def test_ordinary_text_cache_announcement_and_buffering(service, monkeypatch):
         assert second.audio_id != first.audio_id
         assert streams.get_stream(second.audio_id).data == b'audio'
         assert len(calls) == 1
-        assert calls[0][2:] == (['Project.', 'Hello there'], False)
+        assert calls[0][2:] == (['Project.\n\nHello there'], False)
         assert len(speech_cache._entries) == 1
     asyncio.run(scenario())
 

@@ -45,25 +45,32 @@ class StaticParts:
 
 
 class PrefixedParts:
-    """Plain speech parts before a body source, with the body's lifetime."""
+    """A plain spoken prefix glued to the first part of a body source, with the body's lifetime.
 
-    def __init__(self, prefix: Sequence[str], body: PartSource) -> None:
-        self._prefix = deque(prefix)
+    The prefix and the first part make one text, so that one request speaks both without a gap
+    between two requests. Blank lines separate them, so that the voice pauses. The prefix is
+    added to what the body gives: the body's own processing (adaptation, summary) never sees it.
+    """
+
+    SEPARATOR = "\n\n"
+
+    def __init__(self, prefix: str, body: PartSource) -> None:
+        self._prefix = prefix
         self._body = body
-        self._has_prefix = bool(self._prefix)
 
     @property
     def split(self) -> bool | None:
-        # A spoken prefix and the message require separate audio parts.
-        return True if self._has_prefix else self._body.split
+        return self._body.split
 
     async def next_part(self) -> str | None:
-        if self._prefix:
-            return self._prefix.popleft()
-        return await self._body.next_part()
+        part = await self._body.next_part()
+        if part is None or not self._prefix:
+            return part
+        prefix, self._prefix = self._prefix, ""
+        return f"{prefix}{self.SEPARATOR}{part}"
 
     async def aclose(self) -> None:
-        self._prefix.clear()
+        self._prefix = ""
         await self._body.aclose()
 
 

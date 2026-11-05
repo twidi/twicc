@@ -337,8 +337,8 @@ async def _open_speech(
     label tells which (``adapted``, ``adapt_reason``), never the text. The cache key is
     ``(request, engine name or None)``; with OpenRouter, a cached reading of ``then`` plays when no
     OpenRouter one is cached, so that a re-read stays instant while OpenRouter keeps failing.
-    An optional plain announcement is split separately and precedes the message source. It stays
-    outside text cleaning and adaptation. Its normalized text extends the cache key when non-empty.
+    An optional plain announcement is glued to the first part of the message source, after its cleaning
+    and adaptation, so that one request speaks both. Its normalized text extends the cache key when non-empty.
     """
     try:
         announcement = _optional_string(data, "announcement")
@@ -403,9 +403,7 @@ async def _open_speech(
     buffered = data.get("buffered") is True
     pump_parts = parts if source is None else source
     if announcement and has_speech(announcement):
-        prefix = split(speech_request._replace(text=announcement))
-        if prefix:
-            pump_parts = PrefixedParts(prefix, as_part_source(speech_request.text, pump_parts))
+        pump_parts = PrefixedParts(announcement, as_part_source(speech_request.text, pump_parts))
     paced = not buffered
     stream = start_stream(
         lambda sink: pump(sink, pump_parts, paced),

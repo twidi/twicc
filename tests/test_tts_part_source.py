@@ -52,34 +52,35 @@ def test_as_part_source():
     asyncio.run(scenario())
 
 
-def test_prefixed_parts_preserves_body_and_closes_it():
+def test_prefixed_parts_glues_the_prefix_to_the_first_part_only_and_closes_the_body():
     from twicc.tts.part_source import PrefixedParts
 
     async def scenario():
         body = StaticParts(["Body one.", "Body two."])
-        prefix = ["Project.", "Session."]
-        source = PrefixedParts(prefix, body)
-        prefix.append("Added later.")
+        source = PrefixedParts("Project. Session.", body)
         assert isinstance(source, PartSource)
-        assert source.split is True
-        assert [await source.next_part() for _ in range(5)] == [
-            "Project.", "Session.", "Body one.", "Body two.", None,
+        assert [await source.next_part() for _ in range(3)] == [
+            "Project. Session.\n\nBody one.", "Body two.", None,
         ]
+        assert source.split is True
+        await source.aclose()
+
+        body = StaticParts(["Only."])
+        source = PrefixedParts("Project.", body)
+        assert await source.next_part() == "Project.\n\nOnly."
+        assert source.split is False
         await source.aclose()
 
         body = StaticParts(["Never read."])
-        source = PrefixedParts(["Project."], body)
+        source = PrefixedParts("Project.", body)
         await source.aclose()
         assert await source.next_part() is None
         assert await body.next_part() is None
 
-        for parts in (["One."], ["One.", "Two."]):
-            body = StaticParts(parts)
-            source = PrefixedParts([], body)
-            assert source.split is body.split
-            assert await source.next_part() == "One."
-            await source.aclose()
-            assert await body.next_part() is None
+        body = StaticParts(["One."])
+        source = PrefixedParts("", body)
+        assert await source.next_part() == "One."
+        await source.aclose()
 
     asyncio.run(scenario())
 
@@ -104,13 +105,13 @@ def test_prefixed_parts_closes_body_adaptation(monkeypatch):
             monkeypatch.setattr(adapt, "_open_stream", open_stream)
             engine = adapt.OPENROUTER_ENGINE
             body = adapt.AdaptedParts("Body.", engine, 100, 100, fallback=["Body."], label={})
-            source = PrefixedParts(["Project."], body)
+            source = PrefixedParts("Project.", body)
             await source.aclose()
             assert await body.next_part() is None
             assert not started.is_set()
 
             body = adapt.AdaptedParts("Body.", engine, 100, 100, fallback=["Body."], label={})
-            source = PrefixedParts([], body)
+            source = PrefixedParts("", body)
             assert source.split is None
             pending = asyncio.create_task(source.next_part())
             await started.wait()
