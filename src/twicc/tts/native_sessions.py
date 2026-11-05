@@ -32,7 +32,9 @@ class NativeSession:
         self.listening, self.playback, self.error = None, None, None
         self.pending_count = 0
         self.configuration_available = None
-        self.coordinator = None
+        from twicc.tts.native_timeline import TimelineListener
+
+        self.coordinator = TimelineListener(self)
         self.owned_audio: set[str] = set()
         self.released_audio: set[str] = set()
         self.preparation = None
@@ -149,7 +151,7 @@ class NativeSession:
             self._release(audio_id)
             return True
 
-    def _reserve(self, command, request, metadata, automatic=False):
+    def _reserve(self, command, request, metadata, automatic=False, policy=None):
         if command['generation'] <= self.generation:
             return False
         if automatic and self.playback is not None:
@@ -162,16 +164,16 @@ class NativeSession:
                    'audio_id': None, 'phase': 'loading', 'started': False,
                    'automatic': automatic, **metadata}
         self.playback = reading
-        task = asyncio.create_task(self._prepare(reading, request), name='native-tts-prepare')
+        task = asyncio.create_task(self._prepare(reading, request, policy=policy), name='native-tts-prepare')
         self.preparation = task
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return True
 
-    async def select_reading(self, command: dict, request: dict, metadata: dict) -> bool:
+    async def select_reading(self, command: dict, request: dict, metadata: dict, *, policy=None) -> bool:
         """Task 4 boundary: reserve automatic speech only when no reading exists."""
         async with self._lock:
-            accepted = not self.closed and self._reserve(command, request, metadata, automatic=True)
+            accepted = not self.closed and self._reserve(command, request, metadata, automatic=True, policy=policy)
             if accepted:
                 self.publish_state()
             return accepted
@@ -189,7 +191,7 @@ class NativeSession:
             self._emit({'type': 'error', **self.error})
             self.publish_state()
 
-    async def _prepare(self, reading, request):
+    async def _prepare(self, reading, request, *, policy=None):
         reader = None
         opened = None
         failed = False
@@ -201,7 +203,7 @@ class NativeSession:
                 for key in ('text', 'config_id', 'saved_summary_id', 'summary_result_hash'):
                     speech.pop(key, None)
                 speech['summary_id'] = reader.id
-            opened = await open_speech(speech)
+            opened = await open_speech(speech, **({'_policy': policy} if policy is not None else {}))
             async with self._lock:
                 if self.closed or self.playback is not reading:
                     release_stream(opened.audio_id)
@@ -293,8 +295,10 @@ class NativeSession:
                     await self.coordinator.started(started)
                 if old:
                     await self.coordinator.finished(old, command.get('outcome', 'aborted'))
-                if kind in ('listen', 'set_muted', 'disable', 'select', 'stop_all'):
-                    await self.coordinator.command(command)
+                if kind in ('listen', 'set_muted', 'disable', 'select', 'skip', 'stop_all', 'ping'):
+                    coordinator_command = getattr(self.coordinator, 'command', None)
+                    if coordinator_command:
+                        await coordinator_command(command)
             if kind == 'stop_all':
                 await self.close()
 
@@ -310,6 +314,11 @@ class NativeSession:
                 await self.apply(command, connection_id=connection_id)
                 if self.closed:
                     return
+            # Clear stale offers before resume can publish them. The listener
+            # catches up asynchronously, outside the authenticated command lane.
+            reconnect = getattr(self.coordinator, 'reconnect', None)
+            if reconnect:
+                await reconnect()
         finally:
             self._reconciling = False
         started = None

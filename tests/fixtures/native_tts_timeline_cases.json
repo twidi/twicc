@@ -1,0 +1,4 @@
+[
+  {"name":"strict click boundary", "events":[{"id":1,"second":-1},{"id":2,"second":0},{"id":3,"second":1}], "expected":[3]},
+  {"name":"message dates then IDs", "events":[{"id":4,"second":4},{"id":5,"second":2},{"id":6,"second":2}], "expected":[5,6,4]}
+]

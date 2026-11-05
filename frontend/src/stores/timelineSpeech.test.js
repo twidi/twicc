@@ -799,3 +799,21 @@ test('scope removal releases otherwise unowned preparation and never stops selec
     assert.ok(h.summaryDeletes.includes('/api/summaries/summary-3/'))
     assert.equal(h.tts.playback.identity.sourceKey, 'event-1')
 })
+
+test('shared native policy fixtures preserve Web boundary and deterministic ordering', async () => {
+    const { readFileSync } = await import('node:fs')
+    const cases = JSON.parse(readFileSync(new URL('../../../tests/fixtures/native_tts_timeline_cases.json', import.meta.url)))
+    for (const fixture of cases) {
+        const h = setup()
+        const events = fixture.events.map(item => ({ ...message(item.id), occurred_at:
+            new Date(CLICK + item.second * 1000).toISOString().replace('Z', '000Z') }))
+        await h.enable(events)
+        const played = []
+        for (let i = 0; i < fixture.expected.length; i++) {
+            played.push(Number(h.opens.at(-1).text.replace('Message ', '')))
+            await h.start(); await h.end()
+        }
+        assert.deepEqual(played, fixture.expected, fixture.name)
+        h.store.disable()
+    }
+})

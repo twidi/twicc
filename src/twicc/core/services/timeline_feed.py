@@ -470,3 +470,22 @@ def fetch_feed(request: FeedRequest) -> dict:
         "sessions": build_sessions_table(cited_session_ids(events)),
         **visibility,
     }
+
+
+def fetch_click_boundary(request: FeedRequest, boundary: str) -> dict:
+    """Read only click-new rows through a captured high-water ID.
+
+    The boundary bounds bootstrap by message date, not display history. Capture
+    the ID before reading snapshots. Incremental refresh then covers commits
+    during bootstrap, including late dates, with the ordinary after-ID cap.
+    """
+    high_water = latest_event_id() or 0
+    page_request = request._replace(before=None, after_id=None)
+    merged = {}
+    for queryset in _page_querysets(page_request):
+        rows = queryset.filter(occurred_at__gt=datetime.fromisoformat(boundary), id__lte=high_water)
+        for event in rows.iterator(chunk_size=MAX_LIMIT):
+            merged[event.id] = event
+    events = sorted(merged.values(), key=lambda event: (event.occurred_at, event.id))
+    return {'events': [serialize_event(event) for event in events], 'latest_id': high_water,
+            'sessions': build_sessions_table(cited_session_ids(events)), 'truncated': False, 'has_more': False}

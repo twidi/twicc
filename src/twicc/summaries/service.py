@@ -23,7 +23,10 @@ from twicc.openrouter_text import OPENROUTER_TEXT_MODEL, OpenRouterTextError
 from twicc.providers.codex.title_suggest import TITLE_MODEL
 from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS, Engine, fallback_engine, resolve_engine, step_limits, stream_text
 from twicc.providers.text_calls import _openrouter_reason
-from twicc.summaries.sources import SummarySource, normalize_summary_model, resolve_source, validate_source
+from twicc.summaries.sources import (
+    SummarySource, normalize_summary_model, read_timeline_snapshot, resolve_source,
+    resolve_timeline_snapshot, validate_source,
+)
 from twicc.synced_settings import read_synced_settings
 
 logger = logging.getLogger(__name__)
@@ -109,7 +112,7 @@ def load_saved_summary(saved_id: int) -> dict:
 
 
 def _prepare(source_request: dict, *, _temporary_source: SummarySource | None = None):
-    # Native retention already validates temporary text outside the DB lane.
+    # Native callers resolve trusted immutable sources outside the DB lane.
     source = _temporary_source if _temporary_source is not None else resolve_source(source_request)
     requested, policy = _policy()
     saved = previous = None
@@ -141,6 +144,18 @@ def resolve_sources(sources: list[dict]) -> list[dict]:
         except ValueError as error:
             results.append({'error': str(error)})
     return results
+
+
+async def resolve_timeline_summary(event_id: int) -> tuple[SummarySource, dict]:
+    """Native coordination: DB snapshot, CPU processing, then saved-result lookup.
+
+    The trusted source can be reused by acquire_summary's internal source
+    parameter. It is never reconstructed from command JSON.
+    """
+    snapshot = await sync_to_async(read_timeline_snapshot)(event_id)
+    source = await sync_to_async(resolve_timeline_snapshot, thread_sensitive=False)(snapshot)
+    prepared = await sync_to_async(_prepare)({'event_id': event_id}, _temporary_source=source)
+    return source, prepared[3]
 
 
 class _SaveCancelled(Exception):

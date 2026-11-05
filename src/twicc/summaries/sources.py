@@ -193,7 +193,17 @@ def _chat(session, line):
                      complete=_complete(session, group))
 
 
-def _snapshot(event):
+class TimelineSummarySnapshot(NamedTuple):
+    """Immutable DB values; Markdown processing happens after the DB lane exits."""
+
+    key: str
+    text: str
+    session_id: str | None
+    lines: tuple[int, ...]
+    provider: str | None
+
+
+def _snapshot_data(event):
     if event.kind != TimelineKind.ASSISTANT_MESSAGE_SENT or not isinstance(event.data.get('text'), str):
         raise ValueError('Source is not an assistant message snapshot')
     data = event.data
@@ -225,7 +235,26 @@ def _snapshot(event):
             if not scoped or key == current_key:
                 key, lines = current_key, current_lines
             break
-    return _resolved(key=key, text=text, session_id=event.session_id, lines=lines, provider=event.provider)
+    return TimelineSummarySnapshot(key, text, event.session_id, lines, event.provider)
+
+
+def resolve_timeline_snapshot(snapshot: TimelineSummarySnapshot) -> SummarySource:
+    """Apply the existing CPU-only source rules to trusted snapshot values."""
+    return _resolved(key=snapshot.key, text=snapshot.text, session_id=snapshot.session_id,
+                     lines=snapshot.lines, provider=snapshot.provider)
+
+
+def read_timeline_snapshot(event_id: int) -> TimelineSummarySnapshot:
+    """Read the same snapshot identity as synchronous/browser source resolution."""
+    try:
+        event = TimelineEvent.objects.get(pk=event_id)
+    except TimelineEvent.DoesNotExist:
+        raise ValueError('Source event does not exist') from None
+    return _snapshot_data(event)
+
+
+def _snapshot(event):
+    return resolve_timeline_snapshot(_snapshot_data(event))
 
 
 def _positive_int(value):

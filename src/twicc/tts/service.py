@@ -179,7 +179,7 @@ def _summary_reference(data: object) -> dict | None:
     return {'saved_id': saved_id, 'result_hash': result_hash}
 
 
-async def open_speech(data: dict) -> OpenedSpeech:
+async def open_speech(data: dict, *, _policy: dict | None = None) -> OpenedSpeech:
     """Prepare existing speech payloads without an HTTP request or response.
 
     Cancellation releases preparation resources. Success transfers the registered
@@ -203,7 +203,7 @@ async def open_speech(data: dict) -> OpenedSpeech:
                 summary = saved
             data = {**data, 'text': summary.get('text', 'Summary')}
         if isinstance(data, dict) and data.get("kind") == "script":
-            return await _open_script_speech(data, summary=summary)
+            return await _open_script_speech(data, summary=summary, _policy=_policy)
         try:
             speech_request = parse_speech_request(data)
             origin = _origin(data)
@@ -234,6 +234,7 @@ async def open_speech(data: dict) -> OpenedSpeech:
             api_key,
             origin=origin,
             summary=summary,
+            _policy=_policy,
         )
     except SpeechError:
         raise
@@ -243,7 +244,9 @@ async def open_speech(data: dict) -> OpenedSpeech:
         raise SpeechError(SPEECH_FAILED, 500)
 
 
-async def _open_script_speech(data: dict, *, summary: dict | None = None) -> OpenedSpeech:
+async def _open_script_speech(
+    data: dict, *, summary: dict | None = None, _policy: dict | None = None,
+) -> OpenedSpeech:
     """The open step of a script config: it runs the command stored in tts.json for ``script_id``.
 
     The six script fields of the body serve only a settings test (``config_id`` equal to
@@ -262,7 +265,9 @@ async def _open_script_speech(data: dict, *, summary: dict | None = None) -> Ope
     config_id = data.get("config_id")
     if config_id is not None and config_id != script_id:
         raise SpeechError("'config_id' must equal 'script_id'", 400)
-    entry = await sync_to_async(stored_script_config)(script_id)
+    # Only an internal native selection supplies this server-read snapshot.
+    # HTTP JSON never supplies keyword arguments to open_speech.
+    entry = _policy['entry'] if _policy is not None else await sync_to_async(stored_script_config)(script_id)
     if entry is None:
         raise SpeechError(NO_SUCH_SCRIPT, 404)
     fields = script_fields(entry)
@@ -298,6 +303,7 @@ async def _open_script_speech(data: dict, *, summary: dict | None = None) -> Ope
         None,
         origin=origin,
         summary=summary,
+        _policy=_policy,
     )
 
 
@@ -313,6 +319,7 @@ async def _open_speech(
     *,
     origin: str | None = None,
     summary: dict | None = None,
+    _policy: dict | None = None,
 ) -> OpenedSpeech:
     """The open step of a valid speech request: the cache, else the pump (*pump(sink, parts, paced)*;
     the pump paces a split reading only), awaited until its headers arrive.
@@ -354,7 +361,7 @@ async def _open_speech(
         source, adapt_reason, direct = None, None, False
         engine, then = None, None
     else:
-        choice = await sync_to_async(_stored_adapt_choice)()
+        choice = _policy['adapt'] if _policy is not None else await sync_to_async(_stored_adapt_choice)()
         cleaned = None
         if choice != "off" and config_id is None:
             cleaned = await sync_to_async(direct_text)(speech_request.text, origin)
