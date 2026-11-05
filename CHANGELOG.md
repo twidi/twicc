@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Text to speech** — Have messages and selections read aloud. Pick an OpenRouter voice, or plug in any engine with your own command: local, free, or another provider.
 - **Summaries** — Ask for a short summary of a long assistant message, or of any text you select. Read it in place of the original.
 - **Listen to your timeline** — Turn on the speaker button in the timeline. New assistant messages are read aloud as they arrive, from any session, while you work elsewhere in TwiCC. Long messages can be read as summaries.
+- **Android app (experimental)** — Listen to your timeline while using other apps or with your screen off. Individual TTS readings also continue in the background, with playback controls in the Android notification. Build and install the APK yourself; the app is not available on the Play Store — [source and build instructions](https://github.com/twidi/twicc/tree/main/android).
 - **Faster titles** — A new “OpenRouter” option generates session titles in under a second instead of several. It needs your OpenRouter key; pick it in the Titles settings.
 - **Simple model picker** — A lighter way to choose the provider, model and effort, without the score matrix. The score matrix is one click away when you want the scores.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
