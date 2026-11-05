@@ -7,7 +7,13 @@ import * as parts from '../../../utils/timeline/parts.js'
 const Mention = compileComponent(new URL('../../timeline/TimelineSessionMention.vue', import.meta.url), {
     'vue-router': { RouterLink: { props: ['to'], setup: (_, { slots }) => () => Vue.h('a', slots.default?.()) }, useRoute: () => ({}) },
     '../../utils/sessionRoute': { sessionRouteLocation: session => ({ name: 'session', params: { sessionId: session.id } }) },
+    '../../utils/sessions': { isSessionUnread: () => false },
+    '../../utils/backgroundWork': { processStateTooltip: (label, state) => `${label} ${state.state}`, userTurnBackgroundShellCount: () => 0 },
+    '../../providers': { getProviderLabel: provider => provider },
+    '../../stores/data': { useDataStore: () => ({ getProcessState: () => null, getPendingRequests: () => [], getSession: () => undefined }) },
     '../ui/ProviderIcon.vue': { props: ['provider'], setup: props => () => Vue.h('i', props.provider) },
+    '../ui/ProcessIndicator.vue': { props: ['state', 'unread'], setup: () => () => Vue.h('s') },
+    '../ui/ScrollableText.vue': { props: ['text'], setup: props => () => Vue.h('div', props.text) },
 })
 const WordingPart = compileComponent(new URL('../../timeline/TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
 const AppTooltip = { props: ['for', 'trigger'], setup: (_, { slots }) => () => Vue.h('span', { class: 'app-tooltip' }, slots.default?.()) }

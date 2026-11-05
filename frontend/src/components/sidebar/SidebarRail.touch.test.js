@@ -218,7 +218,7 @@ test('stopping the speech indicator hands its keyboard focus to New session', as
         const name = !focused ? 'not focused' : focusVisible ? 'keyboard focus' : 'mouse focus'
         await t.test(name, async t => {
             const calls = []
-            const tts = { status: 'playing', stop(...args) { assert.deepEqual(args, []); calls.push('stop') } }
+            const tts = { status: 'playing', skip(...args) { assert.deepEqual(args, []); calls.push('stop') } }
             const f = fixture(t, false, tts)
             const speech = { id: 'sidebar-rail-speech', matches: selector => selector === ':focus-visible' && focusVisible }
             const newSession = { id: 'sidebar-rail-new-session', focus() { calls.push('focus') } }

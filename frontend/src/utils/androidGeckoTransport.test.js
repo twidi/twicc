@@ -8,7 +8,7 @@ test('Gecko transport decodes the native JSON string and ignores child-frame req
     const replies = []
     const window = { addEventListener: (_, fn) => { listener = fn }, postMessage: (...args) => replies.push(args) }
     const response = { protocol: 1, id: 'one', ok: true, state: { engine: 'Gecko' } }
-    runInNewContext(script, { window, location: { origin: 'https://twicc.example' }, browser: { runtime: {
+    runInNewContext(script, { crypto: globalThis.crypto, window, location: { origin: 'https://twicc.example' }, browser: { runtime: {
         sendNativeMessage: async (app, request) => { assert.equal(app, 'twicc_android'); assert.equal(request.id, 'one'); sent++; return JSON.stringify(response) },
     } } })
     const data = { channel: 'twicc.android.request', request: { protocol: 1, id: 'one', command: 'getState' } }
