@@ -53,6 +53,10 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 dependencies {
     "geckoImplementation"("org.mozilla.geckoview:geckoview:159.0.20261102144711")
     "webviewImplementation"("androidx.webkit:webkit:1.14.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     implementation(project(":policy"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
