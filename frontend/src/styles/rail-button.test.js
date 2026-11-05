@@ -54,7 +54,7 @@ test('main imports rail styles between tool cards and scrollbars', () => {
     assert.match(source, /import '\.\/styles\/surfaces.css'\s*\/\/[^\n]*\nimport '\.\/styles\/sidebar-rows.css'\s*\/\/[^\n]*\nimport '\.\/styles\/option-cards.css'/)
 })
 
-test('short-height fallback fits ten controls and session dividers while preserving the focus ring', () => {
+test('short-height fallback fits eleven controls and session dividers while preserving the focus ring', () => {
     const rail = tokens(body(css(), ':root'))
     // WA theme spacing map. These values are documented because node_modules is absent.
     const spacing = { '--wa-space-xs': '0.5rem', '--wa-space-2xs': '0.25rem' }
@@ -65,7 +65,7 @@ test('short-height fallback fits ten controls and session dividers while preserv
     const threshold = read('../components/sidebar/SidebarRail.vue').match(/@container rail \(height < ([\d.]+rem)\)/)[1]
     const count = Math.max(...[true, false].map(sidebarOpen => resolveRailItems({ mode: 'sessions', sidebarOpen,
         peerConfigured: true, inboxCount: 1, isMac: false, speechStatus: 'playing' }).length))
-    assert.equal(count, 10, 'maximum fixed controls includes New session and the speech indicator')
+    assert.equal(count, 11, 'maximum fixed controls includes New session, the timeline shortcut and the speech indicator')
     const px = (length, root) => {
         assert.match(length, /^[\d.]+(?:rem|px)$/)
         return parseFloat(length) * (length.endsWith('rem') ? root : 1)
@@ -79,7 +79,7 @@ test('short-height fallback fits ten controls and session dividers while preserv
                 + 2 * padding + 4 * px(divider, root) + 2 * px(gap, root)
             assert.ok(required < px(threshold, root), `${count} items at ${root}px root with ${gap} panel gap`)
             if (root === 12 && gap === '0.5rem') {
-                assert.equal(required, 328, 'ten controls plus session dividers need 328px')
+                assert.equal(required, 358, 'eleven controls plus session dividers need 358px')
                 assert.ok(288 < px(threshold, root), '288px viewport enables scrolling before controls overflow')
             }
         }

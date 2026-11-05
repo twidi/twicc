@@ -686,7 +686,7 @@ async function stopSpeech() {
     }
 }
 
-@container rail (height < 27.5rem) {
+@container rail (height < 30rem) {
     /* Keep controls reachable and bound the independently scrolling central groups. */
     .panel-card {
         overflow-x: hidden;
