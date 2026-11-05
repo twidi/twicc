@@ -190,24 +190,39 @@ class TimelineListener:
         # Always observe mute transitions; admission retains the activation choice.
         return FeedRequest(projects, 100, None, self.cursor, include_muted=True)
 
-    async def _subscribe(self):
+    async def _subscribe(self, *, replace=False):
         async with self._subscription_lock:
-            if self._watcher is not None:
+            if self._watcher is not None and not replace:
                 return
             layer = get_channel_layer()
-            self._channel = await layer.new_channel('native.tts.')
-            await layer.group_add('updates', self._channel)
-            self._watcher = asyncio.create_task(self._watch(layer), name='native-timeline-updates')
+            previous_channel, previous_watcher = self._channel, self._watcher
+            channel = await layer.new_channel('native.tts.')
+            await layer.group_add('updates', channel)
+            self._channel = channel
+            self._watcher = asyncio.create_task(self._watch(layer, channel), name='native-timeline-updates')
+            if previous_watcher and previous_watcher is not asyncio.current_task():
+                previous_watcher.cancel()
+                await asyncio.gather(previous_watcher, return_exceptions=True)
+            if previous_channel:
+                await layer.group_discard('updates', previous_channel)
 
-    async def _watch(self, layer):
-        while True:
-            message = await layer.receive(self._channel)
+    async def _watch(self, layer, channel):
+        while self._channel == channel:
+            message = await layer.receive(channel)
             await self.invalidate(message.get('data', {}))
 
     async def invalidate(self, payload):
         """The updates group is an invalidation source, never trusted event content."""
         if not self.active or not isinstance(payload, dict) or payload.get('type') not in INVALIDATIONS:
             return
+        if payload['type'] == 'resync_required':
+            # A production updates channel stays broken permanently. Replace
+            # it before catch-up, retaining the live cursor and accepted work.
+            self._caught_up = False
+            self._epoch += 1
+            self.session._candidate = None
+            self._invalidated_summaries.update(self.preparations)
+            await self._subscribe(replace=True)
         if payload['type'] == 'summary_saved':
             for event_id, preparation in self.preparations.items():
                 descriptor = preparation['descriptor']
@@ -387,6 +402,7 @@ class TimelineListener:
                     or self.session.playback is not None or generation <= self.session.generation):
                 return
             active = self.active
+            epoch = self._epoch
             policy = await sync_to_async(_read_policy)()
             if self.active is not active:
                 return
@@ -399,8 +415,19 @@ class TimelineListener:
                 return
             event = self.pending[0]
             table = await sync_to_async(build_sessions_table)({event['session_id']})
-            _, _, projects = await sync_to_async(_scope)(active['scope'])
-            if self.active is not active:
+            members, _, projects = await sync_to_async(_scope)(active['scope'])
+            if self.active is not active or not self._caught_up or epoch != self._epoch:
+                return
+            if not members:
+                await self._stop('scope_unavailable', 'The listening scope is empty or no longer exists.')
+                return
+            visibility = table.get(event['session_id'], {})
+            if (event['project_id'] not in members or visibility.get('hidden')
+                    or (not active['include_muted'] and visibility.get('mute_on_user_turn'))):
+                self.pending.pop(0)
+                await self._release_preparation(event_id)
+                # Reconcile the remaining queue before offering its next event.
+                await self.reconnect()
                 return
             names = []
             if self.context is None or self.context[0] != event['project_id']:

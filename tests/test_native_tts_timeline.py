@@ -585,3 +585,103 @@ async def test_heartbeat_renews_updates_membership_after_long_silent_listening(h
         assert h.session._candidate['event_id'] == row.id
     finally:
         await h.registry.shutdown()
+
+
+@pytest.mark.parametrize('change', ['hidden', 'muted', 'muted_choice', 'scope_deleted', 'scope_member_removed'])
+async def test_selection_rechecks_current_visibility_and_scope_before_invalidation(
+    harness, fake_summaries, monkeypatch, change,
+):
+    h = harness
+    h.policy['summary'] = True
+    row = await event(1)
+    active = activation('workspace', 'w', include_muted=change == 'muted_choice')
+    await h.listener.enable(active)
+    retained_handle = h.listener.preparations[row.id]['handle'].id
+    async def retain(reference):
+        async def close():
+            pass
+        return SimpleNamespace(id='reader', aclose=close)
+    monkeypatch.setattr(native_sessions.summaries, 'retain_summary_for_speech', retain)
+    assert h.session._candidate['event_id'] == row.id
+    if change == 'hidden':
+        await Session.objects.filter(pk='s').aupdate(hidden=True)
+    elif change in ('muted', 'muted_choice'):
+        await Session.objects.filter(pk='s').aupdate(mute_on_user_turn=True)
+        if change == 'muted_choice':
+            h.listener.active['include_muted'] = False
+    elif change == 'scope_deleted':
+        h.workspaces['workspaces'].clear()
+    else:
+        h.workspaces['workspaces'][0]['projectIds'] = ['q']
+    # No invalidation is delivered between the storage change and selection.
+    try:
+        await select(h, row)
+        if h.listener._refresh_task:
+            await h.listener._refresh_task
+        assert h.opened == []
+        assert h.session.playback is None
+        assert h.session.generation == 0
+        assert h.listener.pending == []
+        assert retained_handle in fake_summaries.released
+        assert (h.session.listening is None) == (change == 'scope_deleted')
+    finally:
+        await h.registry.shutdown()
+
+
+async def test_resync_replaces_broken_channel_and_receives_future_arrivals(
+    harness, fake_summaries, monkeypatch,
+):
+    from twicc.channel_layer import TwiccChannelLayer
+    h = harness
+    layer = TwiccChannelLayer(capacity=1)
+    h.policy['summary'] = True
+    monkeypatch.setattr(native_timeline, 'get_channel_layer', lambda: layer)
+    # Bootstrap excludes this history. Resync must retain the live cursor.
+    await event(-1)
+    accepted = await event(1)
+    await h.listener.enable(activation(include_muted=True))
+    old_channel = h.listener._channel
+    old_cursor = h.listener.cursor
+    old_handle = h.listener.preparations[accepted.id]['handle'].id
+    fake_summaries.saved_ids.add(accepted.id)
+    active = h.session.listening.copy()
+    # Saturate the actual channel without letting its receiver drain it.
+    envelope = {'type': 'broadcast', 'data': {'type': 'timeline_changed'}}
+    await layer.send(old_channel, envelope)
+    from channels.exceptions import ChannelFull
+    with pytest.raises(ChannelFull):
+        await layer.send(old_channel, envelope)
+    assert old_channel in layer._broken
+    try:
+        async with asyncio.timeout(1):
+            while h.listener._channel == old_channel:
+                await asyncio.sleep(0.005)
+        await h.listener._refresh_task
+        assert old_channel not in layer.groups.get('updates', {})
+        assert old_channel not in layer._broken
+        assert h.listener.cursor == old_cursor
+        assert old_handle in fake_summaries.released
+        assert h.listener.preparations[accepted.id]['descriptor']['saved']['id'] == accepted.id
+        assert h.session.listening == active
+        assert [e['id'] for e in h.listener.pending] == [accepted.id]
+        future = await event(2)
+        await layer.group_send('updates', envelope)
+        async with asyncio.timeout(1):
+            while future.id not in h.listener.seen:
+                await asyncio.sleep(0.005)
+        await h.listener._refresh_task
+        assert [e['id'] for e in h.listener.pending] == [accepted.id, future.id]
+        await h.listener.disable()
+        next_activation = activation()
+        next_activation['boundary'] = format_occurred_at(CLICK + timedelta(seconds=50))
+        await h.listener.enable(next_activation)
+        after_reactivation = await event(51)
+        await layer.group_send('updates', envelope)
+        async with asyncio.timeout(1):
+            while after_reactivation.id not in h.listener.seen:
+                await asyncio.sleep(0.005)
+        await h.listener._refresh_task
+        assert [e['id'] for e in h.listener.pending] == [after_reactivation.id]
+        assert h.opened == []
+    finally:
+        await h.registry.shutdown()
