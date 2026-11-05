@@ -32,7 +32,8 @@ function toggle(event) {
 
 <style scoped>
 .message-summary-controls { display: flex; flex-direction: column; gap: var(--wa-space-xs); margin-bottom: var(--wa-space-xs); font-size: var(--wa-font-size-s); }
-.message-summary-actions { display: flex; align-items: center; gap: var(--wa-space-m); }
+/* The line height of the switch: the link and the status stay shorter than it, so the row keeps its height in every state. */
+.message-summary-actions { display: flex; align-items: center; gap: var(--wa-space-m); line-height: 1.2; }
 .summary-link { color: var(--wa-color-text-link); text-decoration: var(--wa-link-decoration-default); text-decoration-thickness: 0.09375em; text-underline-offset: 0.125em; }
 .summary-link:hover { color: color-mix(in oklab, var(--wa-color-text-link), var(--wa-color-mix-hover)); }
 .summary-status { display: inline-flex; align-items: center; gap: var(--wa-space-xs); color: var(--wa-color-text-quiet); }
