@@ -47,6 +47,18 @@ Neither build guarantees a permanent network connection or universal OEM reliabi
 - The launcher uses the TwiCC robot from
   `frontend/public/android-chrome-512x512.png`, with a white adaptive background.
 
+## Instance manager
+
+The native home screen works offline and uses TwiCC's cyan and tinted-neutral
+colors. It follows Android's system light or dark mode, including changes while
+the screen is open. Both engine builds share this screen.
+
+Saved instances show their name, address, and a **Last used** marker. Each card
+provides Open, Edit, and Remove controls. **Add instance** stays below the
+scrollable list. Forms and removal confirmations use the same visual theme.
+Theme changes preserve unsaved form values, validation errors, and pending
+removal confirmations.
+
 ## Requirements
 
 - Android **10+** (API 29), with a valid HTTPS server certificate.
@@ -115,8 +127,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.3**,
-version code **14**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.4**,
+version code **15**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.

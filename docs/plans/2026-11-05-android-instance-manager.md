@@ -51,16 +51,22 @@ Files: `android/app/src/main/java/com/twidi/twicc/MainActivity.kt`, a focused `I
 
 Files: `android/app/src/androidTest/java/com/twidi/twicc/InstanceManagerUiTest.kt`, `android/app/build.gradle.kts`, `android/README.md`, and this plan.
 
-- [ ] Exercise theme changes during editing and removal confirmation on the API 35 emulator.
-- [ ] Verify HTTPS/duplicate validation and successful save through the real UI and InstanceStore.
-- [ ] Inspect light/dark screenshots, empty state, narrow layout, keyboard, and large fonts.
-- [ ] Run policy/app unit tests and lint for both flavors.
-- [ ] Update version to 0.5.4 (15), update current-state documentation, and build Gecko ARM64 release.
-- [ ] Request an independent review. Fix any material issue and verify the affected behavior.
-- [ ] Commit the completed task, publish the signed release APK, remove the previous APK artifact, and stop the emulator.
+- [x] Exercise theme changes during editing and removal confirmation on the API 35 emulator.
+- [x] Verify HTTPS/duplicate validation and successful save through the real UI and InstanceStore.
+- [x] Inspect light/dark screenshots, empty state, narrow layout, keyboard, and large fonts.
+- [x] Run policy/app unit tests and lint for both flavors.
+- [x] Update version to 0.5.4 (15), update current-state documentation, and build Gecko ARM64 release.
+- [x] Request an independent review. Fix any material issue and verify the affected behavior.
+- [x] Commit the completed task, publish the signed release APK, remove the previous APK artifact, and stop the emulator.
 
 ## Verification Notes
 
 - Both engine release Kotlin compilations pass.
 - The API 35 emulator passes four real-UI tests: theme changes preserve edits, validation feedback, and remove confirmation; a selected instance remains readable at 320 dp with large fonts.
 - Independent review found one narrow-layout issue. The Last used badge now sits below the address. The regression test fails before that change and passes afterward.
+
+- Policy tests: 56 passing. App unit tests: 51 passing per engine. Release lint passes for both engines. Build script tests: four passing.
+- Light/dark screen and keyboard form screenshots are inspected on the API 35 emulator. The Edit vector uses explicit arc flags so Android renders it.
+- Instrumentation compiles for both engines. The removal test checks the other engine's pending cleanup, because the installed engine can finish its own cleanup immediately. The corrected test passes on Gecko.
+- Gecko ARM64 release 0.5.4 (15) is signed with the existing certificate, has no debuggable flag, and includes no test CA. SHA-256: `bf808f57a493c2b3389c19fa9447e97891e0c921978a6347ebf21525405b7fa6`.
+- Physical-phone validation remains for the user. The emulator graphics process can fail after changing display density; UI assertions pass, and visual checks use a fresh emulator at its default density.
