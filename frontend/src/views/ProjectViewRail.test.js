@@ -190,6 +190,7 @@ function sidebarHarness({ mobile, open, artifacts = false, bookmarkId, bookmarks
     const store = reactive({ artifactBookmarks: bookmarks, artifactBookmarksLoaded: loaded })
     const context = {
         computed, ref, watch, route, isArtifactsMode, store,
+        router: { rootNavigation: false }, isRailScopeRootNavigation: () => context.router.rootNavigation,
         sessionId: computed(() => route.params.sessionId),
         isNarrowViewport: narrow,
         sidebarState: { open, width: 320 },
@@ -221,6 +222,7 @@ ${entryWatcher}
         watch(result.checked, value => { checkbox.checked = value })
     })
     return { ...result, route, isArtifactsMode, narrow, checkbox, saved,
+        rootNavigation: value => { context.router.rootNavigation = value },
         store, toggle: () => runInNewContext('handleSidebarToggle()', context),
         collapseByDrag: () => runInNewContext('const panel = { positionInPixels: 30 }; handleSplitReposition({ target: panel, currentTarget: panel })', context),
         stop: () => scope.stop() }
@@ -362,6 +364,17 @@ test('returning to mobile Sessions closes selected sessions and opens the Sessio
         assert.equal(h.sidebarOpen.value, true)
         h.stop()
     }
+})
+
+test('a rail scope navigation leaves the mobile drawer closed', async () => {
+    const h = sidebarHarness({ mobile: true, open: false })
+    await nextTick()
+    assert.equal(h.sidebarOpen.value, false)
+    h.rootNavigation(true)
+    h.route.params.sessionId = undefined
+    await nextTick()
+    assert.equal(h.sidebarOpen.value, false)
+    h.stop()
 })
 
 test('shared route memory restores the selected artifact and exact Sessions route', async () => {

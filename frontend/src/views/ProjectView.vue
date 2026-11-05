@@ -1,5 +1,5 @@
 <script setup>
-import { createRailScopeNavigation, openSidebarCheckbox } from '../utils/railScopeNavigation.js'
+import { createRailScopeNavigation, isRailScopeRootNavigation, openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick, shallowRef } from 'vue'
 import { useElementHover, useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
@@ -1424,8 +1424,9 @@ watch(
 )
 
 // On mobile, session selection closes the drawer; the Sessions root opens it.
+// A rail scope navigation (Timeline button) leaves the drawer as it is.
 watch([sessionId, isArtifactsMode], ([newSessionId]) => {
-    if (!isMobile() || isArtifactsMode.value) return
+    if (!isMobile() || isArtifactsMode.value || isRailScopeRootNavigation(router, route)) return
     const checkbox = document.getElementById('sidebar-toggle-state')
     if (checkbox) checkbox.checked = !newSessionId
     syncSidebarState()
