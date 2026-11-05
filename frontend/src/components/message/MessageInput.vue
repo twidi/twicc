@@ -435,6 +435,7 @@ const histCursorPosition = ref(null)   // cursor position right after the '!' ch
 const histMirroredLength = ref(0)      // length of filter text mirrored into textarea after '!' (bang mode only)
 const histTriggerMode = ref(null)      // 'bang' (! trigger) or 'pageup' (PageUp on first line)
 const histInsertPosition = ref(null)   // cursor position for insertion (pageup mode only)
+const histButtonMode = ref(false)     // true when opened via snippets bar button (no focus given back to the textarea on touch)
 let histLastCloseTime = 0              // timestamp of last close (to prevent reopen on same click)
 
 // Extract the text from the optimistic user message (if any) to pass to the history picker
@@ -1049,7 +1050,8 @@ function onCommandPickerFilterChange(filterText) {
  * Button mode: inserts '[space?]@path ' at the memorized cursor position.
  */
 async function onFilePickerSelect(relativePath) {
-    if (atButtonMode.value) {
+    const wasButtonMode = atButtonMode.value
+    if (wasButtonMode) {
         const pos = atInsertPosition.value
         if (pos != null && pos <= messageText.value.length) {
             const before = messageText.value.slice(0, pos)
@@ -1099,10 +1101,11 @@ async function onFilePickerSelect(relativePath) {
 
     atCursorPosition.value = null
     fileMirroredLength.value = 0
-    atButtonMode.value = false
     atInsertPosition.value = null
+    // Button flag stays set: the popup emits 'close' right after 'select' and its handler resets it
     await nextTick()
-    textareaRef.value?.focus()
+    // Button mode on a touch device: never move the focus (it would open the on-screen keyboard)
+    if (!(wasButtonMode && settingsStore.isTouchDevice)) textareaRef.value?.focus()
     adjustTextareaHeight()
 }
 
@@ -1131,7 +1134,8 @@ function onFilePickerClose(payload) {
     atButtonMode.value = false
     atInsertPosition.value = null
 
-    textareaRef.value?.focus()
+    // Button mode on a touch device: never move the focus (it would open the on-screen keyboard)
+    if (!(isButtonMode && settingsStore.isTouchDevice)) textareaRef.value?.focus()
     const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
     if (!inner) return
 
@@ -1169,9 +1173,10 @@ function onFilePickerClose(payload) {
  * button-mode behave identically here: the final textarea is just the command.)
  */
 async function onCommandSelect(commandText) {
+    const wasButtonMode = commandButtonMode.value
     commandCursorPosition.value = null
     commandMirroredLength.value = 0
-    commandButtonMode.value = false
+    // Button flag stays set: the popup emits 'close' right after 'select' and its handler resets it
     activeCommandChar.value = null
     messageText.value = commandText
 
@@ -1187,7 +1192,8 @@ async function onCommandSelect(commandText) {
     }
 
     await nextTick()
-    textareaRef.value?.focus()
+    // Button mode on a touch device: never move the focus (it would open the on-screen keyboard)
+    if (!(wasButtonMode && settingsStore.isTouchDevice)) textareaRef.value?.focus()
     adjustTextareaHeight()
 }
 
@@ -1226,15 +1232,15 @@ function onCommandPickerClose(payload) {
                 inner.value = insertion
                 inner.setSelectionRange(insertion.length, insertion.length)
             }
-            textareaRef.value.focus()
+            if (!settingsStore.isTouchDevice) textareaRef.value.focus()
         }
         adjustTextareaHeight()
         return
     }
 
-    // Button mode: nothing to restore — textarea was never modified
+    // Button mode: nothing to restore; on a touch device the focus stays untouched
     if (isButtonMode) {
-        textareaRef.value?.focus()
+        if (!settingsStore.isTouchDevice) textareaRef.value?.focus()
         return
     }
 
@@ -1273,12 +1279,14 @@ async function onHistoryMessageSelect(selectedText) {
     const triggerPos = histCursorPosition.value
     const mirrorLen = histMirroredLength.value
     const insertPos = histInsertPosition.value
+    const isButtonMode = histButtonMode.value
 
     // Reset all state
     histTriggerMode.value = null
     histCursorPosition.value = null
     histMirroredLength.value = 0
     histInsertPosition.value = null
+    // Button flag stays set: the popup emits 'close' right after 'select' and its handler resets it
 
     if (mode === 'bang' && triggerPos != null) {
         const currentContent = messageText.value
@@ -1312,7 +1320,8 @@ async function onHistoryMessageSelect(selectedText) {
     }
 
     await nextTick()
-    textareaRef.value?.focus()
+    // Button mode on a touch device: never move the focus (it would open the on-screen keyboard)
+    if (!(isButtonMode && settingsStore.isTouchDevice)) textareaRef.value?.focus()
     adjustTextareaHeight()
 }
 
@@ -1338,14 +1347,17 @@ function onHistoryPickerClose(payload) {
     const pos = histCursorPosition.value
     const mirrorLen = histMirroredLength.value
     const insertPos = histInsertPosition.value
+    const isButtonMode = histButtonMode.value
 
     // Reset all state
     histTriggerMode.value = null
     histCursorPosition.value = null
     histMirroredLength.value = 0
     histInsertPosition.value = null
+    histButtonMode.value = false
 
-    textareaRef.value?.focus()
+    // Button mode on a touch device: never move the focus (it would open the on-screen keyboard)
+    if (!(isButtonMode && settingsStore.isTouchDevice)) textareaRef.value?.focus()
     const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
     if (!inner) return
 
@@ -1421,10 +1433,12 @@ function openHistoryFromButton() {
     const inner = textareaRef.value?.shadowRoot?.querySelector('textarea')
     const cursorPos = inner ? inner.selectionStart : 0
     histTriggerMode.value = 'pageup'
+    histButtonMode.value = true
     histInsertPosition.value = cursorPos
     histCursorPosition.value = null
     histMirroredLength.value = 0
-    nextTick(() => historyPickerRef.value?.open())
+    // Touch: do not focus the search input (it would open the on-screen keyboard)
+    nextTick(() => historyPickerRef.value?.open({ focusSearch: !settingsStore.isTouchDevice }))
 }
 
 /**
@@ -1451,7 +1465,7 @@ async function openCommandFromButton(char) {
     commandCursorPosition.value = null
     commandMirroredLength.value = 0
     await nextTick()
-    commandPickerRef.value?.open()
+    commandPickerRef.value?.open({ focusSearch: !settingsStore.isTouchDevice })
 }
 
 /**
@@ -1476,7 +1490,7 @@ async function openAtFromButton() {
     atCursorPosition.value = null
     fileMirroredLength.value = 0
     await nextTick()
-    filePickerRef.value?.open()
+    filePickerRef.value?.open({ focusSearch: !settingsStore.isTouchDevice })
 }
 
 /**

@@ -170,7 +170,11 @@ async function doSearch(query) {
 
 // ─── Open / close ─────────────────────────────────────────────────────────
 
-async function open() {
+/**
+ * @param {{focusSearch?: boolean}} [options] - ``focusSearch: false`` keeps the
+ *   focus where it is (touch devices: avoids opening the on-screen keyboard).
+ */
+async function open({ focusSearch = true } = {}) {
     if (isOpen.value) return
 
     // Initialize root selection
@@ -189,7 +193,7 @@ async function open() {
 
     // Reset any previous search and focus the search input
     fileTreePanelRef.value?.clearSearch(false)
-    fileTreePanelRef.value?.focusSearchInput()
+    if (focusSearch) fileTreePanelRef.value?.focusSearchInput()
 }
 
 function close(payload = {}) {

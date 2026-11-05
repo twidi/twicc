@@ -135,7 +135,11 @@ async function fetchMessages() {
 
 // ─── Open / close ─────────────────────────────────────────────────────────
 
-async function open() {
+/**
+ * @param {{focusSearch?: boolean}} [options] - ``focusSearch: false`` keeps the
+ *   focus where it is (touch devices: avoids opening the on-screen keyboard).
+ */
+async function open({ focusSearch = true } = {}) {
     if (isOpen.value) return
 
     searchQuery.value = ''
@@ -148,8 +152,7 @@ async function open() {
     await nextTick()
     await nextTick()
 
-    // Focus the search input
-    focusSearchInput()
+    if (focusSearch) focusSearchInput()
 }
 
 function close(payload = {}) {
