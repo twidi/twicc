@@ -159,6 +159,7 @@ Resolve readable names through existing project and session display conventions.
 | Only session changes | Session |
 | Neither changes | No announcement |
 | Manual audio has played since the previous automatic message | Project and session |
+| More than 3 minutes of silence since the previous audio ended | Project and session |
 
 Announcements precede the message, in project-then-session order when both are needed.
 Do not add new naming settings or a new title-generation system.

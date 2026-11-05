@@ -300,6 +300,21 @@ test('context follows project and session identity', async () => {
     assert.deepEqual(h.opens.map(body => body.announcement ?? ''), ['Project. Session.', '', 'Second.', 'Other.', 'Project. Third.'])
 })
 
+test('context is announced again after three minutes of silence', async t => {
+    const h = setup()
+    let now = CLICK
+    t.mock.method(Date, 'now', () => now)
+    await h.enable([message(1)])
+    await h.start(); await h.end()
+    now += 3 * 60 * 1000
+    await h.live([message(2)])
+    assert.equal(h.opens.at(-1).announcement ?? '', '')
+    await h.start(); await h.end()
+    now += 3 * 60 * 1000 + 1
+    await h.live([message(3)])
+    assert.equal(h.opens.at(-1).announcement, 'Project. Session.')
+})
+
 test('manual audio and failed automatic speech reset context', async () => {
     const h = setup()
     await h.enable([message(1)])

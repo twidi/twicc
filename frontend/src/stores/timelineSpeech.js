@@ -14,6 +14,8 @@ import { useSummariesStore } from './summaries.js'
 
 // Each Pinia instance owns one coordinator. Requests, tokens and listeners stay outside reactive state.
 const coordinators = new WeakMap()
+// After this much silence the listener may have lost track of where they are: announce the full context again.
+const CONTEXT_SILENCE_MS = 3 * 60 * 1000
 const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z', '000Z')
 
 function createCoordinator(store, { dataStore, workspacesStore, connectionStatus, eventTarget, settingsStore }) {
@@ -140,11 +142,12 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         const event = activation.reading
         if (!event) return
         if (!activation.watermark || event.occurred_at > activation.watermark) activation.watermark = event.occurred_at
-        activation.context = { project: event.project_id, session: event.session_id }
+        activation.context = { project: event.project_id, session: event.session_id, endedAt: null }
     }
 
     function announcement(activation, event) {
-        const context = activation.context
+        let context = activation.context
+        if (context?.endedAt && Date.now() - context.endedAt > CONTEXT_SILENCE_MS) context = null
         const names = []
         if (context?.project !== event.project_id) names.push(dataStore.getProjectDisplayName(event.project_id))
         if (context?.session !== event.session_id) names.push(sessionMention(event.session_id, activation.feed.state.sessions).title)
@@ -312,7 +315,10 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 if (playback.owner === activation.token) rememberStart(activation)
                 else activation.context = null
             }
-            if (playback.status === 'idle') void drain(activation)
+            if (playback.status === 'idle') {
+                if (activation.context) activation.context.endedAt = Date.now()
+                void drain(activation)
+            }
         }, { flush: 'sync' }),
         watch(connectionStatus, status => {
             if (!active) return
