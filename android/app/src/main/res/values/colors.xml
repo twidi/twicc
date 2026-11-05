@@ -1,4 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#FFFFFF</color>
+
+    <!-- TwiCC light palette: Web Awesome cyan brand + tinted neutrals (hue 217), flattened from
+         frontend/src/styles/surfaces.css and neutral-tint.css. Dark values: values-night/colors.xml. -->
+    <color name="twicc_canvas">#EDF3F5</color>
+    <color name="twicc_aura_start">#99C5ECF7</color>
+    <color name="twicc_aura_end">#73D6D2F5</color>
+    <color name="twicc_surface">#FFFFFF</color>
+    <color name="twicc_veil">#4DFFFFFF</color>
+    <color name="twicc_border">#D5E3E8</color>
+    <color name="twicc_divider">#E3ECEF</color>
+    <color name="twicc_text">#19292F</color>
+    <color name="twicc_text_quiet">#456570</color>
+    <color name="twicc_accent">#078098</color>
+    <color name="twicc_accent_on">#FFFFFF</color>
+    <color name="twicc_accent_text">#026274</color>
+    <color name="twicc_accent_quiet">#2E00A3C0</color>
+    <color name="twicc_pressed">#1F00A3C0</color>
+    <color name="twicc_danger">#C62A44</color>
+    <color name="twicc_danger_on">#FFFFFF</color>
+    <color name="twicc_danger_quiet">#FDECEE</color>
+    <color name="twicc_danger_border">#F3B7C0</color>
+    <color name="twicc_scrim">#73122128</color>
+    <color name="twicc_logo_top">#07A5C2</color>
+    <color name="twicc_logo_bottom">#0090AD</color>
 </resources>

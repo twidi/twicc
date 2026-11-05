@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TwiCC dark palette (.wa-dark in the web app). Same names as values/colors.xml. -->
+    <color name="twicc_canvas">#08171D</color>
+    <color name="twicc_aura_start">#7D078098</color>
+    <color name="twicc_aura_end">#8C6A63C0</color>
+    <color name="twicc_surface">#0E1C21</color>
+    <color name="twicc_veil">#4D000000</color>
+    <color name="twicc_border">#24444E</color>
+    <color name="twicc_divider">#193139</color>
+    <color name="twicc_text">#E8F3F7</color>
+    <color name="twicc_text_quiet">#8FAAB3</color>
+    <color name="twicc_accent">#078098</color>
+    <color name="twicc_accent_on">#FFFFFF</color>
+    <color name="twicc_accent_text">#7FD6EC</color>
+    <color name="twicc_accent_quiet">#3300A3C0</color>
+    <color name="twicc_pressed">#2600A3C0</color>
+    <color name="twicc_danger">#FF6B81</color>
+    <color name="twicc_danger_on">#1A0A0E</color>
+    <color name="twicc_danger_quiet">#3A1A22</color>
+    <color name="twicc_danger_border">#7A2A3A</color>
+    <color name="twicc_scrim">#99000000</color>
+    <color name="twicc_logo_top">#07A5C2</color>
+    <color name="twicc_logo_bottom">#0090AD</color>
+</resources>

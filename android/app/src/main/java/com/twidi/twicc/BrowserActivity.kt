@@ -94,7 +94,7 @@ class BrowserActivity : Activity() {
             setPadding(dp(24), dp(24), dp(24), dp(24))
             visibility = View.GONE
             isClickable = true
-            setBackgroundColor(if (resources.configuration.isNightModeActiveCompat()) Color.rgb(24, 24, 27) else Color.rgb(250, 250, 252))
+            setBackgroundColor(getColor(R.color.twicc_canvas))
         }
         root.addView(errorPanel, FrameLayout.LayoutParams(-1, -1))
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -414,6 +414,3 @@ class BrowserActivity : Activity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
 }
-
-private fun android.content.res.Configuration.isNightModeActiveCompat(): Boolean =
-    uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES

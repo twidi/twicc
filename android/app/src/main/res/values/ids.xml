@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stable view ids of the instance manager, for instrumentation tests. -->
+<resources>
+    <item name="instance_manager_root" type="id" />
+    <item name="instance_manager_scroll" type="id" />
+    <item name="instance_list" type="id" />
+    <item name="instance_empty" type="id" />
+    <item name="instance_add_button" type="id" />
+    <item name="instance_form_title" type="id" />
+    <item name="instance_form_name" type="id" />
+    <item name="instance_form_address" type="id" />
+    <item name="instance_form_error" type="id" />
+    <item name="instance_form_save" type="id" />
+    <item name="instance_form_cancel" type="id" />
+    <item name="instance_remove_title" type="id" />
+    <item name="instance_remove_confirm" type="id" />
+    <item name="instance_remove_cancel" type="id" />
+</resources>

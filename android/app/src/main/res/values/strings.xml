@@ -19,4 +19,23 @@
     <string name="tts_continue_without_changes">Continue without changes</string>
     <string name="tts_settings_title">Speech settings required</string>
     <string name="tts_open_settings">Open Settings</string>
+    <string name="instances_title">TwiCC</string>
+    <string name="instances_subtitle">Connect to your existing TwiCC server through an HTTPS tunnel.</string>
+    <string name="instances_saved">Saved instances</string>
+    <string name="instances_last_used">Last used</string>
+    <string name="instances_empty_title">No instances yet</string>
+    <string name="instances_empty_body">Add the address of your TwiCC server to get started.</string>
+    <string name="instances_add">Add instance</string>
+    <string name="instances_edit_title">Edit instance</string>
+    <string name="instances_name_label">Name (optional)</string>
+    <string name="instances_address_label">Server address</string>
+    <string name="instances_address_hint">HTTPS only. A new address starts with a fresh login.</string>
+    <string name="instances_save">Save</string>
+    <string name="instances_cancel">Cancel</string>
+    <string name="instances_remove">Remove</string>
+    <string name="instances_remove_title">Remove %1$s?</string>
+    <string name="instances_remove_message">Remove this address and request deletion of its login and Web storage in each engine. The server is unchanged.</string>
+    <string name="instances_open_description">Open %1$s, %2$s</string>
+    <string name="instances_edit_description">Edit %1$s</string>
+    <string name="instances_remove_description">Remove %1$s</string>
 </resources>
