@@ -36,5 +36,7 @@ function toggle(event) {
 <style scoped>
 .message-summary-controls { display: flex; flex-direction: column; gap: var(--wa-space-xs); margin-bottom: var(--wa-space-xs); font-size: var(--wa-font-size-s); }
 /* The line height of the switch: the link and the status stay shorter than it, so the row keeps its height in every state. */
-.message-summary-actions { display: flex; align-items: center; gap: var(--wa-space-m); line-height: 1.2; }
+.message-summary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wa-space-xs) var(--wa-space-m); line-height: 1.2; }
+/* On a narrow screen the items move to the next line instead of breaking their own text. */
+.message-summary-actions > :deep(*) { white-space: nowrap; }
 </style>
