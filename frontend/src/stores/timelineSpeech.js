@@ -40,7 +40,8 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
         const error = snapshot?.error
         const key = error ? JSON.stringify(error) : null
         // Manual controls consume their own operation result. Background listener errors have no control promise.
-        if (key && key !== lastError && !error.reading_id) store._showError(error.message)
+        const handledByControl = error?.operation_id && client.handlesOperation?.(error.operation_id)
+        if (key && key !== lastError && !handledByControl) store._showError(error.message)
         lastError = key
     }
     mirror(tts.nativeSnapshot)

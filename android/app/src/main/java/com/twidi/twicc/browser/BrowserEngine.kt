@@ -17,6 +17,7 @@ interface BrowserEngine {
 
 interface BrowserSession {
     val nativeTtsSupported: Boolean get() = false
+    val nativeTtsDocumentToken: String? get() = null
     val view: View
     fun load(url: String, bypassCache: Boolean = false)
     fun goBack()

@@ -26,7 +26,7 @@ from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS, Engine, fallb
 from twicc.providers.text_calls import _openrouter_reason
 from twicc.summaries.sources import (
     SummarySource, normalize_summary_model, read_timeline_snapshot, resolve_source,
-    resolve_timeline_snapshot, validate_source,
+    resolve_timeline_snapshot, validate_source, validate_temporary_model_request,
 )
 from twicc.synced_settings import read_synced_settings
 
@@ -86,6 +86,10 @@ class SummaryChanged(SummaryUnavailable):
 
 def _policy() -> tuple[str, str]:
     requested = normalize_summary_model(read_synced_settings().get('summaryModel'))
+    return _policy_for(requested)
+
+
+def _policy_for(requested: str) -> tuple[str, str]:
     identities = [POLICY_VERSION, requested, 'haiku', TITLE_MODEL, repr(OPENROUTER_TEXT_MODEL)]
     return requested, 'policy:' + hashlib.sha256(orjson.dumps(identities)).hexdigest()
 
@@ -112,10 +116,10 @@ def load_saved_summary(saved_id: int) -> dict:
     return {**_saved_metadata(row), 'session_id': row.session_id, 'text': row.text, 'metadata': row.metadata}
 
 
-def _prepare(source_request: dict, *, _temporary_source: SummarySource | None = None):
+def _prepare(source_request: dict, *, _temporary_source: SummarySource | None = None, _requested_model: str | None = None):
     # Native callers resolve trusted immutable sources outside the DB lane.
     source = _temporary_source if _temporary_source is not None else resolve_source(source_request)
-    requested, policy = _policy()
+    requested, policy = _policy() if _requested_model is None else _policy_for(_requested_model)
     saved = previous = None
     if source.source_key is not None:
         rows = MessageSummary.objects.filter(session_id=source.session_id, source_key=source.source_key,
@@ -372,10 +376,10 @@ def _handle(handle_id: str) -> SummaryHandle:
 
 async def acquire_summary(
     source: dict, *, regenerate: bool = False, start: bool = True,
-    _temporary_source: SummarySource | None = None,
+    _temporary_source: SummarySource | None = None, _requested_model: str | None = None,
 ) -> SummaryHandle:
     resolved, requested, policy, descriptor, saved = await sync_to_async(_prepare)(
-        source, _temporary_source=_temporary_source,
+        source, _temporary_source=_temporary_source, _requested_model=_requested_model,
     )
     if not resolved.eligible:
         raise SummaryUnavailable(resolved.unavailable_reason or 'unavailable')
@@ -526,6 +530,14 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         return SummaryReader(SummaryHandle(run, saved, claimed=True))
     if not isinstance(reference.get('source'), dict):
         raise ValueError("'source' must reconstruct the summary")
+    if 'requested_model' in reference:
+        if set(reference) != {'source', 'requested_model'}:
+            raise ValueError('Invalid temporary summary reference')
+        requested = validate_temporary_model_request(reference['source'], reference['requested_model'])
+        temporary = await sync_to_async(validate_source, thread_sensitive=False)(reference['source'])
+        handle = await acquire_summary(reference['source'], _temporary_source=temporary, _requested_model=requested)
+        handle.claim()
+        return SummaryReader(handle)
     fields = ('source_key', 'source_hash', 'policy_key')
     if not all(field in reference for field in fields):
         raise ValueError('A summary source needs its frozen source key, source hash, and policy key')

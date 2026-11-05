@@ -10,7 +10,7 @@ import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 beforeEach(() => { setActivePinia(createPinia()); _resetSpeechForTests(); setSpeechPlayerFactory(() => assert.fail('native cannot create HTMLAudio')); setPcmStreamPlayerFactory(() => assert.fail('native cannot create AudioContext')) })
 async function fixture(snapshot = {}) {
     const calls = []; let observer
-    const client = { attach: async () => true, state: () => ({ revision: 1, playback: { status: 'idle' }, listening: null, ...snapshot }), subscribe(fn) { observer = fn; return () => {} }, manual(request) { calls.push(['manual', request]); return Promise.resolve({ ok: true, ended: Promise.resolve({ ok: true }) }) }, listen(a) { calls.push(['listen', a]); return Promise.resolve({ accepted: true }) }, setMuted(v) { calls.push(['muted', v]) }, disable() { calls.push(['disable']) }, skip(id) { calls.push(['skip', id]) }, stopAll() { calls.push(['stopAll']) }, detach() { calls.push(['detach']) } }
+    const client = { attach: async () => true, state: () => ({ revision: 1, playback: { status: 'idle' }, listening: null, ...snapshot }), subscribe(fn) { observer = fn; return () => {} }, manual(request) { calls.push(['manual', request]); return Promise.resolve({ ok: true, ended: Promise.resolve({ ok: true }) }) }, listen(a) { calls.push(['listen', a]); return Promise.resolve({ accepted: true }) }, setMuted(v) { calls.push(['muted', v]) }, disable() { calls.push(['disable']) }, skip(id, operationId) { calls.push(['skip', id, operationId]) }, stopAll() { calls.push(['stopAll']) }, detach() { calls.push(['detach']) } }
     const tts = useTextToSpeechStore(); tts.applyConfig({ config: { active_id: 'voice', configs: [{ id: 'voice', model: 'model', voice: 'voice', response_format: 'mp3', validated: { model: 'model', voice: 'voice', response_format: 'mp3', speed: null, instructions: '' }, speed: null, instructions: '' }] }, key_present: true })
     await tts.attachNative(client); tts._openSpeech = () => assert.fail('native cannot open Web speech')
     return { tts, calls, client, publish(s) { observer(s) } }
@@ -88,4 +88,83 @@ test('actual logout and authorization loss stop native before leaving authentica
     auth.authenticated = true
     await auth.logout(); assert.equal(auth.authenticated, false)
     await auth.handleUnauthorized(); assert.equal(calls.filter(c => c[0] === 'stopAll').length, 2)
+})
+
+test('automatic preparation errors report once while manual operation errors stay with their controls', async () => {
+    const { tts, client, publish } = await fixture({ listening: { activationId: 'a', pageId: 'p', includeMuted: false } })
+    const timeline = useTimelineSpeechStore(), errors = []
+    client.handlesOperation = id => id === 'op'
+    timeline._showError = message => errors.push(message)
+    timeline.initialize({ dataStore: {}, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
+    const error = { code: 'failed', message: 'Preparation failed', reading_id: 'automatic', generation: 1, automatic: true }
+    publish({ revision: 3, playback: { status: 'idle' }, listening: { activationId: 'a', pageId: 'p', includeMuted: false }, error })
+    publish({ revision: 4, playback: { status: 'idle' }, listening: { activationId: 'a', pageId: 'p', includeMuted: false }, error })
+    assert.deepEqual(errors, ['Preparation failed'])
+    publish({ revision: 5, playback: { status: 'idle' }, error: { ...error, reading_id: 'manual', automatic: false, operation_id: 'op' } })
+    assert.deepEqual(errors, ['Preparation failed'])
+    publish({ revision: 6, playback: { status: 'idle' }, error: { ...error, reading_id: 'vanished-control', automatic: false, operation_id: 'old-page' } })
+    assert.deepEqual(errors, ['Preparation failed', 'Preparation failed'])
+    timeline.dispose(); tts.detachNative()
+})
+
+test('real selection summary reserves native with no descriptor before page acquisition, settings change, and page release', async t => {
+    const Vue = await import('vue')
+    const { useSummariesStore } = await import('./summaries.js')
+    const temporaryGeneration = await import('../composables/useTemporarySummaryGeneration.js')
+    const { compileComponent, descendants, makeRenderer, flush } = await import('../../tests/helpers/scrollerComponentHarness.js')
+    const { tts, calls, client, publish } = await fixture()
+    const summaries = useSummariesStore(), errors = []
+    const settings = Vue.reactive({ summaryModel: 'haiku', enabledProviders: ['claude_code'] })
+    summaries._fetch = (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Released', 'AbortError'))))
+    let complete
+    client.manual = request => { calls.push(['manual', request]); return Object.assign(new Promise(resolve => { complete = resolve }), { operationId: 'selection-operation' }) }
+    const toast = { error: error => errors.push(error), success() {} }
+    const Button = compileComponent(new URL('../components/ui/TextToSpeechButton.vue', import.meta.url), {
+        '../../stores/textToSpeech': { useTextToSpeechStore: () => tts }, '../../composables/useToast': { toast },
+    })
+    const Body = compileComponent(new URL('../components/session/detail/SelectionSummaryBody.vue', import.meta.url), {
+        '../../../stores/summaries': { useSummariesStore: () => summaries }, '../../../stores/settings': { useSettingsStore: () => settings },
+        '../../../stores/textToSpeech': { useTextToSpeechStore: () => tts }, '../../../composables/useTemporarySummaryGeneration': temporaryGeneration,
+        '../../../composables/useToast': { toast }, '../../ui/MarkdownContent.vue': { setup: () => () => Vue.h('markdown') },
+        '../../ui/SummaryGenerationLinks.vue': { setup: () => () => Vue.h('links') }, '../../ui/TextToSpeechButton.vue': Button,
+    })
+    const { renderer, root } = makeRenderer(), text = 'Captured source selection. '.repeat(30)
+    const app = renderer.createApp({ render: () => Vue.h(Body, { text }) }); app.mount(root)
+    t.after(() => { if (root.children.length) app.unmount() })
+    await flush()
+    assert.equal(summaries.temporary.entry.state, 'running'); assert.equal(summaries.temporary.entry.descriptor, null)
+    const button = descendants(root, node => node.type === 'wa-button' && node.props['aria-label'] === 'Read aloud')[0]
+    assert.ok(button)
+    const click = button.props.onClick()
+    assert.equal(calls.length, 1, 'native reserves before descriptor acquisition')
+    assert.deepEqual(calls[0][1].summary, { source: { text, purpose: 'selection' }, requested_model: 'haiku' })
+    assert.equal(calls[0][1].identity, null)
+    settings.summaryModel = 'luna'
+    publish({ revision: 2, playback: { readingId: 'reading', operationId: 'selection-operation', source: 'summary', status: 'loading', identity: null } })
+    await flush(); assert.equal(button.props['aria-label'], 'Cancel the request')
+    app.unmount()
+    assert.equal(summaries.temporary, null); assert.equal(calls[0][1].summary.source.text, text)
+    assert.equal(calls[0][1].summary.requested_model, 'haiku')
+    assert.equal(calls.some(call => call[0] === 'skip' || call[0] === 'stopAll'), false)
+    complete({ ok: true, ended: Promise.resolve({ ok: true }) }); await click
+    assert.deepEqual(errors, [])
+})
+
+test('descriptorless selection replacement keeps only its current provisional Stop identity', async () => {
+    const { tts, client, calls } = await fixture()
+    let sequence = 0
+    const completions = []
+    client.manual = request => {
+        calls.push(['manual', request])
+        return Object.assign(new Promise(resolve => completions.push(resolve)), { operationId: `operation-${++sequence}` })
+    }
+    const source = { source: { text: 'Captured', purpose: 'selection' }, requested_model: 'auto' }
+    const first = tts.playSummary(() => assert.fail('no Web reference'), { identity: { selectionId: 'first', variant: 'summary' }, nativeRequest: source })
+    const second = tts.playSummary(() => assert.fail('no Web reference'), { identity: { selectionId: 'second', variant: 'summary' }, nativeRequest: source })
+    assert.equal(tts.statusForSummary({ selectionId: 'first', variant: 'summary' }), 'idle')
+    assert.equal(tts.statusForSummary({ selectionId: 'second', variant: 'summary' }), 'loading')
+    tts.stop()
+    assert.deepEqual(calls.at(-1), ['skip', undefined, 'operation-2'])
+    completions.forEach(resolve => resolve({ ok: false, aborted: true }))
+    assert.deepEqual(await first, { ok: false, aborted: true }); assert.deepEqual(await second, { ok: false, aborted: true })
 })

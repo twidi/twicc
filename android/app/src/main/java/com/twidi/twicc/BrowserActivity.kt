@@ -74,7 +74,7 @@ class BrowserActivity : Activity() {
         buildLayout()
         val ttsBridge = com.twidi.twicc.tts.NativeTtsBridge(
             { BuildConfig.NATIVE_TTS && browser?.nativeTtsSupported == true },
-            ::nativeTtsDocumentOwner, ::nativeTtsSnapshot, ::dispatchNativeTts)
+            ::nativeTtsDocumentOwner, ::nativeTtsSnapshot, { browser?.nativeTtsDocumentToken }, ::dispatchNativeTts)
         appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction, ttsBridge::receive)
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()

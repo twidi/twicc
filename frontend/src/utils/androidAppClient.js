@@ -6,7 +6,7 @@ const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.manual', 'tts.list
 export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     const pending = new Map()
     const prefix = Math.random().toString(36).slice(2)
-    let sequence = 0, closed = false
+    let sequence = 0, closed = false, documentToken = null
     const proxy = target.TwiccAndroid
     function receive(response) {
         if (!response || response.protocol !== 1 || typeof response.id !== 'string') return
@@ -27,10 +27,20 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     target.addEventListener('message', fromWindow)
     if (proxy) proxy.onmessage = fromProxy
     return {
-        request(command, args = {}) {
+        async request(command, args = {}) {
             if (closed) return Promise.reject(new Error('Android client is closed.'))
+            if (proxy && TTS_COMMANDS.has(command)) {
+                const deadline = Date.now() + timeoutMs
+                while (!documentToken && !closed) {
+                    const token = target.__twiccNativeTtsDocument
+                    if (typeof token === 'string' && token) { documentToken = token; break }
+                    if (Date.now() >= deadline) throw new Error('Native speech document is initializing. Reopen this page.')
+                    await new Promise(resolve => setTimeout(resolve, 10))
+                }
+                if (closed) throw new Error('Android client is closed.')
+            }
             const id = `${prefix}-${++sequence}`
-            const request = { ...args, protocol: 1, id, command }
+            const request = { ...args, ...(documentToken && TTS_COMMANDS.has(command) ? { documentToken } : {}), protocol: 1, id, command }
             let encoded
             try {
                 encoded = JSON.stringify(request)

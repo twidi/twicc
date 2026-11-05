@@ -71,6 +71,11 @@ Do not use periodic inaudible audio to maintain the service.
 Start the required native foreground work from the user's TTS or listening action.
 Do not wait until audio generation completes or a background message arrives to establish the required Android lifecycle.
 Starting manual preparation also reserves playback against automatic selection.
+A temporary selection can reserve native speech before its page acquires a summary descriptor.
+It transfers captured text, purpose, and the summary-model choice frozen at the action.
+The backend derives the source hash and versioned policy, then acquires its own shared-service reader.
+When a descriptor already exists, transfer the complete frozen descriptor instead.
+Neither form waits for the page's summary promise or depends on its continued ownership.
 
 The service remains needed while either condition holds:
 

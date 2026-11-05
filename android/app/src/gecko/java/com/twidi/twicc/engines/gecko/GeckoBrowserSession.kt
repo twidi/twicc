@@ -31,6 +31,8 @@ internal class GeckoBrowserSession(
     private var bridgeReady = false
     private var documentGeneration = 0L
     private var documentId: String? = null
+    private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
+    override val nativeTtsDocumentToken: String? get() = ttsDocument.token
     private var queuedLoad: Pair<String, Boolean>? = null
 
     init {
@@ -62,6 +64,7 @@ internal class GeckoBrowserSession(
                 override fun onPageStart(session: GeckoSession, url: String) {
                     if (!closed) {
                         documentGeneration++
+                        ttsDocument.begin()
                         documentId?.let { TtsExports.retire(it) }
                         documentId = null
                         events.onPageStarted(url)
@@ -102,6 +105,8 @@ internal class GeckoBrowserSession(
                             if (nativeApp == "twicc_tts_document" && message is JSONObject && message.has("ttsDocument")) {
                                 val id = message.optString("ttsDocument")
                                 if (runCatching { UUID.fromString(id) }.isFailure) return null
+                                val epoch = ttsDocument.epoch
+                                if (!ttsDocument.commit(epoch, id)) return null
                                 documentId?.let { TtsExports.retire(it) }
                                 documentId = id
                                 TtsExports.register(id, instance, documentGeneration, sender.url)

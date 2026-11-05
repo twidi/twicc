@@ -7,7 +7,7 @@ const copy = value => JSON.parse(JSON.stringify(value))
 export function createNativeTtsClient({ appClient, document, timers = globalThis, fetchImpl = (...args) => fetch(...args) }) {
     let snapshot = null, attached = false, negotiated = null, attaching = null, attachmentEpoch = -1, timer = null, epoch = 0, operation = 0
     const prefix = Math.random().toString(36).slice(2)
-    const pending = new Map(), subscribers = new Set()
+    const pending = new Map(), subscribers = new Set(), pageOperations = new Set()
     function apply(value) {
         if (!value || value.version !== 1 || !Number.isSafeInteger(value.revision)) return
         if (snapshot && (value.instanceId !== snapshot.instanceId || value.revision <= snapshot.revision)) return
@@ -15,10 +15,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         for (const [id, entry] of pending) {
             const terminal = value.results?.find(result => result.operationId === id)
             if (terminal) {
-                let start = terminal.start
-                if (!start.ok && value.error?.summary_changed && entry.request.summary?.saved_id === value.error.saved_id) {
-                    start = { ...start, summaryChanged: true, savedId: value.error.saved_id }
-                }
+                const start = terminal.start
                 if (!entry.started) entry.resolve(start.ok ? { ok: true, ended: entry.ended } : start)
                 entry.resolveEnded(terminal.ended)
                 pending.delete(id)
@@ -38,9 +35,15 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             timer = null
             try { const response = await appClient.request('tts.state'); if (attached && mine === epoch) apply(response?.snapshot) } catch { /* Reattach on the next visible poll. */ }
             if (mine === epoch) schedule()
-        }, 400)
+        }, 1000)
     }
-    function visibility() { schedule() }
+    async function visibility() {
+        clearPoll()
+        if (!attached || document.visibilityState === 'hidden') return
+        const mine = epoch
+        try { const result = await appClient.request('tts.state'); if (attached && mine === epoch) apply(result?.snapshot) } catch { /* Retry on the next visible poll. */ }
+        if (mine === epoch) schedule()
+    }
     async function command(name, args = {}) {
         const mine = epoch
         try {
@@ -71,29 +74,40 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
                 } catch { return false }
             })()
             attaching = (async () => {
+                let supported = false
                 try {
-                    if (!await negotiated || mine !== epoch) return false
-                    const result = await appClient.request('tts.attach')
-                    if (!result?.snapshot || mine !== epoch) return false
+                    supported = await negotiated
+                    if (!supported || mine !== epoch) return false
+                    let result = await appClient.request('tts.attach')
+                    for (let attempt = 0; !result?.snapshot && result?.error?.code === 'initializing' && attempt < 3 && mine === epoch; attempt++) {
+                        await new Promise(resolve => timers.setTimeout(resolve, 20))
+                        result = await appClient.request('tts.attach')
+                    }
+                    if (mine !== epoch) return false
+                    // Supported native failures never select the Web owner, including a stale document attachment.
+                    if (!result?.snapshot) return true
                     attached = true; apply(result.snapshot)
                     document.addEventListener('visibilitychange', visibility)
                     schedule()
                     return true
-                } catch { return false }
+                } catch { return supported && mine === epoch }
                 finally { if (attachmentEpoch === mine) attaching = null }
             })()
             return attaching
         },
         state: () => snapshot,
+        handlesOperation: operationId => pageOperations.has(operationId),
         subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
         manual(request) {
             if (!attached) return Promise.resolve({ ok: false, error: 'Native speech is unavailable' })
             abortOperations()
             const operationId = `${prefix}-${++operation}`
+            pageOperations.add(operationId)
+            if (pageOperations.size > 64) pageOperations.delete(pageOperations.values().next().value)
             let resolve, resolveEnded
             const result = new Promise(done => { resolve = done }), ended = new Promise(done => { resolveEnded = done })
             const frozen = copy(request)
-            pending.set(operationId, { request: frozen, resolve, ended, resolveEnded, started: false })
+            pending.set(operationId, { resolve, ended, resolveEnded, started: false })
             // Invoke the bridge now, before any deferred Web summary reference or network preparation.
             void command('manual', { operationId, request: frozen }).then(acceptance => {
                 const entry = pending.get(operationId)
@@ -117,7 +131,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         detach() {
             attached = false; epoch++; clearPoll()
             document.removeEventListener('visibilitychange', visibility)
-            abortOperations(); subscribers.clear()
+            abortOperations(); subscribers.clear(); pageOperations.clear()
             // No stop or audio DELETE: the service owns accepted work independently.
         },
     }

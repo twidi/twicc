@@ -6,6 +6,8 @@ from uuid import UUID
 
 import orjson
 
+from twicc.summaries.sources import validate_temporary_model_request
+
 PROTOCOL = 1
 MAX_COMMAND_BYTES = 12 * 1024 * 1024
 MAX_REPLAY_COMMANDS = 256
@@ -85,6 +87,10 @@ def _request(value):
             _integer(summary['saved_id'], 'saved_id')
             if not isinstance(summary['result_hash'], str) or not re.fullmatch('[0-9a-f]{64}', summary['result_hash']):
                 raise ValueError('Invalid summary result hash')
+        elif 'requested_model' in summary:
+            if set(summary) != {'source', 'requested_model'}:
+                raise ValueError('Invalid temporary summary reference')
+            validate_temporary_model_request(summary['source'], summary['requested_model'])
         else:
             if set(summary) - {'source', 'source_key', 'source_hash', 'policy_key', 'handle_id'}:
                 raise ValueError('Invalid summary reference fields')

@@ -8,10 +8,12 @@ function fixture(webview = false) {
         addEventListener(type, fn) { listeners.add(fn) }, removeEventListener(type, fn) { listeners.delete(fn) },
         postMessage(data) { sent.push(data.request) },
     }
+    if (webview) window.__twiccNativeTtsDocument = 'committed-document'
     if (webview) window.TwiccAndroid = { postMessage: text => sent.push(JSON.parse(text)) }
     const client = createAndroidAppClient(window, { timeoutMs: 30 })
     function reply(response, { origin = window.location.origin, source = window } = {}) {
-        if (webview) window.TwiccAndroid.onmessage({ data: JSON.stringify(response) })
+        if (webview) window.__twiccNativeTtsDocument = 'committed-document'
+    if (webview) window.TwiccAndroid.onmessage({ data: JSON.stringify(response) })
         else for (const fn of listeners) fn({ source, origin, data: { channel: 'twicc.android.response', response } })
     }
     return { window, client, sent, reply }
@@ -53,4 +55,20 @@ for (const webview of [false, true]) test(`UTF8 command bounds preserve large TT
     await assert.rejects(f.client.request('menuVisibility', { padding: 'é'.repeat(8192) }), /too large/)
     await assert.rejects(f.client.request('tts.manual', { request: { text: 'é'.repeat(6 * 1024 * 1024) } }), /too large/)
     assert.equal(f.sent.length, 1); f.client.close()
+})
+
+test('WebView waits for committed injection then freezes its document token across later state replies', async () => {
+    const f = fixture(true)
+    delete f.window.__twiccNativeTtsDocument
+    const pending = f.client.request('tts.attach')
+    assert.equal(f.sent.length, 0)
+    f.window.__twiccNativeTtsDocument = 'original-document'
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(f.sent[0].documentToken, 'original-document')
+    f.reply({ protocol: 1, id: f.sent[0].id, ok: true, state: { accepted: true, documentToken: 'untrusted-replacement' } })
+    await pending
+    f.window.__twiccNativeTtsDocument = 'new-document'
+    const next = f.client.request('tts.state')
+    assert.equal(f.sent[1].documentToken, 'original-document')
+    f.reply({ protocol: 1, id: f.sent[1].id, ok: true, state: {} }); await next; f.client.close()
 })

@@ -10,7 +10,7 @@ window.addEventListener('message', async event => {
     if (event.data?.channel !== 'twicc.android.request') return
     await ttsDocumentReady
     try {
-        const response = JSON.parse(await browser.runtime.sendNativeMessage('twicc_android', event.data.request))
+        const response = JSON.parse(await browser.runtime.sendNativeMessage('twicc_android', { ...event.data.request, documentToken: documentId }))
         window.postMessage({ channel: 'twicc.android.response', response }, location.origin)
     } catch { /* Native fallback remains available if the bridge is unavailable. */ }
 })

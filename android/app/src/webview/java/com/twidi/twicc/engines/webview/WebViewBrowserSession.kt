@@ -35,6 +35,9 @@ internal class WebViewBrowserSession(
     private lateinit var cookies: CookieManager
     private var closed = false
     private var appListenerAdded = false
+    private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
+    private var ttsProposedToken: String? = null
+    override val nativeTtsDocumentToken: String? get() = ttsDocument.token
     private var forceLoading = false
     private var safeUrl = "${instance.address}/"
     private val pending = mutableSetOf<PendingRequest>()
@@ -101,8 +104,27 @@ internal class WebViewBrowserSession(
                 else fail("This page cannot open inside TwiCC. Retry to return to your server.")
                 return
             }
+            ttsDocument.begin()
+            ttsProposedToken = java.util.UUID.randomUUID().toString()
             url?.let { safeUrl = it }
             events.onPageStarted(url ?: safeUrl)
+        }
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            if (closed || url == null || !instance.url.allowsNavigation(url)) return
+            val epoch = ttsDocument.epoch
+            val token = ttsProposedToken ?: return
+            view.post {
+                if (closed || epoch != ttsDocument.epoch) return@post
+                val encoded = org.json.JSONObject.quote(token)
+                // The immutable token belongs only to this committed JS document. State replies never replace it.
+                view.evaluateJavascript("""(() => {
+                    if (!Object.prototype.hasOwnProperty.call(window, '__twiccNativeTtsDocument'))
+                        Object.defineProperty(window, '__twiccNativeTtsDocument', { value: $encoded });
+                    return window.__twiccNativeTtsDocument;
+                })()""") { result ->
+                    if (!closed && epoch == ttsDocument.epoch && result == encoded) ttsDocument.commit(epoch, token)
+                }
+            }
         }
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             if (closed) return

@@ -228,4 +228,39 @@ class TtsStateTest {
         assertEquals("scope_unavailable", c.snapshot().error!!["code"])
     }
 
+    @Test fun notificationCancellationRetainsAbortedBeforeAndAfterStart() {
+        for (started in listOf(false, true)) for (command in listOf(TtsCommand.Skip, TtsCommand.StopAll)) {
+            val c = controller(); manual(c); opened(c)
+            val reading = c.snapshot().playback
+            if (started) c.dispatch(TtsCommand.PlayerFeedback(reading.readingId!!, reading.generation, PlayerSignal.Started))
+            c.dispatch(command)
+            val result = c.snapshot().results.single()
+            assertEquals(mapOf("ok" to false, "aborted" to true), result.ended)
+            assertEquals(if (started) mapOf("ok" to true) else result.ended, result.start)
+        }
+    }
+    @Test fun readingErrorsRetainAutomaticOrManualOwnershipAfterPlaybackClears() {
+        for (automatic in listOf(false, true)) {
+            val c = controller(); listen(c); opened(c)
+            if (automatic) c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "candidate", "activation_id" to c.snapshot().listening!!.activationId, "event_id" to 5)))
+            else manual(c)
+            val reading = c.snapshot().playback
+            c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error", "reading_id" to reading.readingId,
+                "generation" to reading.generation, "code" to "failed", "message" to "Preparation failed")))
+            assertEquals("idle", c.snapshot().playback.status)
+            assertEquals(automatic, c.snapshot().error!!["automatic"])
+            assertEquals(if (automatic) null else "manual", c.snapshot().error!!["operation_id"])
+        }
+    }
+    @Test fun summaryMismatchRemainsInTheAffectedOperationAfterTheNextAutomaticReading() {
+        val c = controller(); listen(c); opened(c); manual(c)
+        val reading = c.snapshot().playback
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error", "reading_id" to reading.readingId,
+            "generation" to reading.generation, "code" to "summary_changed", "message" to "Changed", "summary_changed" to true, "saved_id" to 7)))
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "candidate", "activation_id" to c.snapshot().listening!!.activationId, "event_id" to 5)))
+        val result = c.snapshot().results.single()
+        assertEquals(true, result.start["summaryChanged"])
+        assertEquals(7, result.start["savedId"])
+    }
+
 }

@@ -100,6 +100,17 @@ def normalize_summary_model(value: object) -> str:
     return value if isinstance(value, str) and value in {'auto', 'haiku', 'luna', 'openrouter'} else 'auto'
 
 
+def validate_temporary_model_request(source: object, requested: object) -> str:
+    """Validate the early native selection snapshot before descriptor acquisition."""
+    if (not isinstance(source, dict) or set(source) != {'text', 'purpose'}
+            or not isinstance(source['text'], str) or not source['text'].strip()
+            or source['purpose'] not in ('selection', 'test')):
+        raise ValueError('Temporary source requires text and a supported purpose')
+    if not isinstance(requested, str) or normalize_summary_model(requested) != requested:
+        raise ValueError('Invalid summary model')
+    return requested
+
+
 def _hash(value) -> str:
     return hashlib.sha256(orjson.dumps(value)).hexdigest()
 

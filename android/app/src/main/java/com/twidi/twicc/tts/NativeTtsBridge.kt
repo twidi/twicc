@@ -8,10 +8,14 @@ class NativeTtsBridge(
     private val enabled: () -> Boolean,
     private val owner: () -> DocumentOwner,
     private val snapshot: () -> NativeTtsSnapshot,
+    private val documentToken: () -> String?,
     private val dispatch: (TtsCommand) -> Acceptance,
 ) {
     fun receive(command: String, args: JSONObject): JSONObject {
         if (!enabled()) return acceptance(Acceptance(false, error = TtsActionError("unsupported", "Native speech is unavailable in this build.")))
+        val expected = documentToken() ?: return acceptance(Acceptance(false, error = TtsActionError("initializing", "Native speech is initializing. Try again.")))
+        if (args.opt("documentToken") != expected) return acceptance(Acceptance(false,
+            error = TtsActionError("stale_document", "This page no longer controls native speech. Reopen it.")))
         return try {
             val document = owner()
             val control = when (command) {

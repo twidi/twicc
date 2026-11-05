@@ -166,6 +166,10 @@ Ignore callbacks from old connections, generations, instances, and document owne
   `SpeechBody` uses the existing `/api/tts/speech/` fields, including script test fields, cache, origin, and announcement.
 - Summary: `{kind:'summary', speech:SpeechBody, summary:SummaryRequest, identity, text, config_id}`.
   `SummaryRequest` is `{saved_id,result_hash}` or `{source,source_key,source_hash,policy_key,handle_id?}`.
+  Before a temporary descriptor exists, it can be `{source:{text,purpose},requested_model}`.
+  This form permits only temporary selection/test sources and a valid frozen summary-model choice.
+  The backend derives its source hash and policy from the frozen text, choice, and current implementation version.
+  It acquires an independent reader through the shared summary service. Never supply arbitrary hashes, policy keys, or handles in this form.
   A pending source always remains independently reconstructible. A handle ID is only a reuse hint, never the sole reference.
   Preserve saved-reference mismatch `409/summary_changed/saved_id` semantics.
 

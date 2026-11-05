@@ -93,3 +93,22 @@ def test_temporary_identity_rejects_null_nonkey_members(member):
         parse_native_command(frame('manual', reading_id=str(uuid4()), generation=1,
                                    request={'kind': 'summary', 'speech': {}, 'identity': identity, 'text': 'Summary',
                                             'summary': {'saved_id': 1, 'result_hash': 'a' * 64}}))
+
+@pytest.mark.parametrize('model', ['auto', 'haiku', 'luna', 'openrouter'])
+def test_temporary_summary_before_descriptor_has_frozen_model_and_source(model):
+    summary = {'source': {'text': 'Captured selection', 'purpose': 'selection'}, 'requested_model': model}
+    command = frame('manual', reading_id=str(uuid4()), generation=1,
+                    request={'kind': 'summary', 'speech': {}, 'identity': None, 'text': '', 'summary': summary})
+    assert parse_native_command(command)['request']['summary'] == summary
+
+@pytest.mark.parametrize('summary', [
+    {'source': {'event_id': 1}, 'requested_model': 'auto'},
+    {'source': {'text': 'Captured', 'purpose': 'invalid'}, 'requested_model': 'auto'},
+    {'source': {'text': 'Captured', 'purpose': 'selection'}, 'requested_model': 'invalid'},
+    {'source': {'text': 'Captured', 'purpose': 'selection'}, 'requested_model': 'auto', 'handle_id': 'page'},
+    {'source': {'text': 'Captured', 'purpose': 'selection'}, 'requested_model': 'auto', 'policy_key': 'forged'},
+])
+def test_descriptorless_summary_is_strictly_temporary(summary):
+    with pytest.raises(ValueError):
+        parse_native_command(frame('manual', reading_id=str(uuid4()), generation=1,
+            request={'kind': 'summary', 'speech': {}, 'identity': None, 'text': '', 'summary': summary}))

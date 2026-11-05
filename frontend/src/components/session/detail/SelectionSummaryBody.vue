@@ -21,13 +21,14 @@ store.openTemporary(props.text)
 
 const generation = useTemporarySummaryGeneration(() => store.temporary?.source, settings, speech, store)
 const entry = computed(() => store.temporary?.entry)
-const identity = computed(() => speech.nativeMode
-    ? { sourceKey: null, sourceHash: entry.value?.descriptor?.source_hash ?? '', variant: 'summary' }
-    : { selectionId: store.temporary?.id, variant: 'summary' })
+const identity = computed(() => ({ selectionId: store.temporary?.id, variant: 'summary' }))
 const nativeSpeechRequest = computed(() => {
     const descriptor = entry.value?.descriptor, source = store.temporary?.source
-    return descriptor && source ? { source: { ...source }, source_key: descriptor.source_key,
-        source_hash: descriptor.source_hash, policy_key: descriptor.policy_key } : null
+    if (!source) return null
+    if (descriptor) return { source: { ...source }, source_key: descriptor.source_key,
+        source_hash: descriptor.source_hash, policy_key: descriptor.policy_key }
+    const requested = ['auto', 'haiku', 'luna', 'openrouter'].includes(settings.summaryModel) ? settings.summaryModel : 'auto'
+    return { source: { ...source }, requested_model: requested }
 })
 const reading = computed(() => !!store.temporary && speech.statusForSummary(identity.value) !== 'idle')
 const summaryReference = computed(() => store.temporary ? store.temporaryReference() : null)

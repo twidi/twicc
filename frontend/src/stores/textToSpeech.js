@@ -166,7 +166,8 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
         store.playback = loading
         const pending = native.manual({ kind: source === 'summary' ? 'summary' : 'text', speech,
             ...(source === 'summary' ? { summary: JSON.parse(JSON.stringify(nativeRequest)) } : { source }),
-            identity, text: text ?? '', config_id: configId })
+            identity: identity?.selectionId ? null : identity, text: text ?? '', config_id: configId })
+        if (identity?.selectionId) nativeClients.get(store).selection = { operationId: pending.operationId, identity: { ...identity } }
         loading.operationId = pending.operationId
         const result = await pending
         if (!result.ok && store.playback.operationId === pending.operationId && store.status === 'loading') {
@@ -395,8 +396,12 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             if (!snapshot || (this.nativeSnapshot && snapshot.revision <= this.nativeSnapshot.revision)) return
             this.nativeSnapshot = snapshot
             const playback = snapshot.playback ?? { status: 'idle' }
+            const entry = nativeClients.get(this), selection = entry?.selection
+            const identity = selection && playback.operationId === selection.operationId ? selection.identity : playback.identity
+            if (entry && playback.status === 'idle') entry.selection = null
             this.playback = { text: playback.text ?? null, source: playback.source ?? null,
-                configId: playback.configId ?? null, identity: playback.identity ?? null,
+                configId: playback.configId ?? null, identity: identity ?? null,
+                operationId: playback.operationId ?? null,
                 readingId: playback.readingId ?? null, phase: playback.phase,
                 status: playback.status ?? 'idle', owner: playback.automatic ? snapshot.listening?.activationId : null }
         },

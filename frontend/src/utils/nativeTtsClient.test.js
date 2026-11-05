@@ -4,7 +4,7 @@ import { createNativeTtsClient } from './nativeTtsClient.js'
 
 const snapshot = (revision = 1, extra = {}) => ({ version: 1, revision, instanceId: 'instance', sessionStatus: 'connected', playback: { status: 'idle' }, listening: null, pendingCount: 0, results: [], ...extra })
 function fixture({ capability = 1, server = true } = {}) {
-    const calls = [], listeners = new Map(), scheduled = new Map()
+    const calls = [], listeners = new Map(), scheduled = new Map(), delays = []
     let next = 0, current = snapshot()
     const document = { visibilityState: 'visible', addEventListener: (n, fn) => listeners.set(n, fn), removeEventListener: n => listeners.delete(n) }
     const appClient = { request(command, args) {
@@ -12,8 +12,8 @@ function fixture({ capability = 1, server = true } = {}) {
         if (command === 'getState') return Promise.resolve({ capabilities: { nativeTts: capability } })
         return Promise.resolve(command === 'tts.state' || command === 'tts.attach' ? { snapshot: current } : { accepted: true, operationId: args?.operationId, snapshot: current })
     } }
-    const client = createNativeTtsClient({ appClient, document, fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: server }) }), timers: { setTimeout(fn) { scheduled.set(++next, fn); return next }, clearTimeout(id) { scheduled.delete(id) } } })
-    return { client, calls, scheduled, document, listeners, set(value) { current = value }, async poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() } }
+    const client = createNativeTtsClient({ appClient, document, fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: server }) }), timers: { setTimeout(fn, delay) { delays.push(delay); scheduled.set(++next, fn); return next }, clearTimeout(id) { scheduled.delete(id) } } })
+    return { client, calls, scheduled, delays, document, listeners, set(value) { current = value }, async poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() } }
 }
 for (const options of [{ capability: null }, { capability: 0 }, { server: false }]) test(`unsupported capability remains Web ${JSON.stringify(options)}`, async () => {
     const f = fixture(options)
@@ -41,7 +41,7 @@ test('hidden page stops polling without stopping native speech; visible page rea
 test('accepted failure and saved mismatch are terminal without replay', async () => {
     const f = fixture(); await f.client.attach()
     const start = f.client.manual({ kind: 'summary', summary: { saved_id: 7 } }); const id = f.calls.at(-1).args.operationId
-    f.set(snapshot(3, { results: [{ operationId: id, started: false, start: { ok: false, error: 'Changed' }, ended: { ok: false } }], error: { summary_changed: true, saved_id: 7 } })); await f.poll()
+    f.set(snapshot(3, { results: [{ operationId: id, started: false, start: { ok: false, error: 'Changed', summaryChanged: true, savedId: 7 }, ended: { ok: false } }], error: { summary_changed: true, saved_id: 7 } })); await f.poll()
     assert.deepEqual(await start, { ok: false, error: 'Changed', summaryChanged: true, savedId: 7 }); await f.poll()
     assert.equal(f.calls.filter(c => c.command === 'tts.manual').length, 1); f.client.detach()
 })
@@ -66,4 +66,38 @@ test('a cached supported client can reattach after a bfcache pagehide without re
     assert.equal(await f.client.attach(), true); assert.equal(f.scheduled.size, 1)
     assert.equal(f.calls.filter(c => c.command === 'getState').length, 1)
     assert.equal(f.calls.filter(c => c.command === 'tts.manual').length, 0); f.client.detach()
+})
+
+test('visible polling uses one second and visibility return refreshes immediately', async () => {
+    const f = fixture(); await f.client.attach()
+    assert.equal(f.delays.at(-1), 1000)
+    f.document.visibilityState = 'hidden'; f.listeners.get('visibilitychange')()
+    const before = f.calls.length
+    f.document.visibilityState = 'visible'; await f.listeners.get('visibilitychange')()
+    assert.equal(f.calls[before].command, 'tts.state')
+    f.client.detach()
+})
+test('native notification cancellation and retained mismatch metadata reach their operation results', async () => {
+    const f = fixture(); await f.client.attach()
+    const pending = f.client.manual({ kind: 'summary', summary: { saved_id: 7 } })
+    const operationId = pending.operationId
+    f.set(snapshot(2, { results: [{ operationId, started: false, start: { ok: false, error: 'Changed', summaryChanged: true, savedId: 7 }, ended: { ok: false, error: 'Changed' } }], error: null })); await f.poll()
+    assert.deepEqual(await pending, { ok: false, error: 'Changed', summaryChanged: true, savedId: 7 })
+    const speaking = f.client.manual({ kind: 'text', text: 'Message' })
+    f.set(snapshot(3, { playback: { operationId: speaking.operationId, started: true } })); await f.poll()
+    const started = await speaking
+    f.set(snapshot(4, { results: [{ operationId: speaking.operationId, started: true, start: { ok: true }, ended: { ok: false, aborted: true } }] })); await f.poll()
+    assert.deepEqual(await started.ended, { ok: false, aborted: true }); f.client.detach()
+})
+
+test('supported stale attachment never selects Web or silently retries with a replacement document', async () => {
+    const calls = []
+    const client = createNativeTtsClient({ document: { visibilityState: 'visible' }, appClient: { async request(command) {
+        calls.push(command)
+        return command === 'getState' ? { capabilities: { nativeTts: 1 } } : { accepted: false, error: { code: 'stale_document' } }
+    } }, fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: true }) }) })
+    assert.equal(await client.attach(), true)
+    assert.equal(client.state(), null)
+    assert.equal((await client.manual({ kind: 'text' })).ok, false)
+    assert.deepEqual(calls, ['getState', 'tts.attach'])
 })

@@ -534,3 +534,40 @@ async def test_expired_automatic_audio_finishes_once_and_offers_next_candidate(m
     assert terminal == [(selection['reading_id'], 'failed')]
     assert prepare.await_count == 1
     await registry.shutdown()
+
+@pytest.mark.asyncio
+async def test_descriptorless_temporary_reader_cancels_with_native_owner(monkeypatch):
+    from twicc.providers.text_calls import ENGINES
+    service = native_sessions.summaries
+    started, released = asyncio.Event(), asyncio.Event()
+    async def stream_text(*_):
+        try:
+            started.set()
+            await asyncio.Future()
+            yield 'Never generated'
+        finally:
+            released.set()
+    monkeypatch.setattr(service, 'resolve_engine', lambda *_: (ENGINES[0], None))
+    monkeypatch.setattr(service, 'stream_text', stream_text)
+    monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'luna'})
+    async def prepare(data):
+        reader = await service.acquire_summary_reader(data['summary_id'])
+        try:
+            async for _ in reader.snapshots():
+                await asyncio.sleep(0)
+        finally:
+            await reader.aclose()
+    monkeypatch.setattr(native_sessions, 'open_speech', prepare)
+    registry = native_sessions.NativeSessionRegistry()
+    session = registry.open(str(uuid4()), ('cookie', 'fp'))
+    request = manual()
+    request['request'].update(kind='summary', summary={'source': {'text': 'Captured selection', 'purpose': 'selection'}, 'requested_model': 'haiku'})
+    await session.apply(request)
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert session.snapshot()['playback']['reading_id'] == request['reading_id']
+        await session.apply(command('skip', 2, reading_id=request['reading_id'], generation=1))
+        await asyncio.wait_for(released.wait(), 2)
+        assert not service._handles
+    finally:
+        await registry.shutdown()

@@ -771,3 +771,44 @@ def test_retain_summary_validation_allows_unrelated_event_loop_callback(service,
             await service.release_summary(page.id)
         assert not service._handles
     asyncio.run(scenario())
+
+def test_descriptorless_temporary_reader_freezes_model_and_releases_independently(service, monkeypatch):
+    async def scenario():
+        gate, entered = asyncio.Event(), asyncio.Event()
+        choices = []
+        from twicc.providers.text_calls import ENGINES
+        def engine(requested, *_):
+            choices.append(requested)
+            return ENGINES[0], None
+        async def stream(*_):
+            entered.set()
+            await gate.wait()
+            yield 'Independent summary.'
+        monkeypatch.setattr(service, 'resolve_engine', engine)
+        monkeypatch.setattr(service, 'stream_text', stream)
+        monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'luna'})
+        reference = {'source': {'text': 'Captured selection', 'purpose': 'selection'}, 'requested_model': 'haiku'}
+        reader = await service.retain_summary_for_speech(reference)
+        await entered.wait()
+        assert choices == ['haiku']
+        assert reader._run.source.canonical_text == 'Captured selection'
+        assert reader._run.requested == 'haiku'
+        assert reader._run.policy == service._policy_for('haiku')[1]
+        gate.set()
+        assert (await terminal(service, reader))['text'] == 'Independent summary.'
+        await reader.aclose()
+        assert not service._handles
+    asyncio.run(scenario())
+
+@pytest.mark.parametrize('reference', [
+    {'source': {'event_id': 1}, 'requested_model': 'auto'},
+    {'source': {'text': 'Text', 'purpose': 'invalid'}, 'requested_model': 'auto'},
+    {'source': {'text': 'Text', 'purpose': 'selection'}, 'requested_model': 'invalid'},
+    {'source': {'text': 'Text', 'purpose': 'selection'}, 'requested_model': 'auto', 'source_hash': 'forged'},
+])
+def test_descriptorless_reader_rejects_non_temporary_or_injected_policy(service, reference):
+    async def scenario():
+        with pytest.raises(ValueError):
+            await service.retain_summary_for_speech(reference)
+        assert not service._handles
+    asyncio.run(scenario())
