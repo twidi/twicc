@@ -19,6 +19,102 @@ class TtsStateTest {
             "audio_id" to "audio", "content_type" to "audio/mpeg", "identity" to null)))
     private fun listen(c: TtsController) = c.dispatch(TtsCommand.Listen(owner, ListeningScope("worktree", "project"), false, "2026-11-05T12:00:00.000000Z"))
 
+    @Test fun timelinePauseSkipsEitherReadingAndSurvivesAcknowledgedBackendDisable() {
+        for (automatic in listOf(false, true)) {
+            val c = controller(); listen(c); opened(c)
+            if (automatic) candidate(c) else manual(c)
+            audio(c)
+            val before = c.snapshot().playback
+            val id = c.snapshot().listening!!.activationId
+            val effects = c.dispatch(TtsCommand.PauseTimeline(id))
+            assertTrue(c.snapshot().listening!!.paused)
+            assertNull(c.snapshot().playback.readingId)
+            assertEquals(listOf("skip", "disable"), effects.filterIsInstance<TtsEffect.Send>().map { it.frame["type"] })
+            assertTrue(effects.any { it is TtsEffect.Cancel && it.readingId == before.readingId })
+            assertEquals(1, effects.filterIsInstance<TtsEffect.Release>().size)
+            assertTrue(effects.none { it is TtsEffect.StopService || it is TtsEffect.StopAfter })
+            val sequence = effects.filterIsInstance<TtsEffect.Send>().last().frame["seq"]
+            c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state",
+                "revision" to 10, "ack_seq" to sequence, "listening" to null, "pending_count" to 0)))
+            assertTrue(c.snapshot().listening!!.paused)
+            assertTrue(candidate(c, 2).none { it is TtsEffect.Send && it.frame["type"] == "select" })
+            assertTrue(audio(c, before).none { it is TtsEffect.Prepare })
+            assertNull(c.snapshot().playback.readingId)
+        }
+    }
+    @Test fun manualReadingWorksDuringTimelinePauseAndCompletionKeepsPause() {
+        val c = controller(); listen(c); opened(c)
+        c.dispatch(TtsCommand.PauseTimeline(c.snapshot().listening!!.activationId))
+        manual(c); assertFalse(c.snapshot().playback.automatic)
+        assertTrue(audio(c).any { it is TtsEffect.Prepare })
+        val reading = c.snapshot().playback
+        val effects = c.dispatch(TtsCommand.PlayerFeedback(reading.readingId!!, reading.generation, PlayerSignal.Ended(true)))
+        assertTrue(c.snapshot().listening!!.paused)
+        assertTrue(effects.none { it is TtsEffect.StopAfter || it is TtsEffect.StopService })
+    }
+    @Test fun timelineResumeUsesFreshBoundaryActivationAndPausedFilterChoice() {
+        val c = controller(); listen(c); opened(c)
+        val before = c.snapshot().listening!!
+        c.dispatch(TtsCommand.PauseTimeline(before.activationId))
+        val muted = c.dispatch(TtsCommand.SetMuted(owner, before.activationId, true))
+        assertTrue(muted.none { it is TtsEffect.Send })
+        val boundary = "2026-11-05T13:05:01.123456Z"
+        val sent = c.dispatch(TtsCommand.ResumeTimeline(before.activationId, boundary)).filterIsInstance<TtsEffect.Send>().single().frame
+        val after = c.snapshot().listening!!
+        assertFalse(after.paused); assertNotEquals(before.activationId, after.activationId)
+        assertEquals(before.scope, after.scope); assertEquals(before.pageId, after.pageId)
+        assertEquals(boundary, after.boundary); assertTrue(after.includeMuted)
+        assertEquals("listen", sent["type"]); assertEquals(boundary, sent["boundary"])
+        assertEquals(after.activationId, sent["activation_id"]); assertEquals(true, sent["include_muted"])
+        val old = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "candidate",
+            "activation_id" to before.activationId, "event_id" to 1)))
+        assertTrue(old.none { it is TtsEffect.Send })
+        assertTrue(candidate(c, 2).any { it is TtsEffect.Send && it.frame["type"] == "select" })
+    }
+    @Test fun timelinePauseSurvivesOfflineReconciliationAndRejectsDeferredAudio() {
+        val c = controller(); listen(c); opened(c); candidate(c); audio(c)
+        val old = c.snapshot().playback
+        c.dispatch(TtsCommand.TransportLost("socket"))
+        c.dispatch(TtsCommand.PauseTimeline(c.snapshot().listening!!.activationId))
+        val resume = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+        val commands = (resume["commands"] as List<*>).filterIsInstance<Map<*, *>>()
+        assertEquals(listOf("skip", "disable"), commands.takeLast(2).map { it["type"] })
+        c.dispatch(TtsCommand.TransportOpened("resumed"))
+        c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "audio",
+            "reading_id" to old.readingId, "generation" to old.generation, "audio_id" to "old", "content_type" to "audio/mpeg")))
+        val effects = c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 20, "ack_seq" to resume["seq"], "listening" to null)))
+        assertTrue(c.snapshot().listening!!.paused)
+        assertNull(c.snapshot().playback.readingId)
+        assertTrue(effects.none { it is TtsEffect.Prepare || it is TtsEffect.StopService })
+    }
+    @Test fun staleTimelineNotificationActionsCannotChangeNewActivationOrManualPlayback() {
+        val c = controller(); listen(c); opened(c)
+        val old = c.snapshot().listening!!.activationId
+        c.dispatch(TtsCommand.PauseTimeline(old))
+        manual(c)
+        assertTrue(c.dispatch(TtsCommand.PauseTimeline(old)).isEmpty())
+        assertEquals("manual", c.snapshot().playback.operationId)
+        c.dispatch(TtsCommand.ResumeTimeline(old, "2026-11-05T13:00:00.000000Z"))
+        val before = c.snapshot()
+        assertTrue(c.dispatch(TtsCommand.ResumeTimeline(old, "2026-11-05T14:00:00.000000Z")).isEmpty())
+        assertTrue(c.dispatch(TtsCommand.PauseTimeline(old)).isEmpty())
+        assertEquals(before, c.snapshot())
+        c.dispatch(TtsCommand.StopAll)
+        assertTrue(c.dispatch(TtsCommand.ResumeTimeline(old, "2026-11-05T14:00:00.000000Z")).isEmpty())
+    }
+    @Test fun disablingPausedTimelineReleasesForegroundIntent() {
+        for (stopAll in listOf(false, true)) {
+            val c = controller(); listen(c); opened(c)
+            val id = c.snapshot().listening!!.activationId
+            c.dispatch(TtsCommand.PauseTimeline(id))
+            val effects = c.dispatch(if (stopAll) TtsCommand.StopAll else TtsCommand.Disable(owner, id))
+            assertNull(c.snapshot().listening)
+            val timer = effects.filterIsInstance<TtsEffect.StopAfter>().single()
+            assertTrue(c.dispatch(TtsCommand.StopTimeout(timer.epoch)).any { it is TtsEffect.StopService })
+        }
+    }
+
     @Test fun offlineStopAllCannotBeReversedByOldAudio() {
         val c = controller(); listen(c); opened(c); manual(c); val old = c.snapshot().playback
         c.dispatch(TtsCommand.TransportLost("socket")); c.dispatch(TtsCommand.StopAll)

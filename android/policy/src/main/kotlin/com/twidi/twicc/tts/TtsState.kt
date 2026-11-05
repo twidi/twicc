@@ -153,7 +153,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             is TtsCommand.SetMuted -> {
                 if (!valid(command.owner) || listening?.activationId != command.activationId) return emptyList()
                 listening = listening!!.copy(includeMuted = command.includeMuted)
-                queue("set_muted", mapOf("activation_id" to command.activationId, "include_muted" to command.includeMuted))
+                if (listening?.paused != true)
+                    queue("set_muted", mapOf("activation_id" to command.activationId, "include_muted" to command.includeMuted))
             }
             is TtsCommand.Disable -> {
                 if (!valid(command.owner) || listening?.activationId != command.activationId) return emptyList()
@@ -166,6 +167,21 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 cancel(sendSkip = true)
             }
             TtsCommand.Skip -> cancel(sendSkip = true)
+            is TtsCommand.PauseTimeline -> {
+                val current = listening ?: return emptyList()
+                if (stopSeq != null || current.paused || current.activationId != command.activationId) return emptyList()
+                listening = current.copy(paused = true); pendingCount = 0
+                cancel(sendSkip = true)
+                queue("disable", mapOf("activation_id" to current.activationId))
+            }
+            is TtsCommand.ResumeTimeline -> {
+                val current = listening ?: return emptyList()
+                if (stopSeq != null || !current.paused || current.activationId != command.activationId) return emptyList()
+                val next = current.copy(activationId = newId(), boundary = command.boundary, paused = false)
+                listening = next; pendingCount = 0
+                queue("listen", mapOf("activation_id" to next.activationId, "scope" to next.scope.wire(),
+                    "page_id" to next.pageId, "include_muted" to next.includeMuted, "boundary" to next.boundary))
+            }
             TtsCommand.StopAll -> {
                 listening = null; pendingCount = 0; generation++; cancel()
                 status = "stopped"
@@ -218,13 +234,13 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                             }
                             // Local reading and listening intent stay authoritative until acknowledged.
                             if (retained.isEmpty()) {
-                                pendingCount = (f["pending_count"] as? Number)?.toInt() ?: 0
+                                pendingCount = if (listening?.paused == true) 0 else (f["pending_count"] as? Number)?.toInt() ?: 0
                                 configuration = f["configuration_available"] as? Boolean
                                 val incomingError = f["error"] as? TtsFrame
                                 if (incomingError == null) error = null
                                 // Reading errors from an older selection cannot own a replacement.
                                 else if (incomingError["reading_id"] == null || matches(incomingError)) error = incomingError
-                                if (f.containsKey("listening") && f["listening"] == null) listening = null
+                                if (f.containsKey("listening") && f["listening"] == null && listening?.paused != true) listening = null
                             }
                             val serverError = f["error"] as? TtsFrame
                             if (serverError != null) handleError(serverError)
@@ -232,7 +248,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     }
                     "selection_rejected" -> if (matches(f) && playback.automatic && playback.phase == "loading" &&
                         playback.audioId == null && resource == null) cancel()
-                    "candidate" -> if (ready && stopSeq == null && playback.readingId == null && listening?.activationId == f["activation_id"]) {
+                    "candidate" -> if (ready && stopSeq == null && playback.readingId == null && listening?.paused == false && listening?.activationId == f["activation_id"]) {
                         reserve(null, f["identity"] as? TtsFrame, "message", f["text"] as? String ?: "", null, true)
                         queue("select", readingFields() + mapOf("event_id" to f["event_id"],
                             "silence_reset" to (audibleEndedAt?.let { elapsedMs() - it > 180000L } ?: false)))

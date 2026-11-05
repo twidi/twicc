@@ -8,7 +8,7 @@ data class ListeningScope(val kind: String, val id: String?, val label: String? 
     fun wire(): TtsFrame = mapOf("kind" to kind, "id" to id)
 }
 data class NativeListening(val activationId: String, val pageId: String, val scope: ListeningScope,
-    val boundary: String, val includeMuted: Boolean)
+    val boundary: String, val includeMuted: Boolean, val paused: Boolean = false)
 data class NativePlayback(val readingId: String? = null, val generation: Long = 0, val operationId: String? = null,
     val identity: TtsFrame? = null, val source: String? = null, val text: String = "", val configId: String? = null,
     val status: String = "idle", val phase: String = "idle", val automatic: Boolean = false,
@@ -38,6 +38,8 @@ sealed interface TtsCommand {
     data class Listen(val owner: DocumentOwner, val scope: ListeningScope, val includeMuted: Boolean, val boundary: String, val pageId: String = owner.pageId) : TtsCommand
     data class SetMuted(val owner: DocumentOwner, val activationId: String, val includeMuted: Boolean) : TtsCommand
     data class Disable(val owner: DocumentOwner, val activationId: String) : TtsCommand
+    data class PauseTimeline(val activationId: String) : TtsCommand
+    data class ResumeTimeline(val activationId: String, val boundary: String) : TtsCommand
     data class StopReading(val owner: DocumentOwner, val readingId: String, val identity: TtsFrame?) : TtsCommand
     data object Skip : TtsCommand
     data object StopAll : TtsCommand
