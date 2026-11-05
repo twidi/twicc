@@ -3,6 +3,7 @@ import asyncio
 
 import pytest
 
+from twicc.tts import service as speech_service
 from twicc.tts.openrouter import SpeechError
 
 
@@ -115,10 +116,10 @@ def integrated(monkeypatch, transactional_db):
     monkeypatch.setattr(service, 'resolve_source', lambda _: source)
     monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'auto'})
     monkeypatch.setattr(service, 'resolve_engine', lambda *_: (ENGINES[0], None))
-    monkeypatch.setattr(views, 'openrouter_api_key', lambda: 'fake')
-    monkeypatch.setattr(views, '_stored_adapt_choice', lambda: 'openrouter')
-    monkeypatch.setattr(views, 'resolve_engine', lambda *_: pytest.fail('A summary invokes adaptation'))
-    monkeypatch.setattr(views, 'direct_text', lambda *_: pytest.fail('A summary invokes original cleanup'))
+    monkeypatch.setattr(speech_service, 'openrouter_api_key', lambda: 'fake')
+    monkeypatch.setattr(speech_service, '_stored_adapt_choice', lambda: 'openrouter')
+    monkeypatch.setattr(speech_service, 'resolve_engine', lambda *_: pytest.fail('A summary invokes adaptation'))
+    monkeypatch.setattr(speech_service, 'direct_text', lambda *_: pytest.fail('A summary invokes original cleanup'))
     parts = []
     async def pump_part(client, request, api_key, sink, index, **kwargs):
         parts.append(request.text)
@@ -245,8 +246,8 @@ def test_script_without_limit_waits_while_visual_summary_streams(integrated, mon
     service, views, streams, cache, parts, _ = integrated
     fields = {'command': 'fake', 'output': 'stream', 'audio_format': 'mp3', 'pcm_rate': None,
               'pcm_channels': 1, 'max_chars': None}
-    monkeypatch.setattr(views, 'stored_script_config', lambda _: {**fields, 'delete_file': False})
-    monkeypatch.setattr(views, 'script_config_validated', lambda _: True)
+    monkeypatch.setattr(speech_service, 'stored_script_config', lambda _: {**fields, 'delete_file': False})
+    monkeypatch.setattr(speech_service, 'script_config_validated', lambda _: True)
     async def pump(request, sink, source, **kwargs):
         source = as_part_source(request.text, source)
         try:
@@ -258,7 +259,7 @@ def test_script_without_limit_waits_while_visual_summary_streams(integrated, mon
             sink.finish()
         finally:
             await source.aclose()
-    monkeypatch.setattr(views, 'pump_script_speech', pump)
+    monkeypatch.setattr(speech_service, 'pump_script_speech', pump)
     async def scenario():
         sent, gate = asyncio.Event(), asyncio.Event()
         async def generate(*args):
@@ -287,7 +288,7 @@ def test_script_without_limit_waits_while_visual_summary_streams(integrated, mon
 
 def test_audio_pump_cancelled_before_first_step_releases_reader(integrated, monkeypatch):
     service, views, streams, cache, parts, _ = integrated
-    original_start = views.start_stream
+    original_start = speech_service.start_stream
     async def scenario():
         sent, gate = asyncio.Event(), asyncio.Event()
         async def generate(*args):
@@ -301,7 +302,7 @@ def test_audio_pump_cancelled_before_first_step_releases_reader(integrated, monk
             audio = original_start(*args, **kwargs)
             audio._task.cancel()
             return audio
-        monkeypatch.setattr(views, 'start_stream', cancelled_start)
+        monkeypatch.setattr(speech_service, 'start_stream', cancelled_start)
         response = await asyncio.wait_for(views.tts_speech(speech_request(summary_id=handle.id)), 2)
         assert response.status_code == 424
         await asyncio.sleep(0)

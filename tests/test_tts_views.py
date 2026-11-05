@@ -1,8 +1,7 @@
 """Tests for the text-to-speech REST endpoints (twicc.tts.views).
 
-The upstream calls are always mocked: ``pump_speech``, ``fetch_speech_models``,
-``schedule_cost_log``, ``_record_last_test`` and ``openrouter_api_key`` are
-monkeypatched on the views module.
+The upstream calls are always mocked. Speech preparation dependencies are patched
+on the speech service. ``fetch_speech_models`` is patched on the views module.
 
 Every streaming test runs its whole scenario inside one ``asyncio.run(...)``:
 streams, their futures and their timers belong to the loop that created them.
@@ -20,7 +19,7 @@ from django.test import AsyncClient, AsyncRequestFactory
 from twicc.core.enums import Provider
 from twicc.openrouter_text import OpenRouterTextError
 from twicc.paths import get_tts_config_path
-from twicc.tts import adapt, model_catalog, streams, views
+from twicc.tts import adapt, model_catalog, service as speech_service, streams, views
 from twicc.tts.audio_cache import CachedAudio, speech_cache
 from twicc.tts.config import read_tts_config, write_tts_config
 from twicc.tts.openrouter import SpeechError, SpeechRequest, audio_duration_seconds
@@ -29,14 +28,14 @@ from twicc.tts.parts import has_speech
 from twicc.tts.script import ScriptSpeechRequest, script_parts
 from twicc.tts.simple_text import direct_text
 from twicc.tts.streams import get_stream
-from twicc.tts.views import (
+from twicc.tts.views import parse_range
+from twicc.tts.service import (
     NO_COMMAND,
     NO_PCM_RATE,
     NO_SUCH_SCRIPT,
     NOT_SAVED,
     NOT_VALIDATED,
     NOTHING_TO_SAY,
-    parse_range,
     parse_speech_request,
 )
 
@@ -149,7 +148,7 @@ def _no_adaptation_model(monkeypatch):
     monkeypatch.setattr(adapt, "is_provider_running", lambda provider: False)
     # No text is simple for the existing tests: they keep the engine, the reason and the cache key they
     # check. The direct reading has its own tests (the ``direct_reading`` fixture undoes this patch).
-    monkeypatch.setattr(views, "direct_text", lambda text, origin=None: None)
+    monkeypatch.setattr(speech_service, "direct_text", lambda text, origin=None: None)
     yield
     assert calls == [], "A view test reached the real adaptation call"
 
@@ -177,16 +176,16 @@ def client(settings):
 def upstream(monkeypatch):
     """The key is ``"k"``; the pump, the last-test record and the cost lookup are fakes."""
     fake = Upstream()
-    monkeypatch.setattr(views, "openrouter_api_key", lambda: "k")
+    monkeypatch.setattr(speech_service, "openrouter_api_key", lambda: "k")
 
     # Through a function: a test can swap ``fake.pump`` for a fresh one.
     def pump_speech(request, api_key, stream, parts=None, *, paced=False):
         fake.pump_args.append((parts, paced))
         return fake.pump(request, api_key, stream)
 
-    monkeypatch.setattr(views, "pump_speech", pump_speech)
-    monkeypatch.setattr(views, "_record_last_test", fake.record_last_test)
-    monkeypatch.setattr(views, "schedule_cost_log", fake.schedule_cost_log)
+    monkeypatch.setattr(speech_service, "pump_speech", pump_speech)
+    monkeypatch.setattr(speech_service, "_record_last_test", fake.record_last_test)
+    monkeypatch.setattr(speech_service, "schedule_cost_log", fake.schedule_cost_log)
     return fake
 
 
@@ -205,6 +204,7 @@ def _route_to_caplog(caplog, monkeypatch, name: str) -> None:
 @pytest.fixture
 def views_log(caplog, monkeypatch):
     _route_to_caplog(caplog, monkeypatch, "twicc.tts.views")
+    _route_to_caplog(caplog, monkeypatch, "twicc.tts.service")
     return caplog
 
 
@@ -392,7 +392,7 @@ def test_parse_range(header, expected):
 )
 def test_rejects_invalid_payloads(client, upstream, monkeypatch, body, message):
     # An invalid payload is a 400 even without a key: validation runs first.
-    monkeypatch.setattr(views, "openrouter_api_key", lambda: None)
+    monkeypatch.setattr(speech_service, "openrouter_api_key", lambda: None)
     response = _post_json(client, body)
     assert response.status_code == 400
     assert response.json() == {"error": message}
@@ -438,8 +438,8 @@ def test_audio_routes_reject_other_methods(client, upstream):
 
 def test_no_key_returns_503_without_upstream_call(client, upstream, monkeypatch, tmp_path):
     env_path = tmp_path / ".env"
-    monkeypatch.setattr(views, "openrouter_api_key", lambda: None)
-    monkeypatch.setattr(views, "get_env_path", lambda: env_path)
+    monkeypatch.setattr(speech_service, "openrouter_api_key", lambda: None)
+    monkeypatch.setattr(speech_service, "get_env_path", lambda: env_path)
     response = _post_json(client, VALID_PAYLOAD)
     assert response.status_code == 503
     assert response.json() == {
@@ -541,7 +541,7 @@ def test_open_passes_the_parts_and_pacing_to_the_pump(client, upstream, monkeypa
 
     async def scenario():
         with monkeypatch.context() as patch:
-            patch.setattr(views, "speech_parts", lambda request: ["a", "b"])
+            patch.setattr(speech_service, "speech_parts", lambda request: ["a", "b"])
             await run(VALID_PAYLOAD)
             await run({**VALID_PAYLOAD, "buffered": True})
         await run(VALID_PAYLOAD)
@@ -963,7 +963,7 @@ def test_release_after_complete_still_records_and_caches(client, upstream, monke
 
         # A settings test: released while its end steps still run.
         upstream.pump = FakeSpeech()
-        monkeypatch.setattr(views, "_record_last_test", slow_record)
+        monkeypatch.setattr(speech_service, "_record_last_test", slow_record)
         upstream.pump.send("set_headers", "audio/mpeg", "gen-2")
         upstream.pump.send("append", b"tested")
         audio_id = await _open_id(client, TEST_PAYLOAD)
@@ -1238,7 +1238,7 @@ def test_a_settings_test_records_its_run_then_its_cost(client, upstream, monkeyp
         measured.append(content)
         return audio_duration_seconds(content, content_type)
 
-    monkeypatch.setattr(views, "audio_duration_seconds", measure)
+    monkeypatch.setattr(speech_service, "audio_duration_seconds", measure)
 
     async def scenario():
         upstream.pump.send("begin_part")
@@ -1362,8 +1362,8 @@ def test_on_end_steps_fail_independently(client, upstream, monkeypatch, views_lo
     async def broken_record(config_id, update):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(views, "speech_cache", BrokenCache())
-    monkeypatch.setattr(views, "_record_last_test", broken_record)
+    monkeypatch.setattr(speech_service, "speech_cache", BrokenCache())
+    monkeypatch.setattr(speech_service, "_record_last_test", broken_record)
 
     async def scenario():
         audio_ids = []
@@ -1380,7 +1380,7 @@ def test_on_end_steps_fail_independently(client, upstream, monkeypatch, views_lo
         def broken_cost_log(generation_ids, api_key, on_cost=None):
             raise RuntimeError("no running loop")
 
-        monkeypatch.setattr(views, "schedule_cost_log", broken_cost_log)
+        monkeypatch.setattr(speech_service, "schedule_cost_log", broken_cost_log)
         upstream.pump.send("set_headers", "audio/mpeg", "gen-3")
         upstream.pump.send("append", b"ID3audio")
         upstream.pump.send("finish")
@@ -1390,7 +1390,7 @@ def test_on_end_steps_fail_independently(client, upstream, monkeypatch, views_lo
             assert await _body(await _read(client, audio_id)) == b"ID3audio"
 
     asyncio.run(scenario())
-    errors = [r.getMessage() for r in views_log.records if r.name == "twicc.tts.views" and r.exc_info]
+    errors = [r.getMessage() for r in views_log.records if r.name == "twicc.tts.service" and r.exc_info]
     assert errors == [
         "TTS audio could not be cached",
         "TTS last test of cfg-1 could not be recorded",
@@ -1439,9 +1439,9 @@ def script_upstream(monkeypatch, tts_json):
         fake.delete_files.append(delete_file)
         return fake.pump(request, None, stream)
 
-    monkeypatch.setattr(views, "pump_script_speech", pump_script_speech)
-    monkeypatch.setattr(views, "_record_last_test", fake.record_last_test)
-    monkeypatch.setattr(views, "schedule_cost_log", fake.schedule_cost_log)
+    monkeypatch.setattr(speech_service, "pump_script_speech", pump_script_speech)
+    monkeypatch.setattr(speech_service, "_record_last_test", fake.record_last_test)
+    monkeypatch.setattr(speech_service, "schedule_cost_log", fake.schedule_cost_log)
     return fake
 
 
@@ -1478,7 +1478,7 @@ def test_a_script_speech_runs_the_stored_command(client, script_upstream):
 
 
 def test_a_script_speech_needs_no_key(client, script_upstream, monkeypatch):
-    monkeypatch.setattr(views, "openrouter_api_key", lambda: None)
+    monkeypatch.setattr(speech_service, "openrouter_api_key", lambda: None)
     _store_script()
 
     async def scenario():
@@ -1843,8 +1843,8 @@ def adaptation(monkeypatch, upstream, tts_json):
     def pump_script_speech(request, stream, parts=None, *, paced=False, delete_file):
         return fake.pump(request, stream, parts, paced)
 
-    monkeypatch.setattr(views, "pump_speech", pump_speech)
-    monkeypatch.setattr(views, "pump_script_speech", pump_script_speech)
+    monkeypatch.setattr(speech_service, "pump_speech", pump_speech)
+    monkeypatch.setattr(speech_service, "pump_script_speech", pump_script_speech)
     return fake
 
 
@@ -1868,7 +1868,7 @@ class RecordedAdaptedParts(adapt.AdaptedParts):
 @pytest.fixture
 def recorded_sources(monkeypatch):
     RecordedAdaptedParts.made = []
-    monkeypatch.setattr(views, "AdaptedParts", RecordedAdaptedParts)
+    monkeypatch.setattr(speech_service, "AdaptedParts", RecordedAdaptedParts)
     return RecordedAdaptedParts.made
 
 
@@ -1909,7 +1909,7 @@ def test_an_adapted_openrouter_reading_gets_an_adapted_source(
     assert made["text"] == VALID_PAYLOAD["text"]
     assert made["engine"] == "haiku"
     assert made["limits"] == limits
-    assert made["fallback"] == views.speech_parts(request)
+    assert made["fallback"] == speech_service.speech_parts(request)
     [source] = adaptation.sources
     assert isinstance(source, adapt.AdaptedParts)
     assert adaptation.paced == [True]
@@ -1949,7 +1949,7 @@ def test_a_reading_not_adapted_gets_todays_parts_and_says_why(
         expected = script_parts(ScriptSpeechRequest(text, **{**SCRIPT_FIELDS, "max_chars": 300}))
     else:
         body = {**VALID_PAYLOAD, "text": text}
-        expected = views.speech_parts(parse_speech_request(body))
+        expected = speech_service.speech_parts(parse_speech_request(body))
     if case == "off":
         _store_adapt("off")
     if case == "no_provider":
@@ -2045,7 +2045,7 @@ def test_a_released_reading_tells_whether_adapted_text_came(
             await parts.aclose()
 
     monkeypatch.setattr(adapt, "_open_stream", open_stream)
-    monkeypatch.setattr(views, "pump_speech", pump_speech)
+    monkeypatch.setattr(speech_service, "pump_speech", pump_speech)
 
     async def scenario():
         audio_id = await _open_id(client, VALID_PAYLOAD)
@@ -2188,7 +2188,7 @@ def test_an_adaptation_failure_after_the_first_part_cuts_the_reading(client, ada
         stream.finish()
 
     monkeypatch.setattr(adapt, "_open_stream", open_stream)
-    monkeypatch.setattr(views, "pump_speech", pump_speech)
+    monkeypatch.setattr(speech_service, "pump_speech", pump_speech)
 
     async def scenario():
         nonlocal gate
@@ -2358,8 +2358,8 @@ TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
 
 @pytest.fixture
 def direct_reading(monkeypatch):
-    """Undo the autouse patch of ``views.direct_text``: the real decision runs."""
-    monkeypatch.setattr(views, "direct_text", direct_text)
+    """Undo the autouse patch of ``speech_service.direct_text``: the real decision runs."""
+    monkeypatch.setattr(speech_service, "direct_text", direct_text)
 
 
 def _speech_key(body: dict, name: str | None):
@@ -2665,8 +2665,8 @@ def test_saved_summary_bypasses_adaptation_and_checks_exact_body_before_audio(cl
     text = 'Exact previous-policy summary.'
     saved = {'id': 8, 'text': text, 'result_hash': hashlib.sha256(text.encode()).hexdigest()}
     monkeypatch.setattr(service, 'load_saved_summary', lambda saved_id: saved.copy())
-    monkeypatch.setattr(views, '_stored_adapt_choice', lambda: 'openrouter')
-    monkeypatch.setattr(views, 'resolve_engine', lambda *_: pytest.fail('Summary invokes adaptation'))
+    monkeypatch.setattr(speech_service, '_stored_adapt_choice', lambda: 'openrouter')
+    monkeypatch.setattr(speech_service, 'resolve_engine', lambda *_: pytest.fail('Summary invokes adaptation'))
     async def scenario():
         payload = {k: v for k, v in CACHED_PAYLOAD.items() if k != 'text'}
         payload.update(saved_summary_id=8, summary_result_hash=saved['result_hash'])

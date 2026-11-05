@@ -528,3 +528,100 @@ def test_summary_prompt_asks_a_third_of_the_source_within_bounds(service):
     assert service.summary_target_words('é' * 1200) == 66, 'a text without spaces counts one word per six characters'
     prompt = service.summary_prompt('Text with {braces} inside')
     assert 'aim for 15 words' in prompt and 'Text with {braces} inside' in prompt
+
+
+def speech_reference(handle, **changes):
+    return {'source': {}, **{key: handle.descriptor[key] for key in ('source_key', 'source_hash', 'policy_key')},
+            'handle_id': handle.id, **changes}
+
+
+def test_retain_summary_for_speech_owns_running_handle_after_page_release(service, source, monkeypatch):
+    async def scenario():
+        entered, closed = asyncio.Event(), asyncio.Event()
+        async def stream(*_):
+            try:
+                entered.set()
+                yield 'Partial summary'
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+        monkeypatch.setattr(service, 'stream_text', stream)
+        page = await service.acquire_summary({})
+        await entered.wait()
+        reader = await service.retain_summary_for_speech(speech_reference(page))
+        assert isinstance(reader, service.SummaryReader)
+        assert reader.id != page.id
+        await service.release_summary(page.id)
+        assert not closed.is_set()
+        await reader.aclose()
+        assert closed.is_set()
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+def test_retain_summary_for_speech_reconstructs_released_handle(service, source, monkeypatch):
+    calls = []
+    async def stream(*_):
+        calls.append(True)
+        yield 'Independent summary'
+    monkeypatch.setattr(service, 'stream_text', stream)
+    async def scenario():
+        page = await service.acquire_summary({})
+        reference = speech_reference(page)
+        await service.release_summary(page.id)
+        reader = await service.retain_summary_for_speech(reference)
+        snapshots = [item async for item in reader.snapshots()]
+        assert snapshots[-1]['state'] == 'complete'
+        assert snapshots[-1]['text'] == 'Independent summary'
+        await reader.aclose()
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('field', ['source_key', 'source_hash', 'policy_key'])
+@pytest.mark.parametrize('live', [False, True])
+def test_retain_summary_for_speech_rejects_descriptor_mismatch(service, source, monkeypatch, field, live):
+    async def stream(*_):
+        yield 'Partial'
+        await asyncio.Event().wait()
+    monkeypatch.setattr(service, 'stream_text', stream)
+    async def scenario():
+        page = await service.acquire_summary({})
+        reference = speech_reference(page, **{field: 'different'})
+        if not live:
+            await service.release_summary(page.id)
+        before = set(service._handles)
+        with pytest.raises(service.SummaryUnavailable, match='changed'):
+            await service.retain_summary_for_speech(reference)
+        assert set(service._handles) == before
+        await service.release_summary(page.id)
+    asyncio.run(scenario())
+
+
+def test_retain_saved_summary_uses_exact_result_and_rejects_replacement(service, source, monkeypatch):
+    async def stream(*_):
+        yield 'Frozen saved body.'
+    monkeypatch.setattr(service, 'stream_text', stream)
+    async def scenario():
+        page = await service.acquire_summary({})
+        final = await terminal(service, page)
+        saved_id, result_hash = final['saved_id'], final['result_hash']
+        await service.release_summary(page.id)
+        reader = await service.retain_summary_for_speech({'saved_id': saved_id, 'result_hash': result_hash})
+        assert reader.snapshot['text'] == 'Frozen saved body.'
+        assert reader.snapshot['saved_id'] == saved_id
+        await sync_to_async(MessageSummary.objects.filter(pk=saved_id).update)(text='Replacement body.')
+        assert reader.snapshot['text'] == 'Frozen saved body.'
+        with pytest.raises(service.SummaryChanged) as caught:
+            await service.retain_summary_for_speech({'saved_id': saved_id, 'result_hash': result_hash})
+        assert caught.value.saved_id == saved_id
+        await reader.aclose()
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+def test_retain_summary_for_speech_rejects_handle_without_reconstructible_source(service):
+    async def scenario():
+        with pytest.raises(ValueError):
+            await service.retain_summary_for_speech({'handle_id': 'page-only'})
+    asyncio.run(scenario())

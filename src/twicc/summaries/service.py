@@ -6,6 +6,7 @@ results. The registry owns no session data beyond its frozen source snapshot.
 import asyncio
 import hashlib
 import logging
+import re
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -69,6 +70,14 @@ class SummaryGone(ValueError):
 
 class SummaryUnavailable(ValueError):
     """The source is ineligible, or lookup-only acquisition has no result."""
+
+
+class SummaryChanged(SummaryUnavailable):
+    """The saved result no longer matches the caller's frozen fingerprint."""
+
+    def __init__(self, saved_id: int):
+        super().__init__('The saved summary changed. Refresh it before reading.')
+        self.saved_id = saved_id
 
 
 def _policy() -> tuple[str, str]:
@@ -457,3 +466,60 @@ class SummaryReader:
 async def acquire_summary_reader(handle_id: str) -> SummaryReader:
     handle = _handle(handle_id)
     return SummaryReader(SummaryHandle(handle._run, handle.descriptor, claimed=True))
+
+
+async def retain_summary_for_speech(reference: dict) -> SummaryReader:
+    """Retain a saved result or a reconstructible frozen source independently.
+
+    A live handle is only a reuse hint. The returned reader owns its subscription;
+    releasing the page's handle cannot release this reader.
+    """
+    if not isinstance(reference, dict):
+        raise ValueError('The summary reference must be an object')
+    if 'saved_id' in reference:
+        saved_id, result_hash = reference['saved_id'], reference.get('result_hash')
+        if type(saved_id) is not int or saved_id < 1:
+            raise ValueError("'saved_id' must be a positive integer")
+        if not isinstance(result_hash, str) or re.fullmatch('[0-9a-f]{64}', result_hash) is None:
+            raise ValueError("'result_hash' must be the saved result fingerprint")
+        if any(key in reference for key in ('source', 'source_key', 'source_hash', 'policy_key', 'handle_id')):
+            raise ValueError('A summary needs exactly one reference')
+        try:
+            saved = await sync_to_async(load_saved_summary)(saved_id)
+        except MessageSummary.DoesNotExist:
+            raise SummaryGone('The saved summary is no longer available') from None
+        if saved['result_hash'] != result_hash:
+            raise SummaryChanged(saved_id)
+        # A complete run never generates or saves again. Its text is the frozen
+        # result, independent of later row replacement or deletion.
+        source = SummarySource(saved['source_key'], saved['source_hash'], saved['text'], saved['text'],
+                               saved['session_id'], None, (), len(saved['text']), True, None, None, None)
+        run = _SummaryRun(source, saved['requested_model'], saved['policy_key'])
+        run.state, run.text, run.saved_id = 'complete', saved['text'], saved_id
+        run.engine = Engine(saved['engine'], None)
+        run.first_text_ms = saved['metadata'].get('first_text_ms')
+        run.total_ms = saved['metadata'].get('total_ms')
+        run.fallback_reason = saved['metadata'].get('fallback_reason')
+        run.revision = saved['metadata'].get('revision', 1)
+        return SummaryReader(SummaryHandle(run, saved, claimed=True))
+    if not isinstance(reference.get('source'), dict):
+        raise ValueError("'source' must reconstruct the summary")
+    fields = ('source_key', 'source_hash', 'policy_key')
+    if not all(field in reference for field in fields):
+        raise ValueError('A summary source needs its frozen source key, source hash, and policy key')
+    if 'result_hash' in reference:
+        raise ValueError("'result_hash' requires 'saved_id'")
+    handle_id = reference.get('handle_id')
+    if handle_id is not None and (not isinstance(handle_id, str) or not handle_id.strip()):
+        raise ValueError("'handle_id' must be a non-empty handle")
+    handle = _handles.get(handle_id) if handle_id else None
+    if handle is not None:
+        if any(handle.descriptor[field] != reference[field] for field in fields):
+            raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
+        return await acquire_summary_reader(handle.id)
+    handle = await acquire_summary(reference['source'])
+    if any(handle.descriptor[field] != reference[field] for field in fields):
+        await release_summary(handle.id)
+        raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
+    handle.claim()
+    return SummaryReader(handle)
