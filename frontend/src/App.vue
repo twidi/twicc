@@ -936,6 +936,12 @@ body {
     padding: 0;
 }
 
+/* Chromium keeps its toolbar on screen: the body fits the visible area instead of Web Awesome's
+   100vh, which left an empty band to scroll into (utils/staticBrowserToolbar.js). */
+html.static-browser-toolbar body {
+    min-height: 100dvh;
+}
+
 /* Web Awesome removes the footer's block-start padding. Restore the dialog's
    configured spacing so scrolling content does not touch fixed actions. */
 wa-dialog::part(footer) {
