@@ -42,6 +42,9 @@ android {
     buildFeatures { buildConfig = true }
     buildTypes {
         release {
+            isDebuggable = false
+            // Preserve local APK update compatibility across release/debug and both engines.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
     }

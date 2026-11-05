@@ -1,5 +1,5 @@
 # Opt-in template: copy to .github/workflows/android.yml to enable.
-name: Android debug APK
+name: Android release APK
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
           ./build.sh gecko "$TWICC_BUILD_PROFILE"
       - uses: actions/upload-artifact@v4
         with:
-          name: twicc-android-debug
+          name: twicc-android-release
           path: android/dist/**/*
           if-no-files-found: error
           retention-days: 7

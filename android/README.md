@@ -3,7 +3,7 @@
 **Experimental Android client.** Build one app with either
 **Android System WebView** or **Mozilla GeckoView**.
 The engine is selected at build time. Both builds use `com.twidi.twicc`, the
-same version code, app name, icon, native preferences, and debug signing key.
+same version code, app name, icon, native preferences, and local signing key.
 Installing one build replaces the other. There is no runtime engine selector.
 
 The APK opens an existing TwiCC **HTTPS** server, usually through a tunnel.
@@ -62,7 +62,7 @@ Neither build guarantees a permanent network connection or universal OEM reliabi
   Network access is required to download the SDK, Gradle, and dependencies.
 - AndroidX WebKit **1.14.0** belongs only to the WebView flavor. GeckoView
   belongs only to the Gecko flavor. Dependencies are pinned.
-- No Play Store account is required to build and install debug APKs.
+- No Play Store account is required to build and install these APKs.
 
 GeckoView uses MPL 2.0 and bundled component licenses. This app does not modify
 Gecko sources. See the [versioned source archive](https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview/159.0.20261102144711/geckoview-159.0.20261102144711-sources.jar)
@@ -84,6 +84,8 @@ From the repository root:
 ```sh
 ./android/build.sh webview 64
 ./android/build.sh gecko 64
+# Enable Android and browser debugging when needed:
+./android/build.sh gecko 64 --debug
 ```
 
 The first argument selects the engine. The second argument selects the device profile:
@@ -98,6 +100,11 @@ The first argument selects the engine. The second argument selects the device pr
 An ARM64 emulator uses `64`. Both arguments are required. Missing or invalid
 arguments print usage and stop before Gradle runs. Use `./android/build.sh --help`
 to list the profiles. Universal is generated only when explicitly selected.
+
+The default mode is **release**. It disables Android debugging and browser remote
+inspection. Add `--debug` after the profile to enable both. This option works
+with either engine and every device profile. TTS and other app features work
+in both modes. Release builds currently keep code minification disabled.
 
 The build entry point has standalone regression tests:
 
@@ -114,9 +121,10 @@ version code **11**, application ID, native preferences, and signing key.
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
 
-The selected output directory is `android/dist/<engine>/<profile>/`. It contains
-`app-<engine>-<profile>-debug.apk` and `SHA256SUMS` for that APK only. Other profiles
-have separate directories. The script copies the current APK by its exact name;
+The selected output directory is `android/dist/<engine>/<profile>/<mode>/`, where
+`<mode>` is `release` or `debug`. It contains `app-<engine>-<profile>-<mode>.apk`
+and `SHA256SUMS` for that APK only. Engines, profiles, and modes have separate
+directories. The script copies the current APK by its exact name;
 it does not collect stale APKs from previous Gradle builds.
 
 Gecko APKs are much larger because they include the browser engine. Transfer
@@ -124,16 +132,19 @@ the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/64/app-gecko-64-debug.apk
+adb install -r android/dist/gecko/64/release/app-gecko-64-release.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/64/app-webview-64-debug.apk
+adb install -r android/dist/webview/64/release/app-webview-64-release.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
-reuse the same ignored debug key. Another computer or fresh CI runner normally
-creates a different key. A certificate mismatch prevents replacement. Debug
-signing is for personal tests; maintained distribution needs a stable private
-release key. Android Studio/direct Gradle users must set the same
+reuse the same ignored local key for release and debug builds. The key comes
+from Android's debug signing configuration; using it does not make a release
+APK debuggable. All variants can update the same local installation.
+Another computer or fresh CI runner normally creates a different key.
+A certificate mismatch prevents replacement. This automatic key is for personal
+builds; maintained distribution needs a stable private release key and its own
+signing configuration. Android Studio/direct Gradle users must set the same
 `ANDROID_USER_HOME` to share the script's key.
 
 Direct Gradle commands:
@@ -141,20 +152,22 @@ Direct Gradle commands:
 ```sh
 cd android
 export ANDROID_USER_HOME="$PWD/.signing"
-./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testWebviewDebugUnitTest :app:lintWebviewDebug :app:assembleWebviewDebug
-./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testGeckoDebugUnitTest :app:lintGeckoDebug :app:assembleGeckoDebug
+./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testWebviewReleaseUnitTest :app:lintWebviewRelease :app:assembleWebviewRelease
+./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testGeckoReleaseUnitTest :app:lintGeckoRelease :app:assembleGeckoRelease
 # Policy tests only, without Android SDK configuration:
 ./gradlew --configure-on-demand :policy:test
 ```
 
-Direct APK output is `app/build/outputs/apk/<engine>/debug/app-<engine>-debug.apk`.
+Direct APK output is `app/build/outputs/apk/<engine>/<mode>/app-<engine>-<mode>.apk`.
 Gradle defaults to profile `64`; set `-PtargetProfile=32`, `emulator`, or `universal`
 to choose another profile. Native library filtering happens before packaging.
 The Gradle output path is shared between profiles. Use the build script to keep
 selected APKs and checksums in separate distribution directories.
-Open `android/` in Android Studio and select `webviewDebug` or `geckoDebug`.
-The opt-in `ci-build.yml` template builds both flavors sequentially for the selected
-device profile, with one signing key. Copy it to `.github/workflows/android.yml` to enable it.
+Use `Release` tasks for normal builds and `Debug` tasks for debugging.
+Open `android/` in Android Studio and select `webviewRelease` or `geckoRelease`.
+The `webviewDebug` and `geckoDebug` variants enable debugging.
+The opt-in `ci-build.yml` template builds release APKs for both flavors sequentially
+for the selected device profile, with one signing key. Copy it to `.github/workflows/android.yml` to enable it.
 Each workflow run needs a securely restored signing key for updates.
 
 ## Source structure
