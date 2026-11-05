@@ -283,7 +283,10 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     }
     private fun closeTransport() {
         exporting = false; connectionId = null
-        transport?.event = {}; transport?.close(); transport = null
+        val socket = transport
+        socket?.event = {}; transport = null
+        // TLS socket closure can write close_notify. Keep it off the service main looper.
+        platform.worker { socket?.close() }
     }
     private fun stop() {
         closeTransport(); output?.close(); output = null; resource = null

@@ -120,3 +120,26 @@ def test_prefixed_parts_closes_body_adaptation(monkeypatch):
             assert closed.is_set()
 
     asyncio.run(scenario())
+
+
+def test_combined_prefix_uses_the_existing_splitter_and_closes_pending_parts():
+    from twicc.tts.part_source import PrefixedParts
+    from twicc.tts.parts import split_text
+
+    async def scenario():
+        body = StaticParts(["The body."])
+        source = PrefixedParts("Project title.", body, lambda text: split_text(text, 20, 20))
+        assert await source.next_part() == "Project title."
+        assert source.split is True
+        assert await source.next_part() == "The body."
+        assert await source.next_part() is None
+        await source.aclose()
+
+        body = StaticParts(["The body.", "Later body."])
+        source = PrefixedParts("Project title.", body, lambda text: split_text(text, 20, 20))
+        assert await source.next_part() == "Project title."
+        await source.aclose()
+        assert await source.next_part() is None
+        assert await body.next_part() is None
+
+    asyncio.run(scenario())

@@ -219,6 +219,543 @@ class TtsPlatformBoundaryTest {
         }
     }
 
+    /** Real Service + transport + player. Only the provider/backend responses are fixtures. */
+    private inner class ServiceFixture : AutoCloseable {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val instance = UUID.randomUUID().toString()
+        val owner = DocumentOwner(instance, "fixture-page", TtsService.nextDocumentGeneration())
+        val frames = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        val requests = java.util.concurrent.CopyOnWriteArrayList<RecordedRequest>()
+        val endingEntered = CompletableFuture<Unit>()
+        val endingGate = java.util.concurrent.CountDownLatch(1)
+        @Volatile var holdEnding = false
+        @Volatile var socket: WebSocket? = null
+        @Volatile var activation: String? = null
+        @Volatile var revision = 1L
+        @Volatile var pageScript = ""
+        @Volatile var clientGate = java.util.concurrent.CountDownLatch(1)
+        @Volatile var holdManualAudio = false
+        val manualFrame = CompletableFuture<JSONObject>()
+        val resumeFrame = CompletableFuture<JSONObject>()
+        val resumeGate = java.util.concurrent.CountDownLatch(1)
+        @Volatile var holdResume = false
+        fun deliverAudio(frame: JSONObject) {
+            socket!!.send(JSONObject().put("protocol", 1).put("type", "audio")
+                .put("reading_id", frame.getString("reading_id")).put("generation", frame.getLong("generation"))
+                .put("audio_id", frame.getString("reading_id")).put("content_type", "audio/pcm;rate=16000;channels=1").toString())
+        }
+        val server = MockWebServer()
+        val activity: ActivityScenario<MainActivity>
+        val binding: Binding
+        var bound = true
+        init {
+            val assets = instrumentation.context.assets
+            val certificate = HeldCertificate.decode(assets.open("tts-cert.pem").bufferedReader().readText() +
+                assets.open("tts-server-key.fixture").bufferedReader().readText())
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            server.protocols = listOf(Protocol.HTTP_1_1)
+            val samples = assets.open("three-tones.pcm").use { it.readBytes() }
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    requests += request
+                    if (request.path == "/client") return MockResponse().setHeader("Content-Type", "text/html")
+                        .addHeader("Set-Cookie", "fixture-auth=httponly; Secure; HttpOnly; Path=/")
+                        .setBody("""<!doctype html><body>Native TTS fixture<script type="module">
+                            import {createAndroidAppClient} from '/androidAppClient.js';
+                            import {createNativeTtsClient} from '/nativeTtsClient.js';
+                            const app = createAndroidAppClient(window, {timeoutMs:5000});
+                            const native = createNativeTtsClient({appClient:app,document});
+                            window.addEventListener('pagehide', () => native.detach());
+                            await native.attach();
+                            await fetch('/fixture/client-start');
+                            $pageScript
+                        </script>""")
+                    if (request.path in setOf("/androidAppClient.js", "/nativeTtsClient.js")) return MockResponse()
+                        .setHeader("Content-Type", "text/javascript").setBody(assets.open(request.path!!.removePrefix("/")).bufferedReader().readText())
+                    if (request.path == "/api/tts/native/capabilities/") return MockResponse().setHeader("Content-Type", "application/json")
+                        .setBody("""{"protocol":1,"available":true}""")
+                    if (request.path == "/fixture/client-start") clientGate.await(15, TimeUnit.SECONDS)
+                    if (request.path!!.startsWith("/fixture/")) return MockResponse().setResponseCode(204)
+                    if (request.path == "/ws/tts/") return MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                        override fun onOpen(webSocket: WebSocket, response: Response) { socket = webSocket }
+                        override fun onMessage(webSocket: WebSocket, text: String) {
+                            val frame = JSONObject(text); frames += frame
+                            when (frame.getString("type")) {
+                                "open" -> webSocket.send("""{"protocol":1,"type":"opened_session","session_id":"fixture","resume_secret":"secret","revision":1}""")
+                                "manual", "select" -> {
+                                    manualFrame.complete(frame)
+                                    if (!holdManualAudio) deliverAudio(frame)
+                                }
+                                "listen" -> activation = frame.getString("activation_id")
+                                "resume" -> {
+                                    resumeFrame.complete(frame)
+                                    if (holdResume) resumeGate.await(10, TimeUnit.SECONDS)
+                                }
+                                "ping" -> webSocket.send(JSONObject().put("protocol", 1).put("type", "pong").put("ack_seq", frame.getLong("seq")).toString())
+                            }
+                            webSocket.send(JSONObject().put("protocol", 1).put("type", "state").put("revision", ++revision)
+                                .put("ack_seq", frame.getLong("seq")).put("configuration_available", true).toString())
+                        }
+                        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+                    })
+                    if (!request.path!!.startsWith("/api/tts/native/")) return MockResponse().setResponseCode(404)
+                    assertEquals("secret", request.getHeader("X-TwiCC-TTS-Session"))
+                    assertNull(request.getHeader("Range"))
+                    if (request.method == "DELETE") return MockResponse().setResponseCode(204)
+                    if (request.path!!.endsWith("/ending/")) {
+                        if (holdEnding && !endingEntered.isDone) { endingEntered.complete(Unit); endingGate.await(20, TimeUnit.SECONDS) }
+                        return MockResponse().setHeader("Content-Type", "application/json").setBody("""{"state":"complete"}""")
+                    }
+                    return MockResponse().setHeader("Content-Type", "audio/pcm;rate=16000;channels=1")
+                        .setChunkedBody(okio.Buffer().write(samples), 797)
+                        .throttleBody((samples.size / 3).toLong(), 1700, TimeUnit.MILLISECONDS)
+                }
+            }
+            server.start()
+            val origin = server.url("/").toString().removeSuffix("/")
+            shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+            shell("cmd deviceidle whitelist +${context.packageName}")
+            activity = ActivityScenario.launch(MainActivity::class.java)
+            binding = bindService(context)
+            activity.onActivity {
+                binding.binder.configure(TtsActivationSource(instance, "Integration fixture", origin) { _, callback -> callback(Result.success(emptyList())) })
+                assertTrue(binding.binder.dispatch(TtsCommand.AttachDocument(owner)).accepted)
+            }
+        }
+        fun manual(operation: String) = instrumentation.runOnMainSync {
+            assertTrue(binding.binder.dispatch(TtsCommand.Manual(owner, operation, mapOf("kind" to "text", "source" to "test",
+                "text" to "Three real tones", "speech" to mapOf("text" to "Three real tones")))).accepted)
+        }
+        fun snapshot(): NativeTtsSnapshot {
+            var value: NativeTtsSnapshot? = null
+            instrumentation.runOnMainSync { value = TtsService.cachedSnapshot(instance) }
+            return value!!
+        }
+        fun await(message: String, timeout: Long = 10000, condition: () -> Boolean) {
+            val end = android.os.SystemClock.elapsedRealtime() + timeout
+            while (!condition() && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(25)
+            assertTrue("$message: ${snapshot()}", condition())
+        }
+        fun dismiss() {
+            if (bound) { context.unbindService(binding.connection); bound = false }
+            activity.onActivity { it.finishAndRemoveTask() }
+            activity.close()
+        }
+        fun notification() = context.getSystemService(android.app.NotificationManager::class.java)
+            .activeNotifications.single { it.id == TtsNotification.ID }.notification
+        fun candidate(eventId: Int = 1) {
+            assertTrue(socket!!.send(JSONObject().put("protocol", 1).put("type", "candidate").put("activation_id", activation)
+                .put("event_id", eventId).put("text", "Eligible event after silent waiting").toString()))
+        }
+        fun assertReleasedOnce() {
+            fun releases() = requests.filter { it.method == "DELETE" && it.path!!.startsWith("/api/tts/native/") }
+            await("One DELETE per opened audio") { releases().size == frames.count { it.optString("type") in setOf("manual", "select") } }
+            assertEquals(releases().map { it.path }.toSet().size, releases().size)
+        }
+        override fun close() {
+            endingGate.countDown(); resumeGate.countDown(); clientGate.countDown()
+            context.stopService(Intent(context, TtsService::class.java))
+            if (bound) context.unbindService(binding.connection)
+            activity.close()
+            shell("cmd deviceidle unforce")
+            shell("dumpsys battery reset")
+            shell("input keyevent KEYCODE_WAKEUP")
+            shell("wm dismiss-keyguard")
+            shell("cmd deviceidle whitelist -${context.packageName}")
+            server.shutdown()
+        }
+    }
+
+    /** Run the actual JS adapters through each real engine, common bridge, and service binder. */
+    private inner class BrowserClientFixture(val fixture: ServiceFixture, val holdCookies: Boolean = false,
+        val holdOldStop: Boolean = false) : AutoCloseable {
+        lateinit var page: BrowserSession
+        lateinit var bridge: com.twidi.twicc.AndroidAppBridge
+        var document = fixture.owner
+        val accepted = CompletableFuture<JSONObject>()
+        val oldStop = CompletableFuture<String>()
+        val cookies = CompletableFuture<() -> Unit>()
+        val tokens = mutableListOf<String>()
+        init {
+            prepareGeckoTestProfile()
+            val address = fixture.server.url("/").toString().removeSuffix("/")
+            fixture.activity.onActivity { activity ->
+                val native = NativeTtsBridge({ page.nativeTtsSupported }, { document }, { fixture.binding.binder.snapshot() },
+                    { page.nativeTtsDocumentToken }) { command ->
+                    fixture.binding.binder.configure(TtsActivationSource(fixture.instance, "Real page fixture", address) { urls, callback ->
+                        page.exportTtsCookies(urls) { result ->
+                            if (holdCookies) cookies.complete { callback(result) } else callback(result)
+                        }
+                    })
+                    fixture.binding.binder.dispatch(command)
+                }
+                bridge = com.twidi.twicc.AndroidAppBridge({ JSONObject().put("capabilities", JSONObject().put("nativeTts", 1)) },
+                    { _, _ -> }, { _, _ -> null }, native::receive)
+                page = EngineProvider.engine.createSession(activity, Instance(fixture.instance, "Real page fixture", address), object : BrowserEvents {
+                    override fun onNavigationRequest(request: NavigationRequest) = NavigationDecision.ALLOW
+                    override fun onPageStarted(url: String) {
+                        document = DocumentOwner(fixture.instance, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
+                        fixture.binding.binder.dispatch(TtsCommand.AttachDocument(document))
+                    }
+                    override fun onLocationChanged(url: String) {}
+                    override fun onProgressChanged(progress: Int) {}
+                    override fun onPageFinished() {}
+                    override fun onHistoryChanged(canGoBack: Boolean) {}
+                    override fun onFailure(message: String) { accepted.completeExceptionally(AssertionError(message)); oldStop.completeExceptionally(AssertionError(message)) }
+                    override fun onRendererStopped() { onFailure("Renderer stopped") }
+                    override fun onDownload(source: DownloadSource) {}
+                    override fun onAppMessage(message: String): String {
+                        val request = JSONObject(message)
+                        if (holdOldStop && request.optString("command") == "tts.stop_all" && !oldStop.isDone) {
+                            oldStop.complete(message)
+                            return JSONObject().put("protocol", 1).put("id", request.getString("id")).put("ok", true)
+                                .put("state", JSONObject().put("accepted", false)).toString()
+                        }
+                        val reply = bridge.receive(message)
+                        if (request.optString("command") == "tts.attach") page.nativeTtsDocumentToken?.let { tokens += it }
+                        if (request.optString("command") == "tts.manual") accepted.complete(JSONObject(reply).getJSONObject("state"))
+                        return reply
+                    }
+                }, NativeRequests(activity))
+                activity.setContentView(page.view)
+                page.load("$address/client")
+            }
+            allowClientStart()
+        }
+        fun allowClientStart() {
+            fixture.await("Real document and credential principal initialize", 30000) {
+                var ready = false
+                fixture.instrumentation.runOnMainSync {
+                    val token = page.nativeTtsDocumentToken
+                    ready = token != null
+                    if (ready && EngineProvider.engine.displayName.startsWith("Gecko")) {
+                        val exports = Class.forName("com.twidi.twicc.engines.gecko.TtsExports")
+                        val documents = exports.getDeclaredField("documents").apply { isAccessible = true }.get(null) as Map<*, *>
+                        val current = documents[token]
+                        ready = current != null && current.javaClass.getDeclaredField("storeId").apply { isAccessible = true }.get(current) != null
+                    }
+                }
+                ready
+            }
+            fixture.clientGate.countDown()
+        }
+        override fun close() { fixture.instrumentation.runOnMainSync { page.close() } }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun realPageTemporarySummarySurvivesSourceReleaseCookieWaitAndActivityClose() {
+        ServiceFixture().use { fixture ->
+            fixture.holdManualAudio = true
+            fixture.pageScript = """
+                const captured = {kind:'summary',source:'summary',text:'Frozen selection',identity:null,config_id:null,
+                    speech:{text:'',config_id:null},summary:{source:{text:'Frozen temporary source',purpose:'selection'},requested_model:'luna'}};
+                native.manual(captured);
+                captured.summary.source.text = 'Changed page source';
+                await fetch('/fixture/page-source', {method:'DELETE'});
+            """.trimIndent()
+            BrowserClientFixture(fixture, holdCookies = true).use { browser ->
+                assertTrue(browser.accepted.get(30, TimeUnit.SECONDS).getBoolean("accepted"))
+                val deliver = browser.cookies.get(10, TimeUnit.SECONDS)
+                fixture.await("Page releases its own source before native cookie completion") {
+                    fixture.requests.any { it.path == "/fixture/page-source" && it.method == "DELETE" }
+                }
+                assertFalse(fixture.requests.any { it.path == "/ws/tts/" })
+                browser.close(); fixture.dismiss()
+                fixture.instrumentation.runOnMainSync { deliver() }
+                val manual = fixture.manualFrame.get(10, TimeUnit.SECONDS)
+                val summary = manual.getJSONObject("request").getJSONObject("summary")
+                assertEquals("Frozen temporary source", summary.getJSONObject("source").getString("text"))
+                assertEquals("luna", summary.getString("requested_model"))
+                assertFalse(summary.has("handle_id"))
+                assertTrue(fixture.requests.single { it.path == "/ws/tts/" }.getHeader("Cookie").orEmpty().contains("fixture-auth=httponly"))
+                // Generation finishes after page and Activity destruction; the native owner alone receives audio.
+                fixture.deliverAudio(manual)
+                fixture.await("Accepted summary drains after page destruction", 15000) { fixture.snapshot().results.any { it.ended["ok"] == true } }
+                assertEquals(1, fixture.frames.count { it.optString("type") == "started" })
+                fixture.assertReleasedOnce()
+            }
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun sameUrlReloadRejectsDelayedRealDocumentIngressWithoutStoppingListening() {
+        ServiceFixture().use { fixture ->
+            fixture.pageScript = "await app.request('tts.stop_all');"
+            BrowserClientFixture(fixture, holdOldStop = true).use { browser ->
+                val delayed = browser.oldStop.get(30, TimeUnit.SECONDS)
+                val oldToken = JSONObject(delayed).getString("documentToken")
+                fixture.pageScript = """
+                    const accepted = await native.listen({pageId:'stable-timeline-page',scope:{kind:'global',id:null,label:'All events'},
+                        includeMuted:true,boundary:'2026-11-05T10:00:00.000000Z'});
+                    await fetch('/fixture/reloaded?accepted='+accepted.accepted);
+                """.trimIndent()
+                fixture.clientGate = java.util.concurrent.CountDownLatch(1)
+                val reloadUrl = fixture.server.url("/client").toString()
+                fixture.activity.onActivity { browser.page.load(reloadUrl, bypassCache = true) }
+                fixture.await("Reload invalidates the old committed token") {
+                    var changed = false
+                    fixture.instrumentation.runOnMainSync { changed = browser.page.nativeTtsDocumentToken != oldToken }
+                    changed
+                }
+                browser.allowClientStart()
+                fixture.await("New same-URL document attaches and listens", 30000) { fixture.requests.any { it.path == "/fixture/reloaded?accepted=true" } }
+                fixture.activity.onActivity {
+                    assertNotEquals(oldToken, browser.page.nativeTtsDocumentToken)
+                    val reply = JSONObject(browser.bridge.receive(delayed)).getJSONObject("state")
+                    assertFalse(reply.getBoolean("accepted"))
+                    assertEquals("stale_document", reply.getJSONObject("error").getString("code"))
+                    assertFalse(reply.has("snapshot")); assertFalse(reply.has("documentToken"))
+                    val value = fixture.binding.binder.snapshot().listening!!
+                    assertEquals("stable-timeline-page", value.pageId); assertTrue(value.includeMuted)
+                }
+                assertEquals(0, fixture.frames.count { it.optString("type") == "stop_all" })
+                assertEquals(2, browser.tokens.distinct().size)
+                fixture.instrumentation.runOnMainSync { fixture.binding.binder.dispatch(TtsCommand.StopAll) }
+            }
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun offlineNotificationSkipReconcilesBeforeLaterEligibleAudioWithoutReplay() {
+        ServiceFixture().use { fixture ->
+            fixture.activity.onActivity {
+                assertTrue(fixture.binding.binder.dispatch(TtsCommand.Listen(fixture.owner, ListeningScope("global", null), false,
+                    "2026-11-05T10:00:00.000000Z")).accepted)
+            }
+            fixture.await("Listening connects") { fixture.activation != null }
+            fixture.candidate()
+            val old = fixture.manualFrame.get(10, TimeUnit.SECONDS)
+            fixture.await("First automatic reading starts") { fixture.frames.any { it.optString("type") == "started" } }
+            fixture.dismiss()
+            fixture.holdResume = true
+            assertTrue(fixture.socket!!.close(1013, "Fixture outage"))
+            fixture.await("Socket loss reaches native owner") { fixture.snapshot().sessionStatus == "reconnecting" }
+            fixture.notification().actions.first { it.title == "Skip" }.actionIntent.send()
+            fixture.await("Offline Skip cancels locally without disabling listening") {
+                fixture.snapshot().playback.readingId == null && fixture.snapshot().listening != null
+            }
+            val resumed = fixture.resumeFrame.get(10, TimeUnit.SECONDS)
+            val replay = resumed.getJSONArray("commands")
+            assertTrue((0 until replay.length()).any { replay.getJSONObject(it).optString("type") == "skip" })
+            // A delayed old response arrives before resume's state acknowledgement.
+            fixture.deliverAudio(old)
+            fixture.resumeGate.countDown()
+            fixture.await("Retained cancellation reconciles") { fixture.snapshot().sessionStatus == "connected" }
+            fixture.candidate(2)
+            fixture.await("Later event starts once", 15000) { fixture.frames.count { it.optString("type") == "started" } == 2 }
+            fixture.await("Only later event completes", 15000) { fixture.frames.any { it.optString("type") == "finished" } }
+            assertEquals(2, fixture.requests.count { it.method == "GET" && it.path!!.contains("/audio/") && !it.path!!.endsWith("/ending/") })
+            assertEquals(1, fixture.frames.count { it.optString("type") == "finished" })
+            fixture.assertReleasedOnce()
+            fixture.notification().actions.last().actionIntent.send()
+            fixture.await("Stop all clears listener") { fixture.snapshot().listening == null }
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun notificationStopAllWhileRealEndingIsBlockedDoesNotWaitForEnding() {
+        ServiceFixture().use { fixture ->
+            fixture.holdEnding = true
+            fixture.manual("blocked-ending")
+            fixture.endingEntered.get(15, TimeUnit.SECONDS)
+            fixture.dismiss()
+            val start = android.os.SystemClock.elapsedRealtime()
+            fixture.notification().actions.last().actionIntent.send()
+            fixture.await("Stop all releases foreground despite blocked ending", 5000) {
+                fixture.context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID }
+            }
+            assertTrue(android.os.SystemClock.elapsedRealtime() - start < 5000)
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+            assertEquals(true, fixture.snapshot().results.single { it.operationId == "blocked-ending" }.ended["aborted"])
+            fixture.endingGate.countDown()
+            fixture.assertReleasedOnce()
+            assertEquals(0, fixture.frames.count { it.optString("type") == "finished" })
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun realServiceOwnsPlayerEndingReleaseAndShutdownWithoutActivity() {
+        ServiceFixture().use { fixture ->
+            fixture.manual("complete")
+            fixture.dismiss()
+            fixture.await("Real AudioTrack must start") { fixture.frames.any { it.optString("type") == "started" } }
+            fixture.await("Real player must drain", 15000) { fixture.snapshot().results.any { it.operationId == "complete" } }
+            val result = fixture.snapshot().results.single { it.operationId == "complete" }
+            assertTrue(result.started); assertEquals(true, result.ended["ok"])
+            fixture.assertReleasedOnce()
+            fixture.await("Finished acknowledgement must stop foreground") {
+                fixture.context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID }
+            }
+            assertEquals(1, fixture.frames.count { it.optString("type") == "started" })
+            assertEquals(1, fixture.frames.count { it.optString("type") == "finished" })
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun replacementDuringRealPlayerPendingEndingCompletesOnlyReplacement() {
+        ServiceFixture().use { fixture ->
+            fixture.holdEnding = true
+            fixture.manual("old")
+            fixture.endingEntered.get(15, TimeUnit.SECONDS)
+            fixture.manual("replacement")
+            fixture.await("Replacement starts while old ending remains blocked", 10000) {
+                fixture.frames.count { it.optString("type") == "started" } == 2
+            }
+            fixture.endingGate.countDown()
+            fixture.dismiss()
+            fixture.await("Replacement completes", 15000) { fixture.snapshot().results.any { it.operationId == "replacement" } }
+            val results = fixture.snapshot().results
+            assertEquals(true, results.single { it.operationId == "old" }.ended["aborted"])
+            assertEquals(true, results.single { it.operationId == "replacement" }.ended["ok"])
+            assertEquals(1, fixture.frames.count { it.optString("type") == "finished" })
+            fixture.assertReleasedOnce()
+        }
+    }
+
+    @androidx.test.filters.LargeTest
+    @Test fun screenOffArrivalAfterThirtySilentMinutes() {
+        assumeTrue("Explicit long emulator diagnostic", InstrumentationRegistry.getArguments().getString("longScreenOff") == "true")
+        ServiceFixture().use { fixture ->
+            fixture.activity.onActivity {
+                assertTrue(fixture.binding.binder.dispatch(TtsCommand.Listen(fixture.owner, ListeningScope("global", null), false,
+                    "2026-11-05T10:00:00.000000Z")).accepted)
+            }
+            fixture.await("Listening reaches actual WSS") { fixture.activation != null }
+            fixture.dismiss()
+            shell("cmd deviceidle enable")
+            shell("dumpsys battery unplug")
+            shell("input keyevent KEYCODE_SLEEP")
+            fixture.await("Display becomes asleep before forced Doze") { shell("dumpsys power").contains("mWakefulness=Asleep") }
+            val forced = shell("cmd deviceidle force-idle")
+            assertTrue(forced, forced.contains("Now forced in to deep idle mode"))
+            assertEquals("IDLE", shell("cmd deviceidle get deep").trim())
+            val start = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.i("TtsScreenOffEvidence", "START utcMillis=${System.currentTimeMillis()} elapsedRealtimeMillis=$start engine=${EngineProvider.engine.displayName} screen=${shell("dumpsys power").contains("mWakefulness=Asleep")} state=${shell("cmd deviceidle get deep").trim()} wakeLock=${currentWakeLocks().contains("TwiCC:NativeTts")}")
+            val end = start + 30 * 60 * 1000L
+            while (android.os.SystemClock.elapsedRealtime() < end) {
+                Thread.sleep(1000)
+                assertTrue("No silent audio stream", fixture.requests.none { it.path!!.contains("/audio/") })
+                assertNotNull(fixture.snapshot().listening)
+            }
+            val silentWaitMillis = android.os.SystemClock.elapsedRealtime() - start
+            assertTrue(silentWaitMillis >= 30 * 60 * 1000L)
+            assertTrue(shell("dumpsys deviceidle").contains("mState=IDLE"))
+            assertTrue(currentWakeLocks().contains("TwiCC:NativeTts"))
+            assertEquals(listOf("Stop all"), fixture.notification().actions.map { it.title.toString() })
+            fixture.candidate()
+            fixture.await("New event starts under forced Doze", 15000) { fixture.frames.any { it.optString("type") == "started" } }
+            fixture.await("New event drains under forced Doze", 15000) { fixture.frames.any { it.optString("type") == "finished" } }
+            val newEventStartedCount = fixture.frames.count { it.optString("type") == "started" }
+            @Suppress("DEPRECATION")
+            val activityWasReopened = fixture.context.getSystemService(ActivityManager::class.java).appTasks.any {
+                it.taskInfo?.topActivity?.packageName == fixture.context.packageName
+            }
+            assertEquals(1, newEventStartedCount)
+            assertFalse(activityWasReopened)
+            fixture.assertReleasedOnce()
+            android.util.Log.i("TtsScreenOffEvidence", "END utcMillis=${System.currentTimeMillis()} elapsedRealtimeMillis=${android.os.SystemClock.elapsedRealtime()} silentWaitMillis=$silentWaitMillis newEventStartedCount=$newEventStartedCount activityWasReopened=$activityWasReopened state=${shell("cmd deviceidle get deep").trim()} wakeLock=${currentWakeLocks().contains("TwiCC:NativeTts")}")
+            fixture.notification().actions.last().actionIntent.send()
+            fixture.await("Notification Stop all without Activity releases foreground") {
+                fixture.context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID }
+            }
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+        }
+    }
+
+    @Test fun visibleRuntimePermissionDenialOpensRealNotificationSettings() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED,
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
+        context.getSharedPreferences("tts_platform", Context.MODE_PRIVATE).edit().clear().commit()
+        val activity = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            awaitActivityFocus(activity)
+            activity.onActivity {
+                val error = TtsNotification.visiblePreflight(it, false)!!
+                assertEquals("permission_required", error.code)
+            }
+            clickVisibleNode(viewId = "com.android.permissioncontroller:id/permission_deny_button")
+            awaitActivityFocus(activity)
+            assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED,
+                context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
+            activity.onActivity {
+                val error = TtsNotification.visiblePreflight(it, false)!!
+                assertEquals("notification_settings", error.action)
+            }
+            clickVisibleNode(text = "Open Settings")
+            val end = android.os.SystemClock.elapsedRealtime() + 5000
+            var settings = ""
+            while (!settings.contains("com.android.settings") && android.os.SystemClock.elapsedRealtime() < end) {
+                settings = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString().orEmpty()
+                Thread.sleep(50)
+            }
+            assertEquals("com.android.settings", settings)
+            assertTrue(shell("dumpsys activity activities").contains("android.settings.CHANNEL_NOTIFICATION_SETTINGS"))
+            assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+            shell("input keyevent KEYCODE_BACK")
+            shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+            shell("appops set --uid ${context.packageName} POST_NOTIFICATION allow")
+            awaitActivityFocus(activity)
+            activity.onActivity { assertNull(TtsNotification.visiblePreflight(it, false)) }
+            assertTrue("Settings return does not activate speech", context.getSystemService(android.app.NotificationManager::class.java)
+                .activeNotifications.none { it.id == TtsNotification.ID })
+        } finally { activity.close() }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun visibleBatteryPreflightOpensRealSettingsWithoutActivatingListening() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
+        shell("cmd deviceidle whitelist -${context.packageName}")
+        val activity = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            awaitActivityFocus(activity)
+            activity.onActivity {
+                val error = TtsNotification.visiblePreflight(it, true)!!
+                assertEquals("battery_restricted", error.code)
+            }
+            clickVisibleNode(text = "Open Settings")
+            val end = android.os.SystemClock.elapsedRealtime() + 5000
+            while (instrumentation.uiAutomation.rootInActiveWindow?.packageName != "com.android.settings" && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(50)
+            assertEquals("com.android.settings", instrumentation.uiAutomation.rootInActiveWindow?.packageName)
+            assertTrue(shell("dumpsys activity activities").contains("android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"))
+            assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+            shell("input keyevent KEYCODE_BACK")
+            shell("cmd deviceidle whitelist +${context.packageName}")
+            awaitActivityFocus(activity)
+            activity.onActivity { assertNull(TtsNotification.visiblePreflight(it, true)) }
+            assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
+        } finally { shell("cmd deviceidle whitelist -${context.packageName}"); activity.close() }
+    }
+
+    private fun awaitActivityFocus(activity: ActivityScenario<MainActivity>) {
+        val end = android.os.SystemClock.elapsedRealtime() + 5000
+        var focused = false
+        while (!focused && android.os.SystemClock.elapsedRealtime() < end) {
+            activity.onActivity { focused = it.hasWindowFocus() }
+            if (!focused) Thread.sleep(25)
+        }
+        assertTrue("Visible preflight requires real window focus", focused)
+    }
+    private fun clickVisibleNode(viewId: String? = null, text: String? = null) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val end = android.os.SystemClock.elapsedRealtime() + 5000
+        while (android.os.SystemClock.elapsedRealtime() < end) {
+            val root = automation.rootInActiveWindow
+            val nodes = if (viewId != null) root?.findAccessibilityNodeInfosByViewId(viewId) else root?.findAccessibilityNodeInfosByText(text)
+            val node = nodes?.firstOrNull { it.isClickable }
+            if (node != null) { assertTrue(node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)); return }
+            Thread.sleep(50)
+        }
+        fail("Missing visible Android control: ${viewId ?: text}")
+    }
+
     private data class Binding(val binder: TtsService.LocalBinder, val connection: android.content.ServiceConnection)
     private fun bindService(context: Context): Binding {
         val ready = CompletableFuture<TtsService.LocalBinder>()

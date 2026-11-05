@@ -7,7 +7,7 @@ part. This module imports nothing from ``twicc.tts``: the pumps' modules import 
 
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -54,23 +54,34 @@ class PrefixedParts:
 
     SEPARATOR = "\n\n"
 
-    def __init__(self, prefix: str, body: PartSource) -> None:
+    def __init__(self, prefix: str, body: PartSource, split_first: Callable[[str], Sequence[str]] | None = None) -> None:
         self._prefix = prefix
         self._body = body
+        self._split_first = split_first
+        self._pending: deque[str] = deque()
+        self._prefix_split = False
 
     @property
     def split(self) -> bool | None:
-        return self._body.split
+        return True if self._prefix_split else self._body.split
 
     async def next_part(self) -> str | None:
+        if self._pending:
+            return self._pending.popleft()
         part = await self._body.next_part()
         if part is None or not self._prefix:
             return part
         prefix, self._prefix = self._prefix, ""
-        return f"{prefix}{self.SEPARATOR}{part}"
+        combined = f"{prefix}{self.SEPARATOR}{part}"
+        if self._split_first is None:
+            return combined
+        self._pending.extend(self._split_first(combined))
+        self._prefix_split = len(self._pending) > 1
+        return self._pending.popleft() if self._pending else None
 
     async def aclose(self) -> None:
         self._prefix = ""
+        self._pending.clear()
         await self._body.aclose()
 
 

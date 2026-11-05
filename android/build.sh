@@ -2,10 +2,11 @@
 set -euo pipefail
 
 usage() {
-    echo 'Usage: ./android/build.sh webview|gecko'
+    echo 'Usage: ./android/build.sh webview|gecko [--native-tts]'
     echo 'Builds tested, linted debug APKs in android/dist/<engine>/.'
+    echo '--native-tts enables experimental native speech; physical acceptance remains pending.'
 }
-if [[ $# != 1 ]]; then usage >&2; exit 2; fi
+if [[ $# -lt 1 || $# -gt 2 ]]; then usage >&2; exit 2; fi
 case "$1" in
     webview) variant=Webview ;;
     gecko) variant=Gecko ;;
@@ -13,6 +14,12 @@ case "$1" in
     *) usage >&2; exit 2 ;;
 esac
 engine=$1
+gradle_options=()
+if [[ ${2:-} == --native-tts ]]; then
+    gradle_options+=(-PnativeTts=true)
+elif [[ $# == 2 ]]; then
+    usage >&2; exit 2
+fi
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd -- "$project_dir"
 if ! command -v java >/dev/null 2>&1 && [[ ! -x "${JAVA_HOME:-}/bin/java" ]]; then
@@ -27,7 +34,7 @@ fi
 export ANDROID_USER_HOME="$project_dir/.signing"
 mkdir -p -- "$ANDROID_USER_HOME"
 chmod 700 "$ANDROID_USER_HOME"
-./gradlew --no-daemon :policy:test ":app:lint${variant}Debug" ":app:assemble${variant}Debug"
+./gradlew --no-daemon "${gradle_options[@]}" :policy:test ":app:test${variant}DebugUnitTest" ":app:lint${variant}Debug" ":app:assemble${variant}Debug"
 output="$project_dir/dist/$engine"
 mkdir -p -- "$output"
 for apk in "$project_dir/app/build/outputs/apk/$engine/debug/"*.apk; do

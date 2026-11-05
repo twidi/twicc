@@ -8,8 +8,9 @@ Installing one build replaces the other. There is no runtime engine selector.
 
 The APK opens an existing TwiCC **HTTPS** server, usually through a tunnel.
 It does not include the TwiCC frontend or backend. Server updates appear on
-page reload. Foreground audio is web-managed. Background audio and
-persistent background WebSockets are not implemented.
+page reload. Ordinary builds use the existing Web TTS players.
+Native background TTS is **experimental and default-off**. Enable it only in test
+builds with `--native-tts`. Physical-phone acceptance remains pending.
 
 ## Choosing an engine
 
@@ -27,8 +28,9 @@ Choose WebView if its interface runs smoothly and you prefer a smaller download.
 Choose Gecko if it gives you smoother interactions or you need independence
 from the installed WebView provider. Firefox does not need to be installed.
 
-Both builds provide the same native controls. Neither build guarantees
-background JavaScript, WebSocket connections, or audio playback.
+Both builds provide the same native controls. Experimental native TTS uses one
+common Android service. It does not require background page JavaScript.
+Neither build guarantees a permanent network connection or universal OEM reliability.
 
 ## Package identity and engine replacement
 
@@ -85,8 +87,21 @@ From the repository root:
 ```
 
 The script also works from another directory through its absolute path. It runs
-common policy tests, flavor lint, and flavor assembly. It collects APKs and
+common policy tests, flavor app unit tests, flavor lint, and flavor assembly. It collects APKs and
 `SHA256SUMS` in `android/dist/webview/` or `android/dist/gecko/`.
+To prepare experimental native TTS APKs with the same identity and signing key:
+
+```sh
+./android/build.sh webview --native-tts
+./android/build.sh gecko --native-tts
+```
+
+This flag passes the common Gradle property `-PnativeTts=true` for either engine.
+Omitting it keeps `BuildConfig.NATIVE_TTS=false`. The flag creates no extra flavor,
+application ID, storage profile, or signing key. Both builds share version
+**0.5.0**, version code **11**. These experimental APKs use the same output paths;
+a later ordinary build replaces the files in that engine's output directory.
+
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
 
@@ -119,8 +134,8 @@ Direct Gradle commands:
 ```sh
 cd android
 export ANDROID_USER_HOME="$PWD/.signing"
-./gradlew --no-daemon :policy:test :app:lintWebviewDebug :app:assembleWebviewDebug
-./gradlew --no-daemon :policy:test :app:lintGeckoDebug :app:assembleGeckoDebug
+./gradlew --no-daemon :policy:test :app:testWebviewDebugUnitTest :app:lintWebviewDebug :app:assembleWebviewDebug
+./gradlew --no-daemon :policy:test :app:testGeckoDebugUnitTest :app:lintGeckoDebug :app:assembleGeckoDebug
 # Policy tests only, without Android SDK configuration:
 ./gradlew --configure-on-demand :policy:test
 ```
@@ -144,6 +159,7 @@ android/app/src/
       NativeUi.kt                            system bars and keyboard layout
       browser/                               engine/session/event contracts
       platform/                              links, dialogs, file picker, downloads
+      tts/                                   common service, transport, streaming player, notification
   webview/java/com/twidi/twicc/
     browser/EngineProvider.kt                flavor factory
     engines/webview/                         profiles, settings, WebView callbacks
@@ -243,11 +259,84 @@ JavaScript is injected. Rendering and scrolling can differ by engine.
   No DownloadManager notification or background service exists for this path.
   Process death can stop a stream download; failed saves remove pending files.
 - HTTPS downloads are supported. Use a full browser to save `blob:`/`data:` exports.
-- Foreground HTML audio/Web Audio are engine-managed. Gecko allows autoplay
-  for the instance origin. WebView disables the playback gesture requirement.
-  Formats and streaming TTS require validation on your phone.
-- The app does not provide native microphone access, speech recognition, native
-  TTS, push notifications, battery exemption, or guaranteed background WebSocket/audio execution.
+- HTML audio/Web Audio remain engine-managed. Gecko permits autoplay for the
+  instance origin. WebView disables the playback gesture requirement.
+- Ordinary builds and ordinary browsers retain the existing Web TTS players.
+  Experimental native builds route supported TwiCC speech through the common service.
+- The app does not provide native microphone access, speech recognition, or push notifications.
+
+## Experimental native speech
+
+**Physical acceptance is pending.** The API 35 emulator diagnostic is not a
+physical-phone pass. See the [validation record](../docs/plans/2026-11-05-android-background-tts-validation.md)
+for exact APKs, commands, results, and untested conditions.
+
+An opted-in build negotiates native support with the server. WebView also requires
+`GET_COOKIE_INFO`; update Android System WebView if that feature is absent.
+Gecko uses its privileged, instance-specific cookie adapter. Cookies never enter
+page JavaScript. Both engines use the same service and Media3 **1.9.0** player.
+
+When both sides support native TTS, the service owns messages, selections,
+summaries, configuration tests, and automatic timeline readings. The service
+reserves manual work before cookie export or generation waits. Accepted speech
+survives navigation, reload, Activity recreation, and recent-task dismissal.
+The page mirrors state only while visible. It owns no native audio stream.
+A supported native failure reports an error; it does not start a second Web player.
+
+Supported speech outputs are:
+
+| Configuration output | Native input |
+| --- | --- |
+| MP3 | One incremental MP3 stream across all fragments |
+| Raw PCM | Signed 16-bit PCM with the declared rate and channel count |
+| Script WAV | Existing backend normalization removes WAV headers and sends PCM |
+
+Existing voices, adaptation, summary generation, announcements, scripts, cache,
+and streaming remain server-controlled. One reading uses one `audio_id` and one
+forward stream. The player provides no pause, seek, retry, or replay.
+
+### Android settings
+
+Activation requires enabled app notifications and the **Speech** notification
+channel. Android 13+ also requires notification permission. The first request
+opens Android's permission dialog. A denial exposes **Open Settings** guidance.
+Permission or Settings return never repeats a rejected activation. Start again.
+
+Timeline listening also requires Android's battery-optimization exemption for
+TwiCC. The app explains the requirement and opens Android's battery settings.
+Choose the exemption for TwiCC, return, then enable listening again. A denied
+exemption leaves listening inactive. Device labels and OEM settings can differ.
+
+Manual speech can start without this exemption. Long silent preparation then
+has weaker screen-off guarantees. The service holds a partial wake lock during
+preparation, output, settlement, and enabled silent listening. Listening therefore
+uses battery even while no audio plays. It uses no silent audio or microphone.
+
+### Notification and lifetime
+
+The notification shows the instance and Preparing, Reading, Waiting,
+Reconnecting, or Stopping. Its controls work without an Activity or page execution:
+
+- **Skip** cancels the current reading. It preserves enabled listening and later work.
+- **Stop all** cancels the current reading, clears queued work, and disables listening.
+  Local cancellation and wake-lock release occur immediately, including offline.
+  Foreground cleanup has a five-second bound while cancellation reconciles.
+- Tapping the notification opens the current instance when that session still exists.
+
+Manual speech has priority over automatic preparation. Disabling timeline
+listening preserves unrelated manual speech. Each installation has one active
+instance and listening scope. A second device has independent ownership.
+
+The service reconnects after a temporary network loss. Retained cancellations
+reconcile before resumed work, so reconnect cannot replay cancelled speech.
+Backend resources expire after 120 disconnected seconds. Network reachability,
+tunnels, OEM power rules, and explicit Android service stops can still end speech.
+
+Logout, changed credentials, authorization expiry, interactive tunnel challenges,
+and backend-session loss stop native ownership. Sign in when needed, then activate
+again. Instance switch/removal also stops the previous instance. Process death,
+reboot, and explicit Android stop never automatically restore playback or listening.
+Native TTS does not make the app-wide WebSocket permanently reliable.
 
 ## Phone smoke test
 

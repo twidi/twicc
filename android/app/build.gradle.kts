@@ -13,8 +13,8 @@ android {
         minSdk = 29
         targetSdk = 35
         buildConfigField("boolean", "NATIVE_TTS", (providers.gradleProperty("nativeTts").orNull == "true").toString())
-        versionCode = 10
-        versionName = "0.4.1"
+        versionCode = 11
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "engine"
@@ -67,4 +67,14 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
+
+// Package the actual page adapters only in the instrumentation APK, without a copied test implementation.
+val nativeTtsFixtureAssets by tasks.registering(Sync::class) {
+    from("../../frontend/src/utils") { include("androidAppClient.js", "nativeTtsClient.js") }
+    into(layout.buildDirectory.dir("generated/nativeTtsFixtureAssets"))
+}
+android.sourceSets.getByName("androidTest").assets.srcDir("build/generated/nativeTtsFixtureAssets")
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("AndroidTestAssets") }.configureEach {
+    dependsOn(nativeTtsFixtureAssets)
 }

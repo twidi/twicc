@@ -403,7 +403,8 @@ async def _open_speech(
     buffered = data.get("buffered") is True
     pump_parts = parts if source is None else source
     if announcement and has_speech(announcement):
-        pump_parts = PrefixedParts(announcement, as_part_source(speech_request.text, pump_parts))
+        pump_parts = PrefixedParts(announcement, as_part_source(speech_request.text, pump_parts),
+                                   lambda text: split(speech_request._replace(text=text)))
     paced = not buffered
     stream = start_stream(
         lambda sink: pump(sink, pump_parts, paced),

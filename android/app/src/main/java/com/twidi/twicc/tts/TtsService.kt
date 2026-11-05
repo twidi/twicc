@@ -14,7 +14,8 @@ import java.util.concurrent.Executors
 /** Plain Service: listening and settling retain foreground ownership independently of player inactivity. */
 class TtsService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private val workers = Executors.newCachedThreadPool()
+    // Release each owned resource before closing its transport. Neither operation blocks the main looper.
+    private val workers = Executors.newSingleThreadExecutor()
     private lateinit var notification: TtsNotification
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var owner: TtsServiceOwner
@@ -28,6 +29,7 @@ class TtsService : Service() {
         fun snapshot(): NativeTtsSnapshot { checkOwner(); return owner.snapshot() }
     }
     private fun checkOwner() = check(Looper.myLooper() == Looper.getMainLooper()) { "TTS commands require the service main looper" }
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         notification = TtsNotification(this)

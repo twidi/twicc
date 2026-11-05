@@ -2533,9 +2533,9 @@ def test_announcement_precedes_message(client, adaptation, direct_reading, kind,
     elif path == "fallback":
         adaptation.answers.append(RuntimeError("Adaptation unavailable"))
     asyncio.run(_read_through(client, {**body, "announcement": "  Project. Session.  "}))
-    assert adaptation.pulled == [["Project. Session.", expected]]
+    assert adaptation.pulled == [[f"Project. Session.\n\n{expected}"]]
     assert adaptation.calls == ([] if path in ("direct", "off") else ["haiku"])
-    assert adaptation.sources[0].split is True
+    assert adaptation.sources[0].split is False
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "script"])
@@ -2547,7 +2547,7 @@ def test_announcement_outside_adaptation(client, adaptation, kind):
     asyncio.run(_read_through(client, {**body, "announcement": "Project. Session."}))
     assert adaptation.prompts == [adapt.ADAPT_PROMPT.format(text=body["text"])]
     assert "Project. Session." not in adaptation.prompts[0]
-    assert adaptation.pulled == [["Project. Session.", "Adapted message."]]
+    assert adaptation.pulled == [["Project. Session.\n\nAdapted message."]]
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "script"])
@@ -2590,7 +2590,8 @@ def test_announcement_cache_isolation(client, adaptation, direct_reading, openro
         await _read_through(client, {**body, "announcement": "Different session."})
         changed_announcement_calls_pump = len(adaptation.pulled) == 2
         assert changed_announcement_calls_pump is True
-        assert adaptation.pulled[-1][0] == "Different session."
+        expected = "Adapted message." if path in ("adapted", "fallback") else CLEANED if path == "direct" else body["text"]
+        assert adaptation.pulled[-1] == [f"Different session.\n\n{expected}"]
 
         queue_answer()
         await _read_through(client, body)
@@ -2622,9 +2623,21 @@ def test_announcement_fallback_to_original_cache(client, adaptation, kind):
         assert speech_cache.get((request, None)) is None
         _store_adapt("off")
         await _read_through(client, {**body, "announcement": "Project. Session."})
-        assert adaptation.pulled == [["Project. Session.", body["text"]]]
+        assert adaptation.pulled == [[f"Project. Session.\n\n{body['text']}"]]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("announcement", ["P.", "Long project title. " * 40])
+def test_combined_announcement_preserves_script_limit_and_one_fitting_request(client, adaptation, direct_reading, announcement):
+    _store_script(max_chars=30)
+    asyncio.run(_read_through(client, {**SCRIPT_READ, "text": SIMPLE, "announcement": announcement}))
+    parts = adaptation.pulled[0]
+    assert all(0 < len(part) <= 30 for part in parts)
+    assert " ".join(parts).split() == f"{announcement}\n\nHello world.".split()
+    if announcement == "P.":
+        assert parts == ["P.\n\nHello world."]
+        assert adaptation.sources[0].split is False
 
 
 @pytest.mark.parametrize("path", ["direct", "off", "adapted", "fallback"])
@@ -2642,8 +2655,8 @@ def test_long_announcement_respects_script_limits(client, adaptation, direct_rea
     parts = adaptation.pulled[0]
     assert len(parts) > 2
     assert all(0 < len(part) <= 30 for part in parts)
-    assert " ".join(parts[:-1]).split() == announcement.split()
-    assert parts[-1] == (CLEANED if path == "direct" else "Adapted message." if path == "adapted" else text)
+    expected = CLEANED if path == "direct" else "Adapted message." if path == "adapted" else text
+    assert " ".join(parts).split() == f"{announcement}\n\n{expected}".split()
 
 
 @pytest.mark.parametrize("announcement", [None, 3, True, ["Project"], {"project": "Project"}])
