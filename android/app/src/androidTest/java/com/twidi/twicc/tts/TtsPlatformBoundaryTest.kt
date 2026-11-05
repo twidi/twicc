@@ -522,6 +522,74 @@ class TtsPlatformBoundaryTest {
     }
 
     @androidx.test.filters.MediumTest
+    @Test fun notificationTimelinePauseAllowsManualAudioAndResumesWithFreshBoundary() {
+        ServiceFixture().use { fixture ->
+            fixture.activity.onActivity {
+                assertTrue(fixture.binding.binder.dispatch(TtsCommand.Listen(fixture.owner,
+                    ListeningScope("project", "project-one", "One"), true,
+                    "2026-11-05T10:00:00.000000Z", "project-one")).accepted)
+            }
+            fixture.await("Listening connects") { fixture.activation != null }
+            val originalActivation = fixture.activation!!
+            fixture.candidate()
+            fixture.await("Automatic reading starts") { fixture.frames.any { it.optString("type") == "started" } }
+            fixture.dismiss()
+            fixture.await("Pause control reaches the real notification") { fixture.notification().actions.size == 3 }
+            assertEquals(listOf("Skip", "Pause timeline", "Stop all"), fixture.notification().actions.map { it.title.toString() })
+            val oldPause = fixture.notification().actions[1].actionIntent
+            oldPause.send()
+            fixture.await("Pause cancels the reading and remains enabled") {
+                fixture.snapshot().listening?.paused == true && fixture.snapshot().playback.readingId == null
+            }
+            fixture.await("Paused controls replace active controls") {
+                fixture.notification().actions.map { it.title.toString() } == listOf("Resume timeline", "Stop all")
+            }
+            assertTrue(currentWakeLocks().contains("TwiCC:NativeTts"))
+            val selects = fixture.frames.count { it.optString("type") == "select" }
+            val revision = fixture.snapshot().revision
+            fixture.candidate(2)
+            fixture.await("Paused candidate is processed") { fixture.snapshot().revision > revision }
+            assertEquals(selects, fixture.frames.count { it.optString("type") == "select" })
+            fixture.manual("manual-during-pause")
+            fixture.await("Manual audio starts while timeline stays paused") {
+                fixture.snapshot().playback.started && !fixture.snapshot().playback.automatic
+            }
+            assertTrue(fixture.snapshot().listening!!.paused)
+            fixture.await("Manual audio completes without removing pause", 15000) {
+                fixture.snapshot().results.any { it.operationId == "manual-during-pause" && it.ended["ok"] == true }
+            }
+            val oldResume = fixture.notification().actions.first { it.title == "Resume timeline" }.actionIntent
+            val beforeResume = java.time.Instant.now()
+            oldResume.send()
+            fixture.await("Resume creates a new backend listener") { fixture.activation != originalActivation }
+            val afterResume = java.time.Instant.now()
+            val listening = fixture.snapshot().listening!!
+            assertFalse(listening.paused)
+            assertEquals(ListeningScope("project", "project-one", "One"), listening.scope)
+            assertTrue(listening.includeMuted)
+            assertTrue(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z").matches(listening.boundary))
+            val boundary = java.time.Instant.parse(listening.boundary)
+            assertFalse(boundary.isBefore(beforeResume)); assertFalse(boundary.isAfter(afterResume))
+            oldPause.send(); oldResume.send()
+            fixture.instrumentation.waitForIdleSync()
+            assertEquals(listening, fixture.snapshot().listening)
+            fixture.candidate(3)
+            fixture.await("Only a fresh event starts after Resume", 15000) {
+                fixture.frames.count { it.optString("type") == "select" } == selects + 1 && fixture.snapshot().playback.started
+            }
+            fixture.await("New Pause control is visible") { fixture.notification().actions.any { it.title == "Pause timeline" } }
+            fixture.notification().actions.first { it.title == "Pause timeline" }.actionIntent.send()
+            fixture.await("Paused again") { fixture.snapshot().listening?.paused == true }
+            fixture.notification().actions.last().actionIntent.send()
+            fixture.await("Stop all removes paused notification") {
+                fixture.context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID }
+            }
+            assertNull(fixture.snapshot().listening)
+            assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+        }
+    }
+
+    @androidx.test.filters.MediumTest
     @Test fun offlineNotificationSkipReconcilesBeforeLaterEligibleAudioWithoutReplay() {
         ServiceFixture().use { fixture ->
             fixture.activity.onActivity {
@@ -648,7 +716,7 @@ class TtsPlatformBoundaryTest {
             assertTrue(silentWaitMillis >= 30 * 60 * 1000L)
             assertTrue(shell("dumpsys deviceidle").contains("mState=IDLE"))
             assertTrue(currentWakeLocks().contains("TwiCC:NativeTts"))
-            assertEquals(listOf("Stop all"), fixture.notification().actions.map { it.title.toString() })
+            assertEquals(listOf("Pause timeline", "Stop all"), fixture.notification().actions.map { it.title.toString() })
             fixture.candidate()
             fixture.await("New event starts under forced Doze", 15000) { fixture.frames.any { it.optString("type") == "started" } }
             fixture.await("New event drains under forced Doze", 15000) { fixture.frames.any { it.optString("type") == "finished" } }

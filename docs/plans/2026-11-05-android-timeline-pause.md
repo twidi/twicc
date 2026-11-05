@@ -25,6 +25,7 @@
 ## Global constraints
 
 - Reuse backend `disable`, `listen`, and `skip`; add no backend protocol command.
+- Backend listener errors carry their activation ID. A new `listen` clears its predecessor's error before any acknowledgement state.
 - Reuse one common controller and service across Gecko and WebView.
 - Preserve ordinary browser TTS behavior.
 - Do not change battery advice, notification permission, signing, or build profiles.
@@ -38,6 +39,7 @@
 - Pause during connection loss must survive reconciliation; Resume must not admit old candidates.
 - Manual playback during pause must keep working and leave pause intact afterward.
 - Disable and Stop all must remove paused intent and release foreground ownership.
+- Delayed listener errors must not remove paused intent or a newer activation. Intermediate backend `listening: null` states must not override native intent.
 
 ### Task 1: Native controller pause state
 
@@ -82,11 +84,34 @@
 - Modify: `android/app/src/androidTest/java/com/twidi/twicc/tts/TtsPlatformBoundaryTest.kt`
 - Modify: `android/README.md`
 - Modify: `android/app/build.gradle.kts`
+- Modify: `android/policy/src/main/kotlin/com/twidi/twicc/tts/TtsState.kt`
+- Test: `android/policy/src/test/kotlin/com/twidi/twicc/tts/TtsStateTest.kt`
+- Modify: `src/twicc/tts/native_timeline.py`
+- Modify: `src/twicc/tts/native_sessions.py`
+- Test: `tests/test_native_tts_timeline.py`
+- Test: `tests/test_native_tts_sessions.py`
 
-- [ ] Exercise real notification PendingIntents: pause an automatic reading, reject old candidates, allow manual audio, resume with fresh boundary, and stop while paused. Check labels/order, snapshot JSON, and retained notification.
-- [ ] Update previous notification assertions for the added Pause control. Document current pause semantics, including manual reads and ignored messages.
-- [ ] Bump Android version to 0.5.2, code 13. Run frontend build and suite. Report unrelated existing failures separately.
-- [ ] Build Gecko ARM64 release with unit tests and lint. Run WebView release unit tests and lint for common code.
-- [ ] Perform one independent final review. Correct confirmed defects with focused regression tests.
-- [ ] Verify APK identity, architecture, signature, fixture exclusion, non-debuggable manifest, and checksum.
-- [ ] Commit owned changes, publish the new APK, remove superseded APKs and temporary test APKs, and stop the test emulator.
+- [x] Exercise real notification PendingIntents: pause an automatic reading, reject old candidates, allow manual audio, resume with fresh boundary, and stop while paused. Check labels/order, snapshot JSON, and retained notification.
+- [x] Update previous notification assertions for the added Pause control. Document current pause semantics, including manual reads and ignored messages.
+- [x] Bump Android version to 0.5.2, code 13. Run frontend build and suite. Report unrelated existing failures separately.
+- [x] Build Gecko ARM64 release with unit tests and lint. Run WebView release unit tests and lint for common code.
+- [x] Perform one independent final review. Correct confirmed defects with focused regression tests.
+- [x] Verify APK identity, architecture, signature, fixture exclusion, non-debuggable manifest, and checksum.
+- [x] Commit owned changes, publish the new APK, remove superseded APKs and temporary test APKs, and stop the test emulator.
+
+## Review correction
+
+The independent review identifies delayed listener errors that remove paused intent. Inspection also shows that `listen` can publish acknowledged state before the new backend activation exists. The correction keeps native intent authoritative, ignores paused or obsolete activation errors, tags backend listener errors, and clears previous errors before a new listen acknowledgement. No new protocol command or dependency is needed. Tests cover the paused state, manual playback, reconnect, resumed activation, and genuine failure of that new activation.
+
+
+## Validation
+
+- Controller: 56 policy tests pass.
+- App: 50 release unit tests pass for each engine. Both flavor lint checks pass.
+- Frontend: 57 targeted tests and the production build pass.
+- Backend: 117 native TTS tests and Ruff checks pass.
+- Device: the notification Pause/manual/Resume/Stop all scenario passes on the Android 15 emulator with the Activity closed.
+- Review correction: three native regressions and two backend regressions fail before the fix and pass afterward. No review findings remain open.
+- Full frontend suite: 4499 pass; six pre-existing failures remain in SessionEventNotice.test.js (missing sessions dependency), SidebarRail.touch.test.js (three focus cases and their parent, missing skip mock), and androidGeckoTransport.test.js (missing crypto in its VM).
+- Release APK: version 0.5.2/code 13, com.twidi.twicc, ARM64 only, non-debuggable, same persistent signature, no test CA or audio fixtures. SHA256: 8c6551421c13eb4623cfe87fbaec6ba7a1bb8252ecbcbf8848399a9ef31f8ec8.
+- Backend restart remains a user operation. No migration or server restart runs during this task.

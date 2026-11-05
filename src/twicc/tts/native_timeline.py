@@ -522,10 +522,11 @@ class TimelineListener:
 
     async def _stop(self, code, message):
         epoch = self._epoch
+        activation_id = self.active['activation_id'] if self.active else None
         await self.disable()
         # Reader cleanup can yield to a newly reserved listening activation.
         if self._epoch == epoch and self.active is None:
-            await self.session.fail(code, message)
+            await self.session.fail(code, message, activation_id=activation_id)
 
     async def disable(self):
         self.active = None

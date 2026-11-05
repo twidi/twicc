@@ -115,8 +115,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.1**,
-version code **12**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.2**,
+version code **13**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -317,7 +317,7 @@ Supported speech outputs are:
 
 Existing voices, adaptation, summary generation, announcements, scripts, cache,
 and streaming remain server-controlled. One reading uses one `audio_id` and one
-forward stream. The player provides no pause, seek, retry, or replay.
+forward stream. Individual readings provide no pause, seek, retry, or replay.
 
 ### Android settings
 
@@ -346,13 +346,26 @@ uses battery even while no audio plays. It uses no silent audio or microphone.
 ### Notification and lifetime
 
 The notification shows the instance and Preparing, Reading, Waiting,
-Reconnecting, or Stopping. Its controls work without an Activity or page execution:
+Timeline reading paused, Reconnecting, or Stopping. Its controls work without
+an Activity or page execution:
 
 - **Skip** cancels the current reading. It preserves enabled listening and later work.
+- **Pause timeline** appears before Stop all while timeline listening is enabled.
+  It skips the current reading, including a manual reading, and suspends automatic
+  speech. The notification stays present. New manual readings still work.
+- **Resume timeline** replaces Pause timeline during pause. It keeps the listening
+  scope and muted-session choice. Only messages after the Resume click are eligible;
+  messages received during pause are never replayed. Pause disables the backend
+  listener while retaining native intent, so it generates no automatic audio.
 - **Stop all** cancels the current reading, clears queued work, and disables listening.
   Local cancellation and wake-lock release occur immediately, including offline.
   Foreground cleanup has a five-second bound while cancellation reconciles.
 - Tapping the notification opens the current instance when that session still exists.
+
+The page mirrors paused listening as enabled. Its timeline toggle disables it;
+it does not resume it. Disabling paused listening removes the notification once
+no unrelated manual reading remains. Pause retains the foreground service and
+wake lock, with the same background limits described above.
 
 Manual speech has priority over automatic preparation. Disabling timeline
 listening preserves unrelated manual speech. Each installation has one active

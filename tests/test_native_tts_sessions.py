@@ -32,6 +32,34 @@ async def settle(session):
 
 
 @pytest.mark.asyncio
+async def test_listen_acknowledgements_do_not_publish_previous_listener_error(monkeypatch):
+    registry = native_sessions.NativeSessionRegistry()
+    session = registry.open(str(uuid4()), ('cookie', 'fp'))
+    monkeypatch.setattr(session.coordinator, '_initialize', AsyncMock())
+    await session.fail('scope_unavailable', 'Old scope disappeared', activation_id=str(uuid4()))
+    drain_frames(session)
+    emitted = []
+    emit = session._emit
+
+    def record_frame(frame):
+        emitted.append(frame)
+        emit(frame)
+
+    monkeypatch.setattr(session, '_emit', record_frame)
+    current = str(uuid4())
+    try:
+        await session.apply(command('listen', 1, activation_id=current, page_id='all',
+                                    scope={'kind': 'global', 'id': None}, include_muted=False,
+                                    boundary='2026-11-05T14:00:00.000000Z'))
+        states = [frame for frame in emitted if frame['type'] == 'state']
+        assert states
+        assert all(frame['error'] is None for frame in states)
+        assert states[-1]['listening']['activation_id'] == current
+    finally:
+        await registry.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_resume_resends_unclaimed_resource_without_regeneration(monkeypatch):
     stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
     prepare = AsyncMock(return_value=OpenedSpeech(stream.id, stream.content_type))

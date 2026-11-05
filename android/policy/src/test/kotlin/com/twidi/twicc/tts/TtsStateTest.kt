@@ -114,6 +114,67 @@ class TtsStateTest {
             assertTrue(c.dispatch(TtsCommand.StopTimeout(timer.epoch)).any { it is TtsEffect.StopService })
         }
     }
+    @Test fun delayedListenerErrorsCannotDiscardPauseOrItsManualReading() {
+        for (code in listOf("scope_unavailable", "catchup_incomplete", "tts_unavailable")) {
+            for (viaState in listOf(false, true)) {
+                val c = controller(); listen(c); opened(c)
+                val id = c.snapshot().listening!!.activationId
+                val pause = c.dispatch(TtsCommand.PauseTimeline(id))
+                val pauseSeq = pause.filterIsInstance<TtsEffect.Send>().last().frame["seq"]
+                val failure = mapOf("code" to code, "message" to "Old listener failed")
+                val frame = if (viaState) mapOf("protocol" to 1, "type" to "state", "revision" to 10,
+                    "ack_seq" to pauseSeq, "listening" to null, "error" to failure)
+                    else mapOf("protocol" to 1, "type" to "error") + failure
+                c.dispatch(TtsCommand.ServerFrame("socket", frame))
+                assertTrue("$code via state=$viaState retains Resume", c.snapshot().listening?.paused == true)
+                assertNull(c.snapshot().error)
+                manual(c); audio(c)
+                val reading = c.snapshot().playback
+                c.dispatch(TtsCommand.ServerFrame("socket", frame + mapOf("revision" to 11)))
+                assertEquals(reading, c.snapshot().playback)
+                assertTrue(c.snapshot().listening!!.paused)
+                c.dispatch(TtsCommand.TransportLost("socket"))
+                val resume = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+                c.dispatch(TtsCommand.TransportOpened("resumed"))
+                c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "state",
+                    "revision" to 20, "ack_seq" to resume["seq"], "listening" to null, "error" to failure)))
+                assertEquals(reading, c.snapshot().playback)
+                assertTrue(c.snapshot().listening!!.paused)
+                assertNull(c.snapshot().error)
+            }
+        }
+    }
+    @Test fun resumeDoesNotStopOnPreActivationBackendAcknowledgement() {
+        val c = controller(); listen(c); opened(c)
+        val id = c.snapshot().listening!!.activationId
+        c.dispatch(TtsCommand.PauseTimeline(id))
+        val frame = c.dispatch(TtsCommand.ResumeTimeline(id, "2026-11-05T14:00:00.000000Z"))
+            .filterIsInstance<TtsEffect.Send>().single().frame
+        val effects = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 30, "ack_seq" to frame["seq"], "listening" to null)))
+        assertNotNull(c.snapshot().listening)
+        assertTrue(effects.none { it is TtsEffect.StopAfter || it is TtsEffect.StopService })
+        assertTrue(candidate(c, 2).any { it is TtsEffect.Send && it.frame["type"] == "select" })
+    }
+    @Test fun oldListenerErrorCannotStopResumedActivationButItsOwnErrorCan() {
+        val c = controller(); listen(c); opened(c)
+        val old = c.snapshot().listening!!.activationId
+        c.dispatch(TtsCommand.PauseTimeline(old))
+        val frame = c.dispatch(TtsCommand.ResumeTimeline(old, "2026-11-05T14:00:00.000000Z"))
+            .filterIsInstance<TtsEffect.Send>().single().frame
+        val current = c.snapshot().listening!!
+        val failure = mapOf("code" to "scope_unavailable", "message" to "Old scope disappeared", "activation_id" to old)
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error") + failure))
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 30, "ack_seq" to frame["seq"], "listening" to null, "error" to failure)))
+        assertEquals(current, c.snapshot().listening)
+        assertNull(c.snapshot().error)
+        val effects = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error",
+            "code" to "scope_unavailable", "message" to "Current scope disappeared", "activation_id" to current.activationId)))
+        assertNull(c.snapshot().listening)
+        assertEquals("Current scope disappeared", c.snapshot().error!!["message"])
+        assertTrue(effects.any { it is TtsEffect.StopAfter })
+    }
 
     @Test fun offlineStopAllCannotBeReversedByOldAudio() {
         val c = controller(); listen(c); opened(c); manual(c); val old = c.snapshot().playback

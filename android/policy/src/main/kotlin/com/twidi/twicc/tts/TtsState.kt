@@ -232,15 +232,16 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                                 if (stopSeq == null) status = "connected"
                                 flushPending()
                             }
-                            // Local reading and listening intent stay authoritative until acknowledged.
+                            // Update backend metadata after acknowledgement. Listening intent follows commands and owned errors.
+                            // A null backend listener can precede its activation and cannot clear that intent.
                             if (retained.isEmpty()) {
                                 pendingCount = if (listening?.paused == true) 0 else (f["pending_count"] as? Number)?.toInt() ?: 0
                                 configuration = f["configuration_available"] as? Boolean
                                 val incomingError = f["error"] as? TtsFrame
                                 if (incomingError == null) error = null
                                 // Reading errors from an older selection cannot own a replacement.
-                                else if (incomingError["reading_id"] == null || matches(incomingError)) error = incomingError
-                                if (f.containsKey("listening") && f["listening"] == null && listening?.paused != true) listening = null
+                                else if (!obsoleteListeningError(incomingError) &&
+                                    (incomingError["reading_id"] == null || matches(incomingError))) error = incomingError
                             }
                             val serverError = f["error"] as? TtsFrame
                             if (serverError != null) handleError(serverError)
@@ -312,7 +313,11 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     }
     private fun matches(f: TtsFrame) = playback.readingId != null && f["reading_id"] == playback.readingId &&
         (f["generation"] as? Number)?.toLong() == playback.generation
+    private fun obsoleteListeningError(f: TtsFrame): Boolean = f["reading_id"] == null &&
+        f["code"] in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable") &&
+        listening?.let { it.paused || (f["activation_id"] != null && f["activation_id"] != it.activationId) } == true
     private fun handleError(f: TtsFrame) {
+        if (obsoleteListeningError(f)) return
         val code = f["code"] as? String ?: "failed"
         val message = f["message"] as? String ?: "Speech failed"
         if (code in setOf("unauthorized", "session_lost")) terminate(code, message)

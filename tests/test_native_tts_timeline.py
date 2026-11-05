@@ -108,6 +108,18 @@ async def test_click_boundary_order_dedup_and_stable_selected_event(harness):
     await h.registry.shutdown()
 
 
+async def test_listener_failure_keeps_its_activation_identity_after_disable(harness):
+    h = harness
+    current = activation()
+    await h.listener.enable(current)
+    await h.listener._stop('scope_unavailable', 'Old scope disappeared')
+    assert h.session.listening is None
+    assert h.session.error['activation_id'] == current['activation_id']
+    failure = next(frame for frame in h.session._frames if frame['type'] == 'error')
+    assert failure['activation_id'] == current['activation_id']
+    await h.registry.shutdown()
+
+
 async def test_watermark_updates_only_on_start_and_has_inclusive_five_second_tolerance(harness):
     h = harness
     first = await event(40)
@@ -815,7 +827,8 @@ async def test_delayed_summary_descriptor_failure_keeps_selected_reading_scope(h
 
 async def test_configuration_loss_does_not_release_manual_resource(harness):
     h = harness
-    await h.listener.enable(activation())
+    current = activation()
+    await h.listener.enable(current)
     manual = str(uuid4())
     await h.session.apply({'protocol': 1, 'type': 'manual', 'seq': 1, 'reading_id': manual, 'generation': 1,
         'request': {'kind': 'text', 'source': 'message', 'text': 'Manual', 'speech': {'text': 'Manual'}}})
@@ -827,7 +840,9 @@ async def test_configuration_loss_does_not_release_manual_resource(harness):
     assert h.session.playback == before
     assert before['audio_id'] in h.session.owned_audio
     assert h.session.error['code'] == 'tts_unavailable'
-    assert next(f for f in h.session._frames if f['type'] == 'error') == DISPOSITIONS['listener_error']
+    assert next(f for f in h.session._frames if f['type'] == 'error') == {
+        **DISPOSITIONS['listener_error'], 'activation_id': current['activation_id'],
+    }
     await h.registry.shutdown()
 
 

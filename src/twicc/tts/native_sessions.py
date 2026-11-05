@@ -292,6 +292,8 @@ class NativeSession:
                 elif kind == 'ping':
                     self.heartbeat()
                     self._emit({'type': 'pong', 'ack_seq': self.ack_seq})
+                elif kind == 'listen':
+                    self.error = None
                 self.publish_state()
             # Coordinator methods may reserve speech; never call them under _lock.
             if self.coordinator:
