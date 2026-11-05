@@ -1,9 +1,16 @@
 {
   "manifest_version": 2,
   "name": "TwiCC Android app bridge",
-  "version": "1.0",
+  "version": "1.2",
   "browser_specific_settings": { "gecko": { "id": "twicc-android-bridge@twidi.com" } },
-  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons", "cookies", "tabs", "https://*/*"],
+  "experiment_apis": {
+    "twiccCookies": {
+      "schema": "cookies-schema.json",
+      "parent": { "scopes": ["addon_parent"], "paths": [["twiccCookies"]], "script": "cookies-api.js" }
+    }
+  },
+  "background": { "scripts": ["background.js"] },
   "content_scripts": [{
     "matches": ["https://*/*"],
     "js": ["content.js"],

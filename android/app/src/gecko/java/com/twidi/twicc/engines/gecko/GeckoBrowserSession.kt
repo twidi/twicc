@@ -1,6 +1,14 @@
 package com.twidi.twicc.engines.gecko
 
 import android.app.Activity
+import android.os.Handler
+import android.os.Looper
+import com.twidi.twicc.tts.TtsCookie
+import com.twidi.twicc.tts.TtsCookieJar
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.json.JSONObject
+import org.json.JSONArray
+import java.util.UUID
 import com.twidi.twicc.AndroidAppPolicy
 import com.twidi.twicc.Instance
 import com.twidi.twicc.NavigationDecision
@@ -21,6 +29,8 @@ internal class GeckoBrowserSession(
     private val prompts = GeckoPrompts(activity, requests)
     private var closed = false
     private var bridgeReady = false
+    private var documentGeneration = 0L
+    private var documentId: String? = null
     private var queuedLoad: Pair<String, Boolean>? = null
 
     init {
@@ -49,7 +59,14 @@ internal class GeckoBrowserSession(
                 }
             }
             page.progressDelegate = object : GeckoSession.ProgressDelegate {
-                override fun onPageStart(session: GeckoSession, url: String) { if (!closed) events.onPageStarted(url) }
+                override fun onPageStart(session: GeckoSession, url: String) {
+                    if (!closed) {
+                        documentGeneration++
+                        documentId?.let { TtsExports.invalidate(it) }
+                        documentId = null
+                        events.onPageStarted(url)
+                    }
+                }
                 override fun onProgressChange(session: GeckoSession, progress: Int) { if (!closed) events.onProgressChanged(progress) }
                 override fun onPageStop(session: GeckoSession, success: Boolean) { if (!closed) events.onPageFinished() }
             }
@@ -76,14 +93,26 @@ internal class GeckoBrowserSession(
             view.setSession(page)
             GeckoEngine.appExtension(activity).accept({ extension ->
                 if (!closed && extension != null) {
-                    page.webExtensionController.setMessageDelegate(extension, object : WebExtension.MessageDelegate {
+                    TtsExports.attach(extension)
+                    val delegate = object : WebExtension.MessageDelegate {
                         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
                             if (closed || sender.session !== page ||
                                 sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT ||
                                 !AndroidAppPolicy.acceptsFrame(instance.url, sender.url, sender.isTopLevel)) return null
+                            if (nativeApp == "twicc_tts_document" && message is JSONObject && message.has("ttsDocument")) {
+                                val id = message.optString("ttsDocument")
+                                if (runCatching { UUID.fromString(id) }.isFailure) return null
+                                documentId?.let { TtsExports.invalidate(it) }
+                                documentId = id
+                                TtsExports.register(id, instance, documentGeneration, sender.url)
+                                return GeckoResult.fromValue("{}")
+                            }
+                            if (nativeApp != "twicc_android") return null
                             return GeckoResult.fromValue(events.onAppMessage(message.toString()))
                         }
-                    }, "twicc_android")
+                    }
+                    page.webExtensionController.setMessageDelegate(extension, delegate, "twicc_android")
+                    page.webExtensionController.setMessageDelegate(extension, delegate, "twicc_tts_document")
                 }
                 if (!closed) finishBridgeSetup()
             }, { if (!closed) finishBridgeSetup() })
@@ -99,14 +128,136 @@ internal class GeckoBrowserSession(
         page.stop()
         page.load(GeckoSession.Loader().uri(url).flags(if (bypassCache) GeckoSession.LOAD_FLAGS_BYPASS_CACHE else GeckoSession.LOAD_FLAGS_NONE))
     }
+    override fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
+        val id = documentId
+        if (closed || id == null || urls.isEmpty() || urls.any { !instance.url.allowsNavigation(it) }) {
+            callback(Result.failure(IllegalStateException("The browser document is unavailable for cookie export.")))
+            return
+        }
+        TtsExports.export(id, urls, callback)
+    }
     override fun goBack() { if (!closed) page.goBack() }
     override fun setVisible(visible: Boolean) { if (!closed) page.setActive(visible) }
     override fun close() {
         if (closed) return
         closed = true
         queuedLoad = null
+        documentId?.let { TtsExports.release(it) }
+        documentId = null
         view.releaseSession()
         if (page.isOpen) page.close()
         prompts.close()
+    }
+}
+
+/** The extension and accepted operations belong to the runtime, never to an Activity or GeckoView. */
+private object TtsExports {
+    private val handler = Handler(Looper.getMainLooper())
+    private var extension: WebExtension? = null
+    private var port: WebExtension.Port? = null
+    private data class Document(val instance: Instance, val generation: Long, val url: String,
+        var storeId: String? = null, var released: Boolean = false)
+    private data class Export(val documentId: String, val urls: List<String>,
+        val callback: (Result<List<TtsCookie>>) -> Unit, var sent: Boolean = false)
+    private val documents = mutableMapOf<String, Document>()
+    private val pending = mutableMapOf<String, Export>()
+
+    fun attach(value: WebExtension) {
+        if (extension === value) return
+        extension = value
+        value.setMessageDelegate(object : WebExtension.MessageDelegate {
+            override fun onConnect(connected: WebExtension.Port) {
+                if (connected.name != "twicc_tts" || connected.sender.session != null ||
+                    connected.sender.environmentType != WebExtension.MessageSender.ENV_TYPE_EXTENSION ||
+                    connected.sender.webExtension.id != value.id) { connected.disconnect(); return }
+                port = connected
+                connected.setDelegate(object : WebExtension.PortDelegate {
+                    override fun onPortMessage(message: Any, source: WebExtension.Port) {
+                        if (source !== port || message !is JSONObject) return
+                        when (message.optString("type")) {
+                            "document" -> {
+                                val id = message.optString("documentId")
+                                val document = documents[id] ?: return
+                                if (message.optString("url") != document.url ||
+                                    !document.instance.url.allowsNavigation(document.url)) return
+                                document.storeId = message.optString("storeId").takeIf { it.isNotEmpty() } ?: return
+                                pending.filterValues { it.documentId == id }.keys.toList().forEach { send(it) }
+                            }
+                            "exported" -> receive(message)
+                        }
+                    }
+                    override fun onDisconnect(source: WebExtension.Port) {
+                        if (port !== source) return
+                        port = null
+                        pending.keys.toList().forEach { finish(it, Result.failure(IllegalStateException("The cookie export bridge disconnected."))) }
+                    }
+                })
+            }
+        }, "twicc_tts")
+    }
+    fun register(id: String, instance: Instance, generation: Long, url: String) {
+        documents[id] = Document(instance, generation, url)
+    }
+    fun invalidate(id: String) {
+        pending.filterValues { it.documentId == id }.keys.toList().forEach {
+            finish(it, Result.failure(IllegalStateException("The browser document changed.")))
+        }
+        documents.remove(id)
+    }
+    fun release(id: String) {
+        documents[id]?.released = true
+        if (pending.values.none { it.documentId == id }) documents.remove(id)
+    }
+    fun export(id: String, urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
+        // Accept only after the privileged adapter captures the actual principal attributes.
+        // An accepted operation then needs neither the document nor its Activity to remain alive.
+        if (documents[id]?.storeId == null) {
+            handler.post { callback(Result.failure(IllegalStateException("Native speech is still initializing. Retry speech."))) }
+            return
+        }
+        val requestId = UUID.randomUUID().toString()
+        pending[requestId] = Export(id, urls.toList(), callback)
+        handler.postDelayed({ finish(requestId, Result.failure(IllegalStateException("Cookie export timed out."))) }, 15_000)
+        send(requestId)
+    }
+    private fun send(requestId: String) {
+        val operation = pending[requestId] ?: return
+        val document = documents[operation.documentId] ?: return
+        val store = document.storeId ?: return
+        val channel = port ?: return
+        if (operation.sent) return
+        operation.sent = true
+        channel.postMessage(JSONObject().put("type", "export").put("requestId", requestId)
+            .put("documentId", operation.documentId).put("instanceId", document.instance.id)
+            .put("generation", document.generation).put("url", document.url).put("storeId", store)
+            .put("urls", JSONArray(operation.urls)))
+    }
+    private fun receive(message: JSONObject) {
+        val requestId = message.optString("requestId")
+        val operation = pending[requestId] ?: return
+        val document = documents[operation.documentId] ?: return
+        if (!operation.sent || message.optString("documentId") != operation.documentId ||
+            message.optString("instanceId") != document.instance.id ||
+            message.optLong("generation", -1) != document.generation || message.optString("url") != document.url) return
+        finish(requestId, runCatching {
+            check(!message.has("error")) { message.optString("error") }
+            val cookies = message.getJSONArray("cookies")
+            val origin = document.instance.address.toHttpUrl()
+            val jar = TtsCookieJar(origin, (0 until cookies.length()).map {
+                val value = cookies.getJSONObject(it)
+                TtsCookie(value.getString("name"), value.getString("value"), value.getString("domain"),
+                    value.getString("path"), value.getBoolean("hostOnly"), value.getBoolean("secure"),
+                    value.getBoolean("httpOnly"), if (value.isNull("expiresAt")) null else value.getLong("expiresAt"))
+            })
+            operation.urls.flatMap { jar.loadForRequest(it.toHttpUrl()) }.distinctBy { Triple(it.name, it.domain, it.path) }
+                .map { TtsCookie.fromCookie(it) }
+        })
+    }
+    private fun finish(requestId: String, result: Result<List<TtsCookie>>) {
+        val operation = pending.remove(requestId) ?: return
+        val document = documents[operation.documentId]
+        if (document?.released == true && pending.values.none { it.documentId == operation.documentId })
+            documents.remove(operation.documentId)
+        operation.callback(result)
     }
 }

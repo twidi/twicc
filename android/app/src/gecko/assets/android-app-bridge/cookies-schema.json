@@ -1,0 +1,26 @@
+[{
+  "namespace": "twiccCookies",
+  "description": "Background-only credential snapshots for the built-in Android bridge.",
+  "functions": [
+    {
+      "name": "capture", "type": "function", "async": true,
+      "parameters": [
+        { "name": "tabId", "type": "integer" },
+        { "name": "documentId", "type": "string" },
+        { "name": "url", "type": "string" }
+      ]
+    },
+    {
+      "name": "read", "type": "function", "async": true,
+      "parameters": [
+        { "name": "documentId", "type": "string" },
+        { "name": "urls", "type": "array", "items": { "type": "string" } }
+      ],
+      "returns": { "type": "any" }
+    },
+    {
+      "name": "release", "type": "function", "async": true,
+      "parameters": [{ "name": "documentId", "type": "string" }]
+    }
+  ]
+}]

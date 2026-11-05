@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Included only with -PttsBoundaryTests=true. Never used by ordinary debug or release builds. -->
+    <application android:networkSecurityConfig="@xml/tts_test_network_security" />
+</manifest>

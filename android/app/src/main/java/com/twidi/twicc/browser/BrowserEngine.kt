@@ -5,6 +5,7 @@ import android.content.Context
 import android.view.View
 import com.twidi.twicc.Instance
 import com.twidi.twicc.platform.NativeRequests
+import com.twidi.twicc.tts.TtsCookie
 
 /** One implementation is selected at build time by EngineProvider in the flavor source set. */
 interface BrowserEngine {
@@ -19,6 +20,8 @@ interface BrowserSession {
     fun load(url: String, bypassCache: Boolean = false)
     fun goBack()
     fun setVisible(visible: Boolean)
-    /** Close cancels engine callbacks and releases the view, without clearing persistent storage. */
+    /** Export a detached credential snapshot. Accepted exports survive close; credentials never reach page JS. */
+    fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit)
+    /** Close cancels view callbacks and releases the view, without clearing persistent storage. */
     fun close()
 }

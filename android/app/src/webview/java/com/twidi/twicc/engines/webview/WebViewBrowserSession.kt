@@ -7,6 +7,12 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Message
 import android.webkit.*
+import androidx.webkit.CookieManagerCompat
+import com.twidi.twicc.tts.TtsCookie
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import android.os.Handler
+import android.os.Looper
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -203,6 +209,38 @@ internal class WebViewBrowserSession(
             view.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             view.loadUrl(url, mapOf("Cache-Control" to "no-cache", "Pragma" to "no-cache"))
         } else view.loadUrl(url)
+    }
+    override fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
+        val accepted = runCatching {
+            check(!closed && instance.url.allowsNavigation(safeUrl)) { "The browser document is unavailable." }
+            check(WebViewFeature.isFeatureSupported(WebViewFeature.GET_COOKIE_INFO)) {
+                "Native speech requires a WebView with GET_COOKIE_INFO support. Update Android System WebView."
+            }
+            require(urls.isNotEmpty() && urls.all { instance.url.allowsNavigation(it) }) {
+                "Cookie export requires the active HTTPS instance."
+            }
+            cookies to urls.toList()
+        }
+        // Keep the profile manager, never the Activity or WebView. Closing the view cannot cancel this operation.
+        Handler(Looper.getMainLooper()).post {
+            callback(accepted.mapCatching { (manager, requests) ->
+                requests.flatMap { url ->
+                    val requestUrl = url.toHttpUrl()
+                    CookieManagerCompat.getCookieInfo(manager, url).map { value ->
+                        val attributes = value.split(';').drop(1).map { it.trim() }
+                        check(attributes.none { it.equals("partitioned", true) }) {
+                            "Partitioned authentication cookies are unsupported."
+                        }
+                        val parsed = requireNotNull(Cookie.parse(requestUrl, value)) { "WebView returned invalid cookie metadata." }
+                        // Chromium serializes the canonical domain for ALL cookies. Only domain cookies start with a dot.
+                        val domain = attributes.firstOrNull { it.substringBefore('=').equals("domain", true) }
+                            ?.substringAfter('=')?.trim()
+                        TtsCookie.fromCookie(parsed).copy(hostOnly = domain?.startsWith('.') != true)
+                    }
+                }.distinctBy { Triple(it.name, it.domain, it.path) }
+                    .filter { it.expiresAt == null || it.expiresAt > System.currentTimeMillis() }
+            })
+        }
     }
     override fun goBack() { if (!closed) view.goBack() }
     override fun setVisible(visible: Boolean) {

@@ -98,7 +98,11 @@ Do not persist or log copied cookies. Do not send them across origins or follow 
 WebView uses its existing profile-specific `CookieManager`, not the global default manager.
 Use `CookieManagerCompat.getCookieInfo` when `GET_COOKIE_INFO` is supported, so domain/path/expiry metadata stays available.
 If that feature is absent, fail native capability negotiation explicitly; do not fabricate metadata from `getCookie` strings.
-Gecko uses a privileged built-in extension background script, the calling tab's `cookieStoreId`, and `browser.cookies`.
+Gecko uses a privileged built-in extension background script and a background-only `addon_parent` cookie adapter.
+Pinned GeckoView 159 exposes string session-context cookie stores that `browser.cookies` cannot resolve correctly.
+Capture the calling tab's actual top-level document principal `originAttributes` before Activity teardown.
+Read `Services.cookies` with those exact attributes; never parse or reconstruct a context or store identifier.
+Keep the real two-profile HTTPS/WSS export test as a required GeckoView update regression check.
 Use `browser.runtime` ports to request the export. Validate the native session, top-level URL, instance UUID, and document generation.
 Do not guess a cookie-store identifier from `contextId`. Task 1 proves the exact pinned Gecko API path.
 Cookie results travel directly from the privileged extension to native code. The content script receives no cookie values.
