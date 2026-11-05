@@ -2,6 +2,15 @@ plugins {
     id("com.android.application")
 }
 
+val targetProfile = providers.gradleProperty("targetProfile").orElse("64").get()
+val targetAbis = when (targetProfile) {
+    "64" -> listOf("arm64-v8a")
+    "32" -> listOf("armeabi-v7a")
+    "emulator" -> listOf("x86_64")
+    "universal" -> listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    else -> throw GradleException("Unknown targetProfile '$targetProfile'. Choose 64, 32, emulator, or universal.")
+}
+
 android {
     namespace = "com.twidi.twicc"
     compileSdk {
@@ -12,7 +21,7 @@ android {
         applicationId = "com.twidi.twicc"
         minSdk = 29
         targetSdk = 35
-        buildConfigField("boolean", "NATIVE_TTS", (providers.gradleProperty("nativeTts").orNull == "true").toString())
+        ndk { abiFilters += targetAbis }
         versionCode = 11
         versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -31,14 +40,6 @@ android {
     }
     sourceSets.getByName("androidTest").assets.srcDir("../../tests/fixtures/native_tts_audio")
     buildFeatures { buildConfig = true }
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
-            isUniversalApk = true
-        }
-    }
     buildTypes {
         release {
             isMinifyEnabled = false

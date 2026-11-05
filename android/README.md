@@ -8,9 +8,9 @@ Installing one build replaces the other. There is no runtime engine selector.
 
 The APK opens an existing TwiCC **HTTPS** server, usually through a tunnel.
 It does not include the TwiCC frontend or backend. Server updates appear on
-page reload. Ordinary builds use the existing Web TTS players.
-Native background TTS is **experimental and default-off**. Enable it only in test
-builds with `--native-tts`. Physical-phone acceptance remains pending.
+page reload. Both Android builds use native TTS when the engine and server
+support it. There is no build-time speech selector. Ordinary browser users
+keep the Web TTS players. Physical-phone acceptance remains pending.
 
 ## Choosing an engine
 
@@ -28,7 +28,7 @@ Choose WebView if its interface runs smoothly and you prefer a smaller download.
 Choose Gecko if it gives you smoother interactions or you need independence
 from the installed WebView provider. Firefox does not need to be installed.
 
-Both builds provide the same native controls. Experimental native TTS uses one
+Both builds provide the same native controls. Native TTS uses one
 common Android service. It does not require background page JavaScript.
 Neither build guarantees a permanent network connection or universal OEM reliability.
 
@@ -82,44 +82,51 @@ sdkmanager 'platforms;android-37.2' 'build-tools;36.0.0'
 From the repository root:
 
 ```sh
-./android/build.sh webview
-./android/build.sh gecko
+./android/build.sh webview 64
+./android/build.sh gecko 64
+```
+
+The first argument selects the engine. The second argument selects the device profile:
+
+| Profile | Target |
+| --- | --- |
+| `64` | ARM 64-bit phones and tablets (`arm64-v8a`) |
+| `32` | ARM 32-bit phones and tablets (`armeabi-v7a`) |
+| `emulator` | Intel/AMD 64-bit emulators (`x86_64`) |
+| `universal` | All three supported architectures in one APK |
+
+An ARM64 emulator uses `64`. Both arguments are required. Missing or invalid
+arguments print usage and stop before Gradle runs. Use `./android/build.sh --help`
+to list the profiles. Universal is generated only when explicitly selected.
+
+The build entry point has standalone regression tests:
+
+```sh
+python3 -m unittest discover -s android/tests -v
 ```
 
 The script also works from another directory through its absolute path. It runs
-common policy tests, flavor app unit tests, flavor lint, and flavor assembly. It collects APKs and
-`SHA256SUMS` in `android/dist/webview/` or `android/dist/gecko/`.
-To prepare experimental native TTS APKs with the same identity and signing key:
-
-```sh
-./android/build.sh webview --native-tts
-./android/build.sh gecko --native-tts
-```
-
-This flag passes the common Gradle property `-PnativeTts=true` for either engine.
-Omitting it keeps `BuildConfig.NATIVE_TTS=false`. The flag creates no extra flavor,
-application ID, storage profile, or signing key. Both builds share version
-**0.5.0**, version code **11**. These experimental APKs use the same output paths;
-a later ordinary build replaces the files in that engine's output directory.
+common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
+Each command builds one APK for the selected profile. Native TTS is enabled in
+both engines without an extra argument. Both builds share version **0.5.0**,
+version code **11**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
 
-Each directory contains these files, with `<engine>` replaced by the flavor:
-
-- `app-<engine>-arm64-v8a-debug.apk`: modern ARM64 phones.
-- `app-<engine>-armeabi-v7a-debug.apk`: older 32-bit ARM phones.
-- `app-<engine>-x86_64-debug.apk`: x86-64 devices and emulators.
-- `app-<engine>-universal-debug.apk`: all three architectures.
+The selected output directory is `android/dist/<engine>/<profile>/`. It contains
+`app-<engine>-<profile>-debug.apk` and `SHA256SUMS` for that APK only. Other profiles
+have separate directories. The script copies the current APK by its exact name;
+it does not collect stale APKs from previous Gradle builds.
 
 Gecko APKs are much larger because they include the browser engine. Transfer
 the selected APK to the phone and permit installation from that source. Or use
 USB debugging:
 
 ```sh
-adb install -r android/dist/gecko/app-gecko-arm64-v8a-debug.apk
+adb install -r android/dist/gecko/64/app-gecko-64-debug.apk
 # Replace the same installation with WebView:
-adb install -r android/dist/webview/app-webview-arm64-v8a-debug.apk
+adb install -r android/dist/webview/64/app-webview-64-debug.apk
 ```
 
 **Preserve `android/.signing/`.** The script sets `ANDROID_USER_HOME` there to
@@ -134,16 +141,20 @@ Direct Gradle commands:
 ```sh
 cd android
 export ANDROID_USER_HOME="$PWD/.signing"
-./gradlew --no-daemon :policy:test :app:testWebviewDebugUnitTest :app:lintWebviewDebug :app:assembleWebviewDebug
-./gradlew --no-daemon :policy:test :app:testGeckoDebugUnitTest :app:lintGeckoDebug :app:assembleGeckoDebug
+./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testWebviewDebugUnitTest :app:lintWebviewDebug :app:assembleWebviewDebug
+./gradlew --no-daemon -PtargetProfile=64 :policy:test :app:testGeckoDebugUnitTest :app:lintGeckoDebug :app:assembleGeckoDebug
 # Policy tests only, without Android SDK configuration:
 ./gradlew --configure-on-demand :policy:test
 ```
 
-Direct APK outputs are in `app/build/outputs/apk/<engine>/debug/`.
+Direct APK output is `app/build/outputs/apk/<engine>/debug/app-<engine>-debug.apk`.
+Gradle defaults to profile `64`; set `-PtargetProfile=32`, `emulator`, or `universal`
+to choose another profile. Native library filtering happens before packaging.
+The Gradle output path is shared between profiles. Use the build script to keep
+selected APKs and checksums in separate distribution directories.
 Open `android/` in Android Studio and select `webviewDebug` or `geckoDebug`.
-The opt-in `ci-build.yml` template builds both flavors sequentially in one job,
-with one signing key. Copy it to `.github/workflows/android.yml` to enable it.
+The opt-in `ci-build.yml` template builds both flavors sequentially for the selected
+device profile, with one signing key. Copy it to `.github/workflows/android.yml` to enable it.
 Each workflow run needs a securely restored signing key for updates.
 
 ## Source structure
@@ -261,17 +272,17 @@ JavaScript is injected. Rendering and scrolling can differ by engine.
 - HTTPS downloads are supported. Use a full browser to save `blob:`/`data:` exports.
 - HTML audio/Web Audio remain engine-managed. Gecko permits autoplay for the
   instance origin. WebView disables the playback gesture requirement.
-- Ordinary builds and ordinary browsers retain the existing Web TTS players.
-  Experimental native builds route supported TwiCC speech through the common service.
+- Android builds route supported TwiCC speech through the common native service.
+  Ordinary browsers retain the existing Web TTS players.
 - The app does not provide native microphone access, speech recognition, or push notifications.
 
-## Experimental native speech
+## Native speech
 
 **Physical acceptance is pending.** The API 35 emulator diagnostic is not a
 physical-phone pass. See the [validation record](../docs/plans/2026-11-05-android-background-tts-validation.md)
 for exact APKs, commands, results, and untested conditions.
 
-An opted-in build negotiates native support with the server. WebView also requires
+Both builds negotiate native support with the server. WebView also requires
 `GET_COOKIE_INFO`; update Android System WebView if that feature is absent.
 Gecko uses its privileged, instance-specific cookie adapter. Cookies never enter
 page JavaScript. Both engines use the same service and Media3 **1.9.0** player.

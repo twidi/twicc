@@ -1,6 +1,11 @@
 # Android background TTS validation
 
-Date: 2026-11-05. Status: **experimental, default-off; physical acceptance pending**.
+Date: 2026-11-05. Recorded status: **experimental, default-off; physical acceptance pending**.
+
+This record covers the binaries through commit `1eb2eca3e`. Commands and activation
+settings below describe those recorded builds. The current Android build uses a
+required device profile and enables native TTS without a build-time switch.
+See [the Android README](../../android/README.md) for the current interface.
 
 No physical phone is connected. No physical-phone screen-off gate passes in this record.
 Ordinary builds omit native TTS. Both experimental builds use the same native service and player.

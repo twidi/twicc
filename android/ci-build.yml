@@ -3,6 +3,12 @@ name: Android debug APK
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Device profile
+        type: choice
+        default: '64'
+        options: ['64', '32', emulator, universal]
 
 permissions:
   contents: read
@@ -16,6 +22,8 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      - name: Test build entry point
+        run: python3 -m unittest discover -s tests -v
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -24,9 +32,11 @@ jobs:
       - name: Prepare Android SDK
         run: sdkmanager 'platforms;android-37.2' 'build-tools;36.0.0'
       - name: Test, lint, and build
+        env:
+          TWICC_BUILD_PROFILE: ${{ inputs.profile }}
         run: |
-          ./build.sh webview
-          ./build.sh gecko
+          ./build.sh webview "$TWICC_BUILD_PROFILE"
+          ./build.sh gecko "$TWICC_BUILD_PROFILE"
       - uses: actions/upload-artifact@v4
         with:
           name: twicc-android-debug

@@ -2,24 +2,23 @@
 set -euo pipefail
 
 usage() {
-    echo 'Usage: ./android/build.sh webview|gecko [--native-tts]'
-    echo 'Builds tested, linted debug APKs in android/dist/<engine>/.'
-    echo '--native-tts enables experimental native speech; physical acceptance remains pending.'
+    echo 'Usage: ./android/build.sh webview|gecko 64|32|emulator|universal'
+    echo '64: ARM 64-bit phones/tablets; 32: ARM 32-bit phones/tablets.'
+    echo 'emulator: Intel/AMD 64-bit; universal: all supported architectures.'
+    echo 'Builds one tested, linted APK in android/dist/<engine>/<profile>/.'
 }
-if [[ $# -lt 1 || $# -gt 2 ]]; then usage >&2; exit 2; fi
+if [[ $# == 1 && ( $1 == -h || $1 == --help ) ]]; then usage; exit 0; fi
+if [[ $# != 2 ]]; then usage >&2; exit 2; fi
 case "$1" in
     webview) variant=Webview ;;
     gecko) variant=Gecko ;;
-    -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
 esac
 engine=$1
-gradle_options=()
-if [[ ${2:-} == --native-tts ]]; then
-    gradle_options+=(-PnativeTts=true)
-elif [[ $# == 2 ]]; then
-    usage >&2; exit 2
-fi
+case "$2" in
+    64|32|emulator|universal) profile=$2 ;;
+    *) usage >&2; exit 2 ;;
+esac
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd -- "$project_dir"
 if ! command -v java >/dev/null 2>&1 && [[ ! -x "${JAVA_HOME:-}/bin/java" ]]; then
@@ -34,12 +33,11 @@ fi
 export ANDROID_USER_HOME="$project_dir/.signing"
 mkdir -p -- "$ANDROID_USER_HOME"
 chmod 700 "$ANDROID_USER_HOME"
-./gradlew --no-daemon "${gradle_options[@]}" :policy:test ":app:test${variant}DebugUnitTest" ":app:lint${variant}Debug" ":app:assemble${variant}Debug"
-output="$project_dir/dist/$engine"
+./gradlew --no-daemon "-PtargetProfile=$profile" :policy:test ":app:test${variant}DebugUnitTest" ":app:lint${variant}Debug" ":app:assemble${variant}Debug"
+output="$project_dir/dist/$engine/$profile"
+apk_name="app-$engine-$profile-debug.apk"
 mkdir -p -- "$output"
-for apk in "$project_dir/app/build/outputs/apk/$engine/debug/"*.apk; do
-    cp -- "$apk" "$output/"
-done
-(cd -- "$output" && sha256sum -- ./*.apk > SHA256SUMS)
+cp -- "$project_dir/app/build/outputs/apk/$engine/debug/app-$engine-debug.apk" "$output/$apk_name"
+(cd -- "$output" && sha256sum -- "$apk_name" > SHA256SUMS)
 if [[ -f "$ANDROID_USER_HOME/debug.keystore" ]]; then chmod 600 "$ANDROID_USER_HOME/debug.keystore"; fi
-printf '\nAPKs: %s\nChecksums: %s/SHA256SUMS\n' "$output" "$output"
+printf '\nAPK: %s/%s\nChecksums: %s/SHA256SUMS\n' "$output" "$apk_name" "$output"
