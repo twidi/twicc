@@ -63,18 +63,27 @@ class TtsSnapshotCache {
     private var revision = 0L
     private var last: NativeTtsSnapshot? = null
     private val results = linkedMapOf<String, Pair<String, NativeTtsResult>>()
-    fun publish(value: NativeTtsSnapshot): NativeTtsSnapshot {
+    private val terminalStates = mutableMapOf<String, Pair<String, TtsFrame?>>()
+    fun beginActivation(instanceId: String) { terminalStates.remove(instanceId) }
+    fun publish(value: NativeTtsSnapshot, mirrorOnly: Boolean = false): NativeTtsSnapshot {
         value.results.forEach { results[it.operationId] = value.instanceId to it }
         while (results.size > 64) results.remove(results.keys.first())
+        val terminal = terminalStates[value.instanceId].takeIf { mirrorOnly }
         return value.copy(revision = ++revision,
+            sessionStatus = terminal?.first ?: value.sessionStatus,
+            error = if (terminal != null) terminal.second else value.error,
             results = results.values.filter { it.first == value.instanceId }.map { it.second }).also { last = it }
     }
     fun snapshot(instanceId: String): NativeTtsSnapshot = last?.takeIf { it.instanceId == instanceId }
-        ?: NativeTtsSnapshot(revision = revision, instanceId = instanceId, sessionStatus = "idle",
-            playback = NativePlayback(), listening = null, pendingCount = 0, error = null,
+        ?: NativeTtsSnapshot(revision = revision, instanceId = instanceId,
+            sessionStatus = terminalStates[instanceId]?.first ?: "idle",
+            playback = NativePlayback(), listening = null, pendingCount = 0, error = terminalStates[instanceId]?.second,
             configurationAvailable = null, results = results.values.filter { it.first == instanceId }.map { it.second })
-    fun stopped(value: NativeTtsSnapshot) = publish(value.copy(playback = NativePlayback(), listening = null, pendingCount = 0,
-        sessionStatus = if (value.sessionStatus == "error") "error" else "stopped"))
+    fun stopped(value: NativeTtsSnapshot): NativeTtsSnapshot {
+        val status = if (value.sessionStatus == "error") "error" else "stopped"
+        terminalStates[value.instanceId] = status to value.error
+        return publish(value.copy(playback = NativePlayback(), listening = null, pendingCount = 0, sessionStatus = status))
+    }
 }
 
 /** The service main looper is the sole state owner. Binding and document replacement never drive lifetime. */
@@ -117,7 +126,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             if (active) internal(TtsCommand.AuthorizationLost("The active instance changed."))
             controller = TtsController(command.instanceId); instanceId = command.instanceId
             source = null; document = null
-            cache.publish(controller!!.snapshot())
+            cache.publish(controller!!.snapshot(), mirrorOnly = true)
             return Acceptance(true)
         }
         val policy = controller ?: return rejected("not_attached", "Open a saved instance before starting speech.")
@@ -182,6 +191,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     private fun process(effects: List<TtsEffect>) {
         for (effect in effects) when (effect) {
             TtsEffect.RequireForeground -> {
+                cache.beginActivation(instanceId)
                 sessionEpoch = UUID.randomUUID().toString(); active = true; terminal = false
                 output = outputFactory()
                 platform.foreground(controller!!.snapshot(), sessionEpoch!!)
@@ -211,7 +221,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                 if (resource === effect.resource) resource = null
             }
             TtsEffect.UpdateNotification -> {
-                val value = cache.publish(controller!!.snapshot())
+                val value = cache.publish(controller!!.snapshot(), mirrorOnly = !active)
                 if (active && controlsAvailable()) {
                     platform.wakeLock(needsWork(value))
                     platform.update(value, sessionEpoch!!)

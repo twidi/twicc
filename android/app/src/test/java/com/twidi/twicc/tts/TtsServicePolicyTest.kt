@@ -186,6 +186,45 @@ class TtsServicePolicyTest {
         assertEquals("operation", nextService.owner.snapshot().results.single().operationId)
         assertEquals("next", nextService.owner.snapshot().playback.operationId)
     }
+    @Test fun backgroundListeningFailureSurvivesAttachmentUntilExplicitActivation() {
+        val first = Harness()
+        assertTrue(first.listen().accepted)
+        first.connect()
+        val message = "Authentication expired. Open TwiCC and sign in again."
+        first.owner.dispatch(TtsCommand.AuthorizationLost(message))
+        first.owner.destroy()
+        val failure = mapOf("code" to "unauthorized", "message" to message)
+        assertEquals("error", first.cache.snapshot("instance").sessionStatus)
+        assertEquals(failure, first.cache.snapshot("instance").error)
+        assertTrue(first.cache.snapshot("instance").results.isEmpty())
+
+        val returning = Harness(first.cache)
+        val attached = returning.owner.snapshot()
+        assertEquals("error", attached.sessionStatus)
+        assertEquals(failure, attached.error)
+        assertNull(attached.listening)
+        assertNull(attached.playback.readingId)
+        assertEquals("idle", attached.playback.status)
+        assertEquals(0, attached.pendingCount)
+        assertNull(returning.owner.sessionEpoch)
+        assertFalse(returning.foreground); assertFalse(returning.wake)
+        assertFalse(returning.events.contains("export")); assertFalse(returning.events.contains("connection"))
+
+        returning.owner.configure(TtsActivationSource("other", "Other", "https://other.test") { _, _ -> fail("Attachment must not export credentials") })
+        returning.owner.dispatch(TtsCommand.AttachDocument(DocumentOwner("other", "other-page", 2)))
+        assertEquals("idle", returning.owner.snapshot().sessionStatus)
+        assertNull(returning.owner.snapshot().error)
+        assertEquals(failure, first.cache.snapshot("instance").error)
+
+        val reattached = Harness(first.cache)
+        assertEquals(failure, reattached.owner.snapshot().error)
+        assertTrue(reattached.manual("fresh-operation").accepted)
+        assertEquals("starting", reattached.owner.snapshot().sessionStatus)
+        assertNull(reattached.owner.snapshot().error)
+        assertEquals("fresh-operation", reattached.owner.snapshot().playback.operationId)
+        assertTrue(reattached.events.contains("export"))
+    }
+
     @Test fun stalePageAndInternalCommandsCannotClaimAcceptance() {
         val h = Harness()
         assertFalse(h.owner.dispatch(TtsCommand.Manual(h.document.copy(generation = 0), "old", emptyMap())).accepted)
