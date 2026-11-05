@@ -38,7 +38,8 @@ const store = useTimelineFiltersStore()
 const speech = useTimelineSpeechStore()
 const tts = useTextToSpeechStore()
 const listening = computed(() => speech.activePageId === props.pageId)
-const speechLabel = computed(() => listening.value ? 'Stop reading new assistant messages aloud' : 'Read new assistant messages aloud')
+const speechLabel = computed(() => !listening.value ? 'Read new assistant messages aloud'
+    : speech.paused ? 'Timeline reading paused. Stop timeline listening' : 'Stop reading new assistant messages aloud')
 const filters = computed(() => store.filtersFor(props.pageId))
 const count = computed(() => activeCount(filters.value))
 

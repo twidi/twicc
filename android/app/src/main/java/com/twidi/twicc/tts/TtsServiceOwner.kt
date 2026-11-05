@@ -145,6 +145,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             document = command.owner
         } else if (command !is TtsCommand.Manual && command !is TtsCommand.Listen && command !is TtsCommand.SetMuted &&
             command !is TtsCommand.Disable && command !is TtsCommand.StopReading && command != TtsCommand.Skip &&
+            command !is TtsCommand.PauseTimeline && command !is TtsCommand.ResumeTimeline &&
             command != TtsCommand.StopAll && command !is TtsCommand.SwitchInstance && command !is TtsCommand.AuthorizationLost)
             return rejected("invalid_command", "This speech command is internal.")
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
@@ -152,6 +153,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             if (!active && source == null) return rejected("credentials_unavailable", "Reopen this instance, then start speech again.")
             if (terminal) return rejected("stopping", "Speech is stopping. Start again after cleanup.")
         }
+        if (command is TtsCommand.ResumeTimeline)
+            platform.notificationError()?.let { return Acceptance(false, error = it) }
         val effects = policy.dispatch(command)
         if (effects.isEmpty()) return rejected("stale_command", "This speech command no longer matches the active reading.")
         if (command == TtsCommand.StopAll) { terminal = true; exporting = false }
@@ -170,7 +173,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         })
     }
     fun notificationCommand(epoch: String, command: TtsCommand): Acceptance {
-        if (!active || epoch != sessionEpoch || (command != TtsCommand.Skip && command != TtsCommand.StopAll))
+        if (!active || epoch != sessionEpoch || (command != TtsCommand.Skip && command != TtsCommand.StopAll &&
+                command !is TtsCommand.PauseTimeline && command !is TtsCommand.ResumeTimeline))
             return rejected("stale_session", "This notification belongs to an old speech session.")
         return dispatch(command)
     }

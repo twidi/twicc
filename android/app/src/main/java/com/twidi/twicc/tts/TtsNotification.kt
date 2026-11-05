@@ -17,7 +17,7 @@ import android.provider.Settings
 import com.twidi.twicc.MainActivity
 import com.twidi.twicc.R
 
-/** Foreground controls use a unique session URI. Extras alone do not distinguish PendingIntents. */
+/** Control URIs identify the session and listening activation. Extras do not distinguish PendingIntents. */
 class TtsNotification(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
     init {
@@ -37,6 +37,7 @@ class TtsNotification(private val context: Context) {
             snapshot.playback.phase in setOf("playing", "settling") -> R.string.tts_reading
             snapshot.playback.readingId != null || snapshot.sessionStatus == "starting" -> R.string.tts_preparing
             snapshot.sessionStatus == "stopped" -> R.string.tts_stopping
+            snapshot.listening?.paused == true -> R.string.tts_timeline_paused
             else -> R.string.tts_waiting
         }
         val reopen = Intent(context, MainActivity::class.java).setAction(ACTION_REOPEN)
@@ -53,23 +54,32 @@ class TtsNotification(private val context: Context) {
             .apply {
                 if (snapshot.playback.readingId != null) addAction(Notification.Action.Builder(null,
                     context.getString(R.string.tts_skip), command(ACTION_SKIP, epoch)).build())
+                snapshot.listening?.let { listening ->
+                    addAction(Notification.Action.Builder(null,
+                        context.getString(if (listening.paused) R.string.tts_resume_timeline else R.string.tts_pause_timeline),
+                        command(if (listening.paused) ACTION_RESUME_TIMELINE else ACTION_PAUSE_TIMELINE,
+                            epoch, listening.activationId)).build())
+                }
                 addAction(Notification.Action.Builder(null, context.getString(R.string.tts_stop_all), command(ACTION_STOP_ALL, epoch)).build())
                 if (Build.VERSION.SDK_INT >= 31) setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             }.build()
     }
     fun update(snapshot: NativeTtsSnapshot, epoch: String, name: String) = manager.notify(ID, build(snapshot, epoch, name))
-    private fun command(action: String, epoch: String): PendingIntent = PendingIntent.getService(context, 0,
+    private fun command(action: String, epoch: String, activationId: String? = null): PendingIntent = PendingIntent.getService(context, 0,
         Intent(context, TtsService::class.java).setAction(action)
-            .setData(Uri.parse("twicc-tts://control/$epoch/${action.substringAfterLast('.')}"))
-            .putExtra(EXTRA_EPOCH, epoch), PendingIntent.FLAG_IMMUTABLE)
+            .setData(Uri.parse("twicc-tts://control/$epoch/${action.substringAfterLast('.')}/${activationId.orEmpty()}"))
+            .putExtra(EXTRA_EPOCH, epoch).putExtra(EXTRA_ACTIVATION, activationId), PendingIntent.FLAG_IMMUTABLE)
 
     companion object {
         const val CHANNEL = "tts_playback"
         const val ID = 1001
         const val ACTION_SKIP = "com.twidi.twicc.tts.SKIP"
         const val ACTION_STOP_ALL = "com.twidi.twicc.tts.STOP_ALL"
+        const val ACTION_PAUSE_TIMELINE = "com.twidi.twicc.tts.PAUSE_TIMELINE"
+        const val ACTION_RESUME_TIMELINE = "com.twidi.twicc.tts.RESUME_TIMELINE"
         const val ACTION_REOPEN = "com.twidi.twicc.tts.REOPEN"
         const val EXTRA_EPOCH = "tts_session_epoch"
+        const val EXTRA_ACTIVATION = "tts_activation"
         const val EXTRA_INSTANCE = "tts_instance"
         const val PERMISSION_REQUEST = 8601
 

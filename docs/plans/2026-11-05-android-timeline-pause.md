@@ -65,15 +65,16 @@
 - Modify: `frontend/src/stores/timelineSpeech.js`
 - Modify: `frontend/src/components/timeline/TimelineFilterBand.vue`
 - Test: `android/app/src/test/java/com/twidi/twicc/tts/TtsServicePolicyTest.kt`
+- Test: `android/app/src/test/java/com/twidi/twicc/tts/NativeTtsBridgeTest.kt`
 - Test: `frontend/src/stores/nativeTts.integration.test.js`
 - Test: `frontend/src/components/timeline/TimelineFilterBand.test.js`
 
 **Interfaces:** Notification actions include session epoch and listening activation ID. Service creates Resume's UTC boundary with exactly six fractional digits at receipt. Snapshot JSON exposes `listening.paused`; the store mirrors it as `paused`. The timeline toggle still disables paused listening and its tooltip identifies pause.
 
-- [ ] Write failing service tests for current/stale notification commands and retained foreground resources. Write frontend tests for paused state and disabling it.
-- [ ] Implement action routing, labels, paused status, and snapshot mirroring. Keep at most three notification buttons.
-- [ ] Run both flavor release unit suites and targeted frontend tests; expect all to pass.
-- [ ] Commit this task with its tests.
+- [x] Write failing service tests for current/stale notification commands and retained foreground resources. Write frontend tests for paused state and disabling it.
+- [x] Implement action routing, labels, paused status, and snapshot mirroring. Keep at most three notification buttons.
+- [x] Run both flavor release unit suites and targeted frontend tests; expect all to pass.
+- [x] Commit this task with its tests.
 
 ### Task 3: Device validation and installation APK
 

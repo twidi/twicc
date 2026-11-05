@@ -76,7 +76,7 @@ private fun NativeTtsSnapshot.json(): JSONObject = JSONObject().put("version", v
         .put("status", playback.status).put("phase", playback.phase).put("automatic", playback.automatic).put("started", playback.started))
     .put("listening", listening?.let { value -> JSONObject().put("activationId", value.activationId).put("pageId", value.pageId)
         .put("scope", JSONObject().put("kind", value.scope.kind).put("id", value.scope.id ?: JSONObject.NULL).put("label", value.scope.label ?: JSONObject.NULL))
-        .put("boundary", value.boundary).put("includeMuted", value.includeMuted) } ?: JSONObject.NULL)
+        .put("boundary", value.boundary).put("includeMuted", value.includeMuted).put("paused", value.paused) } ?: JSONObject.NULL)
     .put("results", JSONArray().apply { results.forEach { result -> put(JSONObject().put("operationId", result.operationId)
         .put("started", result.started).put("automatic", result.automatic).put("readingId", result.readingId ?: JSONObject.NULL)
         .put("generation", result.generation).put("start", JSONObject(result.start)).put("ended", JSONObject(result.ended))) } })

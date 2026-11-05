@@ -10,6 +10,8 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import java.util.concurrent.Executors
+import java.time.Instant
+import java.time.format.DateTimeFormatterBuilder
 
 /** Plain Service: listening and settling retain foreground ownership independently of player inactivity. */
 class TtsService : Service() {
@@ -66,6 +68,11 @@ class TtsService : Service() {
         when (intent?.action) {
             TtsNotification.ACTION_SKIP -> owner.notificationCommand(epoch.orEmpty(), TtsCommand.Skip)
             TtsNotification.ACTION_STOP_ALL -> owner.notificationCommand(epoch.orEmpty(), TtsCommand.StopAll)
+            TtsNotification.ACTION_PAUSE_TIMELINE -> owner.notificationCommand(epoch.orEmpty(),
+                TtsCommand.PauseTimeline(intent.getStringExtra(TtsNotification.EXTRA_ACTIVATION).orEmpty()))
+            TtsNotification.ACTION_RESUME_TIMELINE -> owner.notificationCommand(epoch.orEmpty(),
+                TtsCommand.ResumeTimeline(intent.getStringExtra(TtsNotification.EXTRA_ACTIVATION).orEmpty(),
+                    DateTimeFormatterBuilder().appendInstant(6).toFormatter().format(Instant.now())))
         }
         // An old PendingIntent can instantiate an idle Service, but it never activates foreground or a session.
         if (!foreground) stopSelfResult(startId)

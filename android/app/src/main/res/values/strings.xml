@@ -10,6 +10,9 @@
     <string name="tts_stopping">Stopping</string>
     <string name="tts_skip">Skip</string>
     <string name="tts_stop_all">Stop all</string>
+    <string name="tts_pause_timeline">Pause timeline</string>
+    <string name="tts_resume_timeline">Resume timeline</string>
+    <string name="tts_timeline_paused">Timeline reading paused</string>
     <string name="tts_notifications_required">Enable speech notifications to use background Skip and Stop all controls. Then start speech again.</string>
     <string name="tts_battery_title">Timeline listening and battery</string>
     <string name="tts_battery_advice">You can use timeline listening without changing battery settings. Android may delay or interrupt speech in the background or with the screen off. Allow unrestricted battery use for TwiCC to improve background listening. You can change this later in Android Settings → Apps → TwiCC → Battery.\n\nContinue without changes to start now, or open Settings and then enable listening again.</string>

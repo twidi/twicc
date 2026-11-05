@@ -98,6 +98,41 @@ class TtsServicePolicyTest {
         assertEquals("reconnecting", h.owner.snapshot().sessionStatus)
         assertTrue(h.foreground); assertTrue(h.wake)
     }
+    @Test fun notificationPauseAndResumeKeepForegroundWithoutTheDocumentSource() {
+        val h = Harness(); h.listen(); h.connect()
+        val source = TtsActivationSource("instance", "Detached page", "https://example.test") { _, _ ->
+            fail("Notification Resume reuses its native session without exporting page credentials")
+        }
+        h.owner.configure(source); h.owner.detachSource(source)
+        val epoch = h.owner.sessionEpoch!!
+        val activation = h.owner.snapshot().listening!!.activationId
+        assertTrue(h.owner.notificationCommand(epoch, TtsCommand.PauseTimeline(activation)).accepted)
+        assertTrue(h.owner.snapshot().listening!!.paused)
+        assertTrue(h.foreground); assertTrue(h.wake)
+        val boundary = "2026-11-05T14:20:00.000000Z"
+        assertFalse(h.owner.notificationCommand("old-epoch", TtsCommand.ResumeTimeline(activation, boundary)).accepted)
+        assertTrue(h.owner.snapshot().listening!!.paused)
+        assertTrue(h.owner.notificationCommand(epoch, TtsCommand.ResumeTimeline(activation, boundary)).accepted)
+        assertFalse(h.owner.snapshot().listening!!.paused)
+        assertNotEquals(activation, h.owner.snapshot().listening!!.activationId)
+        assertEquals(boundary, h.socket.sent.last()["boundary"])
+        assertFalse(h.owner.notificationCommand(epoch, TtsCommand.PauseTimeline(activation)).accepted)
+        assertTrue(h.foreground); assertTrue(h.wake)
+    }
+    @Test fun notificationResumeCannotBypassBlockedNotificationsOrRestoreStoppedListening() {
+        val h = Harness(); h.listen(); h.connect()
+        val epoch = h.owner.sessionEpoch!!
+        val activation = h.owner.snapshot().listening!!.activationId
+        assertTrue(h.owner.notificationCommand(epoch, TtsCommand.PauseTimeline(activation)).accepted)
+        h.blocked = TtsActionError("notifications_blocked", "Enable notifications")
+        val resume = TtsCommand.ResumeTimeline(activation, "2026-11-05T14:20:00.000000Z")
+        assertFalse(h.owner.notificationCommand(epoch, resume).accepted)
+        assertTrue(h.owner.snapshot().listening!!.paused)
+        h.blocked = null
+        h.owner.dispatch(TtsCommand.Disable(h.document, activation))
+        assertFalse(h.owner.notificationCommand(epoch, resume).accepted)
+        assertNull(h.owner.snapshot().listening)
+    }
     @Test fun stopAllDuringExportCannotOpenLateSessionAndStopsWithinFiveSeconds() {
         val h = Harness(); h.manual(); val oldExport = h.exported!!
         assertTrue(h.owner.dispatch(TtsCommand.StopAll).accepted)

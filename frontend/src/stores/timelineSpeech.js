@@ -45,6 +45,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
         }
         store.activePageId = listening?.pageId ?? null
         store.activeLabel = listening?.scope?.label ?? ''
+        store.paused = listening?.paused === true
         store.pendingCount = snapshot?.pendingCount ?? 0
         const results = snapshot?.results ?? []
         for (const result of results) {
@@ -433,7 +434,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
 }
 
 export const useTimelineSpeechStore = defineStore('timelineSpeech', {
-    state: () => ({ activePageId: null, activeLabel: '', pendingCount: 0 }),
+    state: () => ({ activePageId: null, activeLabel: '', pendingCount: 0, paused: false }),
     actions: {
         initialize({ dataStore, workspacesStore, connectionStatus, eventTarget = window, settingsStore = null }) {
             if (coordinators.has(this)) return

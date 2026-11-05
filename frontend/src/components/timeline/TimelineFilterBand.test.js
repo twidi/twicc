@@ -318,6 +318,17 @@ test('speech activation calls enable synchronously with only pageId and ignores 
     assert.deepEqual(speechActions.at(-1), ['enable', 'p2'])
 })
 
+test('paused timeline toggle identifies pause and disables listening instead of resuming', async (t) => {
+    const { root, speech, speechActions } = await mount(t, { activePageId: 'p1' })
+    speech.paused = true
+    await flush()
+    const [button] = byClass(root, 'timeline-speech-toggle')
+    assert.equal(button.props['aria-pressed'], true)
+    assert.equal(button.props.title, 'Timeline reading paused. Stop timeline listening')
+    button.props.onClick()
+    assert.deepEqual(speechActions.at(-1), ['disable'])
+})
+
 test('unavailable speech cannot enable listening; an active toggle can still stop', async (t) => {
     const { root, speech, speechActions } = await mount(t, { available: false })
     const [button] = byClass(root, 'timeline-speech-toggle')

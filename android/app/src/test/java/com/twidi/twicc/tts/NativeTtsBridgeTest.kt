@@ -18,6 +18,14 @@ class NativeTtsBridgeTest {
         commands += command; Acceptance(true, (command as? TtsCommand.Manual)?.operationId)
     }
     private fun NativeTtsBridge.request(command: String, args: JSONObject) = receive(command, args.put("documentToken", "document"))
+    @Test fun pausedTimelineRemainsVisibleInThePageSnapshot() {
+        val paused = snapshot.copy(listening = snapshot.listening!!.copy(paused = true))
+        val bridge = NativeTtsBridge({ true }, { owner }, { paused }, { "document" }) { Acceptance(true) }
+        val value = bridge.request("tts.state", JSONObject()).getJSONObject("snapshot").getJSONObject("listening")
+        assertTrue(value.getBoolean("paused"))
+        assertEquals("activation", value.getString("activationId"))
+        assertEquals("project-one", value.getString("pageId"))
+    }
     @Test fun summaryAndSelectionReachTheCommonOwnerUnchanged() {
         val request = JSONObject("""{"kind":"summary","speech":{"cache":true},"summary":{"source":{"text":"selection","purpose":"selection"},"source_key":null,"source_hash":"hash","policy_key":"policy"},"identity":{"sourceKey":null,"sourceHash":"hash","variant":"summary"},"text":"","config_id":null}""")
         val result = bridge().request("tts.manual", JSONObject().put("operationId", "op").put("request", request))
