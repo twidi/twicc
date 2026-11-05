@@ -481,7 +481,7 @@ test('scope invalidation availability loss and truncation disable listening', as
     assert.equal(h.store.activePageId, null)
     assert.equal(h.requests.length, count + 1)
     assert.equal(h.errors.length, 1)
-    assert.match(h.errors[0], /catch-up/i)
+    assert.match(h.errors[0], /messages could not be loaded/i)
 })
 
 test('stopping the current reading keeps listening and reads the next message', async () => {

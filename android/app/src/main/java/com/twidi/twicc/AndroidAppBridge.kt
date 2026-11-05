@@ -1,6 +1,8 @@
 package com.twidi.twicc
 
 import org.json.JSONObject
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /** Versioned app commands. Engine transports validate the frame before entering this dispatcher. */
 class AndroidAppBridge(
@@ -16,28 +18,35 @@ class AndroidAppBridge(
                 if (error != null) put("error", error)
                 if (state != null) put("state", state)
             }.toString()
+        fun invalid(reason: String): String {
+            Logger.getLogger("TwiCC.AndroidAppBridge").warning(reason)
+            return reply("Could not complete this action. Reload this page and try again.")
+        }
         try {
             frameError(text)?.let { return it }
             val request = JSONObject(text)
             id = (request.opt("id") as? String).orEmpty()
-            if (id.isEmpty() || id.length > 96 || request.opt("protocol") != 1) return reply("Unsupported Android protocol.")
+            if (id.isEmpty() || id.length > 96 || request.opt("protocol") != 1) return invalid("Unsupported Android protocol or request ID")
             val wire = request.optString("command")
-            if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply("Native speech is unavailable.")
-            val command = AppCommand.fromWire(wire) ?: return reply("Unknown Android command.")
+            if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply("Speech is unavailable. Update the Android app and try again.")
+            val command = AppCommand.fromWire(wire) ?: return invalid("Unknown Android command")
             when (command) {
                 AppCommand.GET_STATE -> return reply(state = state().apply {
                     if (!has("capabilities")) put("capabilities", JSONObject())
                 })
                 AppCommand.MENU_VISIBILITY -> {
-                    val owner = request.opt("owner") as? String ?: return reply("Missing menu owner.")
-                    val visible = request.opt("visible") as? Boolean ?: return reply("Missing menu visibility.")
-                    if (owner.isEmpty() || owner.length > 96) return reply("Invalid menu owner.")
+                    val owner = request.opt("owner") as? String ?: return invalid("Missing menu owner")
+                    val visible = request.opt("visible") as? Boolean ?: return invalid("Missing menu visibility")
+                    if (owner.isEmpty() || owner.length > 96) return invalid("Invalid menu owner")
                     visibility(owner, visible)
                     return reply()
                 }
                 else -> return reply(action(command, request.opt("instanceId") as? String))
             }
-        } catch (_: Exception) { return reply("Invalid Android request.") }
+        } catch (error: Exception) {
+            Logger.getLogger("TwiCC.AndroidAppBridge").log(Level.WARNING, "Android request failed", error)
+            return reply("Could not complete this action. Reload this page and try again.")
+        }
     }
 
     companion object {
@@ -52,7 +61,7 @@ class AndroidAppBridge(
             val tts = request?.optString("command") in TTS_COMMANDS
             if (tts && bytes <= TTS_MAX_BYTES) return null
             return JSONObject().put("protocol", 1).put("id", (request?.opt("id") as? String).orEmpty().take(96))
-                .put("ok", false).put("error", "The Android request is too large.").toString()
+                .put("ok", false).put("error", "This action contains too much data. Try a smaller selection.").toString()
         }
     }
 }

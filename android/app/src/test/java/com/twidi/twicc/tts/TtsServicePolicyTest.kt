@@ -78,6 +78,17 @@ class TtsServicePolicyTest {
         assertEquals("connected", h.owner.snapshot().sessionStatus)
         assertTrue(h.foreground)
     }
+    @Test fun cookieExportFailuresOfferRecoveryWithoutExposingBridgeInternals() {
+        for (detail in listOf("Cookie export timed out.", "The cookie export bridge disconnected.")) {
+            val h = Harness(); h.manual()
+            h.exported!!(Result.failure(IllegalStateException(detail)))
+            val state = h.owner.snapshot()
+            assertEquals("error", state.sessionStatus)
+            assertEquals("Speech could not start. Reload the page and try again.", state.error!!["message"])
+            assertEquals(state.error!!["message"], state.results.single().start["error"])
+            assertTrue(h.stopped); assertFalse(h.wake)
+        }
+    }
     @Test fun listeningWithoutExemptionKeepsForegroundControlsAndWakeLock() {
         val h = Harness()
         assertTrue(h.listen().accepted)

@@ -105,6 +105,22 @@ async def test_resume_unknown_or_wrong_secret_never_creates_session(settings):
     await native_sessions.registry.shutdown()
 
 
+async def test_invalid_command_offers_recovery_and_logs_protocol_details(settings, caplog):
+    settings.TWICC_PASSWORD_HASH = ''
+    comm = await socket()
+    await comm.connect()
+    try:
+        await comm.send_json_to({'protocol': 1, 'type': 'ping', 'seq': 1})
+        frame = await comm.receive_json_from()
+        assert frame['code'] == 'invalid_command'
+        assert frame['message'] == 'Speech could not start. Reload the page and try again.'
+        assert 'Open or resume a native session first' in caplog.text
+        await comm.send_to(text_data='{broken JSON')
+        assert (await comm.receive_json_from())['message'] == frame['message']
+    finally:
+        await comm.disconnect()
+
+
 async def test_native_http_stream_and_ending_enforce_session_ownership(settings, monkeypatch):
     from unittest.mock import AsyncMock
     from twicc.tts.service import OpenedSpeech

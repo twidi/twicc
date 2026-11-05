@@ -50,7 +50,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             const response = await appClient.request(`tts.${name}`, args)
             if (attached && mine === epoch) apply(response?.snapshot)
             return response
-        } catch (error) { return { accepted: false, error: { message: error.message || 'Native speech is unavailable' } } }
+        } catch (error) { return { accepted: false, error: { message: error.message || 'Speech is unavailable. Reload the page and try again.' } } }
     }
     function abortOperations(predicate = () => true) {
         for (const [id, entry] of pending) if (predicate(id)) {
@@ -99,7 +99,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         handlesOperation: operationId => pageOperations.has(operationId),
         subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
         manual(request) {
-            if (!attached) return Promise.resolve({ ok: false, error: 'Native speech is unavailable' })
+            if (!attached) return Promise.resolve({ ok: false, error: 'Speech is unavailable. Reload the page and try again.' })
             abortOperations()
             const operationId = `${prefix}-${++operation}`
             pageOperations.add(operationId)
@@ -113,7 +113,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
                 const entry = pending.get(operationId)
                 if (!entry || acceptance?.accepted) return
                 pending.delete(operationId)
-                entry.resolve({ ok: false, error: acceptance?.error?.message || 'Native speech could not start' })
+                entry.resolve({ ok: false, error: acceptance?.error?.message || 'Speech could not start. Reload the page and try again.' })
                 entry.resolveEnded(ABORTED)
             })
             return Object.assign(result, { operationId })

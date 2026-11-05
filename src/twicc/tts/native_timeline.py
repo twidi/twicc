@@ -171,7 +171,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'The listening scope is empty or no longer exists.')
+                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
                 return
             self.boundaries = {member: active['boundary'] for member in members}
             active['label'] = label
@@ -274,7 +274,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'The listening scope is empty or no longer exists.')
+                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
                 return
             now = format_occurred_at(self.clock())
             self.boundaries = {member: self.boundaries.get(member, now) for member in members}
@@ -283,7 +283,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if body['truncated']:
-                await self._stop('catchup_incomplete', 'Timeline catch-up is incomplete. Automatic listening stopped.')
+                await self._stop('catchup_incomplete', 'Some messages could not be loaded. Turn timeline reading on again.')
                 return
             self.cursor = max(self.cursor, body['latest_id'] or 0)
             self._consume(body)
@@ -435,7 +435,7 @@ class TimelineListener:
             if self.active is not active or not self._caught_up or epoch != self._epoch:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'The listening scope is empty or no longer exists.')
+                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
                 return
             visibility = table.get(event['session_id'], {})
             if (event['project_id'] not in members or visibility.get('hidden')

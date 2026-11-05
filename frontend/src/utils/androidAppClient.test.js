@@ -37,12 +37,12 @@ test('client ignores iframe, foreign-origin, and unsupported-protocol responses'
     f.reply(response, { source: {} })
     f.reply(response, { origin: 'https://other.example' })
     f.reply({ ...response, protocol: 2 })
-    await assert.rejects(pending, /unavailable|timed out/i)
+    await assert.rejects(pending, /Could not contact the Android app/)
     f.client.close()
 })
 test('ordinary browser times out and closing a client releases pending requests', async () => {
     const f = fixture()
-    await assert.rejects(f.client.request('getState'), /unavailable|timed out/i)
+    await assert.rejects(f.client.request('getState'), /Could not contact the Android app/)
     const pending = f.client.request('getState')
     f.client.close()
     await assert.rejects(pending, /closed/i)
@@ -52,8 +52,8 @@ for (const webview of [false, true]) test(`UTF8 command bounds preserve large TT
     const pending = f.client.request('tts.manual', { request: { text: 'é'.repeat(20000) } })
     assert.equal(f.sent[0].request.text.length, 20000)
     f.reply({ protocol: 1, id: f.sent[0].id, ok: true, state: { accepted: true } }); await pending
-    await assert.rejects(f.client.request('menuVisibility', { padding: 'é'.repeat(8192) }), /too large/)
-    await assert.rejects(f.client.request('tts.manual', { request: { text: 'é'.repeat(6 * 1024 * 1024) } }), /too large/)
+    await assert.rejects(f.client.request('menuVisibility', { padding: 'é'.repeat(8192) }), /too much data/)
+    await assert.rejects(f.client.request('tts.manual', { request: { text: 'é'.repeat(6 * 1024 * 1024) } }), /too much data/)
     assert.equal(f.sent.length, 1); f.client.close()
 })
 
@@ -71,4 +71,25 @@ test('WebView waits for committed injection then freezes its document token acro
     const next = f.client.request('tts.state')
     assert.equal(f.sent[1].documentToken, 'original-document')
     f.reply({ protocol: 1, id: f.sent[1].id, ok: true, state: {} }); await next; f.client.close()
+})
+
+for (const webview of [false, true]) test(`transport exceptions offer recovery without exposing bridge internals (${webview})`, async () => {
+    const f = fixture(webview)
+    const transport = webview ? f.window.TwiccAndroid : f.window
+    transport.postMessage = () => { throw new Error('The cookie export bridge disconnected.') }
+    try {
+        await assert.rejects(f.client.request('tts.manual'), {
+            message: 'Could not contact the Android app. Reload this page and try again.',
+        })
+    } finally { f.client.close() }
+})
+
+test('invalid request data offers recovery without exposing serialization errors', async () => {
+    const f = fixture()
+    const args = {}; args.circular = args
+    try {
+        await assert.rejects(f.client.request('tts.manual', args), {
+            message: 'Could not complete this action. Reload this page and try again.',
+        })
+    } finally { f.client.close() }
 })

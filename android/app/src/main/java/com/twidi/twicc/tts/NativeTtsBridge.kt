@@ -2,6 +2,8 @@ package com.twidi.twicc.tts
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /** Common bridge mapping. Both browser engines call this after validating the top-level document. */
 class NativeTtsBridge(
@@ -12,10 +14,10 @@ class NativeTtsBridge(
     private val dispatch: (TtsCommand) -> Acceptance,
 ) {
     fun receive(command: String, args: JSONObject): JSONObject {
-        if (!enabled()) return acceptance(Acceptance(false, error = TtsActionError("unsupported", "Native speech is unavailable in this build.")))
-        val expected = documentToken() ?: return acceptance(Acceptance(false, error = TtsActionError("initializing", "Native speech is initializing. Try again.")))
+        if (!enabled()) return acceptance(Acceptance(false, error = TtsActionError("unsupported", "Speech is unavailable. Update the Android app and try again.")))
+        val expected = documentToken() ?: return acceptance(Acceptance(false, error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment.")))
         if (args.opt("documentToken") != expected) return acceptance(Acceptance(false,
-            error = TtsActionError("stale_document", "This page no longer controls native speech. Reopen it.")))
+            error = TtsActionError("stale_document", "Reload this page, then try speech again.")))
         return try {
             val document = owner()
             val control = when (command) {
@@ -47,8 +49,9 @@ class NativeTtsBridge(
             }
             if (control == null) JSONObject().put("snapshot", snapshot().json())
             else acceptance(dispatch(control)).put("snapshot", snapshot().json())
-        } catch (_: Exception) {
-            acceptance(Acceptance(false, error = TtsActionError("invalid_request", "Invalid native speech request.")))
+        } catch (error: Exception) {
+            Logger.getLogger("TwiCC.NativeTtsBridge").log(Level.WARNING, "Speech request failed", error)
+            acceptance(Acceptance(false, error = TtsActionError("invalid_request", "Speech could not start. Reload the page and try again.")))
         }
     }
     private fun acceptance(value: Acceptance) = JSONObject().put("accepted", value.accepted)

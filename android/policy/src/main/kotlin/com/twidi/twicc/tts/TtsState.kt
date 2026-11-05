@@ -48,7 +48,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         mapOf("protocol" to 1, "type" to type, "seq" to nextSeq()) + fields
     private fun queue(type: String, fields: TtsFrame = emptyMap()): Long {
         // A full replay lane must fail closed instead of dropping cancellation intent.
-        if (retained.size >= 256) { terminate("replay_overflow", "Reconnect before starting more speech"); return seq }
+        if (retained.size >= 256) { terminate("replay_overflow", "Speech stopped. Start playback or turn on timeline reading again."); return seq }
         val value = frame(type, fields); val sequence = (value["seq"] as Number).toLong()
         retained[sequence] = value
         if (ready) flushPending()
@@ -220,7 +220,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 } else when (f["type"]) {
                     "opened_session" -> {
                         sessionId = f["session_id"] as? String; secret = f["resume_secret"] as? String
-                        if (sessionId == null || secret == null) terminate("invalid_protocol", "Invalid native session")
+                        if (sessionId == null || secret == null) terminate("invalid_protocol", "Speech could not start. Reload the page and try again.")
                         else { ready = true; status = "connected"; flushPending() }
                     }
                     "state" -> {

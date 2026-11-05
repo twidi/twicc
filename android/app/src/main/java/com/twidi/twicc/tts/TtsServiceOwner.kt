@@ -1,6 +1,8 @@
 package com.twidi.twicc.tts
 
 import java.util.UUID
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /** Action names are native UI actions, never credentials or Android Intent payloads. */
 data class TtsActionError(val code: String, val message: String, val action: String? = null)
@@ -50,7 +52,7 @@ class NativeTtsTransport(credentials: TtsCredentials) : TtsTransport {
 }
 class UnavailableTtsOutput : TtsPlaybackOutput {
     override fun prepare(resource: AudioResource, connection: TtsTransport, feedback: (PlayerSignal) -> Unit) {
-        feedback(PlayerSignal.Ended(false, "Native speech output is not available in this build."))
+        feedback(PlayerSignal.Ended(false, "Speech is unavailable. Update the Android app and try again."))
     }
     override fun play(readingId: String, generation: Long) {}
     override fun cancel(readingId: String, generation: Long) {}
@@ -138,30 +140,31 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             is TtsCommand.StopReading -> command.owner
             else -> null
         }
-        if (owner != null && owner != document) return rejected("stale_document", "This page no longer owns speech controls.")
+        if (owner != null && owner != document) return rejected("stale_document", "Reload this page, then try speech again.")
         if (command is TtsCommand.AttachDocument) {
             if (command.owner.instanceId != instanceId || (document != null && command.owner.generation < document!!.generation))
-                return rejected("stale_document", "This page no longer owns speech controls.")
+                return rejected("stale_document", "Reload this page, then try speech again.")
             document = command.owner
         } else if (command !is TtsCommand.Manual && command !is TtsCommand.Listen && command !is TtsCommand.SetMuted &&
             command !is TtsCommand.Disable && command !is TtsCommand.StopReading && command != TtsCommand.Skip &&
             command !is TtsCommand.PauseTimeline && command !is TtsCommand.ResumeTimeline &&
             command != TtsCommand.StopAll && command !is TtsCommand.SwitchInstance && command !is TtsCommand.AuthorizationLost)
-            return rejected("invalid_command", "This speech command is internal.")
+            return rejected("invalid_command", "Could not change speech playback. Reload the page and try again.")
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
             platform.notificationError()?.let { return Acceptance(false, error = it) }
             if (!active && source == null) return rejected("credentials_unavailable", "Reopen this instance, then start speech again.")
-            if (terminal) return rejected("stopping", "Speech is stopping. Start again after cleanup.")
+            if (terminal) return rejected("stopping", "Speech is stopping. Wait a moment, then try again.")
         }
         if (command is TtsCommand.ResumeTimeline)
             platform.notificationError()?.let { return Acceptance(false, error = it) }
         val effects = policy.dispatch(command)
-        if (effects.isEmpty()) return rejected("stale_command", "This speech command no longer matches the active reading.")
+        if (effects.isEmpty()) return rejected("stale_command", "Speech playback changed. Try again.")
         if (command == TtsCommand.StopAll) { terminal = true; exporting = false }
         if (command is TtsCommand.SwitchInstance) { source = null; document = null }
-        try { process(effects) } catch (_: Exception) {
-            internal(TtsCommand.AuthorizationLost("Native speech could not start. Reopen TwiCC and try again."))
-            return rejected("activation_failed", "Native speech could not start. Reopen TwiCC and try again.")
+        try { process(effects) } catch (error: Exception) {
+            Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Speech activation failed", error)
+            internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
+            return rejected("activation_failed", "Speech could not start. Reload the page and try again.")
         }
         val value = snapshot()
         if (command is TtsCommand.Manual && value.playback.operationId != command.operationId)
@@ -258,8 +261,14 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                     transport = socket
                     socket.event = { event -> platform.enqueue { onEvent(socket, epoch, event) } }
                     connectionId = socket.connect(handshake)
-                } catch (_: Exception) { internal(TtsCommand.AuthorizationLost("Could not open the native speech connection. Reopen TwiCC and sign in again.")) }
-            }, { error -> internal(TtsCommand.AuthorizationLost(error.message ?: "Could not export browser credentials. Reopen TwiCC and sign in again.")) })
+                } catch (error: Exception) {
+                    Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Speech connection failed", error)
+                    internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
+                }
+            }, { error ->
+                Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Browser credential export failed", error)
+                internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
+            })
         } }
     }
     private fun onEvent(socket: TtsTransport, epoch: String, event: TtsConnectionEvent) {
@@ -297,7 +306,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         platform.wakeLock(false); platform.stop()
     }
     fun destroy() {
-        if (active) process(controller?.dispatch(TtsCommand.AuthorizationLost("Android stopped native speech. Start again to continue.")).orEmpty())
+        if (active) process(controller?.dispatch(TtsCommand.AuthorizationLost("Android stopped speech. Start it again.")).orEmpty())
         else { closeTransport(); output?.close(); output = null; platform.wakeLock(false) }
         source = null
     }

@@ -77,7 +77,7 @@ class NativeTtsBridgeTest {
         assertNotNull(AndroidAppBridge.frameError(menu)); assertFalse(JSONObject(bridge.receive(menu)).getBoolean("ok"))
         val huge = selection.put("command", "tts.manual").put("padding", "é".repeat(6 * 1024 * 1024)).toString()
         val error = JSONObject(AndroidAppBridge.frameError(huge)!!)
-        assertEquals("large", error.getString("id")); assertTrue(error.getString("error").contains("large"))
+        assertEquals("large", error.getString("id")); assertTrue(error.getString("error").contains("too much data"))
         assertEquals(1, commands.size)
     }
     @Test fun oldDocumentCannotAttachOrControlAfterSameOriginReload() {

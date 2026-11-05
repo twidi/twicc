@@ -100,7 +100,7 @@ class TtsPlayer(context: Context, renderersFactory: RenderersFactory = DefaultRe
     override fun prepare(resource: AudioResource, connection: TtsTransport, feedback: (PlayerSignal) -> Unit) {
         checkOwner(); check(!closed)
         current?.let { cancel(it.resource.readingId, it.resource.generation) }
-        val http = connection.connection ?: run { feedback(PlayerSignal.Ended(false, "Native speech connection is unavailable")); return }
+        val http = connection.connection ?: run { feedback(PlayerSignal.Ended(false, "Could not reach TwiCC. Start playback again.")); return }
         val reading = Reading(resource, http, feedback); current = reading
         reading.listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {

@@ -81,7 +81,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
                 includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()) })
             // Native displays the advice. Its next state poll adopts listening only after confirmation.
             if (!accepted?.accepted && accepted?.error?.code !== 'confirmation_required')
-                store._showError(accepted?.error?.message || 'Native listening could not start')
+                store._showError(accepted?.error?.message || 'Timeline reading could not start. Try again.')
         },
         disable() { void client.disable() },
         dispose() { unwatchMuted?.(); unwatch() },
@@ -284,7 +284,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     function consume(activation, feed, responseEpoch, { phase, body }) {
         if (!current(activation) || activation.feed !== feed || phase === 'backfill') return
         if (phase === 'live' && body.truncated) {
-            store._showError('Timeline catch-up is incomplete. Automatic listening stopped.')
+            store._showError('Some messages could not be loaded. Turn timeline reading on again.')
             // The feed checks disposal immediately after this callback, before its display-history reset.
             disable()
             return

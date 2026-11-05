@@ -389,7 +389,7 @@ class BrowserActivity : Activity() {
             attachNativeTtsDocument()
         }
         return ttsBinder?.dispatch(command) ?: Acceptance(false,
-            error = TtsActionError("initializing", "Native speech is initializing. Try again."))
+            error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment."))
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
