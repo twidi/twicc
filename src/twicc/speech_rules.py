@@ -16,3 +16,14 @@ SPEECH_IDENTIFIER_RULES = """\
 - A commit hash, an UUID, a token: drop the value and rewrite the sentence so that it stays true and natural; drop the sentence when it then says nothing. Examples: "fixed in commit 9e04b7a" → "fixed in a commit"; "The commit is 9e04b7a." → nothing.
 - An URL: the name of its site, once. Example: https://docs.example.org/guide/setup#step-2 → docs.example.org.
 - A name from code: as written, without backticks. Never spell it out, never write "dot", "slash" or "underscore"."""
+
+
+# The output language. Small models drift to English because the prompt is in English, mostly when
+# the text holds English code, file names or quotes. The rule names the drift and the reference.
+SPEECH_LANGUAGE_RULE = (
+    "The language of your answer is the main language of the text: the language of its sentences, "
+    "not of the code, file names, commands, product names or quotes it holds. A text written in French "
+    "gives an answer in French; a text written in English gives an answer in English; the same for any "
+    "other language. This prompt is in English: that never makes English the language of your answer. "
+    "Never translate."
+)
