@@ -123,7 +123,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         prepare(activation)
     }
 
-    function disable(stop = true) {
+    function disable() {
         const previous = active
         active = null
         // Invalidate every continuation before notifying the player or publishing idle UI state.
@@ -133,7 +133,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         store.activePageId = null
         store.activeLabel = ''
         store.pendingCount = 0
-        if (previous && stop) tts.stop({ owner: previous.token })
+        if (previous) tts.stop({ owner: previous.token })
     }
 
     function rememberStart(activation) {
@@ -331,11 +331,6 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
                 return [session?.hidden, session?.mute_on_user_turn]
             }) ?? []]
         }, () => { if (active) purge(active) }, { flush: 'sync' }),
-        tts.$onAction(({ name, args }) => {
-            if (name !== 'stop' || !active || tts.playback.owner !== active.token) return
-            const owner = args[0]?.owner ?? null
-            if (owner === null || owner === active.token) disable(false)
-        }, true),
     ]
     const onPageHide = () => disable()
     eventTarget.addEventListener('pagehide', onPageHide)

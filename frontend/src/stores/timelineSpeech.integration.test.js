@@ -208,16 +208,13 @@ test('manual replacement and explicit stop preserve queue ownership', async t =>
     await h.live([c])
     assert.equal(h.store.pendingCount, 1)
     const staleB = h.plays[3].handlers
-    h.tts.stop() // SidebarRail's public Stop reading action.
-    assert.equal(h.store.activePageId, null)
-    assert.equal(h.store.pendingCount, 0)
-    assert.equal(h.tts.status, 'idle')
+    h.tts.stop() // SidebarRail's public Stop reading action: skips B, keeps the queue.
+    assert.equal(h.store.activePageId, 'p')
     staleB.onEnded()
-    h.emit(4)
-    await flush()
-    assert.deepEqual(h.opens.map(({ body }) => body.text), [a.data.text, 'Manual M', 'Manual N', b.data.text])
-    assert.deepEqual(h.endings, ['audio-3'])
-    assert.deepEqual(h.releases, ['audio-1', 'audio-2', 'audio-3', 'audio-4'])
+    await until(() => h.opens.length === 5)
+    assert.deepEqual(h.opens.map(({ body }) => body.text), [a.data.text, 'Manual M', 'Manual N', b.data.text, c.data.text])
+    assert.equal(h.store.pendingCount, 0)
+    assert.equal(h.tts.playback.owner, automaticOwner)
 })
 
 // Old feed/open completions must not start audio or populate a later activation.

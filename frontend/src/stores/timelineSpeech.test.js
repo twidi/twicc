@@ -469,19 +469,34 @@ test('scope invalidation availability loss and truncation disable listening', as
     assert.match(h.errors[0], /catch-up/i)
 })
 
-test('explicit automatic stop differs from manual stop', async () => {
+test('stopping the current reading keeps listening and reads the next message', async () => {
     const h = setup()
     await h.enable([message(2), message(1)])
-    h.tts.stop({ owner: 'someone-else' }); await settle()
-    assert.equal(h.store.activePageId, 'p')
     await h.start()
+    assert.equal(h.opens.at(-1).text, 'Message 1')
     h.tts.stop(); await settle()
-    assert.equal(h.store.activePageId, null)
+    assert.equal(h.store.activePageId, 'p')
+    assert.equal(h.opens.at(-1).text, 'Message 2')
+    assert.equal(h.errors.length, 0)
+})
+
+test('stopping a manual reading keeps listening', async () => {
+    const h = setup()
     await h.enable([message(4), message(3)])
     const manual = h.tts.play('Manual'); await settle(); await h.start(); await manual
     h.tts.stop(); await settle()
     assert.equal(h.store.activePageId, 'p')
     assert.equal(h.opens.at(-1).text, 'Message 4')
+})
+
+test('disabling or enabling another page stops the current reading and the listening', async () => {
+    const h = setup()
+    await h.enable([message(2), message(1)])
+    await h.start()
+    h.store.disable(); await settle()
+    assert.equal(h.store.activePageId, null)
+    assert.equal(h.tts.status, 'idle')
+    assert.equal(h.opens.length, 1)
 })
 
 test('reload pagehide logout and disposal cannot restart speech', async () => {
