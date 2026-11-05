@@ -103,6 +103,8 @@ def _get_client_ip(request) -> str:
 async def auth_check(request):
     """GET /api/auth/check/ - Check if user is authenticated.
 
+    Every response includes the running server version for the login screen.
+
     Returns:
         - {"authenticated": true, "password_required": true} if authenticated
         - {"authenticated": true, "password_required": false} if no password configured
@@ -120,10 +122,11 @@ async def auth_check(request):
             return JsonResponse({
                 "authenticated": False,
                 "password_required": False,
+                "version": settings.APP_VERSION,
                 "access_denied": "remote_no_password",
                 "set_password_command": f"{settings.TWICC_LAUNCH_PREFIX} password set",
             })
-        return JsonResponse({"authenticated": True, "password_required": False})
+        return JsonResponse({"authenticated": True, "password_required": False, "version": settings.APP_VERSION})
 
     session = request.session
     auth_value = await session.aget(SESSION_AUTH_KEY)
@@ -136,6 +139,7 @@ async def auth_check(request):
     return JsonResponse({
         "authenticated": authenticated,
         "password_required": True,
+        "version": settings.APP_VERSION,
     })
 
 

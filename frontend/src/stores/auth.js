@@ -8,6 +8,8 @@ export const useAuthStore = defineStore('auth', {
         authenticated: null,
         // Whether the server requires a password
         passwordRequired: null,
+        // Available before login; the WebSocket supplies version updates after login.
+        serverVersion: null,
         // Loading state for initial check
         checking: true,
         // True when checkAuth is retrying after network errors
@@ -67,6 +69,7 @@ export const useAuthStore = defineStore('auth', {
                     const data = await res.json()
                     this.authenticated = data.authenticated
                     this.passwordRequired = data.password_required
+                    this.serverVersion = typeof data.version === 'string' ? data.version : null
                     this.accessDenied = data.access_denied || null
                     this.setPasswordCommand = data.set_password_command || null
                     this.connectionError = false
@@ -103,6 +106,7 @@ export const useAuthStore = defineStore('auth', {
                 const data = await res.json()
                 this.authenticated = data.authenticated
                 this.passwordRequired = data.password_required
+                this.serverVersion = typeof data.version === 'string' ? data.version : null
                 this.accessDenied = data.access_denied || null
                 this.setPasswordCommand = data.set_password_command || null
                 // If we were in a connection error state, clear it

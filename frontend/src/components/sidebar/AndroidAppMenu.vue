@@ -4,7 +4,10 @@ import BrandLogo from '../ui/BrandLogo.vue'
 import { getAndroidAppClient } from '../../utils/androidAppClient.js'
 import { watchAndroidMenuPlacement } from '../../utils/androidMenuPlacement.js'
 
-const props = defineProps({ forceFixed: { type: Boolean, default: false } })
+const props = defineProps({
+    forceFixed: { type: Boolean, default: false },
+    backendVersion: { type: String, default: '' },
+})
 const target = ref(null)
 const railTarget = computed(() => props.forceFixed ? null : target.value)
 const state = ref(null)
@@ -107,7 +110,7 @@ async function confirmForceRefresh() {
                     <button ref="trigger" slot="trigger" type="button" class="rail-button" aria-label="Android app menu">
                         <BrandLogo :size="26" />
                     </button>
-                    <wa-dropdown-item disabled>TwiCC {{ state.version }} · {{ state.engine }}</wa-dropdown-item>
+                    <wa-dropdown-item disabled>{{ backendVersion ? `TwiCC ${backendVersion}` : 'TwiCC' }} · Android {{ state.version }}</wa-dropdown-item>
                     <wa-divider />
                     <wa-dropdown-item v-for="instance in state.instances" :key="instance.id"
                         :value="`instance:${instance.id}`" type="checkbox"
@@ -124,7 +127,7 @@ async function confirmForceRefresh() {
                     <wa-divider />
                     <wa-dropdown-item value="reload"><wa-icon slot="icon" name="rotate-right" />Reload page</wa-dropdown-item>
                     <wa-dropdown-item value="forceRefresh"><wa-icon slot="icon" name="arrows-rotate" />Force refresh (keep login)</wa-dropdown-item>
-                    <wa-dropdown-item value="serverHome"><wa-icon slot="icon" name="house" />Server home</wa-dropdown-item>
+                    <wa-dropdown-item v-if="!railTarget" value="serverHome"><wa-icon slot="icon" name="house" />Server home</wa-dropdown-item>
                     <wa-dropdown-item value="openInBrowser"><wa-icon slot="icon" name="arrow-up-right-from-square" />Open in browser</wa-dropdown-item>
                     <wa-callout v-if="error" variant="danger" role="alert">{{ error }}</wa-callout>
                 </wa-dropdown>

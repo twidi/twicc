@@ -203,10 +203,12 @@ def test_auth_check_reports_authenticated_on_loopback(bypassing_worktree, db):
     """The SPA reads this: a mismatch here shows a login screen over a working API."""
     response = asyncio.run(AsyncClient().get("/api/auth/check/"))
 
-    assert response.json() == {"authenticated": True, "password_required": True}
+    assert response.json() == {"authenticated": True, "password_required": True,
+                               "version": django_settings.APP_VERSION}
 
 
 def test_auth_check_reports_unauthenticated_through_a_tunnel(bypassing_worktree, db):
     response = asyncio.run(AsyncClient().get("/api/auth/check/", **TUNNEL))
 
-    assert response.json() == {"authenticated": False, "password_required": True}
+    assert response.json() == {"authenticated": False, "password_required": True,
+                               "version": django_settings.APP_VERSION}

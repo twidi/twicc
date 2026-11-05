@@ -810,7 +810,8 @@ const toastTheme = computed(() => {
 </script>
 
 <template>
-    <AndroidAppMenu :force-fixed="isConnecting" />
+    <AndroidAppMenu :force-fixed="isConnecting"
+        :backend-version="(isAppReady ? dataStore.currentVersion : null) || authStore.serverVersion || ''" />
 
     <!-- Provider activation: non-dismissible first-run / recovery dialog -->
     <ProviderActivationDialog v-if="isAppReady" />

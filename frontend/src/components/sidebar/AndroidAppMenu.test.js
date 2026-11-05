@@ -10,7 +10,7 @@ const state = { version: '0.4.0', engine: 'GeckoView 159', activeInstanceId: 'a'
     { id: 'a', name: 'Phone', address: 'https://phone.example' },
     { id: 'b', name: 'Computer', address: 'https://computer.example' },
 ] }
-async function load(nativeState = state, forceFixed = false) {
+async function load(nativeState = state, forceFixed = false, backendVersion = '1.96.2') {
     const source = readFileSync(new URL('./AndroidAppMenu.vue', import.meta.url), 'utf8')
     const { descriptor } = parse(source)
     const hooks = {}, calls = []
@@ -32,7 +32,7 @@ async function load(nativeState = state, forceFixed = false) {
         document,
         setInterval: fn => { hooks.heartbeat = fn; return 1 }, clearInterval() {}, IntersectionObserver: undefined,
     })
-    const props = Vue.reactive({ forceFixed })
+    const props = Vue.reactive({ forceFixed, backendVersion })
     const ctx = component.setup(props, { expose() {} })
     await hooks.mount()
     const compiled = compileTemplate({ source: descriptor.template.content, filename: 'AndroidAppMenu.vue', id: 'menu',
@@ -40,10 +40,12 @@ async function load(nativeState = state, forceFixed = false) {
     assert.deepEqual(compiled.errors, [])
     const render = runInNewContext(`(function() { ${compiled.code} })()`, { Vue })
     async function html() {
-        const app = Vue.createSSRApp({ render, data: () => ({ ...ctx }) })
+        const app = Vue.createSSRApp({ render, data: () => ({ ...ctx, ...props }) })
         app.component('BrandLogo', { render: () => Vue.h('svg', { 'data-logo': 'twicc' }) })
         app.config.warnHandler = () => {}
-        return renderToString(app)
+        const context = {}
+        const output = await renderToString(app, context)
+        return output + Object.values(context.teleports ?? {}).join('')
     }
     return { ctx, calls, hooks, html, document, props }
 }
@@ -56,13 +58,34 @@ test('ordinary browser renders no Android control and starts no heartbeat', asyn
 test('native menu renders saved instances, active marker, app details, and actions', async () => {
     const { html, hooks } = await load()
     const output = await html()
-    for (const text of ['Android app menu', '0.4.0', 'GeckoView 159', 'Phone', 'Computer',
+    for (const text of ['Android app menu', 'TwiCC 1.96.2', 'Android 0.4.0', 'Phone', 'Computer',
         'https://computer.example', 'Active', 'Manage instances', 'Reload page', 'Force refresh', 'Server home', 'Open in browser']) {
         assert.ok(output.includes(text), text)
     }
     assert.match(output, /value="instance:a"[^>]*checked[^>]*disabled/)
     assert.match(output, /value="instance:b"/)
     assert.match(output, /data-logo="twicc"/)
+    assert.doesNotMatch(output, /GeckoView 159/)
+    hooks.unmount()
+})
+
+test('Server home follows the menu placement while both versions stay visible', async () => {
+    const { hooks, html, props } = await load()
+    hooks.target('#rail-anchor')
+    let output = await html()
+    assert.match(output, /TwiCC 1\.96\.2/)
+    assert.match(output, /Android 0\.4\.0/)
+    assert.doesNotMatch(output, /Server home/)
+    props.forceFixed = true
+    output = await html()
+    assert.match(output, /TwiCC 1\.96\.2/)
+    assert.match(output, /Android 0\.4\.0/)
+    assert.match(output, /Server home/)
+    props.forceFixed = false
+    hooks.target(null)
+    assert.match(await html(), /Server home/)
+    props.backendVersion = '1.97.0'
+    assert.match(await html(), /TwiCC 1\.97\.0/)
     hooks.unmount()
 })
 test('menu dispatches a saved UUID and confirms force refresh before sending the command', async () => {
