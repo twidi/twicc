@@ -6,6 +6,7 @@ No provider process, provider home, production database, or live model is used.
 
 import asyncio
 import logging
+from copy import copy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -78,6 +79,7 @@ def integrated(answer_fixture, monkeypatch):
     managers = registry.AgentManagerRegistry()
     managers._managers = {agent.provider: manager}
     monkeypatch.setattr(registry, "get_agent_manager_registry", lambda: managers)
+    monkeypatch.setattr("twicc.asgi.get_agent_manager_registry", lambda: managers)
     return SimpleNamespace(**vars(f), agent=agent, manager=manager, frames=frames, notifications=notifications,
                            coordinator=coordinator)
 
@@ -243,6 +245,60 @@ def test_replaced_agent_cannot_publish_stale_timer(integrated, monkeypatch):
         f.manager._broadcast_info.reset_mock()
         await f.manager._confirm_completion(f.agent, ticket)
         f.manager._broadcast_info.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("change", ["activity", "replacement"])
+def test_completion_changed_during_broadcast_preparation_does_not_notify(integrated, monkeypatch, change):
+    from twicc import asgi
+
+    f = integrated
+
+    async def scenario():
+        clock = [0.0]
+        monkeypatch.setattr(asyncio.get_running_loop(), "time", lambda: clock[0])
+        await physical(f, "done", "SYNTHETIC ANSWER")
+        ticket = f.agent.completion_controller.candidate()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = asgi.get_session_and_project_display
+
+        async def delayed(*args):
+            entered.set()
+            await release.wait()
+            return await original(*args)
+
+        monkeypatch.setattr(asgi, "get_session_and_project_display", delayed)
+        clock[0] = ticket.deadline
+        completion = asyncio.create_task(f.manager._confirm_completion(f.agent, ticket))
+        await entered.wait()
+        if change == "activity":
+            f.agent._completion_activity()
+            resumed = asyncio.create_task(f.agent._notify_state_change())
+        else:
+            # Keep identical public fields: identity must also invalidate the old publication.
+            f.manager._agents[f.session.id] = copy(f.agent)
+            resumed = None
+        release.set()
+        await completion
+        if resumed is not None:
+            await resumed
+        await drain(f.agent)
+
+        assert not any(frame.get("state") == "user_turn" for frame in f.frames)
+        assert f.notifications == []
+
+        if change == "activity":
+            assert f.agent.state == AgentState.ASSISTANT_TURN
+            assert f.frames[-1]["state"] == "assistant_turn"
+            # Suppressing the stale finish must not suppress the next real finish.
+            await physical(f, "next", "NEXT ANSWER")
+            ticket = f.agent.completion_controller.candidate()
+            clock[0] = ticket.deadline
+            await f.manager._confirm_completion(f.agent, ticket)
+            await drain(f.agent)
+            assert sum(frame.get("state") == "user_turn" for frame in f.frames) == 1
+            assert len(f.notifications) == 1
 
     asyncio.run(scenario())
 

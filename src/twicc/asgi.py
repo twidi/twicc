@@ -25,7 +25,7 @@ from django.urls import path
 from django.utils import timezone
 
 from twicc.sync_diagnostics import log_slow
-from twicc.agent import AgentInfo, serialize_agent_info
+from twicc.agent import AgentInfo, AgentState, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.access import scope_allowed
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
@@ -266,6 +266,15 @@ async def broadcast_process_state(info: AgentInfo, *, resync: bool = False) -> N
         await get_channel_layer().group_send("updates", {"type": "broadcast", "data": message})
         return
 
+    # Root work can resume while the enrichment below awaits the database.
+    # Keep the same identity/revision guard used by completion publication.
+    completion_agent = None
+    if info.state == AgentState.USER_TURN:
+        manager = get_agent_manager_registry().get(info.provider)
+        completion_agent = manager.get_live_agent(info.session_id)
+        if completion_agent is not None:
+            completion_guard = manager._completion_lifecycle_guard(completion_agent)
+
     # Hidden sessions never produce a process_state event. This is the
     # broadcast that drives toast / sound / browser notifications on the
     # frontend (via notifyProcessStateChange) and hydrates the
@@ -312,6 +321,11 @@ async def broadcast_process_state(info: AgentInfo, *, resync: bool = False) -> N
     # would then precede this frame, and the client would re-create a state
     # nothing could tell is hidden): look once more, right before sending.
     if (await sync_to_async(read_session_visibility_flags)(info.session_id)).hidden:
+        return
+
+    if completion_agent is not None and not manager._completion_lifecycle_is_current(
+        completion_agent, completion_guard,
+    ):
         return
 
     # External notifications (Apprise) mirror the browser notifications this
