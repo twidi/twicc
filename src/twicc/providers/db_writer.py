@@ -64,6 +64,7 @@ from twicc.providers.compute_executor import (
     start_compute_application_executor, start_compute_executor,
     stop_compute_application_executor, stop_compute_executor,
 )
+from twicc.providers import write_guard
 from twicc.providers.writer_signals import NotifyingAsyncQueue, NotifyingQueue, WriterSignals
 from twicc.providers.write_coordinator import (
     ForegroundLock, WritePriority, WriteResources, WriterCoordinator, write_priority,
@@ -482,6 +483,12 @@ _db_write_lock_lease: contextvars.ContextVar[_LockLease | None] = contextvars.Co
 )
 
 
+def _holds_db_write_lease() -> bool:
+    """Return True if this context runs inside a lease that is still held."""
+    lease = _db_write_lock_lease.get()
+    return lease is not None and lease.active
+
+
 def _lease_admits_current() -> bool:
     """Return True if the current Task may reuse the active lease.
 
@@ -728,6 +735,7 @@ def start_db_writer() -> None:
         _storage_admission_lock = _write_coordinator.foreground_lock(WriteResources.ADMISSION)
         _pending_ingestion = None
         _db_writer_task = asyncio.create_task(_db_writer_loop())
+        write_guard.activate(_holds_db_write_lease)
     except BaseException:
         async def failed_start():
             global _db_writer_task, _db_writer_stop_event, _thread_queue, _subprocess_queue
@@ -869,6 +877,7 @@ async def stop_db_writer() -> None:
         # a drained queue or handing out an orphan lock.
         from twicc.core.content_storage.dictionaries import reset_dictionary_cache
 
+        write_guard.deactivate()
         reset_dictionary_cache()
         if _writer_signals is not None:
             _writer_signals.close()

@@ -19,3 +19,9 @@ class CoreConfig(AppConfig):
         from twicc.core import json_response
 
         json_response.install()
+
+        from django.db.backends.signals import connection_created
+
+        from twicc.providers import write_guard
+
+        connection_created.connect(write_guard.install, dispatch_uid="twicc.write_guard")
