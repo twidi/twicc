@@ -132,7 +132,10 @@ class InstanceManagerUiTest {
 
     private fun launch() {
         scenario = ActivityScenario.launch(Intent(context, MainActivity::class.java).putExtra("manage", true))
-        waitFor { nodes().any { it.text?.toString()?.equals("Add instance", ignoreCase = true) == true } }
+        waitFor { nodes().any {
+            it.text?.toString()?.equals("Add instance", ignoreCase = true) == true ||
+                it.contentDescription?.toString() == "Add instance"
+        } }
     }
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }

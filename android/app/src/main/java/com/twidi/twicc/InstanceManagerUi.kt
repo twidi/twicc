@@ -62,20 +62,29 @@ class InstanceManagerUi(private val activity: Activity) {
 
     var onAdd: () -> Unit = {}
 
-    private fun addButton(): Button = Button(activity).apply {
+    private fun addButton(): View = object : LinearLayout(activity) {
+        override fun getAccessibilityClassName(): CharSequence = Button::class.java.name
+    }.apply {
         id = R.id.instance_add_button
-        text = activity.getString(R.string.instances_add)
-        isAllCaps = false
-        textSize = 16f
-        typeface = Typeface.create(typeface, Typeface.BOLD)
-        setTextColor(palette.accentOn)
-        minHeight = activity.dp(52)
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        setPadding(activity.dp(12), activity.dp(12), activity.dp(12), activity.dp(12))
+        contentDescription = activity.getString(R.string.instances_add)
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        isFocusable = true
         minimumHeight = activity.dp(52)
         stateListAnimator = null
         elevation = activity.dp(2).toFloat()
-        compoundDrawablePadding = activity.dp(8)
-        setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_plus, 0, 0, 0)
-        compoundDrawableTintList = ColorStateList.valueOf(palette.accentOn)
+        addView(ImageView(activity).apply {
+            setImageResource(R.drawable.ic_plus)
+            imageTintList = ColorStateList.valueOf(palette.accentOn)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(activity.dp(24), activity.dp(24)).apply {
+            marginEnd = activity.dp(8)
+        })
+        addView(text(activity.getString(R.string.instances_add), 16f, palette.accentOn, bold = true).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
         background = ripple(
             GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(36, 255, 255, 255), Color.argb(26, 0, 0, 0))).let {
                 // The brand button of the web app: accent fill with a light-to-dark shading over it.
