@@ -25,7 +25,7 @@ const displacedPreference = computed(() => settings.summaryModel !== 'auto' && s
 <template>
     <div class="summary-settings">
         <h3>Summaries</h3>
-        <p>Messages and selections need at least 500 content characters. Summaries target one third of the source, up to 140 words.</p>
+        <p>Messages and selections need at least 500 characters. Summaries target one third of the source, up to 140 words.</p>
         <label>Summary model</label>
         <div class="summary-model-row">
             <SegmentedControl :model-value="choice" :options="choices" label="Summary model" @update:model-value="settings.setSummaryModel($event)" />

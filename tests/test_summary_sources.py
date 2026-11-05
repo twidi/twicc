@@ -296,3 +296,10 @@ def test_successful_summary_uniqueness_and_session_cascade(live_session):
     MessageSummary.objects.create(session=f.session, **{**fields, 'policy_key': 'new-policy'})
     f.session.delete()
     assert list(MessageSummary.objects.values_list('id', flat=True)) == [retained.id]
+
+
+def test_the_minimum_counts_the_source_text_markdown_included(live_session):
+    f = live_session
+    f.append(f.message('answer', '**' + 'A' * 496 + '**'))
+    source = resolve(f.session)
+    assert source.content_chars == 496 and source.eligible

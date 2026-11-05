@@ -6,7 +6,7 @@ import * as Vue from 'vue'
 import { compileComponent, descendants, flush, makeRenderer } from '../../../../tests/helpers/scrollerComponentHarness.js'
 import * as touch from '../../../utils/touchTapFallback.js'
 import * as ttsConfig from '../../../utils/ttsConfig.js'
-import { PROVIDER } from '../../../constants.js'
+import * as constants from '../../../constants.js'
 import * as selectionRead from '../../../utils/selectionRead.js'
 const read = file => readFileSync(new URL(file, import.meta.url), 'utf8')
 
@@ -20,7 +20,7 @@ const selectionWidgetDeps = (store, settings, speech, body) => ({
     '../../../utils/ttsConfig': ttsConfig,
     '../../../composables/useTemporarySummaryGeneration': temporaryGeneration,
     '../../../utils/selectionRead': selectionRead, '../../../utils/touchTapFallback': touch,
-    './SelectionSummaryBody.vue': body,
+    '../../../constants': constants, './SelectionSummaryBody.vue': body,
 })
 function fakeBrowser() {
     const originalWindow = globalThis.window, originalDocument = globalThis.document
@@ -34,7 +34,7 @@ test('selection summary opens in the panel, captures the text and keeps the sele
     const calls = []
     const body = { props: ['text'], setup: p => { calls.push(['body', p.text]); return () => Vue.h('summary-body') } }
     const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url),
-        selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
+        selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [constants.PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
     const restoreBrowser = fakeBrowser()
     const props = Vue.reactive({ selectedText: 'Captured selection. '.repeat(30), readOrigin: 'rendered', position: { left: 10, top: 20 }, clearSourceSelection() { calls.push(['clear']) } })
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => {} }); const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, onClose: () => calls.push(['close']) }) }); app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
@@ -80,7 +80,7 @@ test('the panel binds the acquired reference at render and stops only its previo
     const speech = { statusForSummary(identity) { return identity.selectionId === playing?.selectionId ? 'loading' : 'idle' }, stop() { stops++; playing = null } }
     const Button = { props: ['summaryRef', 'summaryIdentity'], setup: props => () => Vue.h('speech', props) }
     const Component = compileComponent(new URL('./SelectionSummaryBody.vue', import.meta.url),
-        bodyDeps(store, speech, { summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }, Button))
+        bodyDeps(store, speech, { summaryModel: 'auto', enabledProviders: [constants.PROVIDER.CLAUDE_CODE] }, Button))
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Component, { text: 'Selection one' }) }); app.mount(root)
     const button = descendants(root, node => node.type === 'speech')[0]
     const captured = button.props.summaryRef
@@ -95,7 +95,7 @@ test('the panel binds the acquired reference at render and stops only its previo
 })
 
 const textOf = node => node.type === '#comment' ? '' : `${node.text || ''}${node.children.map(textOf).join('')}`
-async function mountBody(t, store, speech, settings = { summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }) {
+async function mountBody(t, store, speech, settings = { summaryModel: 'auto', enabledProviders: [constants.PROVIDER.CLAUDE_CODE] }) {
     const Button = compileComponent(new URL('../../ui/TextToSpeechButton.vue', import.meta.url), {
         '../../stores/textToSpeech': { useTextToSpeechStore: () => speech }, '../../composables/useToast': { toast: { error() {}, success() {} } },
     })
@@ -180,14 +180,13 @@ test('selection generation action stays visible but disables with a reason when 
 test('a selection shorter than a message minimum offers no summary action', async t => {
     const body = { props: ['text'], render: () => null }
     const Component = compileComponent(new URL('./TextSelectionComment.vue', import.meta.url),
-        selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
+        selectionWidgetDeps({}, { isTouchDevice: true, summaryModel: 'auto', enabledProviders: [constants.PROVIDER.CLAUDE_CODE] }, { available: false, statusForSelection: () => 'idle' }, body))
     const restoreBrowser = fakeBrowser()
     const props = Vue.reactive({ selectedText: 'x'.repeat(499), readOrigin: 'rendered', position: { left: 10, top: 20 } })
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Component, props) }); app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
     const action = () => descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize selection')[0]
     assert.equal(action(), undefined)
     props.selectedText = 'x'.repeat(500); await flush(); assert.ok(action())
-    props.selectedText = ('word ' + '\n ').repeat(300); await flush(); assert.ok(action(), 'whitespace runs count as one character')
 })
 
 const linkNamed = (root, name) => descendants(root, n => n.type === 'a' && textOf(n) === name)[0]

@@ -11,6 +11,7 @@ export function messageSummaryModule(settings = Vue.reactive({ summaryModel: 'au
         vue: Vue, '../stores/summaries.js': summaries,
         '../stores/settings.js': { useSettingsStore: () => settings },
         '../stores/textToSpeech.js': speech, '../utils/ttsConfig.js': ttsConfig,
+        './useToast': { toast: { error() {} } },
     }
     let source = readFileSync(new URL('../../src/composables/useMessageSummary.js', import.meta.url), 'utf8')
     source = source.replace(/import\s+\{([\s\S]*?)\}\s+from\s+['"]([^'"]+)['"];?/g,

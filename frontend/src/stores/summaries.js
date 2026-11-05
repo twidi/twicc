@@ -23,7 +23,7 @@ function variantKey(descriptor) {
 function entryFor(source) {
     return reactive({ source: { ...source }, descriptor: null, state: 'running', text: '', revision: 0,
         error: null, engine: null, fallback_reason: null, first_text_ms: null, total_ms: null,
-        saved_id: null, result_hash: null, previousPolicy: false, sourceChanged: false })
+        saved_id: null, result_hash: null, previousPolicy: false })
 }
 async function checked(response) {
     if (response.ok) return response
@@ -35,7 +35,8 @@ const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/
 const cancelled = () => new Error('The summary request was cancelled')
 
 export const useSummariesStore = defineStore('summaries', {
-    state: () => ({ descriptors: {}, lookupErrors: {}, lookupVersions: {}, entries: {}, temporary: null }),
+    // Every summary text lives here: `entries` for generations, `savedSummaries` for read rows, by row id.
+    state: () => ({ descriptors: {}, lookupErrors: {}, lookupVersions: {}, entries: {}, savedSummaries: {}, temporary: null }),
     actions: {
         async _fetch(url, options) {
             const { apiFetch } = await import('../utils/api.js')
@@ -43,6 +44,9 @@ export const useSummariesStore = defineStore('summaries', {
         },
         versionFor(source) { return this.lookupVersions[summarySourceKey(source)] || 0 },
         descriptorFor(source) { return this.descriptors[summarySourceKey(source)] ?? null },
+        isTracked(source) { return runtime(this).sources.has(summarySourceKey(source)) },
+        savedFor(id) { return this.savedSummaries[id] ?? null },
+        rememberSaved(summary) { this.savedSummaries[summary.id] = summary },
         entryFor(source) {
             const descriptor = this.descriptorFor(source)
             if (!descriptor) return null
@@ -287,28 +291,29 @@ export const useSummariesStore = defineStore('summaries', {
         },
         invalidate(message) {
             const rt = runtime(this)
-            const sourceEvents = new Set(['session_items_added', 'session_updated', 'session_removed', 'process_state'])
+            // A finished message never changes: session activity invalidates nothing.
             const policyChange = message.type === 'synced_settings_updated'
                 && ['summaryModel', 'disabledProviders'].some(key => key in (message.settings || {}))
-            if (!sourceEvents.has(message.type) && message.type !== 'summary_saved' && !policyChange) return
+            if (message.type !== 'session_removed' && message.type !== 'summary_saved' && !policyChange) return
             const sessionId = message.session_id ?? message.session?.id
             for (const [key, source] of rt.sources) {
                 const descriptor = this.descriptors[key]
                 const matches = policyChange || (message.type === 'summary_saved'
                     ? !descriptor || (descriptor.source_key === message.source_key && descriptor.source_hash === message.source_hash)
                     : !('event_id' in source) && source.session_id === sessionId)
-                if (!matches) continue
-                this.descriptors[key] = null; this.lookupErrors[key] = null
-                rt.lookups.delete(key)
-                const queued = rt.queued.get(key)
-                if (queued) { rt.queued.delete(key); queued.finish(null) }
-                this.lookupVersions[key] = (this.lookupVersions[key] || 0) + 1
-            }
-            if (sourceEvents.has(message.type)) for (const controller of rt.runs.values()) {
-                if (!('text' in controller.entry.source) && !('event_id' in controller.entry.source) && controller.entry.source.session_id === sessionId) controller.entry.sourceChanged = true
+                if (matches) this._drop(key)
             }
             // Active views and queued listeners watch versionFor(source) and resolve on demand.
             // Frozen entries retain their original descriptor/body/hash for deliberate snapshot playback.
+        },
+        forget(source) { this._drop(summarySourceKey(source)) },
+        _drop(key) {
+            const rt = runtime(this)
+            this.descriptors[key] = null; this.lookupErrors[key] = null
+            rt.lookups.delete(key)
+            const queued = rt.queued.get(key)
+            if (queued) { rt.queued.delete(key); queued.finish(null) }
+            this.lookupVersions[key] = (this.lookupVersions[key] || 0) + 1
         },
         openTemporary(text, purpose = 'selection') {
             this.closeTemporary()

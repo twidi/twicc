@@ -35,7 +35,8 @@ _MARKDOWN.block.ruler.before('fence', 'colon_block', _content_colon_block,
                              {'alt': ['paragraph', 'reference', 'blockquote', 'list']})
 _MARKDOWN.block.ruler.before('paragraph', 'html_comment', _comment_block)
 _MARKDOWN.inline.ruler.before('html_inline', 'html_comment', _comment_inline)
-MIN_CONTENT_CHARS = 500
+# The whole source text counts, Markdown syntax included: the frontend applies the same test (SUMMARY_MIN_CHARS).
+MIN_SOURCE_CHARS = 500
 
 
 class SummarySource(NamedTuple):
@@ -172,7 +173,7 @@ def _resolved(*, key, text, session_id=None, lines=(), provider=None, purpose=No
     count = content_length(text)
     empty = not input_text.strip() if purpose is not None else not count
     reason = 'empty' if empty else ('incomplete' if not complete else (
-        'too_short' if purpose is None and count < MIN_CONTENT_CHARS else None))
+        'too_short' if purpose is None and len(text.strip()) < MIN_SOURCE_CHARS else None))
     return SummarySource(key, hashlib.sha256(text.encode()).hexdigest(), text, input_text,
                          session_id, lines[0] if lines else None, lines, count, reason is None, reason,
                          provider, purpose)

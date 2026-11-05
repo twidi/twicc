@@ -200,6 +200,9 @@ export const TITLE_SUGGESTION_MODEL = Object.freeze({
  * ``src/twicc/openrouter_text.py``, and the help page
  * ``frontend/public/help/text-to-speech.md``.
  */
+/** The shortest source text a summary is offered for. Same value as MIN_SOURCE_CHARS in summaries/sources.py. */
+export const SUMMARY_MIN_CHARS = 500
+
 export const OPENROUTER_MODEL_DESCRIPTION = 'Qwen3.8 27B on Cerebras'
 
 const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MODEL))

@@ -19,6 +19,7 @@ import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
 import { detailsScope, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 import { useSettingsStore } from '../../stores/settings'
+import { SUMMARY_MIN_CHARS } from '../../constants'
 import { vHighlight } from '../../directives/vHighlight.js'
 import { toast } from '../../composables/useToast'
 import { openMediaPreview } from '../../composables/useMediaPreview'
@@ -644,6 +645,8 @@ const showRaw = ref(false)
 // The original text hides while its message shows the summary, except in the instance rendering the summary.
 const summaryHidden = computed(() => !!props.summaryContext?.hidden && !props.summaryActive)
 const summaryButtonTitle = computed(() => props.summaryContext?.toggleTitle ?? '')
+const showSummaryButton = computed(() => !!props.summaryContext?.available
+    && (props.summaryContext.hasSummary || props.source.length >= SUMMARY_MIN_CHARS))
 
 const toolbar = ref(null)
 const toolbarToggle = ref(null)
@@ -913,7 +916,7 @@ function handleLinkClick(event) {
                     @summary-changed="summaryActive && summaryContext.refreshSaved($event)"
                 />
                 <wa-button
-                    v-if="summaryContext?.available"
+                    v-if="showSummaryButton"
                     size="small"
                     :variant="summaryActive ? 'brand' : 'neutral'"
                     appearance="filled"

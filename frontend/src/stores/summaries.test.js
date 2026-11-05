@@ -109,16 +109,23 @@ for (const phase of ['resolve', 'acquire', 'stream', 'truncated']) test(`${phase
     await until(() => sub.entry.state === 'failed'); assert.ok(sub.entry.error); sub.release()
 })
 
-test('source notifications invalidate coordinates immediately and ignore an obsolete lookup response', async () => {
+test('session activity invalidates nothing: a finished message never changes', async () => {
+    const { store } = setup()
+    await store.resolve([source])
+    for (const type of ['session_items_added', 'session_updated', 'process_state']) store.invalidate({ type, session_id: 'session' })
+    assert.ok(store.descriptorFor(source)); assert.equal(store.versionFor(source), 0)
+})
+
+test('a removed session invalidates coordinates immediately and ignores an obsolete lookup response', async () => {
     const { store } = setup()
     await store.resolve([source]); assert.ok(store.descriptorFor(source))
     let finish
     const original = store._fetch
-    store.invalidate({ type: 'session_items_added', session_id: 'session' })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     assert.equal(store.descriptorFor(source), null)
     store._fetch = (url, opts) => url.endsWith('resolve/') ? new Promise(resolve => { finish = resolve }) : original(url, opts)
     const old = store.resolve([source]); await until(() => finish)
-    store.invalidate({ type: 'process_state', session_id: 'session' })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     finish(json({ sources: [descriptor()] })); await old
     assert.equal(store.descriptorFor(source), null)
 })
@@ -159,7 +166,7 @@ test('equal selections stay independent and stores never share controllers', asy
 test('invalidation before the scheduled batch resolves the displaced caller and permits a fresh lookup', async () => {
     const { store } = setup()
     const old = store.resolve([source])
-    store.invalidate({ type: 'session_updated', session: { id: 'session', content_storage: 'archive' } })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     const fresh = store.resolve([source])
     assert.equal((await old)[0], null)
     assert.equal((await fresh)[0].source_hash, 'hash')
@@ -189,7 +196,7 @@ test('retry replaces a temporary pending request without sharing ownership or ac
 test('policy and source changes clear current eligibility but preserve timeline snapshot identity', async () => {
     const { store } = setup()
     const event = { event_id: 2 }; await store.resolve([source, event])
-    store.invalidate({ type: 'process_state', session_id: 'session' })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     assert.equal(store.descriptorFor(source), null); assert.ok(store.descriptorFor(event))
     store.invalidate({ type: 'synced_settings_updated', settings: { summaryModel: 'luna' } })
     assert.equal(store.descriptorFor(event), null)
@@ -238,9 +245,9 @@ test('an active listener sees repeated invalidations while its descriptor remain
     store._fetch = () => new Promise(resolve => { responses.push(resolve) })
     const pending = []
     const stop = watch(() => store.versionFor(source), () => { pending.push(store.resolve([source])) }, { flush: 'sync' })
-    store.invalidate({ type: 'session_items_added', session_id: 'session' })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     await until(() => responses.length === 1)
-    store.invalidate({ type: 'process_state', session_id: 'session' })
+    store.invalidate({ type: 'session_removed', session_id: 'session' })
     await until(() => responses.length === 2)
     responses[0](json({ sources: [descriptor({ source_hash: 'obsolete' })] }))
     responses[1](json({ sources: [descriptor({ source_hash: 'current' })] }))

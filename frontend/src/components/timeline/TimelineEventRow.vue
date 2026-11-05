@@ -21,6 +21,7 @@
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { useMessageSummary } from '../../composables/useMessageSummary.js'
 import { computed, nextTick, ref, useId, watch } from 'vue'
+import { SUMMARY_MIN_CHARS } from '../../constants'
 import { RouterLink } from 'vue-router'
 import { useDataStore } from '../../stores/data'
 import { describeEvent } from '../../utils/timeline/describeEvent'
@@ -56,6 +57,8 @@ const summary = useMessageSummary(() => props.row.event.kind === 'assistant_mess
     ? { event_id: props.row.event.id } : null)
 const reading = computed(() => (summary.identity && speech.statusForSummary(summary.identity) !== 'idle')
     || speech.statusForText(props.row.event.data?.text) !== 'idle')
+const showSummaryButton = computed(() => summary.available
+    && (summary.hasSummary || (props.row.event.data?.text ?? '').trim().length >= SUMMARY_MIN_CHARS))
 async function toggleSummary() {
     if (summary.view === 'summary') { summary.showOriginal(); return }
     messageExpanded.value = true
@@ -164,7 +167,7 @@ function toggleSession() {
                     @summary-changed="summary.refreshSaved"
                 />
                 <wa-button
-                    v-if="summary.available"
+                    v-if="showSummaryButton"
                     class="timeline-message-summary"
                     size="small"
                     :variant="summary.view === 'summary' ? 'brand' : 'neutral'"

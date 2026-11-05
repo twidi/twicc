@@ -3,11 +3,14 @@ import { summarySourceKey, useSummariesStore } from '../stores/summaries.js'
 import { useSettingsStore } from '../stores/settings.js'
 import { useTextToSpeechStore } from '../stores/textToSpeech.js'
 import { summaryGenerationAvailability } from '../utils/ttsConfig.js'
+import { toast } from './useToast'
 
 export const MESSAGE_SUMMARY_CONTEXT = Symbol('message-summary')
 export const MESSAGE_SUMMARY_VISIT = Symbol('message-summary-visit')
 
-// The list owns these choices for this visit, independently of virtualized row lifetimes.
+// The list owns these choices for this visit, independently of virtualized row lifetimes. Nothing is asked
+// for a message until a click: most messages never have a summary. Texts live in the store, a group only
+// points at the saved one it shows.
 export function createMessageSummaryVisit(reveal = () => {}, holdScroll = () => {}) {
     return { groups: reactive(new Map()), reveal, holdScroll }
 }
@@ -23,7 +26,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
     const owned = new Set()
     let operation = 0
     const fresh = computed(() => source.value ? store.descriptorFor(source.value) : null)
-    // Any session event clears the store descriptor until the next lookup answers.
+    // An invalidation clears the store descriptor until the next lookup answers.
     // Keep the last answer for that window: only a different answer can change what the row shows.
     const retained = shallowRef(null)
     watch(fresh, current => {
@@ -37,7 +40,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         const d = descriptor.value
         if (!d?.source_key) return null
         const key = JSON.stringify([d.session_id, d.source_key, d.source_hash])
-        if (!scope.groups.has(key)) scope.groups.set(key, { view: 'original', saved: null, requested: null, error: null, loading: false })
+        if (!scope.groups.has(key)) scope.groups.set(key, { view: 'original', savedId: null, requested: null, error: null, loading: false })
         return scope.groups.get(key)
     })
     const generation = computed(() => {
@@ -48,13 +51,21 @@ export function useMessageSummary(sourceRequest, visit = null) {
             || d.policy_key !== descriptor.value?.policy_key)) return null
         return entry || null
     })
-    const entry = computed(() => group.value?.saved ?? generation.value)
+    const saved = computed(() => {
+        const id = group.value?.savedId
+        const summary = id == null ? null : store.savedFor(id)
+        return summary && { ...summary, previousPolicy: summary.policy_key !== descriptor.value?.policy_key }
+    })
+    const entry = computed(() => saved.value ?? generation.value)
     const view = computed(() => group.value?.view ?? 'original')
-    const available = computed(() => !!descriptor.value && !!(descriptor.value.eligible || descriptor.value.saved || descriptor.value.previous))
+    const available = computed(() => !!source.value)
     const generationAvailable = computed(() => !!descriptor.value?.eligible && routing.value.available)
     const generationUnavailableReason = computed(() => !routing.value.available ? routing.value.unavailableReason
-        : descriptor.value?.unavailable_reason || (!descriptor.value?.eligible ? 'This source is unavailable for summary generation.' : ''))
-    const canSummarize = computed(() => available.value && !!(entry.value || descriptor.value.saved || descriptor.value.previous || generationAvailable.value))
+        : descriptor.value?.unavailable_reason === 'incomplete' ? 'This message is not finished yet.'
+            : descriptor.value && !descriptor.value.eligible ? 'This source is unavailable for summary generation.' : '')
+    // Before the first answer, only a click can tell: a saved summary needs no engine.
+    const canSummarize = computed(() => available.value && (!descriptor.value
+        || !!(entry.value || descriptor.value.saved || descriptor.value.previous || generationAvailable.value)))
     const running = computed(() => entry.value?.state === 'running' || generation.value?.state === 'running')
     const toggleTitle = computed(() => {
         if (view.value === 'summary') return 'Show original message'
@@ -91,7 +102,8 @@ export function useMessageSummary(sourceRequest, visit = null) {
             releaseOwned()
             if (!sharedVisit) scope.groups.clear()
         }
-        if (source.value) void store.resolve([source.value])
+        // Only a source already asked for: its descriptor must come back after an invalidation.
+        if (source.value && store.isTracked(source.value)) void store.resolve([source.value])
     }, { immediate: true, flush: 'sync' })
     // A policy change keeps an explicitly displayed completed snapshot available.
     watch(descriptor, (current, previous) => {
@@ -99,26 +111,31 @@ export function useMessageSummary(sourceRequest, visit = null) {
         const target = group.value, old = target?.requested?.entry
         if (old?.state === 'complete' && old.descriptor?.policy_key !== current.policy_key
             && old.descriptor?.source_key === current.source_key && old.descriptor?.source_hash === current.source_hash) {
-            target.saved ??= { ...old, id: old.saved_id, source_key: current.source_key, source_hash: current.source_hash,
-                policy_key: old.descriptor.policy_key, previousPolicy: true }
+            if (target.savedId == null) {
+                store.rememberSaved({ ...old, id: old.saved_id, source_key: current.source_key, source_hash: current.source_hash,
+                    policy_key: old.descriptor.policy_key })
+                target.savedId = old.saved_id
+            }
         }
-        if (target?.saved) target.saved.previousPolicy = target.saved.policy_key !== current.policy_key
         if (previous && (previous.source_hash !== current.source_hash || previous.policy_key !== current.policy_key)) releaseOwned()
     }, { flush: 'sync' })
     watch(() => generation.value?.state, state => {
-        if (state === 'complete' && group.value) group.value.saved = null
+        if (state === 'complete' && group.value) group.value.savedId = null
     })
     onScopeDispose(releaseOwned)
 
-    async function loadSaved(savedId, previousPolicy = false) {
+    // A regeneration rewrites the same row: only the result hash proves that a kept text is current.
+    async function loadSaved(savedId, resultHash = null) {
         const target = group.value, d = descriptor.value, token = ++operation
         if (!target || !d) return
+        if (resultHash && store.savedFor(savedId)?.result_hash === resultHash) { target.savedId = savedId; return }
         target.loading = true; target.error = null
         try {
             const loaded = await store.loadSaved(savedId)
             if (token !== operation || group.value !== target) return
             if (loaded.source_key !== d.source_key || loaded.source_hash !== d.source_hash) throw new Error('The message changed. Try again.')
-            target.saved = { ...loaded, previousPolicy: previousPolicy || loaded.policy_key !== descriptor.value.policy_key }
+            store.rememberSaved(loaded)
+            target.savedId = loaded.id
         } catch (error) {
             if (token === operation && group.value === target) target.error = error.message || 'Could not load the summary'
         } finally {
@@ -133,19 +150,33 @@ export function useMessageSummary(sourceRequest, visit = null) {
         owned.add(subscription); target.requested = markRaw(subscription)
         try { await subscription.ready } catch { /* The shared entry exposes the acquisition error. */ }
     }
+    // A finished message keeps its answer. An ineligible one can become summarizable: it is asked again.
+    async function lookup() {
+        const known = descriptor.value
+        if (known?.eligible || known?.saved || known?.previous) return
+        if (known) store.forget(source.value)
+        await store.resolve([source.value])
+    }
     async function summarize() {
-        if (!canSummarize.value) return
+        if (!source.value) return
+        const key = summarySourceKey(source.value)
+        await lookup()
+        if (!source.value || summarySourceKey(source.value) !== key) return
+        if (!group.value || !canSummarize.value) {
+            toast.error(store.lookupErrors[key] || generationUnavailableReason.value || 'This message cannot be summarized.')
+            return
+        }
         const target = group.value, d = descriptor.value
         target.view = 'summary'
         // Reveal after rendering the new height. The existing navigator owns scroll intent and anchoring.
         if (source.value.line_num && source.value.line_num !== d.first_line) void nextTick().then(() => scope.reveal(d.first_line))
-        if (target.saved) return
+        if (target.savedId != null) return
         if (generation.value) {
             if (generation.value.state === 'running' && !target.requested) await request(false)
             return
         }
-        const saved = d.saved ?? d.previous
-        if (saved) await loadSaved(saved.id, !d.saved)
+        const stored = d.saved ?? d.previous
+        if (stored) await loadSaved(stored.id, stored.result_hash)
         else await request(false)
     }
     async function regenerate() { if (!generationAvailable.value) return; if (group.value) group.value.view = 'summary'; await request(true) }
@@ -156,7 +187,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         group.value.view = 'original'
     }
     function cancel() { if (generation.value) store.cancel(generation.value) }
-    async function refreshSaved(savedId) { await loadSaved(savedId, !!entry.value?.previousPolicy) }
+    async function refreshSaved(savedId) { await loadSaved(savedId) }
 
     return reactive({
         descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference,

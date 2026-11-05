@@ -12,7 +12,7 @@ import { compileComponent, descendants, flush, makeRenderer, deferred } from '..
 const descriptor = (fields = {}) => ({ session_id: 's', source_key: 'native', source_hash: 'hash', policy_key: 'p', first_line: 12, text_lines: [12, 14], eligible: true, saved: null, previous: null, ...fields })
 const textOf = node => node.type === '#comment' ? '' : `${node.text || ''}${node.children.map(textOf).join('')}`
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
-async function setup(t, initial = descriptor()) {
+async function setup(t, initial = descriptor(), asked = true) {
     const settings = Vue.reactive({ summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] })
     const module = messageSummaryModule(settings)
     setActivePinia(createPinia()); const store = useSummariesStore(), calls = [], gate = deferred()
@@ -42,6 +42,8 @@ async function setup(t, initial = descriptor()) {
     const { renderer, root } = makeRenderer()
     const app = renderer.createApp({ render: () => Vue.h('chat', [visible.value ? Vue.h(Row, { index: 0 }) : null, Vue.h('tool', 'tool output'), Vue.h('thinking', 'reasoning'), Vue.h('media', 'image'), Vue.h(Row, { index: 1 })]) })
     app.mount(root); t.after(() => { gate.resolve(); app.unmount() }); await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
+    assert.equal(calls.length, 0, 'displaying a message asks nothing')
+    if (asked) { await store.resolve([...sources]); await flush() }
     return { module, settings, store, calls, visit, bindings, sources, visible, root, gate, setDescriptor(value) { current = value }, async invalidate() { for (const source of sources) { const key = summarySourceKey(source); store.descriptors[key] = null; store.lookupVersions[key] = (store.lookupVersions[key] || 0) + 1 }; await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush() } }
 }
 
@@ -72,7 +74,7 @@ test('view survives virtualized unmount; recycled coordinates and source replace
     sources[1] = { session_id: 'other', line_num: 2 }; await flush()
     assert.equal(bindings[1].view, 'original')
     setDescriptor(descriptor({ source_key: 'new-history', source_hash: 'new-hash' }))
-    store.invalidate({ type: 'session_updated', session_id: 's' })
+    store.invalidate({ type: 'session_removed', session_id: 's' })
     assert.equal(bindings[0].view, 'summary', 'an unanswered lookup never changes the view')
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
     assert.equal(bindings[0].view, 'original'); assert.doesNotMatch(textOf(root), /Saved A/)
@@ -116,10 +118,44 @@ test('a message without any summary offers no switch', async t => {
     assert.equal(bindings[0].available, true); assert.equal(bindings[0].hasSummary, false)
 })
 
-test('mounted ineligible source refreshes after completion and repeated null invalidation', async t => {
-    const { bindings, setDescriptor, invalidate } = await setup(t, descriptor({ eligible: false }))
-    assert.equal(bindings[0].available, false)
-    setDescriptor(descriptor()); await invalidate(); assert.equal(bindings[0].available, true)
+test('an unfinished message is asked again at the next click', async t => {
+    const { bindings, setDescriptor } = await setup(t, descriptor({ eligible: false, unavailable_reason: 'incomplete' }))
+    assert.equal(bindings[0].canSummarize, false); assert.match(bindings[0].generationUnavailableReason, /not finished/)
+    await bindings[0].summarize(); assert.equal(bindings[0].view, 'original')
+    setDescriptor(descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    await bindings[0].summarize(); await flush()
+    assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].entry.text, 'Saved A')
+})
+
+test('displaying asks nothing; the click finds the saved summary, without generation', async t => {
+    const { bindings, calls } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }), false)
+    assert.equal(bindings[0].available, true); assert.equal(bindings[0].canSummarize, true); assert.equal(bindings[0].hasSummary, false)
+    await bindings[0].summarize(); await flush()
+    assert.equal(bindings[0].view, 'summary'); assert.equal(bindings[0].entry.text, 'Saved A')
+    assert.deepEqual(calls.map(([url]) => url).filter(url => url !== 'reveal'), ['/api/summaries/resolve/', '/api/summaries/saved/7/'])
+})
+
+test('no engine needed to find a saved summary; a click with nothing saved does not generate', async t => {
+    const { bindings, settings, calls } = await setup(t, descriptor(), false)
+    settings.enabledProviders = []; await flush()
+    assert.equal(bindings[0].canSummarize, true, 'only the server knows whether a summary exists')
+    await bindings[0].summarize(); await flush()
+    assert.equal(bindings[0].view, 'original'); assert.equal(calls.filter(([url]) => url === '/api/summaries/').length, 0)
+})
+
+test('texts live in the store: a group only points at a saved row, checked by its result hash', async t => {
+    const { bindings, visit, store, calls, setDescriptor, sources } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
+    await bindings[0].summarize(); await flush()
+    const [group] = visit.groups.values()
+    assert.equal(group.savedId, 7); assert.equal('saved' in group, false); assert.equal(store.savedFor(7).text, 'Saved A')
+    const reads = () => calls.filter(([url]) => url.includes('/saved/')).length
+    assert.equal(reads(), 1)
+    bindings[0].showOriginal(); group.savedId = null; await bindings[0].summarize(); await flush()
+    assert.equal(reads(), 1, 'a kept text with the current hash is not read again')
+    bindings[0].showOriginal(); group.savedId = null
+    setDescriptor(descriptor({ saved: { id: 7, result_hash: 'rewritten' } })); store.forget(sources[0]); await store.resolve([sources[0]]); await flush()
+    await bindings[0].summarize(); await flush()
+    assert.equal(reads(), 2, 'a regeneration rewrites the same row')
 })
 
 test('previous policy remains visible during failed regeneration and saved mismatch refresh never plays', async t => {
@@ -241,13 +277,13 @@ test('active rows observe repeated invalidation while descriptors are null and r
     const { bindings, store } = await setup(t)
     const lookups = []
     store._fetch = async (_url, options) => { const held = deferred(); lookups.push({ ...held, sources: JSON.parse(options.body).sources }); return held.promise }
-    store.invalidate({ type: 'process_state', session_id: 's' }); await flush()
-    assert.equal(bindings[0].available, true, 'the toolbar keeps its button during the lookup'); assert.equal(lookups.length, 1)
-    store.invalidate({ type: 'session_updated', session_id: 's' }); await flush()
+    store.invalidate({ type: 'session_removed', session_id: 's' }); await flush()
+    assert.equal(bindings[0].descriptor.eligible, true, 'the row keeps its last answer during the lookup'); assert.equal(lookups.length, 1)
+    store.invalidate({ type: 'session_removed', session_id: 's' }); await flush()
     assert.equal(lookups.length, 2)
     lookups[1].resolve({ ok: true, json: async () => ({ sources: lookups[1].sources.map(() => descriptor({ eligible: false })) }) }); await flush()
     lookups[0].resolve({ ok: true, json: async () => ({ sources: lookups[0].sources.map(() => descriptor()) }) }); await flush()
-    assert.equal(bindings[0].available, false)
+    assert.equal(bindings[0].descriptor.eligible, false)
 })
 
 test('the current result wins over a previous-policy one, which a regeneration keeps visible', async t => {
@@ -308,8 +344,7 @@ test('the actual Markdown toolbar disables new generation and preserves saved-su
     const { renderer, root } = makeRenderer(140, node => { node.style = {} })
     const app = renderer.createApp({ render, setup: () => ({ summaryContext: bindings[0], showToolbar: true, toolbarOpen: false,
         showTocDetails: false, showRaw: false, speakable: false, summaryActive: false, summaryHidden: false,
-        summaryButtonTitle: Vue.computed(() => !bindings[0].canSummarize ? bindings[0].generationUnavailableReason
-            : bindings[0].entry?.text || bindings[0].descriptor?.saved || bindings[0].descriptor?.previous ? 'Show summary' : 'Summarize message'), source: 'Original block', blocks: [], highlightTerms: [],
+        showSummaryButton: true, summaryButtonTitle: Vue.computed(() => bindings[0].toggleTitle), source: 'Original block', blocks: [], highlightTerms: [],
         toggleToolbar() {}, toggleRaw() {}, copySource() {}, handleLinkClick() {},
     }) })
     app.component('TextToSpeechButton', { render: () => null }); app.component('InlineArtifactBlock', { render: () => null })

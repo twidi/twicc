@@ -33,6 +33,7 @@ test('timeline assistant label keeps whole-message Summarize beside active-varia
     assert.match(source, /messageExpanded\.value = true/)
 })
 
+const ORIGINAL = 'Original snapshot. '.repeat(30), ANOTHER = 'Another snapshot. '.repeat(30), UNSUMMARIZED = 'Unsummarized snapshot. '.repeat(30)
 test('the actual row opens Summary from collapsed, passes exact saved references, and resets on recycled event', async t => {
     const { createPinia, setActivePinia } = await import('pinia')
     const { useSummariesStore } = await import('../../stores/summaries.js')
@@ -55,14 +56,14 @@ test('the actual row opens Summary from collapsed, passes exact saved references
         '../../composables/useMessageSummary.js': module,
         '../../stores/textToSpeech': { useTextToSpeechStore: () => ({ statusForText: () => busy.value ? 'playing' : 'idle', statusForSummary: () => 'idle' }) },
         'vue-router': { RouterLink: { render: () => null } },
-        '../../stores/data': { useDataStore: () => ({ getSession: () => null, getProject: () => null }) },
+        '../../constants': { SUMMARY_MIN_CHARS: 500 }, '../../stores/data': { useDataStore: () => ({ getSession: () => null, getProject: () => null }) },
         '../../utils/timeline/describeEvent': { describeEvent: () => ({ severity: 'info', kind: 'assistant_message.sent', parts: [{ text: 'Sent a message' }] }) },
         '../project/ProjectBadge.vue': { render: () => null }, './TimelineSessionMention.vue': { render: () => null },
         './TimelineEventLine.vue': { setup: (_, { slots }) => () => Vue.h('event-line', slots.wording?.()) },
         './TimelineMessage.vue': Message,
         '../ui/TextToSpeechButton.vue': { props: ['text', 'summaryRef', 'summaryIdentity', 'originalText'], emits: ['summary-changed'], setup: (p, { emit }) => () => Vue.h('speech', { ...p, changed: id => emit('summary-changed', id) }) },
     })
-    const props = Vue.reactive({ row: { event: { id: 1, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Original snapshot' } } }, context: {} })
+    const props = Vue.reactive({ row: { event: { id: 1, kind: 'assistant_message.sent', session_id: 's', data: { text: ORIGINAL } } }, context: {} })
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Row, props) }); app.mount(root); t.after(() => app.unmount())
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
     assert.equal(descendants(root, n => n.type === 'original').length, 0)
@@ -71,17 +72,17 @@ test('the actual row opens Summary from collapsed, passes exact saved references
     assert.equal(descendants(root, n => n.type === 'original')[0].text, 'Saved summary')
     const speech = descendants(root, n => n.type === 'speech')[0]
     assert.deepEqual(speech.props.summaryRef(), { saved_id: 7, result_hash: 'body-hash' })
-    assert.equal(speech.props.originalText, 'Original snapshot')
+    assert.equal(speech.props.originalText, ORIGINAL)
     assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
     speech.props.changed(7); await flush(); assert.equal(calls.filter(url => url.includes('/saved/')).length, 2)
     assert.equal(descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0].props['aria-pressed'], true)
-    await summarize.props.onClick(); await flush(); assert.equal(descendants(root, n => n.type === 'original')[0].text, 'Original snapshot')
+    await summarize.props.onClick(); await flush(); assert.equal(descendants(root, n => n.type === 'original')[0].text, ORIGINAL)
     assert.equal(descendants(root, n => n.type === 'speech')[0].props.summaryRef, null)
     await summarize.props.onClick(); await flush()
-    props.row = { event: { id: 2, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Another snapshot' } } }
+    props.row = { event: { id: 2, kind: 'assistant_message.sent', session_id: 's', data: { text: ANOTHER } } }
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
     assert.equal(descendants(root, n => n.type === 'summary-controls').length, 0)
-    assert.equal(descendants(root, n => n.type === 'speech')[0].props.text, 'Another snapshot')
+    assert.equal(descendants(root, n => n.type === 'speech')[0].props.text, ANOTHER)
     busy.value = true
     holdSaved = new Promise(resolve => { finishSaved = resolve })
     const pending = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0].props.onClick()
@@ -93,9 +94,11 @@ test('the actual row opens Summary from collapsed, passes exact saved references
     assert.equal(savedAction.props.disabled, false, 'saved access stays enabled without a generation engine')
     assert.deepEqual(descendants(root, n => n.type === 'speech')[0].props.summaryRef(), { saved_id: 7, result_hash: 'body-hash' })
     withSaved = false
-    props.row = { event: { id: 3, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Unsummarized snapshot' } } }
+    props.row = { event: { id: 3, kind: 'assistant_message.sent', session_id: 's', data: { text: UNSUMMARIZED } } }
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
     const action = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
-    assert.equal(action.props.disabled, true); assert.match(action.props.title, /No summary engine/)
-    await action.props.onClick(); assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
+    assert.equal(action.props.disabled, false, 'only the server knows whether a summary exists')
+    await action.props.onClick(); await flush(); assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
+    const refused = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
+    assert.equal(refused.props.disabled, true); assert.match(refused.props.title, /No summary engine/)
 })
