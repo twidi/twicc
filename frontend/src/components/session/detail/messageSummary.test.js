@@ -29,7 +29,9 @@ async function setup(t, initial = descriptor()) {
     const bindings = [], sources = Vue.reactive([{ session_id: 's', line_num: 12 }, { session_id: 's', line_num: 14 }])
     const visible = Vue.ref(true)
     const Summary = compileComponent(new URL('./items/MessageSummaryView.vue', import.meta.url), {
-        './MessageSummaryControls.vue': compileComponent(new URL('./items/MessageSummaryControls.vue', import.meta.url)),
+        './MessageSummaryControls.vue': compileComponent(new URL('./items/MessageSummaryControls.vue', import.meta.url), {
+            '../../../ui/SummaryGenerationLinks.vue': compileComponent(new URL('../../ui/SummaryGenerationLinks.vue', import.meta.url)),
+        }),
         './TextContent.vue': { props: ['text'], setup: p => () => Vue.h('summary-text', p.text) },
     })
     const Row = { props: ['index'], setup(p) {

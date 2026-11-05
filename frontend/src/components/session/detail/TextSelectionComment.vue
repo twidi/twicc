@@ -2,7 +2,8 @@
 // TextSelectionComment.vue — Ephemeral floating widget for commenting on selected
 // text in the session view. Shows a small button on text selection; clicking it
 // expands a panel with a textarea + "Add to message" action. Nothing is persisted
-// to IndexedDB — the user must send the message right away.
+// to IndexedDB — the user must send the message right away. The same panel shows
+// the summary of the selection, which is never saved either.
 
 import { ref, inject, nextTick, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { formatComment } from '../../../stores/codeComments'
@@ -14,6 +15,7 @@ import { useSummariesStore } from '../../../stores/summaries'
 import { READ_TITLES, canShowRead, readIcon } from '../../../utils/selectionRead'
 import { createTouchTapFallback } from '../../../utils/touchTapFallback'
 import { useTemporarySummaryGeneration } from '../../../composables/useTemporarySummaryGeneration'
+import SelectionSummaryBody from './SelectionSummaryBody.vue'
 
 const props = defineProps({
     /** The text the user selected in the session view. In persistent mode: the
@@ -111,6 +113,8 @@ function onCollapsedClick(id) {
 
 // Read button: a view of the app-wide speech store for this selection.
 const summariesStore = useSummariesStore()
+// The selection the panel summarizes, captured at the click. Null: the panel comments.
+const summarySource = ref(null)
 const speechStore = useTextToSpeechStore()
 const showSummary = computed(() => !props.persistent && ['rendered', 'file'].includes(props.readOrigin) && !!props.selectedText.trim())
 const summaryGeneration = useTemporarySummaryGeneration(() => showSummary.value
@@ -119,10 +123,8 @@ function summarize() {
     if (!showSummary.value) return
     if (summaryGeneration.value.lookupFailed) { summaryGeneration.value.retryLookup(); return }
     if (!summaryGeneration.value.available) return
-    const text = props.selectedText
-    summariesStore.openTemporary(text)
-    props.clearSourceSelection?.()
-    close()
+    summarySource.value = props.selectedText
+    showPanel()
 }
 
 const readStatus = computed(() => speechStore.statusForSelection(props.selectedText))
@@ -151,6 +153,7 @@ async function read() {
 }
 const commentText = ref('')
 const textareaRef = ref(null)
+const closeButtonRef = ref(null)
 const rootRef = ref(null)
 const isDragging = ref(false)
 // Persistent mode: the card is inert until an element is picked.
@@ -320,7 +323,7 @@ function onDragPointerDown(e) {
     // Don't drag when interacting with quote (scrollable), textareas, buttons,
     // or the screenshot controls (switch + clickable thumbnail).
     const target = e.target
-    if (!target.closest('.tsc-grip') && target.closest('.tsc-quote, wa-textarea, wa-button, textarea, button, a, .tsc-shot')) return
+    if (!target.closest('.tsc-grip') && target.closest('.tsc-quote, .tsc-summary-text, wa-textarea, wa-button, textarea, button, a, .tsc-shot')) return
     e.preventDefault()
     // Keep receiving the moves when the pointer crosses an iframe (the picked
     // page), which would otherwise swallow them.
@@ -354,23 +357,28 @@ function onDragPointerUp() {
 
 // ─── Expand / close ────────────────────────────────────────────────
 
-function expand() {
+function showPanel() {
     tapFallback.cancel()
     panelOffset.value = { dx: 0, dy: 0 }
     expanded.value = true
-    // Dismiss the source selection so the highlight goes away. In plain HTML the
-    // browser already drops the page selection when the textarea below gains focus,
-    // but for CodeMirror sources the internal selection persists — the consumer's
-    // override clears it for consistency.
-    props.clearSourceSelection?.()
     addViewportListeners()
     nextTick(() => {
         updatePlacement()
         clampToViewport()
         // Persistent mode starts with nothing to type about: no focus (and no
         // virtual keyboard) until an element is picked.
-        if (!props.persistent) textareaRef.value?.focus()
+        if (summarySource.value !== null) closeButtonRef.value?.focus()
+        else if (!props.persistent) textareaRef.value?.focus()
     })
+}
+
+function expand() {
+    showPanel()
+    // Dismiss the source selection so the highlight goes away. In plain HTML the
+    // browser already drops the page selection when the textarea below gains focus,
+    // but for CodeMirror sources the internal selection persists — the consumer's
+    // override clears it for consistency.
+    props.clearSourceSelection?.()
 }
 
 function close() {
@@ -522,7 +530,7 @@ function copy() {
 }
 
 function handleKeydown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && summarySource.value === null) {
         e.preventDefault()
         addToMessage({ fromKeyboard: true })
         return
@@ -632,13 +640,16 @@ defineExpose({ isExpanded: expanded })
         <div
             v-else
             class="tsc-panel glass-surface"
-            :class="{ dragging: isDragging, persistent }"
+            :class="{ dragging: isDragging, persistent, summary: summarySource !== null }"
             @keydown="handleKeydown"
             @pointerdown="onDragPointerDown"
         >
-            <div v-if="!persistent" class="tsc-quote quote-card">{{ selectedText }}</div>
-            <div v-else class="tsc-header"><slot name="header"></slot></div>
+            <template v-if="summarySource === null">
+                <div v-if="!persistent" class="tsc-quote quote-card">{{ selectedText }}</div>
+                <div v-else class="tsc-header"><slot name="header"></slot></div>
+            </template>
             <wa-button
+                ref="closeButtonRef"
                 class="tsc-corner tsc-close"
                 size="small"
                 variant="neutral"
@@ -663,62 +674,65 @@ defineExpose({ isExpanded: expanded })
                 <span class="tsc-control-label">Move dialog</span>
             </wa-button>
 
-            <wa-textarea
-                ref="textareaRef"
-                :value="commentText"
-                :disabled="!ready"
-                @input="commentText = $event.target.value"
-                :placeholder="placeholderText"
-                size="small"
-                :rows="persistent ? 2 : 3"
-            ></wa-textarea>
+            <SelectionSummaryBody v-if="summarySource !== null" :text="summarySource" @content-change="clampToViewport" />
+            <template v-else>
+                <wa-textarea
+                    ref="textareaRef"
+                    :value="commentText"
+                    :disabled="!ready"
+                    @input="commentText = $event.target.value"
+                    :placeholder="placeholderText"
+                    size="small"
+                    :rows="persistent ? 2 : 3"
+                ></wa-textarea>
 
-            <!-- Optional screenshot capture (only when a capture handler is
-                 provided, i.e. the Browser pane). -->
-            <div v-if="captureScreenshot" class="tsc-shot">
-                <div class="tsc-shot-row">
-                    <wa-switch
+                <!-- Optional screenshot capture (only when a capture handler is
+                     provided, i.e. the Browser pane). -->
+                <div v-if="captureScreenshot" class="tsc-shot">
+                    <div class="tsc-shot-row">
+                        <wa-switch
+                            size="small"
+                            :checked="includeScreenshot"
+                            :disabled="!ready || screenshotLoading || submitting"
+                            @change="onIncludeToggle"
+                        >Include screenshot</wa-switch>
+                        <wa-spinner v-if="screenshotLoading"></wa-spinner>
+                    </div>
+                    <div
+                        v-if="screenshotDataUrl"
+                        class="tsc-shot-thumb"
+                        @click="openShotPreview"
+                    >
+                        <img :src="screenshotDataUrl" alt="Screenshot" />
+                    </div>
+                </div>
+
+                <div v-if="showHelpHint && !persistent" class="tsc-help">
+                    <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered.
+                    <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">Dismiss</a>
+                </div>
+
+                <div class="tsc-actions">
+                    <wa-button
                         size="small"
-                        :checked="includeScreenshot"
-                        :disabled="!ready || screenshotLoading || submitting"
-                        @change="onIncludeToggle"
-                    >Include screenshot</wa-switch>
-                    <wa-spinner v-if="screenshotLoading"></wa-spinner>
+                        variant="brand"
+                        appearance="outlined"
+                        :disabled="!ready || !canAdd || screenshotLoading || submitting"
+                        @click="addToMessage()"
+                    >
+                        Add to message
+                    </wa-button>
+                    <wa-button
+                        v-if="canSendToAgent"
+                        size="small"
+                        variant="brand"
+                        :disabled="!ready || screenshotLoading || submitting || selectionSendPending"
+                        @click="sendToAgent"
+                    >
+                        Send to Agent
+                    </wa-button>
                 </div>
-                <div
-                    v-if="screenshotDataUrl"
-                    class="tsc-shot-thumb"
-                    @click="openShotPreview"
-                >
-                    <img :src="screenshotDataUrl" alt="Screenshot" />
-                </div>
-            </div>
-
-            <div v-if="showHelpHint && !persistent" class="tsc-help">
-                <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered.
-                <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">Dismiss</a>
-            </div>
-
-            <div class="tsc-actions">
-                <wa-button
-                    size="small"
-                    variant="brand"
-                    appearance="outlined"
-                    :disabled="!ready || !canAdd || screenshotLoading || submitting"
-                    @click="addToMessage()"
-                >
-                    Add to message
-                </wa-button>
-                <wa-button
-                    v-if="canSendToAgent"
-                    size="small"
-                    variant="brand"
-                    :disabled="!ready || screenshotLoading || submitting || selectionSendPending"
-                    @click="sendToAgent"
-                >
-                    Send to Agent
-                </wa-button>
-            </div>
+            </template>
         </div>
     </div>
 </template>
@@ -820,6 +834,11 @@ defineExpose({ isExpanded: expanded })
    gaps between its controls still move the card. */
 .tsc-header {
     padding-top: 0;
+}
+
+/* A summary is read, not typed: wider than the comment panel. */
+.tsc-panel.summary {
+    width: 28rem;
 }
 
 /* Persistent mode keeps the page visible: tighter than the one-shot dialog. */
