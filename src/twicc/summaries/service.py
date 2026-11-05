@@ -108,8 +108,9 @@ def load_saved_summary(saved_id: int) -> dict:
     return {**_saved_metadata(row), 'session_id': row.session_id, 'text': row.text, 'metadata': row.metadata}
 
 
-def _prepare(source_request: dict):
-    source = resolve_source(source_request)
+def _prepare(source_request: dict, *, _temporary_source: SummarySource | None = None):
+    # Native retention already validates temporary text outside the DB lane.
+    source = _temporary_source if _temporary_source is not None else resolve_source(source_request)
     requested, policy = _policy()
     saved = previous = None
     if source.source_key is not None:
@@ -353,8 +354,13 @@ def _handle(handle_id: str) -> SummaryHandle:
     return handle
 
 
-async def acquire_summary(source: dict, *, regenerate: bool = False, start: bool = True) -> SummaryHandle:
-    resolved, requested, policy, descriptor, saved = await sync_to_async(_prepare)(source)
+async def acquire_summary(
+    source: dict, *, regenerate: bool = False, start: bool = True,
+    _temporary_source: SummarySource | None = None,
+) -> SummaryHandle:
+    resolved, requested, policy, descriptor, saved = await sync_to_async(_prepare)(
+        source, _temporary_source=_temporary_source,
+    )
     if not resolved.eligible:
         raise SummaryUnavailable(resolved.unavailable_reason or 'unavailable')
     key = _key(resolved, policy)
@@ -509,7 +515,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         raise ValueError('A summary source needs its frozen source key, source hash, and policy key')
     if 'result_hash' in reference:
         raise ValueError("'result_hash' requires 'saved_id'")
-    temporary = await sync_to_async(validate_source)(reference['source'])
+    temporary = await sync_to_async(validate_source, thread_sensitive=False)(reference['source'])
     if temporary is not None and (temporary.source_key != reference['source_key']
                                   or temporary.source_hash != reference['source_hash']):
         raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
@@ -521,7 +527,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         if any(handle.descriptor[field] != reference[field] for field in fields):
             raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
         return await acquire_summary_reader(handle.id)
-    handle = await acquire_summary(reference['source'])
+    handle = await acquire_summary(reference['source'], _temporary_source=temporary)
     if any(handle.descriptor[field] != reference[field] for field in fields):
         await release_summary(handle.id)
         raise SummaryUnavailable('The summary source changed. Refresh it before reading.')

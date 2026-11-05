@@ -325,6 +325,18 @@ def _register(stream: AudioStream) -> None:
     stream.touch()
 
 
+def retain_stream(audio_id: str) -> None:
+    """Transfer the unread expiry lease to a native session.
+
+    The native owner releases on finish, cancellation, or disconnect expiry.
+    Keep the existing safety timer and actual HTTP claim unchanged.
+    """
+    stream = get_stream(audio_id)
+    if stream is not None and stream._unclaimed_timer is not None:
+        stream._unclaimed_timer.cancel()
+        stream._unclaimed_timer = None
+
+
 def _expire_unclaimed(audio_id: str) -> None:
     stream = _streams.get(audio_id)
     if stream is not None and not stream.claimed:

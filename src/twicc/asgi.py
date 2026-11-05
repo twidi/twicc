@@ -75,6 +75,7 @@ from twicc.synced_settings import _settings_lock, prepare_settings_for_client, r
 from twicc.workspaces import read_workspaces
 from twicc.layouts import read_layouts
 from twicc.message_snippets import read_message_snippets_config, write_message_snippets_config
+from twicc.tts.native_consumer import NativeTtsConsumer
 from twicc.tts.config import read_tts_config, tts_client_payload, write_client_tts_config
 from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
 from twicc.seen_help import read_seen_help, write_seen_help
@@ -2685,6 +2686,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
 
 websocket_urlpatterns = [
+    path("ws/tts/", NativeTtsConsumer.as_asgi()),
     # Terminal with session context
     path("ws/terminal/<str:project_id>/<str:session_id>/<int:terminal_index>/", terminal_application),
     # Terminal with project context only (no session)

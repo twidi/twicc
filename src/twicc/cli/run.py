@@ -428,6 +428,9 @@ async def run_server(port: int):
         finally:
             logger.info("Server shutdown initiated...")
 
+            from twicc.tts.native_sessions import registry as native_tts_registry
+            await native_tts_registry.shutdown()
+
             # Finish cancellation of checks and provider pushes before provider or
             # database infrastructure is torn down.
             await _cancel_task(title_auto_task, "Automatic title task")
