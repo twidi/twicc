@@ -18,7 +18,7 @@ import SessionListItem from '../session/list/SessionListItem.vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { useTimelineSpeechStore } from '../../stores/timelineSpeech'
-import { ALL_PROJECTS_ID } from '../../constants.js'
+import { ALL_PROJECTS_ID, MOBILE_BREAKPOINT } from '../../constants.js'
 import { extractWorkspaceId, isWorkspaceProjectId } from '../../utils/workspaceIds.js'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
 import AppTooltip, { onTooltipDismissal } from '../ui/AppTooltip.vue'
@@ -72,6 +72,10 @@ const railRows = computed(() => rows.value.map((row, index, all) => {
 
 const hasCentralContent = computed(() => rows.value.length || recentProjects.value.length || recentWorkspaces.value.length)
 const navigateScope = createRailScopeNavigation(router)
+// The Timeline button must not cover the page it opens with the mobile drawer.
+const navigateTimelineScope = createRailScopeNavigation(router, () => {
+    if (!window.matchMedia(`(width < ${MOBILE_BREAKPOINT}px)`).matches) window.dispatchEvent(new Event('twicc:open-sidebar'))
+})
 function scopeSelected(kind, id) {
     // The bare route is the Timeline; Stats is the same scope page on another tab, so the scope stays selected.
     return kind === 'project'
@@ -176,9 +180,9 @@ function activate(item) {
     if (item.id === 'sessions' || item.id === 'artifacts') emit('select-mode', item.id)
     else if (item.id === 'timeline') {
         const pageId = speech.activePageId
-        if (!pageId || pageId === ALL_PROJECTS_ID) return navigateScope('all-projects')
-        if (isWorkspaceProjectId(pageId)) return navigateScope('workspace', extractWorkspaceId(pageId))
-        return navigateScope('project', pageId)
+        if (!pageId || pageId === ALL_PROJECTS_ID) return navigateTimelineScope('all-projects')
+        if (isWorkspaceProjectId(pageId)) return navigateTimelineScope('workspace', extractWorkspaceId(pageId))
+        return navigateTimelineScope('project', pageId)
     }
     else if (item.id === 'toggle') emit('toggle-sidebar')
     else if (item.id === 'speech') return stopSpeech()

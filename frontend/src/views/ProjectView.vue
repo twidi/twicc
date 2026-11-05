@@ -10,7 +10,7 @@ import { usePeersStore } from '../stores/peers'
 import { useTextToSpeechStore } from '../stores/textToSpeech'
 import { useHelpStore } from '../stores/help'
 import { useWorkspacesStore } from '../stores/workspaces'
-import { SESSION_TIME_FORMAT } from '../constants'
+import { MOBILE_BREAKPOINT, SESSION_TIME_FORMAT } from '../constants'
 import { formatDate } from '../utils/date'
 import { useCommandRegistry } from '../composables/useCommandRegistry'
 import { useStartupPolling } from '../composables/useStartupPolling'
@@ -1250,8 +1250,6 @@ const SIDEBAR_STORAGE_KEY = 'twicc-sidebar-state'
 const DEFAULT_SIDEBAR_WIDTH = 300
 // Sidebar collapse threshold in pixels
 const SIDEBAR_COLLAPSE_THRESHOLD = 120
-// Mobile breakpoint (must match CSS media query)
-const MOBILE_BREAKPOINT = 640
 
 // Reactive narrow-viewport flag (mobile drawer sidebar). Used to re-place the
 // usage quota tooltips: on desktop they sit to the right of their row; on mobile

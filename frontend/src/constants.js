@@ -25,6 +25,9 @@ export const INITIAL_ITEMS_COUNT = 100
 /** Special project ID for "All Projects" mode. */
 export const ALL_PROJECTS_ID = '__all__'
 
+// Mobile breakpoint in pixels (must match CSS media query)
+export const MOBILE_BREAKPOINT = 640
+
 /**
  * Display mode values for session items.
  * - conversation: Show only user messages + last assistant message before each user message
