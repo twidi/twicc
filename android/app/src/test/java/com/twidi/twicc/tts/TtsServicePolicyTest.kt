@@ -259,4 +259,25 @@ class TtsServicePolicyTest {
         assertEquals(1, h.socket.sent.count { it["type"] == "started" })
     }
 
+    @Test fun automaticFailureCacheStaysBoundedAndKeeepsItsSourceInstance() {
+        val cache = TtsSnapshotCache()
+        fun value(instance: String, results: List<NativeTtsResult>) = NativeTtsSnapshot(revision = 1, instanceId = instance,
+            sessionStatus = "connected", playback = NativePlayback(), listening = null, pendingCount = 0, error = null,
+            configurationAvailable = true, results = results)
+        fun result(id: Int, automatic: Boolean) = NativeTtsResult("result-$id", false,
+            mapOf("ok" to false, "error" to "Failed"), mapOf("ok" to false, "error" to "Failed"), automatic, "reading-$id", id.toLong())
+        cache.publish(value("source", listOf(result(0, true))))
+        cache.publish(value("other", listOf(result(1, false))))
+        assertTrue(cache.snapshot("source").results.single().automatic)
+        assertFalse(cache.snapshot("other").results.single().automatic)
+        assertEquals("reading-0", cache.snapshot("source").results.single().readingId)
+        for (id in 2..65) cache.publish(value("other", listOf(result(id, id % 2 == 0))))
+        assertTrue(cache.snapshot("source").results.isEmpty())
+        assertEquals(64, cache.snapshot("other").results.size)
+        assertEquals("result-2", cache.snapshot("other").results.first().operationId)
+        val stopped = cache.stopped(value("other", emptyList()))
+        assertEquals(64, stopped.results.size)
+        assertEquals("idle", stopped.playback.status)
+    }
+
 }

@@ -263,4 +263,39 @@ class TtsStateTest {
         assertEquals(7, result.start["savedId"])
     }
 
+    @Test fun automaticErrorSurvivesRawStateNextCandidateAndAcknowledgedErrorClearBeforePoll() {
+        val c = controller(); listen(c); opened(c)
+        fun candidate(id: Int, text: String): List<TtsEffect> = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1,
+            "type" to "candidate", "activation_id" to c.snapshot().listening!!.activationId, "event_id" to id, "text" to text)))
+        val firstEffects = candidate(1, "First")
+        val first = c.snapshot().playback
+        val failure = mapOf("code" to "failed", "message" to "Automatic preparation failed", "reading_id" to first.readingId, "generation" to first.generation)
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error") + failure))
+        val firstSeq = firstEffects.filterIsInstance<TtsEffect.Send>().last().frame["seq"]
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state", "revision" to 1, "ack_seq" to firstSeq, "error" to failure)))
+        val nextEffects = candidate(2, "Second")
+        val nextSeq = nextEffects.filterIsInstance<TtsEffect.Send>().last().frame["seq"]
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state", "revision" to 2, "ack_seq" to nextSeq, "error" to null)))
+        val snapshot = c.snapshot()
+        assertNull(snapshot.error); assertEquals("Second", snapshot.playback.text)
+        val retained = snapshot.results.single()
+        assertTrue(retained.automatic); assertEquals(first.readingId, retained.readingId); assertEquals(first.generation, retained.generation)
+        assertEquals("Automatic preparation failed", retained.ended["error"])
+        assertEquals(false, retained.ended["ok"])
+    }
+    @Test fun automaticTerminalFailuresShareTheExistingSixtyFourResultBound() {
+        val c = controller(); listen(c); opened(c)
+        val ids = mutableListOf<String>()
+        repeat(66) { id ->
+            c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "candidate",
+                "activation_id" to c.snapshot().listening!!.activationId, "event_id" to id)))
+            val reading = c.snapshot().playback
+            ids += reading.readingId!!
+            c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error", "code" to "failed", "message" to "Failed",
+                "reading_id" to reading.readingId, "generation" to reading.generation)))
+        }
+        assertEquals(64, c.snapshot().results.size)
+        assertEquals(ids[2], c.snapshot().results.first().readingId)
+    }
+
 }

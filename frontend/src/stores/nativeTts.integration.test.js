@@ -7,6 +7,7 @@ import { useTimelineSpeechStore } from './timelineSpeech.js'
 import { useTimelineFiltersStore } from './timelineFilters.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
+import { createNativeTtsClient } from '../utils/nativeTtsClient.js'
 beforeEach(() => { setActivePinia(createPinia()); _resetSpeechForTests(); setSpeechPlayerFactory(() => assert.fail('native cannot create HTMLAudio')); setPcmStreamPlayerFactory(() => assert.fail('native cannot create AudioContext')) })
 async function fixture(snapshot = {}) {
     const calls = []; let observer
@@ -167,4 +168,49 @@ test('descriptorless selection replacement keeps only its current provisional St
     assert.deepEqual(calls.at(-1), ['skip', undefined, 'operation-2'])
     completions.forEach(resolve => resolve({ ok: false, aborted: true }))
     assert.deepEqual(await first, { ok: false, aborted: true }); assert.deepEqual(await second, { ok: false, aborted: true })
+})
+
+test('real next-poll adapter reports retained automatic failure once and keeps manual errors with their controls', async () => {
+    const automatic = { operationId: 'automatic:first:1', automatic: true, readingId: 'first', generation: 1,
+        start: { ok: false, error: 'Automatic preparation failed' }, ended: { ok: false, error: 'Automatic preparation failed' } }
+    let current = { version: 1, revision: 2, instanceId: 'instance', playback: { readingId: 'first', status: 'loading' },
+        listening: { activationId: 'a', pageId: 'p', includeMuted: false }, error: null, results: [] }
+    const scheduled = new Map(); let sequence = 0
+    const client = createNativeTtsClient({
+        appClient: { async request(command) {
+            return command === 'getState' ? { capabilities: { nativeTts: 1 } } : { accepted: true, snapshot: current }
+        } },
+        document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
+        fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: true }) }),
+        timers: { setTimeout(fn, delay) { assert.equal(delay, 1000); scheduled.set(++sequence, fn); return sequence }, clearTimeout(id) { scheduled.delete(id) } },
+    })
+    async function poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() }
+    const { tts } = await fixture()
+    await tts.attachNative(client)
+    const timeline = useTimelineSpeechStore(), errors = []
+    timeline._showError = message => errors.push(message)
+    const options = { dataStore: {}, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() }
+    timeline.initialize(options)
+    assert.deepEqual(errors, [])
+    current = { ...current, revision: 3, playback: { readingId: 'second', source: 'message', text: 'Second', status: 'loading' }, results: [automatic] }
+    await poll()
+    assert.equal(tts.nativeSnapshot.playback.text, 'Second')
+    assert.deepEqual(errors, ['Automatic preparation failed'], 'the next one-second poll sees the retained failure after global error clears')
+    current = { ...current, revision: 4, error: { code: 'failed', message: 'Automatic preparation failed', reading_id: 'first', generation: 1 } }
+    await poll()
+    assert.deepEqual(errors, ['Automatic preparation failed'], 'raw global error cannot report the same terminal twice')
+    const pending = client.manual({ kind: 'text', text: 'Manual' })
+    const manual = { ...automatic, operationId: pending.operationId, automatic: false, readingId: 'manual', generation: 2,
+        start: { ok: false, error: 'Manual preparation failed' }, ended: { ok: false, error: 'Manual preparation failed' } }
+    current = { ...current, revision: 5, results: [automatic, manual],
+        error: { code: 'failed', message: 'Manual preparation failed', reading_id: 'manual', generation: 2 } }
+    await poll()
+    assert.deepEqual(await pending, { ok: false, error: 'Manual preparation failed' })
+    assert.deepEqual(errors, ['Automatic preparation failed'], 'raw manual ownership is recovered from its terminal result')
+    timeline.dispose(); timeline.initialize(options)
+    assert.deepEqual(errors, ['Automatic preparation failed', 'Automatic preparation failed'], 'a new mirror reports the retained automatic failure once')
+    current = { ...current, revision: 6, error: null }
+    await poll()
+    assert.equal(errors.length, 2)
+    timeline.dispose(); tts.detachNative()
 })

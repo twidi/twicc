@@ -22,6 +22,15 @@ const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z
 function createNativeCoordinator(store, { dataStore, workspacesStore }) {
     const tts = useTextToSpeechStore(), filters = useTimelineFiltersStore(), client = tts.nativeClient()
     let activationId = null, unwatchMuted = null, lastError = null
+    const reportedReadings = new Set()
+    const readingKey = (readingId, generation) => `${readingId}:${generation}`
+    function reportReading(readingId, generation, message) {
+        const key = readingKey(readingId, generation)
+        if (reportedReadings.has(key)) return
+        reportedReadings.add(key)
+        if (reportedReadings.size > 64) reportedReadings.delete(reportedReadings.values().next().value)
+        store._showError(message)
+    }
     function mirror(snapshot) {
         const listening = snapshot?.listening
         if (listening?.activationId !== activationId) {
@@ -37,11 +46,21 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
         store.activePageId = listening?.pageId ?? null
         store.activeLabel = listening?.scope?.label ?? ''
         store.pendingCount = snapshot?.pendingCount ?? 0
+        const results = snapshot?.results ?? []
+        for (const result of results) {
+            if (result.automatic && result.readingId && result.ended?.ok === false && !result.ended.aborted) {
+                reportReading(result.readingId, result.generation, result.ended.error)
+            }
+        }
         const error = snapshot?.error
         const key = error ? JSON.stringify(error) : null
-        // Manual controls consume their own operation result. Background listener errors have no control promise.
-        const handledByControl = error?.operation_id && client.handlesOperation?.(error.operation_id)
-        if (key && key !== lastError && !handledByControl) store._showError(error.message)
+        // A raw backend state can omit ownership metadata. The retained native result keeps it.
+        const terminal = error?.reading_id ? results.find(result => result.readingId === error.reading_id
+            && result.generation === error.generation) : null
+        const operationId = error?.operation_id ?? terminal?.operationId
+        const handledByControl = operationId && client.handlesOperation?.(operationId)
+        if (error?.reading_id && !handledByControl) reportReading(error.reading_id, error.generation, error.message)
+        else if (key && key !== lastError && !handledByControl && !error.reading_id) store._showError(error.message)
         lastError = key
     }
     mirror(tts.nativeSnapshot)

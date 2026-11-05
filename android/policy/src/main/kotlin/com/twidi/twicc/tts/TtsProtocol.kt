@@ -13,7 +13,8 @@ data class NativePlayback(val readingId: String? = null, val generation: Long = 
     val identity: TtsFrame? = null, val source: String? = null, val text: String = "", val configId: String? = null,
     val status: String = "idle", val phase: String = "idle", val automatic: Boolean = false,
     val started: Boolean = false, val audioId: String? = null)
-data class NativeTtsResult(val operationId: String, val started: Boolean, val start: TtsFrame, val ended: TtsFrame)
+data class NativeTtsResult(val operationId: String, val started: Boolean, val start: TtsFrame, val ended: TtsFrame,
+    val automatic: Boolean = false, val readingId: String? = null, val generation: Long = 0)
 data class NativeTtsSnapshot(val version: Int = 1, val revision: Long, val instanceId: String,
     val sessionStatus: String, val playback: NativePlayback, val listening: NativeListening?, val pendingCount: Int,
     val error: TtsFrame?, val configurationAvailable: Boolean?, val results: List<NativeTtsResult>)

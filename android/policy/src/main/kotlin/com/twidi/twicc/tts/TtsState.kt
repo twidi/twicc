@@ -81,12 +81,13 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         }
     }
     private fun finish(ok: Boolean, message: String? = null, aborted: Boolean = false, details: TtsFrame = emptyMap()) {
-        playback.operationId?.let {
-            if (results.size == 64) results.removeFirst()
-            val outcome = if (aborted) mapOf("ok" to false, "aborted" to true) else if (ok) mapOf("ok" to true) else mapOf("ok" to false, "error" to (message ?: "The audio stopped before the end"))
-            results.addLast(NativeTtsResult(it, playback.started,
-                if (playback.started) mapOf("ok" to true) else outcome + details, outcome + details))
-        }
+        val operationId = playback.operationId ?: if (playback.automatic && !ok && !aborted && playback.readingId != null)
+            "automatic:${playback.readingId}:${playback.generation}" else return
+        if (results.size == 64) results.removeFirst()
+        val outcome = if (aborted) mapOf("ok" to false, "aborted" to true) else if (ok) mapOf("ok" to true) else mapOf("ok" to false, "error" to (message ?: "The audio stopped before the end"))
+        results.addLast(NativeTtsResult(operationId, playback.started,
+            if (playback.started) mapOf("ok" to true) else outcome + details, outcome + details,
+            playback.automatic, playback.readingId, playback.generation))
     }
     private fun cancel(sendSkip: Boolean = false, failure: String? = null) {
         val old = playback
@@ -99,7 +100,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         playback = NativePlayback(generation = generation)
     }
     private fun errorOwner(value: NativePlayback): TtsFrame = if (value.readingId == null) emptyMap() else
-        mapOf("automatic" to value.automatic, "operation_id" to value.operationId)
+        mapOf("automatic" to value.automatic, "operation_id" to value.operationId, "reading_id" to value.readingId, "generation" to value.generation)
     private fun terminate(code: String, message: String) {
         val failedOwner = errorOwner(playback)
         cancel(failure = message); listening = null; pendingCount = 0; ready = false; active = false
@@ -292,7 +293,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         } else if (f["reading_id"] == null || matches(f)) {
             val failedOwner = errorOwner(playback)
             val details = if (f["summary_changed"] == true) mapOf("summaryChanged" to true, "savedId" to f["saved_id"]) else emptyMap()
-            if (playback.readingId != null) { finish(false, message, details = details); playback = playback.copy(operationId = null); cancel() }
+            if (playback.readingId != null) { finish(false, message, details = details); playback = playback.copy(operationId = null, automatic = false); cancel() }
             error = f.filterKeys { it in setOf("code", "message", "status", "saved_id", "summary_changed", "reading_id", "generation") } + failedOwner
         }
     }

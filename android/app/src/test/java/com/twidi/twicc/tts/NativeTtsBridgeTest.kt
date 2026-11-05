@@ -12,7 +12,8 @@ class NativeTtsBridgeTest {
         playback = NativePlayback(readingId = "reading", operationId = "operation", identity = mapOf("sourceKey" to null, "sourceHash" to "hash", "variant" to "summary"), source = "summary", phase = "settling"),
         listening = NativeListening("activation", "project-one", ListeningScope("project", "project-one", "One"), "2026-11-05T12:00:00.000000Z", true),
         pendingCount = 2, error = mapOf("summary_changed" to true, "saved_id" to 7), configurationAvailable = true,
-        results = listOf(NativeTtsResult("operation", true, mapOf("ok" to true), mapOf("ok" to true))))
+        results = listOf(NativeTtsResult("operation", true, mapOf("ok" to true), mapOf("ok" to true)),
+            NativeTtsResult("automatic:first:3", false, mapOf("ok" to false), mapOf("ok" to false, "error" to "Failed"), true, "first", 3)))
     private fun bridge(enabled: Boolean = true) = NativeTtsBridge({ enabled }, { owner }, { snapshot }, { "document" }) { command ->
         commands += command; Acceptance(true, (command as? TtsCommand.Manual)?.operationId)
     }
@@ -40,6 +41,12 @@ class NativeTtsBridgeTest {
         assertEquals("project-one", result.getJSONObject("listening").getString("pageId"))
         assertTrue(result.getJSONObject("listening").getBoolean("includeMuted"))
         assertEquals("operation", result.getJSONArray("results").getJSONObject(0).getString("operationId"))
+        assertFalse(result.getJSONArray("results").getJSONObject(0).getBoolean("automatic"))
+        assertTrue(result.getJSONArray("results").getJSONObject(0).has("readingId"))
+        assertEquals(0L, result.getJSONArray("results").getJSONObject(0).getLong("generation"))
+        val automatic = result.getJSONArray("results").getJSONObject(1)
+        assertTrue(automatic.getBoolean("automatic")); assertEquals("first", automatic.getString("readingId"))
+        assertEquals(3L, automatic.getLong("generation")); assertEquals("Failed", automatic.getJSONObject("ended").getString("error"))
         assertFalse(result.toString().contains("resume_secret"))
         assertEquals(0, commands.size)
     }
