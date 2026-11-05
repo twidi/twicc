@@ -23,7 +23,7 @@ from twicc.openrouter_text import OPENROUTER_TEXT_MODEL, OpenRouterTextError
 from twicc.providers.codex.title_suggest import TITLE_MODEL
 from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS, Engine, fallback_engine, resolve_engine, step_limits, stream_text
 from twicc.providers.text_calls import _openrouter_reason
-from twicc.summaries.sources import SummarySource, normalize_summary_model, resolve_source
+from twicc.summaries.sources import SummarySource, normalize_summary_model, resolve_source, validate_source
 from twicc.synced_settings import read_synced_settings
 
 logger = logging.getLogger(__name__)
@@ -509,6 +509,10 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         raise ValueError('A summary source needs its frozen source key, source hash, and policy key')
     if 'result_hash' in reference:
         raise ValueError("'result_hash' requires 'saved_id'")
+    temporary = validate_source(reference['source'])
+    if temporary is not None and (temporary.source_key != reference['source_key']
+                                  or temporary.source_hash != reference['source_hash']):
+        raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
     handle_id = reference.get('handle_id')
     if handle_id is not None and (not isinstance(handle_id, str) or not handle_id.strip()):
         raise ValueError("'handle_id' must be a non-empty handle")

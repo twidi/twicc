@@ -232,8 +232,8 @@ def _positive_int(value):
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
-def resolve_source(source: dict) -> SummarySource:
-    """Resolve exactly one supported source shape; never trust client source text for saved messages."""
+def validate_source(source: dict) -> SummarySource | None:
+    """Validate supported shapes without storage reads; resolve immutable temporary text."""
     if not isinstance(source, dict):
         raise ValueError('Source must be an object')  # noqa: TRY004 — one request-validation error contract
     if set(source) == {'text', 'purpose'}:
@@ -244,15 +244,25 @@ def resolve_source(source: dict) -> SummarySource:
     if set(source) == {'session_id', 'line_num'}:
         if not isinstance(source['session_id'], str) or not source['session_id'] or not _positive_int(source['line_num']):
             raise ValueError('Chat source requires session_id and a positive line_num')
+        return None
+    if set(source) == {'event_id'} and _positive_int(source['event_id']):
+        return None
+    raise ValueError('Source must specify a chat message, timeline snapshot, or temporary text')
+
+
+def resolve_source(source: dict) -> SummarySource:
+    """Resolve exactly one supported source shape; never trust client source text for saved messages."""
+    temporary = validate_source(source)
+    if temporary is not None:
+        return temporary
+    if 'session_id' in source:
         try:
             session = Session.objects.get(pk=source['session_id'])
         except Session.DoesNotExist:
             raise ValueError('Source session does not exist') from None
         return _chat(session, source['line_num'])
-    if set(source) == {'event_id'} and _positive_int(source['event_id']):
-        try:
-            event = TimelineEvent.objects.get(pk=source['event_id'])
-        except TimelineEvent.DoesNotExist:
-            raise ValueError('Source event does not exist') from None
-        return _snapshot(event)
-    raise ValueError('Source must specify a chat message, timeline snapshot, or temporary text')
+    try:
+        event = TimelineEvent.objects.get(pk=source['event_id'])
+    except TimelineEvent.DoesNotExist:
+        raise ValueError('Source event does not exist') from None
+    return _snapshot(event)

@@ -530,8 +530,10 @@ def test_summary_prompt_asks_a_third_of_the_source_within_bounds(service):
     assert 'aim for 15 words' in prompt and 'Text with {braces} inside' in prompt
 
 
-def speech_reference(handle, **changes):
-    return {'source': {}, **{key: handle.descriptor[key] for key in ('source_key', 'source_hash', 'policy_key')},
+def speech_reference(handle, source=None, **changes):
+    if source is None:
+        source = {'session_id': handle.descriptor['session_id'], 'line_num': handle.descriptor['first_line']}
+    return {'source': source, **{key: handle.descriptor[key] for key in ('source_key', 'source_hash', 'policy_key')},
             'handle_id': handle.id, **changes}
 
 
@@ -624,4 +626,118 @@ def test_retain_summary_for_speech_rejects_handle_without_reconstructible_source
     async def scenario():
         with pytest.raises(ValueError):
             await service.retain_summary_for_speech({'handle_id': 'page-only'})
+    asyncio.run(scenario())
+
+
+async def complete_temporary_reference(service, monkeypatch, hint):
+    async def stream(*_):
+        yield 'Summary of source A.'
+    monkeypatch.setattr(service, 'stream_text', stream)
+    source = {'text': 'Temporary source A.', 'purpose': 'selection'}
+    page = await service.acquire_summary(source)
+    await terminal(service, page)
+    reference = speech_reference(page, source)
+    if hint == 'none':
+        reference.pop('handle_id')
+    elif hint == 'released':
+        await service.release_summary(page.id)
+    return page, reference
+
+
+@pytest.mark.parametrize('hint', ['none', 'live', 'released'])
+@pytest.mark.parametrize('source', [{}, {'text': 'Missing purpose'}, {'text': '', 'purpose': 'selection'},
+    {'text': 'Source', 'purpose': 'unsupported'}, {'session_id': 'session', 'line_num': True},
+    {'session_id': '', 'line_num': 1}, {'event_id': 0}, {'event_id': 1, 'text': 'Unexpected'}])
+def test_retain_summary_rejects_malformed_real_source_with_any_hint(service, monkeypatch, hint, source):
+    async def scenario():
+        page, reference = await complete_temporary_reference(service, monkeypatch, hint)
+        reference['source'] = source
+        reader = None
+        try:
+            with pytest.raises(ValueError):
+                reader = await service.retain_summary_for_speech(reference)
+        finally:
+            if reader is not None:
+                await reader.aclose()
+            await service.release_summary(page.id)
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('hint', ['none', 'live', 'released'])
+def test_retain_summary_rejects_changed_temporary_text_with_any_hint(service, monkeypatch, hint):
+    async def scenario():
+        page, reference = await complete_temporary_reference(service, monkeypatch, hint)
+        reference['source'] = {'text': 'Different temporary source B.', 'purpose': 'selection'}
+        reader = None
+        try:
+            with pytest.raises(service.SummaryUnavailable, match='changed'):
+                reader = await service.retain_summary_for_speech(reference)
+        finally:
+            if reader is not None:
+                await reader.aclose()
+            await service.release_summary(page.id)
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('hint', ['none', 'live', 'released'])
+def test_retain_summary_accepts_real_temporary_source_with_any_hint(service, monkeypatch, hint):
+    async def scenario():
+        page, reference = await complete_temporary_reference(service, monkeypatch, hint)
+        reader = await service.retain_summary_for_speech(reference)
+        assert (await terminal(service, reader))['text'] == 'Summary of source A.'
+        assert reader.id != page.id
+        if hint == 'live':
+            assert reader._run is page._run
+        await service.release_summary(page.id)
+        assert reader.snapshot['state'] == 'complete'
+        await reader.aclose()
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('hint', ['none', 'live', 'released'])
+@pytest.mark.parametrize('kind', ['chat', 'event'])
+def test_retain_summary_accepts_real_message_sources_with_any_hint(service, monkeypatch, live_session, hint, kind):
+    f = live_session
+    f.append(f.message('answer', 'Message source. ' * 100))
+    source = {'session_id': f.session.id, 'line_num': 1} if kind == 'chat' else {'event_id': f.events()[0].id}
+    async def stream(*_):
+        yield 'Summary of message.'
+    monkeypatch.setattr(service, 'stream_text', stream)
+    async def scenario():
+        page = await service.acquire_summary(source)
+        await terminal(service, page)
+        reference = speech_reference(page, source)
+        if hint == 'none':
+            reference.pop('handle_id')
+        elif hint == 'released':
+            await service.release_summary(page.id)
+        if hint == 'live':
+            monkeypatch.setattr(service, 'resolve_source', lambda _: pytest.fail('Live reader rereads mutable source'))
+            monkeypatch.setattr(service, '_policy', lambda: pytest.fail('Live reader resolves current policy'))
+        reader = await service.retain_summary_for_speech(reference)
+        assert reader.snapshot['text'] == 'Summary of message.'
+        assert reader.id != page.id
+        await service.release_summary(page.id)
+        assert reader.snapshot['state'] == 'complete'
+        await reader.aclose()
+        assert not service._handles
+    asyncio.run(scenario())
+
+
+def test_retain_live_summary_preserves_frozen_policy_after_settings_change(service, monkeypatch):
+    async def scenario():
+        page, reference = await complete_temporary_reference(service, monkeypatch, 'live')
+        frozen_policy = page.descriptor['policy_key']
+        monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'luna'})
+        assert service._policy()[1] != frozen_policy
+        reader = await service.retain_summary_for_speech(reference)
+        assert reader._run is page._run
+        assert reader._run.policy == frozen_policy
+        await service.release_summary(page.id)
+        assert reader.snapshot['text'] == 'Summary of source A.'
+        await reader.aclose()
+        assert not service._handles
     asyncio.run(scenario())
