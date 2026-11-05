@@ -79,7 +79,6 @@ class NativeTtsConsumer(AsyncJsonWebsocketConsumer):
                     await self.send_json({'protocol': 1, 'type': 'opened_session', 'session_id': session.id,
                                           'resume_secret': session.secret, 'revision': session.revision,
                                           'ack_seq': session.ack_seq, 'connection_id': self.connection_id})
-                    session.publish_state()
                 elif kind == 'resume':
                     session = registry.resume(command['session_id'], command['resume_secret'], binding)
                     if command['ack_seq'] > session.ack_seq:
@@ -89,12 +88,18 @@ class NativeTtsConsumer(AsyncJsonWebsocketConsumer):
                     self.native_session = session
                     self.connection_id = session.attach()
                     await session.reconcile(command['commands'], command['current'], connection_id=self.connection_id)
-                    # The resume command itself follows all replayed commands.
-                    if not session.closed:
-                        session.ack_seq = command['seq']
-                        session.publish_state()
                 else:
                     raise ValueError('Open or resume a native session first')
+                # No await separates ownership, acknowledgement, state, and writer installation.
+                # Reconciliation callbacks may have yielded to a replacement transport.
+                if self.connection_id != session.connection_id:
+                    raise SessionLost
+                if not session.closed:
+                    if kind == 'resume':
+                        if command['seq'] <= session.ack_seq:
+                            raise SessionLost
+                        session.ack_seq = command['seq']
+                    session.publish_state()
                 self._sender = asyncio.create_task(self._send_frames(), name='native-tts-websocket-writer')
             else:
                 if self.connection_id != self.native_session.connection_id:

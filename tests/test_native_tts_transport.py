@@ -354,3 +354,62 @@ async def test_socket_reserves_temporary_summary_identity_with_null_key(settings
     finally:
         await comm.disconnect()
         await native_sessions.registry.shutdown()
+
+
+@pytest.mark.parametrize('older_seq,newer_seq', [(11, 12), (12, 11)])
+async def test_overlapping_resumes_keep_newer_ack_state_and_writer(settings, monkeypatch, older_seq, newer_seq):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from tests.test_native_tts_sessions import manual
+    from twicc.tts.service import OpenedSpeech
+    from twicc.tts.streams import release_stream, stream_from_bytes
+    settings.TWICC_PASSWORD_HASH = ''
+    stream = stream_from_bytes(b'audio', 'audio/mpeg', label={})
+    monkeypatch.setattr(native_sessions, 'open_speech', AsyncMock(return_value=OpenedSpeech(stream.id, stream.content_type)))
+    session = native_sessions.registry.open(str(uuid4()), ('', ''))
+    await session.apply(manual(10))
+    await session.preparation
+    release_stream(stream.id)
+    entered, release = asyncio.Event(), asyncio.Event()
+    class Coordinator:
+        async def finished(self, reading, outcome):
+            entered.set()
+            await release.wait()
+        async def close(self):
+            pass
+    session.coordinator = Coordinator()
+    consumers = []
+    original_connect = native_consumer.NativeTtsConsumer.connect
+    async def capture_connect(consumer):
+        consumers.append(consumer)
+        await original_connect(consumer)
+    monkeypatch.setattr(native_consumer.NativeTtsConsumer, 'connect', capture_connect)
+    older, newer = await socket(), await socket()
+    try:
+        await older.connect()
+        await older.send_json_to({'protocol': 1, 'type': 'resume', 'seq': older_seq, 'session_id': session.id,
+                                  'resume_secret': session.secret, 'ack_seq': 10, 'commands': [], 'current': None})
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        stale_consumer = consumers[-1]
+        await newer.connect()
+        await newer.send_json_to({'protocol': 1, 'type': 'resume', 'seq': newer_seq, 'session_id': session.id,
+                                  'resume_secret': session.secret, 'ack_seq': 10, 'commands': [], 'current': None})
+        frame = await newer.receive_json_from()
+        assert frame['ack_seq'] == newer_seq
+        assert consumers[-1]._sender is not None
+        snapshot, connection_id = session.snapshot(), session.connection_id
+        release.set()
+        # An output proves the older callback reaches its handshake continuation.
+        await older.receive_output()
+        assert session.ack_seq == newer_seq
+        assert session.snapshot() == snapshot
+        assert session.connection_id == connection_id
+        assert stale_consumer._sender is None
+        await newer.send_json_to({'protocol': 1, 'type': 'ping', 'seq': 13})
+        assert (await newer.receive_json_from())['type'] == 'pong'
+        assert (await newer.receive_json_from())['ack_seq'] == 13
+    finally:
+        release.set()
+        await older.disconnect()
+        await newer.disconnect()
+        await native_sessions.registry.shutdown()
