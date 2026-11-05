@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { describeMessageSnapshot } from '../../utils/timeline/messageSnapshot'
 
-import MessageSummary from '../session/detail/items/MessageSummary.vue'
+import MessageSummaryControls from '../session/detail/items/MessageSummaryControls.vue'
 
 const MarkdownContent = defineAsyncComponent(() => import('../ui/MarkdownContent.vue'))
 const props = defineProps({
@@ -16,6 +16,8 @@ const props = defineProps({
 const emit = defineEmits(['toggle', 'more-change'])
 const expanded = defineModel('expanded', { type: Boolean, default: false })
 const vm = computed(() => describeMessageSnapshot(props.kind, props.data))
+// The summary takes the place of the original text.
+const bodyText = computed(() => props.summary?.view === 'summary' ? props.summary.entry?.text : vm.value.text)
 const instanceId = useId()
 const regionId = computed(() => props.contentId ?? `timeline-message-${instanceId}`)
 const previewRef = ref(null)
@@ -81,8 +83,8 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
             :aria-label="labelledBy ? undefined : 'Message'"
             class="timeline-message-body"
         >
-            <MessageSummary v-if="summary?.view === 'summary'" :summary="summary" :speech="false" />
-            <MarkdownContent v-else :source="vm.text" />
+            <MessageSummaryControls v-if="summary?.hasSummary" :summary="summary" />
+            <MarkdownContent v-if="bodyText" :source="bodyText" />
             <button type="button" class="timeline-message-control timeline-message-close" @click="toggle">Close message</button>
         </div>
     </div>

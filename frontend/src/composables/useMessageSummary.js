@@ -55,6 +55,12 @@ export function useMessageSummary(sourceRequest, visit = null) {
     const generationUnavailableReason = computed(() => !routing.value.available ? routing.value.unavailableReason
         : descriptor.value?.unavailable_reason || (!descriptor.value?.eligible ? 'This source is unavailable for summary generation.' : ''))
     const canSummarize = computed(() => available.value && !!(entry.value || descriptor.value.saved || descriptor.value.previous || generationAvailable.value))
+    const running = computed(() => entry.value?.state === 'running' || generation.value?.state === 'running')
+    const toggleTitle = computed(() => {
+        if (view.value === 'summary') return 'Show original message'
+        if (!canSummarize.value) return generationUnavailableReason.value
+        return entry.value?.text || descriptor.value?.saved || descriptor.value?.previous ? 'Show summary' : 'Summarize message'
+    })
     const identity = computed(() => descriptor.value ? {
         sourceKey: descriptor.value.source_key, sourceHash: descriptor.value.source_hash, variant: 'summary',
     } : null)
@@ -142,17 +148,6 @@ export function useMessageSummary(sourceRequest, visit = null) {
         if (saved) await loadSaved(saved.id, !d.saved)
         else await request(false)
     }
-    async function showPrevious() {
-        const previous = descriptor.value?.previous
-        if (!previous || !group.value) return
-        group.value.view = 'summary'
-        await loadSaved(previous.id, true)
-    }
-    async function showCurrent() {
-        if (!group.value || (!generation.value && !descriptor.value?.saved)) return
-        group.value.saved = null
-        await summarize()
-    }
     async function regenerate() { if (!generationAvailable.value) return; if (group.value) group.value.view = 'summary'; await request(true) }
     function showOriginal() {
         if (!group.value) return
@@ -165,12 +160,15 @@ export function useMessageSummary(sourceRequest, visit = null) {
 
     return reactive({
         descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference,
+        running, toggleTitle,
         loading: computed(() => !!group.value?.loading),
         error: computed(() => group.value?.error ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),
+        errors: computed(() => [group.value?.error, source.value && store.lookupErrors[summarySourceKey(source.value)], entry.value?.error, generation.value?.error]
+            .filter((message, index, all) => message && all.indexOf(message) === index)),
         // Original view included: the switch stays once the message has a summary to go back to.
         hasSummary: computed(() => view.value === 'summary' || !!(entry.value?.text || descriptor.value?.saved || descriptor.value?.previous)),
         isHost: computed(() => !!descriptor.value && source.value?.line_num === descriptor.value.first_line),
         hidden: computed(() => view.value === 'summary' && !!descriptor.value?.text_lines?.includes(source.value?.line_num)),
-        summarize, regenerate, showOriginal, showPrevious, showCurrent, cancel, refreshSaved,
+        summarize, regenerate, showOriginal, cancel, refreshSaved,
     })
 }

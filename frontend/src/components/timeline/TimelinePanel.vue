@@ -21,7 +21,7 @@
 // The data side lives in utils/timeline/ (pure, tested): which events the scope asks for, the fetch queue,
 // the grouping into rows and the wording of each row. This component wires them to the stores and the DOM.
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTimelineFeed } from '../../composables/useTimelineFeed'
 import { ALL_PROJECTS_ID, useDataStore } from '../../stores/data'
@@ -40,6 +40,7 @@ import ProjectTabNavList from '../project/ProjectTabNavList.vue'
 import DaySeparator from '../session/detail/items/DaySeparator.vue'
 import StickyBand from '../ui/StickyBand.vue'
 import VirtualScroller from '../virtual-scroller/VirtualScroller.vue'
+import { createMessageSummaryVisit, MESSAGE_SUMMARY_VISIT } from '../../composables/useMessageSummary.js'
 import TimelineEventRow from './TimelineEventRow.vue'
 import TimelineFilterBand from './TimelineFilterBand.vue'
 
@@ -85,6 +86,7 @@ const UNFILTERED_QUERY_KEY = queryKey({})
 
 // The list's scroller (VirtualScroller.vue), mounted with the panel and kept through every state.
 const scrollerRef = ref(null)
+provide(MESSAGE_SUMMARY_VISIT, createMessageSummaryVisit(undefined, () => scrollerRef.value?.holdScrollPosition()))
 
 // The feed compares the SET of ids and the query: a project added, removed or archived, or a filter change,
 // reloads the first page. A filter change also brings the scroll back to the top (filters design section 6).

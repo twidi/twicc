@@ -177,6 +177,7 @@ function fixture({ events = [event(3), event(2), event(1)], hasMore = false, pro
         '../ui/StickyBand.vue': StickyBand,
         '../session/detail/items/DaySeparator.vue': { props: ['label', 'dayKey'], setup: (props) => () => Vue.h('div', { class: 'day', 'data-day': props.dayKey }, props.label) },
         '../virtual-scroller/VirtualScroller.vue': scroller ? scroller.component : virtualScroller(),
+        '../../composables/useMessageSummary.js': { createMessageSummaryVisit: () => ({}), MESSAGE_SUMMARY_VISIT: Symbol('visit') },
         './TimelineEventRow.vue': EventRow,
         './TimelineFilterBand.vue': createFilterBand(bandCalls, filtersStore),
     })

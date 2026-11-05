@@ -56,7 +56,8 @@ const summary = useMessageSummary(() => props.row.event.kind === 'assistant_mess
     ? { event_id: props.row.event.id } : null)
 const reading = computed(() => (summary.identity && speech.statusForSummary(summary.identity) !== 'idle')
     || speech.statusForText(props.row.event.data?.text) !== 'idle')
-async function summarize() {
+async function toggleSummary() {
+    if (summary.view === 'summary') { summary.showOriginal(); return }
     messageExpanded.value = true
     await summary.summarize()
 }
@@ -162,8 +163,20 @@ function toggleSession() {
                     :disabled="summary.view === 'summary' && !summary.playbackReference && !reading"
                     @summary-changed="summary.refreshSaved"
                 />
-                <wa-button v-if="summary.available" size="small" appearance="plain" :disabled="!summary.canSummarize" :title="!summary.canSummarize ? summary.generationUnavailableReason : 'Summarize message'" aria-label="Summarize message" @click="summarize">{{ summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize' }}</wa-button>
-                <wa-button v-if="summary.view === 'summary'" size="small" appearance="plain" @click="summary.showOriginal">Original</wa-button>
+                <wa-button
+                    v-if="summary.available"
+                    class="timeline-message-summary"
+                    size="small"
+                    :variant="summary.view === 'summary' ? 'brand' : 'neutral'"
+                    appearance="plain"
+                    :disabled="summary.view !== 'summary' && !summary.canSummarize"
+                    :title="summary.toggleTitle"
+                    :aria-label="summary.toggleTitle"
+                    :aria-pressed="summary.view === 'summary'"
+                    @click="toggleSummary"
+                >
+                    <wa-icon name="compress"></wa-icon>
+                </wa-button>
             </template>
         </TimelineEventLine>
         <TimelineMessage
@@ -273,7 +286,8 @@ function toggleSession() {
     color: var(--wa-color-text-quiet);
 }
 
-.timeline-message-speech {
+.timeline-message-speech,
+.timeline-message-summary {
     margin-inline-start: var(--wa-space-xs);
     vertical-align: middle;
     --wa-form-control-height: 1.5rem;

@@ -643,13 +643,7 @@ const showRaw = ref(false)
 
 // The original text hides while its message shows the summary, except in the instance rendering the summary.
 const summaryHidden = computed(() => !!props.summaryContext?.hidden && !props.summaryActive)
-const summaryButtonTitle = computed(() => {
-    const summary = props.summaryContext
-    if (!summary) return ''
-    if (props.summaryActive) return 'Show original message'
-    if (!summary.canSummarize) return summary.generationUnavailableReason
-    return summary.entry?.text || summary.descriptor?.saved || summary.descriptor?.previous ? 'Show summary' : 'Summarize message'
-})
+const summaryButtonTitle = computed(() => props.summaryContext?.toggleTitle ?? '')
 
 const toolbar = ref(null)
 const toolbarToggle = ref(null)

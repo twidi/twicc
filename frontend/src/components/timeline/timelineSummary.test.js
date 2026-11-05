@@ -11,13 +11,13 @@ test('timeline summary expands directly, preserves view through collapse, and re
     const Message = compileComponent(new URL('./TimelineMessage.vue', import.meta.url), {
         '../../utils/timeline/messageSnapshot': snapshot,
         '../ui/MarkdownContent.vue': { props: ['source'], setup: p => () => Vue.h('original', p.source) },
-        '../session/detail/items/MessageSummary.vue': { props: ['summary'], setup: p => () => Vue.h('saved-summary', p.summary.entry.text) },
+        '../session/detail/items/MessageSummaryControls.vue': { setup: () => () => Vue.h('summary-controls') },
     })
-    const summary = Vue.reactive({ view: 'summary', entry: { text: 'Short summary' }, showOriginal() { this.view = 'original' } })
+    const summary = Vue.reactive({ view: 'summary', hasSummary: true, entry: { text: 'Short summary' }, showOriginal() { this.view = 'original' } })
     const props = Vue.reactive({ eventId: 1, kind: 'assistant_message.sent', data: { text: 'Original snapshot' }, expanded: true, summary })
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Message, { ...props, 'onUpdate:expanded': v => { props.expanded = v } }) }); app.mount(root); t.after(() => app.unmount()); await flush()
-    assert.equal(descendants(root, n => n.type === 'saved-summary').length, 1)
-    assert.equal(descendants(root, n => n.type === 'original').length, 0)
+    assert.equal(descendants(root, n => n.type === 'summary-controls').length, 1)
+    assert.deepEqual(descendants(root, n => n.type === 'original').map(n => n.text), ['Short summary'], 'the summary takes the place of the original')
     props.expanded = false; await flush(); props.expanded = true; await flush(); assert.equal(summary.view, 'summary')
     props.eventId = 2; await flush(); assert.equal(props.expanded, false)
 })
@@ -49,7 +49,7 @@ test('the actual row opens Summary from collapsed, passes exact saved references
     const Message = compileComponent(new URL('./TimelineMessage.vue', import.meta.url), {
         '../../utils/timeline/messageSnapshot': snapshot,
         '../ui/MarkdownContent.vue': { props: ['source'], setup: p => () => Vue.h('original', p.source) },
-        '../session/detail/items/MessageSummary.vue': { props: ['summary'], setup: p => () => Vue.h('saved-summary', p.summary.entry?.text) },
+        '../session/detail/items/MessageSummaryControls.vue': { setup: () => () => Vue.h('summary-controls') },
     })
     const Row = compileComponent(new URL('./TimelineEventRow.vue', import.meta.url), {
         '../../composables/useMessageSummary.js': module,
@@ -66,36 +66,36 @@ test('the actual row opens Summary from collapsed, passes exact saved references
     const { renderer, root } = makeRenderer(); const app = renderer.createApp({ render: () => Vue.h(Row, props) }); app.mount(root); t.after(() => app.unmount())
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
     assert.equal(descendants(root, n => n.type === 'original').length, 0)
-    const summarize = descendants(root, n => n.type === 'wa-button' && n.props.title === 'Summarize message')[0]
+    const summarize = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
     assert.ok(summarize); await summarize.props.onClick(); await flush()
-    assert.equal(descendants(root, n => n.type === 'saved-summary')[0].text, 'Saved summary')
+    assert.equal(descendants(root, n => n.type === 'original')[0].text, 'Saved summary')
     const speech = descendants(root, n => n.type === 'speech')[0]
     assert.deepEqual(speech.props.summaryRef(), { saved_id: 7, result_hash: 'body-hash' })
     assert.equal(speech.props.originalText, 'Original snapshot')
     assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
     speech.props.changed(7); await flush(); assert.equal(calls.filter(url => url.includes('/saved/')).length, 2)
-    const original = descendants(root, n => n.type === 'wa-button' && n.text === 'Original')[0]
-    original.props.onClick(); await flush(); assert.equal(descendants(root, n => n.type === 'original')[0].text, 'Original snapshot')
+    assert.equal(descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0].props['aria-pressed'], true)
+    await summarize.props.onClick(); await flush(); assert.equal(descendants(root, n => n.type === 'original')[0].text, 'Original snapshot')
     assert.equal(descendants(root, n => n.type === 'speech')[0].props.summaryRef, null)
     await summarize.props.onClick(); await flush()
     props.row = { event: { id: 2, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Another snapshot' } } }
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
-    assert.equal(descendants(root, n => n.type === 'saved-summary').length, 0)
+    assert.equal(descendants(root, n => n.type === 'summary-controls').length, 0)
     assert.equal(descendants(root, n => n.type === 'speech')[0].props.text, 'Another snapshot')
     busy.value = true
     holdSaved = new Promise(resolve => { finishSaved = resolve })
-    const pending = descendants(root, n => n.type === 'wa-button' && n.props.title === 'Summarize message')[0].props.onClick()
+    const pending = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0].props.onClick()
     await flush()
     assert.equal(descendants(root, n => n.type === 'speech')[0].props.disabled, false, 'an original reading retains Stop while the saved body loads')
     finishSaved(); await pending
     settings.enabledProviders = []; await flush()
-    const savedAction = descendants(root, n => n.type === 'wa-button' && n.props.title === 'Summarize message')[0]
+    const savedAction = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
     assert.equal(savedAction.props.disabled, false, 'saved access stays enabled without a generation engine')
     assert.deepEqual(descendants(root, n => n.type === 'speech')[0].props.summaryRef(), { saved_id: 7, result_hash: 'body-hash' })
     withSaved = false
     props.row = { event: { id: 3, kind: 'assistant_message.sent', session_id: 's', data: { text: 'Unsummarized snapshot' } } }
     await flush(); await new Promise(resolve => setTimeout(resolve, 0)); await flush()
-    const action = descendants(root, n => n.type === 'wa-button' && n.props['aria-label'] === 'Summarize message')[0]
+    const action = descendants(root, n => n.type === 'wa-button' && n.props['aria-pressed'] !== undefined)[0]
     assert.equal(action.props.disabled, true); assert.match(action.props.title, /No summary engine/)
     await action.props.onClick(); assert.equal(calls.filter(url => url === '/api/summaries/').length, 0)
 })

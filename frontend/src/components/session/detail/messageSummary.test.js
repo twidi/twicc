@@ -28,15 +28,13 @@ async function setup(t, initial = descriptor()) {
     const visit = module.createMessageSummaryVisit((...args) => calls.push(['reveal', ...args]))
     const bindings = [], sources = Vue.reactive([{ session_id: 's', line_num: 12 }, { session_id: 's', line_num: 14 }])
     const visible = Vue.ref(true)
-    const Summary = compileComponent(new URL('./items/MessageSummary.vue', import.meta.url), {
-        '../../../../stores/textToSpeech': { useTextToSpeechStore: () => ({ statusForSummary: () => 'idle' }) },
-        '../../../../composables/useToast': { toast: { success() {}, error() {} } },
-        '../../../ui/SummaryContent.vue': compileComponent(new URL('../../ui/SummaryContent.vue', import.meta.url)),
-        '../../../ui/TextToSpeechButton.vue': { props: ['text', 'summaryRef', 'summaryIdentity'], setup: p => () => Vue.h('speech', { ...p }) },
+    const Summary = compileComponent(new URL('./items/MessageSummaryView.vue', import.meta.url), {
+        './MessageSummaryControls.vue': compileComponent(new URL('./items/MessageSummaryControls.vue', import.meta.url)),
+        './TextContent.vue': { props: ['text'], setup: p => () => Vue.h('summary-text', p.text) },
     })
     const Row = { props: ['index'], setup(p) {
         const summary = module.useMessageSummary(() => sources[p.index], visit); bindings[p.index] = summary
-        return () => Vue.h('row', [summary.isHost ? Vue.h(Summary, { summary }) : null,
+        return () => Vue.h('row', [summary.isHost && summary.hasSummary ? Vue.h(Summary, { summary }) : null,
             !summary.hidden ? Vue.h('original', { copy: `block-${p.index}`, speech: `block-${p.index}` }, `block-${p.index}`) : null])
     } }
     const { renderer, root } = makeRenderer()
@@ -47,9 +45,9 @@ async function setup(t, initial = descriptor()) {
 
 test('two rows share one canonical host; a later action targets the native message and retains unrelated content', async t => {
     const { bindings, root, calls } = await setup(t)
-    assert.equal(descendants(root, n => n.type === 'section' && n.props.class === 'message-summary').length, 1)
     assert.deepEqual(descendants(root, n => n.type === 'original').map(n => [n.props.copy, n.props.speech]), [['block-0', 'block-0'], ['block-1', 'block-1']])
     await bindings[1].summarize(); await flush()
+    assert.equal(descendants(root, n => n.props.class === 'message-summary-controls').length, 1)
     assert.equal(descendants(root, n => n.type === 'original').length, 0)
     for (const type of ['tool', 'thinking', 'media']) assert.equal(descendants(root, n => n.type === type).length, 1)
     assert.deepEqual(calls.find(([url]) => url === '/api/summaries/')[1].source, { session_id: 's', line_num: 14 })
@@ -250,30 +248,23 @@ test('active rows observe repeated invalidation while descriptors are null and r
     assert.equal(bindings[0].available, false)
 })
 
-test('previous-policy results remain explicitly accessible beside a current result and running regeneration', async t => {
-    const { bindings, store, root } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'current' }, previous: { id: 8, result_hash: 'previous' } }))
+test('the current result wins over a previous-policy one, which a regeneration keeps visible', async t => {
+    const { bindings, store } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'current' }, previous: { id: 8, result_hash: 'previous' } }))
     store.loadSaved = async id => ({ id, state: 'complete', text: id === 8 ? 'Previous policy body' : 'Current policy body', result_hash: id === 8 ? 'previous' : 'current', source_key: 'native', source_hash: 'hash', policy_key: id === 8 ? 'old-policy' : 'p' })
     await bindings[0].summarize()
     assert.equal(bindings[0].entry.text, 'Current policy body')
-    assert.ok(descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Show previous summary').length)
-    await bindings[0].showPrevious()
-    assert.equal(bindings[0].entry.text, 'Previous policy body'); assert.equal(bindings[0].entry.previousPolicy, true)
-    assert.deepEqual(bindings[0].playbackReference(), { saved_id: 8, result_hash: 'previous' })
-    await bindings[0].showCurrent(); assert.equal(bindings[0].entry.text, 'Current policy body')
-    await bindings[0].regenerate(); await bindings[0].showPrevious()
-    assert.equal(bindings[0].generation.state, 'running'); assert.equal(bindings[0].entry.text, 'Previous policy body')
+    await bindings[0].regenerate()
+    assert.equal(bindings[0].generation.state, 'running'); assert.equal(bindings[0].entry.text, 'Current policy body')
 })
 
-
-test('message generation and Retry disable without an engine while saved display and speech stay available', async t => {
+test('message generation and Regenerate disappear without an engine while saved display and speech stay available', async t => {
     const { settings, bindings, calls, root } = await setup(t, descriptor({ saved: { id: 7, result_hash: 'result-a' } }))
     settings.enabledProviders = []; await flush()
     assert.equal(bindings[0].generationAvailable, false)
     await bindings[0].summarize(); await flush()
     assert.equal(bindings[0].entry.text, 'Saved A')
     assert.deepEqual(bindings[0].playbackReference(), { saved_id: 7, result_hash: 'result-a' })
-    const retry = descendants(root, n => n.type === 'wa-button' && textOf(n) === 'Retry')[0]
-    assert.equal(retry.props.disabled, true); assert.match(retry.props.title, /No summary engine/)
+    assert.equal(descendants(root, n => n.type === 'a' && textOf(n) === 'Regenerate').length, 0)
     await bindings[0].regenerate()
     assert.equal(calls.filter(([url]) => url === '/api/summaries/').length, 0)
 })
