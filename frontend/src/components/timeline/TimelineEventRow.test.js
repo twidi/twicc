@@ -18,17 +18,32 @@ import { buildTimelineRows } from '../../utils/timeline/rows.js'
 
 const RouterLink = { props: ['to'], setup: (props, { slots }) => () => Vue.h('a', { 'data-to': JSON.stringify(props.to) }, slots.default?.()) }
 const ProviderIcon = { props: ['provider'], setup: (props) => () => Vue.h('i', { 'data-provider': props.provider }) }
+const ProcessIndicator = { props: ['state', 'unread'], setup: (props) => () => Vue.h('s', { class: 'process', 'data-state': props.state, 'data-unread': String(!!props.unread) }) }
+const ScrollableText = { props: ['text'], setup: (props) => () => Vue.h('div', { class: 'scrollable-text' }, props.text) }
 const ProjectBadge = { props: ['projectId'], setup: (props) => () => Vue.h('b', props.projectId) }
 
 const knownProjects = new Set(['p1'])
 const loadedSessions = Vue.reactive({})
-const dataStore = { getProject: (id) => (knownProjects.has(id) ? { id } : null), getSession: id => loadedSessions[id] }
+const processStates = Vue.reactive({})
+const pendingRequests = Vue.reactive({})
+const dataStore = {
+    getProject: (id) => (knownProjects.has(id) ? { id } : null),
+    getSession: id => loadedSessions[id],
+    getProcessState: id => processStates[id] || null,
+    getPendingRequests: id => pendingRequests[id] || [],
+}
 const route = { name: 'project', params: { projectId: 'p1' }, query: {} }
 
 const Mention = compileComponent(new URL('./TimelineSessionMention.vue', import.meta.url), {
     'vue-router': { RouterLink, useRoute: () => route },
     '../../utils/sessionRoute': { sessionRouteLocation: (target) => ({ name: 'session', params: { projectId: 'p1', sessionId: target.id } }) },
+    '../../utils/sessions': { isSessionUnread: (session) => !!session.unread },
+    '../../utils/backgroundWork': { processStateTooltip: (label, state) => `${label} ${state.state}`, userTurnBackgroundShellCount: () => 0 },
+    '../../providers': { getProviderLabel: (provider) => provider },
+    '../../stores/data': { useDataStore: () => dataStore },
     '../ui/ProviderIcon.vue': ProviderIcon,
+    '../ui/ProcessIndicator.vue': ProcessIndicator,
+    '../ui/ScrollableText.vue': ScrollableText,
 })
 const WordingPart = compileComponent(new URL('./TimelineWordingPart.vue', import.meta.url), { './TimelineSessionMention.vue': Mention })
 const AppTooltip = { props: ['for', 'trigger'], setup: (_, { slots }) => () => Vue.h('span', { class: 'app-tooltip' }, slots.default?.()) }
@@ -169,7 +184,8 @@ test('the author line CSS: a line of its own that never wraps; the session title
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
     assert.equal(declarationsOf(mention, '.timeline-session--ellipsis').get('flex'), '0 1 auto')
     const title = declarationsOf(mention, '.timeline-session--ellipsis .timeline-session-title')
-    assert.deepEqual(['overflow', 'text-overflow', 'white-space', 'min-width'].map((name) => title.get(name)), ['hidden', 'ellipsis', 'nowrap', '0'])
+    // The cut itself (ellipsis, touch scroll) is drawn by ScrollableText inside the title.
+    assert.deepEqual(['display', 'min-width'].map((name) => title.get(name)), ['block', '0'])
 })
 
 test('a following row has no header, and its event line has the same indent as the head one', async (t) => {
@@ -340,6 +356,33 @@ test('header state follows live session changes while the historical event stays
     assert.equal(byClass(eventLine, 'timeline-row-icon')[0].props.name, 'box-archive')
 })
 
+test('the header shows the live process state after the title', async (t) => {
+    const indicators = root => byClass(byClass(root, 'timeline-row-header')[0], 'timeline-session-process')
+    t.after(() => { delete processStates.s1; delete pendingRequests.s1 })
+    const root = await render(t, [make('turn.started')])
+    assert.equal(indicators(root).length, 0, 'no process, nothing to show')
+    processStates.s1 = { state: 'assistant_turn' }
+    await flush()
+    const [indicator] = indicators(root)
+    assert.equal(indicator.props['data-state'], 'assistant_turn')
+    const [mention] = byClass(root, 'timeline-session')
+    const elements = mention.children.filter(n => !String(n.type).startsWith('#'))
+    assert.ok(elements.indexOf(sessionLinks(root)[0]) < elements.indexOf(indicator))
+    pendingRequests.s1 = [{}]
+    await flush()
+    assert.equal(indicators(root)[0].props.name, 'hand')
+    delete pendingRequests.s1
+    processStates.s1 = { state: 'dead' }
+    await flush()
+    assert.equal(indicators(root).length, 0, 'a dead process shows nothing')
+})
+
+test('a cut title is a ScrollableText, a plain mention title is not', async (t) => {
+    const root = await render(t, [make('turn.started')])
+    const [header] = byClass(root, 'timeline-row-header')
+    assert.equal(textOf(byClass(byClass(header, 'timeline-session-title')[0], 'scrollable-text')[0]), 'Fix the build')
+})
+
 test('a session with no entry shows its id as plain text', async (t) => {
     const root = await render(t, [make('turn.started', { session_id: 'purged-session-id' })], { sessionTable: {} })
     assert.equal(sessionLinks(root).length, 0)
@@ -459,7 +502,7 @@ test('the layout CSS: a fixed time column that never wraps, a wrapping text colu
     assert.equal(indented.get('padding-inline-start'), 'var(--timeline-line-indent)')
     const mention = readFileSync(new URL('./TimelineSessionMention.vue', import.meta.url), 'utf8')
     const title = declarationsOf(mention, '.timeline-session--truncate .timeline-session-title')
-    assert.deepEqual([title.get('overflow'), title.get('text-overflow'), title.get('white-space')], ['hidden', 'ellipsis', 'nowrap'])
+    assert.deepEqual([title.get('display'), title.get('min-width')], ['block', '0'])
 })
 
 test('the event icon and the badge follow the text baseline, so a badge never moves the icon off the first line', () => {

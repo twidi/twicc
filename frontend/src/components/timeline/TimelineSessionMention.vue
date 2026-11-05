@@ -3,14 +3,24 @@
 // as a link or as plain text (display design sections 5.3 and 5.4). The same rules serve the block header,
 // the "by <session>" author label and the parent of `session.created`.
 //
+// A title that is cut (`truncate`, `ellipsis`) has the full title as tooltip with a mouse and scrolls under the finger
+// on a touch screen (ScrollableText, as in the session list and the session header).
+//
 // The `mention` comes from utils/timeline/sessions.js, which already decided link or not. The block header
 // uses `truncate`: the provider icon in a fixed box, the title on one line with an ellipsis and the full
-// title as tooltip. Only block headers supply current session state for the leading status icons.
+// title as tooltip. Only block headers supply current session state for the status icons: archived, muted and
+// pinned before the title, the live process state after it (same rules as the compact session list).
 
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { sessionRouteLocation } from '../../utils/sessionRoute'
+import { isSessionUnread } from '../../utils/sessions'
+import { processStateTooltip, userTurnBackgroundShellCount } from '../../utils/backgroundWork'
+import { getProviderLabel } from '../../providers'
+import { useDataStore } from '../../stores/data'
 import ProviderIcon from '../ui/ProviderIcon.vue'
+import ProcessIndicator from '../ui/ProcessIndicator.vue'
+import ScrollableText from '../ui/ScrollableText.vue'
 
 const props = defineProps({
     /** See `sessionMention` in utils/timeline/sessions.js. */
@@ -24,11 +34,29 @@ const props = defineProps({
 })
 
 const route = useRoute()
+const store = useDataStore()
 
 const location = computed(() => (props.mention.link
     ? sessionRouteLocation({ id: props.mention.id, project_id: props.mention.projectId }, route)
     : null))
-const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention.title : null))
+const cut = computed(() => props.truncate || props.ellipsis)
+const tooltip = computed(() => (cut.value ? props.mention.title : null))
+
+// The process indicator of the block header. A dead process shows nothing. The unread eye of the session being
+// viewed is hidden, as in the session list.
+const sessionId = computed(() => (props.sessionState ? props.mention.id : null))
+const processState = computed(() => (sessionId.value ? store.getProcessState(sessionId.value) : null))
+const hasUnread = computed(() => sessionId.value !== null
+    && route.params.sessionId !== sessionId.value
+    && isSessionUnread(props.sessionState, processState.value))
+const pendingRequest = computed(() => sessionId.value !== null && store.getPendingRequests(sessionId.value).length > 0)
+const liveProcess = computed(() => !!processState.value && processState.value.state !== 'dead' && !props.sessionState.ephemeral)
+const showProcess = computed(() => liveProcess.value && (hasUnread.value || !pendingRequest.value))
+const showPending = computed(() => liveProcess.value && !hasUnread.value && pendingRequest.value)
+const showUnreadOnly = computed(() => !processState.value && hasUnread.value)
+const processTooltip = computed(() => (processState.value
+    ? processStateTooltip(getProviderLabel(props.sessionState.provider), processState.value)
+    : ''))
 </script>
 
 <template>
@@ -43,8 +71,20 @@ const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention
             <wa-icon v-if="sessionState.mute_on_user_turn" name="bell-slash" label="Muted" title="Muted" class="session-state-icon timeline-session-state--muted"></wa-icon>
             <wa-icon v-if="sessionState.pinned" name="thumbtack" label="Pinned" title="Pinned" class="session-state-icon timeline-session-state--pinned"></wa-icon>
         </span>
-        <RouterLink v-if="location" :to="location" class="timeline-session-title" :title="tooltip">{{ mention.title }}</RouterLink>
-        <span v-else class="timeline-session-title timeline-session-title--plain" :title="tooltip">{{ mention.title }}</span>
+        <RouterLink v-if="location" :to="location" class="timeline-session-title" :title="tooltip"><ScrollableText v-if="cut" :text="mention.title" /><template v-else>{{ mention.title }}</template></RouterLink>
+        <span v-else class="timeline-session-title timeline-session-title--plain" :title="tooltip"><ScrollableText v-if="cut" :text="mention.title" /><template v-else>{{ mention.title }}</template></span>
+        <ProcessIndicator
+            v-if="showProcess"
+            :state="processState.state"
+            :has-active-crons="processState.active_crons?.length > 0"
+            :background-shells="userTurnBackgroundShellCount(processState)"
+            :unread="hasUnread"
+            size="small"
+            :title="hasUnread ? `New content to read · ${processTooltip}` : processTooltip"
+            class="timeline-session-process"
+        />
+        <wa-icon v-else-if="showPending" name="hand" label="Waiting for your response" title="Waiting for your response" class="timeline-session-process timeline-session-pending"></wa-icon>
+        <wa-icon v-else-if="showUnreadOnly" name="eye" label="New content to read" title="New content to read" class="timeline-session-process timeline-session-unread"></wa-icon>
     </span>
 </template>
 
@@ -85,6 +125,17 @@ const tooltip = computed(() => (props.truncate || props.ellipsis ? props.mention
     color: inherit;
 }
 
+.timeline-session-process {
+    flex: none;
+    align-self: center;
+}
+
+.timeline-session-pending,
+.timeline-session-unread {
+    color: var(--wa-color-warning-60);
+    font-size: var(--wa-font-size-xs);
+}
+
 a.timeline-session-title {
     text-decoration: none;
 }
@@ -104,11 +155,16 @@ a.timeline-session-title:hover {
     flex: 0 1 auto;
 }
 
+/* The cut is drawn by ScrollableText inside the title. */
 .timeline-session--ellipsis .timeline-session-title {
+    display: block;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: normal;
+}
+
+.timeline-session--truncate .timeline-session-title {
+    display: block;
+    min-width: 0;
     overflow-wrap: normal;
 }
 
@@ -117,13 +173,5 @@ a.timeline-session-title:hover {
     display: inline-flex;
     justify-content: center;
     width: var(--timeline-provider-width, 1.25rem);
-}
-
-.timeline-session--truncate .timeline-session-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
 }
 </style>
