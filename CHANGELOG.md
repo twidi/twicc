@@ -10,7 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **GPT-6.1 Terra** — support for OpenAI's new Terra model, now the latest Terra (GPT-5.6 Terra remains selectable).
 - **Timeline** — Follow what happens in your sessions, live, in a new tab of each project and workspace. Filter it, see the same events in the chat, and query it from CLI, MCP and RPC API.
-- **Text to speech** — Have messages read aloud. Pick an OpenRouter voice, or plug in any engine with your own command: local, free, or another provider.
+- **Text to speech** — Have messages and selections read aloud. Pick an OpenRouter voice, or plug in any engine with your own command: local, free, or another provider.
+- **Summaries** — Ask for a short summary of a long assistant message, or of any text you select. Read it in place of the original.
+- **Listen to your timeline** — Turn on the speaker button in the timeline. New assistant messages are read aloud as they arrive, from any session, while you work elsewhere in TwiCC. Long messages can be read as summaries.
 - **Faster titles** — A new “OpenRouter” option generates session titles in under a second instead of several. It needs your OpenRouter key; pick it in the Titles settings.
 - **Simple model picker** — A lighter way to choose the provider, model and effort, without the score matrix. The score matrix is one click away when you want the scores.
 - **Session tree** — New option in the sidebar menu to show the sessions an agent started nested under their parent, instead of a flat list.
