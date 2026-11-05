@@ -376,7 +376,7 @@ def test_saved_messages_follow_current_session_visibility_in_every_scope(project
     make_session(a, "message-visible")
     secret = make_session(a, "message-hidden", hidden=True)
     data = {"text": "**Saved message**", "source_refs": [{"kind": "codex_item", "native_id": "message"}],
-            "source_line": 1}
+            "source_line": 1, "storage_incarnation": None, "history_epoch": None}
     visible = record_event_sync(kind, session_id="message-visible", project_id=a.id, actor="agent", data=data)
     hidden = record_event_sync(kind, session_id=secret.id, project_id=a.id, actor="agent", data=data)
     params = {"project_ids": a.id} if scope == "project" else (

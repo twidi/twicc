@@ -684,7 +684,7 @@ def test_message_snapshots_keep_saved_text_in_every_feed_scope(projects, tmp_pat
     Session.objects.filter(pk=session.pk).update(file_path=str(source))
     text = "    indented code\n**Saved Markdown**  \n" + "x" * 10000
     payload = {"text": text, "source_refs": [{"kind": "codex_item", "native_id": "saved-item", "turn_id": "turn"}],
-               "source_line": 1}
+               "source_line": 1, "storage_incarnation": None, "history_epoch": None}
     saved = record_event_sync(kind, session_id=session.id, project_id=a.id, actor="agent", data=payload,
                               occurred_at=T0 + timedelta(seconds=2))
     other = record_event_sync(kind, session_id="other-scope", project_id=c.id, actor="agent", data=payload,
