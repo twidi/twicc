@@ -685,3 +685,47 @@ async def test_resync_replaces_broken_channel_and_receives_future_arrivals(
         assert h.opened == []
     finally:
         await h.registry.shutdown()
+
+
+async def test_disabled_overflow_consumed_before_reactivation_keeps_future_arrivals(harness, monkeypatch):
+    from channels.exceptions import ChannelFull
+    from twicc.channel_layer import TwiccChannelLayer
+    h = harness
+    layer = TwiccChannelLayer(capacity=1)
+    monkeypatch.setattr(native_timeline, 'get_channel_layer', lambda: layer)
+    await h.listener.enable(activation())
+    await h.listener.disable()
+    old_channel = h.listener._channel
+    consumed = asyncio.Event()
+    original_invalidate = h.listener.invalidate
+    async def observe(payload):
+        await original_invalidate(payload)
+        if payload.get('type') == 'resync_required':
+            consumed.set()
+    monkeypatch.setattr(h.listener, 'invalidate', observe)
+    envelope = {'type': 'broadcast', 'data': {'type': 'timeline_changed'}}
+    await layer.send(old_channel, envelope)
+    with pytest.raises(ChannelFull):
+        await layer.send(old_channel, envelope)
+    assert old_channel in layer._broken
+    try:
+        await asyncio.wait_for(consumed.wait(), timeout=1)
+        assert h.listener.active is None
+        assert h.session.listening is None
+        await event(10)
+        next_activation = activation()
+        next_activation['boundary'] = format_occurred_at(CLICK + timedelta(seconds=50))
+        await h.listener.enable(next_activation)
+        future = await event(51)
+        await layer.group_send('updates', envelope)
+        async with asyncio.timeout(1):
+            while future.id not in h.listener.seen:
+                await asyncio.sleep(0.005)
+        await h.listener._refresh_task
+        assert h.listener._channel != old_channel
+        assert old_channel not in layer._broken
+        assert old_channel not in layer.groups.get('updates', {})
+        assert [e['id'] for e in h.listener.pending] == [future.id]
+        assert h.opened == []
+    finally:
+        await h.registry.shutdown()

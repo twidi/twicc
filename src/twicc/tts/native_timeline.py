@@ -213,16 +213,19 @@ class TimelineListener:
 
     async def invalidate(self, payload):
         """The updates group is an invalidation source, never trusted event content."""
-        if not self.active or not isinstance(payload, dict) or payload.get('type') not in INVALIDATIONS:
+        if not isinstance(payload, dict) or payload.get('type') not in INVALIDATIONS:
             return
         if payload['type'] == 'resync_required':
             # A production updates channel stays broken permanently. Replace
             # it before catch-up, retaining the live cursor and accepted work.
-            self._caught_up = False
-            self._epoch += 1
-            self.session._candidate = None
-            self._invalidated_summaries.update(self.preparations)
+            if self.active:
+                self._caught_up = False
+                self._epoch += 1
+                self.session._candidate = None
+                self._invalidated_summaries.update(self.preparations)
             await self._subscribe(replace=True)
+        if not self.active:
+            return
         if payload['type'] == 'summary_saved':
             for event_id, preparation in self.preparations.items():
                 descriptor = preparation['descriptor']
