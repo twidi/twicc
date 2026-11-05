@@ -35,7 +35,7 @@ _MARKDOWN.block.ruler.before('fence', 'colon_block', _content_colon_block,
                              {'alt': ['paragraph', 'reference', 'blockquote', 'list']})
 _MARKDOWN.block.ruler.before('paragraph', 'html_comment', _comment_block)
 _MARKDOWN.inline.ruler.before('html_inline', 'html_comment', _comment_inline)
-MIN_CONTENT_CHARS = 1000
+MIN_CONTENT_CHARS = 500
 
 
 class SummarySource(NamedTuple):

@@ -59,10 +59,10 @@ def test_claude_group_keeps_order_duplicates_and_text_anchor(live_session):
 
 def test_distinct_native_messages_do_not_merge(live_session):
     f = live_session
-    f.append(f.message('first', 'A' * 999), f.message('second', 'B' * 1000))
+    f.append(f.message('first', 'A' * 499), f.message('second', 'B' * 500))
     first, second = resolve(f.session), resolve(f.session, 2)
     assert first.source_key != second.source_key
-    assert first.content_chars == 999 and not first.eligible
+    assert first.content_chars == 499 and not first.eligible
     assert first.unavailable_reason == 'too_short'
     assert second.eligible
 

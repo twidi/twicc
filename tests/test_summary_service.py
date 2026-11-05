@@ -482,7 +482,7 @@ def test_large_openrouter_choice_routes_native_timeline_source_intact_to_enabled
         final = await terminal(service, handle)
         assert final['state'] == 'complete' and final['saved_id'] is not None
         assert len(calls) == 1 and calls[0][0].name == 'luna'
-        assert calls[0][1] == service.SUMMARY_PROMPT.format(text=text)
+        assert calls[0][1] == service.summary_prompt(text)
         saved = await sync_to_async(service.load_saved_summary)(final['saved_id'])
         assert saved['text'] == 'A complete timeline-only summary.'
         assert saved['requested_model'] == 'openrouter'
@@ -519,3 +519,12 @@ def test_openrouter_source_limit_uses_cleaned_input_not_normalized_content(servi
     descriptor = service.resolve_sources([{'text': text, 'purpose': 'selection'}])[0]
     assert descriptor['content_chars'] == 8
     assert descriptor['openrouter_eligible'] is False
+
+
+def test_summary_prompt_asks_a_third_of_the_source_within_bounds(service):
+    assert service.summary_target_words('word ' * 30) == service.SUMMARY_MIN_TARGET_WORDS
+    assert service.summary_target_words('word ' * 150) == 50
+    assert service.summary_target_words('word ' * 3000) == service.SUMMARY_MAX_WORDS
+    assert service.summary_target_words('é' * 1200) == 66, 'a text without spaces counts one word per six characters'
+    prompt = service.summary_prompt('Text with {braces} inside')
+    assert 'aim for 15 words' in prompt and 'Text with {braces} inside' in prompt
