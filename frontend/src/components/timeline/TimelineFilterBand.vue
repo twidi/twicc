@@ -519,6 +519,17 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
 
 .timeline-filter-button {
     flex: none;
+    /* Same height as the views control beside it, whatever font size each one resolves its form-control height at. */
+    align-self: stretch;
+}
+
+.timeline-filter-button::part(base) {
+    height: 100%;
+}
+
+/* Icon only: Web Awesome's gap after the start slot would leave the icon off-center. */
+.timeline-filter-line--compact .timeline-filter-button wa-icon[slot="start"] {
+    margin-inline-end: 0;
 }
 
 /* Out of sight, still in the button's accessible name (never display: none). */
