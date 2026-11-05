@@ -62,7 +62,7 @@ internal class GeckoBrowserSession(
                 override fun onPageStart(session: GeckoSession, url: String) {
                     if (!closed) {
                         documentGeneration++
-                        documentId?.let { TtsExports.invalidate(it) }
+                        documentId?.let { TtsExports.retire(it) }
                         documentId = null
                         events.onPageStarted(url)
                     }
@@ -102,7 +102,7 @@ internal class GeckoBrowserSession(
                             if (nativeApp == "twicc_tts_document" && message is JSONObject && message.has("ttsDocument")) {
                                 val id = message.optString("ttsDocument")
                                 if (runCatching { UUID.fromString(id) }.isFailure) return null
-                                documentId?.let { TtsExports.invalidate(it) }
+                                documentId?.let { TtsExports.retire(it) }
                                 documentId = id
                                 TtsExports.register(id, instance, documentGeneration, sender.url)
                                 return GeckoResult.fromValue("{}")
@@ -142,7 +142,7 @@ internal class GeckoBrowserSession(
         if (closed) return
         closed = true
         queuedLoad = null
-        documentId?.let { TtsExports.release(it) }
+        documentId?.let { TtsExports.retire(it) }
         documentId = null
         view.releaseSession()
         if (page.isOpen) page.close()
@@ -156,7 +156,7 @@ private object TtsExports {
     private var extension: WebExtension? = null
     private var port: WebExtension.Port? = null
     private data class Document(val instance: Instance, val generation: Long, val url: String,
-        var storeId: String? = null, var released: Boolean = false)
+        var storeId: String? = null, var retired: Boolean = false)
     private data class Export(val documentId: String, val urls: List<String>,
         val callback: (Result<List<TtsCookie>>) -> Unit, var sent: Boolean = false)
     private val documents = mutableMapOf<String, Document>()
@@ -198,20 +198,20 @@ private object TtsExports {
     fun register(id: String, instance: Instance, generation: Long, url: String) {
         documents[id] = Document(instance, generation, url)
     }
-    fun invalidate(id: String) {
-        pending.filterValues { it.documentId == id }.keys.toList().forEach {
-            finish(it, Result.failure(IllegalStateException("The browser document changed.")))
-        }
-        documents.remove(id)
-    }
-    fun release(id: String) {
-        documents[id]?.released = true
+    /** Block new exports, but keep each accepted operation's frozen owner until delivery or timeout. */
+    fun retire(id: String) {
+        documents[id]?.retired = true
         if (pending.values.none { it.documentId == id }) documents.remove(id)
     }
     fun export(id: String, urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit) {
         // Accept only after the privileged adapter captures the actual principal attributes.
         // An accepted operation then needs neither the document nor its Activity to remain alive.
-        if (documents[id]?.storeId == null) {
+        val document = documents[id]
+        if (document?.retired == true) {
+            handler.post { callback(Result.failure(IllegalStateException("The browser document changed."))) }
+            return
+        }
+        if (document?.storeId == null) {
             handler.post { callback(Result.failure(IllegalStateException("Native speech is still initializing. Retry speech."))) }
             return
         }
@@ -256,7 +256,7 @@ private object TtsExports {
     private fun finish(requestId: String, result: Result<List<TtsCookie>>) {
         val operation = pending.remove(requestId) ?: return
         val document = documents[operation.documentId]
-        if (document?.released == true && pending.values.none { it.documentId == operation.documentId })
+        if (document?.retired == true && pending.values.none { it.documentId == operation.documentId })
             documents.remove(operation.documentId)
         operation.callback(result)
     }

@@ -9,6 +9,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.twidi.twicc.MainActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.json.JSONObject
+import java.lang.reflect.Proxy
 import org.junit.Test
 import org.junit.runner.RunWith
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -71,6 +74,15 @@ class TtsPlatformBoundaryTest {
         assertTrue(jar.loadForRequest(origin).isEmpty())
     }
     @Test fun export_keeps_same_name_path_cookies_and_profile_isolation() {
+        verifyBrowserBoundary(reloadDuringExport = false)
+    }
+
+    @Test fun gecko_export_survives_reload_while_pending() {
+        assumeTrue(EngineProvider.engine.displayName.startsWith("Gecko"))
+        verifyBrowserBoundary(reloadDuringExport = true)
+    }
+
+    private fun verifyBrowserBoundary(reloadDuringExport: Boolean) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val assets = instrumentation.context.assets
         val certificate = HeldCertificate.decode(assets.open("tts-cert.pem").bufferedReader().readText() +
@@ -128,12 +140,18 @@ class TtsPlatformBoundaryTest {
         val activity = ActivityScenario.launch(MainActivity::class.java)
         val sessions = mutableListOf<BrowserSession>()
         val nativeCookies = CompletableFuture<List<TtsCookie>>()
+        val reloadStarted = CompletableFuture<Unit>()
+        var waitingForReload = false
+        var replyGate: GeckoReplyGate? = null
+        var deliverReply: (() -> Unit)? = null
         try {
             repeat(2) { index ->
                 val pageCookies = CompletableFuture<String>()
                 activity.onActivity { owner ->
                     val instance = Instance(UUID.randomUUID().toString(), "Test", serverAddress.removeSuffix("/"))
-                    val events = testEvents(pageCookies)
+                    val events = testEvents(pageCookies) {
+                        if (index == 0 && waitingForReload) reloadStarted.complete(Unit)
+                    }
                     val session = EngineProvider.engine.createSession(owner, instance, events, NativeRequests(owner))
                     sessions.add(session)
                     session.load(serverAddress + if (index == 0) "seed/a" else "seed/b")
@@ -149,13 +167,34 @@ class TtsPlatformBoundaryTest {
             activity.onActivity {
                 TtsService.start(it)
                 logGeckoStoreDiagnostics()
+                if (reloadDuringExport) replyGate = holdNextGeckoExportReply()
                 sessions.first().exportTtsCookies(listOf(serverAddress + "api/tts/", serverAddress + "ws/tts/")) {
                     it.fold(nativeCookies::complete, nativeCookies::completeExceptionally)
                 }
                 assertFalse("Export must still be pending when the Activity closes", nativeCookies.isDone)
-                sessions.forEach { it.close() }
-                sessions.clear()
-                it.finish()
+                if (!reloadDuringExport) {
+                    sessions.forEach { it.close() }
+                    sessions.clear()
+                    it.finish()
+                }
+            }
+            if (reloadDuringExport) {
+                // Hold a REAL privileged cookie reply, then observe the actual Gecko page-start callback.
+                deliverReply = replyGate!!.reply.get(10, TimeUnit.SECONDS)
+                activity.onActivity {
+                    assertFalse("Export must remain pending before reload", nativeCookies.isDone)
+                    waitingForReload = true
+                    sessions.first().load(serverAddress + "seed/a", bypassCache = true)
+                }
+                reloadStarted.get(10, TimeUnit.SECONDS)
+                activity.onActivity {
+                    assertFalse("Reload must not cancel an accepted cookie export", nativeCookies.isDone)
+                    deliverReply!!.invoke()
+                    deliverReply = null
+                    sessions.forEach { it.close() }
+                    sessions.clear()
+                    it.finish()
+                }
             }
             activity.close()
             val exported = nativeCookies.get(30, TimeUnit.SECONDS)
@@ -191,16 +230,20 @@ class TtsPlatformBoundaryTest {
                 }
             } finally { connection.close() }
         } finally {
-            instrumentation.runOnMainSync { sessions.forEach { it.close() } }
+            instrumentation.runOnMainSync {
+                deliverReply?.invoke()
+                replyGate?.restore?.invoke()
+                sessions.forEach { it.close() }
+            }
             activity.close()
             instrumentation.targetContext.stopService(Intent(instrumentation.targetContext, TtsService::class.java))
             server.shutdown()
         }
     }
 
-    private fun testEvents(pageCookies: CompletableFuture<String>) = object : BrowserEvents {
+    private fun testEvents(pageCookies: CompletableFuture<String>, pageStarted: () -> Unit = {}) = object : BrowserEvents {
         override fun onNavigationRequest(request: NavigationRequest) = NavigationDecision.ALLOW
-        override fun onPageStarted(url: String) {}
+        override fun onPageStarted(url: String) { pageStarted() }
         override fun onLocationChanged(url: String) {}
         override fun onProgressChanged(progress: Int) {}
         override fun onPageFinished() {}
@@ -212,6 +255,27 @@ class TtsPlatformBoundaryTest {
             return "{}"
         }
         override fun onDownload(source: DownloadSource) {}
+    }
+
+    private data class GeckoReplyGate(val reply: CompletableFuture<() -> Unit>, val restore: () -> Unit)
+
+    /** Delay only delivery of a real engine reply. Keep this scheduling gate outside production code. */
+    private fun holdNextGeckoExportReply(): GeckoReplyGate {
+        val owner = Class.forName("com.twidi.twicc.engines.gecko.TtsExports")
+        val port = owner.getDeclaredField("port").apply { isAccessible = true }.get(null)!!
+        val delegateType = Class.forName("org.mozilla.geckoview.WebExtension\$PortDelegate")
+        val delegate = port.javaClass.getDeclaredField("delegate").apply { isAccessible = true }.get(port)
+        val reply = CompletableFuture<() -> Unit>()
+        val gate = Proxy.newProxyInstance(delegateType.classLoader, arrayOf(delegateType)) { _, method, args ->
+            val message = args?.firstOrNull()
+            if (method.name == "onPortMessage" && message is JSONObject && message.optString("type") == "exported" && !reply.isDone) {
+                reply.complete { method.invoke(delegate, *args) }
+                null
+            } else method.invoke(delegate, *(args ?: emptyArray()))
+        }
+        val setDelegate = port.javaClass.getMethod("setDelegate", delegateType)
+        setDelegate.invoke(port, gate)
+        return GeckoReplyGate(reply) { setDelegate.invoke(port, delegate) }
     }
 
     /** Store identity is test diagnostic metadata. Never print cookie names or values. */
@@ -231,13 +295,13 @@ class TtsPlatformBoundaryTest {
         if (!EngineProvider.engine.displayName.startsWith("Gecko")) return
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val profile = File(instrumentation.targetContext.cacheDir, "tts-boundary-gecko-profile").apply { mkdirs() }
-        instrumentation.context.assets.open("tts-ca-profile/cert9.db").use { input ->
-            File(profile, "cert9.db").outputStream().use { input.copyTo(it) }
-        }
         instrumentation.runOnMainSync {
             val engine = Class.forName("com.twidi.twicc.engines.gecko.GeckoEngine")
             val field = engine.getDeclaredField("runtime").apply { isAccessible = true }
             if (field.get(null) == null) {
+                instrumentation.context.assets.open("tts-ca-profile/cert9.db").use { input ->
+                    File(profile, "cert9.db").outputStream().use { input.copyTo(it) }
+                }
                 val builder = Class.forName("org.mozilla.geckoview.GeckoRuntimeSettings\$Builder").getConstructor().newInstance()
                 builder.javaClass.getMethod("arguments", Array<String>::class.java)
                     .invoke(builder, arrayOf("--profile", profile.absolutePath))
