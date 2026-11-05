@@ -73,9 +73,14 @@ sealed interface TtsConnectionEvent {
     data class HeartbeatDue(override val connectionId: String) : TtsConnectionEvent
 }
 /** Retry delay resets after the owner accepts a reconciled state, never merely on a TCP open. */
-class TtsBackoff {
+class TtsBackoff(private val random: () -> Double = { kotlin.random.Random.nextDouble() }) {
     private var delay = 1000L
-    @Synchronized fun failed(): Long = delay.also { delay = (delay * 2).coerceAtMost(30000) }
+    @Synchronized fun failed(): Long {
+        val base = delay
+        delay = (delay * 2).coerceAtMost(30000)
+        val sample = random(); require(sample in 0.0..1.0)
+        return kotlin.math.round(base * (0.8 + 0.4 * sample)).toLong()
+    }
     @Synchronized fun reconciled() { delay = 1000 }
 }
 /** A single cancellable audio response. A failed read is terminal; callers must not reopen from byte zero. */
@@ -90,10 +95,15 @@ class TtsAudioStream internal constructor(private val call: okhttp3.Call, privat
 class TtsConnection(
     origin: String,
     cookies: List<TtsCookie>,
+    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+    random: () -> Double = { kotlin.random.Random.nextDouble() },
     configure: OkHttpClient.Builder.() -> Unit = {},
 ) {
-    constructor(credentials: TtsCredentials, configure: OkHttpClient.Builder.() -> Unit = {}) :
-        this(credentials.origin, credentials.cookies, configure) { instanceId = credentials.instanceId }
+    constructor(credentials: TtsCredentials,
+        clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+        random: () -> Double = { kotlin.random.Random.nextDouble() },
+        configure: OkHttpClient.Builder.() -> Unit = {}) :
+        this(credentials.origin, credentials.cookies, clockMillis, random, configure) { instanceId = credentials.instanceId }
 
     val cookieJar = TtsCookieJar(origin.toHttpUrl(), cookies)
     val client = OkHttpClient.Builder().apply(configure).cookieJar(cookieJar)
@@ -109,8 +119,10 @@ class TtsConnection(
     private val audioCalls = java.util.concurrent.ConcurrentHashMap<String, okhttp3.Call>()
     @Volatile private var currentId: String? = null
     @Volatile private var socket: WebSocket? = null
-    private val backoff = TtsBackoff()
-    @Volatile private var lastPong = System.nanoTime()
+    private val backoff = TtsBackoff(random)
+    private var pendingPingSeq: Long? = null
+    private var pongDeadlineMillis: Long? = null
+    private var pongDeadlineTask: java.util.concurrent.ScheduledFuture<*>? = null
     private var heartbeatTask: java.util.concurrent.ScheduledFuture<*>? = null
     private val scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "twicc-tts-heartbeat").apply { isDaemon = true }
@@ -133,7 +145,7 @@ class TtsConnection(
         require(instanceId == null || instanceId == credentials.instanceId)
         require(resume["type"] == "open" || resume["type"] == "resume")
         instanceId = credentials.instanceId
-        currentId = null; socket?.cancel(); heartbeatTask?.cancel(false)
+        currentId = null; socket?.cancel(); heartbeatTask?.cancel(false); clearPongDeadline()
         val id = java.util.UUID.randomUUID().toString(); currentId = id
         val text = TtsJson.encode(resume)
         socket = connect(cookieJar.origin.newBuilder().encodedPath("/ws/tts/").query(null).fragment(null).build().toString(), object : WebSocketListener() {
@@ -144,7 +156,7 @@ class TtsConnection(
                 if (currentId != id) return
                 val frame = try { TtsJson.decode(text) } catch (_: Exception) { lost(id); return }
                 if (frame["protocol"] != 1 && frame["protocol"] != 1L) { lost(id); return }
-                if (frame["type"] == "pong") lastPong = System.nanoTime()
+                if (frame["type"] == "pong") acceptPong(id, frame)
                 onEvent(TtsConnectionEvent.Frame(id, frame))
             }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -162,7 +174,6 @@ class TtsConnection(
     }
     @Synchronized private fun opened(id: String, webSocket: WebSocket, handshake: String) {
         if (currentId != id) { webSocket.cancel(); return }
-        lastPong = System.nanoTime()
         onEvent(TtsConnectionEvent.Opened(id))
         if (!webSocket.send(handshake)) { lost(id); return }
         heartbeatTask = scheduler.scheduleAtFixedRate({ heartbeat(id) }, 30, 30, java.util.concurrent.TimeUnit.SECONDS)
@@ -171,21 +182,42 @@ class TtsConnection(
     fun reconciled(connectionId: String) { if (currentId == connectionId) backoff.reconciled() }
     /** Also used by the scheduled heartbeat. Sequence allocation stays with the policy owner. */
     fun heartbeat(connectionId: String) {
-        if (currentId != connectionId) return
-        if (System.nanoTime() - lastPong >= java.util.concurrent.TimeUnit.SECONDS.toNanos(75)) lost(connectionId)
-        else onEvent(TtsConnectionEvent.HeartbeatDue(connectionId))
+        if (checkPong(connectionId)) onEvent(TtsConnectionEvent.HeartbeatDue(connectionId))
+    }
+    private fun clearPongDeadline() {
+        pongDeadlineTask?.cancel(false); pongDeadlineTask = null
+        pendingPingSeq = null; pongDeadlineMillis = null
+    }
+    @Synchronized private fun acceptPong(id: String, frame: TtsFrame) {
+        if (currentId != id) return
+        val sequence = (frame["ack_seq"] as? Number)?.toLong() ?: return
+        if (pendingPingSeq?.let { sequence >= it } == true) clearPongDeadline()
+    }
+    @Synchronized private fun checkPong(id: String): Boolean {
+        if (currentId != id) return false
+        if (pongDeadlineMillis?.let { clockMillis() >= it } == true) { lost(id); return false }
+        return true
     }
     @Synchronized private fun lost(id: String) {
         if (currentId != id) return
-        currentId = null; heartbeatTask?.cancel(false); socket?.cancel(); socket = null
+        currentId = null; heartbeatTask?.cancel(false); clearPongDeadline(); socket?.cancel(); socket = null
         onEvent(TtsConnectionEvent.Lost(id, backoff.failed()))
     }
     @Synchronized private fun unauthorized(id: String) {
         if (currentId != id) return
-        currentId = null; heartbeatTask?.cancel(false); socket?.cancel(); socket = null
+        currentId = null; heartbeatTask?.cancel(false); clearPongDeadline(); socket?.cancel(); socket = null
         onEvent(TtsConnectionEvent.AuthorizationLost(id))
     }
-    fun send(frame: TtsFrame): Boolean = socket?.send(TtsJson.encode(frame)) ?: false
+    @Synchronized fun send(frame: TtsFrame): Boolean {
+        val id = currentId ?: return false
+        val sent = socket?.send(TtsJson.encode(frame)) ?: false
+        if (sent && frame["type"] == "ping" && pendingPingSeq == null) {
+            pendingPingSeq = (frame["seq"] as Number).toLong()
+            pongDeadlineMillis = clockMillis() + 5000
+            pongDeadlineTask = scheduler.schedule({ checkPong(id) }, 5, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        return sent
+    }
     private fun resourceRequest(resource: AudioResource, ending: Boolean = false): Request {
         require(instanceId == resource.instanceId) { "Audio belongs to another instance" }
         require(listOf(resource.sessionId, resource.audioId).all { Regex("[A-Za-z0-9_-]+").matches(it) })
@@ -241,7 +273,7 @@ class TtsConnection(
         call.execute().use { response -> if (response.code != 404 && response.code != 410) validate(response) }
     }
     @Synchronized fun close() {
-        currentId = null; heartbeatTask?.cancel(false); socket?.cancel(); socket = null
+        currentId = null; heartbeatTask?.cancel(false); clearPongDeadline(); socket?.cancel(); socket = null
         scheduler.shutdownNow()
         audioCalls.values.forEach { it.cancel() }; audioCalls.clear()
         cookieJar.clear(); client.dispatcher.cancelAll(); client.connectionPool.evictAll()

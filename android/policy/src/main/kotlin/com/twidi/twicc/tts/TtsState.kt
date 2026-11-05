@@ -21,6 +21,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     // Inert cancellation evidence only. No code resumes an abandoned session.
     private var tombstone: Pair<String?, List<TtsFrame>>? = null
     private var handshakeSeq = 0L
+    private var sentSeq = 0L
+    private var openingFrame: TtsFrame? = null
     private var status = "idle"
     private var playback = NativePlayback()
     private var listening: NativeListening? = null
@@ -45,24 +47,32 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         if (retained.size >= 256) { terminate("replay_overflow", "Reconnect before starting more speech"); return seq }
         val value = frame(type, fields); val sequence = (value["seq"] as Number).toLong()
         retained[sequence] = value
-        if (ready) effects += TtsEffect.Send(value)
+        if (ready) flushPending()
         return sequence
+    }
+    private fun flushPending() {
+        for ((sequence, value) in retained) {
+            if (sequence > sentSeq) { effects += TtsEffect.Send(value); sentSeq = sequence }
+        }
     }
     private fun readingFields(p: NativePlayback = playback): TtsFrame = mapOf("reading_id" to p.readingId, "generation" to p.generation)
     private fun connect() {
         ready = false; deferred.clear()
-        val handshake = if (sessionId == null) frame("open", mapOf("client_id" to clientId)) else frame("resume", mapOf(
+        val handshake = if (sessionId == null) {
+            openingFrame ?: frame("open", mapOf("client_id" to clientId)).also { openingFrame = it }
+        } else frame("resume", mapOf(
             "session_id" to sessionId, "resume_secret" to secret, "ack_seq" to ack,
             "commands" to retained.values.toList(), "current" to playback.takeIf { it.readingId != null }?.let {
                 readingFields(it) + mapOf("audio_id" to it.audioId, "phase" to it.phase, "started" to it.started)
             }))
         handshakeSeq = (handshake["seq"] as Number).toLong()
-        status = if (sessionId == null) "starting" else "reconnecting"
+        sentSeq = handshakeSeq
+        status = if (sessionId == null && status != "reconnecting") "starting" else "reconnecting"
         effects += TtsEffect.Connect(handshake)
     }
     private fun activate() {
         if (!active) {
-            active = true; stopSeq = null; stopEpoch = null; error = null
+            active = true; stopSeq = null; stopEpoch = null; error = null; openingFrame = null
             if (tombstone != null) { sessionId = null; secret = null; retained.clear() }
             serverRevision = -1
             // Open reserves its sequence before the user's first command.
@@ -177,7 +187,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     return emptyList()
                 }
                 val incomingAck = (f["ack_seq"] as? Number)?.toLong()
-                if (incomingAck != null && incomingAck <= seq && incomingAck >= ack) {
+                if (incomingAck != null && incomingAck <= sentSeq && incomingAck >= ack) {
                     ack = incomingAck; retained.keys.removeAll { it <= ack }
                 }
                 if (stopSeq != null && ack >= stopSeq!!) {
@@ -187,13 +197,17 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     "opened_session" -> {
                         sessionId = f["session_id"] as? String; secret = f["resume_secret"] as? String
                         if (sessionId == null || secret == null) terminate("invalid_protocol", "Invalid native session")
-                        else { ready = true; status = "connected"; retained.values.forEach { effects += TtsEffect.Send(it) } }
+                        else { ready = true; status = "connected"; flushPending() }
                     }
                     "state" -> {
                         val incoming = (f["revision"] as? Number)?.toLong() ?: -1
                         if (incoming > serverRevision) {
                             serverRevision = incoming
-                            if (ack >= handshakeSeq && stopSeq == null) { ready = true; status = "connected" }
+                            if (ack >= handshakeSeq) {
+                                ready = true
+                                if (stopSeq == null) status = "connected"
+                                flushPending()
+                            }
                             // Local reading and listening intent stay authoritative until acknowledged.
                             if (retained.isEmpty()) {
                                 pendingCount = (f["pending_count"] as? Number)?.toInt() ?: 0
@@ -267,7 +281,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         val code = f["code"] as? String ?: "failed"
         val message = f["message"] as? String ?: "Speech failed"
         if (code in setOf("unauthorized", "session_lost")) terminate(code, message)
-        else if (code == "catchup_incomplete") {
+        else if (code in setOf("catchup_incomplete", "scope_unavailable")) {
             listening?.let { queue("disable", mapOf("activation_id" to it.activationId)) }
             listening = null; pendingCount = 0; if (playback.automatic) cancel(); error = mapOf("code" to code, "message" to message)
         } else if (f["reading_id"] == null || matches(f)) {

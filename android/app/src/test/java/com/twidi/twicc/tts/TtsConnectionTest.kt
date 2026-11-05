@@ -16,14 +16,15 @@ import org.junit.Test
 class TtsConnectionTest {
     private fun cookie(name: String, path: String = "/", domain: String = "localhost", expiry: Long? = null) =
         TtsCookie(name, "value", domain, path, true, true, true, expiry)
-    private fun fixture(test: (MockWebServer, TtsConnection, TtsCredentials) -> Unit) {
+    private fun fixture(clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+        test: (MockWebServer, TtsConnection, TtsCredentials) -> Unit) {
         val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
         val server = MockWebServer()
         server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
         server.start()
         val trust = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
         val credentials = TtsCredentials("instance", server.url("/").toString(), listOf(cookie("sessionid")))
-        val connection = TtsConnection(credentials) { sslSocketFactory(trust.sslSocketFactory(), trust.trustManager) }
+        val connection = TtsConnection(credentials, clockMillis = clockMillis, random = { 0.5 }) { sslSocketFactory(trust.sslSocketFactory(), trust.trustManager) }
         try { test(server, connection, credentials) } finally { connection.close(); server.shutdown() }
     }
     private fun resource() = AudioResource("instance", "session", "secret", "reading", 1, "audio", "audio/mpeg")
@@ -124,8 +125,61 @@ class TtsConnectionTest {
         assertEquals(1000L, (events.poll(5, TimeUnit.SECONDS) as TtsConnectionEvent.Lost).retryAfterMillis)
     }
     @Test fun reconnectBackoffResetsOnlyAfterReconciledState() {
-        val backoff = TtsBackoff()
+        val backoff = TtsBackoff { 0.5 }
         assertEquals(listOf(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L), (1..7).map { backoff.failed() })
         backoff.reconciled(); assertEquals(1000L, backoff.failed())
     }
+    @Test fun missingPongFailsAtFiveSecondsAfterTheActualPing() {
+        var now = 0L
+        fixture(clockMillis = { now }) { server, c, creds ->
+            val received = LinkedBlockingQueue<String>()
+            val events = LinkedBlockingQueue<TtsConnectionEvent>(); c.onEvent = { events.offer(it) }
+            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) { received.offer(text) }
+            }))
+            val id = c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
+            assertNotNull(received.poll(5, TimeUnit.SECONDS))
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Opened)
+            // A due callback alone is not a sent heartbeat and cannot start its deadline.
+            now = 100_000L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.HeartbeatDue)
+            assertTrue(c.send(mapOf("protocol" to 1, "type" to "ping", "seq" to 2)))
+            assertEquals("ping", TtsJson.decode(received.poll(5, TimeUnit.SECONDS)!!)["type"])
+            now = 104_999L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.HeartbeatDue)
+            now = 105_000L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Lost)
+        }
+    }
+    @Test fun validPongCancelsItsDeadlineButOldPongCannotAcknowledgeTheNextPing() {
+        var now = 0L
+        fixture(clockMillis = { now }) { server, c, creds ->
+            val events = LinkedBlockingQueue<TtsConnectionEvent>(); c.onEvent = { events.offer(it) }
+            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (TtsJson.decode(text)["type"] == "ping")
+                        webSocket.send("{\"protocol\":1,\"type\":\"pong\",\"ack_seq\":2}")
+                }
+            }))
+            val id = c.connect(creds, mapOf("protocol" to 1, "type" to "open", "seq" to 1))
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Opened)
+            assertTrue(c.send(mapOf("protocol" to 1, "type" to "ping", "seq" to 2)))
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Frame)
+            now = 5000L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.HeartbeatDue)
+            assertTrue(c.send(mapOf("protocol" to 1, "type" to "ping", "seq" to 3)))
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Frame)
+            now = 9999L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.HeartbeatDue)
+            now = 10000L; c.heartbeat(id)
+            assertTrue(events.poll(5, TimeUnit.SECONDS) is TtsConnectionEvent.Lost)
+        }
+    }
+    @Test fun retryJitterStaysWithinTwentyPercentOfEachCappedBase() {
+        val low = TtsBackoff { 0.0 }; val high = TtsBackoff { 1.0 }
+        assertEquals(listOf(800L,1600L,3200L,6400L,12800L,24000L,24000L), (1..7).map { low.failed() })
+        assertEquals(listOf(1200L,2400L,4800L,9600L,19200L,36000L,36000L), (1..7).map { high.failed() })
+        high.reconciled(); assertEquals(1200L, high.failed())
+    }
+
 }

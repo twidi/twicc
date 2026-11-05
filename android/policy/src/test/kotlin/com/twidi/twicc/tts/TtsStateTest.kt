@@ -175,4 +175,57 @@ class TtsStateTest {
         assertEquals(true, c.snapshot().results.single().ended["ok"])
         assertTrue(c.dispatch(TtsCommand.Reconnect).isEmpty())
     }
+    @Test fun initialHandshakeRetryPreservesUnsentManualAndListenSequences() {
+        for (startManual in listOf(true, false)) {
+            val c = controller()
+            val initial = if (startManual) manual(c) else listen(c)
+            val first = initial.filterIsInstance<TtsEffect.Connect>().single().handshake
+            c.dispatch(TtsCommand.TransportOpened("lost")); c.dispatch(TtsCommand.TransportLost("lost"))
+            val retry = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+            assertEquals(first, retry)
+            c.dispatch(TtsCommand.TransportOpened("retry"))
+            val effects = c.dispatch(TtsCommand.ServerFrame("retry", mapOf("protocol" to 1, "type" to "opened_session",
+                "session_id" to "session", "resume_secret" to "secret", "revision" to 1, "ack_seq" to retry["seq"])))
+            val sent = effects.filterIsInstance<TtsEffect.Send>().single().frame
+            assertEquals(if (startManual) "manual" else "listen", sent["type"])
+            assertEquals(2L, sent["seq"])
+        }
+    }
+    @Test fun skipDuringResumeFlushesBeforeLaterHeartbeat() {
+        val c = controller(); listen(c); opened(c); manual(c)
+        c.dispatch(TtsCommand.TransportLost("socket"))
+        val resume = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+        c.dispatch(TtsCommand.TransportOpened("resumed"))
+        assertTrue(c.dispatch(TtsCommand.Skip).none { it is TtsEffect.Send })
+        val flushed = c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 10, "ack_seq" to resume["seq"]))).filterIsInstance<TtsEffect.Send>()
+        assertEquals("skip", flushed.single().frame["type"])
+        assertEquals(5L, flushed.single().frame["seq"])
+        val ping = c.dispatch(TtsCommand.Heartbeat).filterIsInstance<TtsEffect.Send>().single().frame
+        assertEquals("ping", ping["type"]); assertEquals(6L, ping["seq"])
+    }
+    @Test fun stopAllDuringResumeFlushesEvenWhileTerminalCleanupWaits() {
+        val c = controller(); listen(c); opened(c); manual(c)
+        c.dispatch(TtsCommand.TransportLost("socket"))
+        val resume = c.dispatch(TtsCommand.Reconnect).filterIsInstance<TtsEffect.Connect>().single().handshake
+        c.dispatch(TtsCommand.TransportOpened("resumed"))
+        assertTrue(c.dispatch(TtsCommand.StopAll).none { it is TtsEffect.Send })
+        val flushed = c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 10, "ack_seq" to resume["seq"]))).filterIsInstance<TtsEffect.Send>()
+        assertEquals("stop_all", flushed.single().frame["type"])
+        val done = c.dispatch(TtsCommand.ServerFrame("resumed", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 11, "ack_seq" to flushed.single().frame["seq"])))
+        assertTrue(done.any { it is TtsEffect.StopService })
+    }
+    @Test fun scopeUnavailablePreservesUnrelatedManualPlayback() {
+        val c = controller(); listen(c); opened(c); manual(c); audio(c)
+        val before = c.snapshot().playback
+        val effects = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error",
+            "code" to "scope_unavailable", "message" to "The listening scope is empty or no longer exists.")))
+        assertEquals(before, c.snapshot().playback)
+        assertNull(c.snapshot().listening); assertEquals(0, c.snapshot().pendingCount)
+        assertTrue(effects.none { it is TtsEffect.Cancel })
+        assertEquals("scope_unavailable", c.snapshot().error!!["code"])
+    }
+
 }
