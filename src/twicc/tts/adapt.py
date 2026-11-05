@@ -38,6 +38,7 @@ from twicc.providers.text_calls import (  # noqa: F401
 from twicc.providers.claude_code.hermetic import stream_hermetic_claude  # noqa: F401 - compatibility patch points
 from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex  # noqa: F401 - compatibility patch points
 from twicc.providers.codex.title_suggest import TITLE_MODEL  # noqa: F401 - compatibility patch points
+from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_NEVER_SAID
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.providers.state import is_provider_running  # noqa: F401 - compatibility patch points
 from twicc.tts.openrouter import SpeechError
@@ -62,16 +63,13 @@ Keep:
 - the language of the text, and its voice: the same person (tu, vous, you…), the same tone; a statement stays a statement, a question stays a question, an instruction stays an instruction;
 - every piece of information of the prose, its labels and names included: adapt, do not summarize, do not add.
 
-Not information to keep, and never said: the content of a code block, a command or a diagram (only what it is for); the folders of a path; the value of a commit hash, an UUID or a token; the address of an URL (only its site).
+Not information to keep, and never said: """ + SPEECH_NEVER_SAID + """.
 
 Rewrite:
 - A heading (a line that starts with "#"), the first line included: a short sentence without the "#", or nothing.
 - A list or a table: sentences. No list marker is left: no "-", "*" or "1." at the start of a line.
 - A code block, a command (inline or in a block), a diagram (Mermaid…): a few words on what it is for, as a whole. Never tell how it works or what it does step by step. When a sentence of the text already introduces it, that sentence is enough: add nothing. Examples: a flowchart of how an order is shipped → "A diagram shows how an order is shipped."; "Here is the fix:" followed by a function → "Here is the fix."; "I ran `npm test -- --watch=false`" → "I ran the tests".
-- A path: its last name only, as written. Example: /home/me/project/logs/server.log → server.log; "in src/app/views/home.vue" → "in home.vue". Never say the folder a file is in, in any language.
-- A commit hash, an UUID, a token: drop the value and rewrite the sentence so that it stays true and natural; drop the sentence when it then says nothing. Examples: "fixed in commit 9e04b7a" → "fixed in a commit"; "The commit is 9e04b7a." → nothing.
-- An URL: the name of its site, once. Example: https://docs.example.org/guide/setup#step-2 → docs.example.org.
-- A name from code: as written, without backticks. Never spell it out, never write "dot", "slash" or "underscore".
+""" + SPEECH_IDENTIFIER_RULES + """
 - The Markdown syntax: none left.
 
 A full example. This text:

@@ -28,13 +28,14 @@ from twicc.summaries.sources import (
     SummarySource, normalize_summary_model, read_timeline_snapshot, resolve_source,
     resolve_timeline_snapshot, validate_source, validate_temporary_model_request,
 )
+from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_NEVER_SAID
 from twicc.synced_settings import read_synced_settings
 
 logger = logging.getLogger(__name__)
 
 UNCLAIMED_TTL = 30.0
 SAFETY_TTL = 3 * 3600.0
-POLICY_VERSION = 'summary-v3'
+POLICY_VERSION = 'summary-v4'
 SUMMARY_MAX_WORDS = 140
 SUMMARY_MIN_TARGET_WORDS = 15
 SUMMARY_PROMPT = '''Summarize the source below for a reader. Start writing at once, with no reasoning first.
@@ -44,7 +45,9 @@ The summary must be clearly shorter than the source: aim for {target_words} word
 Keep only what a reader needs: decisions, open questions, limitations, essential facts. Drop details, examples and repetitions.
 Write speech-ready plain text. Convert lists and tables to sentences.
 Use short paragraphs separated by a blank line, with a new paragraph at each change of topic. A summary of three sentences or fewer is one paragraph.
-Describe the purpose of code or diagrams briefly. Omit syntax, long paths, hashes, tokens, and URL addresses.
+Describe the purpose of code, commands or diagrams in a few words, as a whole: never their syntax. Never say: ''' + SPEECH_NEVER_SAID + '''.
+Handle what the source mentions like this:
+''' + SPEECH_IDENTIFIER_RULES + '''
 Do not add facts, a preamble, an announcement that this is a summary, or comments about your work.
 Return only the summary.
 
@@ -501,7 +504,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
     releasing the page's handle cannot release this reader.
     """
     if not isinstance(reference, dict):
-        raise ValueError('The summary reference must be an object')
+        raise ValueError('The summary reference must be an object')  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
     if 'saved_id' in reference:
         saved_id, result_hash = reference['saved_id'], reference.get('result_hash')
         if type(saved_id) is not int or saved_id < 1:
@@ -529,7 +532,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         run.revision = saved['metadata'].get('revision', 1)
         return SummaryReader(SummaryHandle(run, saved, claimed=True))
     if not isinstance(reference.get('source'), dict):
-        raise ValueError("'source' must reconstruct the summary")
+        raise ValueError("'source' must reconstruct the summary")  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
     if 'requested_model' in reference:
         if set(reference) != {'source', 'requested_model'}:
             raise ValueError('Invalid temporary summary reference')

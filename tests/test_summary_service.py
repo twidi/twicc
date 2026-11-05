@@ -533,6 +533,16 @@ def test_summary_prompt_asks_a_third_of_the_source_within_bounds(service):
     assert 'aim for 15 words' in prompt and 'Text with {braces} inside' in prompt
 
 
+def test_summary_prompt_shares_the_speech_rules_of_the_adaptation(service):
+    from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_NEVER_SAID
+    from twicc.tts.adapt import ADAPT_PROMPT
+
+    prompt = service.summary_prompt('Commit 9e04b7a')
+    assert SPEECH_NEVER_SAID in prompt and SPEECH_IDENTIFIER_RULES in prompt
+    assert SPEECH_NEVER_SAID in ADAPT_PROMPT and SPEECH_IDENTIFIER_RULES in ADAPT_PROMPT
+    assert 'fixed in commit 9e04b7a' in prompt
+
+
 def speech_reference(handle, source=None, **changes):
     if source is None:
         source = {'session_id': handle.descriptor['session_id'], 'line_num': handle.descriptor['first_line']}
