@@ -1,9 +1,11 @@
+import { generateUUID } from './crypto.js'
+
 export function isSnippetGroup(entry) {
     return entry?.type === 'group' && Array.isArray(entry.items)
 }
 
 export function createSnippetGroup(label) {
-    return { type: 'group', id: crypto.randomUUID(), label: label.trim(), items: [] }
+    return { type: 'group', id: generateUUID(), label: label.trim(), items: [] }
 }
 
 export function getGroupItems(entries, groupId = null) {

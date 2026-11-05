@@ -1,5 +1,8 @@
 /* Register an engine-generated document identity. Use a separate native app for this privileged handshake. */
-const documentId = crypto.randomUUID()
+/* `crypto.randomUUID` only exists in secure contexts: fall back to `getRandomValues` on plain HTTP. */
+const documentId = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c => (+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16))
 const ttsDocumentReady = browser.runtime.sendNativeMessage('twicc_tts_document', { ttsDocument: documentId }).then(() => {
     const port = browser.runtime.connect({ name: 'twicc-tts-document' })
     port.postMessage({ type: 'document', documentId })
