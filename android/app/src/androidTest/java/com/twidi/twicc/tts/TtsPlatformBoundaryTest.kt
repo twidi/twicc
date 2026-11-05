@@ -194,7 +194,7 @@ class TtsPlatformBoundaryTest {
         }
     }
 
-    @Test fun batteryExemptionRequiredOnlyForListening() {
+    @Test fun batteryExemptionIsOptionalForListening() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
@@ -208,10 +208,15 @@ class TtsPlatformBoundaryTest {
                 val owner = DocumentOwner("battery", "page", 1)
                 binding.binder.dispatch(TtsCommand.AttachDocument(owner))
                 val acceptance = binding.binder.dispatch(TtsCommand.Listen(owner, ListeningScope("global", null), false, "2026-11-05T10:00:00.000000Z"))
-                assertFalse(acceptance.accepted)
-                assertEquals("battery_settings", acceptance.error!!.action)
+                assertTrue(acceptance.accepted)
+                assertNotNull(binding.binder.snapshot().listening)
                 assertTrue(binding.binder.dispatch(TtsCommand.Manual(owner, "manual", mapOf("kind" to "text", "text" to "Probe"))).accepted)
             }
+            val deadline = android.os.SystemClock.elapsedRealtime() + 5000
+            val notifications = context.getSystemService(android.app.NotificationManager::class.java)
+            while (notifications.activeNotifications.none { it.id == TtsNotification.ID } &&
+                android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(25)
+            assertTrue("Android publishes the foreground notification", notifications.activeNotifications.any { it.id == TtsNotification.ID })
         } finally {
             context.stopService(Intent(context, TtsService::class.java))
             context.unbindService(binding.connection)
@@ -674,7 +679,7 @@ class TtsPlatformBoundaryTest {
         try {
             awaitActivityFocus(activity)
             activity.onActivity {
-                val error = TtsNotification.visiblePreflight(it, false)!!
+                val error = TtsNotification.visiblePreflight(it)!!
                 assertEquals("permission_required", error.code)
             }
             clickVisibleNode(viewId = "com.android.permissioncontroller:id/permission_deny_button")
@@ -682,7 +687,7 @@ class TtsPlatformBoundaryTest {
             assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED,
                 context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS))
             activity.onActivity {
-                val error = TtsNotification.visiblePreflight(it, false)!!
+                val error = TtsNotification.visiblePreflight(it)!!
                 assertEquals("notification_settings", error.action)
             }
             clickVisibleNode(text = "Open Settings")
@@ -700,41 +705,187 @@ class TtsPlatformBoundaryTest {
             shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
             shell("appops set --uid ${context.packageName} POST_NOTIFICATION allow")
             awaitActivityFocus(activity)
-            activity.onActivity { assertNull(TtsNotification.visiblePreflight(it, false)) }
+            activity.onActivity { assertNull(TtsNotification.visiblePreflight(it)) }
             assertTrue("Settings return does not activate speech", context.getSystemService(android.app.NotificationManager::class.java)
                 .activeNotifications.none { it.id == TtsNotification.ID })
         } finally { activity.close() }
     }
 
     @androidx.test.filters.MediumTest
-    @Test fun visibleBatteryPreflightOpensRealSettingsWithoutActivatingListening() {
+    @Test fun batteryAdviceOpensRealSettingsWithoutActivatingOrRememberingConsent() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val preferences = context.getSharedPreferences("tts_platform", Context.MODE_PRIVATE)
+        preferences.edit().remove("battery_advice_acknowledged").commit()
         shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
         shell("cmd deviceidle whitelist -${context.packageName}")
         val activity = ActivityScenario.launch(MainActivity::class.java)
+        var continued = false
         try {
             awaitActivityFocus(activity)
             activity.onActivity {
-                val error = TtsNotification.visiblePreflight(it, true)!!
-                assertEquals("battery_restricted", error.code)
+                assertNull(TtsNotification.visiblePreflight(it))
+                assertTrue(TtsNotification.batteryAdviceNeeded(it))
+                TtsNotification.showBatteryAdvice(it) { continued = true }
             }
             clickVisibleNode(text = "Open Settings")
             val end = android.os.SystemClock.elapsedRealtime() + 5000
             while (instrumentation.uiAutomation.rootInActiveWindow?.packageName != "com.android.settings" && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(50)
             assertEquals("com.android.settings", instrumentation.uiAutomation.rootInActiveWindow?.packageName)
             assertTrue(shell("dumpsys activity activities").contains("android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"))
+            assertFalse(continued)
             assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
             assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
             shell("input keyevent KEYCODE_BACK")
-            shell("cmd deviceidle whitelist +${context.packageName}")
             awaitActivityFocus(activity)
-            activity.onActivity { assertNull(TtsNotification.visiblePreflight(it, true)) }
-            assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
-        } finally { shell("cmd deviceidle whitelist -${context.packageName}"); activity.close() }
+            activity.onActivity { assertTrue(TtsNotification.batteryAdviceNeeded(it)) }
+            shell("cmd deviceidle whitelist +${context.packageName}")
+            activity.onActivity { assertFalse(TtsNotification.batteryAdviceNeeded(it)) }
+            assertFalse(continued)
+        } finally {
+            shell("cmd deviceidle whitelist -${context.packageName}")
+            preferences.edit().remove("battery_advice_acknowledged").commit()
+            activity.close()
+        }
     }
 
-    private fun awaitActivityFocus(activity: ActivityScenario<MainActivity>) {
+    @androidx.test.filters.MediumTest
+    @Test fun batteryAdviceContinuePersistsButDismissalDoesNot() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val preferences = context.getSharedPreferences("tts_platform", Context.MODE_PRIVATE)
+        preferences.edit().remove("battery_advice_acknowledged").commit()
+        shell("cmd deviceidle whitelist -${context.packageName}")
+        val activity = ActivityScenario.launch(MainActivity::class.java)
+        var confirmations = 0
+        try {
+            awaitActivityFocus(activity)
+            activity.onActivity { TtsNotification.showBatteryAdvice(it) { confirmations++ } }
+            awaitVisibleNode(text = "Continue without changes")
+            shell("input keyevent KEYCODE_BACK")
+            awaitActivityFocus(activity)
+            activity.onActivity {
+                assertEquals(0, confirmations)
+                assertTrue(TtsNotification.batteryAdviceNeeded(it))
+                TtsNotification.showBatteryAdvice(it) { confirmations++ }
+            }
+            clickVisibleNode(text = "Continue without changes")
+            awaitActivityFocus(activity)
+            activity.onActivity {
+                assertEquals(1, confirmations)
+                assertFalse(TtsNotification.batteryAdviceNeeded(it))
+            }
+            activity.recreate()
+            awaitActivityFocus(activity)
+            activity.onActivity { assertFalse(TtsNotification.batteryAdviceNeeded(it)) }
+            assertFalse(context.getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName))
+        } finally {
+            preferences.edit().remove("battery_advice_acknowledged").commit()
+            activity.close()
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun browserBatteryAdviceContinueStartsListeningWithoutExemption() {
+        prepareGeckoTestProfile()
+        ServiceFixture().use { fixture ->
+            val context = fixture.context
+            val preferences = context.getSharedPreferences("tts_platform", Context.MODE_PRIVATE)
+            preferences.edit().remove("battery_advice_acknowledged").commit()
+            shell("cmd deviceidle whitelist -${context.packageName}")
+            fixture.clientGate.countDown()
+            val store = com.twidi.twicc.InstanceStore(context)
+            val saved = store.save(null, "Battery advice fixture", fixture.server.url("/").toString())
+            store.rememberPage(saved, fixture.server.url("/client").toString())
+            val activity = ActivityScenario.launch<com.twidi.twicc.BrowserActivity>(
+                Intent(context, com.twidi.twicc.BrowserActivity::class.java).putExtra("instance", saved.id))
+            try {
+                fixture.await("Real browser attaches the native document", timeout = 20000) {
+                    fixture.requests.any { it.path == "/fixture/client-start" }
+                }
+                awaitActivityFocus(activity)
+                activity.onActivity {
+                    val result = it.dispatchNativeTts(TtsCommand.Listen(it.nativeTtsDocumentOwner(),
+                        ListeningScope("global", null), false, "2026-11-05T10:00:00.000000Z", "global"))
+                    assertFalse(result.accepted)
+                    assertEquals("confirmation_required", result.error!!.code)
+                    assertNull(it.nativeTtsSnapshot().listening)
+                }
+                // Native confirmation must not inherit the bridge RPC's short deadline.
+                Thread.sleep(1800)
+                assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
+                clickVisibleNode(text = "Continue without changes")
+                awaitActivityFocus(activity)
+                fixture.await("Window focus continuation activates the service") {
+                    var listening = false
+                    activity.onActivity { listening = it.nativeTtsSnapshot().listening != null }
+                    listening
+                }
+                assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any { it.id == TtsNotification.ID })
+                assertTrue(currentWakeLocks().contains("TwiCC:NativeTts"))
+                assertFalse(context.getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName))
+                activity.onActivity {
+                    assertFalse(TtsNotification.batteryAdviceNeeded(it))
+                    it.dispatchNativeTts(TtsCommand.StopAll)
+                }
+            } finally {
+                activity.close()
+                store.remove(saved)
+                preferences.edit().remove("battery_advice_acknowledged").commit()
+            }
+        }
+    }
+
+    @androidx.test.filters.MediumTest
+    @Test fun browserBatteryAdviceDismissAndBackgroundCannotActivateListening() {
+        prepareGeckoTestProfile()
+        ServiceFixture().use { fixture ->
+            val context = fixture.context
+            val preferences = context.getSharedPreferences("tts_platform", Context.MODE_PRIVATE)
+            preferences.edit().remove("battery_advice_acknowledged").commit()
+            shell("cmd deviceidle whitelist -${context.packageName}")
+            fixture.clientGate.countDown()
+            val store = com.twidi.twicc.InstanceStore(context)
+            val saved = store.save(null, "Battery cancellation fixture", fixture.server.url("/").toString())
+            store.rememberPage(saved, fixture.server.url("/client").toString())
+            val activity = ActivityScenario.launch<com.twidi.twicc.BrowserActivity>(
+                Intent(context, com.twidi.twicc.BrowserActivity::class.java).putExtra("instance", saved.id))
+            try {
+                fixture.await("Real browser attaches the native document", timeout = 20000) {
+                    fixture.requests.any { it.path == "/fixture/client-start" }
+                }
+                awaitActivityFocus(activity)
+                activity.onActivity {
+                    it.dispatchNativeTts(TtsCommand.Listen(it.nativeTtsDocumentOwner(), ListeningScope("global", null),
+                        false, "2026-11-05T10:00:00.000000Z", "global"))
+                }
+                awaitVisibleNode(text = "Continue without changes")
+                shell("input keyevent KEYCODE_BACK")
+                awaitActivityFocus(activity)
+                activity.onActivity {
+                    assertNull(it.nativeTtsSnapshot().listening)
+                    assertTrue(TtsNotification.batteryAdviceNeeded(it))
+                    it.dispatchNativeTts(TtsCommand.Listen(it.nativeTtsDocumentOwner(), ListeningScope("global", null),
+                        false, "2026-11-05T10:00:00.000000Z", "global"))
+                }
+                activity.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+                activity.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+                awaitActivityFocus(activity)
+                activity.onActivity {
+                    assertNull(it.nativeTtsSnapshot().listening)
+                    assertTrue(TtsNotification.batteryAdviceNeeded(it))
+                }
+                assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
+                assertFalse(currentWakeLocks().contains("TwiCC:NativeTts"))
+            } finally {
+                activity.close()
+                store.remove(saved)
+                preferences.edit().remove("battery_advice_acknowledged").commit()
+            }
+        }
+    }
+
+    private fun <T : android.app.Activity> awaitActivityFocus(activity: ActivityScenario<T>) {
         val end = android.os.SystemClock.elapsedRealtime() + 5000
         var focused = false
         while (!focused && android.os.SystemClock.elapsedRealtime() < end) {
@@ -744,16 +895,20 @@ class TtsPlatformBoundaryTest {
         assertTrue("Visible preflight requires real window focus", focused)
     }
     private fun clickVisibleNode(viewId: String? = null, text: String? = null) {
+        val node = awaitVisibleNode(viewId, text)
+        assertTrue(node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+    }
+    private fun awaitVisibleNode(viewId: String? = null, text: String? = null): android.view.accessibility.AccessibilityNodeInfo {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val end = android.os.SystemClock.elapsedRealtime() + 5000
         while (android.os.SystemClock.elapsedRealtime() < end) {
             val root = automation.rootInActiveWindow
             val nodes = if (viewId != null) root?.findAccessibilityNodeInfosByViewId(viewId) else root?.findAccessibilityNodeInfosByText(text)
             val node = nodes?.firstOrNull { it.isClickable }
-            if (node != null) { assertTrue(node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)); return }
+            if (node != null) return node
             Thread.sleep(50)
         }
-        fail("Missing visible Android control: ${viewId ?: text}")
+        throw AssertionError("Missing visible Android control: ${viewId ?: text}")
     }
 
     private data class Binding(val binder: TtsService.LocalBinder, val connection: android.content.ServiceConnection)

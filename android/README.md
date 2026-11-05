@@ -115,8 +115,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.0**,
-version code **11**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.1**,
+version code **12**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -326,13 +326,20 @@ channel. Android 13+ also requires notification permission. The first request
 opens Android's permission dialog. A denial exposes **Open Settings** guidance.
 Permission or Settings return never repeats a rejected activation. Start again.
 
-Timeline listening also requires Android's battery-optimization exemption for
-TwiCC. The app explains the requirement and opens Android's battery settings.
-Choose the exemption for TwiCC, return, then enable listening again. A denied
-exemption leaves listening inactive. Device labels and OEM settings can differ.
+The battery-optimization exemption is optional for both timeline listening and
+manual speech. Before the first timeline activation without an exemption, a
+native dialog explains that Android can delay or interrupt background or
+screen-off speech. **Continue without changes** starts listening and remembers
+the choice for this installation. **Open Settings** opens Android's battery
+settings without activating listening. Return and enable listening again.
+Dismissing the dialog leaves listening inactive and does not remember a choice.
+Notification permission remains required. The foreground service and its
+notification stay active during listening, even without a battery exemption.
 
-Manual speech can start without this exemption. Long silent preparation then
-has weaker screen-off guarantees. The service holds a partial wake lock during
+An exemption improves background reliability but does not guarantee it.
+Without it, long silent waits have weaker screen-off guarantees. Find the
+setting later in Android Settings > Apps > TwiCC > Battery. Device labels and
+OEM settings can differ. The service holds a partial wake lock during
 preparation, output, settlement, and enabled silent listening. Listening therefore
 uses battery even while no audio plays. It uses no silent audio or microphone.
 

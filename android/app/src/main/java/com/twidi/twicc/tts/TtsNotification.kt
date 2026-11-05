@@ -74,7 +74,7 @@ class TtsNotification(private val context: Context) {
         const val PERMISSION_REQUEST = 8601
 
         /** A denial never resumes queued activation. The next attempt requires a fresh visible user action. */
-        fun visiblePreflight(activity: Activity, listening: Boolean): TtsActionError? {
+        fun visiblePreflight(activity: Activity): TtsActionError? {
             if (activity.isFinishing || !activity.hasWindowFocus())
                 return TtsActionError("not_visible", "Open TwiCC before starting speech.")
             if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -86,19 +86,35 @@ class TtsNotification(private val context: Context) {
                 }
             }
             TtsNotification(activity).error()?.let { showSettings(activity, it); return it }
-            if (listening && !activity.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(activity.packageName)) {
-                val error = TtsActionError("battery_restricted", activity.getString(R.string.tts_battery_required), "battery_settings")
-                showSettings(activity, error); return error
-            }
             return null
+        }
+
+        fun batteryAdviceNeeded(activity: Activity): Boolean =
+            !activity.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(activity.packageName) &&
+                !activity.getSharedPreferences("tts_platform", Context.MODE_PRIVATE).getBoolean("battery_advice_acknowledged", false)
+
+        /** Only Continue acknowledges the advice. Opening Settings never queues an activation. */
+        fun showBatteryAdvice(activity: Activity, onContinue: () -> Unit): AlertDialog =
+            AlertDialog.Builder(activity).setTitle(R.string.tts_battery_title).setMessage(R.string.tts_battery_advice)
+                .setNegativeButton(R.string.tts_continue_without_changes) { _, _ ->
+                    activity.getSharedPreferences("tts_platform", Context.MODE_PRIVATE).edit()
+                        .putBoolean("battery_advice_acknowledged", true).apply()
+                    onContinue()
+                }
+                .setPositiveButton(R.string.tts_open_settings) { _, _ -> openBatterySettings(activity) }
+                .show()
+
+        private fun openBatterySettings(activity: Activity) {
+            runCatching { activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }.onFailure {
+                activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
+            }
         }
         fun showSettings(activity: Activity, error: TtsActionError) {
             if (activity.isFinishing) return
             AlertDialog.Builder(activity).setTitle(R.string.tts_settings_title).setMessage(error.message)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.tts_open_settings) { _, _ ->
-                    val intent = if (error.action == "battery_settings") Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                    else Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                    val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
                         .putExtra(Settings.EXTRA_CHANNEL_ID, CHANNEL)
                     runCatching { activity.startActivity(intent) }.onFailure {
                         activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))

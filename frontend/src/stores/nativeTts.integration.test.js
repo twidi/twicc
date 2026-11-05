@@ -214,3 +214,25 @@ test('real next-poll adapter reports retained automatic failure once and keeps m
     assert.equal(errors.length, 2)
     timeline.dispose(); tts.detachNative()
 })
+
+
+test('native listening waits for battery advice without an error and adopts the confirmed service state', async () => {
+    const { tts, client, publish } = await fixture()
+    const timeline = useTimelineSpeechStore(), errors = []
+    timeline._showError = message => errors.push(message)
+    timeline.initialize({ dataStore: { projectsLoaded: true, getProject: id => ({ id }),
+        getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Project' },
+    workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
+    client.listen = async () => ({ accepted: false, error: { code: 'confirmation_required', message: 'Choose how to continue.' } })
+    await timeline.enable('p')
+    assert.deepEqual(errors, [])
+    assert.equal(timeline.activePageId, null, 'the dialog does not claim listening is active')
+    publish({ revision: 2, playback: { status: 'idle' }, listening: {
+        activationId: 'confirmed', pageId: 'p', includeMuted: false, scope: { kind: 'project', id: 'p', label: 'Project' },
+    } })
+    assert.equal(timeline.activePageId, 'p')
+    client.listen = async () => ({ accepted: false, error: { code: 'notifications_blocked', message: 'Enable notifications' } })
+    await timeline.enable('p')
+    assert.deepEqual(errors, ['Enable notifications'])
+    timeline.dispose(); tts.detachNative()
+})

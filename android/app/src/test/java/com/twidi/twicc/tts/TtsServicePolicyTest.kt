@@ -7,7 +7,6 @@ class TtsServicePolicyTest {
     private class Harness(val cache: TtsSnapshotCache = TtsSnapshotCache()) {
         val events = mutableListOf<String>()
         var blocked: TtsActionError? = null
-        var battery = true
         var wake = false
         var foreground = false
         var stopped = false
@@ -16,7 +15,6 @@ class TtsServicePolicyTest {
         val socket = Socket()
         val platform = object : TtsServicePlatform {
             override fun notificationError() = blocked
-            override fun batteryExempt() = battery
             override fun foreground(snapshot: NativeTtsSnapshot, epoch: String) { events += "foreground"; foreground = true }
             override fun update(snapshot: NativeTtsSnapshot, epoch: String) { events += "notification" }
             override fun wakeLock(held: Boolean) { wake = held }
@@ -80,12 +78,19 @@ class TtsServicePolicyTest {
         assertEquals("connected", h.owner.snapshot().sessionStatus)
         assertTrue(h.foreground)
     }
-    @Test fun listeningRequiresExemptionButManualDoesNot() {
-        val h = Harness(); h.battery = false
-        val rejected = h.listen()
-        assertFalse(rejected.accepted); assertEquals("battery_settings", rejected.error!!.action)
-        assertFalse(h.events.contains("export")); assertFalse(h.wake)
-        assertTrue(h.manual().accepted)
+    @Test fun listeningWithoutExemptionKeepsForegroundControlsAndWakeLock() {
+        val h = Harness()
+        assertTrue(h.listen().accepted)
+        assertTrue(h.foreground); assertTrue(h.wake)
+        assertTrue(h.events.indexOf("foreground") < h.events.indexOf("export"))
+        h.connect()
+        assertNotNull(h.owner.snapshot().listening)
+        h.socket.event(TtsConnectionEvent.Lost("connection", 1000))
+        assertTrue(h.foreground); assertTrue(h.wake)
+        h.owner.dispatch(TtsCommand.StopAll)
+        assertFalse(h.wake)
+        h.timers.last { it.first == 5000L }.second()
+        assertTrue(h.stopped); assertFalse(h.foreground)
     }
     @Test fun silentListeningAndReconnectKeepForegroundAndWakeLock() {
         val h = Harness(); assertTrue(h.listen().accepted); h.connect()

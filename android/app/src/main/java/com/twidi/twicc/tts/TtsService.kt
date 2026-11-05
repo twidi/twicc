@@ -37,7 +37,6 @@ class TtsService : Service() {
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TwiCC:NativeTts").apply { setReferenceCounted(false) }
         owner = TtsServiceOwner(object : TtsServicePlatform {
             override fun notificationError() = notification.error()
-            override fun batteryExempt() = power.isIgnoringBatteryOptimizations(packageName)
             override fun foreground(snapshot: NativeTtsSnapshot, epoch: String) {
                 // Binding never starts work. The visible activation grants started-service lifetime now.
                 startForegroundService(Intent(this@TtsService, TtsService::class.java).setAction(ACTION_ACTIVATE).putExtra(TtsNotification.EXTRA_EPOCH, epoch))

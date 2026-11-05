@@ -55,6 +55,9 @@ class BrowserActivity : Activity() {
     private var ttsBound = false
     private var ttsSource: TtsActivationSource? = null
     private lateinit var ttsDocument: DocumentOwner
+    private var batteryAdviceDialog: AlertDialog? = null
+    private var batteryAdviceCommand: TtsCommand.Listen? = null
+    private var batteryAdviceConfirmed = false
     private val ttsConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             ttsBinder = binder as TtsService.LocalBinder
@@ -248,6 +251,7 @@ class BrowserActivity : Activity() {
     }
 
     private fun resetWebMenu() {
+        clearBatteryAdvice()
         documentGeneration++
         if (::instance.isInitialized) {
             ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
@@ -320,6 +324,7 @@ class BrowserActivity : Activity() {
     }
 
     override fun onStop() {
+        clearBatteryAdvice()
         browser?.setVisible(false)
         super.onStop()
     }
@@ -363,12 +368,47 @@ class BrowserActivity : Activity() {
     fun nativeTtsDocumentOwner(): DocumentOwner = ttsDocument
     fun nativeTtsSnapshot(): NativeTtsSnapshot = ttsBinder?.snapshot() ?: TtsService.cachedSnapshot(instance.id)
     fun dispatchNativeTts(command: TtsCommand): Acceptance {
+        if (command is TtsCommand.Manual || command is TtsCommand.Listen || command is TtsCommand.Disable || command == TtsCommand.StopAll)
+            clearBatteryAdvice()
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
-            TtsNotification.visiblePreflight(this, command is TtsCommand.Listen)?.let { return Acceptance(false, error = it) }
+            TtsNotification.visiblePreflight(this)?.let { return Acceptance(false, error = it) }
+            if (command is TtsCommand.Listen && TtsNotification.batteryAdviceNeeded(this)) {
+                batteryAdviceCommand = command
+                val dialog = TtsNotification.showBatteryAdvice(this) {
+                    if (batteryAdviceCommand === command) batteryAdviceConfirmed = true
+                }
+                batteryAdviceDialog = dialog
+                dialog.setOnDismissListener {
+                    if (batteryAdviceDialog === dialog) {
+                        batteryAdviceDialog = null
+                        if (!batteryAdviceConfirmed) batteryAdviceCommand = null
+                    }
+                }
+                return Acceptance(false, error = TtsActionError("confirmation_required", "Choose how to continue in the battery advice dialog."))
+            }
             attachNativeTtsDocument()
         }
         return ttsBinder?.dispatch(command) ?: Acceptance(false,
             error = TtsActionError("initializing", "Native speech is initializing. Try again."))
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !batteryAdviceConfirmed) return
+        val command = batteryAdviceCommand ?: return
+        clearBatteryAdvice()
+        // Dialog dismissal restores window focus asynchronously. Never revive a stopped or replaced page.
+        if (isFinishing || isDestroyed || command.owner != ttsDocument) return
+        val acceptance = dispatchNativeTts(command)
+        if (!acceptance.accepted) acceptance.error?.let { toast(it.message) }
+    }
+
+    private fun clearBatteryAdvice() {
+        batteryAdviceCommand = null
+        batteryAdviceConfirmed = false
+        batteryAdviceDialog?.setOnDismissListener(null)
+        batteryAdviceDialog?.dismiss()
+        batteryAdviceDialog = null
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()

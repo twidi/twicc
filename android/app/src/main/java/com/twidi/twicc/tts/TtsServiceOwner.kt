@@ -10,7 +10,6 @@ class TtsActivationSource(val instanceId: String, val name: String, val origin: 
 
 interface TtsServicePlatform {
     fun notificationError(): TtsActionError?
-    fun batteryExempt(): Boolean
     fun foreground(snapshot: NativeTtsSnapshot, epoch: String)
     fun update(snapshot: NativeTtsSnapshot, epoch: String)
     fun wakeLock(held: Boolean)
@@ -150,8 +149,6 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             return rejected("invalid_command", "This speech command is internal.")
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
             platform.notificationError()?.let { return Acceptance(false, error = it) }
-            if (command is TtsCommand.Listen && !platform.batteryExempt())
-                return rejected("battery_restricted", "Allow unrestricted battery use for screen-off timeline listening.", "battery_settings")
             if (!active && source == null) return rejected("credentials_unavailable", "Reopen this instance, then start speech again.")
             if (terminal) return rejected("stopping", "Speech is stopping. Start again after cleanup.")
         }

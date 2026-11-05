@@ -78,7 +78,9 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
                 ? workspacesStore.getWorkspaceById(id)?.name ?? '' : dataStore.getProjectDisplayName(pageId)
             const accepted = await client.listen({ pageId, scope: { kind: scope.kind, id, label },
                 includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()) })
-            if (!accepted?.accepted) store._showError(accepted?.error?.message || 'Native listening could not start')
+            // Native displays the advice. Its next state poll adopts listening only after confirmation.
+            if (!accepted?.accepted && accepted?.error?.code !== 'confirmation_required')
+                store._showError(accepted?.error?.message || 'Native listening could not start')
         },
         disable() { void client.disable() },
         dispose() { unwatchMuted?.(); unwatch() },
