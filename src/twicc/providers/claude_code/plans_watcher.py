@@ -224,7 +224,9 @@ class ClaudeCodePlansWatcher:
                     updated.append(session)
             return updated
 
-        updated_sessions = await _apply()
+        from twicc.providers.db_writer import run_under_db_write_lock
+
+        updated_sessions = await run_under_db_write_lock(_apply)
         if not updated_sessions:
             return
         channel_layer = get_channel_layer()

@@ -151,17 +151,18 @@ async def _apply_flip(session, *, new_hidden: bool) -> None:
     from twicc.providers.compute_executor import run_compute_sync
     from twicc.providers.db_writer import run_under_db_write_lock
 
-    @sync_to_async
-    def _recompute():
+    async def _recompute():
         # Project metadata and search remain best-effort after the commit.
         try:
             # 2. Recompute sessions_count on the Project.
             #    update_project_metadata takes project_id (str), not a Project instance.
             from twicc.projects import update_project_metadata
-            update_project_metadata(session.project_id)
+            await run_under_db_write_lock(
+                lambda: run_compute_sync(update_project_metadata, session.project_id),
+            )
 
             # Activity aggregates already committed with the hidden flag.
-            reindex_session(session.id)
+            await sync_to_async(reindex_session)(session.id)
         except Exception:
             logger.exception(
                 "session_visibility flip side-effects failed for session %s "

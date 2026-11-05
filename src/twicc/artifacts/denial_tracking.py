@@ -37,8 +37,8 @@ def _drain():
 
 
 def _persist(snapshot) -> set[int]:
-    """Blocking DB work — run via ``asyncio.to_thread`` (no write lock —
-    mirrors ``view_tracking._persist``). Upserts rows, drops entries for
+    """Blocking DB work — run under ``run_under_db_write_lock`` (mirrors
+    ``view_tracking._persist``). Upserts rows, drops entries for
     now-allowed hosts (the allow purge already removed their rows — design
     §4.1) and unknown bookmarks, prunes per bookmark. Returns the bookmark ids
     whose rows changed."""
@@ -78,6 +78,13 @@ def _persist(snapshot) -> set[int]:
     return updated
 
 
+async def _persist_under_write_lock(snapshot) -> set[int]:
+    from asgiref.sync import sync_to_async
+    from twicc.providers.db_writer import run_under_db_write_lock
+
+    return await run_under_db_write_lock(lambda: sync_to_async(_persist)(snapshot))
+
+
 async def record_owner_denial(*, bookmark, url: str, kind: str) -> None:
     """Direct write for one owner-preview "Deny" (share=None, no ip/ua). Raises
     ``ValueError`` for a bad kind or a bad scheme (via ``normalize_host_key``)."""
@@ -91,7 +98,7 @@ async def record_owner_denial(*, bookmark, url: str, kind: str) -> None:
         raise ValueError(f"kind must be one of {_DENIABLE_KINDS}; got {kind!r}")
     host_key = normalize_host_key(url)
     snapshot = {(bookmark.id, None, host_key, "", ""): {"kind": kind, "count": 1}}
-    updated = await asyncio.to_thread(_persist, snapshot)
+    updated = await _persist_under_write_lock(snapshot)
     if updated:
         await broadcast_artifact_network_denials_updated(bookmark.id)
 
@@ -114,7 +121,7 @@ async def start_denial_flush_task(stop_event: asyncio.Event) -> None:
         if not snapshot:
             continue
         try:
-            updated = await asyncio.to_thread(_persist, snapshot)
+            updated = await _persist_under_write_lock(snapshot)
             for bookmark_id in updated:
                 await broadcast_artifact_network_denials_updated(bookmark_id)
         except Exception:  # noqa: BLE001 — keep the loop alive

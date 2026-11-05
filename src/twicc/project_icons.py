@@ -522,21 +522,28 @@ def _ensure_repo_icon_discovered(git_root: str) -> bool:
     return True
 
 
-def ensure_project_icon_sync(project) -> tuple[str | None, bool]:
+def _persist_icon_anchor_sync(project_id: str, anchor: str | None) -> None:
+    from twicc.core.models import Project
+
+    Project.objects.filter(id=project_id).update(icon_anchor=anchor)
+
+
+async def _ensure_project_icon(project) -> tuple[str | None, bool]:
     """Resolve+persist the project's icon anchor and ensure its repo icon is
     discovered. Returns ``(anchor, newly_discovered)``. Never writes
-    ``Project.icon``. Best-effort — filesystem/decode errors yield no icon."""
-    anchor = resolve_icon_anchor_sync(project)
+    ``Project.icon``. Best-effort — filesystem/decode errors yield no icon.
+    Only the anchor write takes the DB write lock, never the filesystem scans."""
+    from twicc.providers.db_writer import run_under_db_write_lock
+
+    anchor = await sync_to_async(resolve_icon_anchor_sync)(project)
     # Persist icon_anchor only when it differs from the own git_root.
     desired = anchor if (anchor and anchor != project.git_root) else None
     if project.icon_anchor != desired:
-        from twicc.core.models import Project
-
-        Project.objects.filter(id=project.id).update(icon_anchor=desired)
+        await run_under_db_write_lock(lambda: sync_to_async(_persist_icon_anchor_sync)(project.id, desired))
         project.icon_anchor = desired
     if not anchor:
         return None, False
-    return anchor, _ensure_repo_icon_discovered(anchor)
+    return anchor, await sync_to_async(_ensure_repo_icon_discovered)(anchor)
 
 
 async def _broadcast_repo_icon_change(git_root: str) -> None:
@@ -560,7 +567,7 @@ async def _broadcast_repo_icon_change(git_root: str) -> None:
 async def ensure_project_icon(project) -> None:
     """Async wrapper for the registration path: ensure anchor + repo icon,
     broadcasting when a repo icon is newly discovered."""
-    anchor, changed = await sync_to_async(ensure_project_icon_sync)(project)
+    anchor, changed = await _ensure_project_icon(project)
     if changed and anchor:
         await _broadcast_repo_icon_change(anchor)
 
@@ -579,7 +586,7 @@ async def discover_all_project_icons() -> int:
     discovered = 0
     for project in projects:
         try:
-            anchor, changed = await sync_to_async(ensure_project_icon_sync)(project)
+            anchor, changed = await _ensure_project_icon(project)
         except Exception:
             logger.exception("Project icon discovery failed for %s", project.id)
             continue

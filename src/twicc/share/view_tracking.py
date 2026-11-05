@@ -36,7 +36,7 @@ def _drain() -> dict[str, list[tuple[str, str, str]]]:
 
 
 def _persist(snapshot: dict[str, list[tuple[str, str, str]]]) -> list[str]:
-    """Blocking DB work — run via ``asyncio.to_thread``. Returns share ids updated."""
+    """Blocking DB work — run under ``run_under_db_write_lock``. Returns share ids updated."""
     from twicc.core.models import Share, ShareAccess
 
     updated: list[str] = []
@@ -148,8 +148,9 @@ async def start_share_view_flush_task(stop_event: asyncio.Event) -> None:
         try:
             from asgiref.sync import sync_to_async
             from twicc.core.models import Share
+            from twicc.providers.db_writer import run_under_db_write_lock
 
-            updated = await asyncio.to_thread(_persist, snapshot)
+            updated = await run_under_db_write_lock(lambda views=snapshot: sync_to_async(_persist)(views))
             for share_id in updated:
                 share = await sync_to_async(
                     lambda sid=share_id: Share.objects.select_related(

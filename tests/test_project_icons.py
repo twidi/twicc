@@ -1,11 +1,24 @@
 """Tests for project-icon discovery, normalization, storage and resolution."""
 
+import asyncio
 import io
 from types import SimpleNamespace
 
 import pytest
 
 from twicc import project_icons as pi
+
+
+@pytest.fixture(autouse=True)
+def _passthrough_db_write_lock(monkeypatch):
+    """The global DB writer is only started at app boot."""
+    async def _passthrough(coro_factory):
+        return await coro_factory()
+    monkeypatch.setattr("twicc.providers.db_writer.run_under_db_write_lock", _passthrough)
+
+
+def _ensure(project):
+    return asyncio.run(pi._ensure_project_icon(project))
 
 
 def _png_bytes(size=(10, 10), color=(255, 0, 0, 255)) -> bytes:
@@ -281,7 +294,7 @@ def test_load_cache_reads_found_icons(tmp_path, icons_dir):
 
 
 # ---------------------------------------------------------------------------
-# ensure_project_icon_sync + serialize_project.icon_url (DB-backed)
+# _ensure_project_icon + serialize_project.icon_url (DB-backed)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db(transaction=True)
@@ -294,7 +307,7 @@ def test_ensure_git_project_discovers_and_serializes(tmp_path, icons_dir):
     (repo / "favicon.png").write_bytes(_png_bytes())
     p = Project.objects.create(id="-i-git", directory=str(repo), git_root=str(repo))
 
-    anchor, changed = pi.ensure_project_icon_sync(p)
+    anchor, changed = _ensure(p)
     assert anchor == str(repo) and changed is True
     assert p.icon_anchor is None  # anchor == own git_root -> not materialized
     assert serialize_project(p)["repo_icon_url"] is not None
@@ -313,8 +326,8 @@ def test_worktree_inherits_main_repo_icon(tmp_path, icons_dir):
         id="-i-wt", directory=str(tmp_path / "wt"), git_root=str(tmp_path / "wt"), worktree_of=main
     )
 
-    pi.ensure_project_icon_sync(main)
-    anchor, _ = pi.ensure_project_icon_sync(wt)
+    _ensure(main)
+    anchor, _ = _ensure(wt)
     assert anchor == str(repo)
     wt.refresh_from_db()
     assert wt.icon_anchor == str(repo)  # materialized: differs from wt.git_root
@@ -331,7 +344,7 @@ def test_umbrella_project_anchors_to_single_git_below(tmp_path, icons_dir):
     (umbrella / "app" / "favicon.png").write_bytes(_png_bytes())
     p = Project.objects.create(id="-i-umb", directory=str(umbrella), git_root=None)
 
-    anchor, changed = pi.ensure_project_icon_sync(p)
+    anchor, changed = _ensure(p)
     assert anchor == str(umbrella / "app") and changed is True
     p.refresh_from_db()
     assert p.icon_anchor == str(umbrella / "app")
@@ -347,7 +360,7 @@ def test_project_override_and_state_transitions(tmp_path, icons_dir):
     repo.mkdir()
     (repo / "favicon.png").write_bytes(_png_bytes())
     p = Project.objects.create(id="-i-ovr", directory=str(repo), git_root=str(repo))
-    pi.ensure_project_icon_sync(p)  # repo icon discovered; p stays "inherit"
+    _ensure(p)  # repo icon discovered; p stays "inherit"
 
     # Per-project override -> exposed as icon_override_url (repo_icon_url stays).
     token = pi.set_project_icon_override_sync("-i-ovr", _png_bytes(color=(0, 255, 0, 255)), ".png")

@@ -110,6 +110,9 @@ def integrated(monkeypatch, transactional_db):
     service._handles.clear()
     streams._reset_for_tests()
     speech_cache.clear()
+    async def passthrough(coro_factory):
+        return await coro_factory()
+    monkeypatch.setattr(service, 'run_under_db_write_lock', passthrough)
     session = Session.objects.create(id='speech-summary', project=Project.objects.create(id='speech-project'))
     source = SummarySource('message:speech', 'a' * 64, 'original ' * 200, 'original ' * 200,
                            session.id, 1, (1,), 1800, True, None, 'claude_code', None)

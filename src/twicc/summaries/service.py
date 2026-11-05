@@ -21,6 +21,7 @@ from django.utils import timezone
 from twicc.core.models import MessageSummary, Session
 from twicc.openrouter_text import OPENROUTER_TEXT_MODEL, OpenRouterTextError
 from twicc.providers.codex.title_suggest import TITLE_MODEL
+from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.providers.text_calls import OPENROUTER_ADAPT_MAX_CHARS, Engine, fallback_engine, resolve_engine, step_limits, stream_text
 from twicc.providers.text_calls import _openrouter_reason
 from twicc.summaries.sources import (
@@ -293,7 +294,7 @@ class _SummaryRun:
                 # ORM work cannot be cancelled once its thread starts. Settle it
                 # before deciding whether completion or cancellation wins.
                 self.saving = True
-                save_task = asyncio.create_task(sync_to_async(_save_result)(self))
+                save_task = asyncio.create_task(run_under_db_write_lock(lambda: sync_to_async(_save_result)(self)))
                 try:
                     saved = await asyncio.shield(save_task)
                 except asyncio.CancelledError:

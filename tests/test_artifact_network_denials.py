@@ -27,6 +27,7 @@ def _passthrough_db_write_lock(monkeypatch):
         "twicc.core.services.artifact_bookmark_mutation.run_under_db_write_lock",
         _passthrough,
     )
+    monkeypatch.setattr("twicc.providers.db_writer.run_under_db_write_lock", _passthrough)
 
 
 def _run(coro):

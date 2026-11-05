@@ -24,6 +24,9 @@ def service(monkeypatch):
     monkeypatch.setattr(service, 'read_synced_settings', lambda: {'summaryModel': 'auto'})
     monkeypatch.setattr(service, 'resolve_engine', lambda *_: (ENGINES[0], None))
     monkeypatch.setattr(service, 'fallback_engine', lambda *_: None)
+    async def passthrough(coro_factory):
+        return await coro_factory()
+    monkeypatch.setattr(service, 'run_under_db_write_lock', passthrough)
     return service
 
 
