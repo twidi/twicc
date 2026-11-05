@@ -509,7 +509,7 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         raise ValueError('A summary source needs its frozen source key, source hash, and policy key')
     if 'result_hash' in reference:
         raise ValueError("'result_hash' requires 'saved_id'")
-    temporary = validate_source(reference['source'])
+    temporary = await sync_to_async(validate_source)(reference['source'])
     if temporary is not None and (temporary.source_key != reference['source_key']
                                   or temporary.source_hash != reference['source_hash']):
         raise SummaryUnavailable('The summary source changed. Refresh it before reading.')

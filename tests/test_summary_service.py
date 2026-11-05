@@ -741,3 +741,30 @@ def test_retain_live_summary_preserves_frozen_policy_after_settings_change(servi
         await reader.aclose()
         assert not service._handles
     asyncio.run(scenario())
+
+
+def test_retain_summary_validation_allows_unrelated_event_loop_callback(service, monkeypatch):
+    import threading
+
+    async def scenario():
+        page, reference = await complete_temporary_reference(service, monkeypatch, 'live')
+        loop = asyncio.get_running_loop()
+        callback_ran = threading.Event()
+        original_validate = service.validate_source
+        def controlled_validate(source):
+            loop.call_soon_threadsafe(callback_ran.set)
+            assert callback_ran.wait(2), 'Source validation blocks the unrelated event-loop callback'
+            return original_validate(source)
+        monkeypatch.setattr(service, 'validate_source', controlled_validate)
+        reader = None
+        try:
+            reader = await service.retain_summary_for_speech(reference)
+            assert callback_ran.is_set()
+            assert reader._run is page._run
+            assert reader.id != page.id
+        finally:
+            if reader is not None:
+                await reader.aclose()
+            await service.release_summary(page.id)
+        assert not service._handles
+    asyncio.run(scenario())
