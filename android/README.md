@@ -127,8 +127,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.6**,
-version code **17**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.9**,
+version code **20**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -267,6 +267,18 @@ normal navigation and the native menu remain available.
 
 Back uses browser history, then returns to the instance manager. Rotation keeps
 the session. Process death restores the URL, not unsaved in-memory work.
+If the renderer crashes or is killed, the app recreates it at the saved URL
+when the app returns to the foreground. Automatic recovery is limited to one
+attempt per minute. Another failure shows **Retry**; a manual reload resets
+that limit. Recovery preserves the browser profile but can lose unsaved text.
+Logs distinguish a renderer crash from a killed renderer.
+
+The server frontend also recovers from missing JavaScript or CSS after a new
+build. Its inline HTML guard works even when the entry module cannot load.
+It reloads the current URL once with a temporary cache-busting parameter and
+keeps login and preferences. Repeated failures or an offline device show
+**Retry** instead of a reload loop. This frontend recovery also works in browsers.
+
 WebView profile deletion can wait until cold start. Gecko context deletion is
 asynchronous; its API exposes no completion callback.
 

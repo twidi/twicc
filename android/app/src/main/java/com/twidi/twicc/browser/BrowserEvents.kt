@@ -13,7 +13,7 @@ interface BrowserEvents {
     fun onPageFinished()
     fun onHistoryChanged(canGoBack: Boolean)
     fun onFailure(message: String)
-    fun onRendererStopped()
+    fun onRendererStopped(crashed: Boolean)
     fun onAppMessage(message: String): String
     fun onDownload(source: DownloadSource)
 }

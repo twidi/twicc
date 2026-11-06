@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += targetAbis }
-        versionCode = 17
-        versionName = "0.5.6"
+        versionCode = 20
+        versionName = "0.5.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "engine"
@@ -76,6 +76,7 @@ dependencies {
 // Package the actual page adapters only in the instrumentation APK, without a copied test implementation.
 val nativeTtsFixtureAssets by tasks.registering(Sync::class) {
     from("../../frontend/src/utils") { include("androidAppClient.js", "nativeTtsClient.js") }
+    from("../../frontend") { include("index.html") }
     into(layout.buildDirectory.dir("generated/nativeTtsFixtureAssets"))
 }
 android.sourceSets.getByName("androidTest").assets.srcDir("build/generated/nativeTtsFixtureAssets")

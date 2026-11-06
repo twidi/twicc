@@ -46,6 +46,8 @@ class BrowserActivity : Activity() {
     private var requests: NativeRequests? = null
     private var canGoBack = false
     private var failed = false
+    private var foreground = false
+    private var rendererRecovery = RendererRecovery()
     private var safeUrl = ""
     private lateinit var appBridge: AndroidAppBridge
     private val menuLease = AppMenuLease()
@@ -68,6 +70,8 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        rendererRecovery = RendererRecovery(savedInstanceState?.takeIf { it.containsKey("rendererRecoveryAt") }
+            ?.getLong("rendererRecoveryAt"))
         store = InstanceStore(this)
         instance = store.find(intent.getStringExtra("instance")) ?: run { finish(); return }
         safeUrl = savedInstanceState?.getString("url")
@@ -164,15 +168,19 @@ class BrowserActivity : Activity() {
         override fun onPageFinished() { progress.visibility = View.GONE }
         override fun onHistoryChanged(canGoBack: Boolean) { this@BrowserActivity.canGoBack = canGoBack }
         override fun onFailure(message: String) { showError(message) }
-        override fun onRendererStopped() {
+        override fun onRendererStopped(crashed: Boolean) {
+            android.util.Log.w("TwiCCBrowser", "Renderer ${if (crashed) "crashed" else "was killed"}; foreground=$foreground")
+            rendererRecovery.stopped()
             disposeBrowser()
-            showError("Android stopped the browser engine. Reload to reconnect to TwiCC.")
+            showError("The page stopped unexpectedly. Retry to reopen TwiCC.")
+            recoverRenderer()
         }
         override fun onAppMessage(message: String): String = appBridge.receive(message)
         override fun onDownload(source: DownloadSource) { BrowserDownloads.save(this@BrowserActivity, source) }
     }
 
     private fun refresh(force: Boolean) {
+        rendererRecovery.reset()
         if (force || browser == null) { openBrowser(force); return }
         failed = false
         errorPanel.visibility = View.GONE
@@ -310,12 +318,28 @@ class BrowserActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("url", safeUrl)
+        rendererRecovery.lastAttemptMs?.let { outState.putLong("rendererRecoveryAt", it) }
         super.onSaveInstanceState(outState)
     }
 
     override fun onPause() {
+        foreground = false
         if (::instance.isInitialized) store.rememberPage(instance, safeUrl)
         super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        foreground = true
+        recoverRenderer()
+    }
+
+    private fun recoverRenderer() {
+        // Start the replacement after the engine callback returns.
+        root.post {
+            if (!isFinishing && !isDestroyed && browser == null &&
+                rendererRecovery.takeAttempt(SystemClock.elapsedRealtime(), foreground)) openBrowser()
+        }
     }
 
     override fun onStart() {

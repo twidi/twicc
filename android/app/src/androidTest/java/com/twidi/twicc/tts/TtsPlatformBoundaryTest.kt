@@ -408,7 +408,7 @@ class TtsPlatformBoundaryTest {
                     override fun onPageFinished() {}
                     override fun onHistoryChanged(canGoBack: Boolean) {}
                     override fun onFailure(message: String) { accepted.completeExceptionally(AssertionError(message)); oldStop.completeExceptionally(AssertionError(message)) }
-                    override fun onRendererStopped() { onFailure("Renderer stopped") }
+                    override fun onRendererStopped(crashed: Boolean) { onFailure("Renderer stopped") }
                     override fun onDownload(source: DownloadSource) {}
                     override fun onAppMessage(message: String): String {
                         val request = JSONObject(message)
@@ -1189,7 +1189,7 @@ class TtsPlatformBoundaryTest {
         override fun onPageFinished() {}
         override fun onHistoryChanged(canGoBack: Boolean) {}
         override fun onFailure(message: String) { pageCookies.completeExceptionally(AssertionError(message)) }
-        override fun onRendererStopped() { pageCookies.completeExceptionally(AssertionError("Renderer stopped")) }
+        override fun onRendererStopped(crashed: Boolean) { pageCookies.completeExceptionally(AssertionError("Renderer stopped")) }
         override fun onAppMessage(message: String): String {
             if (message.startsWith("page-cookie:")) pageCookies.complete(message)
             return "{}"
@@ -1230,27 +1230,6 @@ class TtsPlatformBoundaryTest {
         }
     }
 
-    /** Gecko gets an isolated test profile containing ONLY the fixture CA. Ordinary APK TLS is unchanged. */
-    private fun prepareGeckoTestProfile() {
-        if (!EngineProvider.engine.displayName.startsWith("Gecko")) return
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val profile = File(instrumentation.targetContext.cacheDir, "tts-boundary-gecko-profile").apply { mkdirs() }
-        instrumentation.runOnMainSync {
-            val engine = Class.forName("com.twidi.twicc.engines.gecko.GeckoEngine")
-            val field = engine.getDeclaredField("runtime").apply { isAccessible = true }
-            if (field.get(null) == null) {
-                instrumentation.context.assets.open("tts-ca-profile/cert9.db").use { input ->
-                    File(profile, "cert9.db").outputStream().use { input.copyTo(it) }
-                }
-                val builder = Class.forName("org.mozilla.geckoview.GeckoRuntimeSettings\$Builder").getConstructor().newInstance()
-                builder.javaClass.getMethod("arguments", Array<String>::class.java)
-                    .invoke(builder, arrayOf("--profile", profile.absolutePath))
-                val settings = builder.javaClass.getMethod("build").invoke(builder)
-                val runtime = Class.forName("org.mozilla.geckoview.GeckoRuntime").getMethod("create", Context::class.java, settings.javaClass)
-                    .invoke(null, instrumentation.targetContext, settings)
-                field.set(null, runtime)
-            }
-        }
-    }
+    private fun prepareGeckoTestProfile() = com.twidi.twicc.prepareBrowserTestProfile()
 
 }

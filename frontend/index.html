@@ -2,6 +2,75 @@
 <html class="loading wa-theme-default wa-palette-default wa-brand-cyan">
 <head>
     <meta charset="UTF-8">
+    <!-- This guard must run before every stylesheet and module, including the entry module. -->
+    <script data-twicc-recovery>
+    (() => {
+        const key = 'twicc:asset-recovery';
+        const parameter = '__twicc_reload';
+        const cooldown = 60000;
+        const current = new URL(window.location.href);
+        let attemptedAt = Number(current.searchParams.get(parameter)) || 0;
+        try { attemptedAt = Math.max(attemptedAt, Number(window.sessionStorage.getItem(key)) || 0); } catch {}
+        let failed = false;
+        if (attemptedAt) setTimeout(() => {
+            try {
+                if (Number(window.sessionStorage.getItem(key)) === attemptedAt) window.sessionStorage.removeItem(key);
+            } catch {}
+        }, Math.max(0, cooldown - (Date.now() - attemptedAt)));
+
+        function reload() {
+            const now = Date.now();
+            try { window.sessionStorage.setItem(key, String(now)); } catch {}
+            const target = new URL(window.location.href);
+            target.searchParams.set(parameter, String(now));
+            window.location.replace(target.href);
+        }
+
+        function showError() {
+            const panel = document.createElement('section');
+            panel.setAttribute('role', 'alert');
+            panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:2rem;text-align:center;font:16px system-ui,sans-serif;color-scheme:light dark;background:Canvas;color:CanvasText';
+            const message = document.createElement('p');
+            message.textContent = 'TwiCC could not load its files. Check your connection, then retry.';
+            const button = document.createElement('button');
+            button.textContent = 'Retry';
+            button.style.cssText = 'padding:.75rem 1.5rem;font:inherit;cursor:pointer';
+            button.onclick = reload;
+            panel.append(message, button);
+            document.body.append(panel);
+        }
+
+        function recover() {
+            if (failed) return;
+            failed = true;
+            const elapsed = Date.now() - attemptedAt;
+            if (window.navigator.onLine !== false && (attemptedAt === 0 || elapsed >= cooldown || elapsed < 0)) {
+                reload();
+                return;
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showError, { once: true });
+            else showError();
+        }
+
+        window.addEventListener('error', event => {
+            const element = event.target;
+            if (!element || !((element.tagName === 'SCRIPT' && element.type === 'module') ||
+                (element.tagName === 'LINK' && element.rel === 'stylesheet'))) return;
+            const url = new URL(element.src || element.href, window.location.href);
+            if (url.origin === current.origin && (url.pathname.startsWith('/static/assets/') || url.pathname === '/src/main.js')) recover();
+        }, true);
+        window.addEventListener('vite:preloadError', event => { event.preventDefault(); recover(); });
+        window.addEventListener('twicc:assets-ready', () => {
+            if (failed) return;
+            // The timestamp is one short-lived retry budget, never a history of failures.
+            const url = new URL(window.location.href);
+            if (url.searchParams.has(parameter)) {
+                url.searchParams.delete(parameter);
+                window.history.replaceState(window.history.state, '', url.href);
+            }
+        }, { once: true });
+    })();
+    </script>
     <style>
         html.loading { background-color: white; }
         @media (prefers-color-scheme: dark) { html.loading { background-color: #101113; } }

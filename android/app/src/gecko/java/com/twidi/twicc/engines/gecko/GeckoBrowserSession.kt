@@ -79,8 +79,8 @@ internal class GeckoBrowserSession(
                     fun header(name: String) = response.headers.entries.firstOrNull { it.key.equals(name, true) }?.value
                     events.onDownload(DownloadSource.Stream(response.uri, header("content-type"), header("content-disposition"), response.body))
                 }
-                override fun onCrash(session: GeckoSession) { if (!closed) events.onRendererStopped() }
-                override fun onKill(session: GeckoSession) { if (!closed) events.onRendererStopped() }
+                override fun onCrash(session: GeckoSession) { if (!closed) events.onRendererStopped(crashed = true) }
+                override fun onKill(session: GeckoSession) { if (!closed) events.onRendererStopped(crashed = false) }
             }
             page.permissionDelegate = object : GeckoSession.PermissionDelegate {
                 override fun onContentPermissionRequest(session: GeckoSession,

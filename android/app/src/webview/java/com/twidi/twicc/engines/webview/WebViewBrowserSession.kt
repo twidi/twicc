@@ -151,7 +151,7 @@ internal class WebViewBrowserSession(
                 fail("The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date.")
         }
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            if (!closed) events.onRendererStopped()
+            if (!closed) events.onRendererStopped(crashed = detail.didCrash())
             return true
         }
     }

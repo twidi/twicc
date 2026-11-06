@@ -175,6 +175,9 @@ const notivue = createNotivue({
 })
 app.use(notivue)
 
+// All static JS imports and their CSS dependencies have loaded at this point.
+window.dispatchEvent(new Event('twicc:assets-ready'))
+
 // Let the entry module finish evaluating before startup awaits dynamic imports.
 // Production chunks can import this entry again while restoring drafts.
 // A top-level await would make both operations wait for each other.
