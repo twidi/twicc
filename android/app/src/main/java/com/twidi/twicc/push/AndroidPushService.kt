@@ -56,7 +56,7 @@ class AndroidPushService : PushService() {
         }
         val pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, AndroidPush.channel(payload.kind))
-            .setSmallIcon(R.drawable.ic_push_notification)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("${payload.title} · ${saved.name}")
             .setContentText(payload.body).setStyle(Notification.BigTextStyle().bigText(payload.body))
             .setContentIntent(pending).setAutoCancel(true).build()

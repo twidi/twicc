@@ -45,7 +45,7 @@ class TtsNotification(private val context: Context) {
             .putExtra(EXTRA_EPOCH, epoch).putExtra(EXTRA_INSTANCE, snapshot.instanceId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return Notification.Builder(context, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.tts_notification_title, name))
             .setContentText(context.getString(status))
             .setContentIntent(PendingIntent.getActivity(context, 0, reopen, PendingIntent.FLAG_IMMUTABLE))
