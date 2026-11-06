@@ -170,6 +170,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             return Acceptance(true)
         }
         val policy = controller ?: return rejected("not_attached", "Open a saved instance before starting speech.")
+        // An idle bound service has no speech session to lose. Do not recreate a consumed failure.
+        if (command is TtsCommand.AuthorizationLost && !active) return Acceptance(true)
         val owner = when (command) {
             is TtsCommand.Acknowledge -> command.owner
             is TtsCommand.Manual -> command.owner

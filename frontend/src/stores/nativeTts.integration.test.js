@@ -79,6 +79,40 @@ async function fixture(snapshot = {}) {
     await tts.attachNative(client); tts._openSpeech = () => assert.fail('native cannot open Web speech')
     return { tts, calls, client, publish(s, refresh = false) { observer(s, refresh) } }
 }
+test('a repeated failure received during acknowledgement produces one toast until its pending batch is consumed', async () => {
+    const message = 'The active instance was closed. Start speech again to continue.'
+    const failed = { revision: 2, playback: { status: 'idle' }, listening: null,
+        results: [{ operationId: 'automatic:first:1', automatic: true, readingId: 'first', generation: 1,
+            start: { ok: true }, ended: { ok: false, error: message } }],
+        error: { code: 'unauthorized', message, reading_id: 'first', generation: 1 } }
+    const { tts, client, publish } = await fixture(failed)
+    const timeline = useTimelineSpeechStore(), errors = [], acknowledgements = []
+    let complete
+    client.acknowledge = revision => {
+        acknowledgements.push(revision)
+        if (revision === 2) return new Promise(resolve => { complete = () => {
+            publish({ ...failed, revision: 4, results: [], error: { code: 'unauthorized', message } })
+            resolve({ accepted: true })
+        } })
+        publish({ ...failed, revision: revision + 1, results: [], error: null })
+        return Promise.resolve({ accepted: true })
+    }
+    timeline._showError = text => errors.push(text)
+    timeline.initialize({ dataStore: {}, workspacesStore: {}, eventTarget: new EventTarget() })
+    await new Promise(resolve => setImmediate(resolve))
+    // A second close changes the error's ownership while its first toast is being acknowledged.
+    publish({ ...failed, revision: 3, error: { code: 'unauthorized', message } })
+    complete()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [message])
+    assert.deepEqual(acknowledgements, [2, 4])
+    assert.equal(tts.nativeSnapshot.error, null)
+    // No permanent deduplication history: a later failure after consumption remains visible.
+    publish({ ...failed, revision: 6, results: [], error: { code: 'unauthorized', message } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [message, message])
+    timeline.dispose(); tts.detachNative()
+})
 test('hidden native errors wait for visibility, while successful and cancelled readings stay silent', async () => {
     const failed = { revision: 1, playback: { status: 'idle' }, listening: null,
         results: ['failed', 'also-failed'].map(readingId => ({ operationId: `automatic:${readingId}:1`, automatic: true, readingId, generation: 1,

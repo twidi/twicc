@@ -23,7 +23,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
     const tts = useTextToSpeechStore(), filters = useTimelineFiltersStore(), client = tts.nativeClient()
     const pageDocument = eventTarget?.document
     let activationId = null, unwatchMuted = null, latest = null, consuming = false, disposed = false
-    // Only pending notices live here. Acknowledgement removes them from Android and this page.
+    // Only pending notices live here. The consumed native snapshot removes them from this page.
     const notices = new Map()
     const readingKey = (readingId, generation) => `${readingId}:${generation}`
     function present() {
@@ -41,18 +41,27 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
         const handledByControl = operationId && client.handlesOperation?.(operationId)
         if (error && !handledByControl && !terminal?.ended?.aborted && ![...messages.values()].includes(error.message))
             messages.set(error.reading_id ? readingKey(error.reading_id, error.generation) : JSON.stringify(error), error.message)
-        for (const key of notices.keys()) if (!messages.has(key)) notices.delete(key)
-        const byMessage = new Map()
+        const previous = [...notices.values()], byMessage = new Map()
+        const unownedKey = error && !error.reading_id ? JSON.stringify(error) : null
         const displayed = [...messages].map(([key, message]) => {
-            if (!notices.has(key)) notices.set(key, byMessage.get(message) ?? Promise.resolve(store._showError(message)))
-            byMessage.set(message, notices.get(key))
-            return notices.get(key)
+            if (!notices.has(key)) {
+                // Session and reading outcomes can describe the same pending failure.
+                // Distinct readings still own distinct failures, even when their text matches.
+                const pending = previous.find(notice => notice.message === message && (key === unownedKey || notice.unowned))
+                notices.set(key, { message, unowned: key === unownedKey,
+                    displayed: byMessage.get(message) ?? pending?.displayed ?? Promise.resolve(store._showError(message)) })
+            }
+            const notice = notices.get(key)
+            byMessage.set(message, notice.displayed)
+            return notice.displayed
         })
+        for (const key of notices.keys()) if (!messages.has(key)) notices.delete(key)
         consuming = true
         void Promise.all(displayed).then(async () => {
             if (!disposed && pageDocument?.visibilityState !== 'hidden') {
-                const acceptance = await client.acknowledge?.(snapshot.revision)
-                if (acceptance?.accepted) for (const key of messages.keys()) notices.delete(key)
+                // A newer snapshot can still carry this failure under different reading/session ownership.
+                // Let that snapshot, rather than this acknowledgement, end its presentation lifetime.
+                await client.acknowledge?.(snapshot.revision)
             }
         }).catch(() => {
             // Keep native outcomes pending if presentation fails. A later poll can retry.

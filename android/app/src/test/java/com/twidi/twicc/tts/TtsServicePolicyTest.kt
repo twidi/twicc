@@ -4,6 +4,28 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TtsServicePolicyTest {
+    @Test fun closingAnIdleInstanceDoesNotCreateASpeechFailure() {
+        val h = Harness()
+        h.owner.dispatch(TtsCommand.AuthorizationLost("The active instance was closed. Start speech again to continue."))
+        assertNull(h.owner.snapshot().error)
+        assertTrue(h.owner.snapshot().results.isEmpty())
+        assertFalse(h.stopped)
+    }
+
+    @Test fun repeatedInstanceClosureCannotReplaceOrResurrectItsConsumedFailure() {
+        val h = Harness(); h.manual(); h.connect()
+        val close = TtsCommand.AuthorizationLost("The active instance was closed. Start speech again to continue.")
+        h.owner.dispatch(close)
+        val failed = h.owner.snapshot()
+        assertNotNull(failed.error?.get("reading_id"))
+        h.owner.dispatch(close)
+        assertEquals(failed, h.owner.snapshot())
+        assertTrue(h.owner.dispatch(TtsCommand.Acknowledge(h.document, failed.revision)).accepted)
+        h.owner.dispatch(close)
+        assertNull(h.owner.snapshot().error)
+        assertTrue(h.owner.snapshot().results.isEmpty())
+    }
+
     private class Harness(val cache: TtsSnapshotCache = TtsSnapshotCache()) {
         val events = mutableListOf<String>()
         var blocked: TtsActionError? = null
