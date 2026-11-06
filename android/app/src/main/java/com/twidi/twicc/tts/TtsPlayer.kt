@@ -34,9 +34,9 @@ internal fun speechEndResult(drained: Boolean, started: Boolean, refused: Boolea
     val state = backend?.get("state")
     if (state == "failed") return PlayerSignal.Ended(false, backend["error"] as? String ?: "Speech generation failed")
     if (drained) return if (state == "running") PlayerSignal.Ended(false, "The audio stopped before the end") else PlayerSignal.Ended(true)
+    if (refused) return PlayerSignal.Ended(false, if (started) "Audio playback was interrupted." else "Audio playback could not start.")
     if (backend == null) return PlayerSignal.Ended(false, "Could not reach TwiCC")
     if (state != "complete" && state != "running") return PlayerSignal.Ended(false, "The audio is no longer available")
-    if (refused) return PlayerSignal.Ended(false, "Android refused to play the audio")
     return PlayerSignal.Ended(false, if (started) "The audio stopped before the end" else "Could not reach TwiCC")
 }
 

@@ -60,26 +60,60 @@ class UnavailableTtsOutput : TtsPlaybackOutput {
 }
 
 /** Only safe terminal data survives service destruction. Nothing here can resume a backend session. */
-class TtsSnapshotCache {
+data class ConsumedTtsOutcomes(val operationIds: Set<String>, val error: TtsFrame?)
+
+class TtsSnapshotCache(private val elapsedMs: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private data class Pending<T>(val instanceId: String, val value: T, val revision: Long, val createdAt: Long)
     private var revision = 0L
     private var last: NativeTtsSnapshot? = null
-    private val results = linkedMapOf<String, Pair<String, NativeTtsResult>>()
+    private val results = linkedMapOf<String, Pending<NativeTtsResult>>()
+    private val errors = mutableMapOf<String, Pending<TtsFrame>>()
     private val terminalStates = mutableMapOf<String, Pair<String, TtsFrame?>>()
     fun beginActivation(instanceId: String) { terminalStates.remove(instanceId) }
     fun publish(value: NativeTtsSnapshot, mirrorOnly: Boolean = false): NativeTtsSnapshot {
-        value.results.forEach { results[it.operationId] = value.instanceId to it }
+        val nextRevision = ++revision
+        value.results.forEach {
+            results.putIfAbsent(it.operationId, Pending(value.instanceId, it, nextRevision, elapsedMs()))
+        }
         while (results.size > 64) results.remove(results.keys.first())
         val terminal = terminalStates[value.instanceId].takeIf { mirrorOnly }
-        return value.copy(revision = ++revision,
+        val error = if (terminal != null) terminal.second else value.error
+        if (error == null) errors.remove(value.instanceId)
+        else if (errors[value.instanceId]?.value != error)
+            errors[value.instanceId] = Pending(value.instanceId, error, nextRevision, elapsedMs())
+        return value.copy(revision = nextRevision,
             sessionStatus = terminal?.first ?: value.sessionStatus,
-            error = if (terminal != null) terminal.second else value.error,
-            results = results.values.filter { it.first == value.instanceId }.map { it.second }).also { last = it }
+            error = error,
+            results = pendingResults(value.instanceId)).also { last = it }
     }
+    private fun pendingResults(instanceId: String) = results.values.filter { it.instanceId == instanceId }.map { it.value }
     fun snapshot(instanceId: String): NativeTtsSnapshot = last?.takeIf { it.instanceId == instanceId }
         ?: NativeTtsSnapshot(revision = revision, instanceId = instanceId,
             sessionStatus = terminalStates[instanceId]?.first ?: "idle",
             playback = NativePlayback(), listening = null, pendingCount = 0, error = terminalStates[instanceId]?.second,
-            configurationAvailable = null, results = results.values.filter { it.first == instanceId }.map { it.second })
+            configurationAvailable = null, results = pendingResults(instanceId))
+    fun acknowledge(instanceId: String, throughRevision: Long): ConsumedTtsOutcomes {
+        require(throughRevision in 0..revision)
+        return consume(instanceId) { it.revision <= throughRevision }
+    }
+    // A late return should show the current controls, not a collection of old failures.
+    fun expire(instanceId: String): ConsumedTtsOutcomes = consume(instanceId) { elapsedMs() - it.createdAt >= 10 * 60 * 1000L }
+    private fun consume(instanceId: String, matches: (Pending<*>) -> Boolean): ConsumedTtsOutcomes {
+        val ids = results.filterValues { it.instanceId == instanceId && matches(it) }.keys.toSet()
+        ids.forEach { results.remove(it) }
+        val error = errors[instanceId]?.takeIf(matches)?.value
+        if (error != null) {
+            errors.remove(instanceId)
+            terminalStates[instanceId]?.let { terminalStates[instanceId] = it.first to null }
+        }
+        if (ids.isNotEmpty() || error != null) {
+            revision++
+            last?.takeIf { it.instanceId == instanceId }?.let {
+                last = it.copy(revision = revision, results = pendingResults(instanceId), error = if (error != null) null else it.error)
+            }
+        }
+        return ConsumedTtsOutcomes(ids, error)
+    }
     fun stopped(value: NativeTtsSnapshot): NativeTtsSnapshot {
         val status = if (value.sessionStatus == "error") "error" else "stopped"
         terminalStates[value.instanceId] = status to value.error
@@ -118,7 +152,11 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         return true
     }
     fun detachSource(value: TtsActivationSource) { if (source === value) source = null }
-    fun snapshot(): NativeTtsSnapshot = cache.snapshot(instanceId)
+    private fun forget(consumed: ConsumedTtsOutcomes) = controller?.forgetOutcomes(consumed.operationIds, consumed.error)
+    fun snapshot(): NativeTtsSnapshot {
+        forget(cache.expire(instanceId))
+        return cache.snapshot(instanceId)
+    }
     private fun rejected(code: String, message: String, action: String? = null) = Acceptance(false, error = TtsActionError(code, message, action))
     private fun needsWork(value: NativeTtsSnapshot) = value.playback.readingId != null || value.listening != null
 
@@ -133,6 +171,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         }
         val policy = controller ?: return rejected("not_attached", "Open a saved instance before starting speech.")
         val owner = when (command) {
+            is TtsCommand.Acknowledge -> command.owner
             is TtsCommand.Manual -> command.owner
             is TtsCommand.Listen -> command.owner
             is TtsCommand.SetMuted -> command.owner
@@ -141,6 +180,11 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             else -> null
         }
         if (owner != null && owner != document) return rejected("stale_document", "Reload this page, then try speech again.")
+        if (command is TtsCommand.Acknowledge) {
+            if (command.revision !in 0..snapshot().revision) return rejected("stale_command", "Speech playback changed. Try again.")
+            forget(cache.acknowledge(instanceId, command.revision))
+            return Acceptance(true)
+        }
         if (command is TtsCommand.AttachDocument) {
             if (command.owner.instanceId != instanceId || (document != null && command.owner.generation < document!!.generation))
                 return rejected("stale_document", "Reload this page, then try speech again.")
@@ -226,6 +270,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                 if (resource === effect.resource) resource = null
             }
             TtsEffect.UpdateNotification -> {
+                forget(cache.expire(instanceId))
                 val value = cache.publish(controller!!.snapshot(), mirrorOnly = !active)
                 if (active && controlsAvailable()) {
                     platform.wakeLock(needsWork(value))

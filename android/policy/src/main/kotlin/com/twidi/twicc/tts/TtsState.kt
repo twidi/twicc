@@ -42,6 +42,11 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     fun snapshot() = NativeTtsSnapshot(revision = revision, instanceId = instanceId, sessionStatus = status,
         playback = playback, listening = listening, pendingCount = pendingCount, error = error,
         configurationAvailable = configuration, results = results.toList())
+    /** Delivered or expired page outcomes are removed, never kept as an error history. */
+    fun forgetOutcomes(operationIds: Set<String>, consumedError: TtsFrame?) {
+        results.removeAll { it.operationId in operationIds }
+        if (consumedError != null && error == consumedError) error = null
+    }
     private fun valid(value: DocumentOwner) = value == owner && value.instanceId == instanceId
     private fun nextSeq(): Long { check(seq < 9007199254740991L); return ++seq }
     private fun frame(type: String, fields: TtsFrame = emptyMap()): TtsFrame =
@@ -121,6 +126,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
     fun dispatch(command: TtsCommand): List<TtsEffect> {
         effects = mutableListOf()
         when (command) {
+            // The service cache owns the page revision and handles acknowledgements.
+            is TtsCommand.Acknowledge -> return emptyList()
             is TtsCommand.AttachDocument -> {
                 if (command.owner.instanceId != instanceId || (owner != null && command.owner.generation < owner!!.generation)) return emptyList()
                 owner = command.owner
@@ -315,7 +322,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         (f["generation"] as? Number)?.toLong() == playback.generation
     private fun obsoleteListeningError(f: TtsFrame): Boolean = f["reading_id"] == null &&
         f["code"] in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable") &&
-        listening?.let { it.paused || (f["activation_id"] != null && f["activation_id"] != it.activationId) } == true
+        (listening == null || listening!!.let { it.paused || (f["activation_id"] != null && f["activation_id"] != it.activationId) })
     private fun handleError(f: TtsFrame) {
         if (obsoleteListeningError(f)) return
         val code = f["code"] as? String ?: "failed"

@@ -19,19 +19,51 @@ const CONTEXT_SILENCE_MS = 3 * 60 * 1000
 const wireTime = milliseconds => new Date(milliseconds).toISOString().replace('Z', '000Z')
 
 /** Native mode has no Web feed, summary preparation, or playback coordinator. */
-function createNativeCoordinator(store, { dataStore, workspacesStore }) {
+function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarget }) {
     const tts = useTextToSpeechStore(), filters = useTimelineFiltersStore(), client = tts.nativeClient()
-    let activationId = null, unwatchMuted = null, lastError = null
-    const reportedReadings = new Set()
+    const pageDocument = eventTarget?.document
+    let activationId = null, unwatchMuted = null, latest = null, consuming = false, disposed = false
+    // Only pending notices live here. Acknowledgement removes them from Android and this page.
+    const notices = new Map()
     const readingKey = (readingId, generation) => `${readingId}:${generation}`
-    function reportReading(readingId, generation, message) {
-        const key = readingKey(readingId, generation)
-        if (reportedReadings.has(key)) return
-        reportedReadings.add(key)
-        if (reportedReadings.size > 64) reportedReadings.delete(reportedReadings.values().next().value)
-        store._showError(message)
+    function present() {
+        if (disposed || consuming || pageDocument?.visibilityState === 'hidden') return
+        const snapshot = latest, results = snapshot?.results ?? [], error = snapshot?.error
+        if (!results.length && !error) { notices.clear(); return }
+        const messages = new Map()
+        for (const result of results) {
+            if (result.automatic && result.readingId && result.ended?.ok === false && !result.ended.aborted)
+                messages.set(readingKey(result.readingId, result.generation), result.ended.error)
+        }
+        const terminal = error?.reading_id ? results.find(result => result.readingId === error.reading_id
+            && result.generation === error.generation) : null
+        const operationId = error?.operation_id ?? terminal?.operationId
+        const handledByControl = operationId && client.handlesOperation?.(operationId)
+        if (error && !handledByControl && !terminal?.ended?.aborted && ![...messages.values()].includes(error.message))
+            messages.set(error.reading_id ? readingKey(error.reading_id, error.generation) : JSON.stringify(error), error.message)
+        for (const key of notices.keys()) if (!messages.has(key)) notices.delete(key)
+        const byMessage = new Map()
+        const displayed = [...messages].map(([key, message]) => {
+            if (!notices.has(key)) notices.set(key, byMessage.get(message) ?? Promise.resolve(store._showError(message)))
+            byMessage.set(message, notices.get(key))
+            return notices.get(key)
+        })
+        consuming = true
+        void Promise.all(displayed).then(async () => {
+            if (!disposed && pageDocument?.visibilityState !== 'hidden') {
+                const acceptance = await client.acknowledge?.(snapshot.revision)
+                if (acceptance?.accepted) for (const key of messages.keys()) notices.delete(key)
+            }
+        }).catch(() => {
+            // Keep native outcomes pending if presentation fails. A later poll can retry.
+            notices.clear()
+        }).finally(() => {
+            consuming = false
+            if (latest !== snapshot) present()
+        })
     }
     function mirror(snapshot) {
+        latest = snapshot
         const listening = snapshot?.listening
         if (listening?.activationId !== activationId) {
             unwatchMuted?.(); unwatchMuted = null
@@ -47,22 +79,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
         store.activeLabel = listening?.scope?.label ?? ''
         store.paused = listening?.paused === true
         store.pendingCount = snapshot?.pendingCount ?? 0
-        const results = snapshot?.results ?? []
-        for (const result of results) {
-            if (result.automatic && result.readingId && result.ended?.ok === false && !result.ended.aborted) {
-                reportReading(result.readingId, result.generation, result.ended.error)
-            }
-        }
-        const error = snapshot?.error
-        const key = error ? JSON.stringify(error) : null
-        // A raw backend state can omit ownership metadata. The retained native result keeps it.
-        const terminal = error?.reading_id ? results.find(result => result.readingId === error.reading_id
-            && result.generation === error.generation) : null
-        const operationId = error?.operation_id ?? terminal?.operationId
-        const handledByControl = operationId && client.handlesOperation?.(operationId)
-        if (error?.reading_id && !handledByControl) reportReading(error.reading_id, error.generation, error.message)
-        else if (key && key !== lastError && !handledByControl && !error.reading_id) store._showError(error.message)
-        lastError = key
+        present()
     }
     mirror(tts.nativeSnapshot)
     const unwatch = watch(() => tts.nativeSnapshot, mirror, { flush: 'sync' })
@@ -84,7 +101,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore }) {
                 store._showError(accepted?.error?.message || 'Timeline reading could not start. Try again.')
         },
         disable() { void client.disable() },
-        dispose() { unwatchMuted?.(); unwatch() },
+        dispose() { disposed = true; notices.clear(); unwatchMuted?.(); unwatch() },
     }
 }
 

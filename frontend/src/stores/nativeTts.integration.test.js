@@ -9,13 +9,115 @@ import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { createNativeTtsClient } from '../utils/nativeTtsClient.js'
 beforeEach(() => { setActivePinia(createPinia()); _resetSpeechForTests(); setSpeechPlayerFactory(() => assert.fail('native cannot create HTMLAudio')); setPcmStreamPlayerFactory(() => assert.fail('native cannot create AudioContext')) })
+test('displayed native errors are consumed before reload, including after a successful new reading', async () => {
+    const audioError = 'Audio playback was interrupted.'
+    const stopped = 'Speech stopped. Start playback or turn on timeline reading again.'
+    let current = { version: 1, revision: 1, instanceId: 'instance', sessionStatus: 'error', playback: { status: 'idle' },
+        listening: null, pendingCount: 0, error: { code: 'session_lost', message: stopped },
+        results: [{ operationId: 'automatic:old:1', automatic: true, readingId: 'old', generation: 1,
+            start: { ok: true }, ended: { ok: false, error: audioError } }] }
+    const calls = [], errors = [], options = { dataStore: {}, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() }
+    let finishToast
+    async function loadPage() {
+        setActivePinia(createPinia())
+        const client = createNativeTtsClient({
+            appClient: { async request(command, args) {
+                calls.push(command)
+                if (command === 'getState') return { capabilities: { nativeTts: 1 } }
+                if (command === 'tts.acknowledge') {
+                    assert.equal(args.revision, current.revision)
+                    current = { ...current, revision: current.revision + 1, results: [], error: null }
+                }
+                return { accepted: true, snapshot: current }
+            } },
+            document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
+            fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: true }) }),
+            timers: { setTimeout() { return 1 }, clearTimeout() {} },
+        })
+        const tts = useTextToSpeechStore()
+        await tts.attachNative(client)
+        const timeline = useTimelineSpeechStore()
+        timeline._showError = async message => {
+            errors.push(message)
+            if (finishToast === true) await new Promise(resolve => { finishToast = resolve })
+        }
+        timeline.initialize(options)
+        return () => { timeline.dispose(); tts.detachNative() }
+    }
+    finishToast = true
+    const close = await loadPage()
+    assert.equal(calls.includes('tts.acknowledge'), false, 'native must retain an error until its toast is displayed')
+    finishToast(); finishToast = null
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [audioError, stopped])
+    assert.equal(calls.includes('tts.acknowledge'), true)
+    assert.equal(current.error, null)
+    assert.deepEqual(current.results, [])
+    close()
+    const closeReload = await loadPage()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [audioError, stopped], 'reload cannot show a consumed error')
+    closeReload()
+    current = { ...current, revision: current.revision + 1, sessionStatus: 'stopped',
+        results: [{ operationId: 'new-success', start: { ok: true }, ended: { ok: true } }] }
+    const closeSuccess = await loadPage()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [audioError, stopped])
+    assert.deepEqual(current.results, [], 'successful terminal results are consumed too')
+    assert.equal(calls.includes('tts.manual'), false, 'attaching and consuming errors never starts audio')
+    closeSuccess()
+    current = { ...current, revision: current.revision + 1, error: { code: 'session_lost', message: stopped } }
+    const closeNewError = await loadPage()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, [audioError, stopped, stopped], 'a new failure can use the same message as a consumed failure')
+    closeNewError()
+})
 async function fixture(snapshot = {}) {
     const calls = []; let observer
     const client = { attach: async () => true, state: () => ({ revision: 1, playback: { status: 'idle' }, listening: null, ...snapshot }), subscribe(fn) { observer = fn; return () => {} }, manual(request) { calls.push(['manual', request]); return Promise.resolve({ ok: true, ended: Promise.resolve({ ok: true }) }) }, listen(a) { calls.push(['listen', a]); return Promise.resolve({ accepted: true }) }, setMuted(v) { calls.push(['muted', v]) }, disable() { calls.push(['disable']) }, skip(id, operationId) { calls.push(['skip', id, operationId]) }, stopAll() { calls.push(['stopAll']) }, detach() { calls.push(['detach']) } }
     const tts = useTextToSpeechStore(); tts.applyConfig({ config: { active_id: 'voice', configs: [{ id: 'voice', model: 'model', voice: 'voice', response_format: 'mp3', validated: { model: 'model', voice: 'voice', response_format: 'mp3', speed: null, instructions: '' }, speed: null, instructions: '' }] }, key_present: true })
     await tts.attachNative(client); tts._openSpeech = () => assert.fail('native cannot open Web speech')
-    return { tts, calls, client, publish(s) { observer(s) } }
+    return { tts, calls, client, publish(s, refresh = false) { observer(s, refresh) } }
 }
+test('hidden native errors wait for visibility, while successful and cancelled readings stay silent', async () => {
+    const failed = { revision: 1, playback: { status: 'idle' }, listening: null,
+        results: ['failed', 'also-failed'].map(readingId => ({ operationId: `automatic:${readingId}:1`, automatic: true, readingId, generation: 1,
+            start: { ok: false }, ended: { ok: false, error: 'Generation failed' } })),
+        error: { reading_id: 'failed', generation: 1, message: 'Generation failed' } }
+    const { tts, client, publish } = await fixture(failed)
+    const document = new EventTarget(); document.visibilityState = 'hidden'
+    const eventTarget = new EventTarget(); eventTarget.document = document
+    const errors = [], consumed = []
+    client.acknowledge = async revision => {
+        consumed.push(revision)
+        publish({ ...failed, revision: revision + 1, results: [], error: null })
+    }
+    const timeline = useTimelineSpeechStore()
+    timeline._showError = message => errors.push(message)
+    timeline.initialize({ dataStore: {}, workspacesStore: {}, eventTarget })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, []); assert.deepEqual(consumed, [])
+    document.visibilityState = 'visible'; document.dispatchEvent(new Event('visibilitychange'))
+    assert.deepEqual(errors, [], 'visibility alone cannot present a potentially expired cached failure')
+    publish(failed, true)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, ['Generation failed'], 'matching pending failures produce one useful notice')
+    assert.deepEqual(consumed, [1])
+    publish({ ...failed, revision: 3, error: null, results: [
+        { operationId: 'done', start: { ok: true }, ended: { ok: true } },
+        { operationId: 'skip', automatic: true, readingId: 'skip', generation: 2, start: { ok: true }, ended: { ok: false, aborted: true } },
+    ] })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(consumed, [1, 3])
+    assert.deepEqual(errors, ['Generation failed'])
+    document.visibilityState = 'hidden'
+    publish({ ...failed, revision: 5 })
+    document.visibilityState = 'visible'; document.dispatchEvent(new Event('visibilitychange'))
+    publish({ ...failed, revision: 6, error: null, results: [] }, true)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(errors, ['Generation failed'], 'a fresh state discards an error that expires during sleep')
+    timeline.dispose(); tts.detachNative()
+})
 test('native_summary_survives_page_release_before_socket_ready', async () => {
     const { tts, calls, client } = await fixture()
     let webReferenceCalled = false, socketReady
@@ -124,6 +226,7 @@ test('automatic preparation errors report once while manual operation errors sta
     publish({ revision: 5, playback: { status: 'idle' }, error: { ...error, reading_id: 'manual', automatic: false, operation_id: 'op' } })
     assert.deepEqual(errors, ['Preparation failed'])
     publish({ revision: 6, playback: { status: 'idle' }, error: { ...error, reading_id: 'vanished-control', automatic: false, operation_id: 'old-page' } })
+    await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(errors, ['Preparation failed', 'Preparation failed'])
     timeline.dispose(); tts.detachNative()
 })
@@ -197,14 +300,21 @@ test('real next-poll adapter reports retained automatic failure once and keeps m
         listening: { activationId: 'a', pageId: 'p', includeMuted: false }, error: null, results: [] }
     const scheduled = new Map(); let sequence = 0
     const client = createNativeTtsClient({
-        appClient: { async request(command) {
+        appClient: { async request(command, args) {
+            if (command === 'tts.acknowledge') {
+                assert.equal(args.revision <= current.revision, true)
+                current = { ...current, revision: current.revision + 1, results: [], error: null }
+            }
             return command === 'getState' ? { capabilities: { nativeTts: 1 } } : { accepted: true, snapshot: current }
         } },
         document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
         fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: true }) }),
         timers: { setTimeout(fn, delay) { assert.equal(delay, 1000); scheduled.set(++sequence, fn); return sequence }, clearTimeout(id) { scheduled.delete(id) } },
     })
-    async function poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() }
+    async function poll() {
+        const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn()
+        await new Promise(resolve => setImmediate(resolve))
+    }
     const { tts } = await fixture()
     await tts.attachNative(client)
     const timeline = useTimelineSpeechStore(), errors = []
@@ -216,22 +326,24 @@ test('real next-poll adapter reports retained automatic failure once and keeps m
     await poll()
     assert.equal(tts.nativeSnapshot.playback.text, 'Second')
     assert.deepEqual(errors, ['Automatic preparation failed'], 'the next one-second poll sees the retained failure after global error clears')
-    current = { ...current, revision: 4, error: { code: 'failed', message: 'Automatic preparation failed', reading_id: 'first', generation: 1 } }
+    // The acknowledged failure is gone before the next reading starts.
+    assert.deepEqual(current.results, [])
+    current = { ...current, revision: current.revision + 1 }
     await poll()
     assert.deepEqual(errors, ['Automatic preparation failed'], 'raw global error cannot report the same terminal twice')
     const pending = client.manual({ kind: 'text', text: 'Manual' })
     const manual = { ...automatic, operationId: pending.operationId, automatic: false, readingId: 'manual', generation: 2,
         start: { ok: false, error: 'Manual preparation failed' }, ended: { ok: false, error: 'Manual preparation failed' } }
-    current = { ...current, revision: 5, results: [automatic, manual],
+    current = { ...current, revision: current.revision + 1, results: [manual],
         error: { code: 'failed', message: 'Manual preparation failed', reading_id: 'manual', generation: 2 } }
     await poll()
     assert.deepEqual(await pending, { ok: false, error: 'Manual preparation failed' })
     assert.deepEqual(errors, ['Automatic preparation failed'], 'raw manual ownership is recovered from its terminal result')
     timeline.dispose(); timeline.initialize(options)
-    assert.deepEqual(errors, ['Automatic preparation failed', 'Automatic preparation failed'], 'a new mirror reports the retained automatic failure once')
-    current = { ...current, revision: 6, error: null }
+    assert.deepEqual(errors, ['Automatic preparation failed'], 'a new mirror cannot replay consumed failures')
+    current = { ...current, revision: current.revision + 1, error: null }
     await poll()
-    assert.equal(errors.length, 2)
+    assert.equal(errors.length, 1)
     timeline.dispose(); tts.detachNative()
 })
 

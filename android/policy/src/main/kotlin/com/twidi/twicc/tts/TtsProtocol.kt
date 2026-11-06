@@ -34,6 +34,7 @@ sealed interface PlayerSignal {
 }
 sealed interface TtsCommand {
     data class AttachDocument(val owner: DocumentOwner) : TtsCommand
+    data class Acknowledge(val owner: DocumentOwner, val revision: Long) : TtsCommand
     data class Manual(val owner: DocumentOwner, val operationId: String, val request: TtsFrame) : TtsCommand
     data class Listen(val owner: DocumentOwner, val scope: ListeningScope, val includeMuted: Boolean, val boundary: String, val pageId: String = owner.pageId) : TtsCommand
     data class SetMuted(val owner: DocumentOwner, val activationId: String, val includeMuted: Boolean) : TtsCommand

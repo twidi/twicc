@@ -52,7 +52,7 @@ class AndroidAppBridge(
     companion object {
         const val MENU_MAX_BYTES = 16 * 1024
         const val TTS_MAX_BYTES = 12 * 1024 * 1024
-        val TTS_COMMANDS = setOf("tts.attach", "tts.state", "tts.manual", "tts.listen", "tts.set_muted", "tts.disable", "tts.skip", "tts.stop_all")
+        val TTS_COMMANDS = setOf("tts.attach", "tts.state", "tts.acknowledge", "tts.manual", "tts.listen", "tts.set_muted", "tts.disable", "tts.skip", "tts.stop_all")
         /** Engine ingress and common dispatcher use identical UTF-8 limits and explicit rejection replies. */
         fun frameError(text: String): String? {
             val bytes = text.toByteArray(Charsets.UTF_8).size

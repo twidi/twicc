@@ -127,8 +127,8 @@ python3 -m unittest discover -s android/tests -v
 The script also works from another directory through its absolute path. It runs
 common policy tests, flavor app unit tests, flavor lint, and flavor assembly.
 Each command builds one APK for the selected profile. Native TTS is enabled in
-both engines without an extra argument. Both builds share version **0.5.5**,
-version code **16**, application ID, native preferences, and signing key.
+both engines without an extra argument. Both builds share version **0.5.6**,
+version code **17**, application ID, native preferences, and signing key.
 
 Gradle downloads its distribution and dependencies on the first build.
 The WebView build does not download the Gecko dependency.
@@ -318,6 +318,12 @@ reserves manual work before cookie export or generation waits. Accepted speech
 survives navigation, reload, Activity recreation, and recent-task dismissal.
 The page mirrors state only while visible. It owns no native audio stream.
 A supported native failure reports an error; it does not start a second Web player.
+
+Recent failures wait until the page is visible. Displayed failures and completed
+operation results are removed from native memory. Reload does not replay them.
+Pending outcomes expire after ten minutes; no persistent error history exists.
+Matching pending failures share one toast. Skip and Stop all produce no error toast.
+An audio interruption reports an interruption, rather than an Android refusal.
 
 Supported speech outputs are:
 

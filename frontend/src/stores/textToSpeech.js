@@ -382,7 +382,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this.nativeNegotiating = true
             const previous = nativeClients.get(this)
             previous?.unsubscribe?.()
-            const unsubscribe = client.subscribe(snapshot => this.applyNativeSnapshot(snapshot))
+            const unsubscribe = client.subscribe((snapshot, refresh) => this.applyNativeSnapshot(snapshot, refresh))
             const entry = { client, unsubscribe }
             nativeClients.set(this, entry)
             const supported = await client.attach()
@@ -392,9 +392,10 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             this.nativeNegotiating = false
             return this.nativeMode
         },
-        applyNativeSnapshot(snapshot) {
-            if (!snapshot || (this.nativeSnapshot && snapshot.revision <= this.nativeSnapshot.revision)) return
-            this.nativeSnapshot = snapshot
+        applyNativeSnapshot(snapshot, refresh = false) {
+            if (!snapshot || (this.nativeSnapshot && (snapshot.revision < this.nativeSnapshot.revision
+                || snapshot.revision === this.nativeSnapshot.revision && !refresh))) return
+            this.nativeSnapshot = refresh ? { ...snapshot } : snapshot
             const playback = snapshot.playback ?? { status: 'idle' }
             const entry = nativeClients.get(this), selection = entry?.selection
             const identity = selection && playback.operationId === selection.operationId ? selection.identity : playback.identity

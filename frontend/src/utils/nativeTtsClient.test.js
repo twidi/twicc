@@ -34,9 +34,21 @@ test('manual reserves synchronously, preserves large UTF8 selections, and resolv
 })
 test('hidden page stops polling without stopping native speech; visible page reattaches mirror', async () => {
     const f = fixture(); await f.client.attach()
+    const refreshed = []
+    f.client.subscribe((value, refresh) => refreshed.push([value.revision, refresh]))
     f.document.visibilityState = 'hidden'; f.listeners.get('visibilitychange')(); assert.equal(f.scheduled.size, 0)
     f.document.visibilityState = 'visible'; await f.listeners.get('visibilitychange')(); assert.equal(f.scheduled.size, 1)
+    assert.deepEqual(refreshed, [[1, true]], 'fresh native state reaches the page even when its revision does not change')
     assert.equal(f.calls.some(c => c.command === 'tts.stop_all'), false); f.client.detach()
+})
+test('expired native outcomes release pending controls without reporting a new failure', async () => {
+    const f = fixture(); await f.client.attach()
+    const start = f.client.manual({ kind: 'text', text: 'Hello' })
+    f.set(snapshot(2, { playback: { status: 'playing', operationId: start.operationId, started: true } })); await f.poll()
+    const result = await start
+    f.set(snapshot(3)); await f.poll()
+    assert.deepEqual(await result.ended, { ok: false, aborted: true })
+    f.client.detach()
 })
 test('accepted failure and saved mismatch are terminal without replay', async () => {
     const f = fixture(); await f.client.attach()

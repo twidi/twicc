@@ -8,9 +8,10 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
     let snapshot = null, attached = false, negotiated = null, attaching = null, attachmentEpoch = -1, timer = null, epoch = 0, operation = 0
     const prefix = Math.random().toString(36).slice(2)
     const pending = new Map(), subscribers = new Set(), pageOperations = new Set()
-    function apply(value) {
+    function apply(value, refresh = false) {
         if (!value || value.version !== 1 || !Number.isSafeInteger(value.revision)) return
-        if (snapshot && (value.instanceId !== snapshot.instanceId || value.revision <= snapshot.revision)) return
+        if (snapshot && (value.instanceId !== snapshot.instanceId || value.revision < snapshot.revision
+            || value.revision === snapshot.revision && !refresh)) return
         snapshot = value
         for (const [id, entry] of pending) {
             const terminal = value.results?.find(result => result.operationId === id)
@@ -22,9 +23,11 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             } else if (!entry.started && value.playback?.operationId === id && value.playback.started) {
                 entry.started = true
                 entry.resolve({ ok: true, ended: entry.ended })
+            } else if (entry.accepted && value.playback?.operationId !== id && !['starting', 'reconnecting'].includes(value.sessionStatus)) {
+                entry.resolve(ABORTED); entry.resolveEnded(ABORTED); pending.delete(id)
             }
         }
-        for (const callback of subscribers) callback(value)
+        for (const callback of subscribers) callback(value, refresh)
     }
     function clearPoll() { if (timer !== null) timers.clearTimeout(timer); timer = null }
     function schedule() {
@@ -41,7 +44,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         clearPoll()
         if (!attached || document.visibilityState === 'hidden') return
         const mine = epoch
-        try { const result = await appClient.request('tts.state'); if (attached && mine === epoch) apply(result?.snapshot) } catch { /* Retry on the next visible poll. */ }
+        try { const result = await appClient.request('tts.state'); if (attached && mine === epoch) apply(result?.snapshot, true) } catch { /* Retry on the next visible poll. */ }
         if (mine === epoch) schedule()
     }
     async function command(name, args = {}) {
@@ -98,6 +101,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         state: () => snapshot,
         handlesOperation: operationId => pageOperations.has(operationId),
         subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
+        acknowledge: revision => command('acknowledge', { revision }),
         manual(request) {
             if (!attached) return Promise.resolve({ ok: false, error: 'Speech is unavailable. Reload the page and try again.' })
             abortOperations()
@@ -107,11 +111,12 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             let resolve, resolveEnded
             const result = new Promise(done => { resolve = done }), ended = new Promise(done => { resolveEnded = done })
             const frozen = copy(request)
-            pending.set(operationId, { resolve, ended, resolveEnded, started: false })
+            pending.set(operationId, { resolve, ended, resolveEnded, started: false, accepted: false })
             // Invoke the bridge now, before any deferred Web summary reference or network preparation.
             void command('manual', { operationId, request: frozen }).then(acceptance => {
                 const entry = pending.get(operationId)
-                if (!entry || acceptance?.accepted) return
+                if (!entry) return
+                if (acceptance?.accepted) { entry.accepted = true; return }
                 pending.delete(operationId)
                 entry.resolve({ ok: false, error: acceptance?.error?.message || 'Speech could not start. Reload the page and try again.' })
                 entry.resolveEnded(ABORTED)

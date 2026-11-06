@@ -18,6 +18,14 @@ class NativeTtsBridgeTest {
         commands += command; Acceptance(true, (command as? TtsCommand.Manual)?.operationId)
     }
     private fun NativeTtsBridge.request(command: String, args: JSONObject) = receive(command, args.put("documentToken", "document"))
+    @Test fun acknowledgementCarriesTheDocumentAndObservedRevision() {
+        val bridge = bridge()
+        assertTrue(bridge.request("tts.acknowledge", JSONObject().put("revision", 12)).getBoolean("accepted"))
+        assertEquals(TtsCommand.Acknowledge(owner, 12), commands.single())
+        assertFalse(bridge.request("tts.acknowledge", JSONObject().put("revision", -1)).getBoolean("accepted"))
+        assertFalse(bridge.request("tts.acknowledge", JSONObject().put("revision", 9007199254740992L)).getBoolean("accepted"))
+        assertEquals(1, commands.size)
+    }
     @Test fun pausedTimelineRemainsVisibleInThePageSnapshot() {
         val paused = snapshot.copy(listening = snapshot.listening!!.copy(paused = true))
         val bridge = NativeTtsBridge({ true }, { owner }, { paused }, { "document" }) { Acceptance(true) }
@@ -87,7 +95,7 @@ class NativeTtsBridgeTest {
         assertTrue(bridge.receive("tts.attach", JSONObject().put("documentToken", token)).getBoolean("accepted"))
         current = owner.copy(pageId = "replacement-document", generation = 5)
         token = "second-document"
-        for (command in listOf("tts.attach", "tts.state", "tts.stop_all")) {
+        for (command in listOf("tts.attach", "tts.state", "tts.acknowledge", "tts.stop_all")) {
             val rejected = bridge.receive(command, JSONObject().put("documentToken", "first-document"))
             assertFalse(rejected.getBoolean("accepted"))
             assertFalse(rejected.has("snapshot"))

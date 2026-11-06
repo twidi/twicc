@@ -276,6 +276,33 @@ class TtsServicePolicyTest {
         assertTrue(reattached.events.contains("export"))
     }
 
+    @Test fun consumedOutcomesCannotReturnAfterAnotherPublishOrServiceAttachment() {
+        val h = Harness(); h.manual(); h.connect()
+        val reading = h.owner.snapshot().playback
+        h.owner.feedback(reading.readingId!!, reading.generation, PlayerSignal.Ended(false, "Interrupted"))
+        val failed = h.owner.snapshot()
+        assertEquals("Interrupted", failed.results.single().ended["error"])
+        assertTrue(h.owner.dispatch(TtsCommand.Acknowledge(h.document, failed.revision)).accepted)
+        h.owner.dispatch(TtsCommand.AttachDocument(h.document))
+        assertTrue(h.owner.snapshot().results.isEmpty())
+        h.owner.dispatch(TtsCommand.AuthorizationLost("Connection lost"))
+        val terminal = h.owner.snapshot()
+        assertNotNull(terminal.error)
+        assertTrue(h.owner.dispatch(TtsCommand.Acknowledge(h.document, terminal.revision)).accepted)
+        h.owner.destroy()
+        val returning = Harness(h.cache)
+        assertNull(returning.owner.snapshot().error)
+        assertTrue(returning.owner.snapshot().results.isEmpty())
+        assertFalse(returning.foreground)
+    }
+    @Test fun onlyTheCurrentDocumentCanConsumeOutcomes() {
+        val h = Harness(); h.listen(); h.connect()
+        h.owner.dispatch(TtsCommand.AuthorizationLost("Connection lost"))
+        val failed = h.owner.snapshot()
+        assertFalse(h.owner.dispatch(TtsCommand.Acknowledge(h.document.copy(generation = 0), failed.revision)).accepted)
+        assertFalse(h.owner.dispatch(TtsCommand.Acknowledge(h.document, failed.revision + 1)).accepted)
+        assertNotNull(h.owner.snapshot().error)
+    }
     @Test fun stalePageAndInternalCommandsCannotClaimAcceptance() {
         val h = Harness()
         assertFalse(h.owner.dispatch(TtsCommand.Manual(h.document.copy(generation = 0), "old", emptyMap())).accepted)

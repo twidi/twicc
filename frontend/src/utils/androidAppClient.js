@@ -1,6 +1,6 @@
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
-const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.manual', 'tts.listen', 'tts.set_muted', 'tts.disable', 'tts.skip', 'tts.stop_all'])
+const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.acknowledge', 'tts.manual', 'tts.listen', 'tts.set_muted', 'tts.disable', 'tts.skip', 'tts.stop_all'])
 
 /** The page uses one client for either native transport. No user-agent detection. */
 export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {

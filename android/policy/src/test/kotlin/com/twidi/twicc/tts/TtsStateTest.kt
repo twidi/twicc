@@ -19,6 +19,21 @@ class TtsStateTest {
             "audio_id" to "audio", "content_type" to "audio/mpeg", "identity" to null)))
     private fun listen(c: TtsController) = c.dispatch(TtsCommand.Listen(owner, ListeningScope("worktree", "project"), false, "2026-11-05T12:00:00.000000Z"))
 
+    @Test fun consumedListeningFailureCannotReturnInLaterBackendState() {
+        val c = controller(); listen(c); opened(c)
+        val failure = mapOf("code" to "scope_unavailable", "message" to "Timeline reading stopped.",
+            "activation_id" to c.snapshot().listening!!.activationId)
+        val effects = c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error") + failure))
+        assertNotNull(c.snapshot().error)
+        assertNull(c.snapshot().listening)
+        c.forgetOutcomes(emptySet(), c.snapshot().error)
+        val sequence = effects.filterIsInstance<TtsEffect.Send>().last().frame["seq"]
+        c.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "state",
+            "revision" to 10, "ack_seq" to sequence, "error" to failure)))
+        assertNull(c.snapshot().error)
+        assertNull(c.snapshot().listening)
+    }
+
     @Test fun timelinePauseSkipsEitherReadingAndSurvivesAcknowledgedBackendDisable() {
         for (automatic in listOf(false, true)) {
             val c = controller(); listen(c); opened(c)

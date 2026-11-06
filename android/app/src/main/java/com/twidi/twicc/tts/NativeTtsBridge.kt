@@ -23,6 +23,9 @@ class NativeTtsBridge(
             val control = when (command) {
                 "tts.state" -> null
                 "tts.attach" -> TtsCommand.AttachDocument(document)
+                "tts.acknowledge" -> TtsCommand.Acknowledge(document, args.getLong("revision").also {
+                    require(it in 0..9007199254740991L)
+                })
                 "tts.manual" -> TtsCommand.Manual(document, args.string("operationId", 96), args.getJSONObject("request").frame().also {
                     require(it["kind"] in setOf("text", "summary") && it["text"] is String && it["speech"] is Map<*, *>)
                 })

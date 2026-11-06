@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import java.util.concurrent.Executors
 import java.time.Instant
 import java.time.format.DateTimeFormatterBuilder
@@ -88,11 +89,15 @@ class TtsService : Service() {
     }
     companion object {
         private const val ACTION_ACTIVATE = "com.twidi.twicc.tts.ACTIVATE"
-        private val cache = TtsSnapshotCache()
+        private val cache = TtsSnapshotCache(SystemClock::elapsedRealtime)
         private var current: TtsService? = null
         private var documentGeneration = 0L
         fun nextDocumentGeneration(): Long = ++documentGeneration
-        fun cachedSnapshot(instanceId: String): NativeTtsSnapshot = cache.snapshot(instanceId)
+        fun cachedSnapshot(instanceId: String): NativeTtsSnapshot {
+            current?.owner?.snapshot()?.takeIf { it.instanceId == instanceId }?.let { return it }
+            cache.expire(instanceId)
+            return cache.snapshot(instanceId)
+        }
         fun isCurrentSession(epoch: String?, instanceId: String): Boolean = epoch != null &&
             current?.owner?.sessionEpoch == epoch && current?.owner?.snapshot()?.instanceId == instanceId
         /** Actual switch/removal/logout hooks run on the Activity's main looper. */
