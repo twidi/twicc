@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, computed, nextTick, useId, inject, onMounted, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
-import { base64UrlEncode, encodeFilePathSegments } from '../../utils/download'
+import { base64UrlEncode, buildFileDownloadUrl, encodeFilePathSegments, triggerDownload } from '../../utils/download'
 import { useArtifactBroker } from '../../composables/useArtifactBroker'
 import { useSettingsStore } from '../../stores/settings'
 import { useCommandRegistry } from '../../composables/useCommandRegistry'
@@ -185,6 +185,7 @@ const loading = ref(false)       // true only for the very first load (no file d
 const switching = ref(false)     // true during file switch (editor stays visible)
 const error = ref(null)
 const isBinary = ref(false)
+const tooLarge = ref(false)     // file exceeds the editor size cap (error shown, but downloadable)
 const fileSize = ref(0)
 const imageSrc = ref(null)       // data URI for binary image files
 
@@ -251,6 +252,20 @@ const rawFileUrl = computed(() => {
     }
     return `/api/file-raw/${base64UrlEncode(props.rootRestriction || '')}/${trailing}`
 })
+
+// Download button of the "cannot be displayed" placeholders. Only offered when
+// the component loads the file itself (not in diff mode, where the owner
+// supplies the content and knows the revision).
+const canDownload = computed(() => !props.diffMode && !!props.filePath)
+
+function handleDownload() {
+    triggerDownload(buildFileDownloadUrl({
+        filePath: props.filePath,
+        projectId: props.projectId,
+        apiPrefix: resolvedApiPrefix.value,
+        root: props.rootRestriction,
+    }))
+}
 
 // The HTML preview adds a cache-bust token so the reload button forces a fresh
 // load. Relative-asset resolution drops the query, so siblings are unaffected.
@@ -985,6 +1000,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
     saveError.value = null
     isWritable.value = false
     isBinary.value = false
+    tooLarge.value = false
     imageSrc.value = null
 
     try {
@@ -995,6 +1011,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
 
         if (!res.ok) {
             error.value = data.error || 'Failed to load file'
+            tooLarge.value = !!data.too_large
             currentContent.value = ''
             return
         }
@@ -1010,6 +1027,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
 
         if (data.error) {
             error.value = data.error
+            tooLarge.value = !!data.too_large
             currentContent.value = ''
             return
         }
@@ -1824,10 +1842,18 @@ function goToNextDiff() {
                     <wa-callout variant="danger" size="small">
                         {{ error }}
                     </wa-callout>
+                    <wa-button v-if="tooLarge && canDownload" size="small" @click="handleDownload">
+                        <wa-icon slot="start" name="download"></wa-icon>
+                        Download
+                    </wa-button>
                 </template>
                 <template v-else-if="isBinary">
                     <wa-icon name="file-zipper" style="font-size: 1.5rem; opacity: 0.5;"></wa-icon>
                     <span>Binary file ({{ formatSize(fileSize) }}) cannot be displayed</span>
+                    <wa-button v-if="canDownload" size="small" @click="handleDownload">
+                        <wa-icon slot="start" name="download"></wa-icon>
+                        Download
+                    </wa-button>
                 </template>
             </div>
         </div>

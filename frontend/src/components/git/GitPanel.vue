@@ -738,6 +738,7 @@ const diffLoading = ref(false)
 const diffLoadingVisible = ref(false)  // delayed: only true after 500ms of diffLoading
 let _diffLoadingTimer = null
 const diffError = ref(null)
+const diffTooLarge = ref(false)  // diff error is the size cap: the file stays downloadable
 
 watch(diffLoading, (loading) => {
     if (loading) {
@@ -770,6 +771,7 @@ async function fetchDiff(file) {
     // with its current content while the new diff loads in the background.
     diffLoading.value = true
     diffError.value = null
+    diffTooLarge.value = false
 
     try {
         let url
@@ -784,6 +786,7 @@ async function fetchDiff(file) {
 
         if (!res.ok || data.error) {
             diffError.value = data.error || 'Failed to load diff'
+            diffTooLarge.value = !!data.too_large
             diffData.value = null
             return
         }
@@ -1704,6 +1707,10 @@ onMounted(() => {
                                 <wa-callout variant="danger" size="small">
                                     {{ diffError }}
                                 </wa-callout>
+                                <wa-button v-if="diffTooLarge" size="small" @click="handleDownload('file', { path: selectedFile })">
+                                    <wa-icon slot="start" name="download"></wa-icon>
+                                    Download file
+                                </wa-button>
                             </div>
 
                             <!-- Binary image diff (both sides) Logically inverted for a more logical visual rendering for the user -->
@@ -1726,7 +1733,11 @@ onMounted(() => {
 
                             <!-- Non-image binary file -->
                             <div v-else-if="diffData?.binary" class="panel-placeholder">
-                                Binary file cannot be diffed
+                                <span>Binary file cannot be diffed</span>
+                                <wa-button size="small" @click="handleDownload('file', { path: selectedFile })">
+                                    <wa-icon slot="start" name="download"></wa-icon>
+                                    Download file
+                                </wa-button>
                             </div>
 
                             <!-- Diff viewer (CodeMirror diff editor via FilePane) -->
@@ -1949,6 +1960,8 @@ wa-callout {
 
 .panel-placeholder {
     display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-s);
     align-items: center;
     justify-content: center;
     height: 100%;

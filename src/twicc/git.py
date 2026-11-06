@@ -1112,7 +1112,7 @@ def get_index_file_diff(git_directory: str, file_path: str) -> dict:
         return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
 
     if size > MAX_FILE_SIZE:
-        return {"original": None, "modified": None, "binary": False, "error": "File too large"}
+        return {"original": None, "modified": None, "binary": False, "error": "File too large", "too_large": True}
 
     try:
         with open(abs_path, "r", encoding="utf-8") as f:

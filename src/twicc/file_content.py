@@ -85,6 +85,7 @@ def get_file_content(file_path):
             "error": f"File too large ({size / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)",
             "size": size,
             "binary": False,
+            "too_large": True,
         }
 
     try:
