@@ -105,11 +105,11 @@ def _gate():
 
 
 def test_real_asgi_application_has_the_gate_above_blacknoise():
-    from blacknoise import BlackNoise
+    from twicc.frontend_static import FrontendStaticFiles
     from twicc.asgi import application
 
     assert isinstance(application, PublicOriginGate)
-    assert isinstance(application.full_app, BlackNoise)
+    assert isinstance(application.full_app, FrontendStaticFiles)
     assert isinstance(application.share_only_app, ShareOnlyApp)
     assert application.share_only_app.inner is application.full_app
 

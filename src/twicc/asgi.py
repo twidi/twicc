@@ -13,7 +13,6 @@ from datetime import datetime
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
-from blacknoise import BlackNoise
 from packaging.version import InvalidVersion, Version
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.layers import get_channel_layer
@@ -25,6 +24,7 @@ from django.urls import path
 from django.utils import timezone
 
 from twicc.sync_diagnostics import log_slow
+from twicc.frontend_static import FrontendStaticFiles
 from twicc.agent import AgentInfo, AgentState, serialize_agent_info
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.access import scope_allowed
@@ -2730,12 +2730,12 @@ application = ProtocolTypeRouter(
     }
 )
 
-# Serve static files via BlackNoise at the ASGI level. Only the content-hashed
+# Serve static files via BlackNoise, refreshed after each frontend build.
+# Only the content-hashed
 # Vite output (`/static/assets/`) is cached as immutable: the `public/` files
 # keep their name across builds, so they get a short cache and are
 # cache-busted by `?v=` in `resolvePublicAssetUrl` (frontend/src/utils/publicAsset.js).
-application = BlackNoise(application, immutable_file_test=lambda path: path.startswith("/static/assets/"))
-application.add(settings.FRONTEND_DIST_DIR, "/static")
+application = FrontendStaticFiles(application, settings.FRONTEND_DIST_DIR)
 
 # Common public-origin gate (peer-origin-routing design §9-§11): routes the
 # External, Share, and Peer addresses. /share/ is served ONLY on the configured
