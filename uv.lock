@@ -1765,6 +1765,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-asyncio"
+version = "1.4.1.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/7f/c60a4338420b33453d4f814ac0c930abd399f162b9bdd21af4b9e363037f/pytest_asyncio-1.4.1.post1.tar.gz", hash = "sha256:f582d9ea4a1c082195abe8bd29a1fe106aeb1cd435e3dad2d3bc2749935c36a2", size = 145360, upload-time = "2026-11-01T18:26:03.732Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/de/adbc7578959cfab07e5e7c05cf6d54224a51e7667ea2c07458b6bc571e75/pytest_asyncio-1.4.1.post1-py3-none-any.whl", hash = "sha256:0755e488cc0a2b9bd2eab7292cc6390d4cbb8390f1020745647bae5a708e0165", size = 17140, upload-time = "2026-11-01T18:26:02.168Z" },
+]
+
+[[package]]
 name = "pytest-django"
 version = "4.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2163,6 +2175,7 @@ dev = [
     { name = "django-extensions" },
     { name = "ipython" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "pytest-django" },
 ]
 
@@ -2205,6 +2218,7 @@ dev = [
     { name = "django-extensions", specifier = ">=4.1" },
     { name = "ipython", specifier = ">=9.17.1" },
     { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-django", specifier = ">=4.14.0" },
 ]
 
