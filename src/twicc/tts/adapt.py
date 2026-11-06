@@ -38,7 +38,7 @@ from twicc.providers.text_calls import (  # noqa: F401
 from twicc.providers.claude_code.hermetic import stream_hermetic_claude  # noqa: F401 - compatibility patch points
 from twicc.providers.codex.hermetic import prepare_hermetic_codex, stream_hermetic_codex  # noqa: F401 - compatibility patch points
 from twicc.providers.codex.title_suggest import TITLE_MODEL  # noqa: F401 - compatibility patch points
-from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_LANGUAGE_RULE, SPEECH_NEVER_SAID
+from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_NEVER_SAID, speech_language_reminder, speech_language_rule
 from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation, HermeticStreamError
 from twicc.providers.state import is_provider_running  # noqa: F401 - compatibility patch points
 from twicc.tts.openrouter import SpeechError
@@ -63,7 +63,7 @@ Keep:
 - the language of the text, and its voice: the same person (tu, vous, you…), the same tone; a statement stays a statement, a question stays a question, an instruction stays an instruction;
 - every piece of information of the prose, its labels and names included: adapt, do not summarize, do not add.
 
-""" + SPEECH_LANGUAGE_RULE + """
+""" + speech_language_rule("text") + """
 
 Not information to keep, and never said: """ + SPEECH_NEVER_SAID + """.
 
@@ -104,7 +104,8 @@ A diagram shows the order flow.
 Deploy it with the deploy command. The build results are on ci.example.com.
 </example>
 
-Answer with the rewritten text only, in the language of the text, written in one go: plain text, no preamble, no comment, no correction of yourself, no word about what the text does not contain.
+Answer with the rewritten text only, written in one go: plain text, no preamble, no comment, no correction of yourself, no word about what the text does not contain.
+""" + speech_language_reminder("text") + """
 
 <text>
 {text}

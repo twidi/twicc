@@ -19,11 +19,20 @@ SPEECH_IDENTIFIER_RULES = """\
 
 
 # The output language. Small models drift to English because the prompt is in English, mostly when
-# the text holds English code, file names or quotes. The rule names the drift and the reference.
-SPEECH_LANGUAGE_RULE = (
-    "The language of your answer is the main language of the text: the language of its sentences, "
-    "not of the code, file names, commands, product names or quotes it holds. A text written in French "
-    "gives an answer in French; a text written in English gives an answer in English; the same for any "
-    "other language. This prompt is in English: that never makes English the language of your answer. "
-    "Never translate."
-)
+# the text holds English code, file names or quotes. The rule names the drift and the reference: the
+# text between the markers, which is the only thing that sets the language. The result holds no
+# braces: both prompts are filled with ``str.format``.
+def speech_language_rule(tag: str) -> str:
+    """The rule for a prompt whose text sits between ``<tag>`` and ``</tag>``."""
+    return (
+        f"The language of your answer is the language of the text between <{tag}> and </{tag}>: the language "
+        "of its sentences, not of the code, file names, commands, product names or quotes it holds. "
+        "A text written in French gives an answer in French; a text written in English gives an answer in "
+        "English; the same for any other language. This prompt is written in English, and its language "
+        "never sets the language of your answer. Never translate."
+    )
+
+
+# The last line before the text: the reminder a model reads just before it starts to write.
+def speech_language_reminder(tag: str) -> str:
+    return f"Remember: write your answer in the language of the text between <{tag}> and </{tag}>, not in English."
