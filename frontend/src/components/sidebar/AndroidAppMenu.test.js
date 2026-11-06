@@ -25,7 +25,7 @@ async function load(nativeState = state, forceFixed = false, backendVersion = '1
     const script = compileScript(descriptor, { id: 'menu' }).content
         .replace(/^import .*$/gm, '').replace('export default', 'const component =')
     const component = runInNewContext(`${script}; component`, {
-        ...Vue, BrandLogo: {}, getAndroidAppClient: () => client,
+        ...Vue, markAndroidApp() {}, observeAndroidPush() {}, disposeAndroidPush() {}, BrandLogo: {}, getAndroidAppClient: () => client,
         watchAndroidMenuPlacement: (_, onTarget) => { hooks.target = onTarget; return { refresh() {}, stop() {} } },
         onMounted: fn => { hooks.mount = fn }, onBeforeUnmount: fn => { hooks.unmount = fn },
         window: { addEventListener() {}, removeEventListener() {}, getComputedStyle: button => ({ visibility: button.visibility }) },
@@ -67,6 +67,12 @@ test('native menu renders saved instances, active marker, app details, and actio
     assert.match(output, /data-logo="twicc"/)
     assert.doesNotMatch(output, /GeckoView 159/)
     hooks.unmount()
+})
+
+test('the menu has no manual push setup action', async () => {
+    const supported = await load()
+    assert.doesNotMatch(await supported.html(), /Set up push test|pushProbe/)
+    supported.hooks.unmount()
 })
 
 test('Server home follows the menu placement while both versions stay visible', async () => {

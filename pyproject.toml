@@ -45,6 +45,7 @@ dependencies = [
     "pydantic>=2.12", # required by the vendored openai_codex SDK
     "python-dotenv~=1.2.4",
     "pyyaml>=6.0",
+    "pywebpush==2.5.0",
     "standardwebhooks>=1.1.0",
     "tantivy~=0.26.2",
     "typer~=0.27.3",

@@ -26,6 +26,7 @@ from typing import NamedTuple
 
 from twicc import presence
 from twicc.agent.states import AgentInfo, AgentState
+from twicc.android_push import delivery as android_push
 from twicc.core.services.public_origin import usable_public_origin
 from twicc.providers.helpers import get_provider_helpers
 from twicc.synced_settings import read_synced_settings
@@ -146,9 +147,6 @@ def _detect_and_send(
         for target in settings.get("externalNotificationTargets") or []
         if isinstance(target, dict) and target.get("enabled") and target.get("url") and target.get("tested") is True
     ]
-    if not targets:
-        return
-
     label = get_provider_helpers(info.provider).LABEL or str(info.provider)
     # (title, per-target opt-in key) — each target chooses its events via the
     # ``notifyUserTurn`` / ``notifyPendingRequest`` flags (absent = opted in).
@@ -180,6 +178,13 @@ def _detect_and_send(
             events.append((f"{label} needs your approval", "notifyPendingRequest"))
 
     if not events:
+        return
+
+    android_body = _build_body(session_title, project_name, project_parent_name, None)
+    for title, opt_in_key in events:
+        kind = "user_turn" if opt_in_key == "notifyUserTurn" else "pending_request"
+        android_push.dispatch(kind, title, android_body, path=f"/project/{info.project_id}/session/{info.session_id}")
+    if not targets:
         return
 
     body = _build_body(
@@ -275,11 +280,11 @@ def _send_extra_usage_started(provider, snapshot, settings: dict) -> None:
     # ``notifyExtraUsageStart`` absent = opted in (consistent with the other
     # per-target event flags; the master switch is the real off-ramp).
     eligible = [target for target in targets if target.get("notifyExtraUsageStart", True)]
-    if not eligible:
-        return
-
     label = get_provider_helpers(provider).LABEL or str(provider)
     title = f"{label} — Extra usage started"
+    android_push.dispatch("extra_usage", title, _build_extra_usage_body(snapshot, label, None), action="home")
+    if not eligible:
+        return
     # No session to deep-link to: append the bare public base URL when set,
     # matching the same publicBaseUrl handling as the process-state push.
     base_url = usable_public_origin(settings.get("publicBaseUrl")) or None
@@ -371,7 +376,7 @@ def notify_peer_message(message, routing: PeerRouting | None = None) -> None:
             if routing is not None and routing.session_id and routing.project_id
             else None
         )
-        _send_peer_event(title, body, session_ref=session_ref)
+        _send_peer_event(title, body, session_ref=session_ref, action="peerInbox", detail=str(message.id) if getattr(message, "id", None) is not None else None)
     except Exception:
         logger.exception("Peer-message external notification dispatch failed")
 
@@ -388,6 +393,7 @@ def notify_peer_request(peer) -> None:
         _send_peer_event(
             f"Peer request from {claimed}",
             f"{claimed} wants to pair with your instance.\nAddress: {peer.base_url}",
+            action="peerRequests",
         )
     except Exception:
         logger.exception("Peer-request external notification dispatch failed")
@@ -398,7 +404,7 @@ def _peer_label(peer) -> str:
     return peer.name or peer.remote_display_name or peer.base_url
 
 
-def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | None = None) -> None:
+def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | None = None, action=None, detail=None) -> None:
     """Deliver one peer event, mirroring the process-state push.
 
     Enabled + tested targets that opted into ``notifyPeer`` (absent = opted
@@ -408,6 +414,8 @@ def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | No
     (``session_ref`` = ``(project_id, session_id)``), else the bare app URL —
     when a public URL is configured at all.
     """
+    path = f"/project/{session_ref[0]}/session/{session_ref[1]}" if session_ref else None
+    android_push.dispatch("peer", title, body, path=path, action=action, detail=detail)
     settings = read_synced_settings()
     targets = [
         target

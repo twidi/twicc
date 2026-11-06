@@ -33,6 +33,7 @@ import com.twidi.twicc.platform.BrowserDownloads
 import com.twidi.twicc.platform.DownloadSource
 import com.twidi.twicc.platform.ExternalLinks
 import com.twidi.twicc.platform.NativeRequests
+import com.twidi.twicc.push.AndroidPush
 
 /** Remote web client with a small, origin-scoped app command bridge. */
 class BrowserActivity : Activity() {
@@ -51,6 +52,7 @@ class BrowserActivity : Activity() {
     private var safeUrl = ""
     private lateinit var appBridge: AndroidAppBridge
     private val menuLease = AppMenuLease()
+    private val notificationNavigation = NotificationNavigation()
     private var documentGeneration = 0
     private val expireMenu = Runnable { updateNativeMenu() }
     private var ttsBinder: TtsService.LocalBinder? = null
@@ -74,18 +76,60 @@ class BrowserActivity : Activity() {
             ?.getLong("rendererRecoveryAt"))
         store = InstanceStore(this)
         instance = store.find(intent.getStringExtra("instance")) ?: run { finish(); return }
-        safeUrl = savedInstanceState?.getString("url")
+        store.last()?.takeIf { it.id != instance.id }?.let { TtsService.stopForInstance(it.id) }
+        store.select(instance)
+        val session = notificationSession(intent)
+        safeUrl = session?.let { "${instance.address}${it.path}" }
+            ?: savedInstanceState?.getString("url")
             ?.takeIf { instance.url.allowsNavigation(it) }
             ?: store.page(instance)
             ?: "${instance.address}/"
+        queueNotification(intent)
         buildLayout()
         val ttsBridge = com.twidi.twicc.tts.NativeTtsBridge(
             { browser?.nativeTtsSupported == true },
             ::nativeTtsDocumentOwner, ::nativeTtsSnapshot, { browser?.nativeTtsDocumentToken }, ::dispatchNativeTts)
-        appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction, ttsBridge::receive)
+        appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction, ttsBridge::receive,
+            { command, request -> AndroidPush.receive(this, instance, command, request) }, { id ->
+                notificationNavigation.acknowledge(id)
+                if (notificationNavigation.pending == null) clearNotificationIntent()
+            })
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()
         ttsBound = bindService(Intent(this, TtsService::class.java), ttsConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun notificationSession(request: Intent): SessionLink? =
+        if (request.action == AndroidPush.ACTION_OPEN) SessionLink.parse(request.getStringExtra(AndroidPush.EXTRA_PATH)) else null
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val target = store.find(intent.getStringExtra("instance")) ?: return
+        val session = notificationSession(intent)
+        if (target.id != instance.id) {
+            switchInstance(target, intent.takeIf { it.action == AndroidPush.ACTION_OPEN })
+            return
+        }
+        setIntent(intent)
+        if (browser == null || failed) {
+            session?.let { safeUrl = "${instance.address}${it.path}" }
+            queueNotification(intent)
+            openBrowser()
+            return
+        }
+        queueNotification(intent)
+    }
+
+    private fun queueNotification(request: Intent) {
+        notificationNavigation.open(request.getStringExtra(AndroidPush.EXTRA_NAVIGATION_ID) ?: UUID.randomUUID().toString(),
+            notificationSession(request)?.path, safeUrl,
+            request.getStringExtra(AndroidPush.EXTRA_ACTION), request.getStringExtra(AndroidPush.EXTRA_DETAIL))
+        if (notificationNavigation.pending == null) clearNotificationIntent()
+    }
+
+    private fun clearNotificationIntent() {
+        listOf(AndroidPush.EXTRA_PATH, AndroidPush.EXTRA_ACTION, AndroidPush.EXTRA_DETAIL, AndroidPush.EXTRA_NAVIGATION_ID)
+            .forEach { intent.removeExtra(it) }
     }
 
     private fun buildLayout() {
@@ -238,7 +282,12 @@ class BrowserActivity : Activity() {
         .put("version", BuildConfig.VERSION_NAME)
         .put("engine", EngineProvider.engine.displayName)
         .put("activeInstanceId", instance.id)
+        .apply {
+            notificationNavigation.pending?.let { put("navigation", JSONObject().put("id", it.id).put("path", it.path).put("action", it.action).put("detail", it.detail)) }
+        }
+        .put("push", AndroidPush.state(this, instance))
         .put("capabilities", JSONObject().apply {
+            put("androidPush", 1)
             if (browser?.nativeTtsSupported == true) put("nativeTts", 1)
         })
         .put("instances", JSONArray().apply {
@@ -291,13 +340,19 @@ class BrowserActivity : Activity() {
         return null
     }
 
-    private fun switchInstance(target: Instance) {
+    private fun switchInstance(target: Instance, notification: Intent? = null) {
         if (target.id == instance.id) return
         TtsService.stopForInstance(instance.id)
         store.rememberPage(instance, safeUrl)
         store.select(target)
         disposeBrowser()
-        startActivity(Intent(this, BrowserActivity::class.java).putExtra("instance", target.id))
+        startActivity(Intent(this, BrowserActivity::class.java).putExtra("instance", target.id).apply {
+            if (notification != null) {
+                action = AndroidPush.ACTION_OPEN
+                listOf(AndroidPush.EXTRA_PATH, AndroidPush.EXTRA_ACTION, AndroidPush.EXTRA_DETAIL, AndroidPush.EXTRA_NAVIGATION_ID)
+                    .forEach { key -> notification.getStringExtra(key)?.let { putExtra(key, it) } }
+            }
+        })
         finish()
     }
 

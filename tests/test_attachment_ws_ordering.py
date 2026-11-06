@@ -86,6 +86,7 @@ def ephemeral_admission_bound_ids(admission) -> list[str]:
 
 def _consumer(planner: FakePlanner) -> WSConsumer:
     consumer = WSConsumer()
+    consumer.channel_name = f"test-{id(consumer)}"
     consumer.send_json = AsyncMock()
     consumer._handle_send_message_admitted = planner
     return consumer

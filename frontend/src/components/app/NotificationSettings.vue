@@ -8,6 +8,8 @@
 import { computed, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { generateUUID } from '../../utils/crypto'
+import { isAndroidApp, androidPushState } from '../../utils/androidEnvironment.js'
+import { requestAndroidPushPermission, retryAndroidPush } from '../../utils/androidPush.js'
 import { playNotificationSound, getAvailableSoundOptions, NOTIFICATION_SOUNDS } from '../../utils/notificationSounds'
 
 const store = useSettingsStore()
@@ -174,9 +176,22 @@ function externalTestIcon(target) {
 
 // Browser notification permission state
 const browserNotifPermission = ref(getBrowserNotifPermission())
+const notificationLabel = computed(() => isAndroidApp.value ? 'Android notification' : 'Browser notification')
+const canChooseNotification = computed(() => isAndroidApp.value || browserNotifPermission.value === 'granted')
+const androidStatus = computed(() => {
+    const state = androidPushState.value
+    if (state?.permission === 'denied') return 'Android notifications are blocked. Allow them in Android settings.'
+    if (state?.permission === 'default') return 'Choose an event below. Android asks for notification permission when needed.'
+    if (state?.status === 'unavailable') return 'Android notifications require Google Play Services on this phone.'
+    if (state?.status === 'login') return 'Sign in to this instance to set up Android notifications.'
+    if (state?.status === 'server') return 'Android notifications need an updated, reachable TwiCC server.'
+    if (state?.status === 'error') return 'Could not set up Android notifications. Check the network and try again.'
+    if (['registering', 'retrying'].includes(state?.status)) return 'Setting up Android notifications. Network changes are retried automatically.'
+    return 'Android sends selected notifications when you are not active in a browser. No background speech mode is needed.'
+})
 
 function getBrowserNotifPermission() {
-    if (!('Notification' in window)) return 'unsupported'
+    if (isAndroidApp.value || !('Notification' in window)) return 'unsupported'
     return Notification.permission
 }
 
@@ -243,7 +258,7 @@ function testPeerSound() {
  * Once granted, the switches become usable.
  */
 async function requestPermission() {
-    if (!('Notification' in window)) return
+    if (isAndroidApp.value || !('Notification' in window)) return
     try {
         const permission = await Notification.requestPermission()
         browserNotifPermission.value = permission
@@ -266,8 +281,15 @@ defineExpose({ sync })
     <section class="settings-section">
         <h3 class="settings-section-title">Notifications</h3>
 
+        <div v-if="isAndroidApp" class="notif-permission-row">
+            <p class="setting-group-hint">{{ androidStatus }}</p>
+            <wa-button v-if="androidPushState?.permission === 'denied'" size="small" appearance="outlined"
+                @click="requestAndroidPushPermission">Open Android settings</wa-button>
+            <wa-button v-else-if="['error', 'server'].includes(androidPushState?.status)" size="small" appearance="outlined"
+                @click="retryAndroidPush">Try again</wa-button>
+        </div>
         <!-- Browser notification permission (shown once for both) -->
-        <div v-if="browserNotifPermission === 'unsupported'" class="notif-permission-row">
+        <div v-else-if="browserNotifPermission === 'unsupported'" class="notif-permission-row">
             <span class="setting-group-hint">Browser notifications not supported</span>
         </div>
         <div v-else-if="browserNotifPermission === 'denied'" class="notif-permission-row">
@@ -306,12 +328,12 @@ defineExpose({ sync })
                     size="small"
                 >In-app toast</wa-switch>
             </div>
-            <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
                     :checked="userTurnBrowser"
                     @change="onUserTurnBrowserChange"
                     size="small"
-                >Browser notification</wa-switch>
+                >{{ notificationLabel }}</wa-switch>
             </div>
         </div>
 
@@ -332,12 +354,12 @@ defineExpose({ sync })
             <a v-if="pendingRequestSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPendingRequestSound">
                 <wa-icon name="volume-up"></wa-icon> Test sound
             </a>
-            <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
                     :checked="pendingRequestBrowser"
                     @change="onPendingRequestBrowserChange"
                     size="small"
-                >Browser notification</wa-switch>
+                >{{ notificationLabel }}</wa-switch>
             </div>
         </div>
 
@@ -363,12 +385,12 @@ defineExpose({ sync })
             <a v-if="extraUsageStartSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testExtraUsageStartSound">
                 <wa-icon name="volume-up"></wa-icon> Test sound
             </a>
-            <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
                     :checked="extraUsageStartBrowser"
                     @change="onExtraUsageStartBrowserChange"
                     size="small"
-                >Browser notification</wa-switch>
+                >{{ notificationLabel }}</wa-switch>
             </div>
             <p class="setting-group-hint">
                 Turn "Notify me" off to silence extra-usage alerts everywhere —
@@ -395,12 +417,12 @@ defineExpose({ sync })
             <a v-if="peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
                 <wa-icon name="volume-up"></wa-icon> Test sound
             </a>
-            <div v-if="browserNotifPermission === 'granted'" class="notif-browser-row">
+            <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
                     :checked="peerBrowser"
                     @change="onPeerBrowserChange"
                     size="small"
-                >Browser notification</wa-switch>
+                >{{ notificationLabel }}</wa-switch>
             </div>
             <p class="setting-group-hint">
                 A peer sent you a message, or an instance asks to pair with

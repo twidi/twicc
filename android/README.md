@@ -311,7 +311,49 @@ JavaScript is injected. Rendering and scrolling can differ by engine.
   instance origin. WebView disables the playback gesture requirement.
 - Android builds route supported TwiCC speech through the common native service.
   Ordinary browsers retain the existing Web TTS players.
-- The app does not provide native microphone access, speech recognition, or push notifications.
+- The app does not provide native microphone access or speech recognition.
+
+## Android notifications
+
+Notification settings show **Android notification** switches for finished work,
+questions/approvals, extra usage, and peer messages/pairing requests. Each choice
+belongs to this phone and this instance. No browser-notification permission or
+manual push enrollment is needed. Android asks for its notification permission
+when an enabled event first needs it. Blocked permission does not hide the
+choices; settings provide an **Open Android settings** button.
+
+The backend sends notifications when no ordinary TwiCC browser is active.
+Desktop input counts as activity for five minutes; mobile-browser foreground
+activity counts for thirty seconds. Android app activity does not suppress push.
+Existing browser notifications, in-app toasts, sounds, and Apprise targets keep
+their separate settings. The extra-usage master switch still applies.
+
+Both engine builds share the native receiver. UnifiedPush with its embedded FCM
+distributor uses Google Play Services on the phone. No Firebase project,
+Firebase credentials, custom relay, or Play Store installation is required.
+The backend uses encrypted Web Push with a persistent, automatically generated
+VAPID key under `<data_dir>/android-push/`. It requires the project's Python
+dependencies, including `pywebpush`. The phone must reach the saved HTTPS
+instance address without an interactive tunnel challenge.
+
+Registration and endpoint changes persist in private Android storage. A finite
+Android network job updates the backend without browser JavaScript. It retries
+network failures and persists across reboot. Logout, instance removal, and an
+address change unregister the device; pending server removal retries when the
+network returns. A password change invalidates the device grant. Sign in again
+to renew it. No notification history is stored by this feature.
+
+Notifications work independently of native speech and do not start a foreground
+service. Delivery still depends on network access, Google Play Services, and
+Android/OEM restrictions. Android force-stop blocks delivery until the app opens
+again. Events have a five-minute push TTL; missed events are not replayed.
+Four Android notification channels let users control sound and visibility by
+event family. Each instance keeps at most one visible notification per family.
+
+A tap opens the matching saved instance. A session tap uses Vue Router when that
+instance is already open; it preserves the current document and connection.
+Tapping the current session preserves its tab and workspace. Peer notifications
+open the inbox or pairing manager; extra usage opens Home.
 
 ## Native speech
 

@@ -10,6 +10,8 @@ class AndroidAppBridge(
     private val visibility: (String, Boolean) -> Unit,
     private val action: (AppCommand, String?) -> String?,
     private val nativeTts: ((String, JSONObject) -> JSONObject)? = null,
+    private val androidPush: ((String, JSONObject) -> JSONObject)? = null,
+    private val acknowledgeNavigation: ((String) -> Unit)? = null,
 ) {
     fun receive(text: String): String {
         var id = ""
@@ -29,6 +31,14 @@ class AndroidAppBridge(
             if (id.isEmpty() || id.length > 96 || request.opt("protocol") != 1) return invalid("Unsupported Android protocol or request ID")
             val wire = request.optString("command")
             if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply("Speech is unavailable. Update the Android app and try again.")
+            if (wire in setOf("push.state", "push.preferences", "push.configure", "push.permission", "push.remove")) return androidPush?.let { reply(state = it(wire, request)) }
+                ?: reply("Android notifications are unavailable. Update the Android app and try again.")
+            if (wire == "navigation.acknowledge") {
+                val navigationId = request.opt("navigationId") as? String ?: return invalid("Missing navigation ID")
+                if (navigationId.isEmpty() || navigationId.length > 96) return invalid("Invalid navigation ID")
+                acknowledgeNavigation?.invoke(navigationId)
+                return reply()
+            }
             val command = AppCommand.fromWire(wire) ?: return invalid("Unknown Android command")
             when (command) {
                 AppCommand.GET_STATE -> return reply(state = state().apply {
@@ -39,7 +49,12 @@ class AndroidAppBridge(
                     val visible = request.opt("visible") as? Boolean ?: return invalid("Missing menu visibility")
                     if (owner.isEmpty() || owner.length > 96) return invalid("Invalid menu owner")
                     visibility(owner, visible)
-                    return reply()
+                    // The existing heartbeat also delivers a pending notification tap to the SPA.
+                    val current = state()
+                    return reply(state = JSONObject().apply {
+                        current.optJSONObject("navigation")?.let { put("navigation", it) }
+                        current.optJSONObject("push")?.let { put("push", it) }
+                    })
                 }
                 else -> return reply(action(command, request.opt("instanceId") as? String))
             }

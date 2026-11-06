@@ -1,3 +1,5 @@
+import { isAndroidApp } from './androidEnvironment.js'
+
 // frontend/src/utils/notificationSounds.js
 // Audio notification sounds synthesized via Web Audio API
 // Adapted from claude-code-viewer's notification system
@@ -243,6 +245,7 @@ window.addEventListener('focus', () => {
  * @returns {Notification|null}
  */
 export function sendBrowserNotification(title, body, onClick) {
+    if (isAndroidApp.value) return null
     if (!('Notification' in window) || Notification.permission !== 'granted') {
         return null
     }

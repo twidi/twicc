@@ -158,6 +158,8 @@ export const useAuthStore = defineStore('auth', {
         async logout() {
             const { useTextToSpeechStore } = await import('./textToSpeech.js')
             const { useTimelineSpeechStore } = await import('./timelineSpeech.js')
+            const { stopAndroidPush } = await import('../utils/androidPush.js')
+            await stopAndroidPush().catch(() => {})
             useTimelineSpeechStore().disable()
             await useTextToSpeechStore().stopAll()
             try {

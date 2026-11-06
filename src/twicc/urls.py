@@ -20,10 +20,13 @@ from .tts import views as tts_views
 from .tts import native_views as native_tts_views
 from .summaries import views as summary_views
 from .uploads import views as upload_views
+from .android_push import views as android_push_views
 
 from .mcp.owner_views import management as mcp_management
 
 urlpatterns = [
+    path("api/android-push/", android_push_views.enrollment),
+    path("api/auth/android-push/", android_push_views.native_registration),
     path("api/mcp/", mcp_management),
     # Auth endpoints (always accessible, no auth required)
     path("api/auth/check/", auth_views.auth_check),

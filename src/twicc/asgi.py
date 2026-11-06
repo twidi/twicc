@@ -933,7 +933,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             # loops so quota data refreshes promptly when the user comes back.
             from twicc.presence import touch
             from twicc.usage_task import note_activity
-            touch(content.get("device_class"))
+            touch(content.get("device_class"), content.get("client_kind"), self.channel_name)
             note_activity()
 
         elif msg_type == "send_message":

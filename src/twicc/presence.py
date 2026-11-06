@@ -40,16 +40,35 @@ _GRACE: dict[str, int] = {
 # as the max across all clients of that class — a single client interacting is
 # enough to keep the class present.
 _last_active: dict[str, float] = {}
+_browser_clients: dict[str, tuple[str, float]] = {}
 
 
-def touch(device_class: object) -> None:
+def touch(device_class: object, client_kind: object = 'browser', client_id: str = 'legacy') -> None:
     """Record an activity ping from a client of ``device_class``.
 
     Fed straight from a WS payload field, so unknown / malformed classes are
     silently ignored.
     """
-    if device_class in _GRACE:
-        _last_active[device_class] = time.monotonic()
+    if isinstance(device_class, str) and device_class in _GRACE:
+        now = time.monotonic()
+        _last_active[device_class] = now
+        _prune_browsers(now)
+        if client_kind == 'android':
+            _browser_clients.pop(client_id, None)
+        else:
+            _browser_clients[client_id] = (device_class, now)
+
+
+def _prune_browsers(now: float):
+    for client, (device_class, stamp) in list(_browser_clients.items()):
+        if now - stamp >= _GRACE[device_class]:
+            _browser_clients.pop(client, None)
+
+
+def is_browser_present() -> bool:
+    """An ordinary browser is active; native Android never suppresses its own push."""
+    _prune_browsers(time.monotonic())
+    return bool(_browser_clients)
 
 
 def latest_activity() -> float:

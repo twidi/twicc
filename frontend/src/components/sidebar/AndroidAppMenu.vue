@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import BrandLogo from '../ui/BrandLogo.vue'
 import { getAndroidAppClient } from '../../utils/androidAppClient.js'
 import { watchAndroidMenuPlacement } from '../../utils/androidMenuPlacement.js'
+import { markAndroidApp } from '../../utils/androidEnvironment.js'
+import { observeAndroidPush, disposeAndroidPush } from '../../utils/androidPush.js'
 
 const props = defineProps({
     forceFixed: { type: Boolean, default: false },
@@ -15,6 +17,7 @@ const error = ref('')
 const trigger = ref(null)
 const dropdown = ref(null)
 const confirmDialog = ref(null)
+let navigationId = null
 const owner = `rail-${Math.random().toString(36).slice(2)}`
 const actions = new Set(['manageInstances', 'reload', 'serverHome', 'openInBrowser'])
 let client, heartbeat, observer, placement, disposed = false, intersects = false
@@ -26,7 +29,28 @@ async function readState() {
         !value.instances.every(item => item && ['id', 'name', 'address'].every(key => typeof item[key] === 'string'))) {
         throw new Error('Unsupported Android app state.')
     }
-    if (!disposed) state.value = value
+    if (!disposed) {
+        state.value = value
+        markAndroidApp()
+        observeAndroidPush(value.push)
+        handleNavigation(value)
+    }
+}
+
+async function handleNavigation(value) {
+    const target = value?.navigation
+    if (disposed || !target || target.id === navigationId || document.visibilityState !== 'visible') return
+    navigationId = target.id
+    try {
+        const [{ navigateAndroidNotification }, { router }] = await Promise.all([
+            import('../../utils/androidNotificationNavigation.js'), import('../../router.js'),
+        ])
+        if (!disposed) await navigateAndroidNotification(client, router, target)
+    } catch (failure) {
+        if (!disposed) error.value = failure.message
+    } finally {
+        if (navigationId === target.id) navigationId = null
+    }
 }
 
 function reportVisibility() {
@@ -36,12 +60,18 @@ function reportVisibility() {
     const rect = button?.getBoundingClientRect()
     const visible = !!(button?.isConnected && document.visibilityState === 'visible' && intersects &&
         rect.width > 0 && rect.height > 0 && window.getComputedStyle(button).visibility === 'visible')
-    client.request('menuVisibility', { owner, visible }).catch(() => {})
+    client.request('menuVisibility', { owner, visible }).then(value => { observeAndroidPush(value?.push); handleNavigation(value) }).catch(() => {})
 }
 
 onMounted(async () => {
     client = getAndroidAppClient()
     try { await readState() } catch { return } // Ordinary browsers have no Android controls.
+    if (state.value?.capabilities?.androidPush === 1) {
+        const [{ startAndroidPush }, { useSettingsStore }, { useAuthStore }] = await Promise.all([
+            import('../../utils/androidPush.js'), import('../../stores/settings.js'), import('../../stores/auth.js'),
+        ])
+        if (!disposed) startAndroidPush(client, useSettingsStore(), useAuthStore())
+    }
     await nextTick()
     if (disposed) return
     placement = watchAndroidMenuPlacement(window, element => { target.value = element })
@@ -60,6 +90,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     disposed = true
+    disposeAndroidPush()
     clearInterval(heartbeat)
     observer?.disconnect()
     placement?.stop()
@@ -92,6 +123,7 @@ async function selectAction(event) {
             await send('switchInstance', { instanceId: id })
     } else if (value === 'forceRefresh') {
         confirmDialog.value.open = true
+
     } else if (actions.has(value)) await send(value)
 }
 

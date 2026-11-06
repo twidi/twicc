@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += targetAbis }
-        versionCode = 20
-        versionName = "0.5.9"
+        versionCode = 21
+        versionName = "0.5.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions += "engine"
@@ -66,6 +66,9 @@ dependencies {
     implementation(project(":policy"))
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.media3:media3-exoplayer:1.9.0")
+    // Encrypted Web Push through the embedded FCM distributor.
+    implementation("org.unifiedpush.android:connector:3.3.5")
+    implementation("org.unifiedpush.android:embedded-fcm-distributor:3.1.0")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     androidTestImplementation("androidx.test:runner:1.6.2")

@@ -18,6 +18,7 @@
 // so pings simply resume after a reconnect.
 
 import { readonly, ref } from 'vue'
+import { isAndroidApp } from './androidEnvironment.js'
 
 // Cadence well under both backend grace windows (mobile = 30s, desktop = 5min),
 // so a single dropped ping never prematurely expires presence.
@@ -90,7 +91,8 @@ export function installPresenceHeartbeat(send, onActive) {
     installed = true
 
     deviceClass = detectDeviceClass()
-    const ping = () => send({ type: 'presence', device_class: deviceClass })
+    const ping = () => send({ type: 'presence', device_class: deviceClass, client_kind: isAndroidApp.value ? 'android' : 'browser' })
+    window.addEventListener('twicc:android-ready', ping)
     const active = () => { if (onActive) onActive() }
 
     if (deviceClass === 'mobile') {

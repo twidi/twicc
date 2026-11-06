@@ -3,6 +3,7 @@ package com.twidi.twicc
 import com.twidi.twicc.browser.EngineProvider
 import com.twidi.twicc.tts.TtsService
 import com.twidi.twicc.tts.TtsNotification
+import com.twidi.twicc.push.AndroidPush
 import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
@@ -123,6 +124,7 @@ class MainActivity : Activity() {
                 try {
                     val saved = store.save(previous, name, address)
                     if (previous != null && saved.id != previous.id) {
+                        AndroidPush.remove(this, previous.id)
                         TtsService.stopForInstance(previous.id)
                         store.deferProfileDeletion(previous)
                         deleteUnusedProfiles()
@@ -143,6 +145,7 @@ class MainActivity : Activity() {
         sheet = ui.showRemove(
             instance,
             onConfirm = {
+                AndroidPush.remove(this, instance.id)
                 TtsService.stopForInstance(instance.id)
                 store.remove(instance)
                 store.deferProfileDeletion(instance)
