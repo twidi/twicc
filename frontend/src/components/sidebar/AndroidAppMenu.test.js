@@ -15,7 +15,7 @@ async function load(nativeState = state, forceFixed = false, backendVersion = '1
     const { descriptor } = parse(source)
     const hooks = {}, calls = []
     const document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} }
-    const client = { async request(command, args) {
+    const client = { onStateChanged(fn) { hooks.stateChanged = fn; return () => { hooks.stateChanged = null } }, async request(command, args) {
         calls.push([command, args])
         if (command === 'getState') {
             if (!nativeState) throw new Error('Unavailable')
@@ -53,7 +53,17 @@ test('ordinary browser renders no Android control and starts no heartbeat', asyn
     const { html, calls, hooks } = await load(null)
     assert.doesNotMatch(await html(), /Android app menu|wa-dropdown|wa-dialog/)
     assert.deepEqual(calls.map(([command]) => command), ['getState'])
+    assert.equal(hooks.stateChanged, undefined)
     hooks.unmount()
+})
+test('a native state change reads the pending notification immediately without waiting for the heartbeat', async () => {
+    const { calls, hooks } = await load()
+    calls.length = 0
+    assert.equal(typeof hooks.stateChanged, 'function')
+    hooks.stateChanged()
+    assert.equal(calls[0][0], 'menuVisibility')
+    hooks.unmount()
+    assert.equal(hooks.stateChanged, null)
 })
 test('session reports wait for loaded content and clear immediately on navigation or a loading error', async () => {
     const { props, calls, hooks } = await load()

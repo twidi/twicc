@@ -44,6 +44,8 @@ class PushNotificationNavigationTest {
         val nextRoute = AtomicReference<String?>(null)
         val sessionReady = AtomicBoolean(true)
         val lastSessionReport = AtomicReference<String?>(null)
+        val navigationPolling = AtomicBoolean(true)
+        val observedNavigationPolling = AtomicBoolean(true)
         val server = MockWebServer()
         init {
             val assets = instrumentation.context.assets
@@ -54,6 +56,11 @@ class PushNotificationNavigationTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val path = request.requestUrl!!.encodedPath
                     if (path == "/session-ready") return MockResponse().setBody(sessionReady.get().toString())
+                    if (path == "/navigation-polling") {
+                        val enabled = navigationPolling.get()
+                        observedNavigationPolling.set(enabled)
+                        return MockResponse().setBody(enabled.toString())
+                    }
                     if (path == "/reported") {
                         lastSessionReport.set(request.requestUrl!!.queryParameter("session").orEmpty())
                         return MockResponse().setResponseCode(204)
@@ -70,6 +77,15 @@ class PushNotificationNavigationTest {
                     return MockResponse().setHeader("Content-Type", "text/html").setBody("""<!doctype html><body>Push routing fixture<script type="module">
                         import {createAndroidAppClient} from '/androidAppClient.js';
                         const client = createAndroidAppClient(window, {timeoutMs:5000});
+                        async function navigate(state) {
+                            if (!state?.navigation) return;
+                            history.pushState({}, '', state.navigation.path);
+                            await fetch('/route?path=' + encodeURIComponent(state.navigation.path));
+                            await client.request('navigation.acknowledge', {navigationId:state.navigation.id});
+                        }
+                        client.onStateChanged?.(() => {
+                            client.request('getState').then(navigate);
+                        });
                         const id = crypto.randomUUID();
                         await fetch('/boot?id=' + id);
                         let busy = false;
@@ -87,11 +103,7 @@ class PushNotificationNavigationTest {
                                 const sessionId = ready ? (location.pathname.match(/\/session\/([A-Za-z0-9_-]+)/)?.[1] ?? null) : null;
                                 const state = await client.request('menuVisibility', {owner:'fixture',visible:true,sessionId});
                                 await fetch('/reported?session=' + encodeURIComponent(sessionId ?? ''));
-                                if (state?.navigation) {
-                                    history.pushState({}, '', state.navigation.path);
-                                    await fetch('/route?path=' + encodeURIComponent(state.navigation.path));
-                                    await client.request('navigation.acknowledge', {navigationId:state.navigation.id});
-                                }
+                                if (await (await fetch('/navigation-polling')).text() === 'true') await navigate(state);
                             } catch {} finally { busy = false; }
                         }, 100);
                     </script>""")
@@ -162,8 +174,15 @@ class PushNotificationNavigationTest {
                 Thread.sleep(500)
                 assertEquals("Instance-only tap must keep the loaded document", 1, first.loads.size)
 
-                tap(service, one.id, "/project/p/session/two")
+                // A foreground tap must reach the page without any navigation heartbeat.
+                first.navigationPolling.set(false)
+                waitFor { !first.observedNavigationPolling.get() }
+                val immediate = post(service, one.id, "/project/p/session/two")
+                val started = SystemClock.elapsedRealtime()
+                notification(immediate)!!.notification.contentIntent.send()
                 waitFor { first.routes.contains("/project/p/session/two") }
+                android.util.Log.i("PushNavigationTest", "Foreground tap routed in ${SystemClock.elapsedRealtime() - started} ms")
+                first.navigationPolling.set(true)
                 assertSame(original, resumedBrowser())
                 assertEquals("Session routing must not reload HTML", 1, first.loads.size)
                 waitFor { store.page(one)?.endsWith("/project/p/session/two") == true }

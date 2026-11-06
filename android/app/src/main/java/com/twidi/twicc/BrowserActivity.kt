@@ -128,6 +128,7 @@ class BrowserActivity : Activity() {
             notificationSession(request)?.path, safeUrl,
             request.getStringExtra(AndroidPush.EXTRA_ACTION), request.getStringExtra(AndroidPush.EXTRA_DETAIL))
         if (notificationNavigation.pending == null) clearNotificationIntent()
+        else browser?.notifyAppStateChanged()
     }
 
     private fun clearNotificationIntent() {

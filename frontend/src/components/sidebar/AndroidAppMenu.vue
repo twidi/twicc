@@ -22,7 +22,7 @@ const confirmDialog = ref(null)
 let navigationId = null
 const owner = `rail-${Math.random().toString(36).slice(2)}`
 const actions = new Set(['manageInstances', 'reload', 'serverHome', 'openInBrowser'])
-let client, heartbeat, observer, placement, stopSessionWatch, disposed = false, intersects = false
+let client, heartbeat, observer, placement, stopSessionWatch, stopStateWatch, disposed = false, intersects = false
 
 async function readState() {
     const value = await client.request('getState')
@@ -69,6 +69,8 @@ function reportVisibility() {
 onMounted(async () => {
     client = getAndroidAppClient()
     try { await readState() } catch { return } // Ordinary browsers have no Android controls.
+    if (disposed) return
+    stopStateWatch = client.onStateChanged(reportVisibility)
     if (state.value?.capabilities?.androidPush === 1) {
         const [{ startAndroidPush }, { useSettingsStore }, { useAuthStore }] = await Promise.all([
             import('../../utils/androidPush.js'), import('../../stores/settings.js'), import('../../stores/auth.js'),
@@ -97,6 +99,7 @@ onBeforeUnmount(() => {
     disposeAndroidPush()
     clearInterval(heartbeat)
     stopSessionWatch?.()
+    stopStateWatch?.()
     observer?.disconnect()
     placement?.stop()
     document.removeEventListener('visibilitychange', reportVisibility)

@@ -14,6 +14,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import android.os.Handler
 import android.os.Looper
 import androidx.webkit.WebMessageCompat
+import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.twidi.twicc.AndroidAppPolicy
@@ -35,6 +36,7 @@ internal class WebViewBrowserSession(
     private lateinit var cookies: CookieManager
     private var closed = false
     private var appListenerAdded = false
+    private var appReply: JavaScriptReplyProxy? = null
     private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
     private var ttsProposedToken: String? = null
     override val nativeTtsDocumentToken: String? get() = ttsDocument.token
@@ -83,8 +85,10 @@ internal class WebViewBrowserSession(
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(view, "TwiccAndroid", setOf(instance.address)) { _, message, origin, mainFrame, reply ->
                 if (!closed && message.type == WebMessageCompat.TYPE_STRING &&
-                    AndroidAppPolicy.acceptsFrame(instance.url, origin.toString(), mainFrame))
+                    AndroidAppPolicy.acceptsFrame(instance.url, origin.toString(), mainFrame)) {
+                    appReply = reply
                     message.data?.let { reply.postMessage(com.twidi.twicc.AndroidAppBridge.frameError(it) ?: events.onAppMessage(it)) }
+                }
             }
             appListenerAdded = true
         }
@@ -97,6 +101,7 @@ internal class WebViewBrowserSession(
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             if (closed) return
+            appReply = null
             if (url != null && !instance.url.allowsNavigation(url)) {
                 view.stopLoading()
                 val decision = events.onNavigationRequest(NavigationRequest(url))
@@ -268,6 +273,10 @@ internal class WebViewBrowserSession(
         }
     }
     override fun goBack() { if (!closed) view.goBack() }
+    override fun notifyAppStateChanged() {
+        if (!closed && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+            appReply?.postMessage("""{"protocol":1,"event":"stateChanged"}""")
+    }
     override fun setVisible(visible: Boolean) {
         if (!closed) {
             if (visible) view.onResume() else { cookies.flush(); view.onPause() }
@@ -279,6 +288,7 @@ internal class WebViewBrowserSession(
     override fun close() {
         if (closed) return
         closed = true
+        appReply = null
         pending.toList().forEach { it.cancel() }
         pending.clear()
         popups.toList().forEach { destroyPopup(it) }

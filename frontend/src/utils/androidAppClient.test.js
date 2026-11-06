@@ -19,6 +19,28 @@ function fixture(webview = false) {
     return { window, client, sent, reply }
 }
 for (const webview of [false, true]) {
+    test(`native state changes arrive without a request or heartbeat (${webview ? 'WebView' : 'Gecko'})`, () => {
+        const f = fixture(webview)
+        let changes = 0
+        const stop = f.client.onStateChanged(() => changes++)
+        f.reply({ protocol: 2, event: 'stateChanged' })
+        f.reply({ protocol: 1, event: 'other' })
+        if (!webview) {
+            f.reply({ protocol: 1, event: 'stateChanged' }, { origin: 'https://other.example' })
+            f.reply({ protocol: 1, event: 'stateChanged' }, { source: {} })
+        }
+        assert.equal(changes, 0)
+        f.reply({ protocol: 1, event: 'stateChanged' })
+        assert.equal(changes, 1)
+        assert.equal(f.sent.length, 0)
+        stop()
+        f.reply({ protocol: 1, event: 'stateChanged' })
+        assert.equal(changes, 1)
+        f.client.onStateChanged(() => changes++)
+        f.client.close()
+        if (!webview) f.reply({ protocol: 1, event: 'stateChanged' })
+        assert.equal(changes, 1)
+    })
     test(`client correlates replies and propagates native errors (${webview ? 'WebView' : 'Gecko'})`, async () => {
         const f = fixture(webview)
         const first = f.client.request('getState'), second = f.client.request('switchInstance', { instanceId: 'other' })

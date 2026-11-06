@@ -22,6 +22,8 @@ interface BrowserSession {
     fun load(url: String, bypassCache: Boolean = false)
     fun goBack()
     fun setVisible(visible: Boolean)
+    /** Wake the current page to read pending app state, without reloading its document. */
+    fun notifyAppStateChanged()
     /** Export a detached credential snapshot. Accepted exports survive close; credentials never reach page JS. */
     fun exportTtsCookies(urls: List<String>, callback: (Result<List<TtsCookie>>) -> Unit)
     /** Close cancels view callbacks and releases the view, without clearing persistent storage. */

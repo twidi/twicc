@@ -5,10 +5,16 @@ const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.acknowledge', 'tts
 /** The page uses one client for either native transport. No user-agent detection. */
 export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     const pending = new Map()
+    const stateListeners = new Set()
     const prefix = Math.random().toString(36).slice(2)
     let sequence = 0, closed = false, documentToken = null
     const proxy = target.TwiccAndroid
     function receive(response) {
+        if (closed) return
+        if (response?.protocol === 1 && response.event === 'stateChanged') {
+            for (const listener of stateListeners) listener()
+            return
+        }
         if (!response || response.protocol !== 1 || typeof response.id !== 'string') return
         const entry = pending.get(response.id)
         if (!entry || typeof response.ok !== 'boolean') return
@@ -27,6 +33,10 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
     target.addEventListener('message', fromWindow)
     if (proxy) proxy.onmessage = fromProxy
     return {
+        onStateChanged(listener) {
+            if (!closed) stateListeners.add(listener)
+            return () => stateListeners.delete(listener)
+        },
         async request(command, args = {}) {
             if (closed) return Promise.reject(new Error('The connection to the Android app closed. Reload this page and try again.'))
             if (proxy && TTS_COMMANDS.has(command)) {
@@ -69,6 +79,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         },
         close() {
             closed = true
+            stateListeners.clear()
             target.removeEventListener('message', fromWindow)
             if (proxy?.onmessage === fromProxy) proxy.onmessage = null
             for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('The connection to the Android app closed. Reload this page and try again.')) }

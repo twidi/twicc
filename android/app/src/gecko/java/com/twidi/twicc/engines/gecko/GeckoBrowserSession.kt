@@ -31,6 +31,7 @@ internal class GeckoBrowserSession(
     private var bridgeReady = false
     private var documentGeneration = 0L
     private var documentId: String? = null
+    private var appPort: WebExtension.Port? = null
     private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
     override val nativeTtsDocumentToken: String? get() = ttsDocument.token
     private var queuedLoad: Pair<String, Boolean>? = null
@@ -67,6 +68,8 @@ internal class GeckoBrowserSession(
                         ttsDocument.begin()
                         documentId?.let { TtsExports.retire(it) }
                         documentId = null
+                        appPort?.disconnect()
+                        appPort = null
                         events.onPageStarted(url)
                     }
                 }
@@ -98,6 +101,22 @@ internal class GeckoBrowserSession(
                 if (!closed && extension != null) {
                     TtsExports.attach(extension)
                     val delegate = object : WebExtension.MessageDelegate {
+                        override fun onConnect(port: WebExtension.Port) {
+                            val sender = port.sender
+                            if (closed || port.name != "twicc_android" || sender.session !== page ||
+                                sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT ||
+                                !AndroidAppPolicy.acceptsFrame(instance.url, sender.url, sender.isTopLevel)) {
+                                port.disconnect()
+                                return
+                            }
+                            appPort?.disconnect()
+                            appPort = port
+                            port.setDelegate(object : WebExtension.PortDelegate {
+                                override fun onDisconnect(source: WebExtension.Port) {
+                                    if (appPort === source) appPort = null
+                                }
+                            })
+                        }
                         override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
                             if (closed || sender.session !== page ||
                                 sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT ||
@@ -145,10 +164,15 @@ internal class GeckoBrowserSession(
         TtsExports.export(id, urls, callback)
     }
     override fun goBack() { if (!closed) page.goBack() }
+    override fun notifyAppStateChanged() {
+        if (!closed) appPort?.postMessage(JSONObject().put("protocol", 1).put("event", "stateChanged"))
+    }
     override fun setVisible(visible: Boolean) { if (!closed) page.setActive(visible) }
     override fun close() {
         if (closed) return
         closed = true
+        appPort?.disconnect()
+        appPort = null
         queuedLoad = null
         documentId?.let { TtsExports.retire(it) }
         documentId = null
