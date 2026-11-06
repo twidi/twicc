@@ -324,7 +324,8 @@ choices; settings provide an **Open Android settings** button.
 
 The backend sends notifications when no ordinary TwiCC browser is active.
 Desktop input counts as activity for five minutes; mobile-browser foreground
-activity counts for thirty seconds. Android app activity does not suppress push.
+activity counts for thirty seconds. Android app activity does not suppress server
+delivery. On the phone, a loaded foreground session suppresses only its own notifications.
 Existing browser notifications, in-app toasts, sounds, and Apprise targets keep
 their separate settings. The extra-usage master switch still applies.
 
@@ -348,7 +349,16 @@ service. Delivery still depends on network access, Google Play Services, and
 Android/OEM restrictions. Android force-stop blocks delivery until the app opens
 again. Events have a five-minute push TTL; missed events are not replayed.
 Four Android notification channels let users control sound and visibility by
-event family. Each instance keeps at most one visible notification per family.
+event family. Each session in each instance keeps at most one visible notification
+per family. Notifications for different sessions coexist. Events without a session
+keep one notification per family and instance.
+
+Opening or returning to a session clears its notifications in that instance.
+Changing sessions inside the app does the same, including session tool tabs.
+New notifications for the displayed session stay hidden while the app is in the
+foreground. Other sessions and instances still notify. Backgrounding or locking
+the phone permits notifications for every session. Login, loading, error screens,
+and the instance manager do not suppress a session. Speech controls stay separate.
 
 A tap opens the matching saved instance. A session tap uses Vue Router when that
 instance is already open; it preserves the current document and connection.

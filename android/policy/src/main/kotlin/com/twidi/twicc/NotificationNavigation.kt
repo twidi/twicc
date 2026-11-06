@@ -13,6 +13,15 @@ data class SessionLink private constructor(val path: String, val projectId: Stri
         private const val BASE = "/projects?/([A-Za-z0-9_-]{1,255})/session/([A-Za-z0-9_-]{1,255})"
         private val targetPattern = Regex("$BASE/?")
         private val currentPattern = Regex("$BASE(?:/.*)?")
+        /** Native location callbacks include absolute URLs, tool tabs, queries and fragments. */
+        fun fromLocation(url: String): SessionLink? = runCatching {
+            val uri = URI(url)
+            if (!uri.scheme.equals("https", ignoreCase = true) || uri.host == null || uri.rawUserInfo != null) return null
+            val path = uri.rawPath.orEmpty()
+            if (path.split('/').any { it == "." || it == ".." }) return null
+            val match = currentPattern.matchEntire(path) ?: return null
+            parse("/project/${match.groupValues[1]}/session/${match.groupValues[2]}")
+        }.getOrNull()
         fun parse(value: String?): SessionLink? {
             val match = value?.let(targetPattern::matchEntire) ?: return null
             return SessionLink(value.removeSuffix("/"), match.groupValues[1], match.groupValues[2])

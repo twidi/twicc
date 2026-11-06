@@ -32,7 +32,7 @@ async function load(nativeState = state, forceFixed = false, backendVersion = '1
         document,
         setInterval: fn => { hooks.heartbeat = fn; return 1 }, clearInterval() {}, IntersectionObserver: undefined,
     })
-    const props = Vue.reactive({ forceFixed, backendVersion })
+    const props = Vue.reactive({ forceFixed, backendVersion, sessionId: null, sessionReady: false })
     const ctx = component.setup(props, { expose() {} })
     await hooks.mount()
     const compiled = compileTemplate({ source: descriptor.template.content, filename: 'AndroidAppMenu.vue', id: 'menu',
@@ -53,6 +53,26 @@ test('ordinary browser renders no Android control and starts no heartbeat', asyn
     const { html, calls, hooks } = await load(null)
     assert.doesNotMatch(await html(), /Android app menu|wa-dropdown|wa-dialog/)
     assert.deepEqual(calls.map(([command]) => command), ['getState'])
+    hooks.unmount()
+})
+test('session reports wait for loaded content and clear immediately on navigation or a loading error', async () => {
+    const { props, calls, hooks } = await load()
+    props.sessionId = 'a'
+    await Vue.nextTick()
+    hooks.heartbeat()
+    assert.equal(calls.at(-1)[1].sessionId, null)
+    props.sessionReady = true
+    await Vue.nextTick()
+    assert.equal(calls.at(-1)[1].sessionId, 'a')
+    props.sessionId = 'b'; props.sessionReady = false
+    await Vue.nextTick()
+    assert.equal(calls.at(-1)[1].sessionId, null)
+    props.sessionReady = true
+    await Vue.nextTick()
+    assert.equal(calls.at(-1)[1].sessionId, 'b')
+    props.sessionReady = false
+    await Vue.nextTick()
+    assert.equal(calls.at(-1)[1].sessionId, null)
     hooks.unmount()
 })
 test('native menu renders saved instances, active marker, app details, and actions', async () => {

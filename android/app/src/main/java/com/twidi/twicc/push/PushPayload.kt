@@ -9,6 +9,7 @@ import java.util.UUID
 /** Only current, bounded notifications and explicit in-app destinations cross the push boundary. */
 data class PushPayload(val id: String, val kind: String, val title: String, val body: String,
     val path: String?, val action: String?, val detail: String?) {
+    val sessionId: String? get() = SessionLink.parse(path)?.sessionId
     companion object {
         val kinds = setOf("user_turn", "pending_request", "extra_usage", "peer")
         val actions = setOf("home", "peerInbox", "peerRequests")

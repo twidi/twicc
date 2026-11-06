@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BrandLogo from '../ui/BrandLogo.vue'
 import { getAndroidAppClient } from '../../utils/androidAppClient.js'
 import { watchAndroidMenuPlacement } from '../../utils/androidMenuPlacement.js'
@@ -9,6 +9,8 @@ import { observeAndroidPush, disposeAndroidPush } from '../../utils/androidPush.
 const props = defineProps({
     forceFixed: { type: Boolean, default: false },
     backendVersion: { type: String, default: '' },
+    sessionId: { type: String, default: null },
+    sessionReady: { type: Boolean, default: false },
 })
 const target = ref(null)
 const railTarget = computed(() => props.forceFixed ? null : target.value)
@@ -20,7 +22,7 @@ const confirmDialog = ref(null)
 let navigationId = null
 const owner = `rail-${Math.random().toString(36).slice(2)}`
 const actions = new Set(['manageInstances', 'reload', 'serverHome', 'openInBrowser'])
-let client, heartbeat, observer, placement, disposed = false, intersects = false
+let client, heartbeat, observer, placement, stopSessionWatch, disposed = false, intersects = false
 
 async function readState() {
     const value = await client.request('getState')
@@ -60,7 +62,8 @@ function reportVisibility() {
     const rect = button?.getBoundingClientRect()
     const visible = !!(button?.isConnected && document.visibilityState === 'visible' && intersects &&
         rect.width > 0 && rect.height > 0 && window.getComputedStyle(button).visibility === 'visible')
-    client.request('menuVisibility', { owner, visible }).then(value => { observeAndroidPush(value?.push); handleNavigation(value) }).catch(() => {})
+    client.request('menuVisibility', { owner, visible, sessionId: props.sessionReady ? props.sessionId : null })
+        .then(value => { observeAndroidPush(value?.push); handleNavigation(value) }).catch(() => {})
 }
 
 onMounted(async () => {
@@ -74,6 +77,7 @@ onMounted(async () => {
     }
     await nextTick()
     if (disposed) return
+    stopSessionWatch = watch(() => [props.sessionId, props.sessionReady], reportVisibility, { flush: 'post' })
     placement = watchAndroidMenuPlacement(window, element => { target.value = element })
     if (typeof IntersectionObserver !== 'undefined') {
         observer = new IntersectionObserver(entries => {
@@ -92,11 +96,12 @@ onBeforeUnmount(() => {
     disposed = true
     disposeAndroidPush()
     clearInterval(heartbeat)
+    stopSessionWatch?.()
     observer?.disconnect()
     placement?.stop()
     document.removeEventListener('visibilitychange', reportVisibility)
     window.removeEventListener('resize', reportVisibility)
-    if (state.value) client.request('menuVisibility', { owner, visible: false }).catch(() => {})
+    if (state.value) client.request('menuVisibility', { owner, visible: false, sessionId: null }).catch(() => {})
 })
 
 async function send(command, args) {

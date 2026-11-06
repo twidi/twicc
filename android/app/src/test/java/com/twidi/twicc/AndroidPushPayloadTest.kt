@@ -13,6 +13,8 @@ class AndroidPushPayloadTest {
 
     @Test fun handlesSessionAndPeerDestinationsAndRejectsExternalUrls() {
         assertEquals("/project/p/session/s", parse(payload().put("path", "/project/p/session/s"))?.path)
+        assertEquals("s", parse(payload().put("path", "/projects/p/session/s"))?.sessionId)
+        assertNull(parse(payload())?.sessionId)
         assertNull(parse(payload().put("path", "https://evil.example")))
         assertEquals("peerInbox", parse(payload().put("action", "peerInbox").put("detail", "42"))?.action)
         assertNull(parse(payload().put("action", "unknown")))

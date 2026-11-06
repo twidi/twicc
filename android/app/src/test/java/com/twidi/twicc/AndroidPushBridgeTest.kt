@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AndroidPushBridgeTest {
+    @Test fun menuHeartbeatReportsOnlyValidatedDisplayedSessionsIncludingAnExplicitEmptyScreen() {
+        val sessions = mutableListOf<String?>()
+        val bridge = AndroidAppBridge({ JSONObject() }, { _, _ -> }, { _, _ -> null },
+            sessionVisibility = { sessions += it })
+        fun report(value: Any): JSONObject = JSONObject(bridge.receive(JSONObject().put("protocol", 1).put("id", "heartbeat")
+            .put("command", "menuVisibility").put("owner", "menu").put("visible", true).put("sessionId", value).toString()))
+        assertTrue(report("session-a").getBoolean("ok"))
+        assertTrue(report(JSONObject.NULL).getBoolean("ok"))
+        assertFalse(report(42).getBoolean("ok"))
+        assertFalse(report("bad/session").getBoolean("ok"))
+        assertEquals(listOf("session-a", null), sessions)
+    }
     @Test fun existingMenuHeartbeatDeliversThePendingSessionWithoutAnExtraPollingLoop() {
         val bridge = AndroidAppBridge({ JSONObject().put("navigation", JSONObject().put("id", "tap").put("path", "/project/p/session/s")) },
             { _, _ -> }, { _, _ -> null })

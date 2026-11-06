@@ -2,6 +2,8 @@ package com.twidi.twicc.push
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.job.JobInfo
@@ -11,9 +13,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
 import com.twidi.twicc.Instance
+import com.twidi.twicc.PushNotificationPolicy
+import com.twidi.twicc.SessionLink
 import org.json.JSONObject
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.UUID
@@ -26,6 +31,28 @@ object AndroidPush {
     const val EXTRA_ACTION = "pushAction"
     const val EXTRA_DETAIL = "pushDetail"
     private const val JOB_ID = 820
+    private val visibleSession = PushNotificationPolicy()
+
+    private fun screenAvailable(context: Context): Boolean =
+        context.getSystemService(PowerManager::class.java).isInteractive &&
+            !context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
+    /** Location and lifecycle callbacks share the same lock as posting, so a visible session cannot race a push. */
+    @Synchronized fun showSession(context: Context, owner: Any, instance: String, url: String) {
+        if (!screenAvailable(context)) { visibleSession.hide(owner); return }
+        val sessionId = SessionLink.fromLocation(url)?.sessionId
+        visibleSession.show(owner, instance, sessionId)
+        if (sessionId != null) manager(context).let { notifications ->
+            PushPayload.kinds.forEach { notifications.cancel(PushNotificationPolicy.tag(instance, it, sessionId), 1) }
+        }
+    }
+
+    @Synchronized fun hideSession(owner: Any) { visibleSession.hide(owner) }
+
+    @Synchronized fun postNotification(context: Context, instance: String, payload: PushPayload, notification: Notification) {
+        if (screenAvailable(context) && visibleSession.suppresses(instance, payload.sessionId)) return
+        manager(context).notify(PushNotificationPolicy.tag(instance, payload.kind, payload.sessionId), 1, notification)
+    }
     private fun preferences(context: Context) = context.getSharedPreferences("android-push", Context.MODE_PRIVATE)
     @Synchronized fun read(context: Context, id: String): JSONObject = runCatching {
         JSONObject(preferences(context).getString(id, "{}")!!)
@@ -95,7 +122,9 @@ object AndroidPush {
     fun remove(context: Context, instance: String) {
         val value = update(context, instance) { it.put("deleted", true).put("dirty", it.has("token")).remove("preferences") }
         UnifiedPush.unregister(context, instance)
-        manager(context).let { notifications -> PushPayload.kinds.forEach { notifications.cancel("twicc-push:$instance:$it", 1) } }
+        manager(context).let { notifications -> notifications.activeNotifications
+            .filter { it.tag?.startsWith("twicc-push:$instance:") == true }
+            .forEach { notifications.cancel(it.tag, it.id) } }
         if (value.has("token")) schedule(context) else preferences(context).edit().remove(instance).commit()
     }
     fun receive(activity: Activity, instance: Instance, command: String, request: JSONObject): JSONObject {

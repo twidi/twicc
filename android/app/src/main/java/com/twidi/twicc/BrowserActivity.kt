@@ -48,6 +48,9 @@ class BrowserActivity : Activity() {
     private var canGoBack = false
     private var failed = false
     private var foreground = false
+    private var documentLoaded = false
+    private var displayedSessionId: String? = null
+    private val pushVisibilityOwner = Any()
     private var rendererRecovery = RendererRecovery()
     private var safeUrl = ""
     private lateinit var appBridge: AndroidAppBridge
@@ -93,7 +96,7 @@ class BrowserActivity : Activity() {
             { command, request -> AndroidPush.receive(this, instance, command, request) }, { id ->
                 notificationNavigation.acknowledge(id)
                 if (notificationNavigation.pending == null) clearNotificationIntent()
-            })
+            }, sessionVisibility = { id -> displayedSessionId = id; reportPushSession() })
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()
         ttsBound = bindService(Intent(this, TtsService::class.java), ttsConnection, Context.BIND_AUTO_CREATE)
@@ -193,6 +196,9 @@ class BrowserActivity : Activity() {
             return decision
         }
         override fun onPageStarted(url: String) {
+            documentLoaded = false
+            displayedSessionId = null
+            reportPushSession()
             resetWebMenu()
             failed = false
             errorPanel.visibility = View.GONE
@@ -203,13 +209,18 @@ class BrowserActivity : Activity() {
             if (instance.url.allowsNavigation(url)) {
                 safeUrl = url
                 store.rememberPage(instance, url)
+                reportPushSession()
             }
         }
         override fun onProgressChanged(progress: Int) {
             this@BrowserActivity.progress.progress = progress
             this@BrowserActivity.progress.visibility = if (progress < 100 && !failed) View.VISIBLE else View.GONE
         }
-        override fun onPageFinished() { progress.visibility = View.GONE }
+        override fun onPageFinished() {
+            progress.visibility = View.GONE
+            documentLoaded = true
+            reportPushSession()
+        }
         override fun onHistoryChanged(canGoBack: Boolean) { this@BrowserActivity.canGoBack = canGoBack }
         override fun onFailure(message: String) { showError(message) }
         override fun onRendererStopped(crashed: Boolean) {
@@ -227,12 +238,15 @@ class BrowserActivity : Activity() {
         rendererRecovery.reset()
         if (force || browser == null) { openBrowser(force); return }
         failed = false
+        documentLoaded = false
+        reportPushSession()
         errorPanel.visibility = View.GONE
         browser?.load(safeUrl)
     }
 
     private fun showError(message: String, canRetry: Boolean = true) {
         failed = true
+        reportPushSession()
         resetWebMenu()
         progress.visibility = View.GONE
         errorPanel.removeAllViews()
@@ -377,8 +391,16 @@ class BrowserActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
+    private fun reportPushSession() {
+        if (::instance.isInitialized && foreground && documentLoaded && browser != null && !failed &&
+            displayedSessionId != null && SessionLink.fromLocation(safeUrl)?.sessionId == displayedSessionId)
+            AndroidPush.showSession(this, pushVisibilityOwner, instance.id, safeUrl)
+        else AndroidPush.hideSession(pushVisibilityOwner)
+    }
+
     override fun onPause() {
         foreground = false
+        reportPushSession()
         if (::instance.isInitialized) store.rememberPage(instance, safeUrl)
         super.onPause()
     }
@@ -386,6 +408,7 @@ class BrowserActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        reportPushSession()
         recoverRenderer()
     }
 
@@ -403,6 +426,7 @@ class BrowserActivity : Activity() {
     }
 
     override fun onStop() {
+        AndroidPush.hideSession(pushVisibilityOwner)
         clearBatteryAdvice()
         browser?.setVisible(false)
         super.onStop()
@@ -415,6 +439,9 @@ class BrowserActivity : Activity() {
     }
 
     private fun disposeBrowser() {
+        documentLoaded = false
+        displayedSessionId = null
+        AndroidPush.hideSession(pushVisibilityOwner)
         resetWebMenu()
         val page = browser
         browser = null
@@ -473,6 +500,7 @@ class BrowserActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) reportPushSession()
         if (!hasFocus || !batteryAdviceConfirmed) return
         val command = batteryAdviceCommand ?: return
         clearBatteryAdvice()

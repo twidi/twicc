@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -28,6 +29,8 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Real notification PendingIntent, Activity stack, browser document, and shared app bridge. */
 class PushNotificationNavigationTest {
@@ -38,6 +41,9 @@ class PushNotificationNavigationTest {
         val loads = CopyOnWriteArrayList<String>()
         val documents = CopyOnWriteArrayList<String>()
         val routes = CopyOnWriteArrayList<String>()
+        val nextRoute = AtomicReference<String?>(null)
+        val sessionReady = AtomicBoolean(true)
+        val lastSessionReport = AtomicReference<String?>(null)
         val server = MockWebServer()
         init {
             val assets = instrumentation.context.assets
@@ -47,6 +53,13 @@ class PushNotificationNavigationTest {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val path = request.requestUrl!!.encodedPath
+                    if (path == "/session-ready") return MockResponse().setBody(sessionReady.get().toString())
+                    if (path == "/reported") {
+                        lastSessionReport.set(request.requestUrl!!.queryParameter("session").orEmpty())
+                        return MockResponse().setResponseCode(204)
+                    }
+                    if (path == "/next-route") return nextRoute.getAndSet(null)?.let { MockResponse().setBody(it) }
+                        ?: MockResponse().setResponseCode(204)
                     if (path == "/androidAppClient.js") return MockResponse().setHeader("Content-Type", "text/javascript")
                         .setBody(assets.open("androidAppClient.js").bufferedReader().readText())
                     if (path == "/boot") documents += request.requestUrl!!.queryParameter("id")!!
@@ -64,7 +77,16 @@ class PushNotificationNavigationTest {
                             if (busy) return;
                             busy = true;
                             try {
-                                const state = await client.request('menuVisibility', {owner:'fixture',visible:true});
+                                const route = await fetch('/next-route');
+                                if (route.status === 200) {
+                                    const path = await route.text();
+                                    history.pushState({}, '', path);
+                                    await fetch('/route?path=' + encodeURIComponent(path));
+                                }
+                                const ready = await (await fetch('/session-ready')).text() === 'true';
+                                const sessionId = ready ? (location.pathname.match(/\/session\/([A-Za-z0-9_-]+)/)?.[1] ?? null) : null;
+                                const state = await client.request('menuVisibility', {owner:'fixture',visible:true,sessionId});
+                                await fetch('/reported?session=' + encodeURIComponent(sessionId ?? ''));
                                 if (state?.navigation) {
                                     history.pushState({}, '', state.navigation.path);
                                     await fetch('/route?path=' + encodeURIComponent(state.navigation.path));
@@ -103,11 +125,37 @@ class PushNotificationNavigationTest {
                 listOf(one, two).forEach { instance -> AndroidPush.update(context, instance.id) {
                     it.put("preferences", JSONObject().put("user_turn", true).put("pending_request", true).put("extra_usage", true).put("peer", true))
                 } }
+                val a = post(service, one.id, "/project/p/session/one")
+                val b = post(service, one.id, "/project/p/session/two")
+                assertNotNull("Session A must survive a notification of the same category from B", notification(a))
+                assertNotNull(notification(b))
+                first.sessionReady.set(false)
                 store.rememberPage(one, "${one.address}/project/p/session/one")
                 instrumentation.startActivitySync(Intent(context, BrowserActivity::class.java)
                     .putExtra("instance", one.id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 waitFor { first.documents.size == 1 }
                 val original = resumedBrowser()
+                waitFor { first.lastSessionReport.get() == "" }
+                assertNotNull("Loaded HTML without loaded session content must retain A", notification(a))
+                val loading = post(service, one.id, "/project/p/session/one")
+                assertNotNull(notification(loading))
+                first.sessionReady.set(true)
+                waitFor { notification(loading) == null }
+                waitFor { notification(a) == null }
+                assertNotNull("Opening A must retain B", notification(b))
+                val foreground = post(service, one.id, "/project/p/session/one", expectNotification = false)
+                assertNull("The displayed session must never post a new notification", notification(foreground))
+                val foregroundQuestion = post(service, one.id, "/project/p/session/one", "pending_request", expectNotification = false)
+                val otherInstance = post(service, two.id, "/project/p/session/one")
+                assertNotNull("The same session ID in another instance must remain visible", notification(otherInstance))
+                assertNull(notification(foreground)); assertNull(notification(foregroundQuestion))
+
+                first.sessionReady.set(false)
+                waitFor { first.lastSessionReport.get() == "" }
+                val failedContent = post(service, one.id, "/project/p/session/one")
+                assertNotNull("A SPA loading error must not suppress its session", notification(failedContent))
+                first.sessionReady.set(true)
+                waitFor { notification(failedContent) == null }
 
                 tap(service, one.id, null)
                 waitFor { resumedBrowser() === original }
@@ -120,10 +168,40 @@ class PushNotificationNavigationTest {
                 assertEquals("Session routing must not reload HTML", 1, first.loads.size)
                 waitFor { store.page(one)?.endsWith("/project/p/session/two") == true }
 
+                waitFor { notification(b) == null }
+                val backToA = post(service, one.id, "/project/p/session/one")
+                assertNotNull(notification(backToA))
+                first.nextRoute.set("/projects/p/session/one/files/root/example.txt")
+                waitFor { store.page(one)?.endsWith("/projects/p/session/one/files/root/example.txt") == true }
+                waitFor { notification(backToA) == null }
+                assertEquals("SPA navigation must not reload HTML", 1, first.documents.size)
+
+                first.nextRoute.set("/login")
+                waitFor { store.page(one)?.endsWith("/login") == true }
+                val login = post(service, one.id, "/project/p/session/one")
+                assertNotNull("A login screen must not suppress the previous session", notification(login))
+                first.nextRoute.set("/project/p/session/two")
+                waitFor { store.page(one)?.endsWith("/project/p/session/two") == true }
+
+                instrumentation.runOnMainSync { original!!.moveTaskToBack(true) }
+                waitFor { resumedBrowser() == null }
+                val backgroundQuestion = post(service, one.id, "/project/p/session/two", "pending_request")
+                assertNotNull("A background session must still notify", notification(backgroundQuestion))
+
                 tap(service, one.id, "/project/p/session/two")
                 Thread.sleep(500)
                 assertSame(original, resumedBrowser())
                 assertEquals(1, first.documents.size)
+                waitFor { notification(backgroundQuestion) == null }
+
+                instrumentation.uiAutomation.executeShellCommand("input keyevent 223").close()
+                waitFor { !context.getSystemService(PowerManager::class.java).isInteractive }
+                val asleep = post(service, one.id, "/project/p/session/two")
+                assertNotNull("A screen-off session must notify", notification(asleep))
+                instrumentation.uiAutomation.executeShellCommand("input keyevent 224").close()
+                instrumentation.uiAutomation.executeShellCommand("wm dismiss-keyguard").close()
+                waitFor { resumedBrowser() === original }
+                waitFor { notification(asleep) == null }
 
                 tap(service, two.id, "/project/p/session/three")
                 waitFor { second.documents.size == 1 }
@@ -138,8 +216,16 @@ class PushNotificationNavigationTest {
                 waitFor { first.documents.size == 2 }
                 assertEquals("/project/p/session/four", first.loads.last())
                 assertEquals(one.id, store.last()!!.id)
+                val removeA = post(service, one.id, "/project/p/session/a")
+                val removeB = post(service, one.id, "/project/p/session/b")
+                assertNotNull(notification(removeA)); assertNotNull(notification(removeB))
+                AndroidPush.remove(context, one.id)
+                assertNull(notification(removeA)); assertNull(notification(removeB))
+                assertNotNull("Removing an instance must retain other instances' notifications", notification(otherInstance))
             } }
         } finally {
+            instrumentation.uiAutomation.executeShellCommand("input keyevent 224").close()
+            instrumentation.uiAutomation.executeShellCommand("wm dismiss-keyguard").close()
             instrumentation.runOnMainSync {
                 // ActivityScenario tracks the activity class across replacements. This fixture replaces
                 // BrowserActivity itself, so finish the actual live activities instead.
@@ -164,17 +250,24 @@ class PushNotificationNavigationTest {
         }
     }
 
-    private fun tap(service: PushService, instance: String, path: String?) {
+    private fun post(service: PushService, instance: String, path: String?, kind: String = "user_turn", expectNotification: Boolean = true): String {
         val id = UUID.randomUUID().toString()
-        val payload = JSONObject().put("type", "twicc.notification").put("id", id).put("sent_at", Instant.now().toString()).put("kind", "user_turn").put("title", "Finished").put("body", "Session example")
+        val payload = JSONObject().put("type", "twicc.notification").put("id", id).put("sent_at", Instant.now().toString()).put("kind", kind).put("title", "Finished").put("body", id)
         if (path != null) payload.put("path", path)
         // The transport was tested on the phone. This test starts after successful decryption.
-        val notifications = context.getSystemService(NotificationManager::class.java)
-        val tag = "twicc-push:$instance:user_turn"
-        notifications.cancel(tag, 1)
         instrumentation.runOnMainSync { service.onMessage(PushMessage(payload.toString().toByteArray(), true), instance) }
-        waitFor { notifications.activeNotifications.any { it.tag == tag } }
-        notifications.activeNotifications.single { it.tag == tag }.notification.contentIntent.send()
+        instrumentation.waitForIdleSync()
+        if (expectNotification) waitFor { notification(id) != null }
+        return id
+    }
+
+    private fun notification(id: String) = context.getSystemService(NotificationManager::class.java).activeNotifications
+        .singleOrNull { it.notification.extras.getString("android.text") == id }
+
+    private fun tap(service: PushService, instance: String, path: String?) {
+        val id = post(service, instance, path)
+        waitFor { notification(id) != null }
+        notification(id)!!.notification.contentIntent.send()
     }
 
     private fun resumedBrowser(): BrowserActivity? {

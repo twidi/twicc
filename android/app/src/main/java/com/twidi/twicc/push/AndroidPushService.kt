@@ -60,7 +60,7 @@ class AndroidPushService : PushService() {
             .setContentTitle("${payload.title} · ${saved.name}")
             .setContentText(payload.body).setStyle(Notification.BigTextStyle().bigText(payload.body))
             .setContentIntent(pending).setAutoCancel(true).build()
-        try { manager.notify("twicc-push:$instance:${payload.kind}", 1, notification) }
+        try { AndroidPush.postNotification(this, instance, payload, notification) }
         catch (_: SecurityException) { Log.w("TwiCC.Push", "Notifications are blocked") }
     }
 }

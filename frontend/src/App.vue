@@ -811,6 +811,8 @@ const toastTheme = computed(() => {
 
 <template>
     <AndroidAppMenu :force-fixed="isConnecting"
+        :session-id="typeof route.params.sessionId === 'string' ? route.params.sessionId : null"
+        :session-ready="isAppReady && !isConnecting && !!dataStore.getSession(route.params.sessionId)"
         :backend-version="(isAppReady ? dataStore.currentVersion : null) || authStore.serverVersion || ''" />
 
     <!-- Provider activation: non-dismissible first-run / recovery dialog -->

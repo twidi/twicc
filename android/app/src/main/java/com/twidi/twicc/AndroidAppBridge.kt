@@ -12,6 +12,7 @@ class AndroidAppBridge(
     private val nativeTts: ((String, JSONObject) -> JSONObject)? = null,
     private val androidPush: ((String, JSONObject) -> JSONObject)? = null,
     private val acknowledgeNavigation: ((String) -> Unit)? = null,
+    private val sessionVisibility: ((String?) -> Unit)? = null,
 ) {
     fun receive(text: String): String {
         var id = ""
@@ -48,6 +49,10 @@ class AndroidAppBridge(
                     val owner = request.opt("owner") as? String ?: return invalid("Missing menu owner")
                     val visible = request.opt("visible") as? Boolean ?: return invalid("Missing menu visibility")
                     if (owner.isEmpty() || owner.length > 96) return invalid("Invalid menu owner")
+                    val sessionId = if (request.isNull("sessionId")) null else request.opt("sessionId") as? String
+                        ?: return invalid("Invalid displayed session")
+                    if (sessionId != null && !sessionId.matches(Regex("[A-Za-z0-9_-]{1,255}"))) return invalid("Invalid displayed session")
+                    if (request.has("sessionId")) sessionVisibility?.invoke(sessionId)
                     visibility(owner, visible)
                     // The existing heartbeat also delivers a pending notification tap to the SPA.
                     val current = state()
