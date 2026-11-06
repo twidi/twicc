@@ -105,7 +105,9 @@ async def test_resume_unknown_or_wrong_secret_never_creates_session(settings):
     await native_sessions.registry.shutdown()
 
 
-async def test_invalid_command_offers_recovery_and_logs_protocol_details(settings, caplog):
+async def test_invalid_command_offers_recovery_and_logs_protocol_details(settings, caplog, monkeypatch):
+    # Test settings disable existing loggers when the ASGI application initializes.
+    monkeypatch.setattr(native_consumer.logger, 'disabled', False)
     settings.TWICC_PASSWORD_HASH = ''
     comm = await socket()
     await comm.connect()
