@@ -68,11 +68,12 @@ function setup() {
     tts._fetchEnding = async () => json({ state: 'complete' })
     tts._releaseAudio = async () => {}
     const data = reactive({
-        projectsLoaded: true, projects: { p: { name: 'Project' }, q: { name: 'Other' } }, sessions: {},
+        projectsLoaded: true, projects: { p: { name: 'Project' }, q: { name: 'Other' }, wt: { name: 'Worktree', worktree_of: 'p' } }, sessions: {},
         getProject(id) { return this.projects[id] },
         getSession(id) { return this.sessions[id] },
         getProjectScopeIds(id) { return this.projects[id] ? [id] : [] },
         getProjectDisplayName(id) { return this.projects[id]?.name ?? id },
+        getMainRepoProjectId(id) { return this.projects[id]?.worktree_of || id },
     })
     const workspaces = reactive({
         workspaces: { w: { name: 'Workspace', ids: ['p'] } },
@@ -290,6 +291,16 @@ test('manual playback preempts only the current automatic message', async () => 
     await h.end()
     assert.equal(h.opens.at(-1).text, 'Message 3')
 })
+
+test('a worktree is announced as its main project', async () => {
+    const h = setup()
+    const events = [message(1, 1, 'wt', 's'), message(2, 2, 'p', 't')]
+    const sessions = { s: { title: 'Session' }, t: { title: 'Second' } }
+    await h.enable(events, '__all__', { sessions })
+    for (let i = 0; i < 2; i++) { await h.start(); await h.end() }
+    assert.deepEqual(h.opens.map(body => body.announcement ?? ''), ['Project. Session.', 'Second.'])
+})
+
 
 test('context follows project and session identity', async () => {
     const h = setup()

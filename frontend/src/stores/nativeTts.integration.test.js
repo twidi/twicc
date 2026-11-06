@@ -85,7 +85,7 @@ test('native automatic activation sends real worktree scope and six-fraction UTC
     const { tts, calls } = await fixture()
     const timeline = useTimelineSpeechStore()
     timeline._now = () => Date.parse('2026-11-05T12:00:00Z')
-    timeline.initialize({ dataStore: { projectsLoaded: true, getProject: id => ({ id, worktree_of: 'parent' }), getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Worktree' }, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
+    timeline.initialize({ dataStore: { projectsLoaded: true, getProject: id => ({ id, worktree_of: 'parent' }), getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Worktree', getMainRepoProjectId: id => id }, workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
     await timeline.enable('worktree')
     assert.deepEqual(calls[0], ['listen', { pageId: 'worktree', scope: { kind: 'worktree', id: 'worktree', label: 'Worktree' }, includeMuted: false, boundary: '2026-11-05T12:00:00.000000Z' }])
     timeline.dispose(); tts.detachNative()
@@ -241,7 +241,7 @@ test('native listening waits for battery advice without an error and adopts the 
     const timeline = useTimelineSpeechStore(), errors = []
     timeline._showError = message => errors.push(message)
     timeline.initialize({ dataStore: { projectsLoaded: true, getProject: id => ({ id }),
-        getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Project' },
+        getProjectScopeIds: id => [id], getProjectDisplayName: () => 'Project', getMainRepoProjectId: id => id },
     workspacesStore: {}, connectionStatus: ref('OPEN'), eventTarget: new EventTarget() })
     client.listen = async () => ({ accepted: false, error: { code: 'confirmation_required', message: 'Choose how to continue.' } })
     await timeline.enable('p')

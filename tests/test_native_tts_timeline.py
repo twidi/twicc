@@ -256,6 +256,17 @@ async def test_announcements_follow_actual_starts_and_manual_invalidates_context
     await h.registry.shutdown()
 
 
+async def test_worktree_is_announced_as_its_main_project(harness):
+    h = harness
+    first = await event(1, project='wt'); second = await event(2, project='p')
+    await h.listener.enable(activation()); await select(h, first)
+    assert h.opened[-1][0]['announcement'] == 'Project. Session.', 'the worktree name is never spoken'
+    await finish(h)
+    await select(h, second, 2)
+    assert h.opened[-1][0]['announcement'] == '', 'a worktree and its main project are one spoken project'
+    await h.registry.shutdown()
+
+
 async def test_unavailable_configuration_stops_without_opening_audio(harness):
     h = harness
     await event(1)

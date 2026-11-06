@@ -208,18 +208,24 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         if (previous) tts.stop({ owner: previous.token })
     }
 
+    // A worktree is a work folder of its main project: the listener hears the main project's name.
+    function spokenProjectId(projectId) {
+        return dataStore.getMainRepoProjectId(projectId)
+    }
+
     function rememberStart(activation) {
         const event = activation.reading
         if (!event) return
         if (!activation.watermark || event.occurred_at > activation.watermark) activation.watermark = event.occurred_at
-        activation.context = { project: event.project_id, session: event.session_id, endedAt: null }
+        activation.context = { project: spokenProjectId(event.project_id), session: event.session_id, endedAt: null }
     }
 
     function announcement(activation, event) {
         let context = activation.context
         if (context?.endedAt && Date.now() - context.endedAt > CONTEXT_SILENCE_MS) context = null
         const names = []
-        if (context?.project !== event.project_id) names.push(dataStore.getProjectDisplayName(event.project_id))
+        const projectId = spokenProjectId(event.project_id)
+        if (context?.project !== projectId) names.push(dataStore.getProjectDisplayName(projectId))
         if (context?.session !== event.session_id) names.push(sessionMention(event.session_id, activation.feed.state.sessions).title)
         return names.map(name => `${name}.`).join(' ')
     }

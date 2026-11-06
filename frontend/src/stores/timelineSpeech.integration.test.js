@@ -90,7 +90,7 @@ function setup(t, fields = OPENROUTER) {
         dataStore: {
             projectsLoaded: true, projects,
             getProject: id => projects[id], getSession: () => undefined,
-            getProjectScopeIds: id => [id], getProjectDisplayName: id => projects[id]?.name ?? id,
+            getProjectScopeIds: id => [id], getProjectDisplayName: id => projects[id]?.name ?? id, getMainRepoProjectId: id => id,
         },
         workspacesStore: { getWorkspaceById: () => undefined, getAllProjectIds: () => [] },
         connectionStatus: ref('OPEN'), eventTarget: target,

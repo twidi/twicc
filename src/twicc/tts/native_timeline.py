@@ -29,6 +29,12 @@ INVALIDATIONS = frozenset({
 })
 
 
+def _spoken_project(project, projects):
+    """The project the listener hears: a worktree is a work folder of its main project, so it gives
+    way to that project (a missing parent leaves the worktree itself)."""
+    return projects.get(project.worktree_of_id) or project
+
+
 def _project_name(project):
     if project.name:
         return project.name
@@ -446,9 +452,11 @@ class TimelineListener:
                 await self.reconnect()
                 return
             names = []
-            if silence_reset or self.context is None or self.context[0] != event['project_id']:
-                project = projects.get(event['project_id'])
-                names.append(_project_name(project) if project else event['project_id'])
+            project = projects.get(event['project_id'])
+            spoken = _spoken_project(project, projects) if project else None
+            spoken_id = spoken.id if spoken else event['project_id']
+            if silence_reset or self.context is None or self.context[0] != spoken_id:
+                names.append(_project_name(spoken) if spoken else event['project_id'])
             if silence_reset or self.context is None or self.context[1] != event['session_id']:
                 names.append(table.get(event['session_id'], {}).get('title') or str(event['session_id'])[:8])
             speech = {'announcement': ' '.join(f'{name}.' for name in names), 'cache': True}
@@ -483,7 +491,8 @@ class TimelineListener:
             command = {'reading_id': reading_id, 'generation': generation}
             if await self.session.select_reading(command, request, metadata, policy=policy):
                 self.pending.pop(0)
-                self.selected = {'event': event, 'reading_id': reading_id, 'generation': generation}
+                self.selected = {'event': event, 'reading_id': reading_id, 'generation': generation,
+                                 'spoken_project_id': spoken_id}
                 self._publish()
 
     async def started(self, reading: dict | str):
@@ -498,7 +507,7 @@ class TimelineListener:
             event = self.selected['event']
             occurred = timezone.datetime.fromisoformat(event['occurred_at'])
             self.watermark = max(self.watermark, occurred) if self.watermark else occurred
-            self.context = (event['project_id'], event['session_id'])
+            self.context = (self.selected.get('spoken_project_id', event['project_id']), event['session_id'])
 
     async def finished(self, reading: dict | str, outcome: str):
         if isinstance(reading, str):
