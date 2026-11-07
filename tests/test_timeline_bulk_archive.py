@@ -60,6 +60,8 @@ def test_the_bulk_archive_endpoint_records_one_user_event_per_archived_session(p
     from twicc import views
 
     monkeypatch.setattr("twicc.title_auto_task.request_title_check", lambda *a, **k: None)
+    dismissed = []
+    monkeypatch.setattr("twicc.android_push.delivery.dismiss_sessions", lambda ids: dismissed.extend(ids))
     other = Project.objects.create(id="-tl-bulk-other", directory="/tmp/tl-bulk-other")
     for sid, owner in (("a", project), ("b", project), ("c", other)):
         Session.objects.create(
@@ -90,6 +92,7 @@ def test_the_bulk_archive_endpoint_records_one_user_event_per_archived_session(p
         for r in got.values()
     )
     assert kinds("p") == []
+    assert sorted(dismissed) == ["a", "b", "c"]
 
 
 # --- Race analysis: ``ids`` is computed before the lock, the write decides what flipped ----------

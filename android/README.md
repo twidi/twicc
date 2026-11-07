@@ -360,6 +360,11 @@ foreground. Other sessions and instances still notify. Backgrounding or locking
 the phone permits notifications for every session. Login, loading, error screens,
 and the instance manager do not suppress a session. Speech controls stay separate.
 
+Archiving or hiding a session clears its notifications in the matching instance.
+This also applies to changes made from another device, while Android is in the
+background. Other sessions and instances keep their notifications. Unarchiving
+or unhiding does not restore cleared notifications.
+
 A tap opens the matching saved instance. A session tap uses Vue Router when that
 instance is already open; it preserves the current document and connection.
 Session navigation uses the same project filter, all-projects mode, and workspace

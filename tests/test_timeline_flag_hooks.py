@@ -150,3 +150,35 @@ def test_hiding_an_already_hidden_session_writes_nothing(project):
     session = make(project, hidden=True, permission_mode="yolo", question_widget=False)
     assert hide_unhide(session, True).success
     assert kinds("s1") == []
+
+
+@pytest.mark.parametrize('archived', [True, False])
+def test_archive_dismisses_android_notifications_only_when_archiving(project, monkeypatch, archived):
+    from twicc.android_push import delivery
+
+    session = make(project, archived=not archived)
+    dismissed = []
+    monkeypatch.setattr(delivery, 'dismiss_sessions', lambda ids: dismissed.extend(ids), raising=False)
+    run_with_direct_writes(lambda: apply_session_archived_change(session, archived))
+    assert dismissed == ([session.id] if archived else [])
+
+
+@pytest.mark.parametrize('hidden', [True, False])
+def test_visibility_dismisses_android_notifications_only_when_hiding(project, monkeypatch, hidden):
+    from twicc.android_push import delivery
+    from twicc.core.services import session_visibility
+    from twicc.providers import compute_executor
+
+    session = make(project, hidden=not hidden)
+    dismissed = []
+    monkeypatch.setattr(delivery, 'dismiss_sessions', lambda ids: dismissed.extend(ids), raising=False)
+    # Run the real transactional flag writer in the test process, without starting a compute subprocess.
+    async def direct_compute(function, *args):
+        from asgiref.sync import sync_to_async
+        return await sync_to_async(function)(*args)
+    monkeypatch.setattr(compute_executor, 'run_compute_sync', direct_compute)
+    monkeypatch.setattr(session_visibility, '_push_hidden_to_live_agent', lambda *args: None)
+    monkeypatch.setattr('twicc.projects.update_project_metadata', lambda _: None)
+    monkeypatch.setattr('twicc.search.reindex_session', lambda _: None)
+    run_with_direct_writes(lambda: session_visibility._apply_flip(session, new_hidden=hidden))
+    assert dismissed == ([session.id] if hidden else [])

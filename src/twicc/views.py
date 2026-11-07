@@ -1514,8 +1514,10 @@ async def bulk_archive_sessions(request):
     )
 
     if ids:
+        from twicc.android_push.delivery import dismiss_sessions
         from twicc.title_auto_task import request_title_check
 
+        dismiss_sessions(ids)
         for session_id in ids:
             request_title_check(session_id, closing=True)
 

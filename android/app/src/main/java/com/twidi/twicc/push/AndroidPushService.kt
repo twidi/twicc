@@ -39,9 +39,14 @@ class AndroidPushService : PushService() {
     override fun onMessage(message: PushMessage, instance: String) {
         val saved = InstanceStore(this).find(instance) ?: return
         if (!message.decrypted) return
-        val payload = PushPayload.parse(message.content) ?: return
         val config = AndroidPush.read(this, instance)
-        if (config.optBoolean("deleted") || !config.optJSONObject("preferences").let { it?.optBoolean(payload.kind) == true } || !AndroidPush.allowed(this)) return
+        if (config.optBoolean("deleted")) return
+        PushSessionDismissal.parse(message.content)?.let {
+            AndroidPush.dismissSessionNotifications(this, instance, it)
+            return
+        }
+        val payload = PushPayload.parse(message.content) ?: return
+        if (!config.optJSONObject("preferences").let { it?.optBoolean(payload.kind) == true } || !AndroidPush.allowed(this)) return
         val manager = AndroidPush.manager(this)
         if (manager.getNotificationChannel(AndroidPush.channel(payload.kind)).importance == android.app.NotificationManager.IMPORTANCE_NONE) return
         val open = Intent(this, BrowserActivity::class.java).apply {

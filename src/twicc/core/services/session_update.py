@@ -567,6 +567,11 @@ async def apply_session_archived_change(
 
     await run_under_db_write_lock(_save_and_record, content_activity=True)
 
+    if archived:
+        from twicc.android_push.delivery import dismiss_sessions
+
+        dismiss_sessions([session.id])
+
     # Search reindex — non-critical because the next full rebuild reconciles
     # if this attempt fails. The ``archived`` flag is denormalised into every
     # document, so we re-index the whole session.

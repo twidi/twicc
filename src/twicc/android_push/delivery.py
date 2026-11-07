@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,27 +12,67 @@ from twicc.android_push import storage
 
 logger = logging.getLogger(__name__)
 _tasks: set[asyncio.Task] = set()
+_session_path = re.compile(r"/projects?/[A-Za-z0-9_-]{1,255}/session/([A-Za-z0-9_-]{1,255})/?")
 
 
-def dispatch(kind: str, title: str, body: str, *, path=None, action=None, detail=None):
-    if presence.is_browser_present() or len(_tasks) >= 64:
+def dismiss_sessions(session_ids):
+    """Clear these sessions on enrolled phones, including while a browser is active."""
+    ids = tuple(dict.fromkeys(session_ids))
+    if not ids:
         return
     try:
-        task = asyncio.get_running_loop().create_task(send(kind, title, body, path=path, action=action, detail=detail))
+        task = asyncio.get_running_loop().create_task(send_dismissals(ids, sent_at=datetime.now(UTC).isoformat()))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
     except RuntimeError:
         return
 
 
-async def send(kind: str, title: str, body: str, *, path=None, action=None, detail=None):
+async def send_dismissals(session_ids, *, sent_at=None):
+    try:
+        ids = list(dict.fromkeys(session_ids))
+        sent_at = sent_at or datetime.now(UTC).isoformat()
+        devices = await asyncio.to_thread(storage.devices)
+        # Twelve maximum-length session IDs fit within one encrypted push record.
+        for offset in range(0, len(ids), 12):
+            payload = {"type": "twicc.dismiss_sessions", "id": str(uuid4()), "sent_at": sent_at,
+                       "session_ids": ids[offset:offset + 12]}
+            for device in devices:
+                await _send_one(device, payload)
+    except Exception as error:
+        logger.warning("Android notification dismissal failed (%s)", type(error).__name__)
+
+
+async def _session_can_notify(path):
+    match = _session_path.fullmatch(path or "")
+    if match is None:
+        return True  # Instance-wide and peer notifications have no session.
+    from twicc.core.models import Session
+
+    return await Session.objects.filter(id=match[1], archived=False, hidden=False).aexists()
+
+
+def dispatch(kind: str, title: str, body: str, *, path=None, action=None, detail=None):
+    if presence.is_browser_present() or len(_tasks) >= 64:
+        return
+    try:
+        task = asyncio.get_running_loop().create_task(send(
+            kind, title, body, path=path, action=action, detail=detail, sent_at=datetime.now(UTC).isoformat(),
+        ))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+    except RuntimeError:
+        return
+
+
+async def send(kind: str, title: str, body: str, *, path=None, action=None, detail=None, sent_at=None):
     try:
         if kind not in storage.KINDS or presence.is_browser_present():
             return
         payload = {
             "type": "twicc.notification",
             "id": str(uuid4()),
-            "sent_at": datetime.now(UTC).isoformat(),
+            "sent_at": sent_at or datetime.now(UTC).isoformat(),
             "kind": kind,
             "title": title[:180],
             "body": body[:800],
@@ -46,7 +87,7 @@ async def send(kind: str, title: str, body: str, *, path=None, action=None, deta
         while len(orjson.dumps(payload)) > 3900 and payload["body"]:
             payload["body"] = payload["body"][:-40]
         for device in await asyncio.to_thread(storage.devices):
-            if device.get("preferences", {}).get(kind) and not presence.is_browser_present():
+            if device.get("preferences", {}).get(kind) and not presence.is_browser_present() and await _session_can_notify(path):
                 await _send_one(device, payload)
     except Exception as error:
         # Library/network errors can contain the endpoint capability. Log only the class.

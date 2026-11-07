@@ -180,6 +180,11 @@ async def _apply_flip(session, *, new_hidden: bool) -> None:
     session.subagents_cost = saved.subagents_cost
     session.total_cost = saved.total_cost
 
+    if session.hidden:
+        from twicc.android_push.delivery import dismiss_sessions
+
+        dismiss_sessions([session.id])
+
     # Silence (or restore) the live agent's own broadcasts the instant the flag
     # is durable — before the recompute below, which reindexes the whole session
     # and dominates the flip's few hundred milliseconds. A streaming agent emits

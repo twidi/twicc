@@ -152,7 +152,12 @@ def test_android_does_not_suppress_push_but_browsers_do(monkeypatch):
     assert not presence.is_browser_present()
 
 
+@pytest.mark.django_db(transaction=True)
 def test_delivery_respects_choices_permission_and_browser_presence(push_server, monkeypatch):
+    from twicc.core.models import Project, Session
+
+    project = Project.objects.create(id="p", directory="/tmp/android-push")
+    Session.objects.create(id="s", project=project, provider="codex", file_path="s.jsonl")
     from twicc.android_push import storage, delivery
     from twicc import presence
 
@@ -230,7 +235,12 @@ def test_real_events_do_not_require_apprise_targets(monkeypatch):
     assert sent[-1][1]["detail"] == "42"
 
 
+@pytest.mark.django_db(transaction=True)
 def test_real_encryption_and_stale_endpoint_retirement(push_server, monkeypatch):
+    from twicc.core.models import Project, Session
+
+    project = Project.objects.create(id="p", directory="/tmp/android-push")
+    Session.objects.create(id="s", project=project, provider="codex", file_path="s.jsonl")
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
     import http_ece
@@ -310,3 +320,90 @@ def test_real_encryption_and_stale_endpoint_retirement(push_server, monkeypatch)
         ).status_code
         == 200
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_session_dismissals_ignore_browser_presence_and_notification_choices(push_server, monkeypatch):
+    from twicc.android_push import delivery
+
+    client, _ = push_server
+    body = registration()
+    body['preferences'] = choices(user_turn=False)
+    token = client.post('/api/android-push/', data=body, content_type='application/json').json()['token']
+    Client().put('/api/auth/android-push/', data={'device_id': body['device_id'], 'subscription': subscription()},
+                 content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {token}')
+    monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: True)
+    sent = []
+
+    async def capture(device, payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(delivery, '_send_one', capture)
+    ids = [f'session-{i:03d}-' + 'a' * 70 for i in range(75)]
+    asyncio.run(delivery.send_dismissals(ids + [ids[0]]))
+    assert {sid for payload in sent for sid in payload['session_ids']} == set(ids)
+    assert sum(len(payload['session_ids']) for payload in sent) == len(ids)
+    assert all(payload['type'] == 'twicc.dismiss_sessions' for payload in sent)
+    assert all(len(orjson.dumps(payload)) <= 3900 for payload in sent)
+    assert all('title' not in payload and 'body' not in payload for payload in sent)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('flag', ['archived', 'hidden'])
+def test_notification_delivery_drops_sessions_that_are_no_longer_visible(push_server, monkeypatch, flag):
+    from twicc.android_push import delivery
+    from twicc.core.models import Project, Session
+
+    client, _ = push_server
+    project = Project.objects.create(id='p', directory='/tmp/android-push')
+    session = Session.objects.create(id='s', project=project, provider='codex', file_path='s.jsonl', **{flag: True})
+    body = registration()
+    token = client.post('/api/android-push/', data=body, content_type='application/json').json()['token']
+    Client().put('/api/auth/android-push/', data={'device_id': body['device_id'], 'subscription': subscription()},
+                 content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {token}')
+    monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: False)
+    sent = []
+
+    async def capture(device, payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(delivery, '_send_one', capture)
+    asyncio.run(delivery.send('user_turn', 'Finished', 'Body', path='/project/p/session/s'))
+    assert sent == []
+    setattr(session, flag, False)
+    session.save(update_fields=[flag])
+    asyncio.run(delivery.send('user_turn', 'Finished', 'Body', path='/project/p/session/s'))
+    assert len(sent) == 1
+
+
+def test_push_timestamps_describe_the_event_not_delayed_delivery(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from twicc.android_push import delivery
+
+    event_time = datetime(2026, 11, 7, 12, tzinfo=UTC)
+    clock = [event_time]
+
+    class Clock:
+        @staticmethod
+        def now(tz):
+            return clock[0]
+
+    monkeypatch.setattr(delivery, 'datetime', Clock)
+    monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: False)
+    monkeypatch.setattr(delivery.storage, 'devices', lambda: [{'preferences': choices()}])
+    sent = []
+
+    async def capture(device, payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(delivery, '_send_one', capture)
+
+    async def scenario():
+        delivery.dispatch('user_turn', 'Finished', 'Body')
+        delivery.dismiss_sessions(['s'])
+        clock[0] += timedelta(seconds=30)
+        await asyncio.gather(*list(delivery._tasks))
+
+    asyncio.run(scenario())
+    assert {payload['type'] for payload in sent} == {'twicc.notification', 'twicc.dismiss_sessions'}
+    assert all(payload['sent_at'] == event_time.isoformat() for payload in sent)
