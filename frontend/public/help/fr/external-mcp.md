@@ -163,7 +163,7 @@ et les demandes d'autorisation déjà en cours. Elle expire automatiquement.
 L'alerte reste affichée jusqu'à ce que vous l'ignoriez. Un trafic élevé est un soupçon d'abus,
 pas une preuve d'attaque. Plusieurs clients peuvent partager une source réseau.
 
-Sélectionnez **Suspendre tout accès externe** pour arrêter toutes les nouvelles requêtes MCP externes et OAuth
+Sélectionnez **Suspendre tout accès externe** pour arrêter toutes les nouvelles requêtes MCP externes et demandes OAuth
 sans révoquer les autorisations existantes. Les requêtes déjà en cours d'exécution
 peuvent se terminer. Pour reprendre, activez de nouveau l'accès externe dans les paramètres. Cette suspension
 manuelle persiste après un redémarrage.

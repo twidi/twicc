@@ -165,7 +165,7 @@ externo y OAuth sin revocar las autorizaciones existentes. Las solicitudes que y
 ejecutando pueden terminar. Para reanudar, activa de nuevo el acceso externo en Configuración. Esta
 suspensión manual se mantiene tras los reinicios.
 
-Los contadores de tráfico, las alertas y las pausas automáticas se reinician cuando TwiCC se
+Los contadores de tráfico, las alertas y las pausas automáticas se restablecen cuando TwiCC se
 reinicia. Las cuotas de registro y de solicitudes pendientes permanecen almacenadas. La caducidad
 normal de tokens y solicitudes se aplica durante toda la suspensión.
 

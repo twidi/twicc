@@ -9,6 +9,6 @@ opção **Renomear** do menu **⋮** na barra lateral.
 mantém o mesmo texto. Alterações de nome explícitas pela CLI ou pelo MCP fazem o mesmo. Os títulos existentes
 anteriores às atualizações automáticas também permanecem sem atualizações.
 
-A janela identifica os títulos automáticos e explica o efeito de Salvar. Essa dica fica
+O diálogo identifica os títulos automáticos e explica o efeito de Salvar. Essa dica fica
 oculta enquanto seu próprio título está pendente. As atualizações do servidor não substituem o texto
-que você digita na janela aberta. **Cancelar** não altera nada.
+que você digita no diálogo aberto. **Cancelar** não altera nada.

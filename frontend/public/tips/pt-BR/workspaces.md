@@ -6,4 +6,4 @@ Abra o seletor de projetos e escolha **Gerenciar espaços de trabalho...** para 
 também pode definir padrões de adição automática para que os projetos correspondentes entrem no espaço de trabalho
 automaticamente.
 
-Saiba mais na janela de ajuda: [Trabalhar com espaços de trabalho](help/workspaces).
+Saiba mais no diálogo de ajuda: [Trabalhar com espaços de trabalho](help/workspaces).

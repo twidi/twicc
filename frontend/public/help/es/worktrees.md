@@ -9,7 +9,7 @@ proyecto padre**, así que lo ves todo junto en lugar de separado.
 
 ### Dónde se crean los worktrees
 
-El ajuste **directorio de worktrees** decide dónde crea TwiCC los nuevos worktrees
+La configuración **directorio de worktrees** decide dónde crea TwiCC los nuevos worktrees
 y rellena previamente la ruta cuando creas uno. El global es una **plantilla**
 con marcadores que se resuelven por proyecto: `{git_root}` (su raíz de Git),
 `{project_name}` (su nombre, o el nombre de la carpeta si no tiene) y `{project_basedir}`

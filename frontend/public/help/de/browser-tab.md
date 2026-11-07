@@ -20,7 +20,7 @@ wird außerdem pro Sitzung gespeichert.
 
 Manche Seiten lassen sich nicht einbetten:
 
-- Seiten, die das Einbetten in Frames verweigern (die meisten öffentlichen Seiten), zeigen eine Warnung.
+- Seiten, die das Einbetten in Frames ablehnen (die meisten öffentlichen Seiten), zeigen eine Warnung.
   Nutze dann stattdessen **In neuem Browser-Tab öffnen**.
 - Wird TwiCC selbst über `https` ausgeliefert, blockiert der Browser einfache `http://`-Seiten
   (Mixed Content).

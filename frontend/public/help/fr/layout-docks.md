@@ -15,7 +15,7 @@ Les dispositions se trouvent dans le **menu ⋮**, à l'extrémité droite de la
 
 - **Enregistrer la disposition** stocke votre arrangement actuel sous forme de disposition
   nommée — une nouvelle, ou en remplacement d'une existante.
-- Le même menu liste vos dispositions enregistrées (et **Volet unique**). Vous pouvez ainsi
+- Le même menu liste vos dispositions enregistrées (et **Panneau unique**). Vous pouvez ainsi
   appliquer l'une d'elles à n'importe quelle session en un clic. Il propose aussi
   **Gérer les dispositions…** pour les renommer ou les supprimer.
 

@@ -18,10 +18,10 @@ enfoncé signifie que cette chronologie écoute les nouveaux messages.
   **Filtres → Afficher les sessions en sourdine** pour les afficher et les lire dans cette chronologie.
   Les autres filtres d'affichage, y compris la vue sélectionnée et le filtre de session, n'ont
   pas d'effet sur l'écoute.
-- Désactiver **Afficher les sessions en sourdine** supprime leurs messages en file d'attente. La lecture
+- Désactiver **Afficher les sessions en sourdine** retire leurs messages en file d'attente. La lecture
   déjà sélectionnée peut se terminer. Le réactiver ne relit pas les messages
   ignorés pendant qu'il était désactivé. La lecture manuelle reste disponible dans les sessions en sourdine.
-- L'écoute continue quand vous naviguez vers une autre page, changez d'onglet de l'application
+- L'écoute continue quand vous naviguez vers une autre page, basculez d'onglet de l'application
   ou ouvrez une session. Une seule chronologie écoute par onglet de navigateur.
 - Le bouton de la chronologie dans le rail affiche un petit haut-parleur tant que l'écoute est
   activée. Son libellé identifie la chronologie qui écoute. Cliquez dessus pour ouvrir
@@ -31,7 +31,7 @@ enfoncé signifie que cette chronologie écoute les nouveaux messages.
 - Les messages arrivés en retard restent éligibles jusqu'à **cinq secondes** derrière le dernier
   message dont la lecture démarre. Exactement cinq secondes reste éligible.
   Les messages acceptés restent en file d'attente jusqu'à leur tour.
-- La lecture manuelle est prioritaire. La lecture automatique attend pendant qu'une demande
+- La lecture manuelle est prioritaire. La lecture automatique attend pendant qu'une requête
   ou une lecture manuelle est en cours. Le haut-parleur de la chronologie dans le rail reste visible pendant cette attente
   et entre les messages.
 - Cliquez sur le haut-parleur enfoncé de la chronologie pour désactiver l'écoute et vider sa file d'attente.
@@ -102,7 +102,7 @@ bien entendu ? »**. Répondez **Oui** pour valider la configuration. Seule une
 validée peut être activée, et la configuration active est celle que les messages utilisent.
 
 Modifier ce qui produit le son (le modèle, la voix, le format, la commande…)
-supprime la validation : testez de nouveau la configuration.
+retire la validation : testez de nouveau la configuration.
 
 ## Configurations OpenRouter
 
@@ -124,14 +124,14 @@ entre les parties peuvent être audibles.
 
 Sélectionnez du texte dans le chat ou dans la visionneuse de fichiers : le widget flottant affiche le
 **bouton Lire** (l'icône haut-parleur), à côté des boutons Commenter et Copier. Il
-n'apparaît pas dans le terminal, dans le volet navigateur ni sur les cartes d'éléments.
+n'apparaît pas dans le terminal, dans le panneau navigateur ni sur les cartes d'éléments.
 Il n'apparaît que lorsque le service vocal est disponible, comme le bouton haut-parleur d'un
 message.
 
 - Le bouton lit le texte sélectionné avec la configuration active. Son titre est
   « Lire à voix haute ».
 - Pendant la lecture, le même bouton devient une **icône Arrêt** (titre « Arrêter la lecture »),
-  et il reste visible. Cliquez dessus pour annuler la demande ou arrêter le son.
+  et il reste visible. Cliquez dessus pour annuler la requête ou arrêter le son.
 - Le son continue quand le widget se ferme. Arrêtez-le depuis l'indicateur vocal
   du rail, comme pour un message.
 - Un texte qui ne contient rien à lire à voix haute une fois sa mise en forme retirée est
@@ -169,7 +169,7 @@ Claude, sinon Codex. Un modèle Claude ou Codex dont le fournisseur est désacti
 remplacé par l'autre agent, et votre choix revient quand vous réactivez
 son fournisseur.
 
-Claude Haiku 5.5 et GPT-6 Luna utilisent votre abonnement Claude ou Codex.
+Claude Haiku 5.5 et GPT-6 Luna utilisent votre forfait Claude ou Codex.
 **OpenRouter** appelle un modèle rapide sur OpenRouter : aujourd'hui, Qwen3.8 27B servi par
 Cerebras. Il nécessite la clé OpenRouter, comme les configurations OpenRouter. Il envoie
 le texte à OpenRouter, et il est payant sur votre compte OpenRouter. Quand la clé est définie,

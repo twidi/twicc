@@ -3,10 +3,10 @@ personas que trabajan juntas desde sus propios equipos. También puedes empareja
 instancias, pero ese no es el caso de uso principal.
 
 Un mensaje de un par nunca entra por sí solo en una sesión de la otra instancia. El usuario que lo
-recibe debe leerlo primero. Puede rechazarlo o colocarlo en el editor de mensajes de una sesión.
+recibe debe leerlo primero. Puede rechazarlo o colocarlo en el campo de mensaje de una sesión.
 
 Incluso entonces, TwiCC no envía el mensaje al agente. El usuario puede revisar o editar el
-editor de mensajes y luego decidir si lo envía.
+campo de mensaje y luego decidir si lo envía.
 
 ### Para qué sirven los pares
 
@@ -113,7 +113,7 @@ iniciar un agente.
 
 TwiCC también puede avisarte fuera de la aplicación cuando llega un mensaje o una solicitud de
 emparejamiento: un sonido, una notificación del navegador o un push a tus dispositivos. Actívalo en
-**Configuración → Notificaciones → Un par te necesita**. Ningún otro evento de pares envía un aviso:
+**Configuración → Notificaciones → Un par te necesita**. Ningún otro evento de pares envía una notificación:
 esperan hasta tu próxima visita.
 
 ### Revisar un mensaje entrante
@@ -125,14 +125,14 @@ muestre o los descargue.
 
 Después eliges una acción en la lista de acciones de la revisión:
 
-- colocar el mensaje en el editor de mensajes de una sesión existente;
-- crear una nueva sesión en borrador con el mensaje en su editor de mensajes;
+- colocar el mensaje en el campo de mensaje de una sesión existente;
+- crear una nueva sesión en borrador con el mensaje en su campo de mensaje;
 - marcar el mensaje como hecho, cuando lo resolviste tú mismo o no hay nada que hacer; ningún
   agente lo recibe;
 - responder manualmente (ver más abajo);
 - rechazar el mensaje.
 
-Colocar un mensaje en un editor de mensajes lo marca como entregado. Aun así, no envía el editor de mensajes ni
+Colocar un mensaje en un campo de mensaje lo marca como entregado. Aun así, no envía el campo de mensaje ni
 inicia el agente. Al entregar, puedes añadir una nota opcional para tu agente. TwiCC mantiene esa
 nota separada del mensaje del par y la identifica como texto tuyo.
 
@@ -166,7 +166,7 @@ usuario que recibe.
 Los mensajes enviados usan cinco estados:
 
 - **pendiente**: el usuario que recibe aún no ha decidido;
-- **entregado**: el usuario colocó el mensaje en el editor de mensajes de una sesión. Puede haber
+- **entregado**: el usuario colocó el mensaje en el campo de mensaje de una sesión. Puede haber
   consecuencias posteriores, por parte de su agente;
 - **hecho**: el usuario resolvió el mensaje por sí mismo. Ningún agente lo recibió y no llegará nada
   más de un agente. Si tenía algo que decirte, llegó como respuesta;
@@ -182,7 +182,7 @@ incierto: la otra instancia pudo haber almacenado el mensaje antes de que fallar
 ### Reentrega e historial
 
 Un mensaje resuelto sigue disponible en el historial de la bandeja. El usuario que recibe puede
-volver a colocarlo en un editor de mensajes, sea cual sea la decisión anterior. Esto ayuda cuando eligió la
+volver a colocarlo en un campo de mensaje, sea cual sea la decisión anterior. Esto ayuda cuando eligió la
 sesión equivocada o borró un borrador.
 
 TwiCC elimina los bytes de los adjuntos siete días después de la última decisión. Una nueva
@@ -207,4 +207,4 @@ que el emparejamiento original. Restaura la relación existente en lugar de crea
 su nombre local y su historial de mensajes siguen disponibles.
 
 La revisión humana es el principal límite de seguridad. No hace seguro el contenido no confiable.
-Lee cada mensaje antes de colocarlo en un editor de mensajes.
+Lee cada mensaje antes de colocarlo en un campo de mensaje.

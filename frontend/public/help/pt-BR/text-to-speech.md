@@ -15,8 +15,8 @@ indica que essa linha do tempo monitora novas mensagens.
 
 - A escuta usa o escopo da linha do tempo: todos os projetos, um espaço de trabalho, um projeto
   ou um worktree. As sessões silenciadas ficam ocultas e são ignoradas por padrão. Selecione
-  **Filtros → Mostrar sessões silenciadas** para exibi-las e lê-las nessa linha do tempo.
-  Outros filtros de exibição, incluindo a visualização e o filtro de sessões selecionados,
+  **Filtros → Mostrar sessões silenciadas** para mostrá-las e lê-las nessa linha do tempo.
+  Outros filtros de visualização, incluindo a visualização e o filtro de sessões selecionados,
   não afetam a escuta.
 - Desativar **Mostrar sessões silenciadas** remove as mensagens dessas sessões da fila.
   A leitura já selecionada pode terminar. Ativar a opção não reproduz mensagens
@@ -35,10 +35,10 @@ indica que essa linha do tempo monitora novas mensagens.
   ou reprodução manual está em andamento. O alto-falante da linha do tempo na barra de ícones permanece visível durante essa espera
   e entre as mensagens.
 - Clique no alto-falante pressionado da linha do tempo para desativar a escuta e limpar sua fila.
-  Isso interrompe a leitura automática e mantém outras leituras manuais em andamento.
+  Isso faz parar a leitura automática e mantém outras leituras manuais em andamento.
   Ativar outra linha do tempo limpa a fila da linha do tempo anterior.
 - O botão **Parar a leitura em voz alta** na barra de ícones e o botão **Parar a
-  leitura** da mensagem interrompem a leitura atual. Durante a leitura automática, eles
+  leitura** da mensagem param a leitura atual. Durante a leitura automática, eles
   também desativam a escuta e limpam sua fila.
 - A escuta e sua fila ficam na memória. Recarregar a página remove ambas.
 
@@ -73,13 +73,13 @@ interrompe a fala automática e funciona independentemente da opção de resumo 
 Os anúncios habituais de projeto e sessão nunca identificam um resumo.
 
 Selecione texto e use **Resumir seleção** nas ações de seleção para obter um resumo
-temporário. Sua caixa de diálogo oferece Copiar, Ler em voz alta, Tentar novamente, Cancelar e Fechar. Fechar
-a caixa de diálogo libera os recursos da geração e interrompe a leitura correspondente. Os resumos de seleção
+temporário. Seu diálogo oferece Copiar, Ler em voz alta, Tentar novamente, Cancelar e Fechar. Fechar
+o diálogo libera os recursos da geração e faz parar a leitura correspondente. Os resumos de seleção
 e o teste de configurações nunca são salvos como resumos de mensagens.
 
 O texto do resumo aparece conforme é gerado. A fala começa com as partes disponíveis do resumo,
 sem uma segunda chamada de adaptação. Se a geração falha após o início da fala,
-a reprodução para com um erro. O TwiCC não reproduz o texto original nem salva um
+a reprodução é parada com um erro. O TwiCC não reproduz o texto original nem salva um
 resumo parcial.
 
 ### Modelo de resumo
@@ -110,14 +110,14 @@ Elas precisam de uma chave do OpenRouter. Adicione `TWICC_OPENROUTER_API_KEY` ao
 do diretório de dados do TwiCC e reinicie o TwiCC. A chave nunca sai
 do servidor.
 
-Os preços exibidos são os preços de tabela do OpenRouter. Após um teste, a configuração mostra
+Os preços mostrados são os preços de tabela do OpenRouter. Após um teste, a configuração mostra
 o custo real da fala do teste.
 
 ## Mensagens longas
 
 Uma mensagem longa é lida **em partes**, uma após a outra, em um único áudio. Cada
 parte é gerada quando a reprodução precisa dela, com cerca de um minuto de antecedência. O som
-começa rapidamente, e interromper a leitura evita gerar e pagar pelo restante. As transições
+começa rapidamente, e parar a leitura evita gerar e pagar pelo restante. As transições
 entre as partes podem ser audíveis.
 
 ## Ler uma seleção
@@ -131,8 +131,8 @@ uma mensagem.
 - O botão lê o texto selecionado com a configuração ativa. Seu título é
   "Ler em voz alta".
 - Durante a leitura, o mesmo botão mostra um **ícone de parar**, com o título "Parar a leitura",
-  e permanece visível. Clique nele para cancelar a solicitação ou interromper o som.
-- O som continua quando o widget fecha. Interrompa-o pelo indicador de fala
+  e permanece visível. Clique nele para cancelar a solicitação ou parar o som.
+- O som continua quando o widget fecha. Pare-o pelo indicador de fala
   da barra de ícones, como em uma mensagem.
 - Um texto sem conteúdo para ler em voz alta após a remoção da formatação é
   recusado, como em uma mensagem.
@@ -182,7 +182,7 @@ Se o OpenRouter falha antes do início da leitura, o primeiro agente em execuç�
 (Claude ou, na ausência dele, Codex) adapta o texto. Se nenhum modelo pode ser executado, se o texto é
 muito longo ou se o modelo falha antes do início da leitura (no caso do OpenRouter: se
 esse agente também falha ou se nenhum provedor está em execução), o texto é lido **como
-está escrito**. Se o modelo falha depois, a leitura para com um erro.
+está escrito**. Se o modelo falha depois, a leitura é parada com um erro.
 
 A última execução do teste de uma configuração mostra o modelo que adapta o texto ou cada
 modelo que falha e o motivo. Uma chave incorreta ou uma conta OpenRouter sem créditos aparece
@@ -231,11 +231,11 @@ retorna seu próprio arquivo novo. Uma execução com falha mantém seu arquivo.
 
 ### Informações úteis
 
-- Interromper a leitura encerra o comando inteiro, incluindo pipelines.
+- Parar a leitura encerra o comando inteiro, incluindo pipelines.
 - Várias leituras podem executar o comando ao mesmo tempo (um teste e uma mensagem,
   dois dispositivos).
 - Um streaming de áudio que não envia nada por um minuto após o primeiro áudio é
-  interrompido. O áudio de uma leitura tem um limite de 512 MB.
+  parado. O áudio de uma leitura tem um limite de 512 MB.
 - O TwiCC vê apenas a linha de comando. Após editar um script que o comando
   executa, teste a configuração novamente. Caso contrário, uma mensagem pode reproduzir um áudio em cache
   por até 10 minutos.

@@ -74,7 +74,7 @@ er die Beziehung annimmt oder ablehnt. Jeder Nutzer wählt außerdem seinen eige
 Peer.
 
 Nur Nutzer verwalten Peer-Beziehungen. Agenten können sie weder erstellen, genehmigen, ablehnen,
-umbenennen, widerrufen noch wiederverbinden.
+umbenennen, widerrufen noch neu verbinden.
 
 ### Eine Nachricht senden
 
@@ -192,7 +192,7 @@ startet diese Frist neu, bis die Bytes entfernt sind. Eine ausstehende Nachricht
 Text, Titel, Anhangsdetails und Antwortbeziehung bleiben immer im Verlauf. Eine spätere erneute
 Zustellung kann daher nur noch Text enthalten.
 
-### Widerruf und Wiederverbinden
+### Widerruf und Neuverbinden
 
 Jede Seite steuert ihre eigene Peer-Beziehung. Jeder Nutzer kann sie jederzeit widerrufen. Der Widerruf
 beendet das Messaging und löscht die Zugangsdaten der Beziehung, behält aber den lokalen Peer-Namen
@@ -204,7 +204,7 @@ abgelehnt wird. Ihre Kopie der Beziehung erscheint dann als **defekt**.
 Ein Peer kann auch defekt werden, wenn du deine eigene Peer-Adresse änderst oder deaktivierst. Lege
 eine erreichbare Adresse fest und verbinde dann jeden betroffenen Peer manuell neu.
 
-Das Wiederverbinden nutzt einen neuen Verifizierungscode und erfordert die Genehmigung des anderen
+Das Neuverbinden nutzt einen neuen Verifizierungscode und erfordert die Genehmigung des anderen
 Nutzers, wie die ursprüngliche Kopplung. Es stellt die bestehende Beziehung wieder her, statt eine
 weitere zu erstellen, sodass ihr lokaler Name und der Nachrichtenverlauf erhalten bleiben.
 

@@ -22,7 +22,7 @@ O **menu ⋮**, na extremidade direita da barra de abas, reúne os layouts:
 
 ### Defina um padrão para novas sessões
 
-Na janela de salvamento, marque **Definir como padrão para novas sessões** nos escopos desejados.
+No diálogo de salvamento, marque **Definir como padrão para novas sessões** nos escopos desejados.
 Os escopos são independentes:
 
 - **Globalmente** — toda nova sessão, em qualquer lugar.
@@ -32,4 +32,4 @@ Os escopos são independentes:
 Uma nova sessão usa o padrão **mais específico** aplicável: worktree →
 projeto → global. Você também pode alterar esses padrões depois. Altere o padrão global em
 **Configurações → Layouts**. Altere o padrão de um projeto ou worktree na
-respectiva janela de edição.
+respectivo diálogo de edição.

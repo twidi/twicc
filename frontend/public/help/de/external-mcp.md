@@ -123,7 +123,7 @@ der Verifizierungscode. Du musst sie nicht kopieren, um eine Anfrage zu genehmig
 Öffne **Einstellungen → Externer MCP → Verbindungen verwalten**. Die Liste zeigt drei Abschnitte,
 sofern sie Einträge enthalten:
 
-- **Offene Anfragen** — Anfragen, die auf deine Entscheidung warten;
+- **Ausstehende Anfragen** — Anfragen, die auf deine Entscheidung warten;
 - **Aktiv** — genehmigte Verbindungen, auch solche, die OAuth noch abschließen;
 - **Widerrufen** — Verbindungen, die keinen Zugriff mehr haben.
 

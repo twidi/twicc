@@ -16,16 +16,16 @@ com placeholders resolvidos para cada projeto: `{git_root}` (sua raiz git),
 (o nome da pasta). Assim, `{git_root}/.worktrees` mantém os worktrees dentro de cada repositório,
 enquanto `/home/me/worktrees/{project_name}` reúne todos no mesmo local. Cada
 projeto pode substituir essa configuração com seu próprio caminho absoluto. Defina a configuração global em
-Configurações e a de um projeto na caixa de diálogo de edição dele.
+Configurações e a de um projeto no diálogo de edição dele.
 
 ### Criar um worktree
 
 Você cria um worktree ao iniciar uma nova sessão nele. No menu **Nova sessão**,
 cada linha de projeto tem um botão de worktree à direita, com um branch e um
-**+**. Clique nele para abrir a caixa de diálogo de worktree. O botão só aparece para
+**+**. Clique nele para abrir o diálogo de worktree. O botão só aparece para
 projetos que são repositórios git.
 
-Na caixa de diálogo:
+No diálogo:
 
 - **Novo worktree** — o TwiCC cria o worktree e seu branch no
   local escolhido.
@@ -37,7 +37,7 @@ Em ambos os casos, você pode iniciar imediatamente um rascunho de sessão no no
 ### Limpar
 
 Um worktree continua no seletor de projetos e nos menus Nova sessão até
-você **arquivá-lo**, na caixa de diálogo de edição ou no menu **⋮** do seletor de projetos
+você **arquivá-lo**, no diálogo de edição ou no menu **⋮** do seletor de projetos
 no topo da barra lateral. Arquivar oculta o worktree sem excluir
 nada. Isso apenas o oculta no TwiCC. Encerrar o worktree de fato,
 com o merge do branch e a remoção no disco, é uma tarefa sua ou do seu agente.

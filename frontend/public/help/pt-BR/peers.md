@@ -63,7 +63,7 @@ da senha.
 
 ### Parear duas instâncias
 
-As relações entre instâncias parceiras usam um fluxo de solicitação e aprovação. Um usuário envia uma solicitação
+As conexões entre instâncias parceiras usam um fluxo de solicitação e aprovação. Um usuário envia uma solicitação
 de pareamento por **Gerenciar instâncias parceiras**. O outro usuário recebe a solicitação e vê um
 código de verificação de seis dígitos.
 
@@ -72,10 +72,10 @@ uma chamada ou um chat privado. O solicitante insere o código na própria inst�
 Isso confirma que a solicitação chegou à pessoa correta.
 
 A verificação apenas libera a aprovação. O usuário que recebe ainda escolhe se
-aceita ou recusa a relação. Cada usuário também escolhe seu próprio nome local
+aceita ou recusa a conexão. Cada usuário também escolhe seu próprio nome local
 para a instância parceira.
 
-Apenas usuários gerenciam relações entre instâncias parceiras. Agentes não podem criá-las, aprová-las, recusá-las,
+Apenas usuários gerenciam conexões entre instâncias parceiras. Agentes não podem criá-las, aprová-las, recusá-las,
 renomeá-las, revogá-las nem reconectá-las.
 
 ### Enviar uma mensagem
@@ -85,7 +85,7 @@ mensagem pode conter texto e arquivos de qualquer tipo. Cada arquivo mantém seu
 os arquivos de uma mensagem têm limite total de 50 MiB. Para um arquivo maior, o
 agente o coloca em um serviço de armazenamento e informa sua URL no texto da
 mensagem. Nenhuma confirmação adicional do remetente é necessária depois que o usuário
-aprova a relação com a instância parceira.
+aprova a conexão com a instância parceira.
 
 Uma instância parceira com uma versão antiga do TwiCC recusa mensagens com arquivos. Seu usuário precisa
 atualizar o TwiCC. Mensagens apenas com texto continuam chegando.
@@ -203,18 +203,18 @@ apenas texto.
 
 ### Revogação e reconexão
 
-Cada lado controla sua própria relação com a instância parceira. Qualquer usuário pode revogá-la a qualquer
-momento. A revogação interrompe as mensagens e limpa as credenciais da relação, mas
+Cada lado controla sua própria conexão com a instância parceira. Qualquer usuário pode revogá-la a qualquer
+momento. A revogação faz parar as mensagens e limpa as credenciais da conexão, mas
 mantém o nome local da instância parceira e o histórico completo de mensagens.
 
 A revogação é silenciosa. A outra instância descobre quando uma solicitação posterior
-à instância parceira é rejeitada. Sua cópia da relação passa a aparecer como **com falha**.
+à instância parceira é rejeitada. Sua cópia da conexão passa a aparecer como **com falha**.
 
 Uma instância parceira também pode ficar com falha quando você altera ou desativa seu endereço para instâncias parceiras.
 Defina um endereço acessível e reconecte cada instância parceira afetada manualmente.
 
 A reconexão usa um novo código de verificação e exige a aprovação do outro usuário,
-como o pareamento original. Ela restaura a relação existente em vez de
+como o pareamento original. Ela restaura a conexão existente em vez de
 criar outra. Assim, o nome local e o histórico de mensagens continuam disponíveis.
 
 A revisão humana é o principal limite de segurança. Ela não torna seguro um conteúdo não confiável.

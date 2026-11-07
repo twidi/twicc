@@ -37,15 +37,15 @@ presionado significa que esta cronología escucha los mensajes nuevos.
 - Haz clic en el altavoz presionado de la cronología para desactivar la escucha y vaciar su cola.
   Esto detiene su lectura automática y deja en marcha las lecturas manuales no relacionadas.
   Al activar otra cronología se vacía la cola de la cronología anterior.
-- El botón **Detener la lectura en voz alta** existente en el riel y el botón **Dejar de
-  leer** del mensaje detienen la lectura actual. Durante la lectura automática,
+- El botón **Detener la lectura en voz alta** existente en el riel y el botón **Detener
+  lectura** del mensaje detienen la lectura actual. Durante la lectura automática,
   también desactivan la escucha y vacían su cola.
 - La escucha y su cola permanecen en memoria. Al recargar la página se borran.
 
 La lectura automática usa la configuración de texto a voz activa. En **Configuración →
 Resúmenes**, **Leer resúmenes en la lectura en voz alta de la cronología** controla los resúmenes automáticos.
 Está activado de forma predeterminada. Los mensajes elegibles contienen al menos **1000 caracteres
-de contenido**. Los mensajes más cortos usan el ajuste de adaptación de texto existente.
+de contenido**. Los mensajes más cortos usan la configuración de adaptación de texto existente.
 Los anuncios de proyecto y de sesión conservan su redacción habitual.
 
 TwiCC prepara hasta dos resúmenes de texto en cola mientras se reproduce otra lectura.
@@ -66,7 +66,7 @@ el mismo resultado cuando el origen y la política de modelo coinciden. La prepa
 también guarda los resúmenes correctos. Un resultado de una política anterior sigue disponible.
 La regeneración reemplaza un resultado solo si tiene éxito.
 
-Usa **Mostrar resumen** para alternar entre el texto original y su resumen. Copiar y **Leer
+Usa **Mostrar resumen** para cambiar entre el texto original y su resumen. Copiar y **Leer
 en voz alta** usan esa vista. La lectura del chat original conserva su alcance de bloques original.
 La lectura de la cronología original usa la instantánea ensamblada de la cronología. La lectura manual
 interrumpe la lectura automática y funciona de forma independiente del interruptor de resúmenes

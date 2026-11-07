@@ -35,7 +35,7 @@ test('speech button sends retained descriptors for start and ending errors', asy
         assert.equal(notices[0], error)
         assert.equal(notices[1], error)
         i18n.global.locale.value = 'pt-BR'
-        assert.equal(messages.resolveUiMessage(notices[0]), 'Falha na conversão de texto em fala')
+        assert.equal(messages.resolveUiMessage(notices[0]), 'Falha na leitura em voz alta')
     } finally { app.unmount(); i18n.global.locale.value = 'en' }
 })
 
@@ -63,7 +63,7 @@ for (const stage of ['start', 'ending']) {
             assert.equal(displayed(), 'Text-to-speech failed')
             i18n.global.locale.value = 'pt-BR'
             await flush()
-            assert.equal(displayed(), 'Falha na conversão de texto em fala')
+            assert.equal(displayed(), 'Falha na leitura em voz alta')
         } finally { app.unmount(); i18n.global.locale.value = 'en' }
     })
 }

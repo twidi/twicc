@@ -89,7 +89,7 @@ la mettre à jour. Un message contenant seulement du texte lui parvient quand m�
 
 Vous pouvez aussi écrire un message vous-même, depuis **Gérer les pairs**, depuis la boîte de réception,
 ou sous forme de réponse pendant que vous examinez un message. Ce formulaire accepte uniquement un titre et un texte.
-Il ne porte aucune pièce jointe et ne garde aucun brouillon : le fermer supprime ce que vous avez écrit.
+Il ne porte aucune pièce jointe et ne garde aucun brouillon : le fermer abandonne ce que vous avez écrit.
 Pour tout le reste, demandez à un agent : il joint les fichiers et rédige le message pour vous.
 
 Le titre doit énoncer clairement le sujet. Le texte doit inclure tout le contexte dont la personne

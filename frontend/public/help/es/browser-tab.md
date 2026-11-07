@@ -5,11 +5,11 @@ service workers. TwiCC no la usa como proxy ni la aísla en un sandbox.
 
 **Para que un agente configure tu servidor de desarrollo,** indícale esta página:
 <https://github.com/twidi/twicc/blob/main/frontend/public/help/browser-tab.md>.
-Contiene todo lo necesario: incrustación, cookies y el script complementario.
+Contiene todo lo necesario: incrustación, cookies y el script companion.
 El agente también necesita la dirección con la que accedes a TwiCC: los mensajes de configuración
 de la pestaña ofrecen **Añadir instrucciones al mensaje** y **Copiar instrucciones para un
 agente**, un prompt listo para usar con esta página, esa dirección y el snippet
-complementario.
+companion.
 
 ### Abrir una página
 
@@ -40,7 +40,7 @@ normal, así que un inicio de sesión hecho allí ya se aplica. Los puertos no i
 `localhost:5173` y `localhost:3000` cuentan como el mismo sitio.
 
 **Dominios distintos** — por ejemplo, TwiCC en un túnel y tu aplicación en otro. El
-navegador aísla la página incrustada, así que empiezas sin sesión iniciada y necesitas algunos ajustes
+navegador aísla la página incrustada, así que empiezas sin sesión iniciada y necesitas alguna configuración
 **solo para desarrollo**:
 
 - **Permitir la incrustación** — muchos frameworks la prohíben de forma predeterminada con
@@ -51,15 +51,15 @@ navegador aísla la página incrustada, así que empiezas sin sesión iniciada y
   área privada de cookies y almacenamiento, que se conserva entre recargas. `localStorage` e
   `IndexedDB` no requieren configuración: tienen el mismo aislamiento y simplemente funcionan.
 
-Mantén estos ajustes detrás de un indicador de desarrollo: no quieres `SameSite=None` ni la
+Mantén esta configuración detrás de un indicador de desarrollo: no quieres `SameSite=None` ni la
 incrustación abierta en producción.
 
-### El script complementario
+### El script companion
 
 Una página incrustada es una caja negra para TwiCC: los enlaces que sigues dentro de ella son
 invisibles, así que Atrás / Adelante solo siguen las URL escritas en la barra de herramientas. TwiCC
-ofrece un **script complementario** que puedes añadir a tu página de desarrollo para eliminar
-ese límite y habilitar funciones más completas:
+ofrece un **script companion** que puedes añadir a tu página de desarrollo para eliminar
+ese límite y activar funciones más completas:
 
 - seguimiento real de la navegación: Atrás / Adelante / Recargar controlan el historial propio de la
   página, y la navegación interna (SPA) actualiza la barra de direcciones;

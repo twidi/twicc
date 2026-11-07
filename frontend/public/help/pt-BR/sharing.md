@@ -61,13 +61,13 @@ Para o tipo ativado, os agentes também podem:
   pessoalmente (retirar uma publicação é sempre considerado seguro);
 - **ler a URL** de qualquer link existente desse tipo, incluindo os seus.
 
-Os agentes nunca podem remover a senha de um link nem compartilhar com o modo de exibição `debug`.
+Os agentes nunca podem remover a senha de um link nem compartilhar com o modo de visualização `debug`.
 Seus novos links de sessão são snapshots fixos, a menos que eles
 peçam explicitamente um link ao vivo.
 
 ## Artefatos e acesso à rede
 
-Um artefato compartilhado é executado para o visitante **sem pedidos de consentimento**. Se ele
+Um artefato compartilhado é executado para o visitante **sem solicitações de consentimento**. Se ele
 faz chamadas de rede, apenas os hosts **permitidos por você** ficam acessíveis.
 Qualquer outro host é bloqueado, e o visitante vê uma breve mensagem de "bloqueado pelo
 proprietário". Você permite ou nega hosts no **favorito** do artefato.

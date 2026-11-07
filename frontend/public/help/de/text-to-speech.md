@@ -40,7 +40,7 @@ Schaltfläche bedeutet, dass diese Zeitachse auf neue Nachrichten lauscht.
   Vorlesen weiterlaufen. Wenn du eine andere Zeitachse aktivierst, leert TwiCC die Warteschlange der
   vorherigen.
 - Die vorhandene Schaltfläche **Vorlesen stoppen** in der Leiste und die Schaltfläche **Vorlesen
-  stoppen** der Nachricht beenden das aktuelle Vorlesen. Beim automatischen Vorlesen deaktivieren sie
+  stoppen** der Nachricht stoppen das aktuelle Vorlesen. Beim automatischen Vorlesen deaktivieren sie
   außerdem das Lauschen und leeren die Warteschlange.
 - Das Lauschen und seine Warteschlange bleiben im Speicher. Ein Neuladen der Seite löscht sie.
 
@@ -53,7 +53,7 @@ Textanpassung. Ansagen zu Projekten und Sitzungen behalten ihren üblichen Wortl
 TwiCC bereitet bis zu zwei wartende Textzusammenfassungen vor, während ein anderes Vorlesen läuft.
 Audio erzeugt es erst, wenn eine Nachricht an der Reihe ist. Ein gewähltes Vorlesen behält seine
 Einstellungen, bis es endet. Wenn du den Schalter ausschaltest, gibt TwiCC nicht mehr benötigte
-Vorbereitungen frei, und wartende Nachrichten verwenden ihre Originale. Eine fehlgeschlagene
+Vorbereitungen frei, und ausstehende Nachrichten verwenden ihre Originale. Eine fehlgeschlagene
 Zusammenfassung zeigt einen Fehler und überspringt diese Nachricht. Das Lauschen geht mit der
 nächsten Nachricht weiter.
 
@@ -222,7 +222,7 @@ fehlgeschlagener Lauf behält seine Datei.
   Fehlerausgabe**.
 - Andernfalls sagt TwiCC, was nicht stimmt: eine Ausgabe, die nicht das gewählte Format hat, kein
   Audio, ein Pfad, der nicht genau ein absoluter Pfad ist …
-- **Auf die Standardausgabe darf sonst nichts gedruckt werden**: Eine Meldung aus deinem Shell-Profil
+- **Auf die Standardausgabe darf sonst nichts gedruckt werden**: Eine Nachricht aus deinem Shell-Profil
   oder eine Fortschrittszeile zerstört das Audio.
 - Was `~/.bashrc` oder `~/.zshrc` setzt, fehlt meist (Aliase, Ergänzungen von `PATH`): Nutze volle
   Pfade oder ein Skript, das setzt, was es braucht.

@@ -67,7 +67,7 @@ ausdrücklich einen Live-Link anfordern.
 Ein geteiltes Artefakt läuft für den Betrachter **ohne Zustimmungsabfragen**. Wenn es
 Netzwerkaufrufe macht, sind nur die Hosts erreichbar, die **du erlaubt hast**;
 jeder andere Host wird blockiert, und der Betrachter sieht einen kurzen Hinweis „vom
-Eigentümer blockiert“. Du erlaubst oder verweigerst Hosts über das **Lesezeichen** des Artefakts,
+Eigentümer blockiert“. Du erlaubst oder lehnst Hosts über das **Lesezeichen** des Artefakts ab,
 und Hosts, die Betrachter erreichen wollten, werden dort aufgelistet, sodass du sie
 nachträglich genehmigen kannst.
 

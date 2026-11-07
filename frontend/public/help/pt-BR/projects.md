@@ -37,7 +37,7 @@ as sessões do projeto principal e dos worktrees.
 ### Arquivar
 
 Terminou de trabalhar em um projeto? Use **Arquivar** para ocultá-lo das listas. Nada é
-excluído, e suas sessões continuam disponíveis na busca. Arquive-o na caixa de diálogo de edição ou
+excluído, e suas sessões continuam disponíveis na pesquisa. Arquive-o no diálogo de edição ou
 no menu **⋮** do seletor de projetos no topo da barra lateral. Para ver
 os projetos arquivados novamente, marque **Mostrar arquivados** na seção Projetos da página inicial.
 Nessa seção, você pode **desarquivar** qualquer um deles.

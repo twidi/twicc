@@ -4,5 +4,5 @@ auf Ebene **Projekt**, **Arbeitsbereich** oder **Global** an – praktisch für
 lang laufende Befehle, die du aus jeder Sitzung erreichen willst.
 
 Aktiviere **Einstellungen → Terminal → Persistente Sitzungen (tmux)**, damit deine
-Terminals Neuladen und erneute Verbindungen überstehen. Sie werden aufgeräumt,
+Terminals Neuladen und Neuverbindungen überstehen. Sie werden aufgeräumt,
 wenn ihre Sitzung archiviert wird.

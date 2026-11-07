@@ -64,6 +64,7 @@ Spanish, French and Brazilian Portuguese translations. German is standard modern
 addressed with the informal `du` form; it uses the default plural rule, so zero is plural.
 Spanish is neutral international Spanish
 addressed with the informal `tú` form; it uses the default plural rule, so zero is plural.
+Brazilian Portuguese addresses the user with `você`.
 French uses the `vous` form and a custom plural rule
 (`pluralRules` in `index.js`): zero and one take the singular form. Messages
 render as text or Vue component slots, never as HTML strings.
@@ -306,27 +307,47 @@ translation contracts are unchanged.
 
 ## Adding a language
 
-1. Copy the English catalog to a new BCP 47 locale file and translate it.
-2. Register the locale in `SUPPORTED_LOCALES` and add a dynamic import to
+1. Add a column for the language to every table in `docs/i18n-glossary.md`.
+   Fill each term with the glossary meaning before you translate the catalog.
+2. Copy the English catalog to a new BCP 47 locale file and translate it with
+   the glossary words. Use the same words in the help and tip bodies.
+3. Register the locale in `SUPPORTED_LOCALES` and add a dynamic import to
    `localeLoaders` in `src/i18n/index.js`. Add a small JavaScript catalog entry,
    following `locales/pt-BR.js`, to support JSON imports in both Node and Vite.
    Use the language's own name for its selector label.
    Load its Web Awesome translation in the same loader when available.
    Load its Day.js locale there too; components must not import date locales statically.
    Do not add a static catalog import or preload every locale.
-3. Keep catalog keys aligned and preserve interpolation parameter names.
-4. Run `cd frontend && node --test src/i18n/index.test.js`, the frontend
+4. Keep catalog keys aligned and preserve interpolation parameter names.
+5. Run `cd frontend && node --test src/i18n/index.test.js`, the frontend
    suite (`npm test`) and the production build (`npm run build`).
-5. Check the language selector, reload persistence and login in a browser.
+6. Check the language selector, reload persistence and login in a browser.
    Check narrow layouts and avoid translating user or agent content.
-6. Add the locale to the recovery-message subset in `vite.config.js`. The inline
+7. Add the locale to the recovery-message subset in `vite.config.js`. The inline
    guard in `index.html` must recognize it before application modules load.
-7. Confirm the production build emits a separate catalog chunk. Confirm an
+8. Confirm the production build emits a separate catalog chunk. Confirm an
    English startup does not request it and public viewers remain English.
 
 New UI copy should use an English catalog key and a matching translation in
 each supported language. Code, comments and contributor documentation remain English;
 translated catalogs and localized Markdown bodies are the exceptions.
+
+## Glossary
+
+`docs/i18n-glossary.md` fixes one translation per recurring domain term in
+each supported language, for example session, peer, workspace, pane and panel.
+It keeps terminology consistent across catalogs, help bodies and tip bodies.
+
+- Read the glossary before you translate or review any interface text.
+- Use the listed word whenever the English term has the listed meaning.
+  The glossary works per concept: a word that is listed as "avoid" for one
+  term can still be right for another term.
+- When you add a recurring term, add a row with a translation in **all**
+  supported languages. Do not add a row for one language only.
+- When you change a row, update the catalogs and the help and tip bodies in the
+  same pass.
+
+No automated check enforces the glossary. Reviewers verify it.
 
 ## Backend interface messages
 

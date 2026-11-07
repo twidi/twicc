@@ -16,7 +16,7 @@ no topo da barra lateral — mesmo se ele já estiver selecionado. Na página in
 os espaços de trabalho que o contêm aparecem acima da barra de abas. Clique em um para
 abri-lo.
 
-Para editar um espaço de trabalho, abra a caixa de diálogo **Gerenciar espaços de trabalho** pelo ícone de engrenagem
+Para editar um espaço de trabalho, abra o diálogo **Gerenciar espaços de trabalho** pelo ícone de engrenagem
 na seção Espaços de trabalho da página inicial ou pelo menu **⋮** no seletor de projetos.
 
 ### Padrões de inclusão automática
@@ -33,6 +33,6 @@ podem se sobrepor livremente. Eles são rótulos, não grupos exclusivos.
 ### Arquivar
 
 Arquive um espaço de trabalho para ocultá-lo sem excluí-lo. Seus projetos permanecem onde estão.
-Use a caixa de diálogo de gerenciamento ou o menu **⋮** no seletor de projetos no topo
+Use o diálogo de gerenciamento ou o menu **⋮** no seletor de projetos no topo
 da barra lateral. Para ver os espaços de trabalho arquivados novamente, marque **Mostrar arquivados** na
 seção Espaços de trabalho da página inicial. Nessa seção, você pode **desarquivá-los**.

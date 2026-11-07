@@ -15,7 +15,7 @@ Desde ahí puedes añadir a **favoritos** cualquier artefacto, dándole un nombr
 el proyecto al que pertenece la sesión, el espacio de trabajo de ese proyecto, o todas partes.
 
 Las páginas interactivas también pueden **guardar datos**: lo que haces en la página (elecciones,
-ajustes, notas, estado de un juego…) se almacena en una carpeta `data/` junto al
+configuración, notas, estado de un juego…) se almacena en una carpeta `data/` junto al
 artefacto y se conserva al cerrarlo y volver a abrirlo. El agente puede volver a leer esos
 archivos, así que una página puede funcionar como un formulario enriquecido: el agente te entrega un
 artefacto, haces tus elecciones y guardas, le dices al agente que terminaste,

@@ -131,7 +131,7 @@ quando elas contêm entradas:
 Selecione **Revisar** para examinar uma solicitação ou **Detalhes** para examinar uma conexão
 existente. Fechar os detalhes retorna à lista quando você os abre por ela.
 Abrir uma solicitação pela notificação leva diretamente aos detalhes. Fechar
-essa janela não abre a lista.
+esse diálogo não abre a lista.
 
 Vários clientes podem se conectar de forma independente. Revogar uma conexão não
 revoga as outras.
@@ -140,7 +140,7 @@ revoga as outras.
 
 Selecione **Revogar** para impedir novas chamadas MCP de uma conexão. As
 credenciais existentes deixam de conceder acesso. A revogação não desfaz o trabalho
-já feito nem interrompe sessões que o cliente iniciou anteriormente.
+já feito e não faz parar as sessões que o cliente iniciou anteriormente.
 
 A conexão revogada continua na lista. Para conectar novamente, inicie uma nova
 conexão pelo cliente e aprove a nova solicitação.
@@ -164,7 +164,7 @@ solicitações de autorização já em andamento. Ela termina automaticamente.
 O alerta permanece até você dispensá-lo. Tráfego alto indica suspeita de abuso,
 não prova de ataque. Vários clientes podem compartilhar uma origem de rede.
 
-Selecione **Suspender todo o acesso externo** para interromper todas as novas solicitações externas de MCP e OAuth,
+Selecione **Suspender todo o acesso externo** para parar todas as novas solicitações externas de MCP e OAuth,
 sem revogar autorizações existentes. Solicitações já em execução
 podem terminar. Para retomar, ative o acesso externo novamente em Configurações. Essa suspensão
 manual persiste entre reinicializações.
@@ -217,10 +217,10 @@ Verifique o campo agregado `ok` e cada registro. Um lote concluído pode conter
 comandos com falha ou ignorados. Um comando também pode funcionar, mas ter sua resposta grande
 omitida (`response_omitted: true`). Nesse caso, o `ok` agregado é falso.
 
-Por padrão, `batch` para após um erro de execução. Defina `on_error` como `continue`
+Por padrão, `batch` é interrompido após um erro de execução. Defina `on_error` como `continue`
 para tentar os comandos restantes. O padrão de `batch_read` é `continue`.
 A execução paralela exige `continue`. Use o modo sequencial para `stop`.
-A omissão de saída não interrompe os comandos seguintes. Alterações concluídas continuam aplicadas:
+A omissão de saída não faz parar os comandos seguintes. Alterações concluídas continuam aplicadas:
 não há rollback, nova tentativa automática nem transferência de resultados para argumentos posteriores.
 Lotes aninhados não são compatíveis.
 
@@ -238,6 +238,6 @@ prova que as gravações pararam. Examine os recursos afetados antes de repetir 
 incerto. Os IDs de lote identificam chamadas para diagnóstico. Eles não impedem trabalho duplicado.
 
 O TwiCC verifica a autorização externa antes de iniciar cada comando. Expiração,
-revogação ou desativação do acesso externo interrompe os comandos restantes. Se o TwiCC
-não consegue verificar a autorização, também os interrompe. Comandos já iniciados podem
+revogação ou desativação do acesso externo faz parar os comandos restantes. Se o TwiCC
+não consegue verificar a autorização, também faz parar os comandos. Comandos já iniciados podem
 terminar, e seus resultados coletados são preservados.

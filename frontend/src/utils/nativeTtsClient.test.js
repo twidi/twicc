@@ -135,9 +135,9 @@ test('native wire metadata remains reactive in start, ending and snapshot errors
         assert.equal(mirrored.error.message, 'Text-to-speech failed')
         assert.equal(mirrored.results[0].ended.error, 'Text-to-speech failed')
         i18n.global.locale.value = 'pt-BR'
-        assert.equal(started.error, 'Falha na conversão de texto em fala')
-        assert.equal(mirrored.error.message, 'Falha na conversão de texto em fala')
-        assert.equal(mirrored.results[0].ended.error, 'Falha na conversão de texto em fala')
+        assert.equal(started.error, 'Falha na leitura em voz alta')
+        assert.equal(mirrored.error.message, 'Falha na leitura em voz alta')
+        assert.equal(mirrored.results[0].ended.error, 'Falha na leitura em voz alta')
         assert.equal(started.uiMessage.key, 'backend.tts.failed')
         assert.deepEqual(started.ui_message, ui_message)
     } finally { f.client.detach(); i18n.global.locale.value = 'en' }
