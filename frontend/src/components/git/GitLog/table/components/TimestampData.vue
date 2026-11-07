@@ -48,7 +48,7 @@ function formatTimestamp() {
 const timestampId = useId()
 
 const formattedTimestamp = computed(() => {
-  const commitDate = dayjs.utc(props.timestamp).locale(locale.value === 'pt-BR' ? 'pt-br' : 'en')
+  const commitDate = dayjs.utc(props.timestamp).locale(({ 'pt-BR': 'pt-br', fr: 'fr' })[locale.value] ?? 'en')
   if (!commitDate.isValid()) return '-'
 
   if (dayjs.utc().diff(commitDate, 'week') >= 1) {

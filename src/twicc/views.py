@@ -435,7 +435,7 @@ async def project_branches(request, project_id):
     # GET/POST endpoints, so a stale ``git_root=None`` never wrongly 400s here.
     repo_root = await _resolve_repo_root(project)
     if not repo_root:
-        return JsonResponse(ui_error("Project is not a git repository", 'backend.projects.not_git_repository'), status=400)
+        return JsonResponse(ui_error("Project is not a Git repository", 'backend.projects.not_git_repository'), status=400)
 
     branches = await sync_to_async(get_branches)(repo_root)
     checked_out = await sync_to_async(get_worktree_branches)(repo_root)
@@ -598,7 +598,7 @@ async def project_worktrees(request, project_id):
             return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
         repo_root = await _resolve_repo_root(project)
         if not repo_root:
-            return JsonResponse(ui_error("Project is not a git repository", 'backend.projects.not_git_repository'), status=400)
+            return JsonResponse(ui_error("Project is not a Git repository", 'backend.projects.not_git_repository'), status=400)
         worktrees = await sync_to_async(_serialize_worktrees)(repo_root)
         return JsonResponse({"worktrees": worktrees})
 
@@ -839,7 +839,7 @@ async def project_icon_manage(request, project_id):
     if action == "scan":
         anchor = project.icon_anchor or project.git_root
         if not anchor:
-            return JsonResponse(ui_error("Project is not in a git repository", 'backend.projects.not_in_git_repository'), status=400)
+            return JsonResponse(ui_error("Project is not in a Git repository", 'backend.projects.not_in_git_repository'), status=400)
         candidates = await sync_to_async(pi.scan_repo_icons)(anchor)
         return JsonResponse({"candidates": candidates})
 
@@ -2895,7 +2895,7 @@ async def git_log(request, project_id, session_id=None):
     try:
         git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
     except Http404:
-        return JsonResponse(ui_error("No git repository found", 'backend.git.repository_not_found'), status=404)
+        return JsonResponse(ui_error("No Git repository found", 'backend.git.repository_not_found'), status=404)
 
     # Always resolve branch dynamically from the git directory at request time,
     # so the branch selector reflects the actual state (handles worktrees too).
@@ -2964,12 +2964,12 @@ async def _resolve_session_git_directory(project_id, session_id=None, *, request
             return requested
         # Requested directory is not among known/existing roots — reject with 404
         # so the frontend can mark it as missing and fall back to another root.
-        raise Http404("No git repository found")
+        raise Http404("No Git repository found")
 
     if existing:
         return existing[0]
 
-    raise Http404("No git repository found")
+    raise Http404("No Git repository found")
 
 
 async def git_index_files(request, project_id, session_id=None):

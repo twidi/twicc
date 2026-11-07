@@ -1,7 +1,7 @@
 # Interface languages
 
-Choose **Settings → General → Language** to switch between **English** and
-**Português (Brasil)**. The change is immediate. The preference is saved in
+Choose **Settings → General → Language** to switch between **English**,
+**Français** and **Português (Brasil)**. The change is immediate. The preference is saved in
 this browser's existing `twicc-settings` localStorage entry and restored before
 the login screen is mounted. It is deliberately local to the browser, like
 the color scheme; it does not change the language on other devices.
@@ -59,7 +59,9 @@ Do not classify these exclusions as missing translations during later passes.
 
 `frontend/src/i18n/index.js` configures Vue I18n in Composition API mode with
 English fallback. `locales/en.json` is the source catalog, and
-`locales/pt-BR.json` contains Brazilian Portuguese translations. Messages
+`locales/fr.json` and `locales/pt-BR.json` contain the French and Brazilian
+Portuguese translations. French uses the `vous` form and a custom plural rule
+(`pluralRules` in `index.js`): zero and one take the singular form. Messages
 render as text or Vue component slots, never as HTML strings.
 
 English is the only catalog imported synchronously. Other catalogs and their
@@ -84,8 +86,8 @@ therefore falls back to English until the user reloads it.
 Keep code splitting enabled in the SPA, artifact-shell and share-viewer builds.
 Otherwise the bundler inlines optional catalogs into their entry bundles.
 Standalone viewer chunks stay at the bundle root because backend routes accept
-one asset path segment. Tests that render Portuguese explicitly call
-`await loadLocaleMessages('pt-BR')`; production never preloads every supported locale.
+one asset path segment. Tests that render a translation explicitly call
+`await loadLocaleMessages('pt-BR')` or `'fr'`; production never preloads every supported locale.
 
 Components use `$t('key')` in templates or `useI18n().t` in setup code. Build
 translated option arrays and labels in `computed()` so switching languages
@@ -184,7 +186,7 @@ message syntax and embedded HTML. Unused-key and dynamic-key bans are disabled
 because the application intentionally selects some keys dynamically.
 
 Review findings file by file. Confirm each message's purpose before adding a
-semantic key, an English source message and a Brazilian Portuguese translation.
+semantic key, an English source message and a translation for each supported language.
 Use complete messages, including punctuation and parameters. Keep links, icons
 and emphasis in named `i18n-t` slots. Use a narrow, explained ESLint exception
 for a literal product name, URL, keyboard chord or code example when necessary.
@@ -318,8 +320,8 @@ translation contracts are unchanged.
 7. Confirm the production build emits a separate catalog chunk. Confirm an
    English startup does not request it and public viewers remain English.
 
-New UI copy should use an English catalog key and a matching Portuguese
-translation. Code, comments and contributor documentation remain English;
+New UI copy should use an English catalog key and a matching translation in
+each supported language. Code, comments and contributor documentation remain English;
 translated catalogs and localized Markdown bodies are the exceptions.
 
 ## Backend interface messages

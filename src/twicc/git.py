@@ -43,6 +43,18 @@ _WORKTREE_ADD_TIMEOUT = 60
 
 
 # ---------------------------------------------------------------------------
+# Failure messages
+# ---------------------------------------------------------------------------
+
+
+def _git_failed_message(text: str, key: str, stderr: str):
+    """Build a failure message; the detail variant has its own catalog key (``<key>_detail``)."""
+    if not stderr:
+        return ui_message_text(text, key)
+    return ui_message_text(f"{text}: {stderr}", f"{key}_detail", {"detail": stderr})
+
+
+# ---------------------------------------------------------------------------
 # File list → tree builder
 # ---------------------------------------------------------------------------
 
@@ -522,7 +534,7 @@ def get_commit_detail(git_directory: str, commit_hash: str) -> dict:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"Git show failed: {stderr}" if stderr else "Git show failed", 'backend.git.git_show_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("Git show failed", 'backend.git.git_show_failed', stderr))
 
     stdout = result.stdout
     # Split on NUL: fixed fields before, body after.
@@ -849,7 +861,7 @@ def _parse_commit_files(git_directory: str, commit_hash: str) -> list[dict]:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"Git diff-tree failed: {stderr}" if stderr else "Git diff-tree failed", 'backend.git.git_diff-tree_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("Git diff-tree failed", 'backend.git.git_diff-tree_failed', stderr))
 
     files = []
 
@@ -980,7 +992,7 @@ def get_git_log(git_directory: str, branch: str | None = None) -> dict:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"Git log failed: {stderr}" if stderr else "Git log failed", 'backend.git.git_log_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("Git log failed", 'backend.git.git_log_failed', stderr))
 
     stdout = result.stdout
     if not stdout.strip():
@@ -1209,7 +1221,7 @@ def git_stage(git_directory: str, file_path: str) -> None:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"git add failed: {stderr}" if stderr else "git add failed", 'backend.git.git_add_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("git add failed", 'backend.git.git_add_failed', stderr))
 
 
 def git_unstage(git_directory: str, file_path: str) -> None:
@@ -1233,7 +1245,7 @@ def git_unstage(git_directory: str, file_path: str) -> None:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"git restore --staged failed: {stderr}" if stderr else "git restore --staged failed", 'backend.git.git_restore_staged_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("git restore --staged failed", 'backend.git.git_restore_staged_failed', stderr))
 
 
 def git_discard(git_directory: str, file_path: str) -> None:
@@ -1259,7 +1271,7 @@ def git_discard(git_directory: str, file_path: str) -> None:
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(ui_message_text(f"git restore failed: {stderr}" if stderr else "git restore failed", 'backend.git.git_restore_failed', {"detail": f": {stderr}" if stderr else ""}))
+        raise GitError(_git_failed_message("git restore failed", 'backend.git.git_restore_failed', stderr))
 
 
 # ---------------------------------------------------------------------------

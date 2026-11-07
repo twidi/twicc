@@ -9,7 +9,8 @@
         const messages = "__TWICC_RECOVERY_MESSAGES__";
         let locale = 'en';
         try {
-            if (JSON.parse(window.localStorage.getItem('twicc-settings') || '{}')?.locale === 'pt-BR') locale = 'pt-BR';
+            const saved = JSON.parse(window.localStorage.getItem('twicc-settings') || '{}')?.locale;
+            if (saved === 'pt-BR' || saved === 'fr') locale = saved;
         } catch {}
         document.documentElement.lang = locale;
         const key = 'twicc:asset-recovery';

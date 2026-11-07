@@ -4,6 +4,7 @@ import en from './locales/en.json' with { type: 'json' }
 export const DEFAULT_LOCALE = 'en'
 export const SUPPORTED_LOCALES = Object.freeze([
     { value: 'en', label: 'English' },
+    { value: 'fr', label: 'Français' },
     { value: 'pt-BR', label: 'Português (Brasil)' },
 ])
 
@@ -26,6 +27,14 @@ export function readInitialLocale(storage) {
 // Keep English in the entry bundle for fallback, including failed downloads.
 // Each additional language loads its catalog and component/date translations together.
 const localeLoaders = {
+    fr: async () => {
+        const [messages] = await Promise.all([
+            import('./locales/fr.js'),
+            import('dayjs/locale/fr.js'),
+            typeof window === 'undefined' ? null : import('@awesome.me/webawesome/dist/translations/fr.js'),
+        ])
+        return messages.default
+    },
     'pt-BR': async () => {
         const [messages] = await Promise.all([
             import('./locales/pt-BR.js'),
@@ -34,6 +43,14 @@ const localeLoaders = {
         ])
         return messages.default
     },
+}
+
+// French treats zero like one ("0 projet"); vue-i18n's default two-form rule treats it as plural.
+// Three-form messages keep the default zero/one/other selection.
+const pluralRules = {
+    fr: (choice, choicesLength) => choicesLength === 2
+        ? (Math.abs(choice) < 2 ? 0 : 1)
+        : (choice ? (Math.abs(choice) === 1 ? 1 : 2) : 0),
 }
 
 export function createLocaleManager(loaders = localeLoaders) {
@@ -47,6 +64,7 @@ export function createLocaleManager(loaders = localeLoaders) {
             globalInjection: true,
             locale: isSupportedLocale(locale) ? locale : DEFAULT_LOCALE,
             fallbackLocale: DEFAULT_LOCALE,
+            pluralRules,
             messages: Object.fromEntries([...catalogs].map(([language, messages]) => [language, { ...messages }])),
         })
     }

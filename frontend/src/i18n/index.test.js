@@ -5,33 +5,38 @@ import { baseCompile } from '@intlify/message-compiler'
 import { createRenderer, h, nextTick } from 'vue'
 import { createAppI18n, DEFAULT_LOCALE, i18n, isSupportedLocale, readInitialLocale, setLocale, loadLocaleMessages } from './index.js'
 import en from './locales/en.json' with { type: 'json' }
+import fr from './locales/fr.json' with { type: 'json' }
 import ptBR from './locales/pt-BR.json' with { type: 'json' }
 
 // These rendering tests exercise both catalogs; production loads them on demand.
 await loadLocaleMessages('pt-BR')
+await loadLocaleMessages('fr')
 
 const storage = value => ({ getItem: () => value })
 
 test('English is the default; only registered locales are accepted', () => {
     assert.equal(DEFAULT_LOCALE, 'en')
-    for (const value of [undefined, null, '', 'pt', 'fr', '__proto__', {}, 1]) {
+    for (const value of [undefined, null, '', 'pt', 'de', '__proto__', {}, 1]) {
         assert.equal(isSupportedLocale(value), false)
         assert.equal(createAppI18n(value).global.locale.value, 'en')
     }
     assert.equal(isSupportedLocale('pt-BR'), true)
+    assert.equal(isSupportedLocale('fr'), true)
 })
 
 test('saved locale is restored before login; corrupt or unavailable storage is harmless', () => {
     assert.equal(readInitialLocale(storage('{"locale":"pt-BR","colorScheme":"dark"}')), 'pt-BR')
-    for (const value of [null, '{', 'null', '{}', '{"locale":"fr"}', '{"locale":12}']) {
+    assert.equal(readInitialLocale(storage('{"locale":"fr"}')), 'fr')
+    for (const value of [null, '{', 'null', '{}', '{"locale":"de"}', '{"locale":12}']) {
         assert.equal(readInitialLocale(storage(value)), 'en')
     }
     assert.equal(readInitialLocale({ getItem() { throw new Error('Storage denied') } }), 'en')
 })
 
-test('all messages compile and Brazilian Portuguese covers the English keys', () => {
+test('all messages compile and every translation covers the English keys', () => {
     assert.deepEqual(Object.keys(ptBR).sort(), Object.keys(en).sort())
-    for (const [locale, messages] of Object.entries({ en, 'pt-BR': ptBR })) {
+    assert.deepEqual(Object.keys(fr).sort(), Object.keys(en).sort())
+    for (const [locale, messages] of Object.entries({ en, fr, 'pt-BR': ptBR })) {
         for (const [key, message] of Object.entries(messages)) {
             assert.equal(typeof message, 'string', `${locale}.${key}`)
             assert.ok(message.trim(), `${locale}.${key} must not be empty`)
@@ -55,6 +60,18 @@ test('Portuguese interpolates and pluralizes complete session and project messag
     assert.equal(t('session.selection.count', { count: 1 }, 1), '1 selecionada')
     assert.equal(t('session.selection.count', { count: 2 }, 2), '2 selecionadas')
     assert.equal(t('composer.status.startingProvider', { provider: 'Codex' }), 'Iniciando processo do Codex...')
+})
+
+test('French interpolates and treats zero and one as singular', () => {
+    const { t } = createAppI18n('fr').global
+    for (const [count, noun] of [[0, 'session'], [1, 'session'], [2, 'sessions'], [21, 'sessions']]) {
+        assert.equal(t('common.sessionCount', { count }, count), `${count} ${noun}`)
+    }
+    assert.equal(t('workspace.projectCount', { count: 0 }, 0), '0 projet')
+    assert.equal(t('workspace.projectCount', { count: 3 }, 3), '3 projets')
+    assert.match(t('activity.heatmap.sessionsOn', { count: 0, date: 'x' }, 0), /^Aucune session/)
+    assert.match(t('activity.heatmap.sessionsOn', { count: 1, date: 'x' }, 1), /^1 session /)
+    assert.match(t('activity.heatmap.sessionsOn', { count: 4, date: 'x' }, 4), /^4 sessions /)
 })
 
 test('card session counts use complete plural forms, including zero', () => {

@@ -83,7 +83,7 @@ async def _resolve_source_repo_root(
         repo_root = git[0] if git else None
     if not repo_root:
         return None, _error("project", "not_git_repo",
-                            ui_message_text(f"Project {source_project_id!r} is not a git repository.", 'backend.worktrees.not_git_repo', {"project_id": repr(source_project_id)}))
+                            ui_message_text(f"Project {source_project_id!r} is not a Git repository.", 'backend.worktrees.not_git_repo', {"project_id": repr(source_project_id)}))
     return repo_root, None
 
 
