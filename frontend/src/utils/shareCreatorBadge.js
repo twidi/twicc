@@ -1,5 +1,10 @@
-/** Convert the owner-only created_by serializer shape into badge rendering data. */
-export function shareCreatorBadge(createdBy) {
+import { sessionRouteLocation } from './sessionRoute.js'
+
+/**
+ * Convert the owner-only created_by serializer shape into badge rendering data.
+ * The link to the creator session keeps the current frame (see sessionRouteLocation).
+ */
+export function shareCreatorBadge(createdBy, route) {
     if (createdBy?.kind !== 'agent') return null
     const session = createdBy.session
     if (!session) {
@@ -7,9 +12,6 @@ export function shareCreatorBadge(createdBy) {
     }
     return {
         label: session.title || session.id,
-        to: {
-            name: 'session',
-            params: { projectId: session.project_id, sessionId: session.id },
-        },
+        to: sessionRouteLocation({ id: session.id, project_id: session.project_id }, route),
     }
 }

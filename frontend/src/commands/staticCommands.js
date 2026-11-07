@@ -1064,8 +1064,7 @@ export function initStaticCommands(router) {
                 const gate = await ensureProjectTrust(projectId)
                 if (!gate) return
                 const sessionId = data.createDraftSession(projectId, gate.state)
-                const name = isAllProjectsMode() ? 'projects-session' : 'session'
-                router.push({ name, params: { projectId, sessionId } })
+                router.push(sessionRouteLocation({ id: sessionId, project_id: projectId }, route))
             },
         },
         {
@@ -1079,27 +1078,11 @@ export function initStaticCommands(router) {
                 const gate = await ensureProjectTrust(p.id)
                 if (!gate) return
                 const sessionId = data.createDraftSession(p.id, gate.state)
-                // Preserve the current sidebar filter: the draft lives in
-                // project p.id (data), but we keep the URL's projectId on
-                // the current filter so the sidebar does not switch. The
-                // SessionView derives the draft's real project from
-                // session.project_id. In all-projects mode there is no
-                // single-project filter to preserve, and on pages without
-                // a project segment in the URL (home, settings) there is
-                // no filter either — in both cases fall back to the
-                // draft's project for URL canonicity.
-                // `query: route.query` carries the current ?workspace=…
-                // along with any other query params. The router guard
-                // would normally drop workspace when navigating to a
-                // project outside it, but we set workspace explicitly so
-                // the guard short-circuits and our value wins.
-                const filterProjectId = route.params.projectId
-                if (isAllProjectsMode() || !filterProjectId) {
-                    const name = isAllProjectsMode() ? 'projects-session' : 'session'
-                    router.push({ name, params: { projectId: p.id, sessionId }, query: route.query })
-                } else {
-                    router.push({ name: 'session', params: { projectId: filterProjectId, sessionId }, query: route.query })
-                }
+                // Preserve the current frame: the draft lives in project p.id
+                // (data), but the URL keeps the current project filter and
+                // workspace so the sidebar does not switch. The SessionView
+                // derives the draft's real project from session.project_id.
+                router.push(sessionRouteLocation({ id: sessionId, project_id: p.id }, route))
             }, aggregateProjectActivity(activityMap, data, p.id)))
             },
         },

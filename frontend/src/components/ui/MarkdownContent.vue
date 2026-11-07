@@ -17,6 +17,7 @@ import InlineArtifactBlock from '../../inline-artifacts/InlineArtifactBlock.vue'
 import TextToSpeechButton from './TextToSpeechButton.vue'
 import { useMarkdownToolbar } from '../../composables/useMarkdownToolbar.js'
 import { hashString } from '../../utils/hash.js'
+import { sessionLinkLocation } from '../../utils/sessionRoute.js'
 import { detailsScope, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
 import { useSettingsStore } from '../../stores/settings'
 import { SUMMARY_MIN_CHARS } from '../../constants'
@@ -786,6 +787,7 @@ function buildMediaItems(root, clickedEl) {
 //   - data-file-broken     → swallow the click (link is rendered as plain text)
 //   - external / mailto    → leave the browser to handle (target=_blank or default)
 //   - anchor-only (#…)     → leave the browser to scroll
+//   - a session route      → SPA navigation that keeps the current frame
 //   - everything else      → SPA navigation via router.push
 function handleLinkClick(event) {
     // Per-block toolbar (code block, blockquote): checked first, since its
@@ -852,7 +854,13 @@ function handleLinkClick(event) {
 
     event.preventDefault()
     if (router) {
-        router.push(href)
+        // A link to a session (any session, any tab) keeps the user's frame:
+        // the prefix, project and workspace written in the path are the
+        // writer's, not the user's (see sessionLinkLocation).
+        const sessionLocation = href.startsWith('/')
+            ? sessionLinkLocation(router.resolve(href), router.currentRoute.value)
+            : null
+        router.push(sessionLocation || href)
     } else if (/^https?:/i.test(href)) {
         // Router-less host (share bundle): open absolute links in a new tab; a
         // relative SPA route has no meaning here, so it stays inert.

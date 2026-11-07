@@ -51,6 +51,7 @@ import {
 } from './composables/useStopSessionProcess'
 import { canStealFocus, hasBlockingOverlay } from './utils/focusGuard'
 import { focusChatPrimary, gotoChatFooterPanel } from './utils/focusChat'
+import { sessionRouteLocation } from './utils/sessionRoute'
 import { PROJECT_DETAIL_ROUTES, TERMINAL_ROUTES, WORKFLOW_ROUTES } from './utils/tabRoutes'
 import { toggleSearchInActiveCodeMirror } from './composables/useCodeMirror'
 import { useSessionSwitcher } from './composables/useSessionSwitcher'
@@ -752,12 +753,8 @@ async function handleWorktreeResolved(project) {
     const gate = await ensureProjectTrust(project.id)
     if (!gate) return
     const sessionId = dataStore.createDraftSession(project.id, gate.state)
-    const allProjects = route.name?.startsWith('projects-')
-    router.push({
-        name: allProjects ? 'projects-session' : 'session',
-        params: { projectId: project.id, sessionId },
-        query: route.query,
-    })
+    // Creating a session never changes the user's frame (prefix, project filter, workspace).
+    router.push(sessionRouteLocation({ id: sessionId, project_id: project.id }, route))
 }
 
 onMounted(() => {

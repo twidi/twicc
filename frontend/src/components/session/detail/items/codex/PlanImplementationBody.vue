@@ -20,6 +20,7 @@
 
 import { nextTick, onMounted, ref, useId, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { sessionRouteLocation } from '../../../../../utils/sessionRoute'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 import { useDataStore } from '../../../../../stores/data'
 import { sendWsMessage } from '../../../../../composables/useWebSocket'
@@ -145,13 +146,9 @@ function implementInNewSession() {
     })
     dataStore.deleteDraftSession(draftId, { keepInStore: true })
 
-    // 3. Navigate to the fresh session, preserving the current route mode
-    //    (single-project vs "All projects") and query params.
-    router.push({
-        name: route.name === 'projects-session' ? 'projects-session' : 'session',
-        params: { ...route.params, sessionId: draftId },
-        query: route.query,
-    })
+    // 3. Navigate to the fresh session, keeping the user's frame (prefix,
+    //    project filter, workspace) whatever tab is open now.
+    router.push(sessionRouteLocation({ id: draftId, project_id: projectId }, route))
 }
 
 function focusImplement() {

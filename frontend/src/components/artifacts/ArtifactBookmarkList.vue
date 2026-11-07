@@ -31,6 +31,7 @@ import { artifactBookmarkRouteLocation, artifactTypeIcon } from '../../utils/art
 import { activeRowBase, entranceOffset, entryReveal, revealBands } from '../../utils/sidebarRows'
 import { revealBehavior, startSmoothScroll } from '../../utils/nearestScroll'
 import { buildFilesRouteParams } from '../../utils/granularRoutes'
+import { sessionRouteLocation } from '../../utils/sessionRoute'
 import { formatDate } from '../../utils/date'
 import { dateBucketSeparator } from '../../utils/datePresets'
 import { SESSION_TIME_FORMAT } from '../../constants'
@@ -224,13 +225,11 @@ function backToList() {
 // buildFilesRouteParams applies encodePath internally, so the RAW relative_path
 // is passed.
 function openInSession(b) {
-    const params = buildFilesRouteParams({ rootKey: 'artifacts', filePath: b.relative_path })
-    const name = isAllProjectsMode.value ? 'projects-session-artifacts' : 'session-artifacts'
-    router.push({
-        name,
-        params: { projectId: b.project_id, sessionId: b.session_id, ...params },
-        query: queryWithWorkspace(),
-    })
+    router.push(sessionRouteLocation(
+        { id: b.session_id, project_id: b.project_id },
+        route,
+        { tab: 'artifacts', params: buildFilesRouteParams({ rootKey: 'artifacts', filePath: b.relative_path }) },
+    ))
 }
 
 async function removeBookmark(b) {

@@ -10,6 +10,7 @@ import { inject } from 'vue'
 import { useDataStore } from '../stores/data'
 import { ATTACHMENT_SHARE_MODE, artifactNavigationTarget } from '../utils/attachmentStrip'
 import { buildFilesRouteParams } from '../utils/granularRoutes'
+import { sessionRouteLocation } from '../utils/sessionRoute'
 
 /**
  * @param {() => string} getSessionId - the session that displays the message
@@ -38,18 +39,14 @@ export function useAttachmentStripContext(getSessionId) {
         // handler: open that session's Artifacts tab on the file.
         const { default: router } = await import('../router')
         const route = router.currentRoute.value
-        const allProjects = typeof route.name === 'string' && route.name.startsWith('projects-')
         const targetSessionId = target.type === 'current' ? sessionId : target.sessionId
         const projectId = store.getSession(targetSessionId)?.project_id || session?.project_id || route.params.projectId
-        await router.push({
-            name: allProjects ? 'projects-session-artifacts' : 'session-artifacts',
-            params: {
-                projectId,
-                sessionId: targetSessionId,
-                ...buildFilesRouteParams({ rootKey: 'artifacts', filePath: target.relativePath }),
-            },
-            query: route.query,
-        })
+        // Keep the user's frame (prefix, project filter, workspace).
+        await router.push(sessionRouteLocation(
+            { id: targetSessionId, project_id: projectId },
+            route,
+            { tab: 'artifacts', params: buildFilesRouteParams({ rootKey: 'artifacts', filePath: target.relativePath }) },
+        ))
     }
 
     return { share, openArtifact }

@@ -17,6 +17,7 @@ import { useSharesStore } from '../stores/shares'
 import { isShareOutdated } from '../utils/shareStatus'
 import { useNetworkDenials } from '../composables/useNetworkDenials'
 import { buildFilesRouteParams } from '../utils/granularRoutes'
+import { sessionRouteLocation } from '../utils/sessionRoute'
 import FilePane from '../components/files/FilePane.vue'
 import ArtifactBookmarkDialog from '../components/artifacts/ArtifactBookmarkDialog.vue'
 import ArtifactsHelpButton from '../components/artifacts/ArtifactsHelpButton.vue'
@@ -176,17 +177,11 @@ function onRemovedFromDialog() {
 // internally, so the RAW relative_path is passed.
 function openInSession() {
     if (!bookmark.value) return
-    const params = buildFilesRouteParams({ rootKey: 'artifacts', filePath: bookmark.value.relative_path })
-    const name = isAllProjectsMode.value ? 'projects-session-artifacts' : 'session-artifacts'
-    router.push({
-        name,
-        params: {
-            projectId: bookmark.value.project_id,
-            sessionId: bookmark.value.session_id,
-            ...params,
-        },
-        query: queryWithWorkspace(),
-    })
+    router.push(sessionRouteLocation(
+        { id: bookmark.value.session_id, project_id: bookmark.value.project_id },
+        route,
+        { tab: 'artifacts', params: buildFilesRouteParams({ rootKey: 'artifacts', filePath: bookmark.value.relative_path }) },
+    ))
 }
 </script>
 

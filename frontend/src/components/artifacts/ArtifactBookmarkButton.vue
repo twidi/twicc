@@ -12,6 +12,7 @@ import { isShareOutdated } from '../../utils/shareStatus'
 import { useNetworkDenials } from '../../composables/useNetworkDenials'
 import { toast } from '../../composables/useToast'
 import { buildFilesRouteParams } from '../../utils/granularRoutes'
+import { sessionRouteLocation } from '../../utils/sessionRoute'
 import ArtifactBookmarkDialog from './ArtifactBookmarkDialog.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import { ARTIFACT_ICON, suggestArtifactBookmarkName } from '../../utils/artifactBookmark'
@@ -137,17 +138,11 @@ function viewInArtifacts() {
 function openInSession() {
     const b = bookmark.value
     if (!b) return
-    const params = buildFilesRouteParams({ rootKey: 'artifacts', filePath: b.relative_path })
-    const allProjectsMode = route.name?.startsWith('projects-')
-    router.push({
-        name: allProjectsMode ? 'projects-session-artifacts' : 'session-artifacts',
-        params: {
-            projectId: b.project_id,
-            sessionId: b.session_id,
-            ...params,
-        },
-        query: route.query.workspace ? { workspace: route.query.workspace } : {},
-    })
+    router.push(sessionRouteLocation(
+        { id: b.session_id, project_id: b.project_id },
+        route,
+        { tab: 'artifacts', params: buildFilesRouteParams({ rootKey: 'artifacts', filePath: b.relative_path }) },
+    ))
 }
 
 // The two entry points its host (FilePane) also offers in the command palette.

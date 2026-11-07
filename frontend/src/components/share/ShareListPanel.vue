@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, useId } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSharesStore } from '../../stores/shares'
 import { shareAbsoluteUrl } from '../../utils/shareUrl'
 import { shareCreatorBadge } from '../../utils/shareCreatorBadge'
@@ -38,8 +39,9 @@ async function revokeAll() {
 
 // Per-share expanded "Recent views" panel: id -> accesses[] (null = loading).
 const accesses = ref({})
+const route = useRoute()
 function creatorBadge(share) {
-    return shareCreatorBadge(share.created_by)
+    return shareCreatorBadge(share.created_by, route)
 }
 function copy(s) {
     const url = shareAbsoluteUrl(s)
