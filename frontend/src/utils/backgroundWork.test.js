@@ -15,6 +15,7 @@ import {
     idleWithShellsSuffix,
     pluralize,
     processStateTooltip,
+    runningWorkflowCount,
     startupSettingsDeferredText,
     stopConfirmationTitle,
     unreadBackgroundKind,
@@ -209,4 +210,19 @@ test('unreadBackgroundKind picks the background work shown behind an unread sess
     assert.equal(unreadBackgroundKind(state('assistant_turn', 1, crons)), null)
     assert.equal(unreadBackgroundKind(null), null)
     assert.equal(unreadBackgroundKind(undefined), null)
+})
+
+test('runningWorkflowCount reads the live Workflow runs, whatever the state', () => {
+    assert.equal(runningWorkflowCount(null), 0)
+    assert.equal(runningWorkflowCount({ state: 'assistant_turn' }), 0)
+    assert.equal(runningWorkflowCount({ state: 'assistant_turn', background_work_in_progress: work(1) }), 0)
+    assert.equal(runningWorkflowCount({
+        state: 'assistant_turn',
+        background_work_in_progress: { ...work(0), workflows: 2 },
+    }), 2)
+    assert.equal(runningWorkflowCount({
+        state: 'user_turn',
+        background_work_in_progress: { ...work(0), workflows: 1 },
+    }), 1)
+    assert.equal(runningWorkflowCount({ background_work_in_progress: { workflows: 'x' } }), 0)
 })

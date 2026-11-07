@@ -8,6 +8,7 @@ import GitChangeStats from '../../git/GitChangeStats.vue'
 import UploadTabStatus from '../../files/UploadTabStatus.vue'
 import OrchestrationTabActivity from '../../orchestration/OrchestrationTabActivity.vue'
 import TaskTabProgress from '../../tasks/TaskTabProgress.vue'
+import WorkflowTabActivity from '../../workflows/WorkflowTabActivity.vue'
 
 const props = defineProps({
     // resolver gutter: { edge, x, y, w, h, items: [{ dockId, tabs, action, anchor }] }
@@ -27,6 +28,7 @@ const props = defineProps({
     // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
     tabOrchestrationActivity: { type: Function, default: null },
     tabTaskProgress: { type: Function, default: null },
+    tabWorkflowActivity: { type: Function, default: null },
 })
 const emit = defineEmits(['action'])
 
@@ -287,6 +289,7 @@ onUnmounted(cancelPending)
                 <UploadTabStatus v-if="tabUploadStatus" class="g-label" :status="tabUploadStatus(entry.tab.id)" />
                 <OrchestrationTabActivity v-if="tabOrchestrationActivity" class="g-label" :activity="tabOrchestrationActivity(entry.tab.id)" />
                 <TaskTabProgress v-if="tabTaskProgress" class="g-label" :progress="tabTaskProgress(entry.tab.id)" />
+                <WorkflowTabActivity v-if="tabWorkflowActivity" class="g-label" :running="tabWorkflowActivity(entry.tab.id)" />
             </SessionTabLink>
             <SessionTabLink
                 v-if="startPlus"
@@ -319,6 +322,7 @@ onUnmounted(cancelPending)
                 <UploadTabStatus v-if="tabUploadStatus" class="g-label" :status="tabUploadStatus(entry.tab.id)" />
                 <OrchestrationTabActivity v-if="tabOrchestrationActivity" class="g-label" :activity="tabOrchestrationActivity(entry.tab.id)" />
                 <TaskTabProgress v-if="tabTaskProgress" class="g-label" :progress="tabTaskProgress(entry.tab.id)" />
+                <WorkflowTabActivity v-if="tabWorkflowActivity" class="g-label" :running="tabWorkflowActivity(entry.tab.id)" />
             </SessionTabLink>
             <SessionTabLink
                 v-if="endPlus"
@@ -342,6 +346,7 @@ onUnmounted(cancelPending)
                 <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(entry.tab.id)" />
                 <OrchestrationTabActivity v-if="tabOrchestrationActivity" :activity="tabOrchestrationActivity(entry.tab.id)" />
                 <TaskTabProgress v-if="tabTaskProgress" :progress="tabTaskProgress(entry.tab.id)" />
+                <WorkflowTabActivity v-if="tabWorkflowActivity" :running="tabWorkflowActivity(entry.tab.id)" />
             </span>
             <span v-for="entry in startIcons" :key="'i:' + entry.item.dockId + ':' + entry.tab.id" class="g-chip mm-icon">
                 <wa-icon :name="entry.tab.icon"></wa-icon>
@@ -356,6 +361,7 @@ onUnmounted(cancelPending)
                 <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(entry.tab.id)" />
                 <OrchestrationTabActivity v-if="tabOrchestrationActivity" :activity="tabOrchestrationActivity(entry.tab.id)" />
                 <TaskTabProgress v-if="tabTaskProgress" :progress="tabTaskProgress(entry.tab.id)" />
+                <WorkflowTabActivity v-if="tabWorkflowActivity" :running="tabWorkflowActivity(entry.tab.id)" />
             </span>
             <span v-for="entry in endIcons" :key="'i:' + entry.item.dockId + ':' + entry.tab.id" class="g-chip mm-icon">
                 <wa-icon :name="entry.tab.icon"></wa-icon>

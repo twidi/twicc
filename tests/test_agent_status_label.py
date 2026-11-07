@@ -29,6 +29,7 @@ def _claude_agent() -> ClaudeCodeAgent:
     agent.session_id = "session-1"
     agent._live_background_tasks = {}
     agent._live_monitor_tasks = set()
+    agent._live_workflow_tasks = {}
     agent._pending_wakeup_at = None
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()
@@ -72,6 +73,12 @@ class TestClaudeStatusLabel:
 
         agent._live_monitor_tasks = {"monitor-1"}
         assert agent.current_status_label() == "monitoring"
+
+        agent._live_workflow_tasks = {"w1": "review"}
+        assert agent.current_status_label() == "waiting for workflow"
+
+        agent._live_workflow_tasks = {"w1": "review", "w2": "spec"}
+        assert agent.current_status_label() == "waiting for 2 workflows"
 
         agent._live_background_tasks = {"task-1": "Inventory"}
         assert agent.current_status_label() == "waiting for 1 subagent"

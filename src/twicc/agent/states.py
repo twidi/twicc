@@ -136,20 +136,20 @@ class AgentInfo(NamedTuple):
     # Status-line override the front must show *instead of* a bare "thinking",
     # or None when the agent's own live activity speaks for itself. Set only
     # while a turn ended held open by something the agent is waiting on
-    # ("waiting for 2 subagents", "monitoring", "waiting for scheduled
-    # wakeup (14:05)", "compacting"). Recomputed on every read from the live
-    # hold reasons — never a stored copy, which would keep announcing two
-    # subagents once only one is left. Travels on the live ``process_state``
-    # AND in the ``active_processes`` snapshot, for the same reason as
+    # ("waiting for 2 subagents", "waiting for workflow", "monitoring",
+    # "waiting for scheduled wakeup (14:05)", "compacting"). Recomputed on
+    # every read from the live hold reasons — never a stored copy, which
+    # would keep announcing two subagents once only one is left. Travels on
+    # the live ``process_state`` AND in the ``active_processes`` snapshot, for the same reason as
     # ``stopping``: the ``process_label`` message is a one-shot, and a client
     # that connects (or reconnects, or reloads) afterwards would otherwise
     # see a session working on nothing, with no explanation.
     label: str | None = None
     # What still runs behind the agent's back, whatever ``state`` says: live
-    # subagents, background shells, Monitors, a pending scheduled wake-up, a
-    # ``/goal`` continuation. ``None`` when nothing does. Orthogonal to
-    # ``state`` on purpose — a background shell keeps running in
-    # ``USER_TURN``. Built by :meth:`BaseAgent.current_background_work`
+    # subagents, background shells, Monitors, Workflow runs, a pending
+    # scheduled wake-up, a ``/goal`` continuation. ``None`` when nothing
+    # does. Orthogonal to ``state`` on purpose — a background shell keeps
+    # running in ``USER_TURN``. Built by :meth:`BaseAgent.current_background_work`
     # (see :func:`build_background_work` for the shape), recomputed on every
     # read like ``label``.
     background_work_in_progress: dict | None = None
@@ -218,6 +218,7 @@ def build_background_work(
     subagents: int = 0,
     shells: int = 0,
     monitors: int = 0,
+    workflows: int = 0,
     scheduled_wakeup_at: float | None = None,
     goal: bool = False,
 ) -> dict | None:
@@ -236,11 +237,12 @@ def build_background_work(
       agent is still polling mid-turn included (Codex draws no line between
       a long foreground command and a background one).
     - ``monitors``: live Claude Code ``Monitor`` tools.
+    - ``workflows``: live Claude Code ``Workflow`` runs.
     - ``scheduled_wakeup_at``: ISO-8601 UTC time of a pending Claude Code
       ``ScheduleWakeup``, ``None`` when there is none (or it is past).
     - ``goal``: a Codex ``/goal`` continuation is running.
     """
-    if not (subagents or shells or monitors or scheduled_wakeup_at is not None or goal):
+    if not (subagents or shells or monitors or workflows or scheduled_wakeup_at is not None or goal):
         return None
     wakeup_iso = None
     if scheduled_wakeup_at is not None:
@@ -251,6 +253,7 @@ def build_background_work(
         "subagents": subagents,
         "shells": shells,
         "monitors": monitors,
+        "workflows": workflows,
         "scheduled_wakeup_at": wakeup_iso,
         "goal": goal,
     }

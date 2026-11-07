@@ -37,6 +37,19 @@ export function backgroundShellCount(processState) {
 }
 
 /**
+ * Number of Workflow runs still live behind the agent (Claude Code only). 0
+ * when none runs (or the process is unknown). Read from the process state, not
+ * from the persisted run rows: those outlive a dead process, still "running".
+ *
+ * @param {Object|null} processState
+ * @returns {number}
+ */
+export function runningWorkflowCount(processState) {
+    const workflows = processState?.background_work_in_progress?.workflows
+    return Number.isFinite(workflows) && workflows > 0 ? workflows : 0
+}
+
+/**
  * Number of background shells that keep a USER_TURN session from being plain
  * idle. Outside USER_TURN the agent is working (or starting) anyway, so the
  * idle-state variants (terminal icon, bottom line) never apply: 0.

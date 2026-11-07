@@ -122,9 +122,9 @@ Drop `--active` to see finished children too (`process.state: "dead"`). A child
 spawned seconds ago is not listed yet: `sessions get` returns it by id. A child
 in `user_turn` may still run work in the background: read
 `process.background_work_in_progress` — `null`, or `{subagents, shells, monitors,
-scheduled_wakeup_at, goal}` (live subagents, shell commands still running, Claude Code
-`Monitor` tools, a pending Claude Code `ScheduleWakeup`, a
-Codex `/goal` continuation).
+workflows, scheduled_wakeup_at, goal}` (live subagents, shell commands still
+running, Claude Code `Monitor` tools, Claude Code `Workflow` runs, a pending
+Claude Code `ScheduleWakeup`, a Codex `/goal` continuation).
 
 Use `topology self` for structure and context. Use `sessions --spawn-tree self`
 only for an explicit whole-tree inventory, not for routine manager control.

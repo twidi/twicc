@@ -45,7 +45,9 @@ import GitChangeStats from '../components/git/GitChangeStats.vue'
 import UploadTabStatus from '../components/files/UploadTabStatus.vue'
 import OrchestrationTabActivity from '../components/orchestration/OrchestrationTabActivity.vue'
 import TaskTabProgress from '../components/tasks/TaskTabProgress.vue'
+import WorkflowTabActivity from '../components/workflows/WorkflowTabActivity.vue'
 import { countTasks } from '../utils/todoList'
+import { runningWorkflowCount } from '../utils/backgroundWork'
 import { useCodeCommentsStore } from '../stores/codeComments'
 import { useFramePoolStore } from '../stores/framePool'
 import { apiFetch } from '../utils/api'
@@ -576,6 +578,12 @@ function toolTabChangeStats(tabId) {
 const orchestrationActivity = computed(() => store.getOrchestrationActivity(sessionId.value))
 function toolTabOrchestrationActivity(tabId) {
     return tabId === 'orchestration' ? orchestrationActivity.value : null
+}
+// Live Workflow runs of this session, shown next to the Workflows tab's label: read from its
+// process state, which drops them when the process dies (the persisted runs would stay "running").
+const runningWorkflows = computed(() => runningWorkflowCount(store.getProcessState(sessionId.value)))
+function toolTabWorkflowActivity(tabId) {
+    return tabId === 'workflows' ? runningWorkflows.value : null
 }
 // Done / total task counts shown next to the Tasks tab's label (a check once every task is done).
 const taskProgress = computed(() => countTasks(store.getSessionTasks(sessionId.value)?.items))
@@ -2394,6 +2402,7 @@ onBeforeUnmount(() => {
             :tab-upload-status="toolTabUploadStatus"
             :tab-orchestration-activity="toolTabOrchestrationActivity"
             :tab-task-progress="toolTabTaskProgress"
+            :tab-workflow-activity="toolTabWorkflowActivity"
             :register-target="registerLayoutTarget"
             :unregister-target="unregisterLayoutTarget"
             @select-tab="onLayoutSelectTab"
@@ -2480,6 +2489,7 @@ onBeforeUnmount(() => {
                     <UploadTabStatus :status="toolTabUploadStatus(tab.id)" />
                     <OrchestrationTabActivity :activity="toolTabOrchestrationActivity(tab.id)" />
                     <TaskTabProgress :progress="toolTabTaskProgress(tab.id)" />
+                    <WorkflowTabActivity :running="toolTabWorkflowActivity(tab.id)" />
                     <CodeCommentsIndicator
                         v-if="toolTabCommentsCount(tab.id) !== null"
                         :count="toolTabCommentsCount(tab.id)"

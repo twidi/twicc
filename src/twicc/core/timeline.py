@@ -64,7 +64,7 @@ class TurnStartedData(NamedTuple):
 
 class TurnEndedData(NamedTuple):
     # The ProcessRun.background_work_in_progress snapshot ({"subagents": n, "shells": n,
-    # "monitors": n, "scheduled_wakeup_at": iso | None, "goal": bool}), or None when
+    # "monitors": n, "workflows": n, "scheduled_wakeup_at": iso | None, "goal": bool}), or None when
     # nothing runs. Non-None = waiting for the user while work still runs behind the agent.
     background_work: dict | None = None
     message_refs: list | None = None

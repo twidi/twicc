@@ -303,6 +303,17 @@ class ClaudeCodeAgent(BaseAgent):
         # pipeline's task_id -> tool_use_id map, which only correlates timeline
         # result fragments for rendering.
         self._live_monitor_tasks: set[str] = set()
+        # Live Workflow runs, task_id -> workflow name. The ``Workflow`` tool
+        # launches its script in the background and ends the parent's turn
+        # while the run keeps working, exactly like a background agent: it
+        # has a bounded lifetime and a guaranteed terminal task notification
+        # (completed, failed, killed), so it holds ASSISTANT_TURN until it
+        # ends. Fed and drained by ``_update_live_tasks`` (``task_type ==
+        # "local_workflow"``). In-memory only: the run lives in the CLI
+        # process. The ``Workflow`` rows mirrored from the ``wf_*.json``
+        # files are no substitute: they outlive a dead process, still
+        # "running".
+        self._live_workflow_tasks: dict[str, str] = {}
         # Live shell tasks (``task_type == "local_bash"`` minus Monitors),
         # task_id -> ``_ShellTask`` record (backgrounded flag, owner, command,
         # output path, start time). Every Bash call is a task, foreground
@@ -311,11 +322,12 @@ class ClaudeCodeAgent(BaseAgent):
         # ``task_updated`` patch) count as background work. Subagents' shells
         # stream through the parent too (``owned_by_subagent``) and are
         # tracked the same way: they die with this process just as well.
-        # Unlike agents and Monitors they never hold ASSISTANT_TURN — a dev
-        # server may run for the whole conversation — but they do block the
-        # idle auto-stop (see ``BaseAgentManager._state_based_timeout``).
-        # Fed and drained by ``_update_live_tasks``; in-memory only, the
-        # shells are children of the CLI process.
+        # Unlike agents, Workflows and Monitors they never hold
+        # ASSISTANT_TURN — a dev server may run for the whole conversation —
+        # but they do block the idle auto-stop (see
+        # ``BaseAgentManager._state_based_timeout``). Fed and drained by
+        # ``_update_live_tasks``; in-memory only, the shells are children of
+        # the CLI process.
         self._live_shell_tasks: dict[str, _ShellTask] = {}
         # Task ids of the last ``background_tasks_changed`` list — the CLI's
         # own view of its live background tasks, used to drop a shell whose
@@ -328,6 +340,7 @@ class ClaudeCodeAgent(BaseAgent):
         self._wakeup_refresh_handle: asyncio.TimerHandle | None = None
         # True while a "waiting" process label is what the frontend shows —
         # either "waiting for N subagents" (live background agents),
+        # "waiting for N workflows" (live Workflow runs),
         # "monitoring" (live Monitor tools), or "waiting for scheduled wakeup
         # (HH:MM)" (a pending ScheduleWakeup).
         # Broadcast when a turn ends held in ASSISTANT_TURN; refreshed as the
@@ -533,6 +546,7 @@ class ClaudeCodeAgent(BaseAgent):
             subagents=len(self._live_background_tasks),
             shells=sum(1 for record in self._live_shell_tasks.values() if record.backgrounded),
             monitors=len(self._live_monitor_tasks),
+            workflows=len(self._live_workflow_tasks),
             scheduled_wakeup_at=self._pending_wakeup_at if self._has_pending_wakeup() else None,
         )
 
@@ -1671,6 +1685,7 @@ class ClaudeCodeAgent(BaseAgent):
         """Use bounded assistant work only; background shells never hold completion."""
         return frozenset((
             *(f"agent:{key}" for key in self._live_background_tasks),
+            *(f"workflow:{key}" for key in self._live_workflow_tasks),
             *(f"monitor:{key}" for key in self._live_monitor_tasks),
             *(("wakeup",) if self._has_pending_wakeup() else ()),
         ))
@@ -1835,6 +1850,7 @@ class ClaudeCodeAgent(BaseAgent):
         return (
             self.state in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN)
             and not self._main_turn_open
+            and not self._live_workflow_tasks
             and not self._live_monitor_tasks
             and not self._has_pending_wakeup()
             and not self.pending_requests
@@ -1899,6 +1915,9 @@ class ClaudeCodeAgent(BaseAgent):
 
         - ``local_agent``: agents are conversations with a bounded lifetime
           and a guaranteed terminal notification — they hold ASSISTANT_TURN.
+        - ``local_workflow``: Workflow runs, same lifecycle as agents — they
+          hold ASSISTANT_TURN too. The agents a run spawns emit no task
+          events of their own (only ``task_progress`` on the run's task id).
         - ``local_bash``: every Bash call, kept as a ``_ShellTask`` record
           (``backgrounded`` flag, owner, command) in ``_live_shell_tasks``. A
           background shell may legitimately outlive the whole conversation,
@@ -1910,8 +1929,8 @@ class ClaudeCodeAgent(BaseAgent):
         A terminal event *releases* every collection, whatever the task type:
         this system event is the only signal the CLI emits when a Monitor or a
         background shell ends on its own (stream over, timeout reached, exit).
-        Missing it pins the session in ASSISTANT_TURN forever (Monitors), or
-        shields it from the idle auto-stop forever (shells).
+        Missing it pins the session in ASSISTANT_TURN forever (Monitors,
+        Workflows), or shields it from the idle auto-stop forever (shells).
         """
         data = msg.data if isinstance(msg.data, dict) else {}
         if msg.subtype == "background_tasks_changed":
@@ -1932,6 +1951,13 @@ class ClaudeCodeAgent(BaseAgent):
                 self._logger.debug(
                     "Session %s: background agent %s started (%d live)",
                     self.session_id, task_id, len(self._live_background_tasks),
+                )
+                self._schedule_background_work_refresh()
+            elif task_type == "local_workflow":
+                self._live_workflow_tasks[task_id] = data.get("workflow_name") or data.get("description") or ""
+                self._logger.debug(
+                    "Session %s: workflow %s started (%d live)",
+                    self.session_id, task_id, len(self._live_workflow_tasks),
                 )
                 self._schedule_background_work_refresh()
             elif task_type == "local_bash" and task_id not in self._live_monitor_tasks:
@@ -1984,6 +2010,12 @@ class ClaudeCodeAgent(BaseAgent):
             self._logger.debug(
                 "Session %s: background agent %s stopped (%d live)",
                 self.session_id, task_id, len(self._live_background_tasks),
+            )
+        if self._live_workflow_tasks.pop(task_id, None) is not None:
+            released = True
+            self._logger.debug(
+                "Session %s: workflow %s stopped (%d live)",
+                self.session_id, task_id, len(self._live_workflow_tasks),
             )
         if task_id in self._live_monitor_tasks:
             self._live_monitor_tasks.discard(task_id)
@@ -2095,7 +2127,8 @@ class ClaudeCodeAgent(BaseAgent):
         """Compose the "waiting" label from what holds the turn right now.
 
         Live background agents win ("waiting for N subagents"), then live
-        Monitors ("monitoring"); with neither left but a pending
+        Workflow runs ("waiting for workflow" / "waiting for N workflows"),
+        then live Monitors ("monitoring"); with none left but a pending
         ScheduleWakeup it becomes "waiting for scheduled wakeup (HH:MM)".
         ``None`` when nothing holds.
 
@@ -2107,6 +2140,11 @@ class ClaudeCodeAgent(BaseAgent):
         count = len(self._live_background_tasks)
         if count > 0:
             return f"waiting for {count} subagent{'s' if count > 1 else ''}"
+        workflows = len(self._live_workflow_tasks)
+        if workflows == 1:
+            return "waiting for workflow"
+        if workflows > 1:
+            return f"waiting for {workflows} workflows"
         if self._live_monitor_tasks:
             return "monitoring"
         if self._has_pending_wakeup():
@@ -2423,10 +2461,10 @@ class ClaudeCodeAgent(BaseAgent):
                         "Session %s: background shell notice bookkeeping failed", self.session_id, exc_info=True,
                     )
 
-                # Keep the live-background-agents set and the live-Monitors set
+                # Keep the live background agents, Workflow runs and Monitors
                 # current on every task lifecycle event — consumed by the
-                # ResultMessage branch below to hold ASSISTANT_TURN while either
-                # still runs.
+                # ResultMessage branch below to hold ASSISTANT_TURN while any
+                # of them still runs.
                 if isinstance(msg, SystemMessage):
                     await self._update_live_tasks(msg)
                     self._completion_holds_changed(self._completion_assistant_holds())

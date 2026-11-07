@@ -25,6 +25,7 @@ const props = defineProps({
     // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
     tabOrchestrationActivity: { type: Function, default: null },
     tabTaskProgress: { type: Function, default: null },
+    tabWorkflowActivity: { type: Function, default: null },
     registerTarget: { type: Function, required: true },
     unregisterTarget: { type: Function, required: true },
 })
@@ -695,6 +696,7 @@ onBeforeUnmount(() => {
             :tab-upload-status="tabUploadStatus"
             :tab-orchestration-activity="tabOrchestrationActivity"
             :tab-task-progress="tabTaskProgress"
+            :tab-workflow-activity="tabWorkflowActivity"
             :maximized="true"
             :register-target="registerTarget"
             :unregister-target="unregisterTarget"
@@ -722,6 +724,7 @@ onBeforeUnmount(() => {
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
                 :tab-task-progress="tabTaskProgress"
+                :tab-workflow-activity="tabWorkflowActivity"
                 :register-target="registerTarget"
                 :unregister-target="unregisterTarget"
                 @select="(id) => emit('select-tab', id)"
@@ -745,6 +748,7 @@ onBeforeUnmount(() => {
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
                 :tab-task-progress="tabTaskProgress"
+                :tab-workflow-activity="tabWorkflowActivity"
                 @action="onGutterAction"
             />
 
@@ -771,6 +775,7 @@ onBeforeUnmount(() => {
                 :tab-upload-status="tabUploadStatus"
                 :tab-orchestration-activity="tabOrchestrationActivity"
                 :tab-task-progress="tabTaskProgress"
+                :tab-workflow-activity="tabWorkflowActivity"
                 :dock-of="layout.dockOf"
                 :is-dock-occupied="layout.isDockOccupied"
                 :register-target="registerTarget"

@@ -11,6 +11,7 @@ import GitChangeStats from '../../git/GitChangeStats.vue'
 import UploadTabStatus from '../../files/UploadTabStatus.vue'
 import OrchestrationTabActivity from '../../orchestration/OrchestrationTabActivity.vue'
 import TaskTabProgress from '../../tasks/TaskTabProgress.vue'
+import WorkflowTabActivity from '../../workflows/WorkflowTabActivity.vue'
 
 const props = defineProps({
     overlay: { type: Object, required: true }, // { edge, rect:{x,y,w,h}, tabs }
@@ -26,6 +27,7 @@ const props = defineProps({
     // (tabId) -> Orchestration activity ({ sessions, subagentsRunning }) shown next to a tab's label, or null.
     tabOrchestrationActivity: { type: Function, default: null },
     tabTaskProgress: { type: Function, default: null },
+    tabWorkflowActivity: { type: Function, default: null },
     dockOf: { type: Function, required: true }, // tabId -> its current dockId | 'center'
     isDockOccupied: { type: Function, required: true }, // dockId -> whether it holds a tab
     registerTarget: { type: Function, required: true },
@@ -63,6 +65,7 @@ function onShow(event) { emit('select', event.detail.name) }
                             <UploadTabStatus v-if="tabUploadStatus" :status="tabUploadStatus(t.id)" />
                             <OrchestrationTabActivity v-if="tabOrchestrationActivity" :activity="tabOrchestrationActivity(t.id)" />
                             <TaskTabProgress v-if="tabTaskProgress" :progress="tabTaskProgress(t.id)" />
+                            <WorkflowTabActivity v-if="tabWorkflowActivity" :running="tabWorkflowActivity(t.id)" />
                         </SessionTabLink>
                         <TabPlacementMenu
                             :tab-id="t.id"

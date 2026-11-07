@@ -50,6 +50,7 @@ def _claude_agent() -> ClaudeCodeAgent:
     agent.state = AgentState.ASSISTANT_TURN
     agent._live_background_tasks = {}
     agent._live_monitor_tasks = set()
+    agent._live_workflow_tasks = {}
     agent._live_shell_tasks = {}
     agent._listed_background_tasks = set()
     agent._wakeup_refresh_handle = None
@@ -108,7 +109,7 @@ class TestSnapshotShape:
 
     def test_one_fixed_shape_whatever_runs(self):
         assert build_background_work(shells=2) == {
-            "subagents": 0, "shells": 2, "monitors": 0,
+            "subagents": 0, "shells": 2, "monitors": 0, "workflows": 0,
             "scheduled_wakeup_at": None, "goal": False,
         }
 
