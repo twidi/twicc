@@ -2179,6 +2179,9 @@ class ClaudeCodeAgent(BaseAgent):
         count = len(self._live_background_tasks)
         if count > 0:
             return ui_message("backend.claude.waiting_subagents", {"count": count}, count=count)
+        workflows = len(self._live_workflow_tasks)
+        if workflows > 0:
+            return ui_message("backend.claude.waiting_workflows", {"count": workflows}, count=workflows)
         if self._live_monitor_tasks:
             return ui_message("backend.claude.monitoring")
         if self._has_pending_wakeup():

@@ -9,7 +9,6 @@
 import { useId } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import ProcessIndicator from '../ui/ProcessIndicator.vue'
-import { pluralize } from '../../utils/backgroundWork'
 
 defineProps({
     /** Number of live Workflow runs, or null/0 when none runs. */
@@ -25,7 +24,7 @@ const id = useId()
 <template>
     <span v-if="running > 0" class="workflow-tab-activity">
         <ProcessIndicator :id="id" state="assistant_turn" size="small" />
-        <AppTooltip :for="id">{{ running === 1 ? 'Workflow running' : `${pluralize(running, 'workflow')} running` }}</AppTooltip>
+        <AppTooltip :for="id">{{ $t('session.background.workflowsRunning', { count: running }, running) }}</AppTooltip>
     </span>
 </template>
 

@@ -853,6 +853,7 @@ async def test_configuration_loss_does_not_release_manual_resource(harness):
     assert h.session.error['code'] == 'tts_unavailable'
     assert next(f for f in h.session._frames if f['type'] == 'error') == {
         **DISPOSITIONS['listener_error'], 'activation_id': current['activation_id'],
+        'ui_message': {'key': 'backend.tts.configurationUnavailable', 'params': {}},
     }
     await h.registry.shutdown()
 

@@ -23,7 +23,7 @@ import { PROCESS_STATE, PROCESS_STATE_NAMES } from '../constants.js'
  * @returns {string}
  */
 export function pluralize(count, singular, pluralForm = `${singular}s`) {
-    const key = { 'background shell': 'session.background.shellCount', 'active cron': 'session.background.cronCount', 'subagent': 'session.background.subagentCount', 'shell': 'session.background.plainShellCount', 'monitor': 'session.background.monitorCount' }[singular]
+    const key = { 'background shell': 'session.background.shellCount', 'active cron': 'session.background.cronCount', 'subagent': 'session.background.subagentCount', 'shell': 'session.background.plainShellCount', 'monitor': 'session.background.monitorCount', 'workflow': 'session.background.workflowCount' }[singular]
     if (key) return i18n.global.t(key, { count }, count)
     return `${count} ${count === 1 ? singular : pluralForm}`
 }

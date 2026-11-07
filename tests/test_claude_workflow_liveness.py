@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from claude_agent_sdk import SystemMessage
 
+from twicc.core.ui_messages import ui_message
 from twicc.providers.claude_code.agent.agent import ClaudeCodeAgent
 
 
@@ -118,10 +119,16 @@ def test_the_release_refreshes_an_active_waiting_label() -> None:
     asyncio.run(agent._update_live_tasks(_workflow_started("w2")))
 
     asyncio.run(agent._refresh_waiting_label())
-    agent._broadcast_process_label.assert_awaited_with("waiting for 2 workflows")
+    agent._broadcast_process_label.assert_awaited_with(
+        "waiting for 2 workflows",
+        ui_message("backend.claude.waiting_workflows", {"count": 2}, count=2),
+    )
 
     asyncio.run(agent._update_live_tasks(_system("task_notification", "w2", status="completed")))
-    agent._broadcast_process_label.assert_awaited_with("waiting for workflow")
+    agent._broadcast_process_label.assert_awaited_with(
+        "waiting for workflow",
+        ui_message("backend.claude.waiting_workflows", {"count": 1}, count=1),
+    )
 
 
 def test_the_name_falls_back_to_the_description() -> None:

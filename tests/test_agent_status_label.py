@@ -84,6 +84,17 @@ class TestClaudeStatusLabel:
         agent._live_background_tasks = {"task-1": "Inventory"}
         assert agent.current_status_label() == "waiting for 1 subagent"
 
+    def test_workflow_hold_has_a_translatable_message(self):
+        agent = _claude_agent()
+        agent._waiting_label_active = True
+        agent._live_workflow_tasks = {"w1": "review", "w2": "spec"}
+
+        message = agent.current_status_label_ui_message()
+
+        assert message["key"] == "backend.claude.waiting_workflows"
+        assert message["params"] == {"count": 2}
+        assert message["count"] == 2
+
     def test_nothing_left_to_wait_on(self):
         agent = _claude_agent()
         agent._waiting_label_active = True
