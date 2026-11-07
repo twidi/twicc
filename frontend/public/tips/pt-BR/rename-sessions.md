@@ -6,7 +6,7 @@ Para dar um nome à sessão, clique no **lápis** no cabeçalho da sessão ou na
 opção **Renomear** do menu **⋮** na barra lateral.
 
 **Salvar** valida seu título e impede as atualizações automáticas, mesmo quando você
-mantém o mesmo texto. Alterações de nome explícitas pelo CLI ou MCP fazem o mesmo. Os títulos existentes
+mantém o mesmo texto. Alterações de nome explícitas pela CLI ou pelo MCP fazem o mesmo. Os títulos existentes
 anteriores às atualizações automáticas também permanecem sem atualizações.
 
 A janela identifica os títulos automáticos e explica o efeito de Salvar. Essa dica fica

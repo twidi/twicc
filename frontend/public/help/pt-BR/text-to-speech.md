@@ -7,43 +7,43 @@ Há dois tipos de configuração:
 - **OpenRouter**: um modelo de fala do OpenRouter, com suas vozes.
 - **Script**: um comando shell seu que transforma o texto em áudio.
 
-## Ler novas mensagens da timeline
+## Ler novas mensagens da linha do tempo
 
-Use o **botão de alto-falante ao lado de Timeline** para ler automaticamente novas mensagens
+Use o **botão de alto-falante ao lado de Linha do tempo** para ler automaticamente novas mensagens
 do assistente. É necessária uma configuração de leitura em voz alta disponível. O botão pressionado
-indica que essa timeline monitora novas mensagens.
+indica que essa linha do tempo monitora novas mensagens.
 
-- A escuta usa o escopo da timeline: todos os projetos, um espaço de trabalho, um projeto
+- A escuta usa o escopo da linha do tempo: todos os projetos, um espaço de trabalho, um projeto
   ou um worktree. As sessões silenciadas ficam ocultas e são ignoradas por padrão. Selecione
-  **Filtros → Mostrar sessões silenciadas** para exibi-las e lê-las nessa timeline.
+  **Filtros → Mostrar sessões silenciadas** para exibi-las e lê-las nessa linha do tempo.
   Outros filtros de exibição, incluindo a visualização e o filtro de sessões selecionados,
   não afetam a escuta.
 - Desativar **Mostrar sessões silenciadas** remove as mensagens dessas sessões da fila.
   A leitura já selecionada pode terminar. Ativar a opção não reproduz mensagens
   ignoradas enquanto ela estava desativada. A leitura manual continua disponível nas sessões silenciadas.
 - A escuta continua quando você navega para outra página, muda de aba do aplicativo
-  ou abre uma sessão. Apenas uma timeline monitora novas mensagens por aba do navegador.
-- O botão da timeline na barra de ícones mostra um pequeno alto-falante enquanto a escuta está
-  ativada. Seu rótulo identifica a timeline monitorada. Clique nele para abrir
-  essa timeline sem alterar a escuta.
+  ou abre uma sessão. Apenas uma linha do tempo monitora novas mensagens por aba do navegador.
+- O botão da linha do tempo na barra de ícones mostra um pequeno alto-falante enquanto a escuta está
+  ativada. Seu rótulo identifica a linha do tempo monitorada. Clique nele para abrir
+  essa linha do tempo sem alterar a escuta.
 - As mensagens precisam ter uma data nativa **estritamente posterior ao clique de
   ativação**. O histórico existente não é reproduzido quando você ativa a escuta.
 - Mensagens que chegam com atraso continuam elegíveis até **cinco segundos** antes da última
-  mensagem cuja leitura começa. Exatamente cinco segundos ainda é elegível.
+  mensagem cuja leitura começa. Uma mensagem com atraso de exatamente cinco segundos ainda é elegível.
   As mensagens aceitas ficam na fila até chegar a vez delas.
 - A leitura manual tem prioridade. A leitura automática espera enquanto uma solicitação
-  ou reprodução manual está em andamento. O alto-falante da timeline na barra de ícones permanece visível durante essa espera
+  ou reprodução manual está em andamento. O alto-falante da linha do tempo na barra de ícones permanece visível durante essa espera
   e entre as mensagens.
-- Clique no alto-falante pressionado da timeline para desativar a escuta e limpar sua fila.
+- Clique no alto-falante pressionado da linha do tempo para desativar a escuta e limpar sua fila.
   Isso interrompe a leitura automática e mantém outras leituras manuais em andamento.
-  Ativar outra timeline limpa a fila da timeline anterior.
-- O botão **Parar leitura em voz alta** na barra de ícones e o botão **Parar a
+  Ativar outra linha do tempo limpa a fila da linha do tempo anterior.
+- O botão **Parar a leitura em voz alta** na barra de ícones e o botão **Parar a
   leitura** da mensagem interrompem a leitura atual. Durante a leitura automática, eles
   também desativam a escuta e limpam sua fila.
 - A escuta e sua fila ficam na memória. Recarregar a página remove ambas.
 
 A leitura automática usa a configuração ativa de leitura em voz alta. Em **Configurações →
-Resumos**, **Ler resumos na fala da timeline** controla os resumos automáticos.
+Resumos**, **Ler resumos em voz alta na linha do tempo** controla os resumos automáticos.
 Essa opção fica ativada por padrão. Mensagens elegíveis contêm pelo menos **1.000 caracteres
 de conteúdo**. Mensagens menores usam a configuração existente de adaptação de texto.
 Os anúncios de projeto e sessão mantêm seu texto habitual.
@@ -57,24 +57,24 @@ mostra um erro e ignora essa mensagem. A escuta continua com a próxima mensagem
 ## Resumir uma mensagem ou seleção
 
 Use **Resumir mensagem** em uma mensagem elegível do assistente no chat ou na visualização de mensagens
-da timeline. O limite conta a mensagem lógica completa, incluindo seus blocos de código e
+da linha do tempo. O limite conta a mensagem lógica completa, incluindo seus blocos de código e
 texto. Ele exclui o conteúdo de artefatos incorporados e as marcações de controle.
 O resumo visa cerca de um terço do texto original, com um máximo de 140 palavras.
 
-Os resumos de mensagens são salvos. O chat, as visualizações da timeline e a escuta automática compartilham
+Os resumos de mensagens são salvos. O chat, as visualizações da linha do tempo e a escuta automática compartilham
 o mesmo resultado quando o texto original e a política do modelo correspondem. A preparação automática
 também salva os resumos gerados com sucesso. O resultado de uma política anterior permanece disponível.
 Gerar novamente substitui um resultado apenas após a geração bem-sucedida.
 
 Use **Mostrar resumo** para alternar entre o texto original e o resumo. Copiar e **Ler em
 voz alta** usam essa visualização. A fala do texto original no chat mantém o escopo original dos blocos.
-A fala do texto original na timeline usa o snapshot montado da timeline. A fala manual
+A fala do texto original na linha do tempo usa o snapshot montado da linha do tempo. A fala manual
 interrompe a fala automática e funciona independentemente da opção de resumo automático.
 Os anúncios habituais de projeto e sessão nunca identificam um resumo.
 
-Selecione texto e use **Resumir** nas ações de seleção para obter um resumo
+Selecione texto e use **Resumir seleção** nas ações de seleção para obter um resumo
 temporário. Sua caixa de diálogo oferece Copiar, Ler em voz alta, Tentar novamente, Cancelar e Fechar. Fechar
-a caixa de diálogo libera sua geração e interrompe a leitura correspondente. Os resumos de seleção
+a caixa de diálogo libera os recursos da geração e interrompe a leitura correspondente. Os resumos de seleção
 e o teste de configurações nunca são salvos como resumos de mensagens.
 
 O texto do resumo aparece conforme é gerado. A fala começa com as partes disponíveis do resumo,
@@ -91,9 +91,9 @@ depois Codex. Se o agente selecionado está indisponível, o outro agente o subs
 O OpenRouter usa o modelo de texto e a chave do OpenRouter já configurados. Suas chamadas são cobradas
 na sua conta do OpenRouter. Sem a chave, ou acima de **60.000 caracteres no texto
 original**, o TwiCC seleciona um agente ativado. Ele mantém o texto original completo.
-Se o OpenRouter falha antes de a fala do resumo ser confirmada, um agente ativado pode substituir
+Se o OpenRouter falha antes de o texto do resumo ser enviado para gerar o áudio, um agente ativado pode substituir
 seu texto provisório. Sem um modelo disponível, a geração de resumo mostra um erro.
-A opção automática da timeline não desativa os resumos manuais.
+A opção automática da linha do tempo não desativa os resumos manuais.
 
 ## Testar, confirmar e ativar
 
@@ -163,7 +163,7 @@ Por exemplo, estes textos **não são simples** e passam pelo modelo:
 
 Quando as regras não reconhecem um texto com certeza, o modelo decide.
 
-Escolha o modelo em **Adaptar o texto para fala**, no topo de **Configurações →
+Escolha o modelo em **Adaptar o texto para leitura em voz alta**, no topo de **Configurações →
 Leitura em voz alta**: **Claude Haiku 5.5**, **GPT-6 Luna**, **OpenRouter** ou
 **Desativado**, que lê todos os textos como estão escritos. Sem uma escolha, o TwiCC usa
 Claude ou, na ausência dele, Codex. Um modelo Claude ou Codex cujo provedor está desativado é

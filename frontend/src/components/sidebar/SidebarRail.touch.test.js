@@ -296,13 +296,13 @@ test('Portuguese rail labels preserve the timeline destination and speech contro
     const tts = { status: 'loading', stop() {} }
     const f = fixture(t, false, tts, { speech, locale: 'pt-BR' })
     const label = id => f.api.items.value.find(item => item.id === id)?.label
-    assert.equal(label('timeline'), 'Ouvindo a linha do tempo: Workspace one')
+    assert.equal(label('timeline'), 'Leitura em voz alta da linha do tempo: Workspace one')
     assert.equal(label('speech'), 'Cancelar a solicitação de leitura em voz alta')
     tts.status = 'playing'
     assert.equal(label('speech'), 'Parar a leitura em voz alta')
     tts.status = 'idle'
     assert.equal(label('speech'), undefined)
-    assert.equal(label('timeline'), 'Ouvindo a linha do tempo: Workspace one')
+    assert.equal(label('timeline'), 'Leitura em voz alta da linha do tempo: Workspace one')
     speech.activePageId = null
     assert.equal(label('timeline'), 'Linha do tempo de todos os projetos')
     assert.ok(f.api.items.value.every(item => typeof item.label === 'string' && item.label.length > 0))

@@ -7,7 +7,7 @@ mensagem, executar uma ferramenta nem alterar algo no seu ambiente.
 
 - **Um artefato** — um arquivo adicionado aos favoritos na aba Artefatos de uma sessão,
   renderizado separadamente (uma página HTML, um gráfico, um documento…).
-- **Uma sessão** — a conversa, renderizada somente para leitura. As chamadas de ferramentas e
+- **Uma sessão** — a conversa, renderizada em modo somente leitura. As chamadas de ferramentas e
   os diffs aparecem como você os vê.
 
 > **Uma sessão é compartilhada como está**. Nenhum conteúdo é ocultado ou removido.

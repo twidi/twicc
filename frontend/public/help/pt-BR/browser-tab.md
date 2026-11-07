@@ -8,13 +8,13 @@ recarregamento automático e service workers. O TwiCC não usa proxy nem sandbox
 Ela contém tudo que é necessário: incorporação em frames, cookies e o companion script.
 O agente também precisa do endereço usado para acessar o TwiCC. As mensagens de configuração
 na aba oferecem **Adicionar instruções à mensagem** e **Copiar instruções para um
-agente**. Elas fornecem um prompt pronto com esta página, esse endereço e o snippet do companion.
+agente**. Elas fornecem um prompt pronto com esta página, esse endereço e o trecho de código do companion.
 
 ### Abrir uma página
 
 Digite qualquer URL na barra de endereços. O botão **Início** abre a URL
 padrão salva. Use o menu de **favoritos** para salvar a URL atual como
-padrão do projeto ou de um de seus workspaces. A aba passa a abrir
+padrão do projeto ou de um de seus espaços de trabalho. A aba passa a abrir
 nessa URL imediatamente. A última URL acessada também é salva por sessão.
 
 ### Limites da incorporação
@@ -74,7 +74,7 @@ Ele remove esse limite e libera mais recursos:
 - **erros da página** — exceções não tratadas e chamadas de `console.error` são
   coletadas e contadas na barra de ferramentas. Você as adiciona à mensagem com um clique.
 
-O snippet é uma única tag `<script>` que aponta para
+O trecho de código é uma única tag `<script>` que aponta para
 `/_twicc/browser-companion.js` no host do TwiCC:
 
 ```html
@@ -89,9 +89,9 @@ Ela não faz nada quando a página funciona fora do TwiCC. Você pode mantê-la 
 
 Você não precisa digitar a URL manualmente. Quando a página incorporada não tem
 companion, um aviso na aba e o botão de **plugue** oferecem esse mesmo
-snippet, já com o host correto, pronto para copiar. Se você
+trecho de código, já com o host correto, pronto para copiar. Se você
 acessa o TwiCC de outra máquina, configure o
-[Endereço externo](help/external-url). Assim, o snippet copiado aponta para um endereço
+[Endereço externo](help/external-url). Assim, o trecho de código copiado aponta para um endereço
 acessível pelo seu navegador.
 
 O botão de **plugue** mostra o status do companion: usa a cor da marca quando

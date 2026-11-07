@@ -35,7 +35,7 @@ campo `attach`: `data:<mime>;name=<percent-encoded file name>;base64,<data>`. `n
 preserva o nome do arquivo. Os dados inline têm limite de 50 MiB por comando. Para um arquivo
 maior, coloque-o em um serviço de armazenamento e informe sua URL no texto da mensagem.
 Você também pode informar o caminho absoluto de um arquivo que já esteja no host do TwiCC.
-Uma mensagem de peer envia todos os arquivos inline. Nesse caso, apenas a URL funciona para arquivos maiores.
+Uma mensagem para uma instância parceira envia todos os arquivos inline. Nesse caso, apenas a URL funciona para arquivos maiores.
 
 ### Antes de conectar
 

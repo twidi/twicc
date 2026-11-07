@@ -48,7 +48,6 @@ defineProps({
     font-size: var(--wa-font-size-xs);
     font-weight: var(--wa-font-weight-semibold);
     color: var(--wa-color-text-quiet);
-    text-transform: capitalize;
     white-space: nowrap;
 }
 </style>

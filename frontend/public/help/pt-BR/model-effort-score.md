@@ -33,7 +33,7 @@ versão 5.0 do Intelligence Index. Ela não é atualizada automaticamente.
   mais rápidas.
 - **Selecionar o melhor automaticamente** — seleciona a célula com a maior pontuação sempre que um
   controle muda, como se você tivesse clicado nela. Quando vários provedores
-  são exibidos, **Somente o provider padrão** limita a escolha ao seu provedor
+  são exibidos, **Somente o provedor padrão** limita a escolha ao seu provedor
   padrão.
 - **Selecionar o melhor automaticamente** e **Mostrar modelos antigos** são desativados sempre que o
   seletor, o painel de Configurações ou um formulário de predefinição abre ou fecha.

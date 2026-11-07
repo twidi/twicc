@@ -14,7 +14,7 @@ barra lateral e no cabeçalho.
 A primeira verificação exige uma mensagem relevante do usuário. As verificações posteriores exigem pelo menos
 **6 novas mensagens e 15 minutos** desde a última tentativa. Uma parada manual ou o
 arquivamento aciona uma verificação final com **3 novas mensagens** desde a última
-verificação bem-sucedida, independentemente do tempo. Uma saída normal do CLI não aciona essa verificação.
+verificação bem-sucedida, independentemente do tempo. Uma saída normal da CLI não aciona essa verificação.
 Slash commands sem argumentos não contam; comandos com argumentos podem contar.
 
 O TwiCC mantém o título atual, a menos que os assuntos principais da conversa precisem
