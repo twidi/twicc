@@ -362,6 +362,9 @@ and the instance manager do not suppress a session. Speech controls stay separat
 
 A tap opens the matching saved instance. A session tap uses Vue Router when that
 instance is already open; it preserves the current document and connection.
+Session navigation uses the same project filter, all-projects mode, and workspace
+rules as other session links. Opening a closed instance restores its saved page
+before handling the session target, so its navigation context remains available.
 Tapping the current session preserves its tab and workspace. Peer notifications
 open the inbox or pairing manager; extra usage opens Home.
 

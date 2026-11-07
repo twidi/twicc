@@ -73,7 +73,7 @@ class PushNotificationNavigationTest {
                     if (path == "/route") routes += request.requestUrl!!.queryParameter("path")!!
                     if (path == "/boot" || path == "/route") return MockResponse().setResponseCode(204)
                     if (!path.startsWith("/project")) return MockResponse().setResponseCode(404)
-                    loads += path
+                    loads += request.path!!
                     return MockResponse().setHeader("Content-Type", "text/html").setBody("""<!doctype html><body>Push routing fixture<script type="module">
                         import {createAndroidAppClient} from '/androidAppClient.js';
                         const client = createAndroidAppClient(window, {timeoutMs:5000});
@@ -229,11 +229,14 @@ class PushNotificationNavigationTest {
                 assertEquals(two.id, store.last()!!.id)
 
                 instrumentation.runOnMainSync { resumedBrowser()!!.finish() }
+                val remembered = "/project/filter/session/previous?workspace=workspace-one"
+                store.rememberPage(one, "${one.address}$remembered")
                 instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
                     .putExtra("manage", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 tap(service, one.id, "/project/p/session/four")
                 waitFor { first.documents.size == 2 }
-                assertEquals("/project/p/session/four", first.loads.last())
+                assertEquals("Cold notification entry must restore this instance's project and workspace", remembered, first.loads.last())
+                waitFor { first.routes.contains("/project/p/session/four") }
                 assertEquals(one.id, store.last()!!.id)
                 val removeA = post(service, one.id, "/project/p/session/a")
                 val removeB = post(service, one.id, "/project/p/session/b")

@@ -26,6 +26,8 @@ class NotificationNavigationTest {
         val navigation = NotificationNavigation()
         navigation.open("tap", "/project/p/session/s", "https://twicc.example/projects/p/session/s/files/root/file?workspace=w")
         assertNull(navigation.pending)
+        navigation.open("other-project", "/project/actual/session/s", "https://twicc.example/projects/filter/session/s/files/root/file?workspace=w")
+        assertNull("The session ID identifies the open session independently of the current project filter", navigation.pending)
         navigation.open("instance-only", null, "https://twicc.example/project/p")
         assertNull(navigation.pending)
     }

@@ -6,7 +6,7 @@ import java.net.URI
 data class SessionLink private constructor(val path: String, val projectId: String, val sessionId: String) {
     fun isCurrent(url: String): Boolean {
         val current = runCatching { currentPattern.matchEntire(URI(url).rawPath.orEmpty()) }.getOrNull() ?: return false
-        return current.groupValues[1] == projectId && current.groupValues[2] == sessionId
+        return current.groupValues[2] == sessionId
     }
 
     companion object {

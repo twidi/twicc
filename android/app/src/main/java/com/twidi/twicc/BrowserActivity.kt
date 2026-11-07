@@ -82,10 +82,10 @@ class BrowserActivity : Activity() {
         store.last()?.takeIf { it.id != instance.id }?.let { TtsService.stopForInstance(it.id) }
         store.select(instance)
         val session = notificationSession(intent)
-        safeUrl = session?.let { "${instance.address}${it.path}" }
-            ?: savedInstanceState?.getString("url")
+        safeUrl = savedInstanceState?.getString("url")
             ?.takeIf { instance.url.allowsNavigation(it) }
             ?: store.page(instance)
+            ?: session?.let { "${instance.address}${it.path}" }
             ?: "${instance.address}/"
         queueNotification(intent)
         buildLayout()
@@ -108,14 +108,12 @@ class BrowserActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val target = store.find(intent.getStringExtra("instance")) ?: return
-        val session = notificationSession(intent)
         if (target.id != instance.id) {
             switchInstance(target, intent.takeIf { it.action == AndroidPush.ACTION_OPEN })
             return
         }
         setIntent(intent)
         if (browser == null || failed) {
-            session?.let { safeUrl = "${instance.address}${it.path}" }
             queueNotification(intent)
             openBrowser()
             return
