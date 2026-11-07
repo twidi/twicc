@@ -4,6 +4,7 @@ import en from './locales/en.json' with { type: 'json' }
 export const DEFAULT_LOCALE = 'en'
 export const SUPPORTED_LOCALES = Object.freeze([
     { value: 'en', label: 'English' },
+    { value: 'es', label: 'Español' },
     { value: 'fr', label: 'Français' },
     { value: 'pt-BR', label: 'Português (Brasil)' },
 ])
@@ -27,6 +28,14 @@ export function readInitialLocale(storage) {
 // Keep English in the entry bundle for fallback, including failed downloads.
 // Each additional language loads its catalog and component/date translations together.
 const localeLoaders = {
+    es: async () => {
+        const [messages] = await Promise.all([
+            import('./locales/es.js'),
+            import('dayjs/locale/es.js'),
+            typeof window === 'undefined' ? null : import('@awesome.me/webawesome/dist/translations/es.js'),
+        ])
+        return messages.default
+    },
     fr: async () => {
         const [messages] = await Promise.all([
             import('./locales/fr.js'),

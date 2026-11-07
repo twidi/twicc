@@ -9,7 +9,7 @@ export const injectRecoveryMessages = {
     name: 'twicc-inject-recovery-messages',
     async transformIndexHtml(html) {
         const keys = ['startup.assetsUnavailable.description', 'common.actions.retry']
-        const locales = await Promise.all(['en', 'fr', 'pt-BR'].map(async locale => {
+        const locales = await Promise.all(['en', 'es', 'fr', 'pt-BR'].map(async locale => {
             const catalog = JSON.parse(await readFile(new URL(`./src/i18n/locales/${locale}.json`, import.meta.url), 'utf8'))
             const messages = Object.fromEntries(keys.map(key => {
                 if (typeof catalog[key] !== 'string') throw new Error(`Missing recovery message: ${locale}:${key}`)
