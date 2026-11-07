@@ -24,7 +24,7 @@ L'approbation couvre la connexion, pas chaque appel d'outil. Le client peut agir
 nouvelle approbation TwiCC pour chaque message ou session qu'il crée.
 
 Un client externe n'est pas une session TwiCC. Il ne peut pas utiliser `whoami`, `self` ou
-`parent` pour identifier une session appelante. Il doit fournir des identifiants de session explicites
+`parent` pour identifier une session appelante. Il doit fournir des IDs de session explicites
 là où l'outil attend une session. Les opérations relatives à une session exigent ce
 contexte. Elles ne peuvent pas le déduire de la connexion externe.
 
@@ -32,10 +32,10 @@ contexte. Elles ne peuvent pas le déduire de la connexion externe.
 
 Un client externe joint un fichier de sa propre machine avec un data URI base64 dans
 `attach` : `data:<mime>;name=<percent-encoded file name>;base64,<data>`. `name=`
-conserve le nom du fichier. Les données en ligne sont limitées à 50 Mio par commande. Pour un fichier
+conserve le nom du fichier. Les données inline sont limitées à 50 Mio par commande. Pour un fichier
 plus volumineux, placez-le sur un service de stockage de fichiers et indiquez son URL dans le texte du message,
 ou indiquez un chemin absolu vers un fichier déjà présent sur l'hôte TwiCC. Un message de pair
-envoie chaque fichier en ligne, donc seule l'URL fonctionne dans ce cas.
+envoie chaque fichier inline, donc seule l'URL fonctionne dans ce cas.
 
 ### Avant de connecter un client
 
@@ -58,7 +58,7 @@ Ouvrez **Paramètres → MCP externe**. Saisissez votre **URL MCP dédiée**, pu
 **Appliquer**. Saisissez l'origine HTTPS, par exemple `https://mcp.example.com`, sans
 `/mcp`. Activez ensuite **Accepter les clients MCP externes**.
 
-Utilisez un nom d'hôte dédié, différent de vos adresses Externe, Partage et Pairs. Ce nom d'hôte sert uniquement le MCP et ses points de terminaison OAuth. Il ne
+Utilisez un nom d'hôte dédié, différent de vos adresses Externe, Partage et Pairs. Ce nom d'hôte sert uniquement le MCP et ses endpoints OAuth. Il ne
 sert pas votre interface TwiCC, vos fichiers ni les autres routes de l'application.
 
 L'adresse doit être joignable depuis le client. Les appels MCP sont de machine à machine.
@@ -79,7 +79,7 @@ de votre client. Cette adresse inclut `/mcp`, par exemple
 `https://mcp.example.com/mcp`.
 
 Utilisez un client qui prend en charge le MCP distant avec OAuth. Les contrôles de configuration exacts
-dépendent du client. TwiCC fournit les informations d'autorisation par les points de terminaison
+dépendent du client. TwiCC fournit les informations d'autorisation par les endpoints
 de découverte MCP standard.
 
 Les clients de bureau peuvent recevoir le rappel du navigateur sur `http://127.0.0.1` ou
@@ -115,7 +115,7 @@ Les messages envoyés par cette connexion portent un en-tête tel que **Message 
 ChatGPT**. Sans nom, l'en-tête indique **Message via MCP externe**.
 L'en-tête identifie la connexion, pas une autre session TwiCC.
 
-L'**ID du client** dans les détails est un identifiant technique. Ce n'est ni un jeton d'accès
+L'**ID du client** dans les détails est un ID technique. Ce n'est ni un token d'accès
 ni le code de vérification. Vous n'avez pas besoin de le copier pour approuver une demande.
 
 ### Gérer les connexions
@@ -158,7 +158,7 @@ une pause de dix minutes sur les nouveaux enregistrements et les demandes d'auto
 reçoit une notification **Abus OAuth suspecté**. Les paramètres et le gestionnaire de connexions
 affichent la raison, les compteurs récents et le temps de pause restant.
 
-La pause laisse disponibles les connexions MCP existantes, les renouvellements de jeton, la révocation
+La pause laisse disponibles les connexions MCP existantes, les renouvellements de token, la révocation
 et les demandes d'autorisation déjà en cours. Elle expire automatiquement.
 L'alerte reste affichée jusqu'à ce que vous l'ignoriez. Un trafic élevé est un soupçon d'abus,
 pas une preuve d'attaque. Plusieurs clients peuvent partager une source réseau.
@@ -169,7 +169,7 @@ peuvent se terminer. Pour reprendre, activez de nouveau l'accès externe dans le
 manuelle persiste après un redémarrage.
 
 Les compteurs de trafic, les alertes et les pauses automatiques sont réinitialisés au redémarrage de TwiCC.
-Les quotas d'enregistrement et de demandes en attente restent enregistrés. L'expiration normale des jetons et
+Les quotas d'enregistrement et de demandes en attente restent enregistrés. L'expiration normale des tokens et
 des demandes s'applique pendant toute la suspension.
 
 Les limites de débit utilisent l'adresse client fournie par le serveur ASGI. Un proxy doit
@@ -208,9 +208,9 @@ Découvrez d'abord le schéma de chaque commande. Fournissez son nom MCP normal 
 Chaque appel nécessite un `id` unique, un `name` de commande et un objet `arguments`.
 TwiCC valide le lot complet avant de démarrer une commande. Un seul appel invalide
 rejette le lot sans exécuter ses autres commandes. Les contrôles d'autorisation normaux
-s'appliquent toujours à chaque commande. Les appels externes exigent toujours des identifiants de session explicites.
+s'appliquent toujours à chaque commande. Les appels externes exigent toujours des IDs de session explicites.
 
-Les résultats arrivent ensemble, dans l'ordre d'entrée. Chaque enregistrement inclut son identifiant, son état
+Les résultats arrivent ensemble, dans l'ordre d'entrée. Chaque enregistrement inclut son ID, son état
 d'exécution et la réponse normale `{exit_code, result, error}` de la commande.
 Vérifiez le champ agrégé `ok` et chaque enregistrement. Un lot terminé peut contenir
 des commandes en échec ou ignorées. Une commande peut aussi réussir alors que sa réponse volumineuse
@@ -226,7 +226,7 @@ Les lots imbriqués ne sont pas pris en charge.
 Un lot accepte jusqu'à 20 commandes. Les deux connexions MCP partagent une limite de quatre
 lots actifs et de huit commandes de lot actives pour toute l'instance. Les lots supplémentaires
 reçoivent `server_busy`. Les outils individuels restent hors de cette limite d'admission des lots.
-La requête complète est limitée à 72 Mio, pièces jointes comprises. Chaque commande accepte au plus 50 Mio de données jointes en ligne (voir Pièces jointes ci-dessus pour un fichier plus volumineux).
+La requête complète est limitée à 72 Mio, pièces jointes comprises. Chaque commande accepte au plus 50 Mio de données jointes inline (voir Pièces jointes ci-dessus pour un fichier plus volumineux).
 Les réponses de commande de plus de 384 Kio sont explicitement omises. Le résultat d'outil combiné,
 texte et données structurées compris, reste inférieur à 16 Mio. Les clients peuvent avoir des limites plus basses.
 
@@ -234,7 +234,7 @@ Gardez les lots courts et utilisez des appels séparés pour les longues attente
 des commandes existantes s'appliquent toujours, sans délai supplémentaire pour le lot. De longues attentes peuvent occuper toute la capacité
 des lots, même après l'annulation de la requête par le client. Une annulation ou un délai d'expiration ne
 prouve pas que les écritures se sont arrêtées. Inspectez les ressources concernées avant de réessayer une
-écriture incertaine. Les identifiants de lot servent à identifier les appels pour le diagnostic. Ils n'empêchent pas le travail en double.
+écriture incertaine. Les IDs de lot servent à identifier les appels pour le diagnostic. Ils n'empêchent pas le travail en double.
 
 TwiCC vérifie l'autorisation externe avant de démarrer chaque commande. L'expiration,
 la révocation ou la désactivation de l'accès externe arrêtent les commandes restantes.

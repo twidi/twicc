@@ -198,7 +198,7 @@ El texto nunca va en la línea de comandos.
 
 | Salida | El comando escribe | El sonido empieza |
 |---|---|---|
-| **Flujo de audio** | el audio, mientras se genera | con sus primeros bytes |
+| **Stream de audio** | el audio, mientras se genera | con sus primeros bytes |
 | **Audio completo** | el audio, al final | cuando termina la ejecución |
 | **Ruta de archivo** | una ruta absoluta, a un archivo nuevo en cada ejecución | cuando termina la ejecución |
 
@@ -234,7 +234,7 @@ devuelva su propio archivo nuevo. Una ejecución fallida conserva su archivo.
 - Una detención termina todo el comando, incluidos los pipelines.
 - Varias lecturas pueden ejecutar el comando al mismo tiempo (una prueba y un mensaje,
   dos dispositivos).
-- Un flujo de audio que no envía nada durante un minuto después de su primer audio se
+- Un stream de audio que no envía nada durante un minuto después de su primer audio se
   detiene. El audio de una lectura está limitado a 512 MB.
 - TwiCC solo ve la línea de comandos: después de editar un script que ejecuta el comando,
   vuelve a probar la configuración (de lo contrario, un mensaje puede reproducir un audio en caché
@@ -242,13 +242,13 @@ devuelva su propio archivo nuevo. Una ejecución fallida conserva su archivo.
 
 ### Ejemplos
 
-Un tono de prueba, que ignora el texto (**Flujo de audio**, **WAV**):
+Un tono de prueba, que ignora el texto (**Stream de audio**, **WAV**):
 
 ```
 ffmpeg -nostdin -loglevel error -f lavfi -i sine=frequency=440:duration=3 -ac 1 -ar 22050 -f wav -
 ```
 
-[eSpeak NG](https://github.com/espeak-ng/espeak-ng) (**Flujo de audio**,
+[eSpeak NG](https://github.com/espeak-ng/espeak-ng) (**Stream de audio**,
 **WAV**):
 
 ```
@@ -261,7 +261,7 @@ Lo mismo, mediante un archivo (**Ruta de archivo**, **WAV**):
 f=$(mktemp) && espeak-ng --stdin -v en -w "$f" && echo "$f"
 ```
 
-[Piper](https://github.com/rhasspy/piper) (**Flujo de audio**, **PCM**, la
+[Piper](https://github.com/rhasspy/piper) (**Stream de audio**, **PCM**, la
 frecuencia de muestreo de la voz, a menudo 22050 Hz, 1 canal):
 
 ```

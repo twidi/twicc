@@ -10,7 +10,7 @@ automatisch mit dem Haupt-Repository verknüpft. Seine Sitzungen, Kosten und Akt
 
 Die Einstellung **Worktree-Verzeichnis** legt fest, wo TwiCC neue Worktrees erstellt,
 und füllt den Pfad vor, wenn du einen erstellst. Die globale Einstellung ist ein **Template**
-mit Platzhaltern, die pro Projekt aufgelöst werden – `{git_root}` (sein Git-Root),
+mit Platzhaltern, die pro Projekt aufgelöst werden – `{git_root}` (sein Git-Stammverzeichnis),
 `{project_name}` (sein Name oder, falls unbenannt, der Ordnername) und `{project_basedir}`
 (sein Ordnername) –, sodass `{git_root}/.worktrees` die Worktrees in jedem Repository hält,
 während `/home/me/worktrees/{project_name}` alle an einem Ort sammelt. Jedes

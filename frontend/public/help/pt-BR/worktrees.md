@@ -10,7 +10,7 @@ projeto principal**, para você ver tudo junto.
 ### Onde os worktrees são criados
 
 A configuração de **diretório de worktree** define onde o TwiCC cria novos worktrees
-e preenche o caminho quando você cria um. A configuração global é um **modelo**
+e preenche o caminho quando você cria um. A configuração global é um **template**
 com placeholders resolvidos para cada projeto: `{git_root}` (sua raiz git),
 `{project_name}` (seu nome, ou o nome da pasta se não tiver nome) e `{project_basedir}`
 (o nome da pasta). Assim, `{git_root}/.worktrees` mantém os worktrees dentro de cada repositório,

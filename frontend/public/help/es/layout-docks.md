@@ -1,5 +1,5 @@
 Acabas de enviar una pestaña a un **dock**, una de las regiones alrededor de la sesión.
-Así es como das forma a tu propio diseño: mantén el chat en primer plano y
+Así es como das forma a tu propio layout: mantén el chat en primer plano y
 fija **Archivos**, **Git**, **Terminal**, **Artefactos** —cualquier pestaña— donde
 más te convenga.
 
@@ -12,12 +12,12 @@ más te convenga.
 
 ### Guárdalo y reutilízalo
 
-Los diseños están en el **menú ⋮**, en el extremo derecho de la barra de pestañas:
+Los layouts están en el **menú ⋮**, en el extremo derecho de la barra de pestañas:
 
-- **Guardar diseño** almacena tu organización actual como un diseño con nombre: uno nuevo
+- **Guardar layout** almacena tu organización actual como un layout con nombre: uno nuevo
   o sobrescribiendo uno existente.
-- El mismo menú lista tus diseños guardados (y **Panel único**), para que puedas
-  aplicar cualquiera a una sesión con un clic, además de **Administrar diseños…** para renombrarlos
+- El mismo menú lista tus layouts guardados (y **Panel único**), para que puedas
+  aplicar cualquiera a una sesión con un clic, además de **Administrar layouts…** para renombrarlos
   o eliminarlos.
 
 ### Define uno como predeterminado para las sesiones nuevas
@@ -31,5 +31,5 @@ son independientes:
 
 Una sesión nueva toma el valor predeterminado **más específico** que se aplique (worktree →
 proyecto → global). También puedes cambiarlos más tarde: el predeterminado global en
-**Configuración → Diseños**, y el de un proyecto (o worktree) desde su cuadro de diálogo
+**Configuración → Layouts**, y el de un proyecto (o worktree) desde su cuadro de diálogo
 de edición.

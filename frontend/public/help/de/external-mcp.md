@@ -59,7 +59,7 @@ Passwort gesetzt hast.
 den **externen MCP-Zugriff**.
 
 Nutze einen eigenen Hostnamen, der sich von deinen Adressen für Extern, Freigabe und Peers
-unterscheidet. Dieser Hostname bedient nur MCP und seine OAuth-Endpunkte. Er bedient weder deine
+unterscheidet. Dieser Hostname bedient nur MCP und seine OAuth-Endpoints. Er bedient weder deine
 TwiCC-Oberfläche noch Dateien oder andere Anwendungsrouten.
 
 Die Adresse muss vom Client aus erreichbar sein. MCP-Aufrufe laufen von Maschine zu Maschine. Wenn
@@ -80,7 +80,7 @@ Clients ein. Diese Adresse enthält `/mcp`, zum Beispiel `https://mcp.example.co
 
 Nutze einen Client, der Remote-MCP mit OAuth unterstützt. Die genauen Bedienelemente der Einrichtung
 hängen vom Client ab. TwiCC liefert die Autorisierungsinformationen über standardisierte
-MCP-Discovery-Endpunkte.
+MCP-Discovery-Endpoints.
 
 Desktop-Clients können den Browser-Callback auf `http://127.0.0.1` oder `http://[::1]` mit einem bei
 jeder Verbindung anderen freien Port empfangen. Registrierte Adresse, Pfad und Query müssen weiterhin

@@ -1,4 +1,4 @@
-Appuyez sur **Cmd+Maj+F** pour rechercher dans toutes les sessions.
+Appuyez sur **Cmd+Shift+F** pour rechercher dans toutes les sessions.
 
 Vous pouvez filtrer par projet, espace de travail, source, date et sessions archivées, puis ouvrir un résultat dans son contexte.
 

@@ -31,10 +31,10 @@ deducirlo de la conexión externa.
 
 Un cliente externo adjunta un archivo de su propio equipo con un URI de datos base64 en `attach`:
 `data:<mime>;name=<percent-encoded file name>;base64,<data>`. `name=` conserva el nombre del
-archivo. Los datos en línea están limitados a 50 MiB por comando. Para un archivo más grande, ponlo
+archivo. Los datos inline están limitados a 50 MiB por comando. Para un archivo más grande, ponlo
 en un servicio de almacenamiento de archivos y pasa su URL en el texto del mensaje, o pasa una ruta
 absoluta a un archivo que ya esté en el host de TwiCC. Un mensaje de un par envía todos los archivos
-en línea, así que ahí solo funciona la URL.
+inline, así que ahí solo funciona la URL.
 
 ### Antes de conectar
 
@@ -225,7 +225,7 @@ Un lote acepta hasta 20 comandos. Ambas conexiones MCP comparten un límite de c
 y ocho comandos de lote activos en toda la instancia. Los lotes adicionales reciben `server_busy`.
 Las herramientas individuales quedan fuera de este límite de admisión de lotes. La solicitud
 completa está limitada a 72 MiB, incluidos los adjuntos; cada comando acepta como máximo 50 MiB de
-datos adjuntos en línea (consulta Adjuntos más arriba para un archivo más grande). Las respuestas de
+datos adjuntos inline (consulta Adjuntos más arriba para un archivo más grande). Las respuestas de
 comandos de más de 384 KiB se omiten de forma explícita. El resultado combinado de la herramienta,
 incluidos el texto y los datos estructurados, se mantiene por debajo de 16 MiB. Los clientes pueden
 tener límites más pequeños.

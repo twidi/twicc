@@ -1,4 +1,4 @@
-Un worktree est une seconde copie de travail du même dépôt, extraite sur une **autre branche**,
+Un worktree est une seconde copie de travail du même dépôt, en checkout sur une **autre branche**,
 dans son **propre dossier** — tout en partageant l'historique du dépôt. Il vous permet (à vous ou
 à un agent) de travailler sur une branche de fonctionnalité sans toucher à votre checkout
 principal.

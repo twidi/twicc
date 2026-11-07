@@ -14,7 +14,7 @@ barre latérale et dans l'en-tête.
 La première vérification nécessite un message utilisateur pertinent. Les vérifications suivantes nécessitent au moins
 **6 nouveaux messages et 15 minutes** depuis la dernière tentative. Un arrêt manuel ou un
 archivage déclenche une vérification de clôture avec **3 nouveaux messages** depuis la dernière
-vérification réussie, quel que soit le temps écoulé. Une sortie normale du CLI ne la déclenche pas.
+vérification réussie, quel que soit le temps écoulé. Une sortie normale de la CLI ne la déclenche pas.
 Les slash commands seules ne comptent pas, mais celles qui ont des arguments peuvent compter.
 
 TwiCC conserve le titre actuel, sauf si les sujets principaux de la conversation

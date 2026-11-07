@@ -47,13 +47,13 @@ Standardmäßig kannst nur du Freigabelinks erstellen oder verwalten – Agenten
 Zwei Schalter unter **Einstellungen → Freigabe** ändern das, einer pro Art (Sitzungslinks, Artefakt-Links). Beide sind **aus**, bis du sie aktivierst.
 
 Mit aktivierten **Sitzungsfreigaben** können Agenten Sitzungslinks für ihre eigene
-Sitzung oder jede Sitzung in ihrem Spawn-Teilbaum erstellen. Mit aktivierten **Artefakt-Freigaben**
+Sitzung oder jede Sitzung in dem von ihr gestarteten Teilbaum erstellen. Mit aktivierten **Artefakt-Freigaben**
 können Agenten Artefakt-Links für Lesezeichen erstellen, die ihrer eigenen Sitzung
-oder einer beliebigen Sitzung in ihrem Spawn-Teilbaum gehören.
+oder einer beliebigen Sitzung in dem von ihr gestarteten Teilbaum gehören.
 
 Für die aktivierte Art können Agenten außerdem:
 
-- Links, die sie selbst oder Agenten in ihrem Spawn-Teilbaum erstellt haben, **verwalten** (aktualisieren, löschen, erneut veröffentlichen);
+- Links, die sie selbst oder Agenten in dem von ihr gestarteten Teilbaum erstellt haben, **verwalten** (aktualisieren, löschen, erneut veröffentlichen);
 - jeden vorhandenen Link dieser Art **widerrufen** – auch Links, die du selbst
   erstellt hast (Veröffentlichung zurückzunehmen gilt immer als sicher);
 - die **URL** jedes vorhandenen Links dieser Art **lesen**, auch deiner.

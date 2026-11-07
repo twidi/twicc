@@ -126,13 +126,13 @@ sein.
 ## Eine Auswahl vorlesen
 
 Markiere Text im Chat oder im Dateibetrachter: Das schwebende Widget zeigt die
-**Vorlesen-Schaltfläche** (das Lautsprechersymbol) neben den Schaltflächen Kommentieren und Kopieren.
+**Vorlesen-Schaltfläche** (das Lautsprecher-Icon) neben den Schaltflächen Kommentieren und Kopieren.
 Im Terminal, im Browser-Bereich und auf den Elementkarten erscheint sie nicht. Sie erscheint nur,
 wenn der Sprachdienst verfügbar ist, genau wie die Lautsprecher-Schaltfläche einer Nachricht.
 
 - Die Schaltfläche liest den markierten Text mit der aktiven Konfiguration vor. Ihr Titel lautet
   „Vorlesen“.
-- Während sie vorliest, ist dieselbe Schaltfläche ein **Stopp-Symbol** (Titel „Vorlesen stoppen“) und
+- Während sie vorliest, ist dieselbe Schaltfläche ein **Stopp-Icon** (Titel „Vorlesen stoppen“) und
   bleibt sichtbar. Klicke darauf, um die Anfrage abzubrechen oder den Ton zu stoppen.
 - Der Ton läuft weiter, wenn sich das Widget schließt. Stoppe ihn über die Sprachanzeige der Leiste,
   wie bei einer Nachricht.

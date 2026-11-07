@@ -20,7 +20,7 @@ selector de proyectos) y elige **Editar**.
 ### Hazlo tuyo
 
 Dale a un proyecto un **nombre** y un **color**, y define **valores predeterminados por proyecto**
-(proveedor, configuración del agente, diseño predeterminado) que se aplican a cada nueva sesión que inicies
+(proveedor, configuración del agente, layout predeterminado) que se aplican a cada nueva sesión que inicies
 allí.
 
 Poner un nombre también ordena la lista de la página de inicio: los proyectos **con nombre** aparecen arriba como tarjetas, para que

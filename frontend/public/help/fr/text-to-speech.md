@@ -197,7 +197,7 @@ Le texte n'est jamais placé dans la ligne de commande.
 
 | Sortie | La commande écrit | Le son démarre |
 |---|---|---|
-| **Flux audio** | l'audio, pendant sa génération | dès ses premiers octets |
+| **Stream audio** | l'audio, pendant sa génération | dès ses premiers octets |
 | **Audio complet** | l'audio, à la fin | à la fin de l'exécution |
 | **Chemin du fichier** | un chemin absolu, vers un nouveau fichier à chaque exécution | à la fin de l'exécution |
 

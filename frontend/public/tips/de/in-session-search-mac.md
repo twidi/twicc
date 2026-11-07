@@ -1,4 +1,4 @@
-Drücke **Cmd+F** – oder klicke auf das Lupensymbol im Sitzungskopf –, um Text in
+Drücke **Cmd+F** – oder klicke auf das Lupen-Icon im Sitzungskopf –, um Text in
 der aktuellen Unterhaltung zu finden. Das ersetzt die Suche des Browsers; drücke
 erneut **Cmd+F**, um auf sie zurückzufallen.
 

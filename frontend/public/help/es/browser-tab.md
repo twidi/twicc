@@ -101,7 +101,7 @@ Al hacer clic en él se abre esta página de ayuda.
 
 El botón del **teléfono** da a la página un viewport con el tamaño exacto de un dispositivo: elige un
 ajuste predefinido (o escribe un ancho × alto), intercambia ambos valores o arrastra los tiradores alrededor
-del marco. La página se adapta exactamente como lo haría en una ventana de ese tamaño.
+del frame. La página se adapta exactamente como lo haría en una ventana de ese tamaño.
 No se necesita el complemento.
 
 ### Todo lo demás
