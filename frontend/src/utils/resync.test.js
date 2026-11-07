@@ -10,8 +10,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { decideResyncAction, RELOAD_COOLDOWN_MS } from './resync.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const NOW = 1_700_000_000_000
 

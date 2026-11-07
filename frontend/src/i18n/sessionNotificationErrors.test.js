@@ -6,10 +6,13 @@ import ts from 'typescript'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { createAppI18n } from './index.js'
+import { createAppI18n, loadLocaleMessages } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
 import { remoteUiMessage } from './remoteMessages.js'
 import { parseProcessError } from '../utils/errorParsing.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function calculations(file, names, context) {
     const source = readFileSync(new URL(`../components/${file}`, import.meta.url), 'utf8')

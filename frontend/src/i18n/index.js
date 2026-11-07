@@ -1,6 +1,5 @@
 import { createI18n } from 'vue-i18n'
 import en from './locales/en.json' with { type: 'json' }
-import ptBR from './locales/pt-BR.json' with { type: 'json' }
 
 export const DEFAULT_LOCALE = 'en'
 export const SUPPORTED_LOCALES = Object.freeze([
@@ -24,23 +23,76 @@ export function readInitialLocale(storage) {
     }
 }
 
-export function createAppI18n(locale = DEFAULT_LOCALE) {
-    return createI18n({
-        legacy: false,
-        globalInjection: true,
-        locale: isSupportedLocale(locale) ? locale : DEFAULT_LOCALE,
-        fallbackLocale: DEFAULT_LOCALE,
-        messages: { en: { ...en }, 'pt-BR': { ...ptBR } },
-    })
+// Keep English in the entry bundle for fallback, including failed downloads.
+// Each additional language loads its catalog and component/date translations together.
+const localeLoaders = {
+    'pt-BR': async () => {
+        const [messages] = await Promise.all([
+            import('./locales/pt-BR.js'),
+            import('dayjs/locale/pt-br.js'),
+            typeof window === 'undefined' ? null : import('@awesome.me/webawesome/dist/translations/pt.js'),
+        ])
+        return messages.default
+    },
 }
 
-export const i18n = createAppI18n(typeof window === 'undefined' ? DEFAULT_LOCALE : readInitialLocale())
+export function createLocaleManager(loaders = localeLoaders) {
+    const catalogs = new Map([[DEFAULT_LOCALE, en]])
+    const pending = new Map()
+    let latestRequest = 0
 
-export function setLocale(value, document = globalThis.document) {
-    const locale = isSupportedLocale(value) ? value : DEFAULT_LOCALE
-    i18n.global.locale.value = locale
-    if (document) {
-        document.documentElement.lang = locale
-        document.documentElement.style?.setProperty('--twicc-loading-label', JSON.stringify(i18n.global.t('common.status.loading')))
+    function createAppI18n(locale = DEFAULT_LOCALE) {
+        return createI18n({
+            legacy: false,
+            globalInjection: true,
+            locale: isSupportedLocale(locale) ? locale : DEFAULT_LOCALE,
+            fallbackLocale: DEFAULT_LOCALE,
+            messages: Object.fromEntries([...catalogs].map(([language, messages]) => [language, { ...messages }])),
+        })
     }
+
+    // Entry points decide which language to load. Public viewers never read the preference.
+    const i18n = createAppI18n()
+
+    async function loadLocaleMessages(locale) {
+        if (i18n.global.availableLocales.includes(locale)) return
+        if (!isSupportedLocale(locale) || !Object.hasOwn(loaders, locale)) {
+            throw new Error(`No catalog loader for locale: ${locale}`)
+        }
+        if (!pending.has(locale)) {
+            const download = Promise.resolve().then(() => loaders[locale]()).then(messages => {
+                catalogs.set(locale, messages)
+                i18n.global.setLocaleMessage(locale, { ...messages })
+            }).finally(() => pending.delete(locale))
+            pending.set(locale, download)
+        }
+        await pending.get(locale)
+    }
+
+    function applyLocale(locale, document) {
+        i18n.global.locale.value = locale
+        if (document) {
+            document.documentElement.lang = locale
+            document.documentElement.style?.setProperty('--twicc-loading-label', JSON.stringify(i18n.global.t('common.status.loading')))
+        }
+    }
+
+    async function setLocale(value, document = globalThis.document) {
+        const request = ++latestRequest
+        let locale = isSupportedLocale(value) ? value : DEFAULT_LOCALE
+        if (!i18n.global.availableLocales.includes(locale)) {
+            try { await loadLocaleMessages(locale) }
+            catch (error) {
+                if (request !== latestRequest) return
+                console.warn(`Could not load locale ${locale}; using English.`, error)
+                locale = DEFAULT_LOCALE
+            }
+        }
+        // A slower download must not replace a more recent language choice.
+        if (request === latestRequest) applyLocale(locale, document)
+    }
+
+    return { createAppI18n, i18n, loadLocaleMessages, setLocale }
 }
+
+export const { createAppI18n, i18n, loadLocaleMessages, setLocale } = createLocaleManager()

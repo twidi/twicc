@@ -10,7 +10,10 @@ import { dirname, join } from 'node:path'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from 'vue/server-renderer'
-import { createAppI18n } from '../i18n/index.js'
+import { createAppI18n, loadLocaleMessages } from '../i18n/index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, '..')

@@ -6,7 +6,10 @@ import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { parse as parseTemplate } from '@vue/compiler-dom'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { createAppI18n } from './index.js'
+import { createAppI18n, loadLocaleMessages } from './index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function controlRender(file, className) {
     const source = readFileSync(new URL(`../components/session/layout/${file}`, import.meta.url), 'utf8')

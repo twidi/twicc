@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import MarkdownIt from 'markdown-it'
 
 import { installDetailsBlocks } from './markdownDetails.js'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function makeMd() {
     const md = MarkdownIt({ html: false, breaks: true })

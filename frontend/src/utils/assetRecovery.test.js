@@ -76,6 +76,19 @@ test('a dynamic import failure also recovers an already loaded page', () => {
     assert.equal(prevented, true)
 })
 
+test('optional locale failures stay with their English fallback instead of reloading the page', () => {
+    for (const filename of ['pt-BR-catalog.js', 'pt-webawesome.js']) {
+        const p = page()
+        const url = `https://twicc.test/static/assets/${filename}`
+        let prevented = false
+        p.events.get('vite:preloadError')?.({ payload: new TypeError(`Failed to fetch dynamically imported module: ${url}`), preventDefault() { prevented = true } })
+        p.fail('SCRIPT', url)
+        assert.equal(prevented, false, 'The locale loader must receive its rejected import')
+        assert.equal(p.navigation.length, 0)
+        assert.equal(p.panels.length, 0)
+    }
+})
+
 test('blocked storage still prevents a reload loop through the recovery URL', () => {
     const first = page({ storageBlocked: true })
     first.fail()

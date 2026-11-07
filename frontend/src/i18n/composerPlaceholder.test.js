@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { computed } from 'vue'
-import { createAppI18n } from './index.js'
+import { createAppI18n, loadLocaleMessages } from './index.js'
 import { getComposerPlaceholder } from './composerPlaceholder.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function placeholder(locale, options = {}) {
     const instance = createAppI18n(locale)

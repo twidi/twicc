@@ -2,7 +2,6 @@
 import { computed, useId, type CSSProperties, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
-import 'dayjs/locale/pt-br'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { useTableContext } from '../../composables/useTableContext'

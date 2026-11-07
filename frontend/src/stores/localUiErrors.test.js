@@ -2,12 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from 'pinia'
 import { computed, effectScope, reactive } from 'vue'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { useMcpStore } from './mcp.js'
 import { useSummariesStore } from './summaries.js'
 import { summaryGenerationAvailability } from '../utils/ttsConfig.js'
 import { useTemporarySummaryGeneration } from '../composables/useTemporarySummaryGeneration.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function setup(context) {
     setActivePinia(createPinia())

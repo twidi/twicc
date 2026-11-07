@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { baseCompile } from '@intlify/message-compiler'
 import { createRenderer, h, nextTick } from 'vue'
-import { createAppI18n, DEFAULT_LOCALE, i18n, isSupportedLocale, readInitialLocale, setLocale } from './index.js'
+import { createAppI18n, DEFAULT_LOCALE, i18n, isSupportedLocale, readInitialLocale, setLocale, loadLocaleMessages } from './index.js'
 import en from './locales/en.json' with { type: 'json' }
 import ptBR from './locales/pt-BR.json' with { type: 'json' }
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const storage = value => ({ getItem: () => value })
 

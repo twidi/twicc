@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { computed } from 'vue'
-import { i18n, setLocale } from '../i18n/index.js'
+import { i18n, setLocale, loadLocaleMessages } from '../i18n/index.js'
 import { createAndroidAppClient } from './androidAppClient.js'
 import { fetchChangelog } from './changelog.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 afterEach(() => setLocale('en'))
 

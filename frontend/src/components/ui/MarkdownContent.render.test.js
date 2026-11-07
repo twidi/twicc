@@ -1,5 +1,5 @@
 import * as Vue from 'vue'
-import { createAppI18n } from '../../i18n/index.js'
+import { createAppI18n, loadLocaleMessages } from '../../i18n/index.js'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 import test from 'node:test'
@@ -11,6 +11,9 @@ import { INLINE_ARTIFACT_CONTEXT } from '../../inline-artifacts/context.js'
 import { inlineArtifactPlacement } from '../../inline-artifacts/rendering.js'
 import { markdownReferenceContextKey, markdownBlockCacheKey } from '../../utils/markdownRenderCache.js'
 import { detailsScope, applyRememberedDetailsIn, rememberDetailsToggle } from '../../utils/markdownDetailsState.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const source = readFileSync(process.env.TWICC_MARKDOWN_TEST_SOURCE ?? new URL('./MarkdownContent.vue', import.meta.url), 'utf8')
 const start = source.indexOf('const blocks = ref([])')

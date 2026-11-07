@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { computed } from 'vue'
-import { i18n, setLocale } from '../i18n/index.js'
+import { i18n, setLocale, loadLocaleMessages } from '../i18n/index.js'
 import { ATTACHMENT_STATE, mapAttachmentStatus, attachmentBadge, formatAttachmentSize } from './composerAttachments.js'
 import { PLACEHOLDERS, getUnavailablePlaceholders, resolveSnippetText } from './snippetPlaceholders.js'
 import { describeEvent } from './timeline/describeEvent.js'
@@ -9,6 +9,9 @@ import { messageParts, valuePart } from './timeline/parts.js'
 import { formatAvg } from './countUp.js'
 import { formatBurnChip, formatQuotaMoment } from './usage.js'
 import { speechEndResult } from './speechOutcome.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 afterEach(() => setLocale('en'))
 

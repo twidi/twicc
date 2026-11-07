@@ -32,7 +32,10 @@ export default defineConfig({
         },
         rolldownOptions: {
             output: {
-                codeSplitting: false,
+                // Keep optional locale catalogs outside the shell entry.
+                codeSplitting: true,
+                // The backend asset route accepts one path segment.
+                chunkFileNames: '[name]-[hash].js',
                 // Stable name for the single stylesheet (referenced from the shell
                 // HTML); any other asset (e.g. fonts) keeps a hashed name.
                 assetFileNames: (info) => {

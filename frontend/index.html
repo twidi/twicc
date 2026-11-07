@@ -61,11 +61,19 @@
             else showError();
         }
 
+        function isLocaleAsset(pathname) {
+            // Locale downloads have their own English fallback and retry path.
+            // Vite names catalog and Web Awesome chunks after their locale.
+            return pathname.endsWith('.js') && Object.keys(messages).some(locale =>
+                [locale, locale.split('-')[0]].some(name => pathname.startsWith(`/static/assets/${name}-`)));
+        }
+
         window.addEventListener('error', event => {
             const element = event.target;
             if (!element || !((element.tagName === 'SCRIPT' && element.type === 'module') ||
                 (element.tagName === 'LINK' && element.rel === 'stylesheet'))) return;
             const url = new URL(element.src || element.href, window.location.href);
+            if (isLocaleAsset(url.pathname)) return;
             if (url.origin === current.origin && (url.pathname.startsWith('/static/assets/') || url.pathname === '/src/main.js')) recover();
         }, true);
         window.addEventListener('vite:preloadError', event => {
@@ -76,6 +84,7 @@
             let url;
             try { url = new URL(match[1]); } catch { return; }
             if (url.origin !== current.origin || !url.pathname.startsWith('/static/assets/')) return;
+            if (isLocaleAsset(url.pathname)) return;
             event.preventDefault();
             recover();
         });

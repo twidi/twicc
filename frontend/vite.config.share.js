@@ -22,8 +22,7 @@ export default defineConfig({
             { find: /.*\/stores\/settings(\.js)?$/, replacement: r('src/share-session/shims/settingsStoreShim.js') },
             { find: /.*\/stores\/codeComments(\.js)?$/, replacement: r('src/share-session/shims/codeCommentsShim.js') },
             { find: /.*\/composables\/useWebSocket(\.js)?$/, replacement: r('src/share-session/shims/noWebSocket.js') },
-            // Cut the app router (and thus the whole SPA views chain) — reused code
-            // lazy-imports it, which disabled code splitting would otherwise pull in.
+            // Cut the app router and its SPA dependencies from reused components.
             { find: /.*\/router(\.js)?$/, replacement: r('src/share-session/shims/noRouter.js') },
         ],
     },
@@ -34,7 +33,10 @@ export default defineConfig({
         lib: { entry: 'src/share-session/main.js', formats: ['es'], fileName: () => 'share-session.js' },
         rolldownOptions: {
             output: {
-                codeSplitting: false,
+                // Public viewers never request optional locale chunks.
+                codeSplitting: true,
+                // The backend asset route accepts one path segment.
+                chunkFileNames: '[name]-[hash].js',
                 assetFileNames: (info) => {
                     const name = info.names?.[0] || ''
                     return name.endsWith('.css') ? 'share-session.css' : 'assets/[name]-[hash][extname]'

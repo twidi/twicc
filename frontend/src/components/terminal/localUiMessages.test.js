@@ -5,11 +5,14 @@ import * as Vue from 'vue'
 import { useI18n } from 'vue-i18n'
 import { renderToString } from '@vue/server-renderer'
 import { parse, compileScript } from '@vue/compiler-sfc'
-import { createAppI18n } from '../../i18n/index.js'
+import { createAppI18n, loadLocaleMessages } from '../../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups.js'
 import { extractPlaceholders } from '../../utils/snippetPlaceholders.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const sourceOf = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
 async function fixture(file, options = {}) {

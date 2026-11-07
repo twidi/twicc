@@ -5,8 +5,11 @@ import { runInNewContext } from 'node:vm'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { createAppI18n, readInitialLocale } from './index.js'
+import { createAppI18n, readInitialLocale, loadLocaleMessages } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const source = readFileSync(new URL('../views/LoginView.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)

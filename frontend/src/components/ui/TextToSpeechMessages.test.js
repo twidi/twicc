@@ -2,10 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { h, reactive } from 'vue'
 import { compileComponent, makeRenderer, descendants, flush } from '../../../tests/helpers/scrollerComponentHarness.js'
-import { i18n } from '../../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../../i18n/index.js'
 import * as messages from '../../i18n/uiMessages.js'
 import * as configUtils from '../../utils/ttsConfig.js'
 import * as constants from '../../constants.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const error = messages.localUiMessage('backend.tts.failed')
 const failure = { ok: false, error: 'Text-to-speech failed', uiMessage: error }

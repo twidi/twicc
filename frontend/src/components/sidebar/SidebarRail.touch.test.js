@@ -1,4 +1,4 @@
-import { createAppI18n } from '../../i18n/index.js'
+import { createAppI18n, loadLocaleMessages } from '../../i18n/index.js'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -11,6 +11,9 @@ import { createRailScopeNavigation } from '../../utils/railScopeNavigation.js'
 import { resolveRailItems } from '../../utils/sidebarRail.js'
 import { ALL_PROJECTS_ID } from '../../constants.js'
 import { extractWorkspaceId, isWorkspaceProjectId } from '../../utils/workspaceIds.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const source = readFileSync(new URL('./SidebarRail.vue', import.meta.url), 'utf8')
 const tooltipEntry = readFileSync(new URL('../../../node_modules/@awesome.me/webawesome/dist-cdn/components/tooltip/tooltip.js', import.meta.url), 'utf8')

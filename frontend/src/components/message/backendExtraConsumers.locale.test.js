@@ -5,9 +5,12 @@ import { runInNewContext } from 'node:vm'
 import { compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { i18n } from '../../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../../i18n/index.js'
 import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { resolveUiMessage } from '../../i18n/uiMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function componentSource(path) {
     return readFileSync(new URL(path, import.meta.url), 'utf8')

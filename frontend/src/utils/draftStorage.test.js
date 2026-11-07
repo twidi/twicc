@@ -7,8 +7,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { nextTick } from 'vue'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { installDraftStorageBlockedNotice, DRAFT_STORAGE_BLOCKED_MESSAGE } from './draftStorageBlockedNotice.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 let moduleSeq = 0
 function freshStorage() {

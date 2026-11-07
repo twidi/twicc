@@ -6,10 +6,13 @@ import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { parse as parseTemplate } from '@vue/compiler-dom'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { i18n } from '../../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../../i18n/index.js'
 import { localUiMessage, localUiError, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { normalizeBrowserUrl } from '../../utils/browserUrl.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const files = new Map()
 function component(file) {

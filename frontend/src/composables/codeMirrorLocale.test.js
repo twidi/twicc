@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'vite'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 test('locale reconfiguration renews folded accessibility without losing folds, document, selection or history', async context => {
     const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -16,7 +19,7 @@ test('locale reconfiguration renews folded accessibility without losing folds, d
         plugins: [{ name: 'editor-locale-fixture', resolveId: id => id === fixture ? id : null,
             load: id => id === fixture ? `
                 export {useCodeMirrorExtensions} from ${JSON.stringify(join(root, 'src/composables/useCodeMirror.js'))};
-                export {i18n} from ${JSON.stringify(join(root, 'src/i18n/index.js'))};
+                export {i18n,loadLocaleMessages} from ${JSON.stringify(join(root, 'src/i18n/index.js'))};
                 export {EditorState} from '@codemirror/state';
                 export {foldEffect,foldedRanges} from '@codemirror/language';
                 export {undoDepth} from '@codemirror/commands';` : null }],
@@ -32,6 +35,7 @@ test('locale reconfiguration renews folded accessibility without losing folds, d
     }
     const entry = output.find(item => item.type === 'chunk' && item.isEntry)
     const mod = await import(pathToFileURL(join(directory, entry.fileName)))
+    await mod.loadLocaleMessages('pt-BR')
     const cm = mod.useCodeMirrorExtensions({})
     let state = mod.EditorState.create({ doc: 'start\nfolded content\nend', extensions: cm.extensions })
     state = state.update({ changes: { from: state.doc.length, insert: '!' } }).state

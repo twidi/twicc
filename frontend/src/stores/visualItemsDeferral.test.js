@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { toRaw, watch, nextTick } from 'vue'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants.js'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems.js'
 import { getParsedContent, setParsedContent, hasContent } from '../utils/parsedContent.js'
@@ -21,6 +21,9 @@ import { buildBackgroundWorkStatusLines } from '../utils/backgroundWork.js'
 import { createStreamPublicationIdentity } from '../utils/streamPublicationRegistry.js'
 import { matchesStreamingBlock } from '../providers/claude_code/streamMatching.js'
 import { createVisualItemsViews } from '../utils/visualItemsViews.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
 function section(startText, endText) {

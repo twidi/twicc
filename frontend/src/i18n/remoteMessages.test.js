@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { i18n } from './index.js'
+import { i18n, loadLocaleMessages } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
 import { remoteUiMessage, remoteUiError, remoteUiErrors } from './remoteMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 test('remote messages retain their identity while the selected locale changes', () => {
     const previous = i18n.global.locale.value

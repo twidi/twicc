@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { computed, ref } from 'vue'
-import { createAppI18n } from '../../i18n/index.js'
+import { createAppI18n, loadLocaleMessages } from '../../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 // Exercise the actual validation handlers without mounting the browser-only
 // custom elements. Their injected state is the same ref shape as Vue setup.

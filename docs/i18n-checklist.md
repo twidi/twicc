@@ -59,6 +59,8 @@ The explicit English-page exclusions take precedence over this general rule.
 Keep shared modules in scope when they also supply application interface messages.
 MCP approval, telemetry dialogs/settings and sharing controls inside TwiCC remain in scope.
 Existing translations in public Vue viewers do not create a requirement to localize public sharing.
+Public viewers force English without changing the saved locale or adding a language selector.
+Private artifact pages retain the application locale.
 If a file changes role, reassess its exclusion and add it when it becomes application source.
 For an unknown file type, inspect its role before deciding whether it belongs in scope.
 
@@ -86,7 +88,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - Frontend baseline: commit `6bbedd9ed`, with 835 reviewed source files.
 - Retain unchanged frontend approvals only when affected display dependencies remain valid.
 - Previous inventory: 837 frontend sources, 417 backend sources and 5 native transport dependencies.
-- Inventory: 839 frontend sources, 417 backend sources, 5 native transport dependencies and 66 English content entries. Each content entry covers its pt-BR body. All implementation and independent reviews pass.
+- Inventory: 840 frontend sources, 417 backend sources, 5 native transport dependencies and 66 English content entries. Each content entry covers its pt-BR body. All implementation and independent reviews pass.
 - New in-scope files join this list before completion. Checked states reopen when reviewed content changes.
 - This pass forms the combined source-audit checkpoint. No main changes, development-server restart or development-database migration run.
 
@@ -140,6 +142,26 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
   First-use auto-opening, closing with dismissal ON and random tip scheduling are not exercised.
 - Existing terminology note: the help title uses "A aba Browser" while its body and tab use "Navegador".
 - No backend restart, database migration or package installation occurs.
+
+## On-demand catalog validation
+
+- Frontend suite: 4,806 tests pass. Official Vue I18n lint and all six production builds pass.
+- Catalog loading tests cover caching, deduplication, stale requests, failed downloads,
+  English fallback, composer isolation, CSS labels and Day.js registration.
+- Startup tests cover public recent/session/document viewers, public artifacts and private artifacts.
+- Build dependency graphs confirm Portuguese catalogs and dates are absent from all three startup graphs.
+  Each build emits a separate Portuguese catalog; standalone viewer chunks stay at the bundle root.
+- Chrome validates English startup without Portuguese catalog, Web Awesome or Day.js requests;
+  live Portuguese selection; cached switches; persisted Portuguese before first interface render;
+  and Portuguese relative dates. The JSON module adapter fixes Vite dev MIME compatibility.
+- Production share/shell bundles pass browser checks on an isolated static fixture origin:
+  public recent shares and public artifacts use English without Portuguese requests;
+  private artifacts load Portuguese. The application origin deliberately hides share-only routes.
+- Independent source review covers the loader, catalog adapter, entry points, recovery guard,
+  date component and bundle configuration. All touched browser storage is restored; fixtures are closed.
+- Network-failure fallback has unit coverage. Stalled requests and deliberate stale-hash rotation
+  are not browser-tested. A stale locale chunk uses English until reload; see the documentation.
+- Inventory: 1,328 unique checked paths, including the new catalog adapter.
 
 ## Help and tip content
 
@@ -223,13 +245,13 @@ The three corrected English control references receive a second paired review.
 
 ## Frontend sources
 
-- [x] `frontend/index.html` — complete; review pass; batch 8. Promoted classification entry to production after full reading: inline asset-recovery panel and Retry button now use a catalog subset injected by Vite. Reads saved locale before modules; preserves recovery guards, URL budget and product title.
+- [x] `frontend/index.html` — complete; review pass; batch 8. Promoted classification entry to production after full reading: inline asset-recovery panel and Retry button use a catalog subset injected by Vite. Reads saved locale before modules; preserves recovery guards, URL budget and product title. Optional catalog/component/date locale failures remain with the locale loader's English fallback, without a full-page reload.
 - [x] `frontend/src/App.vue` — complete; review pass; batch 5. Parent-authorized narrow notification correction. Resolve local normal/custom message metadata and titleKey params during display. Existing provider auth/status overrides remain. Original full-file ownership stays with batch4.
 - [x] `frontend/src/artifact-broker/appPreferences.js` — complete; review pass; batch 7. Preference CSS and technical attribute mirroring; no interface text.
 - [x] `frontend/src/artifact-broker/host.js` — complete; review pass; batch 7. Broker RPC and fetch errors remain technical diagnostics for artifact code; no UI presentation.
 - [x] `frontend/src/artifact-broker/shim.js` — complete; review pass; batch 7. Injected fetch/data APIs preserve diagnostic and protocol strings; no interface chrome.
 - [x] `frontend/src/artifact-shell/ArtifactShellApp.vue` — complete; review pass; batch 7. Consent and notices already use global i18n; host list now follows locale through Intl.ListFormat.
-- [x] `frontend/src/artifact-shell/main.js` — complete; review pass; batch 7. Standalone shell installs the shared i18n singleton and document locale before mounting. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/artifact-shell/main.js` — complete; review pass; batch 7. Shared shell forces English for public artifacts before title rendering and mount; only private artifacts read and await the saved application locale. Neither mode changes the saved preference. Startup regression tests cover both modes and verify public pages load only English. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/artifact-theme/flattenTheme.js` — complete; review pass; batch 7. PostCSS theme-token transformation only; no UI strings.
 - [x] `frontend/src/artifact-theme/kit.css` — complete; review pass; batch 7. Opt-in CSS contains no displayed text.
 - [x] `frontend/src/artifact-theme/theme.css` — complete; review pass; batch 7. Theme tokens and CSS imports only; no displayed text.
@@ -349,7 +371,7 @@ The three corrected English control references receive a second paired review.
 - [x] `frontend/src/components/git/GitLog/table/components/IndexStatus.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing UI translations preserved; Git metadata, placeholders and CSS values stay unchanged.
 - [x] `frontend/src/components/git/GitLog/table/components/TableContainer.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing UI translations preserved; Git metadata, placeholders and CSS values stay unchanged.
 - [x] `frontend/src/components/git/GitLog/table/components/TableRow.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing UI translations preserved; Git metadata, placeholders and CSS values stay unchanged.
-- [x] `frontend/src/components/git/GitLog/table/components/TimestampData.vue` — complete; review pass; batch 4. Read full SFC; synthetic index message and relative dates now follow locale; explicit timestamp format overrides remain supported.
+- [x] `frontend/src/components/git/GitLog/table/components/TimestampData.vue` — complete; review pass; batch 4. Read full SFC; synthetic index message and relative dates follow locale; explicit timestamp format overrides remain supported. Day.js translations load through the central locale loader instead of a static Portuguese import.
 - [x] `frontend/src/components/git/GitLog/table/GitLogTable.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing UI translations preserved; Git metadata, placeholders and CSS values stay unchanged.
 - [x] `frontend/src/components/git/GitLog/tags/components/BranchIcon.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing index translation preserved; Git refs, names, URL text and SVG geometry remain external or technical content.
 - [x] `frontend/src/components/git/GitLog/tags/components/BranchLabel.vue` — complete; review pass; batch 4. Read full script, template, and styles; existing index translation preserved; Git refs, names, URL text and SVG geometry remain external or technical content.
@@ -685,8 +707,9 @@ The three corrected English control references receive a second paired review.
 - [x] `frontend/src/extensions/patchEllipsis.js` — complete; review pass; batch 7. Static ellipsis marker only; shared collapsed bar theme contains translations.
 - [x] `frontend/src/extensions/smartCollapseUnchanged.js` — complete; review pass; batch 7. No local interface text. Smart collapse delegates labels and locale updates to owned collapsedBar helper.
 - [x] `frontend/src/i18n/composerPlaceholder.js` — complete; review pass; batch 8. Read complete composerPlaceholder stylesheet, including selectors, tokens and generated content. Technical CSS and comments only; no interface prose.
-- [x] `frontend/src/i18n/index.js` — complete; review pass; batch 0. Read complete bootstrap and locale API. Preserve autonyms/settings/wire locale. English default/fallback, guarded storage and global reactive composer remain. Add a catalog-derived CSS loading label for pseudo-elements. CSS and both-locale fallback are tested.
+- [x] `frontend/src/i18n/index.js` — complete; review pass; batch 0. Read complete bootstrap and locale API. Only English loads synchronously; selected catalogs and Web Awesome/Day.js translations load on demand. Cache and deduplicate imports, retain English on failure, allow retry and prevent stale language requests from replacing the latest choice. Entry points choose their locale before rendering; storage remains owned by settings. Tests cover loading, fallback, retry, races, composer isolation, date registration and the CSS loading label.
 - [x] `frontend/src/i18n/locales/en.json` — complete; review pass; batch 0. Catalog parity, named parameters and ICU syntax validated; independent full-file semantic review records the exact approved hash.
+- [x] `frontend/src/i18n/locales/pt-BR.js` — Catalog module adapter only. Static JSON re-export supports Node import attributes and Vite's JavaScript MIME type; loaded only by the Portuguese dynamic import. No additional interface text.
 - [x] `frontend/src/i18n/locales/pt-BR.json` — complete; review pass; batch 0. Catalog parity, named parameters and ICU syntax validated; independent full-file semantic review records the exact approved hash.
 - [x] `frontend/src/i18n/uiMessages.js` — complete; review pass; batch 5. Read the complete helper. Parent-authorized additive localUiError returns Error with dynamic string message and local uiMessage metadata. Reviewer1 independently approves. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/inline-artifacts/context.js` — complete; review pass; batch 11. Read all source. Injection symbols, identity serialization, reload query and navigation selectors are technical contracts; no interface prose.
@@ -705,7 +728,7 @@ The three corrected English control references receive a second paired review.
 - [x] `frontend/src/inline-artifacts/scrollDriver.js` — complete; review pass; batch 11. Read all source. Handles scroll easing, momentum and event dispatch. DOM event/mode strings and geometry units remain technical. No interface prose.
 - [x] `frontend/src/inline-artifacts/scrollForwarder.js` — complete; review pass; batch 11. Read all 170 lines. Iframe scroll/touch relay and CSS queries have no interface prose; protocol kinds, modes and coordinates remain technical.
 - [x] `frontend/src/inline-artifacts/shareOptions.js` — complete; review pass; batch 11. Read all source. Pure persisted option fallback; no interface prose.
-- [x] `frontend/src/main.js` — complete; review pass; batch 8. Read full entry module. Translate access-denied title, explanation, command tooltip, copy status and backend-failure screen through textContent. Preserve commands, startup behavior and console diagnostics.
+- [x] `frontend/src/main.js` — complete; review pass; batch 8. Read full entry module. Await the saved locale before authentication, login, access-denied or bootstrap messages render. Web Awesome translations load with the selected catalog. Translate access-denied title, explanation, command tooltip, copy status and backend-failure screen through textContent. Preserve commands, startup behavior and console diagnostics.
 - [x] `frontend/src/providers/baseHelpers.js` — complete; review pass; batch 1. Read all 1,586 lines. Translate field labels, summary labels, model availability, trust help, startup/idle warnings and retirement dates. Preserve machine states and tool APIs. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/providers/claude_code/agentControlTools.js` — complete; review pass; batch 1. Translate control card headings and encrypted placeholder at call time. Preserve control tool names and expected-count logic.
 - [x] `frontend/src/providers/claude_code/constants.js` — complete; review pass; batch 1. Wire enums and capability constants only; preserve permission and effort identifiers.
@@ -740,7 +763,7 @@ The three corrected English control references receive a second paired review.
 - [x] `frontend/src/share-session/brandRobotIcon.js` — complete; review pass; batch 11. Read all source. Registers the product SVG under technical icon-library identity; no UI prose.
 - [x] `frontend/src/share-session/inlineAdapter.js` — complete; review pass; batch 11. Read all source. Normalizes token-only manifests and publication titles. Validation exception is caught by runtime; probe failures remain technical codes rendered through localized state components.
 - [x] `frontend/src/share-session/inlineCompletion.js` — complete; review pass; batch 11. Read all source. Snapshot polling/access lifecycle has no interface prose; HTTP codes and pending status are technical.
-- [x] `frontend/src/share-session/main.js` — complete; review pass; batch 11. Read all source. Standalone share application installs the shared i18n plugin, sets document locale and loads Web Awesome Portuguese translation. Data titles remain public metadata. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/share-session/main.js` — complete; review pass; batch 11. Read all source. Public session/document viewers and the recent-share list force English before title rendering and mount, without changing the saved application locale. Shared components retain the i18n plugin. Startup regression tests cover all three modes. Data titles remain public metadata. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/share-session/ShareDocApp.vue` — complete; review pass; batch 11. Read all source. Image alt fallback translates reactively without refetching source. Shared document text, diagrams, metadata titles and URLs remain provider content.
 - [x] `frontend/src/share-session/SharedSubagentView.vue` — complete; review pass; batch 11. Read all source. Missing agent-name wrapper uses shared catalog message at render time; real agent names and IDs stay content.
 - [x] `frontend/src/share-session/ShareFooter.vue` — complete; review pass; batch 11. Read all source. Whole footer message already uses global i18n-t with brand slot; product name and repository URL remain technical identity.

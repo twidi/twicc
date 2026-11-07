@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { createRenderer, nextTick, reactive } from 'vue'
-import { i18n, setLocale } from '../../i18n/index.js'
+import { i18n, setLocale, loadLocaleMessages } from '../../i18n/index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 // Mount the real SFC. Only browser Markdown rendering and the backend store are
 // substituted; the locale plugin, loader, watcher and component lifecycle are real.

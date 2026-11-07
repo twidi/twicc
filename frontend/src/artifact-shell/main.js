@@ -6,7 +6,7 @@
 // reads below.
 
 import { createApp, watchEffect } from 'vue'
-import { i18n, setLocale } from '../i18n'
+import { DEFAULT_LOCALE, i18n, readInitialLocale, setLocale } from '../i18n'
 import { artifactPageTitle } from '../i18n/pageTitles.js'
 
 // Web Awesome: design tokens + ONLY the components the consent prompt uses.
@@ -41,25 +41,31 @@ installWaMotionStyles()
 // toggle recoloring just the footer would mislead. Follow the OS, nothing else.
 initArtifactShellColorScheme()
 
-const dataEl = document.getElementById('twicc-shell-data')
-const shellData = dataEl ? JSON.parse(dataEl.textContent) : {}
-watchEffect(() => { document.title = artifactPageTitle(shellData) })
+async function initializeArtifactShell() {
+    const dataEl = document.getElementById('twicc-shell-data')
+    const shellData = dataEl ? JSON.parse(dataEl.textContent) : {}
+    // Public artifacts stay English; only private artifacts read the saved locale.
+    // setLocale does not change the saved browser preference.
+    await setLocale(shellData.mode === 'share' ? DEFAULT_LOCALE : readInitialLocale())
+    watchEffect(() => { document.title = artifactPageTitle(shellData) })
 
-if (shellData.mode === 'share') {
-    // Record this artifact share in the browser's recent list (share host homepage).
-    recordShareView({ tokenPath: shellData.tokenPath, kind: 'artifact', title: shellData.title || '' })
+    if (shellData.mode === 'share') {
+        // Record this artifact share in the browser's recent list (share host homepage).
+        recordShareView({ tokenPath: shellData.tokenPath, kind: 'artifact', title: shellData.title || '' })
+    }
+    const app = createApp(ArtifactShellApp, {
+        innerDocUrl: shellData.innerDocUrl,
+        bookmarkId: shellData.bookmarkId ?? null,
+        allowedHosts: shellData.allowedHosts ?? {},
+        deniedHosts: shellData.deniedHosts ?? {},
+        // Share mode: no bookmark id, no persistence, proxy through the share token.
+        mode: shellData.mode === 'share' ? 'share' : 'owner',
+        proxyUrl: shellData.mode === 'share' ? `${shellData.tokenPath}/api/proxy/` : undefined,
+        snapshotAt: shellData.snapshotAt ?? null,
+        tokenPath: shellData.tokenPath ?? null,
+    })
+    app.use(i18n)
+    app.mount('#app')
 }
-const app = createApp(ArtifactShellApp, {
-    innerDocUrl: shellData.innerDocUrl,
-    bookmarkId: shellData.bookmarkId ?? null,
-    allowedHosts: shellData.allowedHosts ?? {},
-    deniedHosts: shellData.deniedHosts ?? {},
-    // Share mode: no bookmark id, no persistence, proxy through the share token.
-    mode: shellData.mode === 'share' ? 'share' : 'owner',
-    proxyUrl: shellData.mode === 'share' ? `${shellData.tokenPath}/api/proxy/` : undefined,
-    snapshotAt: shellData.snapshotAt ?? null,
-    tokenPath: shellData.tokenPath ?? null,
-})
-app.use(i18n)
-setLocale(i18n.global.locale.value)
-app.mount('#app')
+
+void initializeArtifactShell()

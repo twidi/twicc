@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { computed } from 'vue'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { formatToolNameForHeader, formatDurationMsCompact } from './toolNames.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 test('known first-party headings follow locale at the existing computed consumer boundary', () => {
     const before = i18n.global.locale.value

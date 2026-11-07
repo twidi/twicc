@@ -10,11 +10,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { reactive } from 'vue'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { localUiMessage } from '../i18n/uiMessages.js'
 import { remoteUiError } from '../i18n/remoteMessages.js'
 
 import { buildTimelineUrl, createFeedState, createTimelineFeed } from '../utils/timeline/feed.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 function loadComposable(apiFetch) {
     const source = readFileSync(new URL('./useTimelineFeed.js', import.meta.url), 'utf8')

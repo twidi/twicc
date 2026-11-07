@@ -3,8 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { i18n } from '../i18n/index.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 const toastSource = readFileSync(new URL('./useToast.js', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')

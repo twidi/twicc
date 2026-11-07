@@ -26,9 +26,9 @@ translation metadata. Help and tip bodies use translated Markdown files.
 Their titles and controls use the interface catalogs; images remain shared assets.
 
 The share viewer and artifact shell install the same translation plugin for
-reused components. Their language preference belongs to their browser origin;
-it does not change the language on another origin or device.
-Public sharing does not require localization; see the deliberate exclusions below.
+reused components. Public viewers force English before rendering titles or mounting
+components, regardless of the saved application locale. They have no language selector
+and do not change the saved preference. Private artifact pages keep the application locale.
 
 ### Pages that deliberately stay English
 
@@ -51,8 +51,8 @@ Telemetry dialogs and settings inside TwiCC also remain in scope and are transla
 The application's sharing controls and private artifact viewer remain in scope.
 The artifact shell serves both private and public pages; keep this distinction when auditing shared code.
 
-This decision records translation scope. It does not remove existing translations
-or change the locale behavior of the existing Vue share viewers.
+Shared components keep their existing translations for use inside the application.
+Public entry points select English; they do not need separate English component copies.
 Do not classify these exclusions as missing translations during later passes.
 
 ## Implementation
@@ -61,6 +61,31 @@ Do not classify these exclusions as missing translations during later passes.
 English fallback. `locales/en.json` is the source catalog, and
 `locales/pt-BR.json` contains Brazilian Portuguese translations. Messages
 render as text or Vue component slots, never as HTML strings.
+
+English is the only catalog imported synchronously. Other catalogs and their
+Web Awesome and Day.js translations use dynamic imports, following the
+[Vue I18n lazy-loading pattern](https://vue-i18n.intlify.dev/guide/advanced/lazy).
+`setLocale()` waits for the requested catalog before updating the composer,
+document language and CSS loading label. Await it during startup, before login
+or other interface messages render. Public viewers select English without reading
+the stored locale; private artifact pages await their saved locale.
+
+Successful imports remain cached for the page lifetime. Concurrent requests share
+one download, and only the latest selection can change the displayed language.
+A failed import leaves English available and preserves the saved preference.
+The loader clears failed requests; browsers can retain a failed module until reload.
+Reload the page to retry the saved language. The settings store owns persistence.
+The inline asset-recovery guard embeds only
+two messages per language so it still works when application modules cannot load.
+It leaves optional locale-chunk failures with the locale loader instead of
+reloading the whole application. A stale page with an old locale-chunk hash
+therefore falls back to English until the user reloads it.
+
+Keep code splitting enabled in the SPA, artifact-shell and share-viewer builds.
+Otherwise the bundler inlines optional catalogs into their entry bundles.
+Standalone viewer chunks stay at the bundle root because backend routes accept
+one asset path segment. Tests that render Portuguese explicitly call
+`await loadLocaleMessages('pt-BR')`; production never preloads every supported locale.
 
 Components use `$t('key')` in templates or `useI18n().t` in setup code. Build
 translated option arrays and labels in `computed()` so switching languages
@@ -276,13 +301,22 @@ translation contracts are unchanged.
 ## Adding a language
 
 1. Copy the English catalog to a new BCP 47 locale file and translate it.
-2. Import the catalog and register it in `createAppI18n()` and
-   `SUPPORTED_LOCALES`; use the language's own name for its selector label.
+2. Register the locale in `SUPPORTED_LOCALES` and add a dynamic import to
+   `localeLoaders` in `src/i18n/index.js`. Add a small JavaScript catalog entry,
+   following `locales/pt-BR.js`, to support JSON imports in both Node and Vite.
+   Use the language's own name for its selector label.
+   Load its Web Awesome translation in the same loader when available.
+   Load its Day.js locale there too; components must not import date locales statically.
+   Do not add a static catalog import or preload every locale.
 3. Keep catalog keys aligned and preserve interpolation parameter names.
 4. Run `cd frontend && node --test src/i18n/index.test.js`, the frontend
    suite (`npm test`) and the production build (`npm run build`).
 5. Check the language selector, reload persistence and login in a browser.
    Check narrow layouts and avoid translating user or agent content.
+6. Add the locale to the recovery-message subset in `vite.config.js`. The inline
+   guard in `index.html` must recognize it before application modules load.
+7. Confirm the production build emits a separate catalog chunk. Confirm an
+   English startup does not request it and public viewers remain English.
 
 New UI copy should use an English catalog key and a matching Portuguese
 translation. Code, comments and contributor documentation remain English;

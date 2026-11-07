@@ -115,7 +115,8 @@ test('supported stale attachment never selects Web or silently retries with a re
 })
 
 test('native wire metadata remains reactive in start, ending and snapshot errors', async () => {
-    const { i18n } = await import('../i18n/index.js')
+    const { i18n, loadLocaleMessages } = await import('../i18n/index.js')
+    await loadLocaleMessages('pt-BR')
     const f = fixture()
     i18n.global.locale.value = 'en'
     try {

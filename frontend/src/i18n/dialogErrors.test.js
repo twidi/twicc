@@ -7,9 +7,12 @@ import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { parse as parseTemplate } from '@vue/compiler-dom'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { createAppI18n } from './index.js'
+import { createAppI18n, loadLocaleMessages } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
 import { remoteUiMessage, remoteUiErrors } from './remoteMessages.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 // Execute the production handlers and render their actual error callouts.
 // Replacing descriptors with stored translations must break the locale-switch assertions.

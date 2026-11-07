@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createAppI18n } from './index.js'
+import { createAppI18n, loadLocaleMessages } from './index.js'
+
+// These rendering tests exercise both catalogs; production loads them on demand.
+await loadLocaleMessages('pt-BR')
 
 // Execute the real pre-mount initialization with only browser I/O substituted.
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8')
@@ -27,6 +30,8 @@ function startup(locale, { accessDenied = false, command = 'twicc password set',
     const i18n = createAppI18n(locale)
     const dependencies = {
         i18n,
+        readInitialLocale: () => locale,
+        setLocale: async value => { assert.equal(value, locale) },
         useAuthStore: () => ({ checkAuth: async () => {}, accessDenied, setPasswordCommand: command }),
         document: { getElementById: id => nodes.get(id) },
         navigator: { clipboard: { async writeText(value) { if (clipboardFailure) throw new Error('Clipboard denied'); copied.push(value) } } },
