@@ -107,6 +107,15 @@ def test_descriptions_fit_the_client_cap_on_both_surfaces():
         assert length <= MAX_DESCRIPTION_LENGTH, (tool.name, length)
 
 
+def test_parameter_descriptions_fit_the_client_cap():
+    from twicc.mcp.descriptions import MAX_DESCRIPTION_LENGTH
+
+    for tool in iter_mcp_tools():
+        for name, schema in (tool.input_schema.get("properties") or {}).items():
+            length = len(schema.get("description", ""))
+            assert length <= MAX_DESCRIPTION_LENGTH, (tool.name, name, length)
+
+
 def test_mcp_description_overrides_target_exposed_commands():
     from twicc.mcp.descriptions import MCP_DESCRIPTIONS
 

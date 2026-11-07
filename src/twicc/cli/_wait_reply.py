@@ -82,21 +82,17 @@ WAIT_FAILED = "wait_failed"        # the wait itself broke; the session is unaff
 # that send append " Requires --wait-reply."; the two wait commands use it as
 # is. Kept here, beside the rule it describes, so the five cannot drift.
 WAIT_BACKGROUND_HELP = (
-    "A final message read while background work runs behind the agent "
+    "Ignore a final message read while background work runs behind the agent "
     "(`background_work_in_progress` not null: a subagent, background shell, "
-    "Monitor, scheduled wake-up or goal) does not count; the first confirmed "
-    "logical answer read once that work has ended is the answer, so a wait started or "
-    "resumed after the work ended counts the final messages already written. "
-    "Once a final message was ignored, an idle agent keeps the wait open until "
-    "the next one comes, however late (a dead agent ends it, 'ended'). Claude "
-    "Code reopens a turn when a background shell ends; Codex answers after a "
-    "process ends only if the agent waited for it within its turn, so a "
-    "process it left running on purpose brings no new answer and such a wait "
-    "ends in 'timeout'. On 'timeout', the last ignored final message is "
-    "returned with the current `background_work_in_progress`: to wait for the "
-    "next answer, resume with `session <ID> wait-reply --from-line <its line_num> "
-    "--wait-background`. A pending request still ends the wait at once and "
-    "carries no ignored final message."
+    "Monitor, scheduled wake-up or goal). The answer is the first confirmed "
+    "final message read once that work has ended; a wait started after that "
+    "counts the messages already written. After an ignored message, an idle "
+    "agent keeps the wait open until the next one, however late (a dead agent "
+    "ends it: 'ended'). Claude Code reopens a turn when a background shell "
+    "ends. Codex does it only if the agent waited for the process, so such a "
+    "wait ends in 'timeout'. On 'timeout', the last ignored message is "
+    "returned: resume with `session <ID> wait-reply --from-line <its "
+    "line_num> --wait-background`. A pending request still ends the wait at once."
 )
 
 
