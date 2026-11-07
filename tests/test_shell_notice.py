@@ -10,6 +10,7 @@ import pytest
 
 from twicc.agent.shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
+    SHELL_NOTICE_REMINDER_DELAY_SECONDS,
     SHELL_NOTICE_RESOLUTION_GRACE_SECONDS,
     ClaudeLiveOwners,
     OwnerFacts,
@@ -56,6 +57,24 @@ def test_own_shell_waits_300s_after_idle():
     assert select_concerned_shells(state(s), idle_since=idle_since, notified=(), now=NOW) == []
     assert select_concerned_shells(state(s), idle_since=NOW - SHELL_NOTICE_DELAY_SECONDS,
                                    notified=(), now=NOW) == [s]
+
+
+def test_reminder_uses_the_same_rule_with_the_long_delay():
+    s = shell(started_at=0.0)
+    delay = SHELL_NOTICE_REMINDER_DELAY_SECONDS
+    kwargs = {"notified": (), "now": NOW, "delay": delay}
+    assert select_concerned_shells(state(s), idle_since=NOW - delay + 1, **kwargs) == []
+    assert select_concerned_shells(state(s), idle_since=NOW - delay, **kwargs) == [s]
+    young = shell(started_at=NOW - delay + 1)
+    assert select_concerned_shells(state(young), idle_since=0.0, **kwargs) == []
+    orphan = shell(owner=ShellOwner.SUBAGENT, owner_ref="a1", owner_run_ended_at=NOW - delay + 1)
+    assert select_concerned_shells(state(orphan), idle_since=0.0, **kwargs) == []
+
+
+def test_reminder_header_differs_only_by_the_suffix():
+    s = shell()
+    assert "after a long time" in build_shell_notice([s], now=NOW, reminder=True).splitlines()[0]
+    assert "after a long time" not in build_shell_notice([s], now=NOW)
 
 
 def test_own_shell_waits_300s_after_its_own_start():

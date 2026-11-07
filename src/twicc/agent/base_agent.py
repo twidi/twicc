@@ -1193,6 +1193,8 @@ class BaseAgent(StopOriginMixin):
         with ``__new__`` can call it."""
         self._shell_notice_idle_since: float | None = None
         self._shell_notice_notified: set[str] = set()
+        # Same, for the 30-minute reminder stage.
+        self._shell_notice_notified_reminder: set[str] = set()
         self._shell_notice_resolutions: dict[str, ShellResolution] = {}
         self._shell_notice_task: asyncio.Task[None] | None = None
 
@@ -1218,16 +1220,19 @@ class BaseAgent(StopOriginMixin):
     def _note_external_send(self) -> None:
         """An external send reached the agent (spec §3.2): new notice episode."""
         self._shell_notice_notified.clear()
+        self._shell_notice_notified_reminder.clear()
 
     def _drop_shell_notice_key(self, key: str) -> None:
         """Forget a shell that ended (spec §5.3)."""
         self._shell_notice_notified.discard(key)
+        self._shell_notice_notified_reminder.discard(key)
         self._shell_notice_resolutions.pop(key, None)
 
-    def mark_shells_noticed(self, keys: Iterable[str]) -> None:
+    def mark_shells_noticed(self, keys: Iterable[str], *, reminder: bool = False) -> None:
         """Record a sent notice, only for shells still alive (spec §7 step 5)."""
         live = self._shell_notice_live_keys()
-        self._shell_notice_notified.update(key for key in keys if key in live)
+        target = self._shell_notice_notified_reminder if reminder else self._shell_notice_notified
+        target.update(key for key in keys if key in live)
 
     def store_shell_resolutions(self, facts: Sequence[OwnerFacts], now: float) -> None:
         """Store the database part's facts, only for shells still alive (spec §5.5)."""

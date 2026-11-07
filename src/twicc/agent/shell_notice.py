@@ -17,6 +17,7 @@ from typing import NamedTuple
 from twicc.cli._drop_request.sender_header import SHELL_NOTICE_HEADER, inline_md
 
 SHELL_NOTICE_DELAY_SECONDS = 300
+SHELL_NOTICE_REMINDER_DELAY_SECONDS = 1800  # second notice, same rules, longer delay
 SHELL_NOTICE_RESOLUTION_GRACE_SECONDS = 60
 SHELL_NOTICE_STALE_SECONDS = 30
 SHELL_NOTICE_TEXT_MAX_CHARS = 300
@@ -78,14 +79,19 @@ def _delay_start(shell: ShellInfo, state: ShellNoticeState, idle_since: float) -
 
 def select_concerned_shells(
     state: ShellNoticeState, *, idle_since: float, notified: Collection[str], now: float,
+    delay: float = SHELL_NOTICE_DELAY_SECONDS,
 ) -> list[ShellInfo]:
-    """The shells to report now, in the order ``state`` lists them."""
+    """The shells to report now, in the order ``state`` lists them.
+
+    ``delay`` is the stage's delay: the 5-minute notice or the 30-minute reminder.
+    ``notified`` holds the keys already reported at that stage.
+    """
     concerned = []
     for shell in state.shells:
         if shell.key in notified:
             continue
         start = _delay_start(shell, state, idle_since)
-        if start is not None and start <= now - SHELL_NOTICE_DELAY_SECONDS:
+        if start is not None and start <= now - delay:
             concerned.append(shell)
     return concerned
 
@@ -152,9 +158,14 @@ _MAIN_ASK = (
 )
 
 
-def build_shell_notice(shells: Sequence[ShellInfo], *, now: float) -> str:
-    """The notice text for ``shells`` (spec §6.1): subagents, unattributed, own."""
-    parts = [f"{SHELL_NOTICE_HEADER}: background shell(s) still running"]
+def build_shell_notice(shells: Sequence[ShellInfo], *, now: float, reminder: bool = False) -> str:
+    """The notice text for ``shells`` (spec §6.1): subagents, unattributed, own.
+
+    ``reminder`` is the 30-minute stage: the header says the shells still run
+    after a long time.
+    """
+    suffix = " after a long time" if reminder else ""
+    parts = [f"{SHELL_NOTICE_HEADER}: background shell(s) still running{suffix}"]
 
     by_owner: dict[str, list[ShellInfo]] = {}
     for shell in shells:

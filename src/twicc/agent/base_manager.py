@@ -29,6 +29,7 @@ from .completion_types import CompletionCandidate, CompletionInput, CompletionSn
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
+    SHELL_NOTICE_REMINDER_DELAY_SECONDS,
     SHELL_NOTICE_STALE_SECONDS,
     build_shell_notice,
     earliest_delay_start,
@@ -1808,11 +1809,17 @@ class BaseAgentManager:
         if task is not None and not task.done():
             return
         idle_since = agent._shell_notice_idle_since
-        notified = agent._shell_notice_notified
+        # Stage 1: the 5-minute notice. Stage 2: the 30-minute reminder, same rules.
+        stages = (
+            (False, SHELL_NOTICE_DELAY_SECONDS, agent._shell_notice_notified),
+            (True, SHELL_NOTICE_REMINDER_DELAY_SECONDS, agent._shell_notice_notified_reminder),
+        )
         candidates = {
-            shell.key for shell in state.shells
+            shell.key
+            for _, delay, notified in stages
+            for shell in state.shells
             if shell.key not in notified
-            and earliest_delay_start(shell, idle_since) <= now - SHELL_NOTICE_DELAY_SECONDS
+            and earliest_delay_start(shell, idle_since) <= now - delay
         }
         if not candidates:
             return
@@ -1824,25 +1831,29 @@ class BaseAgentManager:
             now = time.time()
             if state is None or not state.idle:
                 return
-        if not select_concerned_shells(state, idle_since=idle_since, notified=notified, now=now):
+        for reminder, delay, notified in stages:
+            if not select_concerned_shells(
+                state, idle_since=idle_since, notified=notified, now=now, delay=delay,
+            ):
+                continue
+            agent._shell_notice_task = asyncio.create_task(
+                self.send_shell_notice(agent, now, reminder=reminder),
+                name=f"shell-notice-{agent.session_id}",
+            )
             return
-        agent._shell_notice_task = asyncio.create_task(
-            self.send_shell_notice(agent, now),
-            name=f"shell-notice-{agent.session_id}",
-        )
 
-    async def send_shell_notice(self, agent: BaseAgent, now: float) -> None:
+    async def send_shell_notice(self, agent: BaseAgent, now: float, *, reminder: bool = False) -> None:
         """Send the notice to ``agent`` if it still applies (spec §7).
 
         Never ``send_to_session``: no agent start, no settings, no steer.
         """
         async with self._send_gate(agent.session_id), self._lock:
             try:
-                await self._send_shell_notice_locked(agent, now)
+                await self._send_shell_notice_locked(agent, now, reminder=reminder)
             except Exception:
                 logger.warning("Background shell notice failed for session %s", agent.session_id, exc_info=True)
 
-    async def _send_shell_notice_locked(self, agent: BaseAgent, now: float) -> None:
+    async def _send_shell_notice_locked(self, agent: BaseAgent, now: float, *, reminder: bool = False) -> None:
         """Body of ``send_shell_notice``, run under the send gate and the lock."""
         if self._agents.get(agent.session_id) is not agent:
             return
@@ -1853,12 +1864,16 @@ class BaseAgentManager:
         if state is None or not state.idle or idle_since is None:
             return
         current = time.time()
+        if reminder:
+            notified, delay = agent._shell_notice_notified_reminder, SHELL_NOTICE_REMINDER_DELAY_SECONDS
+        else:
+            notified, delay = agent._shell_notice_notified, SHELL_NOTICE_DELAY_SECONDS
         shells = select_concerned_shells(
-            state, idle_since=idle_since, notified=agent._shell_notice_notified, now=current,
+            state, idle_since=idle_since, notified=notified, now=current, delay=delay,
         )
         if not shells:
             return
-        text = build_shell_notice(shells, now=current)
+        text = build_shell_notice(shells, now=current, reminder=reminder)
         keys = [shell.key for shell in shells]
         try:
             result = await agent.send(text, shell_notice=True)
@@ -1874,7 +1889,10 @@ class BaseAgentManager:
                 agent.session_id, ", ".join(keys),
             )
             return
-        agent.mark_shells_noticed(keys)
+        if reminder:
+            agent.mark_shells_noticed(keys, reminder=True)
+        else:
+            agent.mark_shells_noticed(keys)
         logger.info(
             "Background shell notice sent to session %s (%s)",
             agent.session_id, ", ".join(keys),

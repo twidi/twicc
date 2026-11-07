@@ -9,6 +9,7 @@ from tests.shell_notice_helpers import run_async
 from twicc.agent.base_manager import BaseAgentManager
 from twicc.agent.shell_notice import (
     SHELL_NOTICE_DELAY_SECONDS,
+    SHELL_NOTICE_REMINDER_DELAY_SECONDS,
     ShellInfo,
     ShellLookup,
     ShellNoticeState,
@@ -32,6 +33,7 @@ class FakeAgent:
         self._lookups = list(lookups)
         self._shell_notice_idle_since = None
         self._shell_notice_notified = set()
+        self._shell_notice_notified_reminder = set()
         self._shell_notice_task = None
         self.stored = []
         self.send = AsyncMock(return_value=True)
@@ -45,8 +47,9 @@ class FakeAgent:
     def store_shell_resolutions(self, facts, now):
         self.stored.extend(facts)
 
-    def mark_shells_noticed(self, keys):
-        self._shell_notice_notified.update(keys)
+    def mark_shells_noticed(self, keys, *, reminder=False):
+        target = self._shell_notice_notified_reminder if reminder else self._shell_notice_notified
+        target.update(keys)
 
 
 def make_manager(agent):
@@ -85,6 +88,36 @@ async def test_sends_once_after_the_delay():
     agent._shell_notice_task = None
     await run_step(manager, agent)
     agent.send.assert_awaited_once()
+
+
+@run_async
+async def test_reminder_is_sent_after_the_long_delay_once():
+    agent = FakeAgent([shell()])
+    agent._shell_notice_notified = {"b1"}
+    manager = make_manager(agent)
+    agent._shell_notice_idle_since = time.time() - SHELL_NOTICE_REMINDER_DELAY_SECONDS + 60
+    await run_step(manager, agent)
+    agent.send.assert_not_awaited()
+    agent._shell_notice_idle_since = time.time() - SHELL_NOTICE_REMINDER_DELAY_SECONDS - 1
+    await run_step(manager, agent)
+    agent.send.assert_awaited_once()
+    assert "still running after a long time" in agent.send.await_args.args[0]
+    assert agent._shell_notice_notified_reminder == {"b1"}
+    agent._shell_notice_task = None
+    await run_step(manager, agent)
+    agent.send.assert_awaited_once()
+
+
+@run_async
+async def test_first_notice_goes_before_the_reminder_and_alone():
+    agent = FakeAgent([shell()])
+    agent._shell_notice_idle_since = time.time() - SHELL_NOTICE_REMINDER_DELAY_SECONDS - 1
+    manager = make_manager(agent)
+    await run_step(manager, agent)
+    agent.send.assert_awaited_once()
+    assert "after a long time" not in agent.send.await_args.args[0]
+    assert agent._shell_notice_notified == {"b1"}
+    assert agent._shell_notice_notified_reminder == set()
 
 
 @run_async
