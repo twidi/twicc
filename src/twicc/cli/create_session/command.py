@@ -172,6 +172,8 @@ def create_session_cmd(
             "you create the session for your own work (a test, a check, a "
             "throwaway task) and the user has no reason to see it. Leave it "
             "off if the user may want to follow or open the session. "
+            "See also --mute-on-user-turn, to avoid bothering the user if "
+            "you can't or don't want to hide the session. "
             "Requires a non-interactive permission_mode "
             "(bypassPermissions/dontAsk for Claude Code; yolo/strict for "
             "Codex) and question_widget=False."
