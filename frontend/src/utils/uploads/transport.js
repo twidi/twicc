@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/uploads/transport.js
 // Transfer constants and the classification of server answers (spec §5.5,
 // §6.4 creation, §6.5 transfer). Pure.
@@ -99,19 +101,19 @@ export function tusShouldRetry(err) {
  */
 export function classifyTusError(err, record) {
     if (err?.originalRequest == null) {
-        return { action: 'pause', reason: 'error', message: 'The transfer could not start.' }
+        return { action: 'pause', reason: 'error', message: i18n.global.t('files.upload.transferStartError') }
     }
     const info = tusErrorInfo(err)
     const { status, fromUpload } = info
     if (status === 401) return { action: 'unauthorized' }
     if (status === 404 || status === 410 || status === 422) return { action: 'reconcile' }
-    if (status === 507) return { action: 'pause', reason: 'error', message: DISK_FULL_MESSAGE }
+    if (status === 507) return { action: 'pause', reason: 'error', message: i18n.global.t('files.upload.diskFull') }
     const retryable = isRetryableInfo(info)
     if (retryable && info.hasResponse && record?.state === 'active' && record.error) {
         return { action: 'pause', reason: 'error', message: record.error }
     }
     if (status === 500 && fromUpload) {
-        return { action: 'pause', reason: 'error', message: errorMessageOf(err) || 'Server error.' }
+        return { action: 'pause', reason: 'error', message: errorMessageOf(err) || i18n.global.t('files.upload.serverError') }
     }
     if (retryable) return { action: 'pause', reason: 'network', message: null }
     return { action: 'pause', reason: 'error', message: errorMessageOf(err) || statusMessage(status) }
@@ -141,10 +143,10 @@ export function errorMessageOf(err) {
  * @returns {string}
  */
 export function statusMessage(status) {
-    if (!status) return 'The server did not answer.'
-    if (status === 507) return DISK_FULL_MESSAGE
-    if (status === 410) return 'The upload no longer exists on the server.'
-    if (status === 404) return 'The upload was not found on the server.'
-    if (status === 409) return 'The server is busy with this upload. Try again later.'
-    return `The server answered with status ${status}.`
+    if (!status) return i18n.global.t('files.upload.noAnswer')
+    if (status === 507) return i18n.global.t('files.upload.diskFull')
+    if (status === 410) return i18n.global.t('files.upload.noLongerExists')
+    if (status === 404) return i18n.global.t('files.upload.notFound')
+    if (status === 409) return i18n.global.t('files.upload.serverBusy')
+    return i18n.global.t('files.upload.statusError', { status })
 }

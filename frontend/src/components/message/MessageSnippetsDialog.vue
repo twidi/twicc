@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+const { t } = useI18n()
 // MessageSnippetsDialog.vue - Dialog for managing message input snippets with scope grouping
 import GroupedListEditor from '../ui/GroupedListEditor.vue'
 import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
@@ -48,10 +51,10 @@ const warningMessage = ref('')
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
-    if (groupMode.value && view.value === 'form') return 'Add Group'
-    if (view.value === 'list') return 'Manage Message Snippets'
-    if (editIndex.value !== null) return 'Edit Snippet'
-    return 'Add Snippet'
+    if (groupMode.value && view.value === 'form') return t('composer.snippets.addGroupTitle')
+    if (view.value === 'list') return t('composer.snippets.manageTitle')
+    if (editIndex.value !== null) return t('composer.snippets.editTitle')
+    return t('composer.snippets.addTitle')
 })
 
 /** Active projects (non-stale, non-archived, worktrees excluded) — same filter as sidebar. */
@@ -82,7 +85,7 @@ const activeWs = computed(() => {
     return wsId ? workspacesStore.getWorkspaceById(wsId) : null
 })
 
-const activeWsLabel = computed(() => activeWs.value ? `${activeWs.value.name} projects` : null)
+const activeWsLabel = computed(() => activeWs.value ? t('composer.snippets.workspaceProjects', { name: activeWs.value.name }) : null)
 const activeWsColor = computed(() => activeWs.value?.color || null)
 
 /** When a workspace is active, split named projects into prioritized and others. */
@@ -313,11 +316,11 @@ function handleSave() {
     const trimmedLabel = formData.value.label.trim()
     if (groupMode.value) {
         if (!trimmedLabel) {
-            errorMessage.value = 'Group name is required.'
+            errorMessage.value = localUiMessage('composer.snippets.errors.groupNameRequired')
             return
         }
         if (!messageSnippetsStore.addSnippetGroup(formData.value.scope, trimmedLabel)) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('composer.snippets.errors.changed')
             return
         }
         cancelForm()
@@ -326,18 +329,18 @@ function handleSave() {
     if (editIndex.value !== null) {
         const source = getGroupItems(messageSnippetsStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
         if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('composer.snippets.errors.changed')
             return
         }
     }
     if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
-        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        errorMessage.value = localUiMessage('composer.snippets.errors.groupMissing')
         return
     }
     const text = formData.value.text
 
     if (!text.trim()) {
-        errorMessage.value = 'Message text is required.'
+        errorMessage.value = localUiMessage('composer.snippets.errors.textRequired')
         return
     }
 
@@ -358,7 +361,7 @@ function handleSave() {
             return s.label && s.label.trim().toLowerCase() === trimmedLabel.toLowerCase()
         })
         if (hasDuplicateLabel && !warningMessage.value) {
-            warningMessage.value = 'A snippet with the same label already exists in this scope. Submit again to save anyway.'
+            warningMessage.value = localUiMessage('composer.snippets.warnings.duplicateLabel')
             return
         }
     }
@@ -372,7 +375,7 @@ function handleSave() {
         )
         : messageSnippetsStore.addSnippet(selectedScope, snippetData, formData.value.groupId)
     if (!saved) {
-        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        errorMessage.value = localUiMessage('composer.snippets.errors.changed')
         return
     }
 
@@ -503,7 +506,7 @@ defineExpose({ open, close })
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    :placeholder="groupMode ? 'e.g. Reviews' : 'e.g. &quot;Quick fix request&quot;'"
+                    :placeholder="groupMode ? $t('composer.snippets.groupPlaceholder') : $t('composer.snippets.labelPlaceholder')"
                     size="small"
                 />
             </div>
@@ -531,8 +534,8 @@ defineExpose({ open, close })
                         type="button"
                         class="picker-key placeholder-key"
                         @click="insertPlaceholder(p.id)"
-                        :title="`Insert {${p.id}}`"
-                    >{{ p.label }}</button>
+                        :title="$t('composer.snippets.insertPlaceholder', { placeholder: `{${p.id}}` })"
+                    >{{ $t(p.labelKey) }}</button>
                 </div>
             </div>
 
@@ -666,12 +669,12 @@ defineExpose({ open, close })
 
             <!-- Warning (duplicate label) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
-                {{ warningMessage }}
+                {{ resolveUiMessage(warningMessage) }}
             </wa-callout>
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

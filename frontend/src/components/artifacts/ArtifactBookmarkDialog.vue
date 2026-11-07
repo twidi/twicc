@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ArtifactBookmarkDialog.vue — create/edit (and remove) an artifact bookmark.
 // Mirrors ProjectEditDialog.vue's form/submit/focus/guard patterns.
 import { ref, computed, reactive, nextTick, useId, onMounted, onBeforeUnmount } from 'vue'
@@ -92,7 +95,7 @@ const hostRows = computed(() => {
         const pkey = d.share ? d.share.id : '__owner__'
         let prov = row.provenances.get(pkey)
         if (!prov) {
-            prov = { label: d.share ? d.share.label || d.share.id : 'You, in preview', count: 0, entries: [] }
+            prov = { label: d.share ? d.share.label || d.share.id : t('artifacts.network.ownerPreview'), count: 0, entries: [] }
             row.provenances.set(pkey, prov)
         }
         prov.count += d.count
@@ -133,8 +136,8 @@ function kindOf(host) {
 
 // Adaptive non-public confirm copy — mirrors ArtifactBrokerPrompt's sentences.
 const NON_PUBLIC_TARGET = {
-    loopback: 'the machine TwiCC runs on (localhost)',
-    lan: 'an address on the local network of the machine TwiCC runs on',
+    loopback: 'artifacts.network.targetLoopback',
+    lan: 'artifacts.network.targetLan',
 }
 const confirmNonPublic = computed(() =>
     confirmAllow.hosts.map((h) => ({ host: h, kind: kindOf(h) })).filter((e) => e.kind && e.kind !== 'public'),
@@ -149,8 +152,8 @@ async function postHost(pathSuffix, method, body) {
     })
     if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        sectionError.value = err.error || `Request failed (${res.status})`
-        throw new Error(sectionError.value)
+        sectionError.value = err.error || localUiMessage('artifacts.network.errors.request', { status: res.status })
+        throw new Error(resolveUiMessage(sectionError.value))
     }
 }
 async function performAllow(hosts) {
@@ -315,7 +318,7 @@ async function handleSave() {
     if (isSaving.value) return
     const name = localName.value.trim()
     if (!name) {
-        errorMessage.value = 'Name is required'
+        errorMessage.value = localUiMessage('artifacts.bookmarks.errors.nameRequired')
         return
     }
     isSaving.value = true
@@ -334,7 +337,7 @@ async function handleSave() {
         emit('saved')
         close()
     } catch (err) {
-        errorMessage.value = err?.message || 'Failed to save bookmark'
+        errorMessage.value = err?.uiMessage || err?.message || localUiMessage('artifacts.bookmarks.errors.save')
     } finally {
         isSaving.value = false
     }
@@ -349,7 +352,7 @@ async function handleRemove() {
         emit('removed')
         close()
     } catch (err) {
-        errorMessage.value = err?.message || 'Failed to remove bookmark'
+        errorMessage.value = err?.uiMessage || err?.message || localUiMessage('artifacts.bookmarks.errors.remove')
     } finally {
         isSaving.value = false
     }
@@ -361,7 +364,7 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        :label="isEditMode ? 'Edit artifact bookmark' : 'Bookmark artifact'"
+        :label="isEditMode ? $t('artifacts.browser.editBookmark') : $t('artifacts.bookmarks.createTitle')"
         class="artifact-bookmark-dialog"
         @wa-show="handleDialogShow"
         @wa-after-show="handleDialogAfterShow"
@@ -405,9 +408,9 @@ defineExpose({ open, close })
                             <wa-tag
                                 size="small"
                                 :variant="row.state === 'allowed' ? 'success' : row.state === 'denied' ? 'danger' : 'warning'"
-                            >{{ row.state }}</wa-tag>
+                            >{{ $t(`artifacts.network.state.${row.state}`) }}</wa-tag>
                             <code class="host-key">{{ row.host }}</code>
-                            <wa-tag v-if="row.kind !== 'public'" size="small" variant="warning">{{ row.kind }}</wa-tag>
+                            <wa-tag v-if="row.kind !== 'public'" size="small" variant="warning">{{ $t(`artifacts.network.kind.${row.kind}`) }}</wa-tag>
                             <button v-if="row.total" class="denial-count" type="button" @click="toggleHost(row.host)">
                                 {{ $t('artifacts.network.refusedCount', { count: row.total }, row.total) }}
                             </button>
@@ -466,8 +469,8 @@ defineExpose({ open, close })
                             <li v-for="e in confirmNonPublic" :key="e.host">
                                 <i18n-t keypath="artifacts.network.resolvesTo" scope="global">
                                     <template #host><code>{{ e.host }}</code></template>
-                                    <template #kind>{{ e.kind }}</template>
-                                    <template #target>{{ NON_PUBLIC_TARGET[e.kind] }}</template>
+                                    <template #kind>{{ $t(`artifacts.network.kind.${e.kind}`) }}</template>
+                                    <template #target>{{ $t(NON_PUBLIC_TARGET[e.kind]) }}</template>
                                 </i18n-t>
                             </li>
                         </ul>
@@ -483,13 +486,13 @@ defineExpose({ open, close })
                             </wa-button>
                         </div>
                     </wa-callout>
-                    <wa-callout v-if="sectionError" variant="danger" size="small">{{ sectionError }}</wa-callout>
+                    <wa-callout v-if="sectionError" variant="danger" size="small">{{ resolveUiMessage(sectionError) }}</wa-callout>
                 </template>
                 <div class="form-hint">
                     {{ $t('artifacts.network.hostsHint') }}
                 </div>
             </div>
-            <wa-callout v-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
+            <wa-callout v-if="errorMessage" variant="danger" size="small">{{ resolveUiMessage(errorMessage) }}</wa-callout>
         </form>
         <div slot="footer" class="dialog-footer">
             <wa-button
@@ -507,7 +510,7 @@ defineExpose({ open, close })
                 variant="neutral"
                 appearance="outlined"
                 :disabled="!sharingEnabled"
-                :title="sharingEnabled ? 'Share this artifact' : 'Configure a share host in Settings → Sharing'"
+                :title="sharingEnabled ? $t('artifacts.sharing.thisArtifact') : $t('artifacts.sharing.configure')"
                 @click="openShareDialog"
             >
                 <wa-icon name="share-nodes" slot="start"></wa-icon>

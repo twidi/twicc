@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * CodeCommentsIndicator - Shows a comment icon when there are unsent code comments.
  *
@@ -70,9 +72,7 @@ const effectiveCount = computed(() => {
 
 const tooltipText = computed(() => {
     const n = effectiveCount.value
-    return n === 1
-        ? '1 code comment not yet sent'
-        : `${n} code comments not yet sent`
+    return t('common.codeComments.unsentCount', { count: n }, n)
 })
 
 const indicatorId = useId()

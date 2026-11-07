@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch, useId, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useResizeObserver } from '@vueuse/core'
 import AppTooltip from '../ui/AppTooltip.vue'
 
@@ -18,6 +19,7 @@ const props = defineProps({
     frameRect: { type: Object, default: null },
     visibleBounds: { type: Object, default: null },
 })
+const { t } = useI18n()
 const emit = defineEmits(['toggle-fullscreen', 'drag-start', 'drag-end'])
 const previewToolsButtonId = `preview-tools-${useId()}`
 const previewFullscreenButtonId = `preview-fullscreen-${useId()}`
@@ -36,7 +38,7 @@ const orderedButtons = computed(() => {
     const fullscreenButton = {
         id: previewFullscreenButtonId,
         icon: props.fullscreen ? 'compress' : 'expand',
-        label: props.fullscreen ? 'Exit full screen' : 'Full screen',
+        label: t(props.fullscreen ? 'browser.display.exitFullscreen' : 'browser.display.fullscreen'),
         disabled: props.fullscreenDisabled && !props.fullscreen,
         action: () => emit('toggle-fullscreen'),
     }

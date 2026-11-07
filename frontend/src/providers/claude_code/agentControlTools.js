@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 /**
  * Pure rules for Claude Code's agent control tools (`SendMessage` /
  * `TaskStop` / `TaskOutput`): the header label and expected result count of
@@ -5,10 +7,10 @@
  * count").
  *
  * `claude_code/toolHelpers.js` cannot be imported under Node (extensionless
- * imports, `.vue` components), so these rules live in this import-free
+ * imports, `.vue` components), so these rules live in this standalone
  * module and the helper delegates.
  *
- * Imports nothing, so `node --test` loads it directly.
+ * Uses an explicit JavaScript import so `node --test` loads it directly.
  */
 
 // Control tool name -> header label, shown only on a control card (an
@@ -16,9 +18,9 @@
 // calls target shells and must keep today's label, so this map is never
 // consulted without an interaction.
 const HEADER_LABEL_BY_TOOL = {
-    SendMessage: 'Send message',
-    TaskStop: 'Stop agent',
-    TaskOutput: 'Agent output',
+    SendMessage: 'session.tools.control.sendMessage',
+    TaskStop: 'session.tools.control.stopAgent',
+    TaskOutput: 'session.tools.control.agentOutput',
 }
 
 /**
@@ -27,7 +29,8 @@ const HEADER_LABEL_BY_TOOL = {
  */
 export function agentControlHeaderLabel(name, agentInteraction) {
     if (!agentInteraction) return null
-    return HEADER_LABEL_BY_TOOL[name] ?? null
+    const key = HEADER_LABEL_BY_TOOL[name]
+    return key ? i18n.global.t(key) : null
 }
 
 /**

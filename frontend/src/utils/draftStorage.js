@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/draftStorage.js
 // IndexedDB wrapper for draft messages, draft sessions, draft medias and
 // draft attachment records persistence
@@ -566,8 +568,8 @@ function commitTransaction(db, stores, write) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(stores, 'readwrite')
         tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error || new Error('Draft transaction failed'))
-        tx.onabort = () => reject(tx.error || new Error('Draft transaction aborted'))
+        tx.onerror = () => reject(tx.error || new Error(i18n.global.t('composer.storage.errors.transactionFailed')))
+        tx.onabort = () => reject(tx.error || new Error(i18n.global.t('composer.storage.errors.transactionAborted')))
         try { write(tx) }
         catch (error) { tx.abort(); reject(error) }
     })
@@ -610,7 +612,7 @@ export async function getAllAsyncQuestionDrafts(openDb = getDb) {
         }
         tx.oncomplete = () => resolve(drafts)
         tx.onerror = () => reject(tx.error)
-        tx.onabort = () => reject(tx.error || new Error('Draft read aborted'))
+        tx.onabort = () => reject(tx.error || new Error(i18n.global.t('composer.storage.errors.readAborted')))
     })
 }
 

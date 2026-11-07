@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { locale } = useI18n()
 // AnimatedNumber.vue - A number that counts up when its screen opens (visual refresh step 7a,
 // docs/plans/2026-09-30-stats-motion-design.md §4).
 // The count starts on the `animationstart` of the root's CSS fade, which restarts every time
@@ -82,7 +84,7 @@ onDeactivated(settle)
 onBeforeUnmount(settle)
 
 function formatInteger(value) {
-    return isNumber(value) ? String(Math.round(value)) : '-'
+    return isNumber(value) ? new Intl.NumberFormat(locale.value, { maximumFractionDigits: 0 }).format(value) : '-'
 }
 </script>
 

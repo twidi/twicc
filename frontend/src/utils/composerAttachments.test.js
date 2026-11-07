@@ -1114,7 +1114,7 @@ test('attachmentChipItem: image thumbnails from local object URLs, else the cont
 
 test('formatAttachmentSize: bytes, KB, MB, GB; the chip carries the label', () => {
     assert.equal(formatAttachmentSize(0), '0 B')
-    assert.equal(formatAttachmentSize(1023), '1023 B')
+    assert.equal(formatAttachmentSize(1023), '1,023 B')
     assert.equal(formatAttachmentSize(1536), '1.5 KB')
     assert.equal(formatAttachmentSize(5 * 1024 * 1024), '5.0 MB')
     assert.equal(formatAttachmentSize(3 * 1024 ** 3), '3.0 GB')

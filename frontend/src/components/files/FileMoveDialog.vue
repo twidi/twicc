@@ -1,7 +1,11 @@
 <script setup>
 import { ref, useId, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { apiFetch } from '../../utils/api'
 import FileTreePanel from './FileTreePanel.vue'
+
+const { t } = useI18n()
 
 const props = defineProps({
     apiPrefix: { type: String, required: true },
@@ -79,10 +83,10 @@ async function loadTree(dirPath) {
             tree.value = await res.json()
         } else {
             const data = await res.json().catch(() => ({}))
-            treeError.value = data.error || 'Failed to load directory tree'
+            treeError.value = data.error || localUiMessage('files.errors.loadTree')
         }
     } catch {
-        treeError.value = 'Network error'
+        treeError.value = localUiMessage('files.errors.network')
     } finally {
         treeLoading.value = false
     }
@@ -133,14 +137,14 @@ async function handleMove() {
             }),
         })
     } catch {
-        errorMessage.value = 'Network error. Please try again.'
+        errorMessage.value = localUiMessage('files.errors.networkRetry')
         isMoving.value = false
         return
     }
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || `Failed to move (HTTP ${response.status})`
+        errorMessage.value = data.error || localUiMessage('files.errors.moveHttp', { status: response.status })
         isMoving.value = false
         return
     }
@@ -156,7 +160,7 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        :label="`Move ${nodeType}`"
+        :label="$t(nodeType === 'directory' ? 'files.move.title.directory' : 'files.move.title.file')"
         class="move-dialog"
         @wa-show="syncFormState"
     >
@@ -172,7 +176,7 @@ defineExpose({ open, close })
                     ref="fileTreePanelRef"
                     :tree="tree"
                     :loading="treeLoading"
-                    :error="treeError"
+                    :error="resolveUiMessage(treeError, { t })"
                     :root-path="rootPath"
                     :project-id="projectId"
                     :session-id="sessionId"
@@ -193,7 +197,7 @@ defineExpose({ open, close })
             </div>
 
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage, { t }) }}
             </wa-callout>
         </form>
 

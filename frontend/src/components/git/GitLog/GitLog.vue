@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, provide, ref, useSlots, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 
@@ -33,6 +34,8 @@ import { neonAuroraDarkColours, neonAuroraLightColours } from './utils/colors'
 import Layout from './Layout.vue'
 
 dayjs.extend(utc)
+
+const { t } = useI18n()
 
 // ---------------------------------------------------------------------------
 // Props
@@ -142,7 +145,7 @@ const indexCommit = computed<Commit | undefined>(() => {
     parents: [headCommit.value.hash],
     children: [],
     authorDate: today,
-    message: 'Uncommitted changes',
+    message: t('git.index.uncommittedChanges'),
     committerDate: today,
     isBranchTip: false,
   } as Commit

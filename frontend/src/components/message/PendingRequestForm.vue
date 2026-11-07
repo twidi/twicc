@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // PendingRequestForm.vue - Thin shell for pending request forms.
 //
 // Owns only:
@@ -167,8 +169,8 @@ const requestType = computed(() => props.pendingRequest.request_type)
 // Icon + title, shared by the normal header and the minimized bar.
 const headerIcon = computed(() => requestType.value === 'ask_user_question' ? 'circle-question' : 'shield-halved')
 const headerTitle = computed(() => requestType.value === 'ask_user_question'
-    ? `${providerLabel.value} needs your input`
-    : 'Tool approval requested')
+    ? t('session.pending.needsInput', { provider: providerLabel.value })
+    : t('session.pending.approvalRequested'))
 
 // ── Auto-deny countdown (bypassPermissions) ──────────────────────────────────
 // The store gives an armed request a local `autoDenyDeadlineMs` (utils/autoDeny.js).
@@ -203,11 +205,11 @@ const autoDenyLocked = computed(() => autoDenyDeadlineMs.value !== null
 
 const autoDenyLabel = computed(() => {
     if (autoDenyDeadlineMs.value === null) return null
-    if (autoDenyLocked.value) return 'Auto-denying…'
-    return `Auto-deny in ${formatAutoDenyRemaining(autoDenyDeadlineMs.value, autoDenyNowMs.value)}`
+    if (autoDenyLocked.value) return t('session.pending.autoDenying')
+    return t('session.pending.autoDenyIn', { remaining: formatAutoDenyRemaining(autoDenyDeadlineMs.value, autoDenyNowMs.value) })
 })
 
-const autoDenyTooltip = `Bypass permissions mode: this request is denied automatically when nobody answers within ${AUTO_DENY_DELAY_SECONDS / 60} minutes.`
+const autoDenyTooltip = computed(() => t('session.pending.autoDenyHint', { count: AUTO_DENY_DELAY_SECONDS / 60 }, AUTO_DENY_DELAY_SECONDS / 60))
 
 // Route to the appropriate body component based on provider
 const bodyComponent = computed(() => {
@@ -270,7 +272,7 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
             v-if="isMinimized"
             :icon="headerIcon"
             :label="headerTitle"
-            expand-tooltip="Expand the request"
+            :expand-tooltip="$t('session.pending.expand')"
             @expand="$emit('request-open')"
         >
             <template #trailing>

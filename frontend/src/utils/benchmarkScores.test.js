@@ -235,8 +235,8 @@ test('formats cost and time as the spec says', () => {
     assert.equal(formatCost(0.59), '$0.59')
     assert.equal(formatCost(0.000175), '$0.000175')
     assert.equal(formatCost(null), '—')
-    assert.equal(formatTime(9.14), '9.1 s')
-    assert.equal(formatTime(0.305), '0.3 s')
+    assert.equal(formatTime(9.14), '9.1 sec')
+    assert.equal(formatTime(0.305), '0.3 sec')
     assert.equal(formatTime(59.97), '1.0 min')
     assert.equal(formatTime(696), '11.6 min')
     assert.equal(formatTime(62.95), '1.1 min')
@@ -259,7 +259,7 @@ test('details for general', () => {
         ['Intelligence Index', '51.7'],
         ['Target', '46.0'],
         ['Cost / task', '$5.12'],
-        ['Time / task', '12.9 min'],
+        ['Time / task', '13.0 min'],
     ])
     for (const x of d) assert.ok(x.description.length > 0)
 })

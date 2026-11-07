@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 /**
  * SessionSwitcher — the overlay panel for the Ctrl+` session switcher.
  *
@@ -28,7 +32,7 @@ const route = useRoute()
 const store = useDataStore()
 const { visible, mode, items, cursor, pointTo, commitTo, cancel } = useSessionSwitcher()
 
-const modeLabel = computed(() => (mode.value === 'list' ? 'Displayed sessions' : 'Recent sessions'))
+const modeLabel = computed(() => (mode.value === 'list' ? t('session.switcher.displayed') : t('session.switcher.recent')))
 
 /**
  * Color for the project dot: the project's own color, or — for a worktree with
@@ -42,7 +46,7 @@ function projectDotColor(session) {
 }
 
 function displayName(session) {
-    if (session.draft && !session.title) return 'New session'
+    if (session.draft && !session.title) return t('session.switcher.newSession')
     return session.title || session.id
 }
 

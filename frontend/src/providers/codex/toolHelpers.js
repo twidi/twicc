@@ -1,3 +1,4 @@
+import { i18n } from '../../i18n/index.js'
 /**
  * Tool-rendering helpers for Codex sessions.
  *
@@ -746,13 +747,13 @@ function resolveParsedCommand(name, input) {
     return parseCommand(payload)
 }
 
-const HEADER_LABELS_BY_VARIANT = {
-    read: 'Read',
-    list_files: 'List files',
+const HEADER_LABELS_BY_VARIANT = () => ({
+    read: i18n.global.t('session.tools.headers.read'),
+    list_files: i18n.global.t('session.tools.headers.listFiles'),
     // ``Grep`` reads better than ``Search`` for shell users: it
     // mirrors what the underlying tools (rg / grep / git grep) are.
-    search: 'Grep',
-}
+    search: i18n.global.t('session.tools.headers.grep'),
+})
 
 // Priority used by ``pickPrimary``: more specific variants win.
 // ``search`` carries a query (the most informative item), then ``read``
@@ -1085,18 +1086,18 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // names the backend ``process_tools`` feed sends (see
         // ``providers/codex/agent/active_tools.py``).
         if (!name) return null
-        if (name === 'clock__sleep') return 'sleeping'
-        if (FUNCTION_CALL_EXEC_TOOLS.has(name)) return 'running'
-        if (name === 'apply_patch') return 'editing'
-        if (name === 'web_search_call' || name === 'web__run') return 'searching'
-        if (name === VIEW_IMAGE_TOOL_NAME) return 'viewing'
-        if (name === IMAGE_GEN_TOOL_NAME) return 'generating an image'
+        if (name === 'clock__sleep') return i18n.global.t('session.tools.verbs.sleeping')
+        if (FUNCTION_CALL_EXEC_TOOLS.has(name)) return i18n.global.t('session.tools.verbs.running')
+        if (name === 'apply_patch') return i18n.global.t('session.tools.verbs.editing')
+        if (name === 'web_search_call' || name === 'web__run') return i18n.global.t('session.tools.verbs.searching')
+        if (name === VIEW_IMAGE_TOOL_NAME) return i18n.global.t('session.tools.verbs.viewing')
+        if (name === IMAGE_GEN_TOOL_NAME) return i18n.global.t('session.tools.verbs.generatingImage')
         if (name.startsWith(MCP_TOOL_NAME_PREFIX)) {
             const server = name.split('__')[1] || 'mcp'
-            return `mcping (${server})`
+            return i18n.global.t('session.tools.verbs.mcp', { server })
         }
         // Unknown tool: never null, an empty phrase would read "Codex is".
-        return `using ${humanizeToolSegment(name.split('__').pop()).toLowerCase()}`.trim()
+        return i18n.global.t('session.tools.verbs.using', { tool: humanizeToolSegment(name.split('__').pop()) })
     }
 
     getHeaderLabel(name, input, options) {
@@ -1108,18 +1109,18 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // ``apply_patch`` is the model's verb, not the user-facing
         // operation. Mirror Claude Code's ``Edit`` header so users see
         // the same word regardless of provider.
-        if (name === 'apply_patch') return 'Edit'
+        if (name === 'apply_patch') return i18n.global.t('session.tools.headers.edit')
         // Same idea for ``update_plan`` → ``Todo``: the tool plays the
         // role of Claude Code's ``TodoWrite``, so users see the same
         // header word across providers.
-        if (name === 'update_plan') return 'Todo'
-        if (name === 'request_user_input_async') return 'Request user input'
+        if (name === 'update_plan') return i18n.global.t('session.tools.headers.todo')
+        if (name === 'request_user_input_async') return i18n.global.t('session.tools.headers.requestInput')
         // ``clock.sleep`` (namespaced function call, name ``clock__sleep``):
         // the "Clock" namespace adds nothing, so the title is just "Sleep"
         // plus the requested duration, so the card reads without being opened.
         if (name === 'clock__sleep') {
             const duration = formatDurationMsCompact(input?.duration_ms)
-            return duration ? `Sleep for ${duration}` : 'Sleep'
+            return duration ? i18n.global.t('session.tools.headers.sleepDuration', { duration }) : i18n.global.t('session.tools.headers.sleep')
         }
         // ``web_search_call`` splits into two user-facing surfaces
         // depending on the action variant: a web search for ``search``
@@ -1131,13 +1132,13 @@ export class CodexToolHelpers extends BaseToolHelpers {
         // override would surface the raw ``Web search call`` and lose the
         // search-vs-fetch distinction (which lives in ``input.type``).
         if (name === 'web_search_call') {
-            return input?.type === 'search' ? 'Web search' : 'Web fetch'
+            return input?.type === 'search' ? i18n.global.t('session.tools.headers.webSearch') : i18n.global.t('session.tools.headers.webFetch')
         }
         if (name === 'web__run') {
             const web = describeWebRun(input)
-            if (web?.kind === 'search') return 'Web search'
-            if (web?.kind === 'fetch') return 'Web fetch'
-            return web ? 'Web' : null
+            if (web?.kind === 'search') return i18n.global.t('session.tools.headers.webSearch')
+            if (web?.kind === 'fetch') return i18n.global.t('session.tools.headers.webFetch')
+            return web ? i18n.global.t('session.tools.headers.web') : null
         }
         // ``exec`` is Codex's ``code_mode`` tool — runs a JavaScript
         // snippet as a sandboxed code cell. When the script wraps a
@@ -1150,17 +1151,17 @@ export class CodexToolHelpers extends BaseToolHelpers {
             if (nested?.name === 'exec_command') {
                 // Delegate to the direct exec_command path — the nested
                 // arg has the exact same shape ({cmd, workdir, …}).
-                return this.getHeaderLabel('exec_command', nested.arg, options) ?? 'Shell'
+                return this.getHeaderLabel('exec_command', nested.arg, options) ?? i18n.global.t('session.tools.headers.shell')
             }
-            if (nested?.name === 'apply_patch') return 'Edit'
-            if (nested?.name === VIEW_IMAGE_TOOL_NAME) return 'Image'
-            if (nested?.name === IMAGE_GEN_TOOL_NAME) return 'Image generation'
-            if (nested?.name === 'update_plan') return 'Todo'
+            if (nested?.name === 'apply_patch') return i18n.global.t('session.tools.headers.edit')
+            if (nested?.name === VIEW_IMAGE_TOOL_NAME) return i18n.global.t('session.tools.headers.image')
+            if (nested?.name === IMAGE_GEN_TOOL_NAME) return i18n.global.t('session.tools.headers.imageGeneration')
+            if (nested?.name === 'update_plan') return i18n.global.t('session.tools.headers.todo')
             if (nested?.name === 'web__run') {
                 const web = describeWebRun(nested.arg)
-                if (web?.kind === 'search') return 'Web search'
-                if (web?.kind === 'fetch') return 'Web fetch'
-                return 'Web'
+                if (web?.kind === 'search') return i18n.global.t('session.tools.headers.webSearch')
+                if (web?.kind === 'fetch') return i18n.global.t('session.tools.headers.webFetch')
+                return i18n.global.t('session.tools.headers.web')
             }
             if (nested?.name?.startsWith(MCP_TOOL_NAME_PREFIX)) {
                 // Same words a direct MCP call would show: direct calls
@@ -1169,31 +1170,25 @@ export class CodexToolHelpers extends BaseToolHelpers {
                 // shell's fallback would format ``exec`` instead).
                 return formatToolNameForHeader(nested.name)
             }
-            return 'Run code'
+            return i18n.global.t('session.tools.headers.runCode')
         }
         // ``view_image`` loads a local image for the model — show the
         // clean "Image" header instead of the raw ``view_image`` name.
-        if (name === VIEW_IMAGE_TOOL_NAME) return 'Image'
+        if (name === VIEW_IMAGE_TOOL_NAME) return i18n.global.t('session.tools.headers.image')
         // GPT-5.6 hosted image generation: the raw namespaced name would
         // format as "Image gen : Imagegen". The generated picture itself is
         // a separate ``image`` item (``ImageGeneration.vue``); this card is
         // the call that produced it.
-        if (name === IMAGE_GEN_TOOL_NAME) return 'Image generation'
-        // Only SEMANTIC remaps live here (Edit, Todo, WebSearch, Image,
-        // Run code) — where the header word differs from the tool's raw
-        // name. Pure snake_case → clean-label cases (``create_goal``,
-        // ``update_goal``, ``request_user_input``, and any future
-        // first-party tool) are intentionally NOT listed: the shared
-        // ``formatToolNameForHeader`` fallback already sentence-cases them
-        // ("Create goal", "Request user input"), so an entry here would be
-        // dead duplication. ``get_goal`` never reaches the header — the
-        // backend buckets it as SYSTEM (DEBUG_ONLY).
+        if (name === IMAGE_GEN_TOOL_NAME) return i18n.global.t('session.tools.headers.imageGeneration')
+        // Semantic remaps stay here. The shared formatter translates other
+        // known first-party tool IDs and preserves unknown/custom tool names.
+        // ``get_goal`` is normally DEBUG_ONLY and does not reach this header.
         if (!FUNCTION_CALL_EXEC_TOOLS.has(name)) return null
         const parsed = resolveParsedCommand(name, input)
         if (!parsed) return null
         const primary = pickPrimary(mergeStages(parsed))
         if (!primary) return null
-        return HEADER_LABELS_BY_VARIANT[primary.type] ?? 'Shell'
+        return HEADER_LABELS_BY_VARIANT()[primary.type] ?? i18n.global.t('session.tools.headers.shell')
     }
 
     getSummaryRendering(name, input, baseDir, options) {
@@ -1536,9 +1531,9 @@ export class CodexToolHelpers extends BaseToolHelpers {
                     message = status.errored
                 }
             } else if (status === 'shutdown') {
-                statusLabel = 'Subagent was shut down before producing a final message.'
+                statusLabel = i18n.global.t('session.tools.headers.agentShutdown')
             } else if (status === 'not_found') {
-                statusLabel = 'Subagent reference was not found.'
+                statusLabel = i18n.global.t('session.tools.headers.agentMissing')
             }
             if (!message && !statusLabel) return null
             return {
@@ -1553,7 +1548,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             const images = extractInputImageUrls(result)
             if (images.length === 0) return null
             // Title for the preview dialog — the input path basename.
-            let imageName = 'Image'
+            let imageName = i18n.global.t('session.tools.headers.image')
             const path = input?.path
             if (typeof path === 'string' && path) {
                 const idx = path.lastIndexOf('/')
@@ -1578,7 +1573,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
             if (images.length === 0) return null
             return {
                 component: ViewImageResult,
-                props: { images, name: 'Generated image' },
+                props: { images, name: i18n.global.t('session.tools.headers.generatedImage') },
                 uncapped: true, // the image caps itself at 75vh
             }
         }
@@ -1920,7 +1915,7 @@ export class CodexToolHelpers extends BaseToolHelpers {
         if (!isSpawnAgentTool(name)) return null
         const rawType = typeof input?.agent_type === 'string' ? input.agent_type.trim() : ''
         if (!rawType || rawType === 'default') {
-            return { name: 'Agent', namespace: null }
+            return { name: i18n.global.t('session.tools.headers.agent'), namespace: null }
         }
         return { name: capitalize(rawType), namespace: null }
     }

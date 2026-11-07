@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { ref } from 'vue'
 
 /**
@@ -24,7 +25,7 @@ function createIndicator(x, y, delay) {
     removeIndicator()
     const el = document.createElement('wa-progress-ring')
     el.value = 0
-    el.label = 'Switching...'
+    el.label = i18n.global.t('navigation.dragHover.switching')
     el.className = 'drag-hover-indicator'
     el.style.setProperty('--x', x)
     el.style.setProperty('--y', y)

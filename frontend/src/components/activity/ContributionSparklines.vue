@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 // ContributionSparklines.vue - Three sparkline curves (sessions, messages, cost)
 // rendered from daily activity data over 365 days, using the exact same SVG style
 // as ActivitySparkline.vue. Each curve is independently scaled to its own max value,
@@ -105,18 +109,14 @@ function getISOWeekKey(date) {
 function formatWeekRange(startStr, endStr) {
     const start = parseDateStr(startStr)
     const end = parseDateStr(endStr)
-    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()
-    if (sameMonth) {
-        return `${start.toLocaleDateString('en-US', { month: 'short' })} ${start.getDate()}\u2013${end.getDate()}, ${end.getFullYear()}`
-    }
-    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}\u2013${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+    return new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', year: 'numeric' }).formatRange(start, end)
 }
 
 /** Format a month key "YYYY-MM" as "January 2026". */
 function formatMonthLabel(monthKey) {
     const [y, m] = monthKey.split('-').map(Number)
     const date = new Date(y, m - 1, 1)
-    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    return date.toLocaleDateString(locale.value, { month: 'long', year: 'numeric' })
 }
 
 /**
@@ -257,7 +257,7 @@ function aggregateByQuarter(days) {
         sessions: g.sessions,
         messages: g.messages,
         cost: g.cost,
-        dateLabel: `Q${g.quarter} ${g.year}`,
+        dateLabel: t('activity.graph.quarterLabel', { quarter: g.quarter, year: g.year }),
     }))
 }
 
@@ -280,12 +280,8 @@ const displayData = computed(() => {
 })
 
 /** Label suffix that adapts to the selected granularity */
-const periodLabel = computed(() => ({
-    day: 'per day',
-    week: 'per week',
-    month: 'per month',
-    quarter: 'per quarter',
-}[props.granularity] || 'per day'))
+const granularityKey = computed(() => ['day', 'week', 'month', 'quarter'].includes(props.granularity) ? props.granularity : 'day')
+const periodLabel = computed(() => t(`activity.graph.period.${granularityKey.value}`))
 
 // SVG width is always based on 365 days to keep a consistent stroke thickness
 // regardless of the displayed time range or granularity (avoids stroke scaling
@@ -329,19 +325,19 @@ const costPoints = computed(() => buildPolylinePoints(costValues.value, costMax.
 const allSeparateCurves = [
     {
         key: 'sessions',
-        label: () => `Sessions created ${periodLabel.value}`,
+        label: () => t(`activity.graph.sessions.${granularityKey.value}`),
         points: () => sessionsPoints.value,
         colorPrefix: 'blue',
     },
     {
         key: 'messages',
-        label: () => `Message turns ${periodLabel.value}`,
+        label: () => t(`activity.graph.messages.${granularityKey.value}`),
         points: () => messagesPoints.value,
         colorPrefix: 'green',
     },
     {
         key: 'cost',
-        label: () => `Cost ${periodLabel.value}`,
+        label: () => t(`activity.graph.cost.${granularityKey.value}`),
         points: () => costPoints.value,
         colorPrefix: 'red',
         isCost: true,
@@ -352,19 +348,19 @@ const allSeparateCurves = [
 const allCombinedCurves = [
     {
         key: 'sessions',
-        label: () => 'Sessions',
+        label: () => t('activity.graph.legend.sessions'),
         points: () => sessionsPoints.value,
         colorPrefix: 'blue',
     },
     {
         key: 'messages',
-        label: () => 'Message turns',
+        label: () => t('activity.graph.legend.turns'),
         points: () => messagesPoints.value,
         colorPrefix: 'green',
     },
     {
         key: 'cost',
-        label: () => 'Cost',
+        label: () => t('activity.graph.legend.cost'),
         points: () => costPoints.value,
         colorPrefix: 'red',
         isCost: true,
@@ -462,18 +458,15 @@ const hoveredData = computed(() => {
 function formatTooltipDate(dateStr) {
     const [y, m, d] = dateStr.split('-').map(Number)
     const date = new Date(y, m - 1, d)
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    return date.toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 /** Format a metric value for display in the tooltip */
 function formatMetricValue(key, value) {
     if (key === 'cost') {
-        return value === 0 ? 'No cost' : `$${value.toFixed(2)}`
+        return value === 0 ? t('activity.graph.noCost') : new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD' }).format(value)
     }
-    if (key === 'sessions') {
-        return `${value} ${value === 1 ? 'session' : 'sessions'}`
-    }
-    return `${value} ${value === 1 ? 'message turn' : 'message turns'}`
+    return t(key === 'sessions' ? 'activity.graph.sessionCount' : 'activity.graph.turnCount', { count: value }, value)
 }
 
 /**
@@ -495,8 +488,8 @@ const hoveredAverages = computed(() => {
 
 function formatAverage(value, isCost) {
     if (value === null) return '–'
-    if (isCost) return `$${value.toFixed(2)}`
-    return value.toFixed(1)
+    if (isCost) return new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD' }).format(value)
+    return new Intl.NumberFormat(locale.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
 }
 </script>
 

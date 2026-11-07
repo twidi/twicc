@@ -1,9 +1,11 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Controls of the model × effort score, right below the matrix (spec §5.1):
 // Task type, Task difficulty and Favor (Cost / Speed), then the auto-select
 // switches. The benchmarkTask store holds the state; the parent popover runs
 // the actual matrix pick. Score help lives in the heading above the matrix.
-import { useId } from 'vue'
+import { computed, useId } from 'vue'
 import { useBenchmarkTaskStore } from '../../stores/benchmarkTask'
 import { TASK_TYPES } from '../../utils/benchmarkScores'
 import SegmentedControl from '../ui/SegmentedControl.vue'
@@ -24,7 +26,7 @@ defineProps({
 const store = useBenchmarkTaskStore()
 const uid = useId()
 const taskTypes = TASK_TYPES
-const FAVOR_OPTIONS = [{ value: 'cost', label: 'Cost' }, { value: 'speed', label: 'Speed' }]
+const FAVOR_OPTIONS = computed(() => [{ value: 'cost', label: t('session.agentSettings.benchmark.cost') }, { value: 'speed', label: t('session.agentSettings.benchmark.speed') }])
 
 function onTaskTypeChange(event) {
     store.setTaskType(event.target.value)

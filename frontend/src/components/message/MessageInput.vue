@@ -46,7 +46,7 @@ import AgentSettingsPopover from './AgentSettingsPopover.vue'
 import CollapsedBar from './CollapsedBar.vue'
 import HybridModeExplainer from './HybridModeExplainer.vue'
 import AsyncQuestions from './AsyncQuestions.vue'
-import { classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
+import { ASYNC_QUESTION_RECOVERY_NOTICE_KEY, ASYNC_QUESTION_RECOVERY_NOTICE, classifyAsyncQuestionSend, prepareAsyncQuestionSend } from '../../utils/asyncQuestions.js'
 import { useMessageSnippetsStore } from '../../stores/messageSnippets'
 import { useWorkspacesStore } from '../../stores/workspaces'
 import { mapGroupedEntries } from '../../utils/snippetGroups'
@@ -75,7 +75,7 @@ const props = defineProps({
     },
     sendingLockedReason: {
         type: String,
-        default: 'Answer the pending request to send'
+        default: ''
     },
     sendingLockedPresentation: {
         type: String,
@@ -169,13 +169,18 @@ const asyncQuestionAnswers = computed(() => readyAsyncQuestionBatches.value
         const answer = asyncQuestionDraft.value?.choices?.[batch.item_id]?.[question.index]
         return answer ? [{ ...answer, item_id: batch.item_id, index: question.index }] : []
     })))
-const asyncQuestionNotice = computed(() => store.localState.asyncQuestionNotices[props.sessionId])
+const asyncQuestionNotice = computed(() => {
+    const notice = store.localState.asyncQuestionNotices[props.sessionId]
+    return notice === ASYNC_QUESTION_RECOVERY_NOTICE_KEY || notice === ASYNC_QUESTION_RECOVERY_NOTICE
+        ? t(ASYNC_QUESTION_RECOVERY_NOTICE_KEY)
+        : notice
+})
 
 async function dismissAsyncQuestion(itemId) {
     try {
         await store.dismissAsyncQuestion(props.projectId, props.sessionId, itemId)
     } catch {
-        toast.error('Failed to dismiss questions. Your answers remain in your draft.')
+        toast.error(t('composer.errors.dismissQuestions'))
     }
 }
 
@@ -236,10 +241,10 @@ const isHybridStaged = computed(() => !isHybridCommitted.value && store.isHybrid
 const hybridPending = computed(() => (isDraft.value && isHybrid.value) || isHybridStaged.value)
 
 const hybridTooltipLabel = computed(() => {
-    if (isHybridCommitted.value) return 'Hybrid mode (permanent) — open the terminal (Alt+Shift+T)'
-    if (isDraft.value && isHybrid.value) return 'Hybrid mode on for this draft — click to turn off'
-    if (isHybridStaged.value) return 'Hybrid switch staged — applies on send; click to cancel'
-    return 'Turn on hybrid mode'
+    if (isHybridCommitted.value) return t('composer.hybrid.permanentTooltip')
+    if (isDraft.value && isHybrid.value) return t('composer.hybrid.draftTooltip')
+    if (isHybridStaged.value) return t('composer.hybrid.stagedTooltip')
+    return t('composer.hybrid.enableTooltip')
 })
 
 // ── Hybrid dialog (single dialog, three variants) ───────────────────────────
@@ -264,22 +269,22 @@ const hybridDialogHasSwitch = computed(() =>
 const hybridDialogDetailsOpen = computed(() => hybridDialogHasSwitch.value)
 const hybridDialogForcedChoice = computed(() => hybridDialogHasSwitch.value)
 const hybridDialogTitle = computed(() => {
-    if (hybridDialogVariant.value === 'draft-enable') return 'Start this session in hybrid mode?'
-    return 'Switch this session to hybrid mode?'
+    if (hybridDialogVariant.value === 'draft-enable') return t('composer.hybrid.startTitle')
+    return t('composer.hybrid.switchTitle')
 })
 const hybridDialogIntro = computed(() => {
     switch (hybridDialogVariant.value) {
         case 'draft-enable':
             // Draft = reversible until sent, so no "cannot be undone" now — only
             // a heads-up that the choice locks in once the session starts.
-            return 'This draft will start in hybrid mode. You can turn it back off until you send the first message — after that it\'s permanent.'
+            return t('composer.hybrid.startIntro')
         default: // sdk-explainer / sdk-confirm
-            return 'This session switches to hybrid mode on your next message — and can\'t be undone afterwards.'
+            return t('composer.hybrid.switchIntro')
     }
 })
 // A draft "starts" hybrid; an existing SDK session "switches" — match the title.
 const hybridConfirmLabel = computed(() =>
-    hybridDialogVariant.value === 'draft-enable' ? 'Start in hybrid mode' : 'Switch to hybrid mode'
+    hybridDialogVariant.value === 'draft-enable' ? t('composer.hybrid.startAction') : t('composer.hybrid.switchAction')
 )
 
 function openHybridDialog(variant) {
@@ -482,7 +487,8 @@ const attachmentBadgeState = computed(() => attachmentBadge({
 }))
 
 // Temporary tooltip shown when new files are attached
-const attachTooltipText = ref('')
+const attachTooltipCount = ref(0)
+const attachTooltipText = computed(() => t('composer.attachments.filesAttached', { count: attachTooltipCount.value }, attachTooltipCount.value))
 const showAttachTooltip = ref(false)
 let attachTooltipTimer = null
 
@@ -490,7 +496,7 @@ watch(attachmentCount, (newCount, oldCount) => {
     if (newCount > oldCount) {
         const added = newCount - oldCount
         clearTimeout(attachTooltipTimer)
-        attachTooltipText.value = `${added} file${added > 1 ? 's' : ''} attached`
+        attachTooltipCount.value = added
         showAttachTooltip.value = true
         attachTooltipTimer = setTimeout(() => {
             showAttachTooltip.value = false
@@ -746,23 +752,15 @@ function adjustTextareaHeight() {
 // Friendly, state-aware label for the collapsed bar so the user knows what the
 // single line is — and whether anything is waiting in it. We deliberately do NOT
 // preview the text; we only signal that a message has been started.
-const collapsedLabel = computed(() => {
-    const parts = []
-    if (readyAsyncQuestionCount.value > 0) {
-        parts.push(`${readyAsyncQuestionCount.value} question${readyAsyncQuestionCount.value === 1 ? '' : 's'} ready`)
-    }
-    if (parts.length) return `${parts.join(' · ')} · ${collapsedMessageLabel.value}`
-    return collapsedMessageLabel.value
-})
+const collapsedLabel = computed(() => readyAsyncQuestionCount.value > 0
+    ? t('composer.status.questionsReadyWithMessage', { count: readyAsyncQuestionCount.value, message: collapsedMessageLabel.value }, readyAsyncQuestionCount.value)
+    : collapsedMessageLabel.value)
 const collapsedMessageLabel = computed(() => {
     const hasText = messageText.value.trim().length > 0
     const count = attachmentCount.value
-    const filesPart = count > 0 ? `${count} file${count > 1 ? 's' : ''} attached` : ''
-    if (hasText && filesPart) return `Your message is waiting · ${filesPart}`
+    if (hasText && count > 0) return t('composer.status.messageWaitingWithFiles', { count }, count)
     if (hasText) return t('composer.status.messageWaiting')
-    if (filesPart) return filesPart
-    // While sending is locked by a pending request, the bar is the entry point to
-    // prepare the next message, so name it for that intent.
+    if (count > 0) return t('composer.attachments.filesAttached', { count }, count)
     if (props.sendingLocked) return t('composer.input.prepareLabel')
     return t('composer.input.label')
 })
@@ -1498,8 +1496,8 @@ async function addFile(file) {
         // Notify server that user is actively preparing a message
         notifyUserDraftUpdated(props.sessionId)
     } catch (error) {
-        toast.error(error.message || 'Failed to add the file', {
-            title: 'Cannot attach file'
+        toast.error(error.message || t('composer.errors.addFile'), {
+            title: t('composer.errors.attachFileTitle')
         })
     }
 }
@@ -1565,7 +1563,7 @@ const selectionCommentSendController = createSelectionCommentSendController({
     attemptSend: attemptSelectionCommentSend,
     onPendingChange: pending => { selectionCommentSendPending.value = pending },
     onScreenshotChange: id => { selectionScreenshotId.value = id },
-    notifyUploadWait: () => toast.info('Screenshot upload in progress. Your message will send when the upload completes.'),
+    notifyUploadWait: () => toast.info(t('composer.attachments.screenshotWait')),
 })
 const selectionScreenshotState = computed(() => {
     const id = selectionScreenshotId.value
@@ -1592,7 +1590,7 @@ function startSelectionCommentSend(text, options) {
 async function attemptSelectionCommentSend() {
     if (sendInProgress.value || props.sendingLocked || isDisabled.value || attachmentsBlockSend.value
         || !asyncQuestionSendClassification.value.canSend) {
-        toast.warning('Cannot send right now. Your message is in the composer. Send it when sending becomes available.')
+        toast.warning(t('composer.errors.sendUnavailable'))
         return
     }
     await handleSend()
@@ -1761,7 +1759,7 @@ async function handleSend() {
                 })
             } catch (error) {
                 console.warn('Failed to save the question send:', error?.name || 'Error')
-                toast.error('Failed to save the question send. Your message remains available for recovery.')
+                toast.error(t('composer.errors.saveQuestionSend'))
                 return
             }
         } else {
@@ -1780,7 +1778,7 @@ async function handleSend() {
             })
             // The frame did not leave (socket closed or failing): the text and the attachments are
             // still in the composer. The question path restores its own draft on a failed dispatch.
-            if (!success) toast.error('Message not sent: the connection is unavailable. Your message is still in the composer.')
+            if (!success) toast.error(t('composer.errors.connectionUnavailable'))
         }
 
         if (success) {
@@ -1993,7 +1991,7 @@ const snippetsForProject = computed(() => {
         return {
             ...snippet,
             _disabled: true,
-            _disabledReason: `Not available: ${unavailable.map(p => p.label).join(', ')}`,
+            _disabledReason: t('composer.snippets.unavailablePlaceholders', { placeholders: new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(unavailable.map(p => t(p.labelKey))) }),
         }
     })
 })
@@ -2026,7 +2024,7 @@ function handleSnippetLongPress(snippet) {
 }
 
 function handleSnippetDisabledPress(snippet) {
-    toast(snippet._disabledReason || 'Some placeholders are not available', { variant: 'warning' })
+    toast(snippet._disabledReason || t('composer.snippets.placeholdersUnavailable'), { variant: 'warning' })
 }
 
 function openMessageSnippetsDialog() {
@@ -2070,7 +2068,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
             class="message-input-collapsed-bar"
             :icon="collapsedIcon"
             :label="collapsedLabel"
-            expand-tooltip="Expand the message input"
+            :expand-tooltip="$t('composer.input.expandTooltip')"
             :sidebar-toggle-clearance="true"
             @expand="requestExpandAndFocus"
         >
@@ -2411,7 +2409,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     <wa-icon name="lock" variant="classic"></wa-icon>
                     <span>{{ $t('composer.status.sendingPaused') }}</span>
                 </div>
-                <AppTooltip v-if="sendingLocked" :for="sendingLockedId">{{ sendingLockedReason }}</AppTooltip>
+                <AppTooltip v-if="sendingLocked" :for="sendingLockedId">{{ sendingLockedReason || $t('composer.status.answerToSend') }}</AppTooltip>
             </div>
         </div>
 

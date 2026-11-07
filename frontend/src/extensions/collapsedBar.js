@@ -3,6 +3,10 @@
 // and patchEllipsis). A hatched band: the top half reveals lines above the bar, the bottom half
 // reveals lines below it, and a centred pill reveals everything. Texts shorten with the width.
 
+import { watch } from 'vue'
+import { i18n } from '../i18n/index.js'
+const { t } = i18n.global
+
 import { EditorView } from '@codemirror/view'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -40,12 +44,12 @@ function tiers(prefix, texts) {
 }
 
 function halfButton(direction, step, onClick) {
-    const word = direction === 'up' ? 'above' : 'below'
+    const side = direction === 'up' ? 'above' : 'below'
     const button = el('button', `cm-cb-half cm-cb-${direction}`)
     button.type = 'button'
-    button.title = `Show ${step} lines ${word} the bar`
+    button.title = t(`diff.collapse.${side}.title`, { count: step }, step)
     button.setAttribute('aria-label', button.title)
-    button.append(glyph(direction), ...tiers('h', [`Show ${step} lines ${word}`, `+${step} ${word}`, `+${step}`]))
+    button.append(glyph(direction), ...tiers('h', [t(`diff.collapse.${side}.full`, { count: step }, step), t(`diff.collapse.${side}.short`, { count: step }), t('diff.collapse.count', { count: step })]))
     button.addEventListener('click', e => {
         e.stopPropagation()
         onClick(e.currentTarget)
@@ -60,7 +64,7 @@ function halfPlaceholder(direction) {
 }
 
 function preview(direction) {
-    return el('div', `cm-cb-preview cm-cb-preview-${direction}`, '+ lines appear here')
+    return el('div', `cm-cb-preview cm-cb-preview-${direction}`, t('diff.collapse.preview'))
 }
 
 function intersects(a, b, margin) {
@@ -119,6 +123,8 @@ function observe(bar) {
 export function destroyBar(bar) {
     bar._cbObserver?.disconnect()
     bar._cbObserver = null
+    bar._cbStopLocale?.()
+    bar._cbStopLocale = null
 }
 
 /**
@@ -149,13 +155,13 @@ export function createCollapsedBar({ lines, canShowAbove, canShowBelow, step, on
     const mid = el('div', 'cm-cb-mid')
     const all = el('button', 'cm-cb-all')
     all.type = 'button'
-    all.title = `Show all ${lines} unchanged lines`
+    all.title = t('diff.collapse.all.full', { count: lines }, lines)
     all.setAttribute('aria-label', all.title)
     all.append(...tiers('p', [
-        `Show all ${lines} unchanged lines`,
-        `+${lines} unchanged lines`,
-        `Show all ${lines}`,
-        `+${lines}`,
+        t('diff.collapse.all.full', { count: lines }, lines),
+        t('diff.collapse.all.unchanged', { count: lines }, lines),
+        t('diff.collapse.all.short', { count: lines }),
+        t('diff.collapse.count', { count: lines }),
     ]))
     all.addEventListener('click', e => {
         e.stopPropagation()
@@ -164,6 +170,24 @@ export function createCollapsedBar({ lines, canShowAbove, canShowBelow, step, on
     mid.appendChild(all)
     bar.appendChild(mid)
 
+    bar._cbStopLocale = watch(i18n.global.locale, () => {
+        for (const [direction, side] of [['up', 'above'], ['down', 'below']]) {
+            const button = bar.querySelector(`button.cm-cb-${direction}`)
+            if (!button) continue
+            button.title = t(`diff.collapse.${side}.title`, { count: step }, step)
+            button.setAttribute('aria-label', button.title)
+            const labels = [t(`diff.collapse.${side}.full`, { count: step }, step),
+                t(`diff.collapse.${side}.short`, { count: step }), t('diff.collapse.count', { count: step })]
+            button.querySelectorAll('.cm-cb-tier').forEach((span, i) => { span.textContent = labels[i] })
+        }
+        all.title = t('diff.collapse.all.full', { count: lines }, lines)
+        all.setAttribute('aria-label', all.title)
+        const labels = [all.title, t('diff.collapse.all.unchanged', { count: lines }, lines),
+            t('diff.collapse.all.short', { count: lines }), t('diff.collapse.count', { count: lines })]
+        all.querySelectorAll('.cm-cb-tier').forEach((span, i) => { span.textContent = labels[i] })
+        bar.querySelectorAll('.cm-cb-preview').forEach(node => { node.textContent = t('diff.collapse.preview') })
+        if (bar.isConnected) fit(bar)
+    })
     observe(bar)
     return bar
 }

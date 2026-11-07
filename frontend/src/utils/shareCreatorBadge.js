@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { sessionRouteLocation } from './sessionRoute.js'
 
 /**
@@ -8,7 +9,7 @@ export function shareCreatorBadge(createdBy, route) {
     if (createdBy?.kind !== 'agent') return null
     const session = createdBy.session
     if (!session) {
-        return { label: 'Agent-created (hidden session)', to: null }
+        return { label: i18n.global.t('session.sharing.agentCreatedHidden'), to: null }
     }
     return {
         label: session.title || session.id,

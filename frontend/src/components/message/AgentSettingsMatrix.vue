@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Provider × model × effort matrix. Data is assembled provider-agnostically in
 // useSessionAgentSettings.matrixBlocks: rows are a provider's models, columns
 // the shared effort ladder, each cell picks provider + model + effort in one
@@ -127,7 +129,7 @@ const cellTips = computed(() => {
                 const hasData = cell.score != null && !!cell.benchmark
                 tips.push({
                     id: cellId(block.provider, r.model, cell.effort),
-                    title: `Benchmark data for ${modelLabel} × ${effortLabel(cell.effort)}`,
+                    title: t('session.agentSettings.matrix.benchmarkTitle', { model: modelLabel, effort: effortLabel(cell.effort) }),
                     details: hasData ? formatBenchmarkDetails(cell.benchmark.row, cell.benchmark.scored, taskStore.taskType) : null,
                 })
             }
@@ -141,6 +143,18 @@ const tipsById = computed(() => {
     for (const t of cellTips.value) m.set(t.id, t)
     return m
 })
+
+function cellLabel(block, row, cell) {
+    const values = {
+        provider: block.label,
+        model: [row.name, row.version].filter(Boolean).join(' '),
+        effort: props.effortColumns.find(column => column.effort === cell.effort)?.label ?? cell.effort,
+        score: cell.score,
+    }
+    return t(!cell.enabled ? 'session.agentSettings.matrix.cellUnavailable'
+        : cell.score == null ? 'session.agentSettings.matrix.cellUnknownScore'
+            : 'session.agentSettings.matrix.cellScore', values)
+}
 
 // ─── Floating "Benchmark data" panel ──────────────────────────────────────
 // One persistent HoverInfoPanel shows the hovered / long-pressed cell's details.
@@ -386,7 +400,7 @@ onBeforeUnmount(() => {
                         :class="{ selected: cell.selected, unavailable: !cell.enabled, 'top-solid': cell.borderStyle === 'solid', 'top-dashed': cell.borderStyle === 'dashed', 'score-high': cell.enabled && cell.score != null && cell.score > 80 }"
                         :style="{ gridColumn: cell.col, gridRow: r.row, '--score-alpha': cell.enabled && cell.score != null ? cell.score / 100 : 0 }"
                         :disabled="!cell.enabled"
-                        :aria-label="`${block.label} · ${r.name} ${r.version} · ${cell.effort}${cell.enabled ? ` · score ${cell.score ?? 'unknown'}` : ''}`"
+                        :aria-label="cellLabel(block, r, cell)"
                         :aria-pressed="cell.selected"
                         @click="onCellClick(block.provider, r.model, cell)"
                     >

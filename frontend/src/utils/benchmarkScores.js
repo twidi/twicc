@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Model × effort scores — the "target ability" model.
  *
@@ -53,12 +55,12 @@ export const EVAL_LABELS = {
 // Task types, in display order. ``evals: null`` = the Intelligence Index, with
 // Terminal-Bench 4.0 cost and time.
 export const TASK_TYPES = [
-    { id: 'general', label: 'General (Intelligence Index)', evals: null },
-    { id: 'coding', label: 'Coding & terminal', evals: ['terminalbench_4_0', 'frontiercode_2_0'] },
-    { id: 'office', label: 'Office & knowledge work', evals: ['aa_briefcase', 'gdp_pdf'] },
-    { id: 'automation', label: 'Automation & tools', evals: ['automationbench_aa'] },
-    { id: 'science', label: 'Science & reasoning', evals: ['hle_diamond', 'critpt_v2_hard', 'terminal_bench_science'] },
-    { id: 'knowledge', label: 'Factual knowledge', evals: ['aa_omniscience'] },
+    { id: 'general', get label() { return i18n.global.t('session.benchmarks.taskTypes.general') }, evals: null },
+    { id: 'coding', get label() { return i18n.global.t('session.benchmarks.taskTypes.coding') }, evals: ['terminalbench_4_0', 'frontiercode_2_0'] },
+    { id: 'office', get label() { return i18n.global.t('session.benchmarks.taskTypes.office') }, evals: ['aa_briefcase', 'gdp_pdf'] },
+    { id: 'automation', get label() { return i18n.global.t('session.benchmarks.taskTypes.automation') }, evals: ['automationbench_aa'] },
+    { id: 'science', get label() { return i18n.global.t('session.benchmarks.taskTypes.science') }, evals: ['hle_diamond', 'critpt_v2_hard', 'terminal_bench_science'] },
+    { id: 'knowledge', get label() { return i18n.global.t('session.benchmarks.taskTypes.knowledge') }, evals: ['aa_omniscience'] },
 ]
 
 // Evaluation scores not already a 0..1 rate: Elo as Artificial Analysis converts
@@ -239,14 +241,14 @@ export function makeScoringSetPredicate(enabledProviders, getHelpers) {
 
 /** "$" + 3 significant digits, trailing zeros dropped; em dash when missing. */
 export function formatCost(x) {
-    return isNum(x) ? `$${String(Number(x.toPrecision(3)))}` : DASH
+    return isNum(x) ? new Intl.NumberFormat(i18n.global.locale.value, { style: 'currency', currency: 'USD', maximumSignificantDigits: 3 }).format(x) : DASH
 }
 
 /** Seconds (1 decimal) below 60 s after rounding, else minutes (1 decimal). */
 export function formatTime(seconds) {
     if (!isNum(seconds)) return DASH
     const s = Math.round(seconds * 10) / 10
-    return s < 60 ? `${s.toFixed(1)} s` : `${(s / 60).toFixed(1)} min`
+    return s < 60 ? new Intl.NumberFormat(i18n.global.locale.value, { style: 'unit', unit: 'second', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(s) : new Intl.NumberFormat(i18n.global.locale.value, { style: 'unit', unit: 'minute', unitDisplay: 'short', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(s / 60)
 }
 
 /**
@@ -260,32 +262,32 @@ export function formatTime(seconds) {
 export function formatBenchmarkDetails(row, scored, taskType) {
     const type = TASK_TYPES.find(t => t.id === taskType) ?? TASK_TYPES[0]
     const m = typeMetrics(row, type.id)
-    const one = x => (isNum(x) ? x.toFixed(1) : DASH)
+    const one = x => (isNum(x) ? new Intl.NumberFormat(i18n.global.locale.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(x) : DASH)
     return [
         {
-            label: 'Score',
+            label: i18n.global.t('session.benchmarks.details.score'),
             value: isNum(scored?.score) ? String(scored.score) : DASH,
-            description: 'Our score for this task: 100 = best choice.',
+            description: i18n.global.t('session.benchmarks.details.scoreDescription'),
         },
         {
-            label: type.evals ? `${type.label} score` : 'Intelligence Index',
+            label: type.evals ? i18n.global.t('session.benchmarks.details.taskScore', { task: type.label }) : 'Intelligence Index',
             value: one(m.ability),
-            description: "The couple's ability on this task type (0–100).",
+            description: i18n.global.t('session.benchmarks.details.abilityDescription'),
         },
         {
-            label: 'Target',
+            label: i18n.global.t('session.benchmarks.details.target'),
             value: one(scored?.target),
-            description: 'The level set by Task difficulty.',
+            description: i18n.global.t('session.benchmarks.details.targetDescription'),
         },
         {
-            label: 'Cost / task',
+            label: i18n.global.t('session.benchmarks.details.cost'),
             value: formatCost(m.cost),
-            description: 'Average cost of one task.',
+            description: i18n.global.t('session.benchmarks.details.costDescription'),
         },
         {
-            label: 'Time / task',
+            label: i18n.global.t('session.benchmarks.details.time'),
             value: formatTime(m.time),
-            description: 'Average decode time of one task.',
+            description: i18n.global.t('session.benchmarks.details.timeDescription'),
         },
     ]
 }

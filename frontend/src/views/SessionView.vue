@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 import { computed, watch, ref, shallowRef, reactive, readonly, provide, inject, onActivated, onDeactivated, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDataStore } from '../stores/data'
@@ -33,7 +37,7 @@ import LayoutMenu from '../components/session/layout/LayoutMenu.vue'
 import { DOCK_LABELS, DOCK_ICONS, PLACEMENT_OPTIONS } from '../components/session/layout/dockMeta'
 import LayoutSaveDialog from '../components/session/layout/LayoutSaveDialog.vue'
 import LayoutManagerDialog from '../components/session/layout/LayoutManagerDialog.vue'
-import { useLayoutsStore, SINGLE_PANE_ID, SINGLE_PANE_NAME } from '../stores/layouts'
+import { useLayoutsStore, SINGLE_PANE_ID } from '../stores/layouts'
 import { ancestorChain } from '../utils/projectAgentDefaults'
 import { AGENT_SETTING_ICONS } from '../utils/agentSettingIcons'
 import { resolveProjectLayoutId } from '../utils/layoutDefaults'
@@ -448,7 +452,7 @@ const sessionArtifactBookmarks = computed(() => computeSessionArtifactBookmarks(
 }))
 const artifactsDir = computed(() => session.value?.artifacts_dir || null)
 const artifactsExternalRoots = computed(() =>
-    artifactsDir.value ? [{ key: 'artifacts', label: 'Artifacts', path: artifactsDir.value }] : []
+    artifactsDir.value ? [{ key: 'artifacts', label: t('session.tabs.artifacts'), path: artifactsDir.value }] : []
 )
 
 // Where an upload started from the Files / Artifacts tab belongs (upload spec §6.7).
@@ -657,20 +661,20 @@ const activeTabId = computed(() => {
 // row (its repo-ness depends on it), the others just the session row. Chat + subagents are
 // center-only, so they're not in here.
 const TOOL_TABS = [
-    { id: 'files', label: 'Files', icon: 'folder', present: () => true },
-    { id: 'git', label: 'Git', icon: 'code-branch', present: () => hasGitRepo.value, redirectReady: () => !!store.getProject(session.value?.project_id) },
-    { id: 'terminal', label: 'Terminal', icon: 'terminal', present: () => true },
-    { id: 'tasks', label: 'Tasks', icon: 'square-check', present: () => hasTasks.value, redirectReady: () => !!session.value },
-    { id: 'plan', label: 'Plan', icon: 'list-check', present: () => hasPlan.value, redirectReady: () => !!session.value },
-    { id: 'artifacts', label: 'Artifacts', icon: 'shapes', present: () => !session.value?.draft },
-    { id: 'orchestration', label: 'Orchestration', icon: 'diagram-project', present: () => hasSpawnRoot.value || hasSubagents.value, redirectReady: () => !!session.value && subagentsResolved.value },
-    { id: 'workflows', label: 'Workflows', icon: 'sitemap', present: () => hasWorkflows.value, redirectReady: () => !!session.value },
-    { id: 'browser', label: 'Browser', icon: 'globe', present: () => true },
+    { id: 'files', labelKey: 'session.tabs.files', icon: 'folder', present: () => true },
+    { id: 'git', labelKey: 'session.tabs.git', icon: 'code-branch', present: () => hasGitRepo.value, redirectReady: () => !!store.getProject(session.value?.project_id) },
+    { id: 'terminal', labelKey: 'session.tabs.terminal', icon: 'terminal', present: () => true },
+    { id: 'tasks', labelKey: 'session.tabs.tasks', icon: 'square-check', present: () => hasTasks.value, redirectReady: () => !!session.value },
+    { id: 'plan', labelKey: 'session.tabs.plan', icon: 'list-check', present: () => hasPlan.value, redirectReady: () => !!session.value },
+    { id: 'artifacts', labelKey: 'session.tabs.artifacts', icon: 'shapes', present: () => !session.value?.draft },
+    { id: 'orchestration', labelKey: 'session.tabs.orchestration', icon: 'diagram-project', present: () => hasSpawnRoot.value || hasSubagents.value, redirectReady: () => !!session.value && subagentsResolved.value },
+    { id: 'workflows', labelKey: 'session.tabs.workflows', icon: 'sitemap', present: () => hasWorkflows.value, redirectReady: () => !!session.value },
+    { id: 'browser', labelKey: 'session.tabs.browser', icon: 'globe', present: () => true },
 ]
 function toolTabById(tabId) { return TOOL_TABS.find((t) => t.id === tabId) || null }
 // Non-tool tabs (main, agent-*) are never gated → treated as present.
 function isToolTabPresent(tabId) { const t = toolTabById(tabId); return t ? t.present() : true }
-const presentToolTabs = computed(() => TOOL_TABS.filter((t) => t.present()))
+const presentToolTabs = computed(() => TOOL_TABS.filter((tab) => tab.present()).map((tab) => ({ ...tab, label: t(tab.labelKey) })))
 
 // FA icon names for the tab nav (chat + the tool tabs), derived from the registry — one place.
 const TAB_ICONS = { main: 'comments', ...Object.fromEntries(TOOL_TABS.map((t) => [t.id, t.icon])) }
@@ -952,7 +956,7 @@ const sessionTabsRef = ref(null)
 // Resolver input: chat is the fixed center anchor; the present tool tabs come from the TOOL_TABS
 // registry above (subagents are center-only and not dockable, so they're excluded here).
 const layoutTabs = computed(() => [
-    { id: 'main', label: 'Chat', icon: TAB_ICONS.main, fixedCenter: true },
+    { id: 'main', label: t('session.tabs.chat'), icon: TAB_ICONS.main, fixedCenter: true },
     ...presentToolTabs.value.map((t) => ({ id: t.id, label: t.label, icon: t.icon })),
 ])
 
@@ -1317,9 +1321,9 @@ const layoutScopeDefaults = computed(() => {
         seen.add(id)
         rows.push({ scope, label, layoutId: id, layoutName: layout.name })
     }
-    add('worktree', 'Worktree default', worktreeId)
-    add('project', 'Project default', projDefaultId)
-    add('global', 'Global default', settingsStore.getDefaultLayoutId)
+    add('worktree', t('session.layout.scopeDefaults.worktree'), worktreeId)
+    add('project', t('session.layout.scopeDefaults.project'), projDefaultId)
+    add('global', t('session.layout.scopeDefaults.global'), settingsStore.getDefaultLayoutId)
     return rows
 })
 
@@ -1333,7 +1337,7 @@ const layoutScopeDefaults = computed(() => {
 const layoutSaveScopes = computed(() => {
     const globalId = settingsStore.getDefaultLayoutId
     const nameForId = (id) =>
-        !id || id === SINGLE_PANE_ID ? SINGLE_PANE_NAME : layoutsStore.getLayoutById(id)?.name || SINGLE_PANE_NAME
+        !id || id === SINGLE_PANE_ID ? t('session.layout.singlePane') : layoutsStore.getLayoutById(id)?.name || t('session.layout.singlePane')
     // A project-backed scope (worktree / project): its own column drives the pre-check + the hint.
     const projectScope = (key, label, target) => {
         const ownId = target.default_layout_id ?? null
@@ -1352,18 +1356,18 @@ const layoutSaveScopes = computed(() => {
     const self = projectId.value ? store.projects[projectId.value] : null
     if (self) {
         if (self.worktree_of) {
-            scopes.push(projectScope('worktree', 'In Worktree', self))
+            scopes.push(projectScope('worktree', t('session.layout.saveScopes.worktree'), self))
             const parent = store.projects[self.worktree_of]
             // Drop the project row if the parent repo isn't loaded — nothing to target.
-            if (parent) scopes.push(projectScope('project', `In Project — ${store.getProjectDisplayName(parent.id)}`, parent))
+            if (parent) scopes.push(projectScope('project', t('session.layout.saveScopes.namedProject', { project: store.getProjectDisplayName(parent.id) }), parent))
         } else {
-            scopes.push(projectScope('project', 'In Project', self))
+            scopes.push(projectScope('project', t('session.layout.saveScopes.project'), self))
         }
     }
     // Global (chain root): always concrete, never inherited.
     scopes.push({
         key: 'global',
-        label: 'Globally',
+        label: t('session.layout.saveScopes.global'),
         targetProjectId: null,
         preChecked: (globalId || SINGLE_PANE_ID) === SINGLE_PANE_ID,
         inherited: false,
@@ -1437,12 +1441,12 @@ async function syncCenterBarTitle() {
     const nav = group.shadowRoot?.querySelector('[part~="nav"]')
     if (!nav) return
     const title = hasDocks.value
-        ? (isCenterMaximized.value ? 'Double-click to restore' : 'Double-click to maximize')
+        ? (isCenterMaximized.value ? t('session.layout.doubleClickRestore') : t('session.layout.doubleClickMaximize'))
         : null
     if (title) nav.setAttribute('title', title)
     else nav.removeAttribute('title')
 }
-watch([hasDocks, isCenterMaximized, sessionTabsRef], syncCenterBarTitle, { immediate: true })
+watch([hasDocks, isCenterMaximized, sessionTabsRef, locale], syncCenterBarTitle, { immediate: true })
 
 // ─── Fixed nav-cluster geometry (see the cluster's template comment) ─────────
 // One observer, two targets: the cluster (its width changes with hasDocks and menu content) and
@@ -1747,7 +1751,7 @@ function openSubagentTab(agentId) {
  */
 function getAgentTabLabel(agentId) {
     const { name, isFallback } = getAgentDisplay(agentId, store)
-    return isFallback ? `Agent "${name}"` : name
+    return isFallback ? t('session.tabs.unnamedAgent', { name }) : name
 }
 
 // Watch subagentId to open tab when navigating to a subagent URL.
@@ -1807,10 +1811,10 @@ function handleNeedsTitle() {
 // The transcript moves exposed by SessionItemsList's `chatNav`, in the order
 // the ChatNavToolbar shows them (and with its icons).
 const CHAT_NAV_COMMANDS = [
-    { idSuffix: 'top',    label: 'Go to First Message',    icon: 'angles-up',    move: 'goTop' },
-    { idSuffix: 'prev',   label: 'Previous Message Block', icon: 'chevron-up',   move: 'goPrevBlock' },
-    { idSuffix: 'next',   label: 'Next Message Block',     icon: 'chevron-down', move: 'goNextBlock' },
-    { idSuffix: 'bottom', label: 'Go to Last Message',     icon: 'angles-down',  move: 'goBottom' },
+    { idSuffix: 'top',    labelKey: 'commands.context.firstMessage',    icon: 'angles-up',    move: 'goTop' },
+    { idSuffix: 'prev',   labelKey: 'commands.context.previousMessageBlock', icon: 'chevron-up',   move: 'goPrevBlock' },
+    { idSuffix: 'next',   labelKey: 'commands.context.nextMessageBlock',     icon: 'chevron-down', move: 'goNextBlock' },
+    { idSuffix: 'bottom', labelKey: 'commands.context.lastMessage',     icon: 'angles-down',  move: 'goBottom' },
 ]
 
 const SESSION_COMMAND_IDS = [
@@ -1871,7 +1875,7 @@ function registerSessionCommands() {
     registerCommands([
         {
             id: 'session.rename',
-            label: 'Rename Session',
+            labelKey: 'commands.context.renameSession',
             icon: 'pencil',
             category: 'session',
             when: () => {
@@ -1882,7 +1886,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.archive',
-            label: 'Archive Session',
+            labelKey: 'commands.context.archiveSession',
             icon: 'box-archive',
             category: 'session',
             when: () => {
@@ -1893,7 +1897,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.unarchive',
-            label: 'Unarchive Session',
+            labelKey: 'commands.context.unarchiveSession',
             icon: 'box-open',
             category: 'session',
             when: () => {
@@ -1904,7 +1908,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.pin-mode',
-            label: 'Change Pin Mode…',
+            labelKey: 'commands.context.pinMode',
             icon: 'thumbtack',
             category: 'session',
             when: () => {
@@ -1916,16 +1920,16 @@ function registerSessionCommands() {
                 const current = s?.pinned ?? null
                 const pick = (mode) => store.setSessionPinMode(projectId.value, sessionId.value, mode)
                 return [
-                    { id: 'none',      label: 'Not pinned',   action: () => pick(null),        active: !current },
-                    { id: 'project',   label: 'Project',      action: () => pick('project'),   active: current === 'project' },
-                    { id: 'workspace', label: 'Workspace',    action: () => pick('workspace'), active: current === 'workspace' },
-                    { id: 'all',       label: 'Everywhere', action: () => pick('all'),       active: current === 'all' },
+                    { id: 'none',      label: t('session.commands.pin.none'),   action: () => pick(null),        active: !current },
+                    { id: 'project',   label: t('session.commands.pin.project'),      action: () => pick('project'),   active: current === 'project' },
+                    { id: 'workspace', label: t('session.commands.pin.workspace'),    action: () => pick('workspace'), active: current === 'workspace' },
+                    { id: 'all',       label: t('session.commands.pin.everywhere'), action: () => pick('all'),       active: current === 'all' },
                 ]
             },
         },
         {
             id: 'session.mute',
-            label: 'Silence Notification and Unread Flag',
+            labelKey: 'commands.context.muteSession',
             icon: 'bell-slash',
             category: 'session',
             // Mirrors the session header's bell. Silences the "finished
@@ -1941,7 +1945,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.mark-read',
-            label: 'Mark as Read',
+            labelKey: 'commands.context.markRead',
             icon: 'eye-slash',
             category: 'session',
             when: () => currentSessionReadState()?.unread === true,
@@ -1949,7 +1953,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.mark-unread',
-            label: 'Mark as Unread',
+            labelKey: 'commands.context.markUnread',
             icon: 'eye',
             category: 'session',
             when: () => currentSessionReadState()?.unread === false,
@@ -1969,7 +1973,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.stop',
-            label: 'Stop Process',
+            labelKey: 'commands.context.stopProcess',
             icon: 'stop',
             category: 'session',
             when: () => {
@@ -1981,7 +1985,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.force-stop',
-            label: 'Force Kill Process',
+            labelKey: 'commands.context.forceKillProcess',
             icon: 'bolt',
             category: 'session',
             when: () => {
@@ -1992,7 +1996,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.delete-draft',
-            label: 'Discard',
+            labelKey: 'commands.context.discard',
             icon: 'trash',
             category: 'session',
             when: () => {
@@ -2015,7 +2019,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.focus-input',
-            label: 'Focus Message Input',
+            labelKey: 'commands.context.focusMessageInput',
             icon: 'keyboard',
             category: 'session',
             // Direct access to the message input specifically — opens it in the
@@ -2026,7 +2030,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.focus-pending',
-            label: 'Focus Pending Request',
+            labelKey: 'commands.context.focusPendingRequest',
             icon: 'reply',
             category: 'session',
             // Only when an answerable pending request form is shown (a request
@@ -2041,7 +2045,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.focus-terminal',
-            label: 'Open Claude CLI Terminal',
+            labelKey: 'commands.context.openClaudeTerminal',
             icon: 'terminal',
             category: 'session',
             // Hybrid sessions only — the embedded CLI terminal block. Hidden
@@ -2053,7 +2057,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.toggle-hybrid',
-            label: 'Toggle Hybrid Mode',
+            labelKey: 'commands.context.toggleHybrid',
             icon: 'right-left',
             category: 'session',
             // Claude sessions where hybrid is actually toggleable — not a
@@ -2073,9 +2077,9 @@ function registerSessionCommands() {
             // draft, stage/un-stage, or open the confirm dialog). Mirrors Alt+Shift+H.
             action: () => gotoChatFooterPanel(route, router, 'twicc:toggle-hybrid'),
         },
-        ...CHAT_NAV_COMMANDS.map(({ idSuffix, label, icon, move }) => ({
+        ...CHAT_NAV_COMMANDS.map(({ idSuffix, labelKey, icon, move }) => ({
             id: `session.nav-${idSuffix}`,
-            label,
+            labelKey,
             icon,
             category: 'navigation',
             // The four moves of the ChatNavToolbar, which is mouse-only. They
@@ -2088,7 +2092,7 @@ function registerSessionCommands() {
         })),
         {
             id: 'session.collapse-input',
-            label: 'Collapse Message Input',
+            labelKey: 'commands.context.collapseMessageInput',
             icon: 'chevron-down',
             category: 'session',
             // Only when a message input is actually shown (main session, not
@@ -2103,7 +2107,7 @@ function registerSessionCommands() {
         },
         {
             id: 'session.expand-input',
-            label: 'Expand Message Input',
+            labelKey: 'commands.context.expandMessageInput',
             icon: 'chevron-up',
             category: 'session',
             when: () => !!document.querySelector('.message-input.collapsed'),
@@ -2160,17 +2164,17 @@ function buildSessionSettingsCommands() {
         return {
             id: '__default__',
             group: 'default',
-            label: `Default: ${helpers.getDefaultValueLabel(field, helpers.getDefaultValue(field))}`,
+            label: t('session.settings.defaultValue', { value: helpers.getDefaultValueLabel(field, helpers.getDefaultValue(field)) }),
             action: () => setSessionSettingValue(field, null),
             active: current === null,
         }
     }
 
-    function buildSimpleCommand(field, { id, label, icon, iconSrc, when }) {
+    function buildSimpleCommand(field, { id, labelKey, icon, iconSrc, when }) {
         if (!helpers.supportsAgentSetting(field)) return []
         return [{
             id,
-            label,
+            labelKey,
             icon,
             iconSrc,
             category: 'session',
@@ -2198,7 +2202,7 @@ function buildSessionSettingsCommands() {
     return [
         ...(helpers.supportsAgentSetting('selected_model') ? [{
             id: 'session.model',
-            label: 'Change Session Model…',
+            labelKey: 'commands.context.sessionModel',
             icon: 'robot',
             category: 'session',
             when: isAvailable,
@@ -2224,22 +2228,22 @@ function buildSessionSettingsCommands() {
         }] : []),
         ...buildSimpleCommand('effort', {
             id: 'session.effort',
-            label: 'Change Session Effort…',
+            labelKey: 'commands.context.sessionEffort',
             icon: 'gauge',
         }),
         ...buildSimpleCommand('thinking_enabled', {
             id: 'session.thinking',
-            label: 'Change Session Thinking…',
+            labelKey: 'commands.context.sessionThinking',
             iconSrc: AGENT_SETTING_ICONS.thinking_enabled.src,
         }),
         ...buildSimpleCommand('permission_mode', {
             id: 'session.permission',
-            label: 'Change Session Permission Mode…',
+            labelKey: 'commands.context.sessionPermission',
             icon: 'shield-halved',
         }),
         ...buildSimpleCommand('context_max', {
             id: 'session.context',
-            label: 'Change Session Context Size…',
+            labelKey: 'commands.context.sessionContext',
             icon: 'window-maximize',
             when: () => {
                 const gate = sessionSettingsGate()
@@ -2249,12 +2253,12 @@ function buildSessionSettingsCommands() {
         }),
         ...buildSimpleCommand('claude_in_chrome', {
             id: 'session.chrome',
-            label: 'Change Session Claude in Chrome MCP…',
+            labelKey: 'commands.context.sessionChrome',
             icon: 'globe',
         }),
         ...buildSimpleCommand('fast_mode', {
             id: 'session.fast-mode',
-            label: 'Change Session Fast Mode…',
+            labelKey: 'commands.context.sessionFastMode',
             icon: 'gauge-high',
         }),
     ]
@@ -2276,7 +2280,7 @@ function buildLayoutCommands() {
     return [
         {
             id: 'layout.maximize-pane',
-            label: 'Maximize Focused Pane',
+            labelKey: 'commands.context.maximizePane',
             icon: 'expand',
             category: 'layout',
             when: () => ready() && canMaximizeFocusedPane(),
@@ -2284,7 +2288,7 @@ function buildLayoutCommands() {
         },
         {
             id: 'layout.minimize-pane',
-            label: 'Minimize Focused Pane',
+            labelKey: 'commands.context.minimizePane',
             icon: 'window-minimize',
             category: 'layout',
             when: () => ready() && canMinimizeFocusedPane(),
@@ -2292,7 +2296,7 @@ function buildLayoutCommands() {
         },
         {
             id: 'layout.restore-pane',
-            label: 'Restore Maximized Pane',
+            labelKey: 'commands.context.restorePane',
             icon: 'compress',
             category: 'layout',
             when: () => ready() && !!layout.maximizedRegion.value,
@@ -2300,7 +2304,7 @@ function buildLayoutCommands() {
         },
         {
             id: 'layout.move-tab',
-            label: 'Move Current Tab to…',
+            labelKey: 'commands.context.moveTab',
             icon: 'up-down-left-right',
             category: 'layout',
             when: () => ready() && movableTab(activeTabId.value),
@@ -2321,7 +2325,7 @@ function buildLayoutCommands() {
         },
         {
             id: 'layout.save',
-            label: 'Save Layout…',
+            labelKey: 'commands.context.saveLayout',
             icon: 'floppy-disk',
             category: 'layout',
             when: () => ready() && hasDocks.value,
@@ -2329,7 +2333,7 @@ function buildLayoutCommands() {
         },
         {
             id: 'layout.load',
-            label: 'Load Layout…',
+            labelKey: 'commands.context.loadLayout',
             icon: 'table-columns',
             category: 'layout',
             // Hidden in the mobile tab strip, like the on-screen layout menu — no layout there.
@@ -2339,14 +2343,14 @@ function buildLayoutCommands() {
             items: () => {
                 const items = [{
                     id: SINGLE_PANE_ID,
-                    label: 'Single pane',
+                    label: t('session.layout.singlePane'),
                     group: 'base',
                     action: () => onSelectLayout(SINGLE_PANE_ID),
                 }]
                 for (const d of layoutScopeDefaults.value) {
                     items.push({
                         id: d.layoutId,
-                        label: `${d.label} — ${d.layoutName}`,
+                        label: t('session.layout.namedScopeDefault', { scope: d.label, layout: d.layoutName }),
                         group: 'scope',
                         action: () => onSelectLayout(d.layoutId),
                     })
@@ -2580,8 +2584,8 @@ onBeforeUnmount(() => {
                 :variant="isCenterMaximized ? 'brand' : 'neutral'"
                 :appearance="isCenterMaximized ? 'accent' : 'plain'"
                 size="small"
-                :title="isCenterMaximized ? 'Restore (Alt+Shift+Enter)' : 'Maximize main area (Alt+Shift+Enter)'"
-                :aria-label="isCenterMaximized ? 'Restore' : 'Maximize main area'"
+                :title="isCenterMaximized ? $t('session.layout.restoreTooltip') : $t('session.layout.maximizeMainTooltip')"
+                :aria-label="isCenterMaximized ? $t('session.layout.restore') : $t('session.layout.maximizeMain')"
                 @click.stop="isCenterMaximized ? onLayoutRestoreMaximized() : onCenterMaximize()"
             >
                 <wa-icon :name="isCenterMaximized ? 'compress' : 'expand'"></wa-icon>
@@ -2717,7 +2721,7 @@ onBeforeUnmount(() => {
                         :root-restriction="artifactsDir"
                         :show-root-selector="false"
                         lazy-root
-                        root-label="Session artifacts"
+                        :root-label="$t('session.artifacts.rootLabel')"
                         root-icon="folder-open"
                         :preview-by-default="true"
                         :artifact-bookmark-session-id="session?.id"

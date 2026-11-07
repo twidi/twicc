@@ -26,9 +26,11 @@ function harness(t, options = {}) {
     const eligible = ref(true)
     const calls = [], errors = [], emitted = [], reports = []
     const scope = effectScope()
+    const i18n = createAppI18n()
     const document = options.document ?? { createElement: () => ({ innerHTML: '', querySelectorAll: () => [] }) }
     const dependencies = {
         ref, computed, watch, unref, nextTick, onScopeDispose, props, settingsStore, document,
+        locale: i18n.global.locale, t: i18n.global.t,
         inject: key => key === INLINE_ARTIFACT_CONTEXT ? options.inlineRuntime ?? null : options.rowContext ?? null, INLINE_ARTIFACT_CONTEXT, inlineArtifactPlacement, STREAMING_ROW_CONTEXT: Symbol(),
         getCurrentInstance: () => ({ proxy: 'component-proxy', appContext: { config: { errorHandler: options.errorHandler ?? ((...args) => reports.push(args)) } } }),
         console: { error: (...args) => reports.push(args) },
@@ -45,10 +47,10 @@ function harness(t, options = {}) {
         applyMermaidTheme: text => text,
         mermaidThemeFor: scheme => scheme,
     }
-    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, artifactPlacement: typeof artifactPlacement === 'function' ? artifactPlacement : undefined, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState };`)
+    const setup = new Function(...Object.keys(dependencies), `${extracted}\nreturn { blocks, artifactPlacement: typeof artifactPlacement === 'function' ? artifactPlacement : undefined, renderCache, coordinator, container, renderOneBlock, renderNestedMarkdown, renderMermaidIn, toolOwnership, applyCodeRendered, handleCodeToolsAction, restoreCodeToolsState, codeToolsState, withRememberedDetails };`)
     const component = scope.run(() => setup(...Object.values(dependencies)))
     t.after(() => scope.stop())
-    return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope, reports }
+    return { ...component, props, eligible, calls, errors, emitted, settingsStore, scope, reports, i18n }
 }
 
 test('superseded highlighter stops before another block and retains complete output', async t => {
@@ -151,7 +153,7 @@ for (const invalidation of ['source', 'hide-show', 'dispose']) {
         const h = harness(t, { render: text => text === 'nested' ? held.promise : text })
         await flush()
         const fixture = wrapperFixture()
-        h.container.value = { contains: () => true }
+        h.container.value = { contains: () => true, querySelectorAll: () => [] }
         const pending = h.handleCodeToolsAction({ closest: () => fixture.wrapper, dataset: { blockAction: 'view' } })
         await flush()
         if (invalidation === 'source') h.props.source = 'replacement'
@@ -170,7 +172,7 @@ test('invalid nested rejection cannot toast or delete remembered state', async t
     const h = harness(t, { render: text => text === 'nested' ? held.promise : text })
     await flush()
     const { wrapper } = wrapperFixture()
-    h.container.value = { contains: () => true, querySelectorAll: () => [wrapper] }
+    h.container.value = { contains: () => true, querySelectorAll: selector => selector === '[data-block-action]' ? [] : [wrapper] }
     h.codeToolsState.set('nested', { rendered: true })
     const pending = h.restoreCodeToolsState(() => true)
     await flush(); h.eligible.value = false; held.reject(Error('obsolete'))
@@ -227,7 +229,7 @@ test('queued nextTick restoration cannot apply after source changes', async t =>
     await flush()
     let wraps = 0
     const wrapper = { dataset: { codeKey: 'saved' }, querySelector: () => { wraps++; return null } }
-    h.container.value = { contains: () => true, querySelectorAll: () => [wrapper] }
+    h.container.value = { contains: () => true, querySelectorAll: selector => selector === '[data-block-action]' ? [] : [wrapper] }
     h.codeToolsState.set('saved', { wrap: true })
     h.props.source = 'one'; await flush()
     assert.equal(h.blocks.value[0].html, 'one')
@@ -292,7 +294,7 @@ for (const pipeline of ['renderOneBlock', 'renderNestedMarkdown']) {
             } }
             const h = harness(t, { document, render: () => held.promise })
             await flush()
-            h.container.value = { contains: () => true }
+            h.container.value = { contains: () => true, querySelectorAll: () => [] }
             const owned = h.toolOwnership({})
             assert.equal(owned(), true)
             const pending = pipeline === 'renderOneBlock'
@@ -452,3 +454,47 @@ for (const context of [
         assert.equal(html.includes('data-artifact-state'), false)
     })
 }
+
+
+test('locale changes update generated summaries without replacing content or frame nodes', async t => {
+    const h = harness(t)
+    await flush()
+    const summary = { textContent: 'Details' }
+    const explicitSummary = { textContent: 'Details' }
+    const frame = Object.freeze({ id: 'persistent-frame' })
+    const nodes = [summary, explicitSummary, frame]
+    h.container.value = { contains: () => true, querySelectorAll: selector => selector === '[data-default-summary]' ? [summary] : [] }
+    h.i18n.global.locale.value = 'pt-BR'
+    await flush()
+    assert.equal(summary.textContent, h.i18n.global.t('session.markdown.details'))
+    assert.notEqual(summary.textContent, 'Details')
+    assert.equal(explicitSummary.textContent, 'Details')
+    assert.equal(nodes[2], frame)
+    assert.deepEqual(h.calls, [], 'locale changes must not rerender Markdown')
+    h.i18n.global.locale.value = 'en'
+    await flush()
+    assert.equal(summary.textContent, 'Details')
+})
+
+test('restored cached details and nested Markdown receive the current generated summary', async t => {
+    const summaries = []
+    const document = { createElement: () => {
+        let html = ''
+        const summary = { textContent: 'Details' }
+        summaries.push(summary)
+        return {
+            set innerHTML(value) { html = value },
+            get innerHTML() { return html.replace('>Details</span>', `>${summary.textContent}</span>`) },
+            querySelectorAll: selector => selector === '[data-default-summary]' ? [summary] : [],
+        }
+    } }
+    const html = '<wa-details class="md-details"><span slot="summary" data-default-summary>Details</span></wa-details>'
+    const h = harness(t, { document, render: () => html })
+    await flush()
+    h.i18n.global.locale.value = 'pt-BR'
+    const expected = h.i18n.global.t('session.markdown.details')
+    assert.ok(h.withRememberedDetails(html, 'cached').includes(`>${expected}</span>`))
+    const nested = await h.renderNestedMarkdown('nested', 'default', () => true)
+    assert.ok(nested.includes(`>${expected}</span>`))
+    assert.ok(summaries.every(summary => summary.textContent === expected))
+})

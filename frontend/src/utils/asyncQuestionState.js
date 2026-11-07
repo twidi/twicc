@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 import { reconcileSend, retainsAsyncQuestionSend, consumeAsyncQuestionSend, restoreAsyncQuestionSend } from './asyncQuestions.js'
 import { applyUnavailableRefusal, captureRefusalTarget, getSessionUnavailableReason } from './sessionAvailability.js'
 
@@ -98,14 +100,14 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             let staged = false
             try {
                 await enqueue(sessionId, async () => {
-                    if (deletedSessions.has(sessionId)) throw new Error('Session was deleted')
+                    if (deletedSessions.has(sessionId)) throw new Error(i18n.global.t('composer.questions.errors.deleted'))
                     cancelDraftSave(sessionId)
                     const next = retryRequestId
                         ? { draft: this.localState.draftMessages[sessionId] || {}, questionDraft: this.localState.asyncQuestionDrafts[sessionId] || emptyDraft() }
                         : consumeAsyncQuestionSend(snapshot, this.localState.draftMessages[sessionId], this.localState.asyncQuestionDrafts[sessionId])
                     await stageSend(requestId, snapshot, next.draft, next.questionDraft)
                     staged = true
-                    if (deletedSessions.has(sessionId)) throw new Error('Session was deleted')
+                    if (deletedSessions.has(sessionId)) throw new Error(i18n.global.t('composer.questions.errors.deleted'))
                     if (!retryRequestId) {
                         const current = consumeAsyncQuestionSend(snapshot, this.localState.draftMessages[sessionId], this.localState.asyncQuestionDrafts[sessionId])
                         this.localState.draftMessages[sessionId] = current.draft
@@ -206,7 +208,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                     })
                     if (!response.ok) {
                         if (await applyUnavailableRefusal(response, refusal)) return
-                        throw new Error(`Failed to reconcile question sends: ${response.status}`)
+                        throw new Error(i18n.global.t('composer.questions.errors.reconcile', { status: response.status }))
                     }
                     const result = await response.json()
                     for (const [id, status] of Object.entries(result.requests || {})) {
@@ -215,9 +217,10 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                         if (status === 'accepted') await this.acknowledgeInflightSend(sessionId, id)
                         else if (['rejected', 'not_admitted'].includes(status) && entry.status !== 'accepted') {
                             const info = { code: status === 'not_admitted' ? 'async_questions_not_admitted' : 'send_failed',
+                                messageKey: status === 'not_admitted' ? 'composer.questions.errors.notSent' : 'composer.questions.errors.rejected',
                                 message: status === 'not_admitted'
-                                    ? 'This message was not sent. Edit or retry it.'
-                                    : 'The server rejected this message. Edit or retry it.' }
+                                    ? i18n.global.t('composer.questions.errors.notSent')
+                                    : i18n.global.t('composer.questions.errors.rejected') }
                             if (!this.failInflightSend(id, info)) this._applySendFailure(id, entry, info)
                         }
                     }
@@ -253,7 +256,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
                 if (!response.ok) {
                     // Refused as unavailable: the reason is now on the session, like the guard above.
                     if (await applyUnavailableRefusal(response, refusal)) return null
-                    throw new Error(`Failed to load async questions: ${response.status}`)
+                    throw new Error(i18n.global.t('composer.questions.errors.load', { status: response.status }))
                 }
                 const snapshot = await response.json()
                 await this.reconcileAsyncQuestionSends(projectId, sessionId)
@@ -387,7 +390,7 @@ export function createAsyncQuestionActions({ saveMessage, getAll, getAllMessages
             try {
                 await persist(this, sessionId)
                 if (!await send({ type: 'codex_dismiss_async_question', session_id: sessionId, item_id: itemId, request_id: requestId })) {
-                    throw new Error('WebSocket is disconnected')
+                    throw new Error(i18n.global.t('composer.questions.errors.disconnected'))
                 }
             } catch (error) {
                 // A failed transaction retains source answers and releases only this request.

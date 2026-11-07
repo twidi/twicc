@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 import { usePendingRequestSubmitShortcut } from '../../../../../composables/usePendingRequestSubmitShortcut'
@@ -19,13 +21,19 @@ const action = computed(() => input.value.action || {})
 const actionType = computed(() => action.value.type || 'unknown')
 
 const actionLabel = computed(() => ({
-    command: 'Command',
-    execve: 'Program execution',
-    applyPatch: 'File changes',
-    networkAccess: 'Network access',
-    mcpToolCall: 'MCP tool call',
-    requestPermissions: 'Additional permissions',
-}[actionType.value] || 'Action'))
+    command: t('session.autoReview.actions.command'),
+    execve: t('session.autoReview.actions.execve'),
+    applyPatch: t('session.autoReview.actions.applyPatch'),
+    networkAccess: t('session.autoReview.actions.networkAccess'),
+    mcpToolCall: t('session.autoReview.actions.mcpToolCall'),
+    requestPermissions: t('session.autoReview.actions.requestPermissions'),
+}[actionType.value] || t('session.autoReview.actions.fallback')))
+
+const riskLabel = computed(() => {
+    const level = input.value.riskLevel
+    const keys = { low: 'session.autoReview.riskLevels.low', medium: 'session.autoReview.riskLevels.medium', high: 'session.autoReview.riskLevels.high', critical: 'session.autoReview.riskLevels.critical' }
+    return keys[level] ? t(keys[level]) : level
+})
 
 const riskVariant = computed(() => {
     if (input.value.riskLevel === 'critical' || input.value.riskLevel === 'high') return 'danger'
@@ -74,7 +82,7 @@ usePendingRequestSubmitShortcut((event) => {
                 <span class="summary-label">{{ $t('session.autoReview.denied') }}</span>
                 <wa-badge variant="neutral">{{ actionLabel }}</wa-badge>
                 <wa-badge v-if="input.riskLevel" :variant="riskVariant">
-                    {{ $t('session.autoReview.risk', { level: input.riskLevel }) }}
+                    {{ $t('session.autoReview.risk', { level: riskLabel }) }}
                 </wa-badge>
             </div>
 

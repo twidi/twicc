@@ -1,3 +1,6 @@
+import { h } from 'vue'
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/resync.js
 //
 // Handles the backend's `resync_required` frame.
@@ -104,16 +107,22 @@ function showResyncToast() {
     // useToast reaches back into the stores.
     import('../composables/useToast').then(({ toast }) => {
         toast.custom({
+            setup() {
+                return () => h('div', {
+                    style: { display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.25rem' },
+                }, [
+                    h('span', i18n.global.t('session.resync.description')),
+                    h('a', {
+                        href: '#',
+                        onClick(event) { event.preventDefault(); window.location.reload() },
+                        style: { color: 'var(--wa-color-text-link)', textDecoration: 'underline' },
+                    }, i18n.global.t('session.resync.reload')),
+                ])
+            },
+        }, {
             type: 'warning',
-            title: 'Updates were lost',
+            title: i18n.global.t('session.resync.title'),
             duration: Infinity,
-            html: `
-                <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
-                    <span>This tab is out of sync with the server and stopped receiving updates.</span>
-                    <a href="#" onclick="window.location.reload(); return false;"
-                       style="color: var(--wa-color-text-link); text-decoration: underline;">Reload now</a>
-                </div>
-            `,
         })
     })
 }

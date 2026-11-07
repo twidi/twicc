@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // PendingRequestBody.vue (claude_code) — body sub-component for pending requests.
 //
 // Handles two request types:
@@ -97,22 +99,22 @@ const TOOL_PATH_KEYS = {
 }
 
 // Human-readable labels for the permission_mode wire values.
-const MODE_LABELS = {
-    default: 'Default',
-    auto: 'Auto',
-    acceptEdits: 'Accept all edits',
-    bypassPermissions: 'Bypass permissions',
-    plan: 'Plan',
-    dontAsk: "Don't ask",
+const MODE_LABEL_KEYS = {
+    default: 'session.approval.modes.default',
+    auto: 'session.approval.modes.auto',
+    acceptEdits: 'session.approval.modes.acceptEdits',
+    bypassPermissions: 'session.approval.modes.bypassPermissions',
+    plan: 'session.approval.modes.plan',
+    dontAsk: 'session.approval.modes.dontAsk',
 }
 
 function formatModeLabel(mode) {
-    return MODE_LABELS[mode] || mode
+    return MODE_LABEL_KEYS[mode] ? t(MODE_LABEL_KEYS[mode]) : mode
 }
 
 // Per-option help text shown on a mode the trust floor makes unavailable
 // (untrusted project). Mirrors the agent-settings popover wording.
-const DISABLED_MODE_REASON = 'Unavailable on untrusted projects.'
+const disabledModeReason = computed(() => t('session.approval.untrustedMode'))
 
 const props = defineProps({
     pendingRequest: {
@@ -385,10 +387,10 @@ onBeforeUnmount(() => {
 // ============================================================================
 
 // Tool name (raw, used for override lookup)
-const toolName = computed(() => props.pendingRequest.tool_name || 'Unknown tool')
+const toolName = computed(() => props.pendingRequest.tool_name || '')
 
 // Tool name formatted for display (underscores → spaces, collapse multiple)
-const toolNameDisplay = computed(() => toolName.value.replace(/_+/g, ' '))
+const toolNameDisplay = computed(() => toolName.value ? toolName.value.replace(/_+/g, ' ') : t('session.approval.missingTool'))
 
 // Tool input data: uses the edited copy when in edit mode, otherwise the original from the pending request.
 const toolInput = computed(() =>
@@ -452,7 +454,7 @@ const modeOptions = computed(() => {
 // Label for the "don't change mode" option in the picker.
 const noChangeLabel = computed(() => {
     const current = setModeSuggestion.value?._currentMode
-    return current ? `Don't change (current: ${formatModeLabel(current)})` : "Don't change"
+    return current ? t('session.approval.keepModeCurrent', { mode: formatModeLabel(current) }) : t('session.approval.keepMode')
 })
 
 // Whether a mode value is a disabled option (untrusted floor). The backend
@@ -470,11 +472,9 @@ const hasPermissionSuggestions = computed(() => permissionSuggestions.value.leng
 const permissionSummaryLabel = computed(() => {
     const count = permissionSuggestions.value.length
     const accepted = checkedSuggestions.size
-    let label = `${count} Permission suggestion${count > 1 ? 's' : ''}`
-    if (accepted > 0) {
-        label += accepted === count ? ' (All accepted)' : ` (${accepted} accepted)`
-    }
-    return label
+    if (accepted === count && accepted > 0) return t('session.approval.suggestionsAllAccepted', { count }, count)
+    if (accepted > 0) return t('session.approval.suggestionsAccepted', { count, accepted }, count)
+    return t('session.approval.suggestions', { count }, count)
 })
 
 // Whether the tool input has any fields that can be edited
@@ -1064,7 +1064,7 @@ usePendingRequestDraft({
                     :disabled="opt.disabled"
                 >
                     <span>{{ $t(opt.disabled ? 'session.approval.switchModeUnavailable' : 'session.approval.switchMode', { mode: formatModeLabel(opt.mode) }) }}</span>
-                    <span v-if="opt.disabled" class="option-description">{{ DISABLED_MODE_REASON }}</span>
+                    <span v-if="opt.disabled" class="option-description">{{ disabledModeReason }}</span>
                 </wa-option>
             </wa-select>
         </div>

@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 // frontend/src/composables/useTerminal.js
 
 import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
@@ -396,13 +398,13 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         ws.onopen = () => {
             isConnected.value = true
             if (shouldUseTmux()) {
-                terminal?.writeln('\x1b[32mConnected (tmux).\x1b[0m \x1b[2m(Session persists across disconnections)\x1b[0m')
+                terminal?.writeln(`\x1b[32m${i18n.global.t('session.terminal.connectedTmux')}\x1b[0m \x1b[2m${i18n.global.t('session.terminal.persists')}\x1b[0m`)
             } else {
-                terminal?.writeln('\x1b[32mConnected.\x1b[0m \x1b[2m(Ctrl+D or type "exit" to disconnect)\x1b[0m')
+                terminal?.writeln(`\x1b[32m${i18n.global.t('session.terminal.connected')}\x1b[0m \x1b[2m${i18n.global.t('session.terminal.disconnectHint')}\x1b[0m`)
                 if (settingsStore.isTerminalUseTmux && sessionId) {
                     const session = dataStore.getSession(sessionId)
-                    const reason = session?.draft ? 'draft' : 'archived'
-                    terminal?.writeln(`\x1b[2m(tmux disabled for ${reason} sessions)\x1b[0m`)
+                    terminal?.writeln(`\x1b[2m${i18n.global.t(session?.draft
+                        ? 'session.terminal.tmuxDraft' : 'session.terminal.tmuxArchived')}\x1b[0m`)
                 }
             }
             // The PTY was spawned at the dimensions carried by the WS URL;
@@ -483,11 +485,11 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
 
             // Auth failure — don't reconnect
             if (event.code === 4001) {
-                terminal?.writeln('\x1b[31mAuthentication failed.\x1b[0m')
+                terminal?.writeln(`\x1b[31m${i18n.global.t('session.terminal.authenticationFailed')}\x1b[0m`)
                 return
             }
 
-            terminal?.writeln('\x1b[31mDisconnected.\x1b[0m')
+            terminal?.writeln(`\x1b[31m${i18n.global.t('session.terminal.disconnected')}\x1b[0m`)
         }
 
         ws.onerror = () => {
@@ -1591,6 +1593,8 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         terminal.loadAddon(new WebLinksAddon())
         terminal.loadAddon(new ClipboardAddon())
 
+        Terminal.strings.promptLabel = i18n.global.t('session.terminal.input')
+        Terminal.strings.tooMuchOutput = i18n.global.t('session.terminal.tooMuchOutput')
         terminal.open(containerRef.value)
 
         // Tweak the hidden textarea that xterm.js uses for keyboard input.
@@ -1691,7 +1695,7 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
                     navigator.clipboard.writeText(selection)
                     terminal.clearSelection()
                     resetTmuxScrollSelection()
-                    toast.success('Copied to clipboard', { duration: 2000 })
+                    toast.success(localUiMessage('session.terminal.copied'), { duration: 2000 })
                     event.preventDefault()
                     return false
                 }
@@ -1774,7 +1778,7 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
      */
     function reconnect() {
         if (isConnected.value) return
-        terminal?.writeln('\x1b[33mReconnecting...\x1b[0m')
+        terminal?.writeln(`\x1b[33m${i18n.global.t('session.terminal.reconnecting')}\x1b[0m`)
         connectWs()
     }
 
@@ -1808,7 +1812,7 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
         terminal.clearSelection()
         hasSelection.value = false
         resetTmuxScrollSelection()
-        toast.success('Copied to clipboard', { duration: 2000 })
+        toast.success(localUiMessage('session.terminal.copied'), { duration: 2000 })
     }
 
     // ── Extra keys bar handlers ────────────────────────────────────────
@@ -1896,7 +1900,7 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
                 wsSend({ type: 'input', data: text })
             }
         } catch {
-            toast.error('Clipboard access denied')
+            toast.error(localUiMessage('session.terminal.clipboardDenied'))
         }
         terminal?.focus()
     }
@@ -2006,7 +2010,7 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
                 ws.close()
                 ws = null
                 isConnected.value = false
-                terminal?.writeln('\x1b[31mSession archived — terminal disconnected.\x1b[0m')
+                terminal?.writeln(`\x1b[31m${i18n.global.t('session.terminal.archived')}\x1b[0m`)
             }
         },
     )
@@ -2021,6 +2025,12 @@ export function useTerminal(contextKey, terminalIndex = 0, { sessionId = null, p
             terminal.clearSelection()
             hasSelection.value = false
         }
+    })
+
+    watch(i18n.global.locale, () => {
+        Terminal.strings.promptLabel = i18n.global.t('session.terminal.input')
+        Terminal.strings.tooMuchOutput = i18n.global.t('session.terminal.tooMuchOutput')
+        terminal?.textarea?.setAttribute('aria-label', Terminal.strings.promptLabel)
     })
 
     // Switch theme live when the user toggles dark/light mode

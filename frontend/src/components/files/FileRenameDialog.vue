@@ -1,6 +1,10 @@
 <script setup>
 import { ref, useId, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { apiFetch } from '../../utils/api'
+
+const { t } = useI18n()
 
 const props = defineProps({
     apiPrefix: { type: String, required: true },
@@ -65,11 +69,11 @@ async function handleSave() {
 
     const trimmed = localName.value.trim()
     if (!trimmed) {
-        errorMessage.value = 'Name cannot be empty'
+        errorMessage.value = localUiMessage('files.errors.nameEmpty')
         return
     }
     if (trimmed.includes('/') || trimmed.includes('\\')) {
-        errorMessage.value = 'Name cannot contain slashes'
+        errorMessage.value = localUiMessage('files.errors.nameSlashes')
         return
     }
     if (trimmed === originalName.value) {
@@ -88,14 +92,14 @@ async function handleSave() {
             body: JSON.stringify({ path: originalPath.value, new_name: trimmed }),
         })
     } catch {
-        errorMessage.value = 'Network error. Please try again.'
+        errorMessage.value = localUiMessage('files.errors.networkRetry')
         isSaving.value = false
         return
     }
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || `Failed to rename (HTTP ${response.status})`
+        errorMessage.value = data.error || localUiMessage('files.errors.renameHttp', { status: response.status })
         isSaving.value = false
         return
     }
@@ -111,7 +115,7 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        :label="`Rename ${nodeType}`"
+        :label="$t(nodeType === 'directory' ? 'files.rename.title.directory' : 'files.rename.title.file')"
         class="rename-dialog"
         @wa-show="syncFormState"
         @wa-after-show="focusInput"
@@ -126,7 +130,7 @@ defineExpose({ open, close })
                 ></wa-input>
             </div>
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage, { t }) }}
             </wa-callout>
         </form>
         <div slot="footer" class="dialog-footer">

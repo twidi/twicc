@@ -1,6 +1,8 @@
+import { i18n } from '../i18n/index.js'
+
 /** Helpers of the Read button of the text selection widget (pure). */
 
-export const READ_TITLES = { idle: 'Read aloud', loading: 'Cancel the request', playing: 'Stop reading' }
+export const READ_TITLES = { get idle() { return i18n.global.t('session.selection.read.idle') }, get loading() { return i18n.global.t('session.selection.read.loading') }, get playing() { return i18n.global.t('session.selection.read.playing') } }
 
 /** The icon of the Read button: Read while idle, Stop while loading or playing. */
 export function readIcon(status) {

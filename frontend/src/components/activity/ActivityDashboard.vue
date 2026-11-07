@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 // ActivityDashboard.vue - KPI cards for daily/weekly/monthly periods + all-time total,
 // with trend badges comparing to the previous period (except total which has no comparison).
 // Supports two modes:
@@ -88,44 +92,44 @@ function computeTrend(cur, prev, upIsGood) {
     const direction = pctChange >= 0 ? 'up' : 'down'
     const isPositive = pctChange >= 0
     return {
-        value: Math.abs(pctChange).toFixed(1),
+        value: new Intl.NumberFormat(locale.value, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(pctChange) / 100),
         direction,
         variant: (isPositive === upIsGood) ? 'success' : 'danger',
     }
 }
 
-const periodDefs = [
+const periodDefs = computed(() => [
     {
         key: 'daily',
-        label: 'Daily',
-        sublabel: 'current day',
+        label: t('activity.periods.daily'),
+        sublabel: t('activity.periods.currentDay'),
         icon: 'calendar-day',
-        previousLabel: 'yesterday',
+        previousLabel: t('activity.periods.yesterday'),
         offsetCurrent: 0,
         offsetPrevious: -1,
         days: 1,
     },
     {
         key: 'weekly',
-        label: 'Weekly',
-        sublabel: 'rolling 7 days',
+        label: t('activity.periods.weekly'),
+        sublabel: t('activity.periods.rollingWeek'),
         icon: 'calendar-week',
-        previousLabel: 'the previous 7 days period',
+        previousLabel: t('activity.periods.previousWeek'),
         offsetCurrent: -6,
         offsetPrevious: -13,
         days: 7,
     },
     {
         key: 'monthly',
-        label: 'Monthly',
-        sublabel: 'rolling 30 days',
+        label: t('activity.periods.monthly'),
+        sublabel: t('activity.periods.rollingMonth'),
         icon: 'calendar-days',
-        previousLabel: 'the previous 30 days period',
+        previousLabel: t('activity.periods.previousMonth'),
         offsetCurrent: -29,
         offsetPrevious: -59,
         days: 30,
     },
-]
+])
 
 const periods = computed(() => {
     const data = props.dailyActivity
@@ -135,7 +139,7 @@ const periods = computed(() => {
     today.setHours(0, 0, 0, 0)
     const tomorrow = addDays(today, 1)
 
-    const rollingPeriods = periodDefs.map(({ key, label, sublabel, icon, previousLabel, offsetCurrent, offsetPrevious, days }) => {
+    const rollingPeriods = periodDefs.value.map(({ key, label, sublabel, icon, previousLabel, offsetCurrent, offsetPrevious, days }) => {
         const currentStart = addDays(today, offsetCurrent)
         const previousStart = addDays(today, offsetPrevious)
         const previousEnd = addDays(previousStart, days)
@@ -185,10 +189,10 @@ const periods = computed(() => {
 
     // All-time total column (no trend, no previous value)
     if (props.totals) {
-        const t = props.totals
-        const userMessageCount = t.user_message_count || 0
-        const sessionCount = t.session_count || 0
-        const cost = parseFloat(t.cost) || 0
+        const totals = props.totals
+        const userMessageCount = totals.user_message_count || 0
+        const sessionCount = totals.session_count || 0
+        const cost = parseFloat(totals.cost) || 0
 
         const mainValue = isSessionsMode.value ? sessionCount : userMessageCount
 
@@ -208,8 +212,8 @@ const periods = computed(() => {
 
         rollingPeriods.push({
             key: 'total',
-            label: 'Total',
-            sublabel: 'all time',
+            label: t('activity.periods.total'),
+            sublabel: t('activity.periods.allTime'),
             icon: 'calendar',
             isTotal: true,
             mainValue,
@@ -226,7 +230,7 @@ const periods = computed(() => {
     <div v-if="periods.length > 0" class="activity-dashboard">
         <h3 class="dashboard-title">{{ isSessionsMode ? $t('activity.overview.sessions') : $t('activity.overview.messageTurns') }}</h3>
         <div class="wa-cluster dashboard-grid">
-            <wa-card v-for="period in periods" :key="period.label">
+            <wa-card v-for="period in periods" :key="period.key">
                 <div class="wa-flank wa-align-items-start">
                     <div class="wa-stack wa-gap-l">
                         <h3 class="wa-caption-m wa-cluster wa-gap-s">
@@ -240,9 +244,9 @@ const periods = computed(() => {
                         <div class="wa-stack wa-gap-xs">
                             <div class="wa-cluster wa-gap-m">
                                 <div class="wa-stack wa-gap-3xs wa-align-items-center">
-                                    <span v-if="period.mainTrend && period.mainTrend.direction !== 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
+                                    <span v-if="period.mainTrend && period.mainTrend.direction !== 'up'" class="wa-caption-xs prev-value">{{ new Intl.NumberFormat(locale).format(period.prevMainValue) }}</span>
                                     <AnimatedNumber :value="period.mainValue" format="integer" class="wa-heading-2xl stat-number" />
-                                    <span v-if="period.mainTrend && period.mainTrend.direction === 'up'" class="wa-caption-xs prev-value">{{ period.prevMainValue }}</span>
+                                    <span v-if="period.mainTrend && period.mainTrend.direction === 'up'" class="wa-caption-xs prev-value">{{ new Intl.NumberFormat(locale).format(period.prevMainValue) }}</span>
                                 </div>
                                 <wa-tag
                                     v-if="period.mainTrend"
@@ -250,9 +254,9 @@ const periods = computed(() => {
                                 >
                                     <wa-icon
                                         :name="period.mainTrend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                        :label="period.mainTrend.direction === 'up' ? 'Up' : 'Down'"
+                                        :label="period.mainTrend.direction === 'up' ? $t('activity.trend.up') : $t('activity.trend.down')"
                                     ></wa-icon>
-                                    {{ period.mainTrend.value }}%
+                                    {{ period.mainTrend.value }}
                                 </wa-tag>
                                 <template v-if="!period.isTotal">
                                     <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" pill>{{ $t('activity.overview.notAvailable') }}</wa-tag>
@@ -288,9 +292,9 @@ const periods = computed(() => {
                                     >
                                         <wa-icon
                                             :name="period.sub1Trend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                            :label="period.sub1Trend.direction === 'up' ? 'Up' : 'Down'"
+                                            :label="period.sub1Trend.direction === 'up' ? $t('activity.trend.up') : $t('activity.trend.down')"
                                         ></wa-icon>
-                                        {{ period.sub1Trend.value }}%
+                                        {{ period.sub1Trend.value }}
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
                                         <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" pill size="small">{{ $t('activity.overview.notAvailable') }}</wa-tag>
@@ -319,9 +323,9 @@ const periods = computed(() => {
                                     >
                                         <wa-icon
                                             :name="period.sub2Trend.direction === 'up' ? 'arrow-up' : 'arrow-down'"
-                                            :label="period.sub2Trend.direction === 'up' ? 'Up' : 'Down'"
+                                            :label="period.sub2Trend.direction === 'up' ? $t('activity.trend.up') : $t('activity.trend.down')"
                                         ></wa-icon>
-                                        {{ period.sub2Trend.value }}%
+                                        {{ period.sub2Trend.value }}
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
                                         <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" pill size="small">{{ $t('activity.overview.notAvailable') }}</wa-tag>

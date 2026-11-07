@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * The pure rules of an agent card (design §8.3): a spawn card (`Agent`, Codex
  * `spawn_agent`) or a control card (a call that targets an agent: Claude
@@ -138,5 +140,5 @@ export function needsMoreRows({
 /** The name a control card shows for its agent: its name, or `Agent "<short id>"`. */
 export function controlCardAgentName(agentId, dataStore) {
     const { name, isFallback } = getAgentDisplay(agentId, dataStore)
-    return isFallback ? `Agent "${name}"` : name
+    return isFallback ? i18n.global.t('session.agent.fallbackName', { name }) : name
 }

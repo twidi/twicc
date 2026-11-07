@@ -1,4 +1,5 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
 /**
  * PeerComposeDialog — the owner writes a peer message directly.
  *
@@ -107,7 +108,7 @@ function errorText(payload) {
     if (Array.isArray(errors) && errors.length) {
         return errors.map(e => e.message || e.code).join(' — ')
     }
-    return payload?.error || 'Request failed.'
+    return payload?.error || localUiMessage('peer.compose.errors.request')
 }
 
 async function handleSend() {
@@ -115,11 +116,11 @@ async function handleSend() {
     const cleanTitle = title.value.trim()
     const cleanText = text.value.trim()
     if (!selectedPeerId.value) {
-        error.value = 'Pick a peer.'
+        error.value = localUiMessage('peer.compose.errors.peerRequired')
         return
     }
     if (!cleanTitle || !cleanText) {
-        error.value = 'Title and message are both required.'
+        error.value = localUiMessage('peer.compose.errors.contentRequired')
         return
     }
     busy.value = true
@@ -158,7 +159,7 @@ async function handleSend() {
         proposedTitle.value = ''
         emit('close')
     } catch {
-        error.value = 'Request failed.'
+        error.value = localUiMessage('peer.compose.errors.request')
     } finally {
         busy.value = false
     }
@@ -262,7 +263,7 @@ function onAfterShow(event) {
             <wa-select
                 v-if="!isReply"
                 v-model="selectedProjectId" size="small" :label="$t('common.entities.project')"
-                hint="Optional — where this message counts in the inbox"
+                :hint="$t('peer.compose.projectHint')"
                 :disabled="busy"
             >
                 <ProjectMark
@@ -296,7 +297,7 @@ function onAfterShow(event) {
                 {{ $t('peer.compose.manualHint') }}
             </p>
 
-            <wa-callout v-if="error" variant="danger" size="small">{{ error }}</wa-callout>
+            <wa-callout v-if="error" variant="danger" size="small">{{ resolveUiMessage(error) }}</wa-callout>
             <wa-callout v-if="confirmingDiscard" variant="warning" size="small">
                 <div class="pc-confirm-body">
                     <span>{{ $t('peer.compose.discardConfirmation') }}</span>

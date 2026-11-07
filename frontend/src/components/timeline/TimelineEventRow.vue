@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // TimelineEventRow.vue - One event row of the Timeline, in session blocks (display design section 5.1):
 //   group head:  [provider icon] session title (one line, ellipsis) ..... [only] project
 //                    icon | wording, tags, badge, author label                   | time
@@ -88,7 +90,7 @@ const currentSessionState = computed(() => dataStore.getSession(sessionId.value)
 const onlyThisSession = computed(() => props.sessionFilterId !== null && props.sessionFilterId === sessionId.value)
 // The name stays "Only this session" in both states (a toggle button's label never changes with its state, WAI-ARIA
 // APG): `aria-pressed` carries the state. The tooltip says what a click does.
-const onlyTooltip = computed(() => (onlyThisSession.value ? 'Show every session' : 'Only this session'))
+const onlyTooltip = computed(() => (onlyThisSession.value ? t('timeline.event.everySession') : t('timeline.event.onlySession')))
 
 // The title of the side table, captured by the pill. Not the header mention's: built with the full id as fallback, it
 // would hide the short id the pill shows for an untitled session.

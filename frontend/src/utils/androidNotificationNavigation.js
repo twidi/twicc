@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 import { sessionRouteLocation } from './sessionRoute.js'
 
 /** Keep the current document, including its connection and unsaved state. */
@@ -9,7 +11,7 @@ export async function navigateAndroidNotification(client, router, target, dispat
         (hasPath && (typeof target.path !== 'string' || /^\/projects?\/[A-Za-z0-9_-]{1,255}\/session\/[A-Za-z0-9_-]{1,255}\/?$/.exec(target.path)?.[0] !== target.path)) ||
         (hasAction && !['home', 'peerInbox', 'peerRequests'].includes(target.action)) ||
         (target.detail != null && (typeof target.detail !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(target.detail)))) {
-        throw new Error('Invalid notification target.')
+        throw new Error(i18n.global.t('common.android.errors.invalidNotification'))
     }
     await router.isReady()
     // Login reloads the document. Keep the target native until its saved route context is restored.

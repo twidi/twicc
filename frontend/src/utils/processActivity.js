@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/processActivity.js
 //
 // The aggregated activity badge of a set of sessions: which single indicator
@@ -80,21 +82,19 @@ export function processActivityDisplayMode(summary) {
  * @returns {string}
  */
 export function processActivityTooltip(summary, mode) {
-    const sessionLabel = `${summary.processCount} active session${summary.processCount !== 1 ? 's' : ''}`
+    const sessionLabel = i18n.global.t('session.activity.activeCount', { count: summary.processCount }, summary.processCount)
     const backgroundSuffix = aggregatedBackgroundSuffix({
         shells: summary.backgroundShellCount,
         crons: summary.activeCronCount,
     })
 
     if (mode === 'pending_request') {
-        const pendingLabel = summary.pendingRequestCount === 1
-            ? 'Pending request'
-            : `${summary.pendingRequestCount} pending requests`
+        const pendingLabel = i18n.global.t('session.activity.pendingCount', { count: summary.pendingRequestCount }, summary.pendingRequestCount)
         return `${pendingLabel} · ${sessionLabel}${backgroundSuffix}`
     }
 
     if (mode === 'unread' || mode === 'unread_background') {
-        const unreadLabel = `${summary.unreadCount} unread session${summary.unreadCount !== 1 ? 's' : ''}`
+        const unreadLabel = i18n.global.t('session.activity.unreadCount', { count: summary.unreadCount }, summary.unreadCount)
         return summary.processCount > 0
             ? `${unreadLabel} · ${sessionLabel}${backgroundSuffix}`
             : unreadLabel

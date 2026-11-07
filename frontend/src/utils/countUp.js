@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Count-up of the project stats numbers (visual refresh step 7a,
 // docs/plans/2026-09-30-stats-motion-design.md §4). Pure helpers of AnimatedNumber.vue.
 
@@ -23,5 +25,5 @@ export function tweenValue(from, to, k) {
 export function formatAvg(value) {
     if (value === null) return '-'
     const rounded = Math.round(value * 10) / 10
-    return rounded % 1 === 0 ? rounded.toString() : rounded.toFixed(1)
+    return new Intl.NumberFormat(i18n.global.locale.value, { maximumFractionDigits: 1 }).format(rounded)
 }

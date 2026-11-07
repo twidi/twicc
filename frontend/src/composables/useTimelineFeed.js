@@ -1,3 +1,4 @@
+import { localUiError } from '../i18n/uiMessages.js'
 // frontend/src/composables/useTimelineFeed.js
 //
 // The Timeline page's feed: the pure controller of utils/timeline/feed.js with a reactive state and the
@@ -15,7 +16,7 @@ import { buildTimelineUrl, createFeedState, createTimelineFeed } from '../utils/
  */
 export async function fetchTimelinePage({ projectIds, query, before, afterId }) {
     const response = await apiFetch(buildTimelineUrl({ projectIds, query, before, afterId }))
-    if (!response.ok) throw new Error(`Timeline request failed (${response.status})`)
+    if (!response.ok) throw localUiError('session.timeline.requestFailed', { status: response.status })
     return response.json()
 }
 

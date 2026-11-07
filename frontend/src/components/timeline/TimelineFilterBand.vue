@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n, locale } = useI18n()
 // TimelineFilterBand.vue - The content of the Timeline tab's sticky band (filters design sections 3.1 to 3.3):
 // the "Timeline" title and speech toggle, the views (a segmented control), the Filters button and its panel (a wa-popover of
 // checkboxes), then the active filter pills and "Clear all".
@@ -38,14 +40,18 @@ const store = useTimelineFiltersStore()
 const speech = useTimelineSpeechStore()
 const tts = useTextToSpeechStore()
 const listening = computed(() => speech.activePageId === props.pageId)
-const speechLabel = computed(() => !listening.value ? 'Read new assistant messages aloud'
-    : speech.paused ? 'Timeline reading paused. Stop timeline listening' : 'Stop reading new assistant messages aloud')
+const speechLabel = computed(() => !listening.value ? t('timeline.speech.readNew')
+    : speech.paused ? t('timeline.speech.paused') : t('timeline.speech.stopReading'))
 const filters = computed(() => store.filtersFor(props.pageId))
 const count = computed(() => activeCount(filters.value))
 
 /** The product name of a provider ("Claude Code", "Codex"), the raw key when the helpers do not name one. */
 function providerLabel(provider) {
     return getProviderHelpers(provider)?.constructor?.serviceProductLabel ?? provider
+}
+
+function formatPillValues(values) {
+    return new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(values)
 }
 
 const pills = computed(() => groupPills(filters.value, { providerLabel }))
@@ -55,11 +61,11 @@ const uid = useId()
 const buttonId = `${uid}-filters`
 
 /** The panel groups (spec 3.2), their values in constant order. */
-const PANEL_GROUPS = [
-    { group: 'families', label: 'Events', options: FAMILIES },
-    { group: 'providers', label: 'Provider', options: PROVIDERS.map((value) => ({ value, label: providerLabel(value), provider: value })) },
-    { group: 'authors', label: 'Done by', options: AUTHORS },
-].map((entry) => ({ ...entry, labelId: `${uid}-${entry.group}` }))
+const PANEL_GROUPS = computed(() => [
+    { group: 'families', label: t('timeline.filters.eventsGroup'), options: FAMILIES },
+    { group: 'providers', label: t('timeline.filters.providerGroup'), options: PROVIDERS.map((value) => ({ value, label: providerLabel(value), provider: value })) },
+    { group: 'authors', label: t('timeline.filters.authorsGroup'), options: AUTHORS },
+].map((entry) => ({ ...entry, labelId: `${uid}-${entry.group}` })))
 
 function isChecked(group, value) {
     return filters.value[group].includes(value)
@@ -263,7 +269,7 @@ watch(layout, () => {
 
 // The count appearing or disappearing changes the content, not the line box: a recorded width would be stale, so
 // measure again from the first level.
-watch(count, () => {
+watch([count, locale], () => {
     if (layout.value === 'line') measure()
     else setLayout('line')
 }, { flush: 'post' })
@@ -327,7 +333,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                 <wa-button :id="buttonId" ref="buttonRef" class="timeline-filter-button" size="small" appearance="outlined">
                     <wa-icon slot="start" name="filter"></wa-icon>
                     <span class="timeline-filter-button-label">{{ $t('timeline.filters.label') }}</span>
-                    <span v-if="count > 0" class="timeline-filter-count">{{ count }}</span>
+                    <span v-if="count > 0" class="timeline-filter-count">{{ n(count) }}</span>
                 </wa-button>
                 <!-- Right after its button: Tab from the button reaches the panel before the pills. -->
                 <wa-popover
@@ -378,13 +384,13 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
         <div v-if="pills.length" class="timeline-filter-pills">
             <span v-for="pill in pills" :key="pill.group" class="timeline-filter-pill" :title="pill.title">
                 <span class="timeline-filter-pill-name">{{ pill.label }}:</span>
-                <span class="timeline-filter-pill-value">{{ pill.shown.join(', ') }}</span>
-                <span v-if="pill.more > 0" class="timeline-filter-pill-more">+{{ pill.more }}</span>
+                <span class="timeline-filter-pill-value">{{ formatPillValues(pill.shown) }}</span>
+                <span v-if="pill.more > 0" class="timeline-filter-pill-more">+{{ n(pill.more) }}</span>
                 <button
                     :ref="(element) => setRemoveRef(pill.group, element)"
                     type="button"
                     class="timeline-filter-pill-remove"
-                    :aria-label="`Remove the ${pill.label} filter`"
+                    :aria-label="$t('timeline.filters.remove', { label: pill.label })"
                     @click="removePill(pill.group)"
                 >
                     <wa-icon name="xmark"></wa-icon>

@@ -31,6 +31,7 @@ export function serializeDraftSession(session) {
 export function summarizeEphemeralAttachments(items = []) {
     return items.map(item => ({
         name: item.name || item.filename || 'Attachment',
+        ...(!item.name && !item.filename ? { name_key: 'session.messages.attachmentFile' } : {}),
         media_type: item.mimeType || item.media_type || '',
         kind: typeof item.bucket === 'string' ? item.kind : (item.type === 'image' ? 'image' : 'document'),
     }))
@@ -248,6 +249,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             session.ephemeralPhase = frame.status
             session.ephemeralResult = {
                 text: frame.text || '', error: frame.error || null,
+                ...(frame.error_key ? { error_key: frame.error_key } : {}),
                 cost_usd: frame.cost_usd ?? null, duration_ms: frame.duration_ms ?? null,
                 finished_at: frame.finished_at || new Date().toISOString(),
             }
@@ -260,7 +262,10 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             this.clearEphemeralControl(frame.draft_session_id)
             const session = this.sessions[id]
             if (!isLaunchedEphemeral(session) || session.ephemeralPhase !== 'running') return
-            this.receiveEphemeralResult({ session_id: id, status: 'error', error: frame.error || 'The ephemeral run could not start.' })
+            this.receiveEphemeralResult({
+                session_id: id, status: 'error', error: frame.error || null,
+                ...(!frame.error ? { error_key: 'session.ephemeral.startFailed' } : {}),
+            })
         },
         clearEphemeralControl(id) {
             for (const [key, control] of Object.entries(this.localState.ephemeralControls)) {

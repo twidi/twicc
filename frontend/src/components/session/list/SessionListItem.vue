@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n, locale } = useI18n()
 /**
  * SessionListItem - Renders a single session entry in the SessionList.
  *
@@ -213,8 +215,8 @@ const processTooltip = computed(() =>
 
 /** Archive entry label: says the process stops, and which shells it kills. */
 const archiveLabel = computed(() => canStop.value
-    ? archiveStopLabel('Archive', providerLabel.value, backgroundShellCount(processState.value))
-    : 'Archive'
+    ? archiveStopLabel(t('common.actions.archive'), providerLabel.value, backgroundShellCount(processState.value))
+    : t('common.actions.archive')
 )
 
 /** Project for this session — single lookup. */
@@ -344,15 +346,15 @@ function formatMemory(bytes) {
     const gb = mb / 1024
 
     if (gb >= 1) {
-        return `${gb.toFixed(1)} GB`
+        return `${n(gb, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`
     }
     if (mb >= 10) {
-        return `${Math.round(mb)} MB`
+        return `${n(Math.round(mb))} MB`
     }
     if (mb >= 1) {
-        return `${mb.toFixed(1)} MB`
+        return `${n(mb, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`
     }
-    return `${Math.round(kb)} KB`
+    return `${n(Math.round(kb))} KB`
 }
 
 /**
@@ -564,7 +566,7 @@ function handleMenuSelect(event) {
             type="button"
             class="tree-toggle"
             :aria-expanded="treeRow.expanded ? 'true' : 'false'"
-            :aria-label="treeRow.expanded ? 'Collapse child sessions' : 'Expand child sessions'"
+            :aria-label="treeRow.expanded ? $t('session.list.collapseChildren') : $t('session.list.expandChildren')"
             @click="handleToggleTree"
             @mousedown.stop
         >
@@ -736,7 +738,7 @@ function handleMenuSelect(event) {
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
             <div v-if="!compactView && !session.draft && !session.ephemeral" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
-                <span :id="rowId('session-messages')" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count ?? '??' }}</span>
+                <span :id="rowId('session-messages')" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count == null ? '??' : n(session.user_message_count) }}</span>
                 <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-messages')">{{ $t('session.stats.messages.tooltip') }}</AppTooltip>
 
                 <template v-if="showCosts">

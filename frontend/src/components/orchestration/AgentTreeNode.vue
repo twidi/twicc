@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // One subagent card of the Orchestration tree, rendered recursively. Same card as OrchestrationNode
 // (treeNode.css): title + working robot, the model the subagent last used, time bar, dates/duration/turns/
 // context with the cost at the right. What an agent has no equivalent of — settings, project, annotations —
@@ -48,7 +50,7 @@ const descendantCount = visibleComputed(() => flattenTree(props.node).length - 1
 // named it — this tab says "subagent" throughout, to tell these apart from the sessions in the other tree.
 const label = visibleComputed(() => {
     const { name, isFallback } = getAgentDisplay(props.node.id, store)
-    return isFallback ? `Subagent "${name}"` : name
+    return isFallback ? t('session.orchestration.subagentFallback', { name }) : name
 })
 
 // A running agent carries a process state — real, or the synthetic one the agent-link cache maintains.
@@ -93,7 +95,7 @@ const contextUsageTooltip = visibleComputed(() => {
     if (max == null) return null
     const helpers = provider.value ? getProviderHelpers(provider.value) : null
     const label = helpers?.getChoiceLabel('context_max', max) || `${Math.round(max / 1000)}K`
-    return `Context window usage (${label} max)`
+    return t('session.orchestration.contextUsage', { label })
 })
 const contextUsageColor = visibleComputed(() => {
     const pct = contextUsagePercentage.value
@@ -114,7 +116,7 @@ function fmtDate(iso) {
 // else the agent's own last idle boundary. A running agent ends at the panel's shared clock.
 const finishedAt = visibleComputed(() => entry.value?.stoppedAt ?? entry.value?.agentStoppedAt ?? null)
 const startLabel = visibleComputed(() => fmtDate(entry.value?.startedAt))
-const endLabel = visibleComputed(() => (isRunning.value ? 'now' : fmtDate(finishedAt.value)))
+const endLabel = visibleComputed(() => (isRunning.value ? t('session.orchestration.now') : fmtDate(finishedAt.value)))
 const durationLabel = visibleComputed(() => {
     const from = entry.value?.startedAt
     const to = isRunning.value ? now.value : Date.parse(finishedAt.value)
@@ -151,7 +153,7 @@ const expanded = ref(true)
                     type="button"
                     class="ocard-toggle"
                     :aria-expanded="expanded"
-                    :aria-label="expanded ? 'Collapse' : 'Expand'"
+                    :aria-label="expanded ? $t('session.orchestration.collapse') : $t('session.orchestration.expand')"
                     @click="expanded = !expanded"
                 >
                     <span>{{ descendantCount }}</span>

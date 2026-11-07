@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/backgroundWork.js
 //
 // Wording and decisions for the work an agent leaves running after its turn
@@ -21,6 +23,8 @@ import { PROCESS_STATE, PROCESS_STATE_NAMES } from '../constants.js'
  * @returns {string}
  */
 export function pluralize(count, singular, pluralForm = `${singular}s`) {
+    const key = { 'background shell': 'session.background.shellCount', 'active cron': 'session.background.cronCount', 'subagent': 'session.background.subagentCount', 'shell': 'session.background.plainShellCount', 'monitor': 'session.background.monitorCount' }[singular]
+    if (key) return i18n.global.t(key, { count }, count)
     return `${count} ${count === 1 ? singular : pluralForm}`
 }
 
@@ -92,7 +96,7 @@ export function activeCronCount(processState) {
  * @returns {string}
  */
 export function backgroundShellsRunningPhrase(shellCount) {
-    return `${pluralize(shellCount, 'background shell')} running`
+    return i18n.global.t('session.background.shellsRunning', { count: shellCount }, shellCount)
 }
 
 /**
@@ -105,11 +109,11 @@ export function backgroundShellsRunningPhrase(shellCount) {
  */
 export function processStateTooltip(providerLabel, processState) {
     const state = processState?.state
-    let text = `${providerLabel} state: ${PROCESS_STATE_NAMES[state] ?? state}`
+    let text = i18n.global.t('session.background.state', { provider: providerLabel, state: PROCESS_STATE_NAMES[state] ?? state })
     const shells = userTurnBackgroundShellCount(processState)
-    if (shells) text += ` — ${backgroundShellsRunningPhrase(shells)}`
+    if (shells) text = i18n.global.t('session.background.stateWithShells', { state: text, shells: backgroundShellsRunningPhrase(shells) })
     const crons = activeCronCount(processState)
-    if (crons) text += ` (${pluralize(crons, 'active cron')})`
+    if (crons) text = i18n.global.t('session.background.stateWithCrons', { state: text, crons: pluralize(crons, 'active cron') })
     return text
 }
 
@@ -126,7 +130,7 @@ export function aggregatedBackgroundSuffix({ shells = 0, crons = 0 } = {}) {
     const parts = []
     if (shells > 0) parts.push(pluralize(shells, 'background shell'))
     if (crons > 0) parts.push(pluralize(crons, 'active cron'))
-    return parts.length ? ` (${parts.join(', ')})` : ''
+    return parts.length ? i18n.global.t('session.background.aggregateSuffix', { items: new Intl.ListFormat(i18n.global.locale.value, { style: 'short', type: 'unit' }).format(parts) }) : ''
 }
 
 /**
@@ -138,7 +142,7 @@ export function aggregatedBackgroundSuffix({ shells = 0, crons = 0 } = {}) {
  * @returns {string}
  */
 export function idleWithShellsSuffix(sessionCount) {
-    return sessionCount > 0 ? `, ${sessionCount} with background shells` : ''
+    return sessionCount > 0 ? i18n.global.t('session.background.idleShellsSuffix', { count: sessionCount }) : ''
 }
 
 /**
@@ -169,7 +173,7 @@ export function buildBackgroundWorkStatusLines(processState, nowSeconds) {
     const lines = []
     const shells = backgroundShellCount(processState)
     if (shells) {
-        lines.push({ kind: 'shells', text: `${pluralize(shells, 'background shell')} still running` })
+        lines.push({ kind: 'shells', textKey: 'session.background.shellsStillRunning', textParams: { count: shells }, textCount: shells, text: i18n.global.t('session.background.shellsStillRunning', { count: shells }, shells) })
     }
     const crons = activeCronCount(processState)
     if (crons) {
@@ -183,7 +187,10 @@ export function buildBackgroundWorkStatusLines(processState, nowSeconds) {
         const label = pluralize(crons, 'active cron')
         lines.push({
             kind: 'crons',
-            text: nextFire === null ? label : `${label} — next run at ${formatClockTime(nextFire)}`,
+            textKey: nextFire === null ? 'session.background.cronCount' : 'session.background.cronNextRun',
+            textParams: { count: crons, time: nextFire === null ? '' : formatClockTime(nextFire) },
+            textCount: crons,
+            text: nextFire === null ? label : i18n.global.t('session.background.cronNextRun', { count: crons, time: formatClockTime(nextFire) }, crons),
         })
     }
     return lines
@@ -227,9 +234,9 @@ export function getStopConfirmation(processState) {
  * @returns {string}
  */
 export function stopConfirmationTitle({ cronCount = 0, shellCount = 0 } = {}) {
-    if (cronCount && shellCount) return 'Background work will be lost'
-    if (shellCount) return 'Background shells will be killed'
-    return 'Active crons will be lost'
+    if (cronCount && shellCount) return i18n.global.t('session.background.lost')
+    if (shellCount) return i18n.global.t('session.background.shellsKilled')
+    return i18n.global.t('session.background.cronsLost')
 }
 
 /**
@@ -239,7 +246,7 @@ export function stopConfirmationTitle({ cronCount = 0, shellCount = 0 } = {}) {
  * @returns {string}
  */
 export function backgroundShellsKillSentence(shellCount) {
-    return `Stopping will kill ${pluralize(shellCount, 'background shell')}.`
+    return i18n.global.t('session.background.kill', { count: shellCount }, shellCount)
 }
 
 /**
@@ -255,13 +262,13 @@ export function backgroundShellsKillSentence(shellCount) {
 export function batchStopConfirmationMessage({ mode, processCount = 0, cronCount = 0, shellCount = 0 }) {
     const parts = []
     if (mode === 'archive' && processCount > 0) {
-        parts.push(`${pluralize(processCount, 'running process', 'running processes')} will be stopped.`)
+        parts.push(i18n.global.t('session.background.stopProcesses', { count: processCount }, processCount))
     }
     if (shellCount > 0) {
-        parts.push(`${pluralize(shellCount, 'background shell')} will be killed.`)
+        parts.push(i18n.global.t('session.background.killShells', { count: shellCount }, shellCount))
     }
     if (cronCount > 0) {
-        parts.push(`${pluralize(cronCount, 'active cron job')} will be cancelled.`)
+        parts.push(i18n.global.t('session.background.cancelCrons', { count: cronCount }, cronCount))
     }
     return parts.join(' ')
 }
@@ -276,8 +283,9 @@ export function batchStopConfirmationMessage({ mode, processCount = 0, cronCount
  * @returns {string}
  */
 export function archiveStopLabel(prefix, providerLabel, shellCount) {
-    const shells = shellCount > 0 ? ` and kill ${pluralize(shellCount, 'background shell')}` : ''
-    return `${prefix} (it will stop the ${providerLabel} process${shells})`
+    return shellCount > 0
+        ? i18n.global.t('session.background.archiveKill', { action: prefix, provider: providerLabel, count: shellCount }, shellCount)
+        : i18n.global.t('session.background.archiveStop', { action: prefix, provider: providerLabel })
 }
 
 /**
@@ -292,11 +300,6 @@ export function archiveStopLabel(prefix, providerLabel, shellCount) {
  * @returns {string}
  */
 export function startupSettingsDeferredText({ label, shellCount, hasMessageText, working = false }) {
-    const shells = pluralize(shellCount, 'background shell')
-    const verb = shellCount === 1 ? 'ends' : 'end'
-    const wait = working
-        ? `once ${label} finishes its current work and the ${shells} ${verb}`
-        : `once the ${shells} ${verb}`
-    const text = `The restart these settings need will happen ${wait}, or when you stop the ${label} process.`
-    return hasMessageText ? `${text} Your message will be sent now, before the restart.` : text
+    const key = `session.background.deferred${working ? 'Working' : ''}${hasMessageText ? 'Sending' : ''}`
+    return i18n.global.t(key, { label, count: shellCount }, shellCount)
 }

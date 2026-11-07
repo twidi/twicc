@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../i18n/uiMessages.js'
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -76,7 +77,7 @@ async function handleSubmit() {
             redirectAway()
             return
         }
-        error.value = result.error
+        error.value = result.errorMessage || result.error
         password.value = ''
     } finally {
         loading.value = false
@@ -121,7 +122,7 @@ async function handleSubmit() {
 
                 <wa-callout v-if="error" variant="danger" size="small" class="login-error">
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                    {{ error === 'Invalid password' ? $t('auth.login.errors.invalidPassword') : error === 'Network error' ? $t('auth.login.errors.network') : error }}
+                    {{ resolveUiMessage(error) }}
                 </wa-callout>
 
                 <wa-button

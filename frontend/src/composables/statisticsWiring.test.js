@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createAppI18n } from '../i18n/index.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRenderer, ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
@@ -44,7 +45,7 @@ test('mounted real graph script refreshes on activity events and removes its lis
         return new Promise(resolve => gates.push(resolve))
     }
     const names = ['ref', 'computed', 'watch', 'onMounted', 'onUnmounted', 'createStatisticsRefresh',
-        'apiFetch', 'ALL_PROJECTS_ID', 'useSettingsStore', 'useStartupPolling', 'getProviderOptions', 'defineProps', 'window']
+        'apiFetch', 'ALL_PROJECTS_ID', 'useSettingsStore', 'useStartupPolling', 'getProviderOptions', 'defineProps', 'window', 'useI18n']
     const setup = new Function(...names, `${script}\nreturn {dailyActivity, activityTotals}`)
     let exposed
     const renderer = createRenderer({
@@ -52,7 +53,7 @@ test('mounted real graph script refreshes on activity events and removes its lis
     })
     const app = renderer.createApp({ setup() {
         exposed = setup(ref, computed, watch, onMounted, onUnmounted, createStatisticsRefresh, apiFetch,
-            '_all', () => ({ areCostsShown: true }), () => {}, () => [], () => ({ projectId: 'p' }), window)
+            '_all', () => ({ areCostsShown: true }), () => {}, () => [], () => ({ projectId: 'p' }), window, () => createAppI18n().global)
         return () => null
     } })
     app.mount({})

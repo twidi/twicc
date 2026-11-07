@@ -160,7 +160,7 @@ test('selection generation action stays visible but disables with a reason when 
     const widget = Vue.ref(0) // The owner mounts a new widget for each selection.
     const { renderer, root } = makeRenderer(140, node => { node.focus = () => {} }); const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, key: widget.value }) })
     app.mount(root); t.after(() => { app.unmount(); restoreBrowser() })
-    const action = () => descendants(root, n => n.type === 'wa-button' && ['Summarize selection', 'Retry summary availability'].includes(n.props['aria-label']))[0]
+    const action = () => descendants(root, n => n.type === 'wa-button' && ['Summarize selection', 'Retry availability check'].includes(n.props['aria-label']))[0]
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /No summary engine/)
     action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, [])
     props.readOrigin = null; await flush(); settings.summaryModel = 'openrouter'; await flush()
@@ -171,7 +171,7 @@ test('selection generation action stays visible but disables with a reason when 
     assert.equal(action().props.disabled, true); assert.match(action().props.title, /source.*OpenRouter|OpenRouter.*source/)
     action().props.onClick({ stopPropagation() {} }); assert.deepEqual(calls, [CAPTURED])
     props.selectedText = NETWORK; await flush()
-    assert.equal(action().props['aria-label'], 'Retry summary availability')
+    assert.equal(action().props['aria-label'], 'Retry availability check')
     assert.equal(action().props.disabled, false); assert.match(action().props.title, /Network unavailable/)
     action().props.onClick({ stopPropagation() {} }); await flush()
     assert.equal(networkAttempts, 2); assert.deepEqual(calls, [CAPTURED])

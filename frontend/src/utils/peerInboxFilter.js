@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 const MESSAGE_HISTORY_LIMIT = 200
 const MESSAGE_PEER_STATES = new Set(['active', 'broken', 'revoked'])
 
@@ -22,7 +24,7 @@ export function peerInboxView(messages, filtersActive) {
         history,
         emptyMessage: received.length || history.length
             ? null
-            : filtersActive ? 'No messages match your filters.' : 'No peer messages yet.',
+            : filtersActive ? i18n.global.t('workspace.peers.inbox.noMatches') : i18n.global.t('workspace.peers.inbox.empty'),
     }
 }
 

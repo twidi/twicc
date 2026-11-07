@@ -7,7 +7,7 @@ import { showHelp } from './showHelp'
 
 const props = defineProps({
     helpKey: { type: String, required: true },
-    label: { type: String, default: 'Learn more' },
+    label: { type: String, default: null },
 })
 
 function onActivate() {
@@ -19,8 +19,8 @@ function onActivate() {
     <button
         type="button"
         class="help-icon-button"
-        :title="label"
-        :aria-label="label"
+        :title="label || $t('help.controls.learnMore')"
+        :aria-label="label || $t('help.controls.learnMore')"
         @click="onActivate"
     >
         <wa-icon name="circle-question"></wa-icon>

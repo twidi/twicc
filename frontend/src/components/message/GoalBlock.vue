@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Footer bar surfacing the session's current goal (the last entry of the
 // ``Session.goals`` lifecycle history — see the backend ``providers/goals.py``
 // docstring for the shape). Sits at the very top of the session-footer stack,
@@ -114,7 +116,7 @@ defineExpose({ open, collapse, requestFocus })
 // Normalised display state: a manual /goal clear wins (the reducer only sets
 // `cleared` on a goal that never completed), then completion, else active.
 function entryStatusLabel(entry) {
-    return entry?.cleared ? 'Stopped' : entry?.state === 'completed' ? 'Completed' : 'Active'
+    return entry?.cleared ? t('session.goal.stopped') : entry?.state === 'completed' ? t('session.goal.completed') : t('session.goal.active')
 }
 function entryStatusVariant(entry) {
     return entry?.cleared ? 'neutral' : entry?.state === 'completed' ? 'success' : 'brand'
@@ -146,7 +148,9 @@ const statusVariant = computed(() => entryStatusVariant(goal.value))
 const TRIVIAL_RAW_STATES = new Set(['met', 'unmet', 'active', 'complete'])
 const rawStateNuance = computed(() => {
     const raw = goal.value?.raw_state
-    return raw && !TRIVIAL_RAW_STATES.has(raw) ? raw.replaceAll('_', ' ') : null
+    if (!raw || TRIVIAL_RAW_STATES.has(raw)) return null
+    const keys = { paused: 'paused', blocked: 'blocked', usage_limited: 'usageLimited', budget_limited: 'budgetLimited' }
+    return keys[raw] ? t(`session.goal.states.${keys[raw]}`) : raw.replaceAll('_', ' ')
 })
 
 const currentObjective = computed(() => lastObjectiveOf(goal.value))
@@ -156,7 +160,7 @@ const earlierObjectives = computed(() => earlierObjectivesOf(goal.value))
 // current statement, so the bar always names what it is at a glance.
 const barLabel = computed(() => {
     const line = firstLineOf(currentObjective.value)
-    return line ? `Goal: ${line}` : 'Goal'
+    return line ? t('session.goal.barTitle', { objective: line }) : t('session.goal.title')
 })
 
 // ── Dates (open header) ──────────────────────────────────────────────────────
@@ -165,8 +169,8 @@ const createdAtMs = computed(() => (goal.value?.created_at ? Date.parse(goal.val
 const updatedAgo = computed(() => (updatedAtMs.value ? formatRelative(updatedAtMs.value) : null))
 const datesTooltip = computed(() => {
     const parts = []
-    if (createdAtMs.value) parts.push(`Set ${formatFullDateTime(createdAtMs.value)}`)
-    if (updatedAtMs.value) parts.push(`Updated ${formatFullDateTime(updatedAtMs.value)}`)
+    if (createdAtMs.value) parts.push(t('session.goal.setDate', { date: formatFullDateTime(createdAtMs.value) }))
+    if (updatedAtMs.value) parts.push(t('session.goal.updatedDate', { date: formatFullDateTime(updatedAtMs.value) }))
     return parts.join(' — ')
 })
 
@@ -179,7 +183,7 @@ async function dismiss() {
     try {
         await store.dismissSessionGoal(props.projectId, props.sessionId, createdAt)
     } catch (error) {
-        toast.error(error.message || 'Failed to dismiss the goal')
+        toast.error(error.message || t('session.goal.dismissError'))
     }
 }
 
@@ -208,7 +212,7 @@ function sendGoalCommand(text) {
         request_id: requestId,
     }
     if (!sendWsMessage(payload)) {
-        toast.error('Not connected — please retry in a moment')
+        toast.error(t('session.goal.notConnected'))
         return false
     }
     // Optimistic user bubble + failure tracking, like any composer send.
@@ -273,7 +277,7 @@ const datesId = useId()
             icon="bullseye"
             :label="barLabel"
             :variant="statusVariant"
-            expand-tooltip="Show the goal"
+            :expand-tooltip="$t('session.goal.show')"
             @expand="emit('request-open')"
         >
             <template #trailing>
@@ -398,7 +402,7 @@ const datesId = useId()
                     size="small"
                     rows="1"
                     resize="auto"
-                    :placeholder="isClosed ? 'Set a new goal…' : 'Update the goal…'"
+                    :placeholder="isClosed ? $t('session.goal.setPlaceholder') : $t('session.goal.updatePlaceholder')"
                     :value.prop="updateText"
                     @input="updateText = $event.target.value"
                     @keydown="onUpdateKeydown"

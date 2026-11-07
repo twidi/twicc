@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { useI18n } from 'vue-i18n'
 import { createAppI18n } from '../../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
@@ -14,7 +15,7 @@ const script = compiled.replace(/import \{([^}]+)\} from ['"]vue['"]/g,
     (_, names) => `const {${names.replace(/ as /g, ': ')}} = Vue`)
     .replace(/^import .*$/gm, '')
     .replace('export default', 'return')
-const Tools = new Function('Vue', 'useResizeObserver', 'AppTooltip', script)(Vue,
+const Tools = new Function('Vue', 'useI18n', 'useResizeObserver', 'AppTooltip', script)(Vue, useI18n,
     (target, callback) => { resize = callback }, { props: ['placement', 'for'], render() { return Vue.h('tooltip', { placement: this.placement }, this.$slots.default?.()) } })
 
 function fixture(t, overrides = {}, rootGeometry = {}) {

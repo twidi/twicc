@@ -28,6 +28,8 @@ defineProps({
         type: String,
         default: null,
     },
+    // Complete localized threshold label for the wide view and accessibility.
+    fullLabel: { type: String, default: null },
     // Optional native tooltip (e.g. the exact cutoff datetime).
     title: {
         type: String,
@@ -40,11 +42,17 @@ defineProps({
     <div
         class="sidebar-list-separator"
         role="separator"
-        :aria-label="prefix ? `${prefix}${label}` : label"
+        :aria-label="fullLabel || (prefix ? `${prefix}${label}` : label)"
         :title="title"
     >
         <span class="sls-line"></span>
-        <span class="sls-label"><span v-if="prefix" class="sls-prefix">{{ prefix }}</span>{{ label }}<span v-if="prefix" class="sls-suffix"> +</span></span>
+        <span class="sls-label">
+            <template v-if="fullLabel || prefix">
+                <span class="sls-full">{{ fullLabel || `${prefix}${label}` }}</span>
+                <span class="sls-compact">{{ $t('navigation.sidebar.thresholdCompact', { duration: label }) }}</span>
+            </template>
+            <template v-else>{{ label }}</template>
+        </span>
         <span class="sls-line"></span>
     </div>
 </template>
@@ -82,11 +90,11 @@ defineProps({
 /* Threshold labels (with a prefix): default to the compact "<label> +" form,
    expand to "<prefix><label>" once the sidebar (nearest size container) is wide
    enough. Anonymous query so it works under both the session and artifact lists. */
-.sls-prefix { display: none; }
-.sls-suffix { display: inline; }
+.sls-full { display: none; }
+.sls-compact { display: inline; }
 
 @container (min-width: 12rem) {
-    .sls-prefix { display: inline; }
-    .sls-suffix { display: none; }
+    .sls-full { display: inline; }
+    .sls-compact { display: none; }
 }
 </style>

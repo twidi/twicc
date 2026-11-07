@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Orchestration tab content. Two trees, one switch (shown only when both exist):
 //
 //   - "sessions": the sessions spawned BY this session (the topology re-rooted on it), with a
@@ -56,10 +58,10 @@ const hasAgents = visibleComputed(() => store.hasSubagents(props.sessionId), fal
 // The tab label's indicators, repeated on the view switch's inactive segment.
 const orchestrationActivity = visibleComputed(() => store.getOrchestrationActivity(props.sessionId), null)
 const canSwitchView = visibleComputed(() => props.hasSpawnTree && hasAgents.value, false)
-const VIEW_OPTIONS = [
-    { value: 'sessions', label: 'Sessions', icon: 'diagram-project' },
-    { value: 'agents', label: 'Subagents', icon: 'robot' },
-]
+const VIEW_OPTIONS = computed(() => [
+    { value: 'sessions', label: t('common.entities.sessions'), icon: 'diagram-project' },
+    { value: 'agents', label: t('session.orchestration.subagents'), icon: 'robot' },
+])
 // User choice, only honoured when both views exist; otherwise the available one wins.
 const selectedView = ref('sessions')
 const view = visibleComputed(() => {
@@ -283,7 +285,7 @@ async function load({ silent = false } = {}) {
         if (controller.signal.aborted || inFlightController !== controller || !sessionsActive.value || e.name === 'AbortError') return // superseded by a newer load
         console.error('Failed to load orchestration topology:', e)
         if (!silent || !topology.value) {
-            error.value = 'Failed to load the orchestration topology.'
+            error.value = 'session.orchestration.loadError'
         }
     } finally {
         // A superseded (aborted) read leaves the flag to the newer one, which owns the controller now.
@@ -544,7 +546,7 @@ onUnmounted(() => {
                         <!-- A failed read never replaces a tree already shown: the banner sits above it. -->
                         <wa-callout v-if="error" variant="danger" size="small">
                             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                            {{ error }}
+                            {{ $t(error) }}
                         </wa-callout>
                         <template v-if="subtree">
                             <div v-if="parentNode" class="orch-parent">

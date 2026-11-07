@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // The broker consent prompt (design §9). Dumb + controlled: it shows whenever
 // `prompt` is set and emits the user's choice. The parent owns the pending
 // fetch's promise and settles it (idempotently) on `decision`.
@@ -58,9 +60,9 @@ async function onDialogAfterHide() {
 const isDataWrite = computed(() => props.prompt?.type === 'data-write')
 
 const KIND_LABEL = {
-    public: 'a public site',
-    loopback: "this server's own machine (localhost)",
-    lan: "this server's local network",
+    public: 'artifacts.broker.kind.public',
+    loopback: 'artifacts.broker.kind.loopback',
+    lan: 'artifacts.broker.kind.lan',
 }
 
 // The bare hostname (no scheme/port) from the normalized key — to tell a *name*
@@ -98,12 +100,9 @@ const calloutIcon = computed(() => (isMasquerade.value ? 'triangle-exclamation' 
 const calloutText = computed(() => {
     const p = props.prompt
     if (!p || p.kind === 'public') return ''
-    const subject = isDomainName(hostname.value) ? `${hostname.value} resolves to` : 'This is'
-    const target =
-        p.kind === 'loopback'
-            ? 'the machine TwiCC runs on (localhost)'
-            : 'an address on the local network of the machine TwiCC runs on'
-    return `${subject} ${target} — TwiCC's server makes the request from there, not your browser.`
+    const kind = p.kind === 'loopback' ? 'loopback' : 'lan'
+    const subject = isDomainName(hostname.value) ? 'domain' : 'address'
+    return t(`artifacts.broker.warning.${kind}.${subject}`, { hostname: hostname.value })
 })
 </script>
 
@@ -114,7 +113,7 @@ const calloutText = computed(() => {
     <wa-dialog
         ref="dialogRef"
         :open="dialogOpen"
-        :label="isDataWrite ? 'Store data' : 'Network request'"
+        :label="isDataWrite ? $t('artifacts.broker.storeTitle') : $t('artifacts.broker.networkTitle')"
         @wa-hide.self="onDialogHide"
         @wa-after-hide.self="onDialogAfterHide"
     >
@@ -129,7 +128,7 @@ const calloutText = computed(() => {
             <p class="broker-prompt-target">
                 <i18n-t keypath="artifacts.broker.resolvesTo" scope="global">
                     <template #ip><code>{{ prompt.ip }}</code></template>
-                    <template #kind>{{ KIND_LABEL[prompt.kind] || prompt.kind }}</template>
+                    <template #kind>{{ KIND_LABEL[prompt.kind] ? $t(KIND_LABEL[prompt.kind]) : prompt.kind }}</template>
                 </i18n-t>
             </p>
             <wa-callout v-if="prompt.kind !== 'public'" :variant="calloutVariant">

@@ -1,3 +1,5 @@
+import { localUiError } from '../../i18n/uiMessages.js'
+
 // Complete snapshots for one loaded chat. The Timeline page keeps its progressive feed.
 import { compareNewestFirst, cursorOf } from '../timeline/eventTime.js'
 
@@ -76,13 +78,13 @@ export function createSessionEventHistory({ sessionId, fetchPage, state = create
             merge(target, response)
             while (response.has_more) {
                 const tail = response.events.at(-1)
-                if (!tail) throw new Error('Session event pagination made no progress')
+                if (!tail) throw localUiError('session.events.errors.pagination')
                 const before = cursorOf(tail)
                 response = await request(before, null)
                 if (!response) return
                 const next = response.events.at(-1)
                 if (response.has_more && (!next || cursorOf(next) === before || compareNewestFirst(next, tail) <= 0)) {
-                    throw new Error('Session event pagination made no progress')
+                    throw localUiError('session.events.errors.pagination')
                 }
                 merge(target, response)
             }

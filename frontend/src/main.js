@@ -201,22 +201,22 @@ async function initializeApp() {
     // enable access by setting a password.
     if (authStore.accessDenied) {
         const cmd = authStore.setPasswordCommand || 'twicc password set'
-        const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
-            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-        ))
         document.getElementById('app').innerHTML = `
             <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
                 <div style="max-width:520px;padding:2rem;border-radius:12px;background:#422006;border:1px solid #854d0e;color:#fcd34d">
-                    <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fde68a">Access blocked</h2>
-                    <p style="margin:0 0 1rem;line-height:1.5">
-                        For your security, TwiCC refuses remote access while it isn't
-                        protected by a password. Set one on the machine running TwiCC,
-                        restart it, then reload this page:
-                    </p>
-                    <pre id="twicc-blocked-cmd" title="Click to copy" style="margin:0;padding:.75rem 1rem;border-radius:8px;background:#1c1207;color:#fde68a;overflow:auto;text-wrap:wrap;font-size:.9rem;cursor:pointer"><code>${esc(cmd)}</code></pre>
-                    <p id="twicc-blocked-hint" style="margin:.5rem 0 0;font-size:.8rem;opacity:.7">Click the command to copy</p>
+                    <h2 id="twicc-blocked-title" style="margin:0 0 .75rem;font-size:1.25rem;color:#fde68a"></h2>
+                    <p id="twicc-blocked-description" style="margin:0 0 1rem;line-height:1.5"></p>
+                    <pre id="twicc-blocked-cmd" style="margin:0;padding:.75rem 1rem;border-radius:8px;background:#1c1207;color:#fde68a;overflow:auto;text-wrap:wrap;font-size:.9rem;cursor:pointer"><code></code></pre>
+                    <p id="twicc-blocked-hint" style="margin:.5rem 0 0;font-size:.8rem;opacity:.7"></p>
                 </div>
             </div>`
+        // Translate into text nodes: commands and catalog messages never become HTML.
+        document.getElementById('twicc-blocked-title').textContent = i18n.global.t('startup.accessBlocked.title')
+        document.getElementById('twicc-blocked-description').textContent = i18n.global.t('startup.accessBlocked.description')
+        const commandElement = document.getElementById('twicc-blocked-cmd')
+        commandElement.title = i18n.global.t('startup.accessBlocked.commandTooltip')
+        commandElement.querySelector('code').textContent = cmd
+        document.getElementById('twicc-blocked-hint').textContent = i18n.global.t('startup.accessBlocked.copyHint')
         const copyCmd = async () => {
             let ok = false
             try {
@@ -240,8 +240,8 @@ async function initializeApp() {
             }
             const hint = document.getElementById('twicc-blocked-hint')
             if (hint) {
-                hint.textContent = ok ? 'Copied!' : 'Press Ctrl/Cmd+C to copy'
-                if (ok) setTimeout(() => { hint.textContent = 'Click the command to copy' }, 1500)
+                hint.textContent = i18n.global.t(ok ? 'startup.accessBlocked.copied' : 'startup.accessBlocked.manualCopy')
+                if (ok) setTimeout(() => { hint.textContent = i18n.global.t('startup.accessBlocked.copyHint') }, 1500)
             }
         }
         document.getElementById('twicc-blocked-cmd')?.addEventListener('click', copyCmd)
@@ -299,13 +299,12 @@ async function initializeApp() {
             document.getElementById('app').innerHTML = `
                 <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;font-family:system-ui,sans-serif">
                     <div style="max-width:480px;padding:2rem;border-radius:12px;background:#451a1a;border:1px solid #7f1d1d;color:#fca5a5">
-                        <h2 style="margin:0 0 .75rem;font-size:1.25rem;color:#fecaca">Backend unreachable</h2>
-                        <p style="margin:0;line-height:1.5">
-                            TwiCC could not connect to the backend server.
-                            Try restarting the backend and refreshing this page.
-                        </p>
+                        <h2 id="twicc-bootstrap-title" style="margin:0 0 .75rem;font-size:1.25rem;color:#fecaca"></h2>
+                        <p id="twicc-bootstrap-description" style="margin:0;line-height:1.5"></p>
                     </div>
                 </div>`
+            document.getElementById('twicc-bootstrap-title').textContent = i18n.global.t('startup.backendUnavailable.title')
+            document.getElementById('twicc-bootstrap-description').textContent = i18n.global.t('startup.backendUnavailable.description')
             throw new Error('Backend unreachable — cannot fetch bootstrap data')
         }
 

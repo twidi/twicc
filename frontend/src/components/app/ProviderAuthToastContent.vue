@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 /**
  * ProviderAuthToastContent — rich content for the persistent
  * "<provider> CLI not authenticated" toast.
@@ -64,7 +68,7 @@ const canDisable = computed(() => canDisableProvider(props.provider))
 
 function disableProvider() {
     setProviderEnabled(props.provider, false)
-    toast.success(`${getProviderLabel(props.provider)} provider disabled`, { duration: 2000 })
+    toast.success(t('providers.auth.disabledToast', { provider: getProviderLabel(props.provider) }), { duration: 2000 })
     // This toast disappears on its own: the provider leaves
     // ``enabledProviders``, which flips the ``shouldShow`` watcher in
     // App.vue and pushes the toast out.
@@ -72,7 +76,7 @@ function disableProvider() {
 
 function copyLoginCommand() {
     navigator.clipboard.writeText(props.loginCommand)
-    toast.success('Command copied to clipboard', { duration: 2000 })
+    toast.success(t('providers.auth.commandCopied'), { duration: 2000 })
 }
 </script>
 

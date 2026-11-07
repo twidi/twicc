@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { localizedContentManifest } from './contentMetadata.js'
 import { isTipAvailable } from './tipsConstraints'
 
 // Sibling of the tips store (stores/tips.js). Help pages are surfaced as a
@@ -10,7 +11,8 @@ import { isTipAvailable } from './tipsConstraints'
 export const useHelpStore = defineStore('help', () => {
     // Read-only manifest pushed by the backend at boot / WS connect.
     // Shape: { <key>: { title, platform, os, providers_any, providers_all } }
-    const manifest = ref({})
+    const rawManifest = ref({})
+    const manifest = computed(() => localizedContentManifest('help', rawManifest.value))
 
     // Synced seen state: { <key>: ISO timestamp }
     const seenHelp = ref({})
@@ -25,7 +27,7 @@ export const useHelpStore = defineStore('help', () => {
     const currentHelpShowSwitch = ref(true)
 
     function applyManifest(remote) {
-        manifest.value = remote || {}
+        rawManifest.value = remote || {}
     }
 
     function applySeenHelp(remote) {

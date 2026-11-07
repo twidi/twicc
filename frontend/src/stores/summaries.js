@@ -1,3 +1,4 @@
+import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 
@@ -22,21 +23,28 @@ function variantKey(descriptor) {
 }
 function entryFor(source) {
     return reactive({ source: { ...source }, descriptor: null, state: 'running', text: '', revision: 0,
-        error: null, engine: null, fallback_reason: null, first_text_ms: null, total_ms: null,
+        errorMessage: null,
+        get error() { return resolveUiMessage(this.errorMessage) },
+        set error(message) { this.errorMessage = message },
+        engine: null, fallback_reason: null, first_text_ms: null, total_ms: null,
         saved_id: null, result_hash: null, previousPolicy: false })
 }
 async function checked(response) {
     if (response.ok) return response
     let error
     try { error = (await response.json()).error } catch { /* Use the HTTP status below. */ }
-    throw new Error(error || `Summary request failed (${response.status})`)
+    throw error ? new Error(error) : localUiError('session.summary.httpFailed', { status: response.status })
 }
 const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-const cancelled = () => new Error('The summary request was cancelled')
+const cancelled = () => localUiError('session.summary.cancelled')
 
 export const useSummariesStore = defineStore('summaries', {
     // Every summary text lives here: `entries` for generations, `savedSummaries` for read rows, by row id.
-    state: () => ({ descriptors: {}, lookupErrors: {}, lookupVersions: {}, entries: {}, savedSummaries: {}, temporary: null }),
+    state: () => ({ descriptors: {}, lookupErrorMessages: {}, lookupVersions: {}, entries: {}, savedSummaries: {}, temporary: null }),
+    getters: {
+        lookupErrors: state => Object.fromEntries(Object.entries(state.lookupErrorMessages)
+            .map(([key, message]) => [key, resolveUiMessage(message)])),
+    },
     actions: {
         async _fetch(url, options) {
             const { apiFetch } = await import('../utils/api.js')
@@ -77,7 +85,7 @@ export const useSummariesStore = defineStore('summaries', {
         async _resolveTemporary(sources, signal) {
             const response = await checked(await this._fetch('/api/summaries/resolve/', { ...post({ sources }), signal }))
             const results = (await response.json()).sources
-            if (!Array.isArray(results) || results.length !== sources.length) throw new Error('Invalid summary lookup response')
+            if (!Array.isArray(results) || results.length !== sources.length) throw localUiError('session.summary.lookupInvalid')
             return results
         },
         async _flushLookups() {
@@ -90,14 +98,15 @@ export const useSummariesStore = defineStore('summaries', {
                 try {
                     const response = await checked(await this._fetch('/api/summaries/resolve/', post({ sources: chunk.map(item => item.source) })))
                     results = (await response.json()).sources
-                    if (!Array.isArray(results) || results.length !== chunk.length) throw new Error('Invalid summary lookup response')
-                } catch (error) { results = chunk.map(() => ({ error: error.message || 'The summary lookup failed' })) }
+                    if (!Array.isArray(results) || results.length !== chunk.length) throw localUiError('session.summary.lookupInvalid')
+                } catch (error) { results = chunk.map(() => ({ errorMessage: error.uiMessage || error.message || localUiMessage('session.summary.lookupFailed'),
+                    get error() { return resolveUiMessage(this.errorMessage) } })) }
                 chunk.forEach((item, index) => {
                     const current = (this.lookupVersions[item.key] || 0) === item.version
                     const result = current ? results[index] : null
                     if (current) {
                         this.descriptors[item.key] = result?.error ? null : result
-                        this.lookupErrors[item.key] = result?.error || null
+                        this.lookupErrorMessages[item.key] = result?.errorMessage || result?.error || null
                     }
                     if (rt.lookups.get(item.key) === item.promise) rt.lookups.delete(item.key)
                     item.finish(result)
@@ -129,8 +138,11 @@ export const useSummariesStore = defineStore('summaries', {
                     let descriptor = null
                     if (!temporary) {
                         ;[descriptor] = await this.resolve([source])
-                        if (!descriptor) throw new Error('The message changed. Try again.')
-                        if (descriptor.error) throw new Error(descriptor.error)
+                        if (!descriptor) throw localUiError('session.summary.changedTryAgain')
+                        if (descriptor.error) {
+                            if (descriptor.errorMessage?.type === 'local-ui-message') throw localUiError(descriptor.errorMessage.key, descriptor.errorMessage.params, descriptor.errorMessage.count)
+                            throw new Error(descriptor.error)
+                        }
                     }
                     if (!owner.active) throw cancelled()
                     const key = temporary ? `temporary:${++rt.sequence}` : variantKey(descriptor)
@@ -153,7 +165,7 @@ export const useSummariesStore = defineStore('summaries', {
                 } catch (error) {
                     if (owner.active) {
                         subscription.entry.state = 'failed'
-                        subscription.entry.error = error.message || 'The summary request failed'
+                        subscription.entry.error = error.uiMessage || error.message || localUiMessage('session.summary.requestFailed')
                     }
                     rejectReady(error)
                     if (!owner.attached) this._releaseOwner(owner)
@@ -200,7 +212,7 @@ export const useSummariesStore = defineStore('summaries', {
                 this._read(controller).catch(() => {})
             } catch (error) {
                 if (!controller.stopped) {
-                    controller.entry.state = 'failed'; controller.entry.error = error.message || 'The summary request failed'
+                    controller.entry.state = 'failed'; controller.entry.error = error.uiMessage || error.message || localUiMessage('session.summary.requestFailed')
                     this._finishDetached(controller)
                 }
                 throw error
@@ -218,7 +230,7 @@ export const useSummariesStore = defineStore('summaries', {
                 const consume = line => {
                     if (!line.trim() || controller.stopped) return
                     const snapshot = JSON.parse(line)
-                    if (!['running', 'complete', 'failed', 'cancelled'].includes(snapshot.state)) throw new Error('Invalid summary stream')
+                    if (!['running', 'complete', 'failed', 'cancelled'].includes(snapshot.state)) throw localUiError('session.summary.streamInvalid')
                     if (snapshot.revision < entry.revision) return
                     // Every record is a complete snapshot, including fallback replacements and exact body hashes.
                     for (const field of ['revision', 'state', 'text', 'engine', 'fallback_reason', 'first_text_ms', 'total_ms', 'error', 'saved_id', 'result_hash']) entry[field] = snapshot[field] ?? (field === 'text' ? '' : null)
@@ -231,11 +243,11 @@ export const useSummariesStore = defineStore('summaries', {
                     while ((newline = pending.indexOf('\n')) !== -1) { consume(pending.slice(0, newline)); pending = pending.slice(newline + 1) }
                     if (done) { if (pending) consume(pending); break }
                 }
-                if (!controller.stopped && !terminal) throw new Error('The summary stream stopped before the end')
+                if (!controller.stopped && !terminal) throw localUiError('session.summary.streamStopped')
                 this._finishDetached(controller)
             } catch (error) {
                 if (!controller.stopped) {
-                    controller.entry.state = 'failed'; controller.entry.error = error.message || 'The summary stream failed'
+                    controller.entry.state = 'failed'; controller.entry.error = error.uiMessage || error.message || localUiMessage('session.summary.streamFailed')
                     this._finishDetached(controller)
                     // A broken network stream cannot retain a public backend handle.
                     await this._deleteHandle(controller.id)
@@ -309,7 +321,7 @@ export const useSummariesStore = defineStore('summaries', {
         forget(source) { this._drop(summarySourceKey(source)) },
         _drop(key) {
             const rt = runtime(this)
-            this.descriptors[key] = null; this.lookupErrors[key] = null
+            this.descriptors[key] = null; this.lookupErrorMessages[key] = null
             rt.lookups.delete(key)
             const queued = rt.queued.get(key)
             if (queued) { rt.queued.delete(key); queued.finish(null) }
@@ -338,7 +350,9 @@ export const useSummariesStore = defineStore('summaries', {
         cancelTemporary() {
             if (!this.temporary) return
             // Release the transport, but keep this panel's captured source and visible partial text.
-            const entry = { ...this.temporary.entry, source: { ...this.temporary.entry.source } }
+            const entry = { ...this.temporary.entry, source: { ...this.temporary.entry.source },
+                get error() { return resolveUiMessage(this.errorMessage) },
+                set error(message) { this.errorMessage = message } }
             const rt = runtime(this)
             rt.temporary?.release(); rt.temporary = null
             if (entry.state === 'running') entry.state = 'cancelled'

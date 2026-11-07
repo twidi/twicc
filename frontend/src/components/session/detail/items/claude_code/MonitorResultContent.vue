@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed } from 'vue'
 import MarkdownContent from '../../../../ui/MarkdownContent.vue'
 
@@ -18,7 +20,7 @@ const markdownSource = computed(() => {
         return '```\n' + props.aggregatedOutput + '\n```'
     }
     if (!props.isTerminated) {
-        return '```\nWaiting for monitor events…\n```'
+        return '```\n' + t('session.tools.monitor.waiting') + '\n```'
     }
     return null
 })

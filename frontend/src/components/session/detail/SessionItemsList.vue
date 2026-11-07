@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n } = useI18n()
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
 import { MARKDOWN_RENDER_VIEW_CONTEXT, STREAMING_VIEW_CONTEXT } from '../../../composables/streamPublicationKeys.js'
 import { createMessageSummaryVisit, MESSAGE_SUMMARY_VISIT } from '../../../composables/useMessageSummary.js'
@@ -216,11 +218,11 @@ watch(isEphemeral, (active) => { if (active) showSessionSearch.value = false })
 const ephemeralNotice = computed(() => {
     const result = session.value?.ephemeralResult
     switch (session.value?.ephemeralPhase) {
-        case 'done': return { variant: 'success', text: 'Ephemeral session finished.' }
-        case 'error': return { variant: 'danger', text: `Ephemeral session failed. ${result?.error || ''}` }
-        case 'stopped': return { variant: 'neutral', text: 'Ephemeral session stopped.' }
-        case 'lost': return { variant: 'warning', text: 'This ephemeral run is no longer available. Its answer was not received.' }
-        default: return { variant: 'brand', text: `Ephemeral session running. TwiCC and ${providerLabel.value} do not save a local session transcript. This browser keeps your prompt and final answer until you discard them.` }
+        case 'done': return { variant: 'success', text: t('session.ephemeral.finished') }
+        case 'error': return { variant: 'danger', text: t('session.ephemeral.failed', { error: result?.error_key === 'session.ephemeral.startFailed' ? t(result.error_key) : (result?.error || '') }) }
+        case 'stopped': return { variant: 'neutral', text: t('session.ephemeral.stopped') }
+        case 'lost': return { variant: 'warning', text: t('session.ephemeral.lost') }
+        default: return { variant: 'brand', text: t('session.ephemeral.running', { provider: providerLabel.value }) }
     }
 })
 const project = computed(() => store.getProject(props.projectId))
@@ -1847,8 +1849,8 @@ async function processDroppedFile(file) {
     try {
         await store.addAttachment(props.sessionId, file)
     } catch (error) {
-        toast.error(error.message || 'Failed to process file', {
-            title: 'Cannot attach file'
+        toast.error(error.message || t('session.drop.processFailed'), {
+            title: t('session.drop.attachFailed')
         })
     }
 }
@@ -2359,8 +2361,8 @@ defineExpose({
         <wa-callout v-if="isEphemeral" :variant="ephemeralNotice.variant" class="ephemeral-notice">
             <wa-spinner v-if="session.ephemeralPhase === 'running'" slot="icon"></wa-spinner>
             <span>{{ ephemeralNotice.text }}</span>
-            <span v-if="settingsStore.areCostsShown && session.ephemeralResult?.cost_usd != null"> · ${{ Number(session.ephemeralResult.cost_usd).toFixed(4) }}</span>
-            <span v-if="session.ephemeralResult?.duration_ms != null">{{ $t('session.history.durationSeconds', { duration: (session.ephemeralResult.duration_ms / 1000).toFixed(1) }) }}</span>
+            <span v-if="settingsStore.areCostsShown && session.ephemeralResult?.cost_usd != null"> · {{ n(Number(session.ephemeralResult.cost_usd), { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 4 }) }}</span>
+            <span v-if="session.ephemeralResult?.duration_ms != null">{{ $t('session.history.durationSeconds', { duration: n(session.ephemeralResult.duration_ms / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) }}</span>
         </wa-callout>
 
         <!-- In-session search bar (Ctrl+F): it slides down from the top edge of this list, which

@@ -1,16 +1,20 @@
 <script setup>
+import { localUiMessage } from '../../i18n/uiMessages.js'
 import ReorderHandle from '../ui/ReorderHandle.vue'
 // Editable list of saved Browser-pane URL entries ({ url, label?, default? }),
 // shared by ProjectEditDialog and WorkspaceManageDialog. The component keeps
 // its own editable rows (seeded from the `entries` prop); the owner dialog
 // calls getEntries() at save time to obtain the validated canonical list (or
-// a user-facing error), and reset() when it (re)opens.
+// a local UI message descriptor), and reset() when it (re)opens.
 import { ref, useId, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { normalizeBrowserUrl } from '../../utils/browserUrl'
 
 const props = defineProps({
     entries: { type: Array, default: () => [] },
 })
+
+const { t } = useI18n()
 
 const radioName = `browser-url-default-${useId()}`
 const rows = ref([])
@@ -47,7 +51,8 @@ function setDefault(index) {
 
 /**
  * Validate + canonicalize the rows. Empty-URL rows are dropped. Returns
- * `{ entries }` on success or `{ error }` with a user-facing message.
+ * `{ entries }` on success or `{ error }` with a local UI message descriptor.
+ * The owner stores the descriptor and resolves it when rendering the error.
  */
 function getEntries() {
     const entries = []
@@ -56,8 +61,8 @@ function getEntries() {
         const raw = row.url.trim()
         if (!raw) continue
         const url = normalizeBrowserUrl(raw)
-        if (!url) return { error: `Browser URL must be a valid http(s) URL: "${raw}"` }
-        if (seen.has(url)) return { error: `Duplicate browser URL: ${url}` }
+        if (!url) return { error: localUiMessage('browser.savedUrls.errors.invalid', { url: raw }) }
+        if (seen.has(url)) return { error: localUiMessage('browser.savedUrls.errors.duplicate', { url }) }
         seen.add(url)
         const entry = { url }
         const label = row.label.trim()

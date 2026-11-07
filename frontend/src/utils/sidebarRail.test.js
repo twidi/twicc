@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { i18n } from '../i18n/index.js'
 import {
     CLOSE_SIDEBAR_LABEL,
+    CLOSE_SIDEBAR_LABEL_KEY,
     OPEN_SIDEBAR_LABEL,
+    OPEN_SIDEBAR_LABEL_KEY,
     RAIL_ITEM_DEFINITIONS,
     resolveRailItems,
 } from './sidebarRail.js'
@@ -166,4 +169,23 @@ test('shows the speech indicator first in the bottom group only while busy', () 
         assert.deepEqual(bottom, ['speech', 'new-session', 'palette', 'inbox', 'settings', 'toggle'])
         assert.equal(items.find(item => item.id === 'speech').label, label)
     }
+})
+
+
+test('labels resolve in the current locale while navigation identifiers and legacy constants stay stable', context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    const english = resolveRailItems(state)
+    i18n.global.locale.value = 'pt-BR'
+    const translated = resolveRailItems(state)
+    assert.deepEqual(translated.map(item => item.id), english.map(item => item.id))
+    assert.deepEqual(translated.map(item => item.icon), english.map(item => item.icon))
+    assert.equal(translated.find(item => item.id === 'sessions').label, i18n.global.t('sidebar.rail.sessions'))
+    assert.notEqual(translated.find(item => item.id === 'sessions').label, english.find(item => item.id === 'sessions').label)
+    assert.equal(translated.at(-1).label, i18n.global.t(CLOSE_SIDEBAR_LABEL_KEY))
+    assert.equal(resolveRailItems({ ...state, sidebarOpen: false }).at(-1).label, i18n.global.t(OPEN_SIDEBAR_LABEL_KEY))
+    const timeline = resolveRailItems({ ...state, listeningTimelineLabel: 'My workspace' }).find(item => item.id === 'timeline')
+    assert.equal(timeline.label, i18n.global.t('sidebar.rail.listeningTimeline', { label: 'My workspace' }))
+    assert.equal(OPEN_SIDEBAR_LABEL, 'Open sidebar (Alt+Shift+B)')
+    assert.equal(CLOSE_SIDEBAR_LABEL, 'Close sidebar (Alt+Shift+B)')
 })

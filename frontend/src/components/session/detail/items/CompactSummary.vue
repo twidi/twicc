@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * Shared "Session compacted" item, used by both Claude Code and Codex.
  *
@@ -41,7 +43,7 @@ const props = defineProps({
 })
 
 const hasContent = computed(() => typeof props.content === 'string' && props.content.trim().length > 0)
-const placeholder = computed(() => `Context summary not provided by ${getProviderLabel(props.provider)}`)
+const placeholder = computed(() => t('session.items.compactSummaryMissing', { provider: getProviderLabel(props.provider) }))
 
 const detailsRef = ref(null)
 

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 import { ref } from 'vue'
 import { readRecentShares, removeRecentShare } from '../share-recent/recordView'
 
@@ -6,7 +8,7 @@ const entries = ref(readRecentShares())
 
 function open(token) { window.location.assign(`/share/${token}/`) }
 function remove(token) { removeRecentShare(token); entries.value = readRecentShares() }
-function when(iso) { try { return new Date(iso).toLocaleString() } catch { return '' } }
+function when(iso) { try { return new Date(iso).toLocaleString(locale.value) } catch { return '' } }
 </script>
 
 <template>

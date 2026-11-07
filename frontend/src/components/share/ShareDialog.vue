@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ref, reactive, computed, watch, nextTick, useId, defineAsyncComponent } from 'vue'
 import { useSharesStore } from '../../stores/shares'
 import { useSettingsStore } from '../../stores/settings'
@@ -81,8 +84,8 @@ const promote = reactive({}) // host key -> checked
 const removePassword = ref(false)
 const clearPwId = `share-clear-pw-${useId()}`
 const passwordPlaceholder = computed(() => {
-    if (removePassword.value) return 'will be removed on save'
-    return props.edit?.has_password ? 'unchanged — type to replace' : 'no password'
+    if (removePassword.value) return t('sharing.edit.passwordRemovedPlaceholder')
+    return props.edit?.has_password ? t('sharing.edit.passwordUnchangedPlaceholder') : t('sharing.edit.noPasswordPlaceholder')
 })
 function onPasswordInput(e) {
     form.password = e.target.value
@@ -153,7 +156,7 @@ function buildOptions() {
 async function handleSave() {
     error.value = ''
     if (!sharingEnabled.value) {
-        error.value = 'Configure a share host in Settings → Sharing to create links.'
+        error.value = localUiMessage('sharing.edit.hostRequired')
         return
     }
     try {
@@ -168,7 +171,7 @@ async function handleSave() {
             // Editing is a plain "apply my changes" action, so close on save (the URL
             // is unchanged and already known). Creating instead keeps the dialog open
             // so the freshly-minted link can be copied from the footer.
-            toast.success('Share updated')
+            toast.success(t('sharing.edit.updated'))
             emit('close')
         } else {
             // Promote the checked session-only grants onto the bookmark's
@@ -182,7 +185,7 @@ async function handleSave() {
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({ url: key, kind: entry.kind }),
                 })
-                if (!res.ok) throw await res.json().catch(() => ({ error: `failed to allow ${key}` }))
+                if (!res.ok) throw await res.json().catch(() => ({ error: localUiMessage('sharing.edit.allowHostFailed', { host: key }) }))
             }
             const body = {
                 kind: props.kind, label: form.label.trim(),
@@ -195,11 +198,11 @@ async function handleSave() {
             createdUrl.value = shareAbsoluteUrl(share)
         }
     } catch (e) {
-        error.value = (e?.errors?.[0]?.message) || e?.reason || e?.error || 'Failed to save share'
+        error.value = (e?.errors?.[0]?.message) || e?.reason || e?.error || localUiMessage('sharing.edit.saveFailed')
     }
 }
 
-function copyUrl() { navigator.clipboard.writeText(linkUrl.value); toast.success('Share URL copied') }
+function copyUrl() { navigator.clipboard.writeText(linkUrl.value); toast.success(t('sharing.edit.urlCopied')) }
 
 function onAfterShow(e) {
     // Guard bubbling wa-after-show from a nested wa-select/wa-switch panel: re-running
@@ -218,11 +221,11 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" :open="open" :label="edit ? 'Edit share' : 'Create share'"
+    <wa-dialog ref="dialogRef" :open="open" :label="edit ? $t('sharing.edit.editTitle') : $t('sharing.edit.createTitle')"
                style="--width: min(560px, calc(100vw - 2rem))"
                @wa-after-show="onAfterShow" @wa-hide="onHide">
         <form :id="formId" @submit.prevent="handleSave">
-            <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
+            <wa-callout v-if="error" variant="danger">{{ resolveUiMessage(error) }}</wa-callout>
             <wa-callout v-for="failure in inlineDataErrors" :key="failure.artifact_id" variant="warning">
                 {{ $t('sharing.edit.dataExportFailed', { artifactId: failure.artifact_id }) }}
             </wa-callout>
@@ -243,7 +246,7 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
 
             <label>{{ $t('sharing.edit.viewerTitle') }}
                 <wa-input :value="form.display_title" @input="form.display_title = $event.target.value"
-                          :placeholder="defaultTitle || 'Default title'"
+                          :placeholder="defaultTitle || $t('sharing.edit.defaultTitle')"
                           :disabled="!form.show_title"></wa-input>
             </label>
             <wa-switch :checked="form.show_title"

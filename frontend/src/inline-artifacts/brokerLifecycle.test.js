@@ -84,6 +84,7 @@ async function promptFixture() {
     const code = compileScript(descriptor, { id: 'prompt', inlineTemplate: true,
         templateOptions: { compilerOptions: { isCustomElement: tag => tag.startsWith('wa-') } } }).content
         .replaceAll('from "vue"', `from '${vueUrl}'`).replaceAll("from 'vue'", `from '${vueUrl}'`)
+        .replace(/from (['"])vue-i18n\1/g, `from '${import.meta.resolve('vue-i18n')}'`)
     const { default: Prompt } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
     const nodes = []
     const node = type => {

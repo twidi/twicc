@@ -3,8 +3,11 @@
 // Supports prev/next navigation via arrow keys and buttons.
 // Items: `{ type: 'image', src, name?, link? }` (see composables/useMediaPreview.js).
 import { ref, computed, watch, onBeforeUnmount, useId } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AppTooltip from '../ui/AppTooltip.vue'
 import { usePanZoom } from '../../composables/usePanZoom'
+
+const { t } = useI18n()
 
 const props = defineProps({
     items: {
@@ -32,6 +35,12 @@ const currentItem = computed(() => {
     return props.items[currentIndex.value] || null
 })
 
+// User names stay literal. Generated fallback names follow the current locale.
+const currentItemName = computed(() => {
+    const item = currentItem.value
+    return item?.name || t(item?.nameKey || (item?.type === 'image' ? 'media.preview.image' : 'media.preview.title'))
+})
+
 // Navigation state
 const hasPrev = computed(() => currentIndex.value > 0)
 const hasNext = computed(() => currentIndex.value < props.items.length - 1)
@@ -40,12 +49,12 @@ const hasNavigation = computed(() => props.items.length > 1)
 // Dialog title (filename + position indicator)
 const dialogTitle = computed(() => {
     const item = currentItem.value
-    if (!item) return 'Preview'
+    if (!item) return t('media.preview.title')
 
-    const name = item.name || (item.type === 'image' ? 'Image' : 'Preview')
+    const name = currentItemName.value
 
     if (hasNavigation.value) {
-        return `${name} (${currentIndex.value + 1}/${props.items.length})`
+        return t('media.preview.position', { name, position: currentIndex.value + 1, total: props.items.length })
     }
     return name
 })
@@ -178,7 +187,7 @@ defineExpose({ open, close })
             >
                 <img
                     :src="currentItem.src"
-                    :alt="currentItem.name || 'Image'"
+                    :alt="currentItemName"
                     class="preview-image"
                 />
             </div>

@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import * as Vue from 'vue'
+import * as i18nModule from '../../src/i18n/index.js'
+import * as uiMessages from '../../src/i18n/uiMessages.js'
 import * as summaries from '../../src/stores/summaries.js'
 import * as speech from '../../src/stores/textToSpeech.js'
 import * as ttsConfig from '../../src/utils/ttsConfig.js'
@@ -8,7 +10,7 @@ import { PROVIDER } from '../../src/constants.js'
 // Keep the real view controller and stores; replace only browser-owned settings initialization.
 export function messageSummaryModule(settings = Vue.reactive({ summaryModel: 'auto', enabledProviders: [PROVIDER.CLAUDE_CODE] })) {
     const modules = {
-        vue: Vue, '../stores/summaries.js': summaries,
+        vue: Vue, '../i18n/index.js': i18nModule, '../i18n/uiMessages.js': uiMessages, '../stores/summaries.js': summaries,
         '../stores/settings.js': { useSettingsStore: () => settings },
         '../stores/textToSpeech.js': speech, '../utils/ttsConfig.js': ttsConfig,
         './useToast': { toast: { error() {} } },

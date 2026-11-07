@@ -13,7 +13,7 @@ defineProps({
     // Single-line label; truncated with an ellipsis when too long.
     label: { type: String, default: '' },
     // Tooltip on the expand (chevron) button.
-    expandTooltip: { type: String, default: 'Expand' },
+    expandTooltip: { type: String, default: '' },
     // Icon + label color family. The historical bars (pending request, message
     // input) are warning-tinted; the goal bar picks per goal state.
     variant: {
@@ -50,7 +50,7 @@ const restoreButtonId = useId()
         >
             <wa-icon name="chevron-up"></wa-icon>
         </wa-button>
-        <AppTooltip :for="restoreButtonId">{{ expandTooltip }}</AppTooltip>
+        <AppTooltip :for="restoreButtonId">{{ expandTooltip || $t('common.actions.expand') }}</AppTooltip>
     </div>
 </template>
 

@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ref, watch, computed } from 'vue'
 import { useDataStore } from '../../../stores/data'
 import { useSettingsStore } from '../../../stores/settings'
@@ -88,11 +91,11 @@ const alternativeTitleModels = computed(() =>
 // excluded on purpose: nothing to summarize is not a failure, and the section
 // stays hidden exactly as it did before.
 const suggestionErrorMessage = computed(() => {
-    if (suggestionSendFailed.value) return 'Could not reach the server.'
+    if (suggestionSendFailed.value) return t('session.rename.errors.serverUnavailable')
     const error = suggestionEntry.value?.error
-    if (error === 'no_provider_available') return 'No provider is available to generate a title.'
-    if (error === 'generation_failed') return 'Could not generate a title suggestion.'
-    if (error === 'session_unavailable') return "This session's history is not available: no title can be suggested from it."
+    if (error === 'no_provider_available') return t('session.rename.errors.noProvider')
+    if (error === 'generation_failed') return t('session.rename.errors.generationFailed')
+    if (error === 'session_unavailable') return t('session.rename.errors.historyUnavailable')
     return null
 })
 
@@ -297,12 +300,12 @@ async function handleSave() {
     const trimmedTitle = localTitle.value.trim()
 
     if (!trimmedTitle) {
-        errorMessage.value = 'Title cannot be empty'
+        errorMessage.value = localUiMessage('session.rename.errors.empty')
         return
     }
 
     if (trimmedTitle.length > 200) {
-        errorMessage.value = 'Title must be 200 characters or less'
+        errorMessage.value = localUiMessage('session.rename.errors.tooLong')
         return
     }
 
@@ -330,7 +333,7 @@ async function handleSave() {
         emit('saved')
         close()
     } catch (error) {
-        errorMessage.value = error.message || 'Failed to rename session'
+        errorMessage.value = error.message || localUiMessage('session.rename.errors.saveFailed')
     } finally {
         isSaving.value = false
     }
@@ -434,7 +437,7 @@ defineExpose({
 
             <!-- Error message -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

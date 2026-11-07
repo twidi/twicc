@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/describeEvent.js
 //
 // The view-model of one timeline event row: icon, severity, wording, tags, badge, author label, time and
@@ -10,7 +12,7 @@ import { describeAuthor } from './authorLabel.js'
 import { describeBackgroundWork } from './backgroundBadge.js'
 import { ESTIMATED_MARK, formatClock, formatFullTime, parseOccurredAt, splitFirstLine, truncateText } from './eventTime.js'
 import { formatFullDateTime } from '../date.js'
-import { arrowPart, textPart, valuePart } from './parts.js'
+import { arrowPart, messageParts, textPart, valuePart } from './parts.js'
 import { describeSettingsChange } from './settingsDiff.js'
 import { sessionMention } from './sessions.js'
 
@@ -22,51 +24,51 @@ const TOOL_MAX = 40
  * (null otherwise). The reason set is open (see `describeProcessEnded`).
  */
 export const PROCESS_ENDED_REASONS = {
-    manual: ['Process stopped', 'neutral'],
-    force: ['Process killed', 'neutral'],
-    archived: ['Process stopped', 'neutral', 'session archived'],
-    shutdown: ['Process stopped', 'neutral', 'TwiCC shutdown'],
-    'apply-settings': ['Process restarted to apply settings', 'neutral'],
-    'switch-hybrid': ['Process stopped', 'neutral', 'switch to hybrid'],
-    timeout_user_turn: ['Process stopped', 'neutral', 'idle timeout'],
-    'cli-exit': ['Hybrid CLI exited', 'neutral'],
-    timeout_starting: ['Process stopped: start timed out', 'warning'],
-    timeout_assistant_turn: ['Process stopped: no activity', 'warning'],
-    cron_restart_timeout: ['Cron restart timed out', 'warning'],
-    lost: ['Process lost', 'warning', 'found dead at boot'],
-    auth_required: ['Process stopped: login required', 'danger'],
-    'startup-failed': ['Process failed to start', 'danger'],
-    error: ['Process crashed', 'danger'],
+    get manual() { return [i18n.global.t('session.timeline.processStopped'), 'neutral'] },
+    get force() { return [i18n.global.t('session.timeline.processKilled'), 'neutral'] },
+    get archived() { return [i18n.global.t('session.timeline.processStopped'), 'neutral', i18n.global.t('session.timeline.sessionArchived')] },
+    get shutdown() { return [i18n.global.t('session.timeline.processStopped'), 'neutral', i18n.global.t('session.timeline.shutdown')] },
+    get 'apply-settings'() { return [i18n.global.t('session.timeline.processSettings'), 'neutral'] },
+    get 'switch-hybrid'() { return [i18n.global.t('session.timeline.processStopped'), 'neutral', i18n.global.t('session.timeline.switchHybrid')] },
+    get timeout_user_turn() { return [i18n.global.t('session.timeline.processStopped'), 'neutral', i18n.global.t('session.timeline.idleTimeout')] },
+    get 'cli-exit'() { return [i18n.global.t('session.timeline.cliExited'), 'neutral'] },
+    get timeout_starting() { return [i18n.global.t('session.timeline.startTimeout'), 'warning'] },
+    get timeout_assistant_turn() { return [i18n.global.t('session.timeline.noActivity'), 'warning'] },
+    get cron_restart_timeout() { return [i18n.global.t('session.timeline.cronTimeout'), 'warning'] },
+    get lost() { return [i18n.global.t('session.timeline.processLost'), 'warning', i18n.global.t('session.timeline.deadAtBoot')] },
+    get auth_required() { return [i18n.global.t('session.timeline.loginRequired'), 'danger'] },
+    get 'startup-failed'() { return [i18n.global.t('session.timeline.startFailed'), 'danger'] },
+    get error() { return [i18n.global.t('session.timeline.crashed'), 'danger'] },
 }
 
 // The settings reasons whose wording already says the change was automatic (the prefixes of settingsDiff.js).
 const AUTOMATIC_SETTINGS_REASONS = new Set(['model_retired', 'switch-hybrid'])
 
-const PIN_SCOPES = { project: 'project', workspace: 'workspace', all: 'all projects' }
+const PIN_SCOPES = { get project() { return i18n.global.t('session.timeline.scopeProject') }, get workspace() { return i18n.global.t('session.timeline.scopeWorkspace') }, get all() { return i18n.global.t('session.timeline.scopeAll') } }
 
 const FLAG_KINDS = {
-    'archived.started': ['Archived', 'box-archive'],
-    'archived.ended': ['Unarchived', 'box-open'],
-    'hidden.started': ['Hidden', 'eye-slash'],
-    'hidden.ended': ['Unhidden', 'eye'],
-    'muted.started': ['Muted', 'bell-slash'],
-    'muted.ended': ['Unmuted', 'bell'],
-    'tree_detached.started': ['Detached from parent', 'sitemap'],
-    'tree_detached.ended': ['Reattached to parent', 'sitemap'],
+    get 'archived.started'() { return [i18n.global.t('session.timeline.archived'), 'box-archive'] },
+    get 'archived.ended'() { return [i18n.global.t('session.timeline.unarchived'), 'box-open'] },
+    get 'hidden.started'() { return [i18n.global.t('session.timeline.hidden'), 'eye-slash'] },
+    get 'hidden.ended'() { return [i18n.global.t('session.timeline.unhidden'), 'eye'] },
+    get 'muted.started'() { return [i18n.global.t('session.timeline.muted'), 'bell-slash'] },
+    get 'muted.ended'() { return [i18n.global.t('session.timeline.unmuted'), 'bell'] },
+    get 'tree_detached.started'() { return [i18n.global.t('session.timeline.detached'), 'sitemap'] },
+    get 'tree_detached.ended'() { return [i18n.global.t('session.timeline.reattached'), 'sitemap'] },
 }
 
 const SESSION_CREATED_BASE = {
-    twicc: 'Session created',
-    external: 'Session created from a terminal',
-    sync: 'Session created',
+    get twicc() { return i18n.global.t('session.timeline.sessionCreated') },
+    get external() { return i18n.global.t('session.timeline.sessionCreatedTerminal') },
+    get sync() { return i18n.global.t('session.timeline.sessionCreated') },
 }
 
 /** The tag of an automatic row (author label `automatic`), and of an automatic title. */
-const AUTOMATIC_TAG = 'automatic'
+const automaticTag = () => i18n.global.t('session.timeline.automatic')
 
 // `agent`: the provider wrote the title in its own files (a /rename in the CLI, Codex naming its thread); the tag
 // names the provider, see titleSourceTag.
-const TITLE_SOURCE_TAGS = { auto: AUTOMATIC_TAG }
+const TITLE_SOURCE_TAGS = { get auto() { return automaticTag() } }
 
 const text = textPart
 
@@ -90,18 +92,18 @@ function toolName(data) {
 
 /** The wording of a request, the tool name as a value (like a title) in parentheses: "Waiting for approval (Bash)". */
 function withTool(label, tool) {
-    return tool ? [text(`${label} (`), valuePart(tool), text(')')] : [text(label)]
+    return tool ? messageParts('session.timeline.withTool', { label: text(label), tool: valuePart(tool) }) : [text(label)]
 }
 
 function describeSessionCreated(event, data, context, author) {
-    const base = lookup(SESSION_CREATED_BASE, data.origin) ?? 'Session created'
+    const base = lookup(SESSION_CREATED_BASE, data.origin) ?? i18n.global.t('session.timeline.sessionCreated')
     const parent = asString(data.spawned_by)
     // The parent appears once: an agent author label already names a session.
     if (!parent || author.kind === 'session') return { icon: 'plus', severity: 'neutral', parts: [text(base)] }
     const mention = sessionMention(parent, context.sessions, { isSubagent: context.isSubagent })
-    const parts = base === 'Session created'
-        ? [text(`${base} by `), { type: 'session', mention }]
-        : [text(`${base} (spawned by `), { type: 'session', mention }, text(')')]
+    const parts = data.origin !== 'external'
+        ? messageParts('session.timeline.createdBy', { session: { type: 'session', mention } })
+        : messageParts('session.timeline.createdTerminalBy', { session: { type: 'session', mention } })
     return { icon: 'plus', severity: 'neutral', parts }
 }
 
@@ -109,7 +111,7 @@ function titleSourceTag(event, data, context) {
     if (data.source !== 'agent') return lookup(TITLE_SOURCE_TAGS, data.source) ?? null
     const provider = event.provider ?? context.sessions?.[event.session_id]?.provider ?? null
     const product = context.labelsFor?.(provider)?.product ?? null
-    return product ? `from ${product}` : 'from the provider'
+    return product ? i18n.global.t('session.timeline.fromProduct', { product }) : i18n.global.t('session.timeline.fromProvider')
 }
 
 function describeTitleChanged(event, data, context) {
@@ -123,9 +125,9 @@ function describeTitleChanged(event, data, context) {
         return valuePart(cut.text)
     }
     let parts
-    if (next === null) parts = [text('Title cleared')]
-    else if (previous === null) parts = [text('Titled '), value(next, 'New title')]
-    else parts = [text('Renamed '), value(previous, 'Old title'), arrowPart(), value(next, 'New title')]
+    if (next === null) parts = [text(i18n.global.t('session.timeline.titleCleared'))]
+    else if (previous === null) parts = messageParts('session.timeline.titled', { title: value(next, i18n.global.t('session.timeline.newTitle')) })
+    else parts = messageParts('session.timeline.renamed', { old: value(previous, i18n.global.t('session.timeline.oldTitle')), arrow: arrowPart(), new: value(next, i18n.global.t('session.timeline.newTitle')) })
     return {
         icon: 'pencil', severity: 'neutral', parts, tags: [titleSourceTag(event, data, context)], tooltip,
     }
@@ -142,18 +144,18 @@ function describeSettings(event, data, context) {
 }
 
 function describeProcessStarted(event, data) {
-    const label = data.cause === 'resume' ? 'Process resumed' : 'Process started'
-    const tooltip = Number.isFinite(data.twicc_pid) ? [`Process id: ${data.twicc_pid}`] : []
-    return { icon: 'play', severity: 'success', parts: [text(label)], tags: [data.hybrid === true ? 'hybrid CLI' : null], tooltip }
+    const label = data.cause === 'resume' ? i18n.global.t('session.timeline.processResumed') : i18n.global.t('session.timeline.processStarted')
+    const tooltip = Number.isFinite(data.twicc_pid) ? [i18n.global.t('session.timeline.processId', { pid: data.twicc_pid })] : []
+    return { icon: 'play', severity: 'success', parts: [text(label)], tags: [data.hybrid === true ? i18n.global.t('session.timeline.hybridCli') : null], tooltip }
 }
 
 function describeProcessEnded(event, data, context) {
     const known = lookup(PROCESS_ENDED_REASONS, event.reason)
-    const [label, severity, cause = null] = known ?? ['Process stopped', 'neutral']
-    const tooltip = Number.isFinite(data.twicc_pid) ? [`Process id: ${data.twicc_pid}`] : []
+    const [label, severity, cause = null] = known ?? [i18n.global.t('session.timeline.processStopped'), 'neutral']
+    const tooltip = Number.isFinite(data.twicc_pid) ? [i18n.global.t('session.timeline.processId', { pid: data.twicc_pid })] : []
     if (event.reason === 'lost' && asString(data.upper_bound)) {
         const bound = formatClock(parseOccurredAt(data.upper_bound), context.time)
-        if (bound) tooltip.push(`Detected at boot ${bound}`)
+        if (bound) tooltip.push(i18n.global.t('session.timeline.detectedBoot', { time: bound }))
     }
     const error = event.reason === 'error' ? asString(data.error) : null
     return {
@@ -170,21 +172,21 @@ const AUTO_DENIED_REASON = 'auto_denied'
 
 const AWAITING = {
     tool_approval: {
-        started: (tool) => withTool('Waiting for approval', tool),
-        ended: (tool, reason) => withTool(reason === AUTO_DENIED_REASON ? 'Approval denied automatically' : 'Approval handled', tool),
+        started: (tool) => withTool(i18n.global.t('session.timeline.waitingApproval'), tool),
+        ended: (tool, reason) => withTool(reason === AUTO_DENIED_REASON ? i18n.global.t('session.timeline.deniedAutomatically') : i18n.global.t('session.timeline.approvalHandled'), tool),
     },
-    ask_user_question: { started: () => [text('Question for you')], ended: () => [text('Question answered')] },
+    ask_user_question: { started: () => [text(i18n.global.t('session.timeline.question'))], ended: () => [text(i18n.global.t('session.timeline.answered'))] },
     hybrid_terminal: {
-        started: (tool) => withTool('Waiting in the terminal', tool),
-        ended: () => [text('Terminal input handled')],
+        started: (tool) => withTool(i18n.global.t('session.timeline.waitingTerminal'), tool),
+        ended: () => [text(i18n.global.t('session.timeline.terminalHandled'))],
     },
 }
-const AWAITING_OTHER = { started: (tool) => withTool('Waiting for input', tool), ended: () => [text('Input handled')] }
+const AWAITING_OTHER = { started: (tool) => withTool(i18n.global.t('session.timeline.waitingInput'), tool), ended: () => [text(i18n.global.t('session.timeline.inputHandled'))] }
 
 /** The tag of an auto-denied request: "no answer in 2 min", from the delay stored with the event (null when absent). */
 function noAnswerTag(seconds) {
     if (!Number.isFinite(seconds) || seconds <= 0) return null
-    return seconds % 60 === 0 ? `no answer in ${seconds / 60} min` : `no answer in ${seconds} s`
+    return seconds % 60 === 0 ? i18n.global.t('session.timeline.noAnswerMinutes', { count: seconds / 60 }) : i18n.global.t('session.timeline.noAnswerSeconds', { count: seconds })
 }
 
 function describeAwaiting(event, data, phase) {
@@ -201,8 +203,8 @@ function describeAwaiting(event, data, phase) {
 
 function describePinned(event, data, phase) {
     const scope = lookup(PIN_SCOPES, data.scope) ?? null
-    if (phase === 'started') return { icon: 'thumbtack', severity: 'neutral', parts: [text('Pinned')], tags: [scope] }
-    return { icon: 'thumbtack-slash', severity: 'neutral', parts: [text('Unpinned')], tags: [scope ? `was ${scope}` : null] }
+    if (phase === 'started') return { icon: 'thumbtack', severity: 'neutral', parts: [text(i18n.global.t('session.timeline.pinned'))], tags: [scope] }
+    return { icon: 'thumbtack-slash', severity: 'neutral', parts: [text(i18n.global.t('session.timeline.unpinned'))], tags: [scope ? i18n.global.t('session.timeline.wasScope', { scope }) : null] }
 }
 
 const NAME_MAX = 60
@@ -262,7 +264,7 @@ function describeWorkflowEnded(event, data) {
 
 function describeBackendStarted(event, data) {
     const version = asString(data.version)
-    const label = data.machine_restarted === true ? 'TwiCC started after a machine restart' : 'TwiCC started'
+    const label = data.machine_restarted === true ? i18n.global.t('session.timeline.backendMachineRestart') : i18n.global.t('session.timeline.backendStarted')
     return {
         icon: 'server', severity: 'neutral', parts: [text(label)], tags: [version ? `v${version}` : null],
         tooltip: backendTooltip(data),
@@ -273,15 +275,15 @@ function describeBackendEnded(event, data) {
     const unclean = data.clean === false
     return {
         icon: 'power-off', severity: unclean ? 'danger' : 'neutral',
-        parts: [text(unclean ? 'TwiCC stopped unexpectedly' : 'TwiCC stopped')], tooltip: backendTooltip(data),
+        parts: [text(unclean ? i18n.global.t('session.timeline.backendUnexpectedStop') : i18n.global.t('session.timeline.backendStopped'))], tooltip: backendTooltip(data),
     }
 }
 
 function backendTooltip(data) {
     const lines = []
-    if (Number.isFinite(data.pid)) lines.push(`Process id: ${data.pid}`)
-    if (asString(data.version)) lines.push(`Version: ${data.version}`)
-    if (asString(data.boot_id)) lines.push(`Boot id: ${data.boot_id}`)
+    if (Number.isFinite(data.pid)) lines.push(i18n.global.t('session.timeline.processId', { pid: data.pid }))
+    if (asString(data.version)) lines.push(i18n.global.t('session.timeline.version', { value: data.version }))
+    if (asString(data.boot_id)) lines.push(i18n.global.t('session.timeline.bootId', { value: data.boot_id }))
     return lines
 }
 
@@ -292,12 +294,12 @@ function describeKind(event, data, context, author) {
         case 'settings.changed': return describeSettings(event, data, context)
         case 'process.started': return describeProcessStarted(event, data)
         case 'process.ended': return describeProcessEnded(event, data, context)
-        case 'user_message.sent': return { icon: 'comment', severity: 'neutral', ...plain('User message') }
-        case 'assistant_message.sent': return { icon: 'robot', severity: 'neutral', ...plain('Assistant message') }
-        case 'turn.started': return { icon: 'robot', severity: 'neutral', ...plain('Turn started') }
+        case 'user_message.sent': return { icon: 'comment', severity: 'neutral', ...plain(i18n.global.t('session.timeline.userMessage')) }
+        case 'assistant_message.sent': return { icon: 'robot', severity: 'neutral', ...plain(i18n.global.t('session.timeline.assistantMessage')) }
+        case 'turn.started': return { icon: 'robot', severity: 'neutral', ...plain(i18n.global.t('session.timeline.turnStarted')) }
         case 'turn.ended': {
             const badge = describeBackgroundWork(data.background_work)
-            return { icon: 'circle-check', severity: 'success', parts: [text('Turn ended')], badge }
+            return { icon: 'circle-check', severity: 'success', parts: [text(i18n.global.t('session.timeline.turnEnded'))], badge }
         }
         case 'awaiting_input.started': return describeAwaiting(event, data, 'started')
         case 'awaiting_input.ended': return describeAwaiting(event, data, 'ended')
@@ -320,7 +322,7 @@ function describeTime(event, context) {
     // A `derived` time is the session's `created_at`, read from its file: it is shown like an exact one.
     const estimated = event.precision === 'estimated'
     const clock = formatClock(ms, context.time)
-    const caption = estimated ? 'Estimated: it happened at or before this time' : null
+    const caption = estimated ? i18n.global.t('session.timeline.estimated') : null
     return {
         text: estimated ? `${ESTIMATED_MARK}${clock}` : clock,
         estimated,
@@ -362,18 +364,18 @@ export function describeEvent(event, context) {
     const described = describeKind(event, data, context, author)
     const time = describeTime(event, context)
     const lines = [time.full]
-    if (event.precision) lines.push(`Precision: ${event.precision}`)
+    if (event.precision) lines.push(i18n.global.t('session.timeline.precision', { value: event.precision }))
     if (time.caption) lines.push(time.caption)
     lines.push(...(described.tooltip ?? []))
-    if (event.reason) lines.push(`Reason: ${event.reason}`)
-    if (event.via) lines.push(`Via: ${event.via}`)
-    if (event.actor_ref) lines.push(`Actor ref: ${event.actor_ref}`)
-    if (event.actor_name) lines.push(`Actor name: ${event.actor_name}`)
-    if (author.unknown) lines.push(`Actor: ${event.actor}`)
+    if (event.reason) lines.push(i18n.global.t('session.timeline.reason', { value: event.reason }))
+    if (event.via) lines.push(i18n.global.t('session.timeline.via', { value: event.via }))
+    if (event.actor_ref) lines.push(i18n.global.t('session.timeline.actorRef', { value: event.actor_ref }))
+    if (event.actor_name) lines.push(i18n.global.t('session.timeline.actorName', { value: event.actor_name }))
+    if (author.unknown) lines.push(i18n.global.t('session.timeline.actor', { value: event.actor }))
     // The source last: an automatic row says so with the tag of an automatic title, once, and only when its wording
     // does not already say it ("TwiCC shutdown", "Model upgraded (retired)").
     const tags = (described.tags ?? []).filter(Boolean)
-    if (author.kind === 'automatic' && !described.saysAutomatic && !tags.includes(AUTOMATIC_TAG)) tags.push(AUTOMATIC_TAG)
+    if (author.kind === 'automatic' && !described.saysAutomatic && !tags.includes(automaticTag())) tags.push(automaticTag())
     return {
         id: event.id,
         kind: event.kind,

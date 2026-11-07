@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * Read-aloud button of the MarkdownContent toolbar (a `wa-button` of its button group).
  *
@@ -26,16 +28,16 @@ const emit = defineEmits(['summary-changed'])
 const store = useTextToSpeechStore()
 
 const TITLES = {
-    idle: 'Read aloud',
-    loading: 'Cancel the request',
-    playing: 'Stop reading',
+    idle: 'tts.controls.readAloud',
+    loading: 'tts.controls.cancelRequest',
+    playing: 'tts.controls.stopReading',
 }
 
 const status = computed(() => {
     const summary = props.summaryIdentity ? store.statusForSummary(props.summaryIdentity) : 'idle'
     return summary !== 'idle' ? summary : store.statusForText(props.originalText ?? props.text)
 })
-const title = computed(() => TITLES[status.value])
+const title = computed(() => t(TITLES[status.value]))
 
 async function onClick() {
     if (status.value !== 'idle') {

@@ -316,8 +316,8 @@ const loadedDirectory = ref(null)
 const routeRootIssue = ref(null)
 const routeFileIssue = ref(null)
 
-function makeRouteIssue(before, detail = null, after = '') {
-    return { before, detail, after }
+function makeRouteIssue(key, detail = null) {
+    return { key, detail }
 }
 
 const routeIssueMessage = computed(() => routeRootIssue.value || routeFileIssue.value)
@@ -359,11 +359,7 @@ async function fetchTree(dirPath) {
             }
             if (res.status === 404 && selectedRootKey.value) {
                 missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
-                routeRootIssue.value = makeRouteIssue(
-                    'Root ',
-                    props.routeRootKey || selectedRootKey.value,
-                    ' is no longer available.',
-                )
+                routeRootIssue.value = makeRouteIssue('files.route.rootGone', props.routeRootKey || selectedRootKey.value)
                 tree.value = null
                 loadedDirectory.value = null
                 return
@@ -761,7 +757,7 @@ watch(
 
         const requestedRoot = roots.find(root => root.key === routeRootKey)
         if (!requestedRoot) {
-            routeRootIssue.value = makeRouteIssue('Root ', routeRootKey, ' is not available.')
+            routeRootIssue.value = makeRouteIssue('files.route.rootUnavailable', routeRootKey)
             if (selectedRootKey.value !== null) {
                 syncingFromRoute = true
                 selectedRootKey.value = null
@@ -774,7 +770,7 @@ watch(
         }
 
         if (missingRoots.value.has(routeRootKey)) {
-            routeRootIssue.value = makeRouteIssue('Root ', routeRootKey, ' is no longer available.')
+            routeRootIssue.value = makeRouteIssue('files.route.rootGone', routeRootKey)
             if (selectedRootKey.value !== routeRootKey) {
                 syncingFromRoute = true
                 selectedRootKey.value = routeRootKey
@@ -819,18 +815,14 @@ watch(
         if (routeFilePath == null) {
             selectedBookmarkId.value = null
             routeFileIssue.value = routeFilePath === null
-                ? makeRouteIssue('Requested bookmark id is invalid.')
+                ? makeRouteIssue('files.route.invalidBookmark')
                 : null
         } else if (bookmark) {
             selectedBookmarkId.value = bookmark.id
             routeFileIssue.value = null
         } else {
             selectedBookmarkId.value = null
-            routeFileIssue.value = makeRouteIssue(
-                'Bookmarked artifact ',
-                routeFilePath,
-                ' is no longer available in this session scope.',
-            )
+            routeFileIssue.value = makeRouteIssue('files.route.bookmarkGone', routeFilePath)
         }
         await nextTick()
         syncingFromRoute = false
@@ -867,7 +859,7 @@ watch(
                 syncingFromRoute = false
             }
             if (routeFilePath === null) {
-                routeFileIssue.value = makeRouteIssue('Requested file path is invalid.')
+                routeFileIssue.value = makeRouteIssue('files.route.invalidPath')
             } else {
                 routeFileIssue.value = null
             }
@@ -887,11 +879,7 @@ watch(
             await fileTreePanelRef.value?.scrollToPath(absolutePath)
         } else {
             clearSelectedFile()
-            routeFileIssue.value = makeRouteIssue(
-                'File ',
-                routeFilePath,
-                ' is no longer available in this root.',
-            )
+            routeFileIssue.value = makeRouteIssue('files.route.fileGone', routeFilePath)
         }
         await nextTick()
         syncingFromRoute = false
@@ -1104,9 +1092,9 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                     class="pane-callout"
                 >
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                    <span>{{ routeIssueMessage.before }}</span>
-                    <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
-                    <span>{{ routeIssueMessage.after }}</span>
+                    <i18n-t :keypath="routeIssueMessage.key" scope="global">
+                        <template #detail><span class="pane-callout-detail">{{ routeIssueMessage.detail }}</span></template>
+                    </i18n-t>
                 </wa-callout>
             </div>
         </Teleport>
@@ -1142,7 +1130,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                 :external-artifact-session-id="selectedBookmark?.session_id || null"
                 :external-artifact-relative-path="selectedBookmark?.relative_path || null"
                 :external-artifact-abs-path="selectedBookmark ? selectedContentAbsPath : null"
-                :search-placeholder="artifactBookmarks.length ? 'Filter artifacts...' : 'Filter files...'"
+                :search-placeholder="artifactBookmarks.length ? $t('files.search.artifactsPlaceholder') : $t('files.search.placeholder')"
                 :commented-paths="commentedPaths"
                 enable-context-menu
                 :lazy-root="lazyRoot"

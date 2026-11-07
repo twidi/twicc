@@ -22,6 +22,10 @@ const props = defineProps({
         type: Object,
         required: true,
     },
+    title: {
+        type: String,
+        default: null,
+    },
     theme: {
         type: Object,
         default: () => ({}),
@@ -36,7 +40,7 @@ const props = defineProps({
     },
     closeAriaLabel: {
         type: String,
-        default: 'Close',
+        default: null,
     },
 })
 
@@ -49,7 +53,8 @@ watch(
 )
 const CloseIcon = props.icons.close
 
-const hasTitle = computed(() => Boolean(props.item.title))
+const displayTitle = computed(() => props.title ?? props.item.title)
+const hasTitle = computed(() => Boolean(displayTitle.value))
 
 // Access the content component and its props from item.props (set by useToast)
 const contentComponent = computed(() => props.item.props?.content)
@@ -91,7 +96,7 @@ const mergedStyle = computed(() => ({
             aria-atomic="true"
         >
             <!-- Title (same as Notivue: plain text in h3) -->
-            <h3 v-if="item.title" class="Notivue__content-title" v-text="item.title" />
+            <h3 v-if="displayTitle" class="Notivue__content-title" v-text="displayTitle" />
 
             <!-- Rich content area: slot, component, HTML, or fallback to plain message -->
             <div class="Notivue__content-message">
@@ -112,7 +117,7 @@ const mergedStyle = computed(() => ({
         <button
             v-if="!hideClose && !item.props?.persistent && CloseIcon && item.type !== 'promise'"
             class="Notivue__close"
-            :aria-label="closeAriaLabel"
+            :aria-label="closeAriaLabel ?? $t('common.actions.close')"
             type="button"
             tabindex="-1"
             @click="item.clear"

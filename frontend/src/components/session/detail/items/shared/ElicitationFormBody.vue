@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ElicitationFormBody.vue (shared) — body sub-component for an
 // ``elicitationForm`` pending request (request_type ``ask_user_question``,
 // mode ``form``). Used by BOTH providers' PendingRequestBody: Codex (untagged
@@ -44,7 +46,7 @@ function fieldLabelId(fieldIndex) {
 
 // Wire params.
 const input = computed(() => props.pendingRequest.tool_input || {})
-const serverName = computed(() => input.value.serverName || 'unknown server')
+const serverName = computed(() => input.value.serverName || t('session.approval.unknownServer'))
 const message = computed(() => input.value.message || '')
 const schema = computed(() => input.value.requestedSchema || {})
 const requiredSet = computed(() => new Set(schema.value.required || []))

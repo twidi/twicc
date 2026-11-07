@@ -508,7 +508,7 @@ test('one pill per non-empty group plus the session, +N for the others, the full
     const { root } = await withPills(t)
     const pills = byClass(root, 'timeline-filter-pill')
     assert.deepEqual(pills.map((pill) => textOf(byClass(pill, 'timeline-filter-pill-name')[0])), ['Events:', 'Provider:', 'Done by:', 'Session:'])
-    assert.deepEqual(pills.map((pill) => textOf(byClass(pill, 'timeline-filter-pill-value')[0])), ['Sessions, Processes', 'Claude Code', 'You', LONG_TITLE])
+    assert.deepEqual(pills.map((pill) => textOf(byClass(pill, 'timeline-filter-pill-value')[0])), ['Sessions and Processes', 'Claude Code', 'You', LONG_TITLE])
     assert.deepEqual(pills.map((pill) => byClass(pill, 'timeline-filter-pill-more').map(textOf)), [['+1'], [], [], []])
     assert.deepEqual(pills.map((pill) => pill.props.title), ['Sessions, Processes, TwiCC', 'Claude Code', 'You', LONG_TITLE])
     assert.deepEqual(pills.map((pill) => byClass(pill, 'timeline-filter-pill-remove')[0].props['aria-label']),

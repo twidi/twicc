@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 import { isAndroidApp } from './androidEnvironment.js'
 
 // frontend/src/utils/notificationSounds.js
@@ -26,17 +28,17 @@ export const NOTIFICATION_SOUNDS = {
  * Display labels for each sound type (used in settings UI).
  */
 export const NOTIFICATION_SOUND_LABELS = {
-    [NOTIFICATION_SOUNDS.NONE]: 'No sound',
-    [NOTIFICATION_SOUNDS.BEEP]: 'Beep',
-    [NOTIFICATION_SOUNDS.CHIME]: 'Chime',
-    [NOTIFICATION_SOUNDS.PING]: 'Ping',
-    [NOTIFICATION_SOUNDS.POP]: 'Pop',
-    [NOTIFICATION_SOUNDS.BLOOP]: 'Bloop',
-    [NOTIFICATION_SOUNDS.TINK]: 'Tink',
-    [NOTIFICATION_SOUNDS.KNOCK]: 'Knock',
-    [NOTIFICATION_SOUNDS.SWEEP]: 'Sweep',
-    [NOTIFICATION_SOUNDS.SIGNAL]: 'Signal',
-    [NOTIFICATION_SOUNDS.RIPPLE]: 'Ripple',
+    get [NOTIFICATION_SOUNDS.NONE]() { return i18n.global.t('settings.notifications.sounds.none') },
+    get [NOTIFICATION_SOUNDS.BEEP]() { return i18n.global.t('settings.notifications.sounds.beep') },
+    get [NOTIFICATION_SOUNDS.CHIME]() { return i18n.global.t('settings.notifications.sounds.chime') },
+    get [NOTIFICATION_SOUNDS.PING]() { return i18n.global.t('settings.notifications.sounds.ping') },
+    get [NOTIFICATION_SOUNDS.POP]() { return i18n.global.t('settings.notifications.sounds.pop') },
+    get [NOTIFICATION_SOUNDS.BLOOP]() { return i18n.global.t('settings.notifications.sounds.bloop') },
+    get [NOTIFICATION_SOUNDS.TINK]() { return i18n.global.t('settings.notifications.sounds.tink') },
+    get [NOTIFICATION_SOUNDS.KNOCK]() { return i18n.global.t('settings.notifications.sounds.knock') },
+    get [NOTIFICATION_SOUNDS.SWEEP]() { return i18n.global.t('settings.notifications.sounds.sweep') },
+    get [NOTIFICATION_SOUNDS.SIGNAL]() { return i18n.global.t('settings.notifications.sounds.signal') },
+    get [NOTIFICATION_SOUNDS.RIPPLE]() { return i18n.global.t('settings.notifications.sounds.ripple') },
 }
 
 /**

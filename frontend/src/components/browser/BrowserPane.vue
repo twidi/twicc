@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+
 // Browser pane: embeds a user-chosen URL (typically the project's dev server)
 // in a plain iframe. Unlike the Artifacts preview there is NO sandbox, NO CSP
 // lockdown and NO network broker — deliberate: the page runs exactly as in a
@@ -49,7 +52,7 @@ import TextSelectionComment from '../session/detail/TextSelectionComment.vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 
 // Stable identity — an inline literal would churn the frame descriptor watch.
-const BROWSER_FRAME_ATTRS = { allow: 'clipboard-read; clipboard-write; fullscreen', title: 'Browser' }
+const BROWSER_FRAME_ATTRS = computed(() => ({ allow: 'clipboard-read; clipboard-write; fullscreen', title: t('browser.frame.title') }))
 
 const props = defineProps({
     sessionId: { type: String, default: null },
@@ -164,7 +167,7 @@ function onWindowMessage(event) {
         // Fresh document → the previous page's errors are gone.
         pageErrors.value = []
         pageErrorTotal.value = 0
-        rejectPendingCapture('page reloaded')
+        rejectPendingCapture(t('browser.capture.errors.pageReloaded'))
         clearHelloGraceTimer()
         // A connected companion is definitive proof the page is reachable and
         // embeddable — drop any banner a slower/raced probe put up.
@@ -230,7 +233,7 @@ function onWindowMessage(event) {
             clearTimeout(timer)
             if (typeof data.error === 'string') reject(new Error(data.error))
             else if (typeof data.dataUrl === 'string' && data.dataUrl.startsWith('data:image/')) resolve(data.dataUrl)
-            else reject(new Error('no image returned'))
+            else reject(new Error(t('browser.capture.errors.noImage')))
         }
     } else if (data.type === 'errors') {
         // The companion pushed the current page-error buffer (console.error,
@@ -254,7 +257,7 @@ function onWindowMessage(event) {
         resetSelectArea()
         pageErrors.value = []
         pageErrorTotal.value = 0
-        rejectPendingCapture('page navigating away')
+        rejectPendingCapture(t('browser.capture.errors.pageNavigating'))
         // The frozen pre-companion stack becomes reachable the moment we
         // leave 'present' — and this waiting window is exactly when users
         // click Back ("page is taking too long"). Reset it NOW; clearing
@@ -311,7 +314,7 @@ onBeforeUnmount(() => {
     unregisterCommand(saveUrlCommandId)
     if (isFullscreen.value) expandPreviewHost?.(false)
     clearHelloGraceTimer()
-    rejectPendingCapture('pane closed')
+    rejectPendingCapture(t('browser.capture.errors.paneClosed'))
     persistUrlDebounced.cancel()
 })
 
@@ -463,7 +466,7 @@ function goHome() {
 // contentWindow identity check.
 function clearBrowser() {
     clearHelloGraceTimer()
-    rejectPendingCapture('browser cleared')
+    rejectPendingCapture(t('browser.capture.errors.browserCleared'))
     resetSelectArea()
     pageErrors.value = []
     pageErrorTotal.value = 0
@@ -633,7 +636,7 @@ const agentInstructions = computed(() => {
 // The text lands in the draft either way; the toast confirms it.
 function addAgentInstructionsToMessage() {
     insertTextAtCursor(agentInstructions.value + '\n', { focus: false })
-    toast.success('Added to message', { duration: 2000 })
+    toast.success(t('browser.message.added'), { duration: 2000 })
 }
 
 async function copyAgentInstructions() {
@@ -644,16 +647,16 @@ async function copyAgentInstructions() {
             agentInstructionsCopied.value = false
         }, 1500)
     } catch {
-        toast.error("Couldn't copy to clipboard")
+        toast.error(t('browser.clipboard.copyFailed'))
     }
 }
 
 const companionTooltip = computed(() => {
     if (companionStatus.value === 'present') {
-        return 'Companion connected — real navigation history, element selection and page-error capture are available. Click for help on this tab.'
+        return t('browser.companion.status.connected')
     }
-    if (companionStatus.value === 'waiting') return 'Checking for the TwiCC companion script…'
-    return 'No companion script on this page — real history, element selection and error capture are off. Click to see how to add it.'
+    if (companionStatus.value === 'waiting') return t('browser.companion.status.checking')
+    return t('browser.companion.status.absent')
 })
 
 // Open the Browser tab's help page (reference open — no dismiss switch).
@@ -714,7 +717,7 @@ function resetSelectArea() {
 function applySelectState(rect) {
     selectDescription.value = ''
     selectAvoidRect.value = null
-    rejectPendingCapture('selection changed')
+    rejectPendingCapture(t('browser.capture.errors.selectionChanged'))
     if (!selectState.value?.locked || !selectState.value.hasSelection) return
     const frameRect = frameEl.value?.getBoundingClientRect()
     if (frameRect && rect && [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)) {
@@ -732,7 +735,7 @@ function setSelectArea(enabled) {
     if (selectAreaActive.value === enabled) return
     resetSelectArea()
     selectAreaActive.value = enabled
-    rejectPendingCapture('select mode changed')
+    rejectPendingCapture(t('browser.capture.errors.modeChanged'))
     // Drop any open comment widget so a stale one can't flash back on re-entry.
     commentPosition.value = null
     if (enabled) {
@@ -769,11 +772,11 @@ function selectClear() {
 const CAPTURE_TIMEOUT_MS = 15000
 function captureScreenshot() {
     if (companionStatus.value !== 'present') {
-        return Promise.reject(new Error('companion not connected'))
+        return Promise.reject(new Error(t('browser.capture.errors.notConnected')))
     }
-    if (pendingCapture) return Promise.reject(new Error('a capture is already in progress'))
+    if (pendingCapture) return Promise.reject(new Error(t('browser.capture.errors.inProgress')))
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => rejectPendingCapture('capture timed out'), CAPTURE_TIMEOUT_MS)
+        const timer = setTimeout(() => rejectPendingCapture(t('browser.capture.errors.timedOut')), CAPTURE_TIMEOUT_MS)
         pendingCapture = { resolve, reject, timer }
         sendToCompanion(hostMessage('command', { action: 'select-capture' }))
     })
@@ -871,7 +874,7 @@ async function putProjectBrowserUrls(projectId, entries) {
     })
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || `Failed to save (${response.status})`)
+        throw new Error(data.error || t('browser.savedUrls.errors.saveStatus', { status: response.status }))
     }
     store.updateProject(await response.json())
 }
@@ -942,7 +945,7 @@ async function submitSave() {
         )
         if (saveDialogRef.value) saveDialogRef.value.open = false
     } catch (e) {
-        saveError.value = e.message || 'Failed to save URL'
+        saveError.value = e.message || t('browser.savedUrls.errors.save')
     }
 }
 
@@ -987,7 +990,7 @@ watch(
         if (active) {
             registerCommand({
                 id: openSavedUrlCommandId,
-                label: 'Open a Saved URL…',
+                labelKey: 'browser.commands.openSavedUrl',
                 icon: 'house',
                 category: 'navigation',
                 when: () => homeOptions.value.length > 0,
@@ -1000,7 +1003,7 @@ watch(
             })
             registerCommand({
                 id: saveUrlCommandId,
-                label: 'Save Current URL…',
+                labelKey: 'browser.commands.saveCurrentUrl',
                 icon: 'bookmark',
                 category: 'ui',
                 // Nothing loaded yet → nothing to save (same gate as the button).
@@ -1036,7 +1039,7 @@ async function removeSavedUrl(opt) {
     try {
         await applyLevelEntries(level.key, removeBrowserUrlEntry(level.entries, opt.url))
     } catch (e) {
-        saveError.value = e.message || 'Failed to remove URL'
+        saveError.value = e.message || t('browser.savedUrls.errors.remove')
     }
 }
 
@@ -1048,7 +1051,7 @@ async function makeDefaultSavedUrl(opt) {
     try {
         await applyLevelEntries(level.key, setDefaultBrowserUrlEntry(level.entries, opt.url))
     } catch (e) {
-        saveError.value = e.message || 'Failed to set the default URL'
+        saveError.value = e.message || t('browser.savedUrls.errors.setDefault')
     }
 }
 </script>

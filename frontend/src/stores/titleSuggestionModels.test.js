@@ -30,8 +30,9 @@ test('the Titles setting offers OpenRouter, disabled while the OpenRouter key is
     // The disabled map holds OpenRouter exactly when the key is absent.
     assert.match(popoverSource, /if \(!openrouterKeySet\.value\) \{\s*disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] =/)
     // The note says what to do (the variable, where, and the restart), not only that the key is missing.
-    assert.match(popoverSource, /Add TWICC_OPENROUTER_API_KEY to \$\{textToSpeechStore\.envPath\}, then restart TwiCC\./)
-    assert.match(popoverSource, /Add TWICC_OPENROUTER_API_KEY to the \.env file of your TwiCC data directory, then restart TwiCC\./)
+    assert.match(popoverSource, /t\('settings.titles.model.addKeyToPath', \{ path: textToSpeechStore\.envPath \}\)/)
+    assert.match(en['settings.titles.model.addKeyToPath'], /Add TWICC_OPENROUTER_API_KEY to \{path\}, then restart TwiCC\./)
+    assert.match(en['settings.titles.model.addKey'], /Add TWICC_OPENROUTER_API_KEY to the \.env file of your TwiCC data directory, then restart TwiCC\./)
     assert.doesNotMatch(popoverSource, /'The OpenRouter key is not set\.'/)
     assert.match(popoverSource, /const openrouterKeySet = computed\(\(\) => textToSpeechStore\.keyPresent\)/)
 })
@@ -45,7 +46,7 @@ test('the OpenRouter radio says where the text goes and who pays, unless the key
     )
     assert.match(
         radio,
-        /<span v-else class="radio-note" >\{\{ \$t\('settings\.titles\.model\.openRouterHint', \{ model: OPENROUTER_MODEL_DESCRIPTION \}\) \}\}<\/span>/,
+        /<span v-else class="radio-note" >\{\{ \$t\('settings\.titles\.model\.openRouterHint', \{ model: \$t\(OPENROUTER_MODEL_DESCRIPTION_KEY\) \}\) \}\}<\/span>/,
     )
     assert.equal(en['settings.titles.model.openRouterHint'], '— much faster: a title in under a second instead of several; uses {model}; sends the user messages to OpenRouter, paid on your OpenRouter account')
 })

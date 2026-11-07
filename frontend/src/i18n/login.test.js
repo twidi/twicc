@@ -6,6 +6,7 @@ import { parse, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createAppI18n, readInitialLocale } from './index.js'
+import { localUiMessage, resolveUiMessage } from './uiMessages.js'
 
 const source = readFileSync(new URL('../views/LoginView.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
@@ -20,11 +21,12 @@ const render = runInNewContext(`(function() { ${compiled.code} })()`, { Vue })
 
 async function renderLogin(savedLocale, error = '') {
     const locale = readInitialLocale({ getItem: () => JSON.stringify({ locale: savedLocale }) })
+    const instance = createAppI18n(locale)
     const app = Vue.createSSRApp({
         render,
-        data: () => ({ password: '', error, loading: false, handleSubmit() {} }),
+        data: () => ({ password: '', error, loading: false, handleSubmit() {}, resolveUiMessage: message => resolveUiMessage(message, instance.global) }),
     })
-    app.use(createAppI18n(locale))
+    app.use(instance)
     app.component('BrandLogo', { render: () => Vue.h('span', 'TwiCC') })
     return renderToString(app)
 }
@@ -42,7 +44,8 @@ test('login renders the restored locale before the authenticated settings bootst
 })
 
 test('login translates known errors and preserves server-supplied error text', async () => {
-    assert.match(await renderLogin('pt-BR', 'Invalid password'), /Senha inválida/)
-    assert.match(await renderLogin('pt-BR', 'Network error'), /Erro de conexão/)
+    assert.match(await renderLogin('pt-BR', localUiMessage('auth.errors.invalidPassword')), /Senha inválida/)
+    assert.match(await renderLogin('pt-BR', localUiMessage('auth.errors.network')), /Erro de rede/)
     assert.match(await renderLogin('pt-BR', 'Custom server error'), /Custom server error/)
+    assert.match(await renderLogin('pt-BR', 'Network error'), /Network error/)
 })

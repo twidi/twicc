@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { locale } = useI18n()
+
 /**
  * CommandPalette — Modal command palette with search, keyboard navigation,
  * and nested sub-selection mode.
@@ -51,6 +55,13 @@ const parentCommand = shallowRef(null)
 // The search query to restore when leaving nested mode, so Esc/← returns to
 // the search the user came from instead of an empty root.
 let returnQuery = ''
+
+// Keep a nested breadcrumb synchronized with the localized registry.
+watch([locale, availableCommands], () => {
+    if (parentCommand.value) {
+        parentCommand.value = availableCommands.value.find(command => command.id === parentCommand.value.id) ?? parentCommand.value
+    }
+})
 
 const PAGE_SIZE = 8
 // Drill-down: children listed per parent before the "+N more" row.
@@ -537,7 +548,7 @@ defineExpose({ open, close })
                     ref="searchInputRef"
                     type="text"
                     v-model="query"
-                    :placeholder="parentCommand ? 'Filter...' : 'Type a command...'"
+                    :placeholder="parentCommand ? $t('commands.filterPlaceholder') : $t('commands.commandPlaceholder')"
                     @keydown="handleKeydown"
                     autocomplete="off"
                     spellcheck="false"
@@ -573,22 +584,26 @@ defineExpose({ open, close })
                             <template v-if="cmd.target">
                                 <template v-for="t in [cmd.target()]" :key="cmd.id + '-target'">
                                     <span v-if="t" class="command-text-col">
-                                        <span class="command-label command-target-line">
-                                            <span v-if="t.prefix" class="command-target-prefix">{{ t.prefix }}</span>
-                                            <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
-                                            <template v-if="t.worktree?.parentName">
-                                                <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
-                                                <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
+                                        <i18n-t tag="span" class="command-label command-target-line" scope="global"
+                                                :keypath="t.messageKey || 'commands.targetIdentity'">
+                                            <template #target>
+                                                <span class="command-target-identity">
+                                                    <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
+                                                    <template v-if="t.worktree?.parentName">
+                                                        <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
+                                                        <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
+                                                    </template>
+                                                    <span class="command-wt-folder">{{ t.label }}</span>
+                                                    <wa-icon
+                                                        v-if="t.project?.untrusted"
+                                                        name="lock"
+                                                        :label="$t('commands.untrustedProject')"
+                                                        :title="$t('commands.untrustedProjectTooltip')"
+                                                        class="palette-trust-icon"
+                                                    ></wa-icon>
+                                                </span>
                                             </template>
-                                            <span class="command-wt-folder">{{ t.label }}</span>
-                                            <wa-icon
-                                                v-if="t.project?.untrusted"
-                                                name="lock"
-                                                :label="$t('commands.untrustedProject')"
-                                                :title="$t('commands.untrustedProjectTooltip')"
-                                                class="palette-trust-icon"
-                                            ></wa-icon>
-                                        </span>
+                                        </i18n-t>
                                         <span v-if="t.path" class="command-path">{{ t.path }}</span>
                                     </span>
                                     <span v-else class="command-label">{{ cmd.label }}</span>
@@ -624,15 +639,19 @@ defineExpose({ open, close })
                             <template v-if="result.cmd.target">
                                 <template v-for="t in [result.cmd.target()]" :key="result.cmd.id + '-target'">
                                     <span v-if="t" class="command-text-col">
-                                        <span class="command-label command-target-line">
-                                            <span v-if="t.prefix" class="command-target-prefix">{{ t.prefix }}</span>
-                                            <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
-                                            <template v-if="t.worktree?.parentName">
-                                                <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
-                                                <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
+                                        <i18n-t tag="span" class="command-label command-target-line" scope="global"
+                                                :keypath="t.messageKey || 'commands.targetIdentity'">
+                                            <template #target>
+                                                <span class="command-target-identity">
+                                                    <ProjectMark :icon-url="t.project?.icon_url || null" :color="t.project?.color || null" />
+                                                    <template v-if="t.worktree?.parentName">
+                                                        <span class="command-wt-parent">{{ t.worktree.parentName }}</span>
+                                                        <wa-icon name="code-branch" auto-width class="command-wt-sep"></wa-icon>
+                                                    </template>
+                                                    <span class="command-wt-folder">{{ t.label }}</span>
+                                                </span>
                                             </template>
-                                            <span class="command-wt-folder">{{ t.label }}</span>
-                                        </span>
+                                        </i18n-t>
                                         <span v-if="t.path" class="command-path">{{ t.path }}</span>
                                     </span>
                                     <span v-else class="command-label" v-html="result.highlighted" />
@@ -1053,9 +1072,8 @@ wa-divider {
     min-width: 0;
 }
 
-/* Top-level command rendered as a project/worktree badge (e.g. "New Session in
-   ●Project"): a leading text prefix, the colored dot, then the project name or
-   the worktree's parent + code-branch + folder — mirroring the picker rows. */
+/* A whole localized command message contains its project/worktree badge as a
+   named slot. The slot keeps the dot, parent, branch icon and folder together. */
 .command-target-line {
     display: flex;
     align-items: center;
@@ -1064,8 +1082,12 @@ wa-divider {
     overflow: hidden;
     white-space: nowrap;
 }
-.command-target-prefix {
-    flex-shrink: 0;
+.command-target-identity {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-2xs);
+    min-width: 0;
+    overflow: hidden;
 }
 .command-chevron,
 .command-toggle {

@@ -2,12 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import config, { injectRecoveryMessages } from '../../vite.config.js'
+import en from '../i18n/locales/en.json' with { type: 'json' }
+import ptBR from '../i18n/locales/pt-BR.json' with { type: 'json' }
 
-const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
+const sourceHtml = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
+const html = await injectRecoveryMessages.transformIndexHtml(sourceHtml)
 const script = html.match(/<script data-twicc-recovery>([\s\S]*?)<\/script>/)?.[1] ?? ''
 
 // Only browser I/O is simulated. Execute the actual inline startup guard, without the app bundle.
-function page({ storage = new Map(), href = 'https://twicc.test/project/p/session/s?workspace=w#item', online = true, storageBlocked = false } = {}) {
+function page({ storage = new Map(), href = 'https://twicc.test/project/p/session/s?workspace=w#item', online = true, storageBlocked = false, settings = null, settingsBlocked = false } = {}) {
     const events = new Map()
     const navigation = []
     const panels = []
@@ -15,6 +19,9 @@ function page({ storage = new Map(), href = 'https://twicc.test/project/p/sessio
         addEventListener(name, handler) { events.set(name, handler) },
         location: { href, replace(value) { navigation.push(value) } },
         history: { state: null, replaceState(_state, _title, value) { window.location.href = String(value) } },
+        localStorage: {
+            getItem() { if (settingsBlocked) throw Error('Blocked'); return settings },
+        },
         sessionStorage: {
             getItem(key) { if (storageBlocked) throw Error('Blocked'); return storage.get(key) ?? null },
             setItem(key, value) { if (storageBlocked) throw Error('Blocked'); storage.set(key, String(value)) },
@@ -23,6 +30,7 @@ function page({ storage = new Map(), href = 'https://twicc.test/project/p/sessio
     }
     const document = {
         readyState: 'complete',
+        documentElement: {},
         body: { append(node) { panels.push(node) } },
         createElement(tag) { return { tagName: tag.toUpperCase(), style: {}, children: [], append(...nodes) { this.children.push(...nodes) }, setAttribute() {} } },
         addEventListener(name, handler) { events.set(name, handler) },
@@ -31,7 +39,7 @@ function page({ storage = new Map(), href = 'https://twicc.test/project/p/sessio
     function fail(tagName = 'SCRIPT', url = 'https://twicc.test/static/assets/index-old.js') {
         events.get('error')?.({ target: { tagName, src: url, href: url, rel: 'stylesheet', type: 'module' } })
     }
-    return { window, events, navigation, panels, storage, fail }
+    return { window, document, events, navigation, panels, storage, fail }
 }
 
 test('a missing entry module refreshes the HTML once and preserves the route', () => {
@@ -133,4 +141,58 @@ test('only actual same-origin build resource loading failures trigger recovery',
         assert.equal(p.navigation.length, 0, message)
         assert.equal(p.panels.length, 0, message)
     }
+})
+
+
+test('dev and build embed only the recovery catalog subset before modules', async () => {
+    for (const command of ['serve', 'build']) {
+        const plugins = config({ command }).plugins
+        const plugin = plugins.find(plugin => plugin.name === 'twicc-inject-recovery-messages')
+        assert.ok(plugin)
+        const transformed = await plugin.transformIndexHtml(sourceHtml)
+        assert.ok(!transformed.includes('__TWICC_RECOVERY_MESSAGES__'))
+        const source = transformed.match(/const messages = (.+);/)[1]
+        const messages = JSON.parse(source)
+        for (const [locale, catalog] of [['en', en], ['pt-BR', ptBR]]) {
+            assert.deepEqual(Object.keys(messages[locale]).sort(), ['common.actions.retry', 'startup.assetsUnavailable.description'])
+            for (const [key, value] of Object.entries(messages[locale])) assert.equal(value, catalog[key])
+        }
+        assert.ok(transformed.indexOf('const messages =') < transformed.indexOf('src="/src/main.js"'))
+    }
+})
+
+test('recovery uses the saved locale before the app bundle loads', () => {
+    for (const [locale, catalog] of [['en', en], ['pt-BR', ptBR]]) {
+        const p = page({ online: false, settings: JSON.stringify({ locale }) })
+        p.fail()
+        assert.equal(p.document.documentElement.lang, locale)
+        const panel = p.panels[0]
+        assert.equal(panel.children[0].textContent, catalog['startup.assetsUnavailable.description'])
+        assert.equal(panel.children[1].textContent, catalog['common.actions.retry'])
+    }
+})
+
+test('recovery defaults to English with invalid, missing or inaccessible settings', () => {
+    for (const options of [
+        {},
+        { settings: '{' },
+        { settings: 'null' },
+        { settings: JSON.stringify({ locale: 'unknown' }) },
+        { settings: JSON.stringify({ locale: 'pt-BR' }), settingsBlocked: true },
+    ]) {
+        const p = page({ online: false, ...options })
+        p.fail()
+        assert.equal(p.document.documentElement.lang, 'en')
+        assert.equal(p.panels[0].children[0].textContent, en['startup.assetsUnavailable.description'])
+        assert.equal(p.panels[0].children[1].textContent, en['common.actions.retry'])
+    }
+})
+
+
+test('recovery text follows a locale switch after startup', () => {
+    const p = page({ online: false })
+    p.document.documentElement.lang = 'pt-BR'
+    p.fail()
+    assert.equal(p.panels[0].children[0].textContent, ptBR['startup.assetsUnavailable.description'])
+    assert.equal(p.panels[0].children[1].textContent, ptBR['common.actions.retry'])
 })

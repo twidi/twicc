@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // The summary of a text selection, inside the floating selection panel. It owns
 // the temporary summary: it opens it on mount and discards it on unmount.
 import { computed, onBeforeUnmount, watch } from 'vue'
@@ -54,9 +56,9 @@ function cancel() {
 async function copy() {
     try {
         await navigator.clipboard.writeText(entry.value.text)
-        toast.success('Copied to clipboard', { duration: 2000 })
+        toast.success(t('session.summary.copied'), { duration: 2000 })
     } catch (error) {
-        toast.error(error.message || 'Could not copy the summary')
+        toast.error(error.message || t('session.summary.copyFailed'))
     }
 }
 onBeforeUnmount(() => {

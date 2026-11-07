@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 import { getAndroidAppClient } from './androidAppClient.js'
 
 const ABORTED = Object.freeze({ ok: false, aborted: true })
@@ -53,7 +55,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             const response = await appClient.request(`tts.${name}`, args)
             if (attached && mine === epoch) apply(response?.snapshot)
             return response
-        } catch (error) { return { accepted: false, error: { message: error.message || 'Speech is unavailable. Reload the page and try again.' } } }
+        } catch (error) { return { accepted: false, error: { message: error.message || i18n.global.t('session.speech.errors.unavailable') } } }
     }
     function abortOperations(predicate = () => true) {
         for (const [id, entry] of pending) if (predicate(id)) {
@@ -103,7 +105,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
         acknowledge: revision => command('acknowledge', { revision }),
         manual(request) {
-            if (!attached) return Promise.resolve({ ok: false, error: 'Speech is unavailable. Reload the page and try again.' })
+            if (!attached) return Promise.resolve({ ok: false, error: i18n.global.t('session.speech.errors.unavailable') })
             abortOperations()
             const operationId = `${prefix}-${++operation}`
             pageOperations.add(operationId)
@@ -118,7 +120,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
                 if (!entry) return
                 if (acceptance?.accepted) { entry.accepted = true; return }
                 pending.delete(operationId)
-                entry.resolve({ ok: false, error: acceptance?.error?.message || 'Speech could not start. Reload the page and try again.' })
+                entry.resolve({ ok: false, error: acceptance?.error?.message || i18n.global.t('session.speech.errors.startFailed') })
                 entry.resolveEnded(ABORTED)
             })
             return Object.assign(result, { operationId })

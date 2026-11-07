@@ -595,13 +595,13 @@ test('18b. the breathing terminal icon of a background shell', () => {
     // The USER_TURN status line reads like the working line, without its movement: the phrase
     // keeps the resting (quiet) colour of the shimmer.
     const status = read('../components/session/detail/items/BackgroundWorkStatus.vue')
-    assert.ok(collapse(templateOf(status)).includes('<span class="background-work-status__phrase" :class="{ \'background-work-status__phrase--live\': line.kind === \'shells\' }">{{ line.text }}'), 'phrase span')
+    assert.ok(collapse(templateOf(status)).includes('<span class="background-work-status__phrase" :class="{ \'background-work-status__phrase--live\': line.kind === \'shells\' }">{{ line.textKey ? $t(line.textKey, line.textParams || {}, line.textCount ?? 1) : line.text }}'), 'phrase span')
     assert.equal(rule(parseCss(styleOf(status)), ['.background-work-status__phrase'], topLevel).decls.color, 'var(--wa-color-text-quiet)')
 
     // A running shell shows the working line's three bouncing dots (same rules, own class names);
     // a cron line, which waits, does not.
     const statusTemplate = collapse(templateOf(status))
-    assert.ok(statusTemplate.includes('{{ line.text }}<span v-if="line.kind === \'shells\'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'), 'dots after the shells phrase, no space')
+    assert.ok(statusTemplate.includes('{{ line.textKey ? $t(line.textKey, line.textParams || {}, line.textCount ?? 1) : line.text }}<span v-if="line.kind === \'shells\'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'), 'dots after the shells phrase, no space')
     const dots = parseCss(styleOf(status))
     // The shell phrase shimmers like the working line's; the cron phrase does not.
     assert.ok(collapse(templateOf(status)).includes(`:class="{ 'background-work-status__phrase--live': line.kind === 'shells' }"`), 'live class on shells only')

@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 // ContributionGraphs.vue - Fetches daily activity data once and renders
 // the user messages, sessions, and cost contribution graphs.
 // Supports toggling between heatmap view and sparkline view.
@@ -61,40 +65,40 @@ const isCombined = ref(false)
 const combinedSwitchRef = ref(null)
 
 /** Granularity slider: group data by day, week, month, or quarter */
-const granularitySteps = [
-    { key: 'day', label: 'Day' },
-    { key: 'week', label: 'Week' },
-    { key: 'month', label: 'Month' },
-    { key: 'quarter', label: 'Quarter' },
-]
+const granularitySteps = computed(() => [
+    { key: 'day', label: t('activity.ranges.day') },
+    { key: 'week', label: t('activity.ranges.week') },
+    { key: 'month', label: t('activity.ranges.month') },
+    { key: 'quarter', label: t('activity.ranges.quarter') },
+])
 const granularityStepIndex = ref(0) // default: Day
-const granularity = computed(() => granularitySteps[granularityStepIndex.value].key)
-const granularityLabel = computed(() => granularitySteps[granularityStepIndex.value].label)
+const granularity = computed(() => granularitySteps.value[granularityStepIndex.value].key)
+const granularityLabel = computed(() => granularitySteps.value[granularityStepIndex.value].label)
 
 function onGranularityChange(e) {
     granularityStepIndex.value = parseInt(e.target.value, 10)
 }
 
 /** Time range slider: discrete steps depend on the selected granularity */
-const rangeStepsMap = {
+const rangeStepsMap = computed(() => ({
     day: [
-        { days: 7, label: '1 week' },
-        { days: 14, label: '2 weeks' },
-        { days: 30, label: '1 month' },
-        { days: 90, label: '3 months' },
-        { days: 182, label: '6 months' },
-        { days: 365, label: '1 year' },
+        { days: 7, label: t('activity.ranges.oneWeek') },
+        { days: 14, label: t('activity.ranges.twoWeeks') },
+        { days: 30, label: t('activity.ranges.oneMonth') },
+        { days: 90, label: t('activity.ranges.threeMonths') },
+        { days: 182, label: t('activity.ranges.sixMonths') },
+        { days: 365, label: t('activity.ranges.oneYear') },
     ],
     week: [
-        { days: 28, label: '4 weeks' },
-        { days: 84, label: '12 weeks' },
-        { days: 168, label: '24 weeks' },
-        { days: 365, label: '1 year' },
+        { days: 28, label: t('activity.ranges.fourWeeks') },
+        { days: 84, label: t('activity.ranges.twelveWeeks') },
+        { days: 168, label: t('activity.ranges.twentyFourWeeks') },
+        { days: 365, label: t('activity.ranges.oneYear') },
     ],
-    month: [{ days: 0, label: '' }, { days: 365, label: '1 year' }],      // 2 steps so slider shows at right; disabled
-    quarter: [{ days: 0, label: '' }, { days: 365, label: '1 year' }],   // 2 steps so slider shows at right; disabled
-}
-const rangeSteps = computed(() => rangeStepsMap[granularity.value])
+    month: [{ days: 0, label: '' }, { days: 365, label: t('activity.ranges.oneYear') }],      // 2 steps so slider shows at right; disabled
+    quarter: [{ days: 0, label: '' }, { days: 365, label: t('activity.ranges.oneYear') }],   // 2 steps so slider shows at right; disabled
+}))
+const rangeSteps = computed(() => rangeStepsMap.value[granularity.value])
 const rangeStepIndex = ref(5) // default: last step (1Y)
 const isRangeDisabled = computed(() => granularity.value === 'month' || granularity.value === 'quarter')
 const displayDays = computed(() => rangeSteps.value[rangeStepIndex.value].days)
@@ -124,7 +128,7 @@ function onCombinedModeChange(e) {
 // E.g. switching from quarter (365 days) to week should land on "1 year", not "4 weeks".
 // E.g. switching from week/24 weeks (168 days) to day should land on "6 months" (182 days).
 watch(granularity, (_, oldGranularity) => {
-    const oldSteps = rangeStepsMap[oldGranularity]
+    const oldSteps = rangeStepsMap.value[oldGranularity]
     const prevDays = oldSteps[Math.min(rangeStepIndex.value, oldSteps.length - 1)].days
 
     const newSteps = rangeSteps.value

@@ -255,7 +255,8 @@ wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::before
     animation: motion-spin 2s linear infinite;
 }
 wa-details[data-motion-loading]:not(:has(> :not([slot])))::part(content)::after {
-    content: 'Loading...';
+    /* setLocale() supplies a quoted catalog message on the document root. */
+    content: var(--twicc-loading-label);
     vertical-align: middle;
     color: var(--wa-color-text-quiet);
 }

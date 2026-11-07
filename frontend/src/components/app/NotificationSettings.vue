@@ -1,4 +1,9 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 // NotificationSettings.vue - Notification settings section for the settings popover
 // Four notification types: User Turn, Pending Request, Extra Usage and Peer.
 // Each has a sound selector (with test button) and a browser notification toggle;
@@ -22,7 +27,7 @@ const emit = defineEmits(['go-to-public-base-url'])
 const hasPublicBaseUrl = computed(() => !!store.getUsablePublicBaseUrl)
 
 // Sound options for selects
-const soundOptions = getAvailableSoundOptions()
+const soundOptions = computed(() => getAvailableSoundOptions())
 
 // Computed from store
 const userTurnSound = computed(() => store.getNotifUserTurnSound)
@@ -148,14 +153,14 @@ async function testExternalTarget(index) {
         })
         const data = await response.json()
         if (!response.ok) {
-            error = data?.error || `Request failed (${response.status})`
+            error = data?.error || localUiMessage('settings.notifications.status.requestFailed', { status: response.status })
         } else {
             const result = data.results?.[0]
             ok = !!result?.ok
             error = result?.error || null
         }
     } catch (e) {
-        error = e?.message || 'Network error'
+        error = e?.uiMessage || e?.message || localUiMessage('settings.notifications.status.networkError')
     } finally {
         delete testingTargets.value[index]
     }
@@ -176,18 +181,18 @@ function externalTestIcon(target) {
 
 // Browser notification permission state
 const browserNotifPermission = ref(getBrowserNotifPermission())
-const notificationLabel = computed(() => isAndroidApp.value ? 'Android notification' : 'Browser notification')
+const notificationLabel = computed(() => isAndroidApp.value ? t('settings.notifications.status.androidLabel') : t('settings.notifications.status.browserLabel'))
 const canChooseNotification = computed(() => isAndroidApp.value || browserNotifPermission.value === 'granted')
 const androidStatus = computed(() => {
     const state = androidPushState.value
-    if (state?.permission === 'denied') return 'Android notifications are blocked. Allow them in Android settings.'
-    if (state?.permission === 'default') return 'Choose an event below. Android asks for notification permission when needed.'
-    if (state?.status === 'unavailable') return 'Android notifications require Google Play Services on this phone.'
-    if (state?.status === 'login') return 'Sign in to this instance to set up Android notifications.'
-    if (state?.status === 'server') return 'Android notifications need an updated, reachable TwiCC server.'
-    if (state?.status === 'error') return 'Could not set up Android notifications. Check the network and try again.'
-    if (['registering', 'retrying'].includes(state?.status)) return 'Setting up Android notifications. Network changes are retried automatically.'
-    return 'Android sends selected notifications when you are not active in a browser. No background speech mode is needed.'
+    if (state?.permission === 'denied') return t('settings.notifications.status.blocked')
+    if (state?.permission === 'default') return t('settings.notifications.status.permission')
+    if (state?.status === 'unavailable') return t('settings.notifications.status.unavailable')
+    if (state?.status === 'login') return t('settings.notifications.status.login')
+    if (state?.status === 'server') return t('settings.notifications.status.server')
+    if (state?.status === 'error') return t('settings.notifications.status.error')
+    if (['registering', 'retrying'].includes(state?.status)) return t('settings.notifications.status.registering')
+    return t('settings.notifications.status.ready')
 })
 
 function getBrowserNotifPermission() {
@@ -528,7 +533,7 @@ defineExpose({ sync })
                             @change="onExternalTargetEventChange(index, 'awayOnly', $event)"
                         >{{ $t('settings.notifications.targets.awayOnly') }}</wa-switch>
                     </div>
-                    <div v-if="targetTestErrors[index]" class="apprise-test-error">{{ targetTestErrors[index] }}</div>
+                    <div v-if="targetTestErrors[index]" class="apprise-test-error">{{ resolveUiMessage(targetTestErrors[index]) }}</div>
                 </div>
             </div>
             <wa-button size="small" appearance="outlined" @click="addExternalTarget">

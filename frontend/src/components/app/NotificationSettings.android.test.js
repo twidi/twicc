@@ -14,7 +14,7 @@ async function render(android, permission) {
     const script = compileScript(descriptor, { id: 'notifications' }).content
         .replace(/^import .*$/gm, '').replace('export default', 'const component =')
     const component = runInNewContext(`${script}; component`, { ...Vue,
-        useSettingsStore:() => store, generateUUID:() => 'id', getAvailableSoundOptions:() => [], NOTIFICATION_SOUNDS:{},
+        useI18n: () => createAppI18n().global, useSettingsStore:() => store, generateUUID:() => 'id', getAvailableSoundOptions:() => [], NOTIFICATION_SOUNDS:{},
         playNotificationSound() {}, isAndroidApp:Vue.ref(android), androidPushState:Vue.ref({ permission }),
         requestAndroidPushPermission() {}, retryAndroidPush() {}, window:{},
     })

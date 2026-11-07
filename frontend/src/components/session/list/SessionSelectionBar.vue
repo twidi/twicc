@@ -24,7 +24,7 @@ import { backgroundShellCount, batchStopConfirmationMessage } from '../../../uti
 import { canToggleSessionReadState, isSessionUnread } from '../../../utils/sessions'
 import AppTooltip from '../../ui/AppTooltip.vue'
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 
 const props = defineProps({
     /** Id of the currently open session, if any (route param). */
@@ -119,14 +119,14 @@ const confirmLabel = computed(() => {
 const confirmMessage = computed(() => {
     if (!confirmState.value) return ''
     const { mode, processCount, cronCount, shellCount } = confirmState.value
-    if (mode === 'delete-drafts') return 'This cannot be undone.'
+    if (mode === 'delete-drafts') return t('session.selection.cannotUndo')
     return batchStopConfirmationMessage({ mode, processCount, cronCount, shellCount })
 })
 
 const confirmButtonLabel = computed(() => {
     if (!confirmState.value) return ''
     const { mode } = confirmState.value
-    if (mode === 'archive') return 'Stop and archive'
+    if (mode === 'archive') return t('session.selection.stopAndArchive')
     if (mode === 'stop') return t('session.process.stop')
     return t('common.actions.delete')
 })
@@ -270,51 +270,51 @@ function handleActionSelect(event) {
 
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked(null)" :disabled="pinTargets(null).length === 0" value="pin-none">
                 {{ $t('session.pin.none') }}
-                <span slot="details" class="affected-count">{{ pinTargets(null).length }}</span>
+                <span slot="details" class="affected-count">{{ n(pinTargets(null).length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('project')" :disabled="pinTargets('project').length === 0" value="pin-project">
                 {{ $t('session.pin.project') }}
-                <span slot="details" class="affected-count">{{ pinTargets('project').length }}</span>
+                <span slot="details" class="affected-count">{{ n(pinTargets('project').length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('workspace')" :disabled="pinTargets('workspace').length === 0" value="pin-workspace">
                 {{ $t('session.pin.workspace') }}
-                <span slot="details" class="affected-count">{{ pinTargets('workspace').length }}</span>
+                <span slot="details" class="affected-count">{{ n(pinTargets('workspace').length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('all')" :disabled="pinTargets('all').length === 0" value="pin-all">
                 {{ $t('session.pin.everywhere') }}
-                <span slot="details" class="affected-count">{{ pinTargets('all').length }}</span>
+                <span slot="details" class="affected-count">{{ n(pinTargets('all').length) }}</span>
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item :disabled="markReadCandidates.length === 0" value="mark-read">
                 <wa-icon slot="icon" name="eye-slash"></wa-icon>
                 {{ $t('session.actions.markRead') }}
-                <span slot="details" class="affected-count">{{ markReadCandidates.length }}</span>
+                <span slot="details" class="affected-count">{{ n(markReadCandidates.length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="markUnreadCandidates.length === 0" value="mark-unread">
                 <wa-icon slot="icon" name="eye"></wa-icon>
                 {{ $t('session.actions.markUnread') }}
-                <span slot="details" class="affected-count">{{ markUnreadCandidates.length }}</span>
+                <span slot="details" class="affected-count">{{ n(markUnreadCandidates.length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="archiveTargets.length === 0" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
                 {{ $t('common.actions.archive') }}
-                <span slot="details" class="affected-count">{{ archiveTargets.length }}</span>
+                <span slot="details" class="affected-count">{{ n(archiveTargets.length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="unarchiveTargets.length === 0" value="unarchive">
                 <wa-icon slot="icon" name="box-open"></wa-icon>
                 {{ $t('common.actions.unarchive') }}
-                <span slot="details" class="affected-count">{{ unarchiveTargets.length }}</span>
+                <span slot="details" class="affected-count">{{ n(unarchiveTargets.length) }}</span>
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item :disabled="stopTargets.length === 0" value="stop">
                 <wa-icon slot="icon" name="ban"></wa-icon>
                 {{ $t('session.selection.stopProcesses', stopTargets.length) }}
-                <span slot="details" class="affected-count">{{ stopTargets.length }}</span>
+                <span slot="details" class="affected-count">{{ n(stopTargets.length) }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="draftTargets.length === 0" value="delete-drafts" variant="danger">
                 <wa-icon slot="icon" name="trash"></wa-icon>
                 {{ $t('session.actions.discard') }}
-                <span slot="details" class="affected-count">{{ draftTargets.length }}</span>
+                <span slot="details" class="affected-count">{{ n(draftTargets.length) }}</span>
             </wa-dropdown-item>
         </wa-dropdown>
 

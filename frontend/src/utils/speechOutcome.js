@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // How a speech playback ends, and which player plays it (spec: docs/plans/2026-10-30-tts-streaming-design.md).
 
 import { isPcmType } from './pcmAudio.js'
@@ -17,12 +19,12 @@ export function speechEndResult(player, backend) {
     if (state === 'failed') return { ok: false, error: backend.error }
     if (player.kind === 'ended') {
         // Unknown or no answer: the backend restarted or the network dropped after the download.
-        return state === 'running' ? { ok: false, error: CUT } : { ok: true }
+        return state === 'running' ? { ok: false, error: i18n.global.t('session.speech.errors.cut') } : { ok: true }
     }
-    if (!backend) return { ok: false, error: UNREACHABLE }
-    if (state !== 'complete' && state !== 'running') return { ok: false, error: GONE }
-    if (player.reason === 'refused') return { ok: false, error: REFUSED }
-    return { ok: false, error: player.started ? CUT : UNREACHABLE }
+    if (!backend) return { ok: false, error: i18n.global.t('session.speech.errors.unreachable') }
+    if (state !== 'complete' && state !== 'running') return { ok: false, error: i18n.global.t('session.speech.errors.gone') }
+    if (player.reason === 'refused') return { ok: false, reason: 'refused', error: i18n.global.t('session.speech.errors.refused') }
+    return { ok: false, error: player.started ? i18n.global.t('session.speech.errors.cut') : i18n.global.t('session.speech.errors.unreachable') }
 }
 
 /**
@@ -64,4 +66,8 @@ export function currentPlatform(nav = globalThis.navigator) {
     if (/Safari\//.test(userAgent) && /Version\//.test(userAgent)
         && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Firefox/.test(userAgent)) return 'safari'
     return 'desktop'
+}
+
+export function unreachableMessage() {
+    return i18n.global.t('session.speech.errors.unreachable')
 }

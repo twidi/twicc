@@ -2,6 +2,8 @@
 // TerminalSnippetsDialog.vue - Dialog for managing text snippets with scope grouping
 import GroupedListEditor from '../ui/GroupedListEditor.vue'
 import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { ref, computed, nextTick, useId, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
@@ -22,6 +24,7 @@ const props = defineProps({
 })
 
 const route = useRoute()
+const { t } = useI18n()
 const terminalConfigStore = useTerminalConfigStore()
 const dataStore = useDataStore()
 const workspacesStore = useWorkspacesStore()
@@ -48,10 +51,10 @@ const warningMessage = ref('')
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
-    if (groupMode.value && view.value === 'form') return 'Add Group'
-    if (view.value === 'list') return 'Manage Snippets'
-    if (editIndex.value !== null) return 'Edit Snippet'
-    return 'Add Snippet'
+    if (groupMode.value && view.value === 'form') return t('terminal.editor.addGroup')
+    if (view.value === 'list') return t('terminal.snippets.title.manage')
+    if (editIndex.value !== null) return t('terminal.snippets.title.edit')
+    return t('terminal.snippets.title.add')
 })
 
 /** Active projects (non-stale, non-archived, worktrees excluded) — same filter as sidebar. */
@@ -82,7 +85,7 @@ const activeWs = computed(() => {
     return wsId ? workspacesStore.getWorkspaceById(wsId) : null
 })
 
-const activeWsLabel = computed(() => activeWs.value ? `${activeWs.value.name} projects` : null)
+const activeWsLabel = computed(() => activeWs.value ? t('terminal.snippets.workspaceProjects', { workspace: activeWs.value.name }) : null)
 const activeWsColor = computed(() => activeWs.value?.color || null)
 
 /** When a workspace is active, split named projects into prioritized and others. */
@@ -294,11 +297,11 @@ function handleSave() {
     const trimmedLabel = formData.value.label.trim()
     if (groupMode.value) {
         if (!trimmedLabel) {
-            errorMessage.value = 'Group name is required.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.groupRequired')
             return
         }
         if (!terminalConfigStore.addSnippetGroup(formData.value.scope, trimmedLabel)) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
             return
         }
         cancelForm()
@@ -307,23 +310,23 @@ function handleSave() {
     if (editIndex.value !== null) {
         const source = getGroupItems(terminalConfigStore.snippets[editScope.value] || [], editSourceGroupId.value)?.[editIndex.value]
         if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
             return
         }
     }
     if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
-        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        errorMessage.value = localUiMessage('terminal.editor.errors.groupMissing')
         return
     }
     const trimmedSnippet = formData.value.snippet.trim()
 
     if (!trimmedLabel) {
-        errorMessage.value = 'Label is required.'
+        errorMessage.value = localUiMessage('terminal.snippets.errors.labelRequired')
         return
     }
 
     if (!trimmedSnippet) {
-        errorMessage.value = 'Snippet text is required.'
+        errorMessage.value = localUiMessage('terminal.snippets.errors.textRequired')
         return
     }
 
@@ -345,7 +348,7 @@ function handleSave() {
         return s.label.trim().toLowerCase() === trimmedLabel.toLowerCase()
     })
     if (hasDuplicateLabel && !warningMessage.value) {
-        warningMessage.value = 'A snippet with the same label already exists in this scope. Submit again to save anyway.'
+        warningMessage.value = localUiMessage('terminal.snippets.duplicateWarning')
         return
     }
     warningMessage.value = ''
@@ -358,7 +361,7 @@ function handleSave() {
         )
         : terminalConfigStore.addSnippet(selectedScope, snippetData, formData.value.groupId)
     if (!saved) {
-        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
         return
     }
 
@@ -486,7 +489,7 @@ defineExpose({ open, close })
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    :placeholder="groupMode ? 'e.g. Git' : 'e.g. &quot;git status&quot;'"
+                    :placeholder="groupMode ? $t('terminal.snippets.groupPlaceholder') : $t('terminal.snippets.labelPlaceholder')"
                     size="small"
                 />
             </div>
@@ -628,12 +631,12 @@ defineExpose({ open, close })
 
             <!-- Warning (duplicate label) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
-                {{ warningMessage }}
+                {{ resolveUiMessage(warningMessage, { t }) }}
             </wa-callout>
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage, { t }) }}
             </wa-callout>
         </form>
 

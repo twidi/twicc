@@ -1,6 +1,9 @@
 <script setup>
 // TerminalRenameDialog.vue - Dialog for renaming a terminal tab
-import { ref, nextTick, useId } from 'vue'
+import { ref, computed, nextTick, useId } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const LABEL_MAX_LENGTH = 30
 
@@ -12,7 +15,9 @@ const saveButtonRef = ref(null)
 
 const localLabel = ref('')
 const currentIndex = ref(null)
-const currentDefaultLabel = ref('')
+const currentDefaultLabel = computed(() => currentIndex.value === 0
+    ? t('terminal.tabs.main')
+    : t('terminal.tabs.numbered', { number: currentIndex.value + 1 }))
 
 const instanceId = useId()
 const formId = `terminal-rename-form-${instanceId}`
@@ -49,7 +54,6 @@ function focusInput() {
  */
 function open(index, currentLabel, defaultLabel) {
     currentIndex.value = index
-    currentDefaultLabel.value = defaultLabel
     // If the current label is the default, start with empty input so the
     // placeholder shows the default and the user types a custom name from scratch
     localLabel.value = currentLabel === defaultLabel ? '' : currentLabel

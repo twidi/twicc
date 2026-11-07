@@ -24,7 +24,7 @@ import {
     COLOR_SCHEME,
     SESSION_TIME_FORMAT,
     DEFAULT_MAX_CACHED_SESSIONS,
-    OPENROUTER_MODEL_DESCRIPTION,
+    OPENROUTER_MODEL_DESCRIPTION_KEY,
     SPONSOR_URL,
     TITLE_SUGGESTION_MODEL,
     TITLE_SUGGESTION_MODEL_LABELS,
@@ -69,7 +69,7 @@ const props = defineProps({
     positionAnchor: { type: Object, default: null },
 })
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const store = useSettingsStore()
 const dataStore = useDataStore()
@@ -315,120 +315,120 @@ const shortcutGroups = computed(() => {
         if (!meta) continue
         commandShortcuts.push({
             keys: [char],
-            description: `${meta.tooltip} (at start of input — ${labels.join(', ')})`,
+            description: t('settings.shortcuts.commandActivation', { command: meta.tooltip, providers: new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(labels) }),
         })
     }
 
     return [
         {
-            label: 'Global',
+            label: t('settings.shortcuts.groups.global'),
             shortcuts: [
-                { keys: [mod, 'K'], description: 'Open command palette' },
-                { keys: [mod, 'Shift', 'F'], description: 'Open full-text search' },
+                { keys: [mod, 'K'], description: t('settings.shortcuts.openPalette') },
+                { keys: [mod, 'Shift', 'F'], description: t('settings.shortcuts.openSearch') },
                 // Always Ctrl (even on macOS, where ⌘+` is an OS shortcut), so these
                 // deliberately don't use `mod`. The cycle key is the physical key
                 // above Tab — backquoteKeyLabel resolves its legend per layout, and
                 // the description names its position too.
-                { keys: ['Ctrl', backquoteKeyLabel.value], description: 'Switch between recent sessions — hold Ctrl, tap the key above Tab (or ↑/↓) to cycle, release to switch' },
-                { keys: ['Ctrl', 'Shift', backquoteKeyLabel.value], description: 'Same, through the sessions currently shown in the sidebar (tap Shift while open to toggle either source)' },
-                { keys: ['Alt', 'Shift', 'B'], description: 'Toggle the sidebar' },
+                { keys: ['Ctrl', backquoteKeyLabel.value], description: t('settings.shortcuts.recentSwitcher') },
+                { keys: ['Ctrl', 'Shift', backquoteKeyLabel.value], description: t('settings.shortcuts.displayedSwitcher') },
+                { keys: ['Alt', 'Shift', 'B'], description: t('settings.shortcuts.toggleSidebar') },
             ]
         },
         {
-            label: 'Session tabs',
+            label: t('settings.shortcuts.groups.sessionTabs'),
             shortcuts: [
-                { keys: ['Alt', 'Shift', '1–9, 0'], description: 'Jump to tab (Chat, Files, Git, Terminal, Tasks, Plan, Artifacts, Orchestration, Workflows, Browser)' },
-                { keys: ['Alt', 'Shift', '←/→'], description: 'Previous / next tab' },
-                { keys: ['Alt', 'Shift', '↑/↓'], description: 'Last visited tab' },
+                { keys: ['Alt', 'Shift', '1–9, 0'], description: t('settings.shortcuts.jumpSessionTab') },
+                { keys: ['Alt', 'Shift', '←/→'], description: t('settings.shortcuts.previousNextTab') },
+                { keys: ['Alt', 'Shift', '↑/↓'], description: t('settings.shortcuts.lastTab') },
             ]
         },
         {
-            label: 'Session chat',
+            label: t('settings.shortcuts.groups.sessionChat'),
             shortcuts: [
-                { keys: ['Alt', 'Shift', 'M'], description: 'Focus message input — or the active pending request when one is open (from any session tab)' },
-                { keys: ['Alt', 'Shift', 'PageDown'], description: 'Go to the message input (chat tab)' },
+                { keys: ['Alt', 'Shift', 'M'], description: t('settings.shortcuts.focusInput') },
+                { keys: ['Alt', 'Shift', 'PageDown'], description: t('settings.shortcuts.goInput') },
                 // PageUp is dual-purpose: pending-request nav always, plus the hybrid
                 // CLI terminal only when hybrid mode is enabled — drop that clause off.
                 store.isClaudeHybridEnabled
-                    ? { keys: ['Alt', 'Shift', 'PageUp'], description: 'Go to the open pending request — or, from the message input on a hybrid session, the Claude CLI terminal (chat tab)' }
-                    : { keys: ['Alt', 'Shift', 'PageUp'], description: 'Go to the open pending request (chat tab)' },
+                    ? { keys: ['Alt', 'Shift', 'PageUp'], description: t('settings.shortcuts.goPendingHybrid') }
+                    : { keys: ['Alt', 'Shift', 'PageUp'], description: t('settings.shortcuts.goPending') },
                 // Hybrid-only chords: listed only when hybrid mode is enabled.
                 ...(store.isClaudeHybridEnabled ? [
-                    { keys: ['Alt', 'Shift', 'T'], description: 'Toggle between the Claude CLI terminal and the message input — hybrid sessions only (from any session tab)' },
-                    { keys: ['Alt', 'Shift', 'H'], description: 'Toggle hybrid mode on a Claude session, where it can be toggled (from any session tab)' },
+                    { keys: ['Alt', 'Shift', 'T'], description: t('settings.shortcuts.toggleHybridInput') },
+                    { keys: ['Alt', 'Shift', 'H'], description: t('settings.shortcuts.toggleHybrid') },
                 ] : []),
-                { keys: ['Quick triple Esc'], description: 'Emergency stop of the running process' },
-                { keys: ['Shift', 'Quick triple Esc'], description: 'Force kill the running process — no grace window, no confirmation (also: Shift-click the Stop button, or click it again while stopping)' },
+                { keys: [t('settings.shortcuts.tripleEscape')], description: t('settings.shortcuts.emergencyStop') },
+                { keys: ['Shift', t('settings.shortcuts.tripleEscape')], description: t('settings.shortcuts.hardKill') },
             ]
         },
         {
-            label: 'Session layout',
+            label: t('settings.shortcuts.groups.layout'),
             shortcuts: [
-                { keys: ['Alt', 'Shift', '↵'], description: 'Maximize the focused pane (chat or a docked tool panel) — press again to restore' },
-                { keys: ['Alt', 'Shift', 'Backspace'], description: 'Minimize the focused docked panel to the gutter' },
+                { keys: ['Alt', 'Shift', '↵'], description: t('settings.shortcuts.maximize') },
+                { keys: ['Alt', 'Shift', 'Backspace'], description: t('settings.shortcuts.minimize') },
             ]
         },
         {
             label: t('composer.input.label'),
             shortcuts: [
-                { keys: [mod, '↵'], description: 'Send message' },
-                { keys: ['Alt', 'Shift', 'O'], description: 'Open / close Agent Settings popover' },
-                { keys: ['@'], description: 'Insert file path (after a space or at start)' },
+                { keys: [mod, '↵'], description: t('settings.shortcuts.send') },
+                { keys: ['Alt', 'Shift', 'O'], description: t('settings.shortcuts.agentSettings') },
+                { keys: ['@'], description: t('settings.shortcuts.insertFile') },
                 ...commandShortcuts,
-                { keys: ['!'], description: 'Message history (at start of input)' },
-                { keys: ['PageUp'], description: 'Message history (cursor on first line)' },
+                { keys: ['!'], description: t('settings.shortcuts.historyStart') },
+                { keys: ['PageUp'], description: t('settings.shortcuts.historyFirstLine') },
             ]
         },
         {
-            label: 'Pending request (approval / question)',
+            label: t('settings.shortcuts.groups.pending'),
             shortcuts: [
-                { keys: [mod, '↵'], description: 'Submit the form — Approve (or "Approve with changes" in edit mode, Submit for a question). Sends Deny / Cancel turn when that button is focused.' },
+                { keys: [mod, '↵'], description: t('settings.shortcuts.submitPending') },
             ]
         },
         {
-            label: 'Project home tabs',
+            label: t('settings.shortcuts.groups.projectTabs'),
             shortcuts: [
-                { keys: ['Alt', 'Shift', '1–5'], description: 'Jump to tab (Timeline, Stats, Files, Git, Terminal)' },
-                { keys: ['Alt', 'Shift', '←/→'], description: 'Previous / next tab' },
-                { keys: ['Alt', 'Shift', '↑/↓'], description: 'Last visited tab' },
+                { keys: ['Alt', 'Shift', '1–5'], description: t('settings.shortcuts.jumpProjectTab') },
+                { keys: ['Alt', 'Shift', '←/→'], description: t('settings.shortcuts.previousNextTab') },
+                { keys: ['Alt', 'Shift', '↑/↓'], description: t('settings.shortcuts.lastTab') },
             ]
         },
         {
-            label: 'Terminal tabs',
+            label: t('settings.shortcuts.groups.terminalTabs'),
             shortcuts: [
-                { keys: ['Alt', 'Ctrl', 'Shift', '1–9'], description: 'Jump to terminal tab N' },
-                { keys: ['Alt', 'Ctrl', 'Shift', '←/→'], description: 'Previous / next terminal tab' },
-                { keys: ['Alt', 'Ctrl', 'Shift', '↑/↓'], description: 'Last visited terminal tab' },
+                { keys: ['Alt', 'Ctrl', 'Shift', '1–9'], description: t('settings.shortcuts.jumpTerminalTab') },
+                { keys: ['Alt', 'Ctrl', 'Shift', '←/→'], description: t('settings.shortcuts.previousNextTerminal') },
+                { keys: ['Alt', 'Ctrl', 'Shift', '↑/↓'], description: t('settings.shortcuts.lastTerminal') },
             ]
         },
         {
-            label: 'Workflow run tabs',
+            label: t('settings.shortcuts.groups.workflowTabs'),
             shortcuts: [
-                { keys: ['Alt', 'Ctrl', 'Shift', '1–9'], description: 'Jump to workflow run tab N' },
-                { keys: ['Alt', 'Ctrl', 'Shift', '←/→'], description: 'Previous / next workflow run tab' },
-                { keys: ['Alt', 'Ctrl', 'Shift', '↑/↓'], description: 'Last visited workflow run tab' },
+                { keys: ['Alt', 'Ctrl', 'Shift', '1–9'], description: t('settings.shortcuts.jumpWorkflowTab') },
+                { keys: ['Alt', 'Ctrl', 'Shift', '←/→'], description: t('settings.shortcuts.previousNextWorkflow') },
+                { keys: ['Alt', 'Ctrl', 'Shift', '↑/↓'], description: t('settings.shortcuts.lastWorkflow') },
             ]
         },
         {
-            label: 'In-session search',
+            label: t('settings.shortcuts.groups.search'),
             shortcuts: [
-                { keys: [mod, 'F'], description: 'Find in current session' },
-                { keys: ['F3'], description: 'Next match (works without focus)' },
-                { keys: ['Shift', 'F3'], description: 'Previous match (works without focus)' },
+                { keys: [mod, 'F'], description: t('settings.shortcuts.findSession') },
+                { keys: ['F3'], description: t('settings.shortcuts.nextMatch') },
+                { keys: ['Shift', 'F3'], description: t('settings.shortcuts.previousMatch') },
             ]
         },
         {
-            label: 'Files / Git editor',
+            label: t('settings.shortcuts.groups.editor'),
             shortcuts: [
-                { keys: ['Alt', 'E'], description: 'Toggle edit mode for the current file' },
+                { keys: ['Alt', 'E'], description: t('settings.shortcuts.toggleEdit') },
             ]
         },
         {
             label: t('settings.sections.terminal'),
             shortcuts: [
-                { keys: ['Ctrl', 'C'], description: 'Copy selected text (instead of SIGINT)' },
-                { keys: ['Ctrl', 'Shift', 'C'], description: 'Copy selected text' },
-                { keys: ['Ctrl', 'D'], description: 'Send EOF / disconnect' },
+                { keys: ['Ctrl', 'C'], description: t('settings.shortcuts.copyInsteadSignal') },
+                { keys: ['Ctrl', 'Shift', 'C'], description: t('settings.shortcuts.copy') },
+                { keys: ['Ctrl', 'D'], description: t('settings.shortcuts.eof') },
             ]
         },
     ]
@@ -533,13 +533,13 @@ const disabledTitleSuggestionModels = computed(() => {
     const disabled = {}
     for (const [model, provider] of Object.entries(TITLE_SUGGESTION_MODEL_PROVIDERS)) {
         if (enabledProviders.value.has(provider)) continue
-        disabled[model] = `${getProviderLabel(provider)} is disabled.`
+        disabled[model] = t('settings.titles.model.providerDisabled', { provider: getProviderLabel(provider) })
     }
     // Say what to do, as the Text to Speech settings do: the key lives in the `.env` of the data directory.
     if (!openrouterKeySet.value) {
         disabled[TITLE_SUGGESTION_MODEL.OPENROUTER] = textToSpeechStore.envPath
-            ? `Add TWICC_OPENROUTER_API_KEY to ${textToSpeechStore.envPath}, then restart TwiCC.`
-            : 'Add TWICC_OPENROUTER_API_KEY to the .env file of your TwiCC data directory, then restart TwiCC.'
+            ? t('settings.titles.model.addKeyToPath', { path: textToSpeechStore.envPath })
+            : t('settings.titles.model.addKey')
     }
     return disabled
 })
@@ -636,14 +636,14 @@ function dumpApplyIcon(provider) {
 
 // Hour options 00–23: the stored value is always the 24h "HH"; only the label
 // is locale-aware (12h AM/PM or 24h, per the browser locale, like the app's
-// other clocks). Built once — the locale doesn't change at runtime.
-const WAKEUP_HOUR_OPTIONS = (() => {
-    const fmt = new Intl.DateTimeFormat(navigator.language, { hour: 'numeric' })
+// other clocks). Rebuild when the selected interface locale changes.
+const WAKEUP_HOUR_OPTIONS = computed(() => {
+    const fmt = new Intl.DateTimeFormat(locale.value, { hour: 'numeric' })
     return Array.from({ length: 24 }, (_, h) => ({
         value: String(h).padStart(2, '0'),
         label: fmt.format(new Date(2000, 0, 1, h)),
     }))
-})()
+})
 const WAKEUP_MINUTES = ['00', '10', '20', '30', '40', '50']
 
 function supportsWakeup(provider) {
@@ -694,11 +694,10 @@ const worktreeTemplateError = computed(() => {
     const v = worktreeTemplateValidation.value
     if (v.valid) return ''
     if (v.unknown.length) {
-        const list = v.unknown.map((n) => `{${n}}`).join(', ')
-        return `Unknown placeholder${v.unknown.length > 1 ? 's' : ''}: ${list}. `
-            + 'Allowed: {git_root}, {project_name}, {project_basedir}.'
+        const list = new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(v.unknown.map(name => `{${name}}`))
+        return t('settings.general.worktreeDirectory.errors.unknown', { placeholders: list, allowed: '{git_root}, {project_name}, {project_basedir}' }, v.unknown.length)
     }
-    return 'Malformed template: check for unmatched { or } braces.'
+    return t('settings.general.worktreeDirectory.errors.malformed', { openBrace: '{', closeBrace: '}' })
 })
 const worktreeDirApplyIcon = computed(() => {
     if (!worktreeTemplateValidation.value.valid) return 'x-circle'
@@ -2017,7 +2016,7 @@ function onChangelogClose() {
                                     <span
                                         v-else
                                         class="radio-note"
-                                    >{{ $t('settings.titles.model.openRouterHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</span>
+                                    >{{ $t('settings.titles.model.openRouterHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</span>
                                 </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">

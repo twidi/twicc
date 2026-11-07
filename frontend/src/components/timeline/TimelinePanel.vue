@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 // TimelinePanel.vue - The Timeline tab of a scope page (global, workspace, project, worktree).
 // Design: docs/plans/2026-10-15-timeline-display-design.md.
 //
@@ -159,7 +161,7 @@ const items = computed(() => [
 /** The no-match message names the view when it is not `all`: some views can never match some filters. */
 const noMatchMessage = computed(() => {
     const selected = VIEWS.find((entry) => entry.value === filters.value.view && entry.value !== 'all')
-    return selected ? `Nothing matches ${selected.label} with these filters` : 'Nothing matches these filters'
+    return selected ? t('timeline.filters.noViewMatches', { view: selected.label }) : t('timeline.filters.noMatches')
 })
 
 // The filter band, for the focus moves of spec 3.1.
@@ -196,10 +198,10 @@ const bandRef = ref(null)
 const topHeight = ref(0)
 // The widest times of the locale, for the time column of every row (TimelineEventRow.vue): computed once, with the
 // clock format of the rows (the context sets no `time` options, like this call).
-const TIME_COLUMN_SIZER = timeColumnSizer()
+const timeSizer = computed(() => timeColumnSizer({ locale: locale.value }))
 const panelStyle = computed(() => ({
     '--timeline-top-height': `${topHeight.value}px`,
-    '--timeline-time-sizer': TIME_COLUMN_SIZER,
+    '--timeline-time-sizer': timeSizer.value,
 }))
 let topObserver = null
 

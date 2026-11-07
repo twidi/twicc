@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { it } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { computed, nextTick, ref } from 'vue'
@@ -70,14 +71,14 @@ function setupSource(path) {
 function mountFields(overrides = {}) {
     const props = { questions: [], modelValue: {}, disabled: false, autoFocus: false, ...overrides }
     let mounted
-    const setup = new Function('defineProps', 'defineEmits', 'defineExpose', 'nextTick', 'onMounted', 'ref', 'useId', 'canStealFocus', `
+    const setup = new Function('defineProps', 'defineEmits', 'defineExpose', 'nextTick', 'onMounted', 'ref', 'useId', 'canStealFocus', 'useI18n', `
         ${setupSource('../components/message/QuestionFields.vue')}
         return { selectOption, clearAnswer, toggleOther, handleOptionKeydown, setPrimaryRef, setTextInputRef }
     `)
     const fields = setup(() => props, () => (event, value) => {
         assert.equal(event, 'update:modelValue')
         props.modelValue = value
-    }, () => {}, nextTick, callback => { mounted = callback }, ref, () => 'question-id', () => true)
+    }, () => {}, nextTick, callback => { mounted = callback }, ref, () => 'question-id', () => true, () => createAppI18n().global)
     return { props, fields, mounted }
 }
 
@@ -183,11 +184,11 @@ function mountAsync(widgetEnabled = true) {
             return Promise.resolve()
         },
     }
-    const setup = new Function('defineProps', 'defineEmits', 'computed', 'useDataStore', 'toast', `
+    const setup = new Function('defineProps', 'defineEmits', 'computed', 'useDataStore', 'toast', 'useI18n', `
         ${setupSource('../components/message/AsyncQuestions.vue')}
         return { batches, fields, updateChoices }
     `)
-    const host = setup(() => props, () => () => {}, computed, () => store, { error() { assert.fail('unexpected storage error') } })
+    const host = setup(() => props, () => () => {}, computed, () => store, { error() { assert.fail('unexpected storage error') } }, () => createAppI18n().global)
     return { host, batch, record: () => record }
 }
 
@@ -216,12 +217,12 @@ it('failed answer persistence reports the error type without exposing the answer
         getPendingAsyncQuestionIds: () => [],
         setAsyncQuestionDraft: async () => { throw new DOMException('Private diagnostic content', 'NotFoundError') },
     }
-    const setup = new Function('defineProps', 'defineEmits', 'computed', 'useDataStore', 'toast', 'console', `
+    const setup = new Function('defineProps', 'defineEmits', 'computed', 'useDataStore', 'toast', 'console', 'useI18n', `
         ${setupSource('../components/message/AsyncQuestions.vue')}
         return updateChoices
     `)
     const updateChoices = setup(() => ({ sessionId: 's', snapshot: { batches: [] } }), () => () => {},
-        computed, () => store, { error: message => errors.push(message) }, { warn: (...args) => warnings.push(args) })
+        computed, () => store, { error: message => errors.push(message) }, { warn: (...args) => warnings.push(args) }, () => createAppI18n().global)
     updateChoices({ item_id: 'q1' }, { 0: { kind: 'other', value: 'Private answer' } })
     await new Promise(resolve => setImmediate(resolve))
     assert.deepEqual(warnings, [['Failed to save question answers:', 'NotFoundError']])
@@ -256,12 +257,12 @@ it('collapsed composer shows arriving ready questions during active turns withou
     const source = readFileSync(new URL('../components/message/MessageInput.vue', import.meta.url), 'utf8')
     const start = source.indexOf('const collapsedLabel = computed(')
     const end = source.indexOf('const collapsedMessageLabel =', start)
-    const setup = new Function('computed', 'readyAsyncQuestionCount', 'collapsedMessageLabel', `
+    const setup = new Function('computed', 'readyAsyncQuestionCount', 'collapsedMessageLabel', 't', 'n', `
         ${source.slice(start, end)}
         return collapsedLabel
     `)
     const count = ref(0)
-    const label = setup(computed, count, ref('Your message is waiting'))
+    const label = setup(computed, count, ref('Your message is waiting'), createAppI18n().global.t, createAppI18n().global.n)
     assert.equal(label.value, 'Your message is waiting')
     count.value = 1
     assert.equal(label.value, '1 question ready · Your message is waiting')

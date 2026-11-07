@@ -1,3 +1,4 @@
+import { i18n } from '../../i18n/index.js'
 /**
  * Tool-rendering helpers for Claude Code sessions.
  *
@@ -51,9 +52,9 @@ const MONITOR_TOOL_NAME = 'Monitor'
 // the header and the full plan body in ``TodoContent``.
 const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'])
 const TASK_SUBAGENT_LABELS = {
-    explore: 'exploring',
-    plan: 'planning',
-    bash: 'bashing',
+    explore: 'session.tools.verbs.exploring',
+    plan: 'session.tools.verbs.planning',
+    bash: 'session.tools.verbs.shell',
 }
 
 const INPUT_OVERRIDES = {
@@ -92,11 +93,14 @@ function getDisplayName(name, input) {
 }
 
 function buildGrepInline(pattern, fileType, path) {
-    const parts = []
-    if (pattern) parts.push(pattern)
-    if (fileType) parts.push(`in ${fileType} files`)
-    if (path) parts.push(`in ${path}`)
-    return parts.length ? parts.join(' ') : null
+    const values = { pattern, fileType, path }
+    if (pattern && fileType && path) return i18n.global.t('session.tools.grep.patternTypePath', values)
+    if (pattern && fileType) return i18n.global.t('session.tools.grep.patternType', values)
+    if (pattern && path) return i18n.global.t('session.tools.grep.patternPath', values)
+    if (fileType && path) return i18n.global.t('session.tools.grep.typePath', values)
+    if (fileType) return i18n.global.t('session.tools.grep.fileType', values)
+    if (path) return i18n.global.t('session.tools.grep.path', values)
+    return pattern || null
 }
 
 function parseCatNContent(content) {
@@ -311,17 +315,19 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
         if (AGENT_TOOL_NAMES.has(name)) {
             const subtype = input?.subagent_type?.toLowerCase()
             if (subtype && TASK_SUBAGENT_LABELS[subtype]) {
-                return TASK_SUBAGENT_LABELS[subtype]
+                return i18n.global.t(TASK_SUBAGENT_LABELS[subtype])
             }
-            return 'agenting'
+            return i18n.global.t('session.tools.verbs.agent')
         }
         if (name.startsWith('mcp__')) {
             const parts = name.split('__')
             const server = parts[1] || 'mcp'
-            return `mcping (${server})`
+            return i18n.global.t('session.tools.verbs.mcp', { server })
         }
-        const lower = name.toLowerCase()
-        return lower.replace(/[aeiou]+$/, '') + 'ing'
+        const keys = { Read: 'reading', Write: 'writing', Edit: 'editing', Grep: 'searching', Glob: 'searching', Bash: 'running', WebFetch: 'fetching', WebSearch: 'searching', TodoWrite: 'planning', Skill: 'usingSkill', ToolSearch: 'searching' }
+        return keys[name]
+            ? i18n.global.t(`session.tools.verbs.${keys[name]}`)
+            : i18n.global.t('session.tools.verbs.using', { tool: name })
     }
 
     getHeaderLabel(name, _input, options) {
@@ -332,7 +338,7 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
         // must not read "Stop agent" / "Agent output").
         const controlLabel = agentControlHeaderLabel(name, options?.agentInteraction)
         if (controlLabel) return controlLabel
-        if (name === 'TodoWrite') return 'Todo'
+        if (name === 'TodoWrite') return i18n.global.t('session.tools.headers.todo')
         // TaskCreate / TaskUpdate / TaskGet / TaskList keep their raw names —
         // the operation is informative on its own and a flat ``Task`` header
         // hides it (we'd then only tell create vs update vs get apart via
@@ -435,7 +441,7 @@ export class ClaudeCodeToolHelpers extends BaseToolHelpers {
             const tasks = options?.twiccTasksData
             if (!Array.isArray(tasks)) return null
             const count = tasks.length
-            const label = count === 1 ? '1 task' : `${count} tasks`
+            const label = i18n.global.t('session.tools.taskCount', { count }, count)
             return {
                 component: DescriptionSummary,
                 props: { description: label, fileIconSrc: null },

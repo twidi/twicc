@@ -18,7 +18,7 @@ const props = defineProps({
     // The field's accessible name, read before the value (the caller shows its own label).
     label: { type: String, default: '' },
     // What the open menu says when it has no option to show.
-    emptyText: { type: String, default: 'No match' },
+    emptyText: { type: String, default: null },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -120,7 +120,7 @@ function onFilterKeydown(event) {
                 size="small"
                 :placeholder="$t('common.select.filterPlaceholder')"
                 autocomplete="off"
-                :label="label ? `Filter ${label.toLowerCase()}` : 'Filter'"
+                :label="label ? $t('common.select.filterLabel', { label }) : $t('common.select.filter')"
                 class="fs-filter-input"
                 :value.prop="query"
                 @input="onFilterInput"
@@ -146,7 +146,7 @@ function onFilterKeydown(event) {
             <span v-if="option.tag" slot="details" class="fs-option-tag">{{ option.tag }}</span>
         </wa-dropdown-item>
 
-        <div v-if="filtered.length === 0" class="fs-empty">{{ emptyText }}</div>
+        <div v-if="filtered.length === 0" class="fs-empty">{{ emptyText ?? $t('common.select.noMatch') }}</div>
     </wa-dropdown>
 </template>
 

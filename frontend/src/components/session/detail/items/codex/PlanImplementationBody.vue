@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // PlanImplementationBody.vue (codex) — body sub-component for a
 // ``planImplementation`` pending request (request_type ``ask_user_question``).
 //
@@ -91,7 +93,7 @@ function implementInNewSession() {
     if (!plan || !current?.project_id) {
         // The plan message should be right above this form; not finding it
         // means the store has not ingested it (yet). Keep the request open.
-        toast.error('Could not find the proposed plan in this session — please retry')
+        toast.error(t('session.planImplementation.planMissing'))
         return
     }
 
@@ -131,7 +133,7 @@ function implementInNewSession() {
         // Default deletion: a draft created here, never abandoned by the
         // user — its attachments (none) are only forgotten, never released.
         dataStore.deleteDraftSession(draftId)
-        toast.error('Not connected — please retry in a moment')
+        toast.error(t('session.planImplementation.disconnected'))
         return
     }
 

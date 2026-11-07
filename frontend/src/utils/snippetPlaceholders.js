@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Placeholder definitions, extraction, resolution, and availability checks for snippets.
 
 /**
@@ -22,17 +24,17 @@ function localISO(d = new Date()) {
  */
 export const PLACEHOLDERS = [
     // Project-related
-    { id: 'project-dir', label: 'Project dir', resolve: (ctx) => ctx.project?.directory },
-    { id: 'project-name', label: 'Project name', resolve: (ctx) => ctx.projectName },
+    { id: 'project-dir', labelKey: 'composer.snippets.placeholders.projectDir', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.project?.directory },
+    { id: 'project-name', labelKey: 'composer.snippets.placeholders.projectName', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.projectName },
     // Session-related
-    { id: 'session-cwd', label: 'Session dir', resolve: (ctx) => ctx.session?.cwd },
-    { id: 'session-git-branch', label: 'Git branch', resolve: (ctx) => ctx.session?.git_branch },
-    { id: 'session-git-dir', label: 'Git dir', resolve: (ctx) => ctx.session?.git_directory },
-    { id: 'session-id', label: 'Session ID', resolve: (ctx) => ctx.session?.id },
+    { id: 'session-cwd', labelKey: 'composer.snippets.placeholders.sessionDir', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.session?.cwd },
+    { id: 'session-git-branch', labelKey: 'composer.snippets.placeholders.gitBranch', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.session?.git_branch },
+    { id: 'session-git-dir', labelKey: 'composer.snippets.placeholders.gitDir', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.session?.git_directory },
+    { id: 'session-id', labelKey: 'composer.snippets.placeholders.sessionId', get label() { return i18n.global.t(this.labelKey) }, resolve: (ctx) => ctx.session?.id },
     // Dynamic (always available — computed at insertion time)
-    { id: 'date', label: 'Date', resolve: () => localISO().date },
-    { id: 'time', label: 'Time', resolve: () => localISO().time },
-    { id: 'datetime', label: 'Datetime', resolve: () => localISO().datetime },
+    { id: 'date', labelKey: 'composer.snippets.placeholders.date', get label() { return i18n.global.t(this.labelKey) }, resolve: () => localISO().date },
+    { id: 'time', labelKey: 'composer.snippets.placeholders.time', get label() { return i18n.global.t(this.labelKey) }, resolve: () => localISO().time },
+    { id: 'datetime', labelKey: 'composer.snippets.placeholders.datetime', get label() { return i18n.global.t(this.labelKey) }, resolve: () => localISO().datetime },
 ]
 
 /** Regex matching {placeholder-id} tokens. */
@@ -68,7 +70,7 @@ export function getUnavailablePlaceholders(placeholderIds, ctx) {
         if (!p) continue
         const value = p.resolve(ctx)
         if (value === null || value === undefined || value === '') {
-            unavailable.push({ id: p.id, label: p.label })
+            unavailable.push({ id: p.id, labelKey: p.labelKey, label: p.label })
         }
     }
     return unavailable

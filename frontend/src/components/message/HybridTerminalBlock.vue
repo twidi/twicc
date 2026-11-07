@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // HybridTerminalBlock.vue - Embedded terminal for hybrid CLI sessions.
 //
 // Sits in the session footer, above the message input. Shows the live claude
@@ -179,15 +181,15 @@ const terminalBlocked = computed(() => !!processState.value?.extra?.terminal_blo
 const attentionTerminalOnly = computed(() => pendingTerminalOnly.value || terminalBlocked.value)
 // Same wording the minimized bar used to carry, promoted to the callout.
 const attentionLabel = computed(() =>
-    pendingTerminalOnly.value ? 'Answer in the terminal' : 'Terminal blocked — click here to open'
+    pendingTerminalOnly.value ? t('terminal.hybrid.answerTerminal') : t('terminal.hybrid.blockedOpen')
 )
 
 // Open-header badge: while the terminal IS open, keep the same context — steer
 // an answerable request to the UI form, or note a block. Quiet (no pulse): the
 // terminal is already on screen.
 const headerBadgeLabel = computed(() => {
-    if (hybridPending.value) return pendingIsAnswerable.value ? 'Prefer answering in the UI' : 'Answer in the terminal'
-    if (terminalBlocked.value) return 'Terminal blocked'
+    if (hybridPending.value) return pendingIsAnswerable.value ? t('terminal.hybrid.answerUi') : t('terminal.hybrid.answerTerminal')
+    if (terminalBlocked.value) return t('terminal.hybrid.blocked')
     return ''
 })
 // Clicking the answerable badge brings the form back if the user minimized it,

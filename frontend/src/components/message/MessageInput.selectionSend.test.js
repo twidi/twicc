@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createAppI18n } from '../../i18n/index.js'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { parse, babelParse } from '@vue/compiler-sfc'
@@ -40,7 +41,7 @@ function fixture({ collapsed = false, text = 'draft ', connected = true, overrid
     const inner = { selectionStart: 6, selectionEnd: 6, value: text, setSelectionRange() {} }
     const textareaRef = ref({ shadowRoot: { querySelector: () => inner }, focus: () => events.push('focus') })
     Object.assign(values, {
-        ref, computed, watch, nextTick, props, store, createSelectionCommentSendController,
+        ref, computed, watch, nextTick, props, store, createSelectionCommentSendController, t: createAppI18n().global.t,
         composerAttachmentsReady, sendComposerMessage, setAttachmentPayloadFields, snapshotAttachments,
         messageText, collapsed: ref(collapsed), textareaRef,
         session: ref({ provider: 'codex', title: 'Test' }),

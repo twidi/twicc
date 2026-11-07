@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { toRaw } from 'vue'
+import { i18n } from '../i18n/index.js'
 import { hasContent, getParsedContent, clearParsedContent, setParsedContent } from '../utils/parsedContent.js'
 import { DISPLAY_LEVEL, INITIAL_ITEMS_COUNT } from '../constants.js'
 import { userMessageText, userMessageAttachmentCount } from '../providers/codex/canonical.js'
@@ -40,11 +41,13 @@ const copy = value => JSON.parse(JSON.stringify(value))
 function fixture({ fetched = false, lastLine = 2, stallMs = 30000, logger = quiet } = {}) {
     const requests = []
     let respond = async url => ({ ok: true, json: async () => copy(url.includes('metadata') ? metadata : transcript) })
-    const deps = { hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT, DISPLAY_LEVEL, toRaw,
+    const deps = { i18n, hasContent, getParsedContent, clearParsedContent, setParsedContent, INITIAL_ITEMS_COUNT, DISPLAY_LEVEL, toRaw,
         isLaunchedEphemeral: s => !!s.ephemeral,
         itemsCoverageInFlight: new Function(`return ${source.match(/const itemsCoverageInFlight = (new \w+\(\))/)[1]}`)(),
         readJsonWithProgress: new Function(`return ${source.match(/async function readJsonWithProgress[\s\S]*?\n}\n/)[0]}`)(),
-        describeFetchFailure: new Function(`return ${source.match(/function describeFetchFailure[\s\S]*?\n}\n/)[0]}`)(),
+        describeFetchFailure: new Function('i18n', `return ${source.match(/function describeFetchFailure[\s\S]*?\n}\n/)[0]}`)(i18n),
+        fetchFailureDescriptor: new Function(`return ${source.match(/function fetchFailureDescriptor[\s\S]*?\n}\n/)[0]}`)(),
+        localizedFetchError: new Function('i18n', `return ${source.match(/function localizedFetchError[\s\S]*?\n}\n/)[0]}`)(i18n),
         sessionHistoryInFlight: new Map(), sessionHistoryControllers: new Map(), SESSION_HISTORY_STALL_TIMEOUT_MS: stallMs,
         lineNumsToRanges: lines => lines.map(line => [line, line]),
         apiFetch: async (url, options) => { requests.push(url); return respond(url, options) }, console: logger,

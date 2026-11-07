@@ -76,7 +76,7 @@ const searchIndexingPercent = computed(() => {
                     </div>
                     <wa-progress-bar
                         :value="syncPercent"
-                        :label="`Syncing sessions: ${syncPercent}%`"
+                        :label="$t('app.startup.syncProgress', { percent: syncPercent })"
                     ></wa-progress-bar>
                     <p v-if="isSyncActive" class="phase-hint">
                         {{ $t('app.startup.syncHint') }}
@@ -93,7 +93,7 @@ const searchIndexingPercent = computed(() => {
                     </div>
                     <wa-progress-bar
                         :value="computePercent"
-                        :label="`Indexing sessions: ${computePercent}%`"
+                        :label="$t('app.startup.computeProgress', { percent: computePercent })"
                     ></wa-progress-bar>
                     <p v-if="isComputeActive" class="phase-hint">
                         {{ $t('app.startup.indexingHint') }}
@@ -117,7 +117,7 @@ const searchIndexingPercent = computed(() => {
                     </div>
                     <wa-progress-bar
                         :value="searchIndexingPercent"
-                        :label="`Building search index: ${searchIndexingPercent}%`"
+                        :label="$t('app.startup.searchProgress', { percent: searchIndexingPercent })"
                     ></wa-progress-bar>
                     <p v-if="isSearchIndexingActive" class="phase-hint">
                         {{ $t('app.startup.searchHint') }}

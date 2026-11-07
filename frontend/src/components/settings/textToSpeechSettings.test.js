@@ -131,7 +131,7 @@ test('a script config tests without the key, with its own rule and title', () =>
     const body = canTestSource()
     assert.match(body, /kindOf\(config\) === 'script'/)
     assert.match(body, /canTestScript\(config\)/)
-    assert.ok(settingsSource.includes("'Test: needs a command, a sample rate for PCM, and a test text'"))
+    assert.ok(settingsSource.includes("t('settings.textToSpeech.scriptTestRequirements')"))
 })
 
 test('the last test of a script config shows no price', () => {
@@ -145,12 +145,12 @@ test('the last test of a script config shows no price', () => {
     assert.match(template, /lastTestTexts\[config\.id\]\.stats/)
     assert.match(template, /lastTestTexts\[config\.id\]\.facts/)
     assert.match(settingsSource, /function isPriced\(config\) \{\s*return kindOf\(config\) !== 'script'/)
-    assert.ok(settingsSource.includes("'Last test run: generation time per 1,000 characters, and time to the first audio'"))
+    assert.ok(settingsSource.includes("t('settings.textToSpeech.scriptTestTitle')"))
 })
 
 test('an icon before the name tells an OpenRouter config from a script config', () => {
-    assert.match(settingsSource, /openrouter: \{ name: 'globe', label: 'OpenRouter config' \}/)
-    assert.match(settingsSource, /script: \{ name: 'terminal', label: 'Script config' \}/)
+    assert.match(settingsSource, /openrouter: \{ name: 'globe', label: 'settings.textToSpeech.kind.openrouter' \}/)
+    assert.match(settingsSource, /script: \{ name: 'terminal', label: 'settings.textToSpeech.kind.script' \}/)
     assert.match(settingsSource, /<span class="tts-summary-name"><wa-icon\s+class="tts-kind-icon"\s+:name="kindIconOf\(config\)\.name"/)
 })
 
@@ -201,12 +201,12 @@ test('the adaptation control shows what really runs, from the enabled providers 
 test('the adaptation hint or the no-provider hint instead, then the OpenRouter note whenever the key is set', () => {
     assert.match(
         flatSource,
-        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.noProvider'\) \}\}<\/span> <span v-else class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.openRouterAdaptHint', \{ model: OPENROUTER_MODEL_DESCRIPTION \}\) \}\}<\/span>/,
+        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.noProvider'\) \}\}<\/span> <span v-else class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.openRouterAdaptHint', \{ model: \$t\(OPENROUTER_MODEL_DESCRIPTION_KEY\) \}\) \}\}<\/span>/,
     )
     // One OpenRouter note only, and never bound to OpenRouter being the effective choice.
     assert.equal(settingsSource.match(/\$t\('settings\.textToSpeech\.openRouterAdaptHint'/g)?.length, 1)
     // The model words come from the one constant, never written here.
-    assert.match(settingsSource, /import \{ OPENROUTER_MODEL_DESCRIPTION \} from '\.\.\/\.\.\/constants'/)
+    assert.match(settingsSource, /import \{ OPENROUTER_MODEL_DESCRIPTION_KEY \} from '\.\.\/\.\.\/constants'/)
     assert.doesNotMatch(settingsSource, /Qwen|Cerebras/)
     assert.doesNotMatch(settingsSource, /adaptHintKind/)
 })

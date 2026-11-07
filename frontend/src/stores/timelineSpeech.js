@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 import { watch } from 'vue'
 import { ALL_PROJECTS_ID } from '../constants.js'
@@ -13,6 +15,10 @@ import { useTimelineFiltersStore } from './timelineFilters.js'
 import { useSummariesStore } from './summaries.js'
 
 // Each Pinia instance owns one coordinator. Requests, tokens and listeners stay outside reactive state.
+function showError(store, message) {
+    return store._showError(resolveUiMessage(message), message?.type === 'local-ui-message' ? message : null)
+}
+
 const coordinators = new WeakMap()
 // After this much silence the listener may have lost track of where they are: announce the full context again.
 const CONTEXT_SILENCE_MS = 3 * 60 * 1000
@@ -49,7 +55,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
                 // Distinct readings still own distinct failures, even when their text matches.
                 const pending = previous.find(notice => notice.message === message && (key === unownedKey || notice.unowned))
                 notices.set(key, { message, unowned: key === unownedKey,
-                    displayed: byMessage.get(message) ?? pending?.displayed ?? Promise.resolve(store._showError(message)) })
+                    displayed: byMessage.get(message) ?? pending?.displayed ?? Promise.resolve(showError(store, message)) })
             }
             const notice = notices.get(key)
             byMessage.set(message, notice.displayed)
@@ -85,13 +91,14 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
             }
         }
         store.activePageId = listening?.pageId ?? null
-        store.activeLabel = listening?.scope?.label ?? ''
+        store.activeLabel = listening?.scope?.kind === 'global' ? i18n.global.t('session.timelineSpeech.allProjects') : listening?.scope?.label ?? ''
         store.paused = listening?.paused === true
         store.pendingCount = snapshot?.pendingCount ?? 0
         present()
     }
     mirror(tts.nativeSnapshot)
     const unwatch = watch(() => tts.nativeSnapshot, mirror, { flush: 'sync' })
+    const unwatchLocale = watch(i18n.global.locale, () => mirror(tts.nativeSnapshot), { flush: 'sync' })
     return {
         async enable(pageId) {
             if (!tts.available) return
@@ -101,16 +108,16 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
                 projectOf: id => dataStore.getProject(id), projectScopeIds: id => dataStore.getProjectScopeIds(id) })
             if (scope.state !== 'ready') return
             const id = scope.kind === 'global' ? null : scope.kind === 'workspace' ? extractWorkspaceId(pageId) : scope.projectId
-            const label = scope.kind === 'global' ? 'All projects' : scope.kind === 'workspace'
+            const label = scope.kind === 'global' ? i18n.global.t('session.timelineSpeech.allProjects') : scope.kind === 'workspace'
                 ? workspacesStore.getWorkspaceById(id)?.name ?? '' : dataStore.getProjectDisplayName(pageId)
             const accepted = await client.listen({ pageId, scope: { kind: scope.kind, id, label },
                 includeMuted: filters.filtersFor(pageId).includeMuted, boundary: wireTime(store._now()) })
             // Native displays the advice. Its next state poll adopts listening only after confirmation.
             if (!accepted?.accepted && accepted?.error?.code !== 'confirmation_required')
-                store._showError(accepted?.error?.message || 'Timeline reading could not start. Try again.')
+                showError(store, accepted?.error?.uiMessage || accepted?.error?.message || localUiMessage('session.timelineSpeech.startFailed'))
         },
         disable() { void client.disable() },
-        dispose() { disposed = true; notices.clear(); unwatchMuted?.(); unwatch() },
+        dispose() { disposed = true; notices.clear(); unwatchMuted?.(); unwatch(); unwatchLocale() },
     }
 }
 
@@ -134,7 +141,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             projectScopeIds: id => dataStore.getProjectScopeIds(id),
         })
         const members = scope.kind === 'global' ? Object.keys(dataStore.projects) : scope.projectIds
-        const label = scope.kind === 'global' ? 'All projects'
+        const label = scope.kind === 'global' ? i18n.global.t('session.timelineSpeech.allProjects')
             : scope.kind === 'workspace' ? workspacesStore.getWorkspaceById(extractWorkspaceId(store.activePageId))?.name ?? ''
                 : dataStore.getProjectDisplayName(store.activePageId)
         return { ...scope, members, label }
@@ -270,16 +277,16 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
         try {
             let result
             const descriptor = preparation?.descriptor
-            if (descriptor?.error) result = { ok: false, error: descriptor.error }
+            if (descriptor?.error) result = { ok: false, error: descriptor.errorMessage || descriptor.error }
             else if (descriptor?.eligible) {
                 const subscription = acquirePreparation(activation, preparation)
                 if (['failed', 'cancelled'].includes(subscription.entry.state)) {
-                    result = { ok: false, error: subscription.entry.error || 'The summary is unavailable' }
+                    result = { ok: false, error: subscription.entry.errorMessage || subscription.entry.error || localUiMessage('session.timelineSpeech.summaryUnavailable') }
                 } else {
                     // Reserve the existing player before handle acquisition. Settings freeze here.
                     let acquisitionError = null
                     const reference = subscription.ready.then(() => ({ id: subscription.id }), error => {
-                        acquisitionError = error.message || 'The summary is unavailable'
+                        acquisitionError = error.uiMessage || error.message || localUiMessage('session.timelineSpeech.summaryUnavailable')
                         throw error
                     })
                     result = await tts.playSummary(reference, {
@@ -302,8 +309,8 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
             }
             if (!result.ok) {
                 activation.context = null
-                if (result.error) store._showError(result.error)
-                if (!tts.available || result.error === REFUSED) disable()
+                if (result.error) showError(store, result.error)
+                if (!tts.available || (result.reason === 'refused' || result.error === REFUSED)) disable()
             }
         } finally {
             activation.processing = false
@@ -316,7 +323,7 @@ function createCoordinator(store, { dataStore, workspacesStore, connectionStatus
     function consume(activation, feed, responseEpoch, { phase, body }) {
         if (!current(activation) || activation.feed !== feed || phase === 'backfill') return
         if (phase === 'live' && body.truncated) {
-            store._showError('Some messages could not be loaded. Turn timeline reading on again.')
+            showError(store, localUiMessage('session.timelineSpeech.loadFailed'))
             // The feed checks disposal immediately after this callback, before its display-history reset.
             disable()
             return
@@ -484,9 +491,9 @@ export const useTimelineSpeechStore = defineStore('timelineSpeech', {
             const { fetchTimelinePage } = await import('../composables/useTimelineFeed.js')
             return fetchTimelinePage(params)
         },
-        async _showError(message) {
+        async _showError(message, messageDescriptor = null) {
             const { toast } = await import('../composables/useToast.js')
-            toast.error(message)
+            toast.error(messageDescriptor || message)
         },
     },
 })

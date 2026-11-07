@@ -2,8 +2,11 @@
 // TerminalSnippetSendDialog.vue - One-shot dialog to edit a snippet's text before sending it to a terminal.
 // Nothing is persisted — the edited text is used for this single send only.
 import { ref, computed, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import TerminalSnippetTextEditor from './TerminalSnippetTextEditor.vue'
 import { extractPlaceholders, getUnavailablePlaceholders } from '../../utils/snippetPlaceholders'
+
+const { locale } = useI18n()
 
 const props = defineProps({
     terminals: {
@@ -124,7 +127,7 @@ defineExpose({ open, close })
 
             <!-- Unavailable placeholders warning -->
             <wa-callout v-if="sendDisabled" variant="danger" size="small">
-                {{ $t('terminal.snippets.unavailable', { placeholders: unavailable.map(p => p.label).join(', ') }) }}
+                {{ $t('terminal.snippets.unavailable', { placeholders: new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(unavailable.map(p => p.label)) }) }}
             </wa-callout>
         </div>
 

@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Real sessions receive automatic titles from the backend. Only ephemeral
 // sessions need the frontend suggestion flow because they have no database row.
 export function shouldRequestAutomaticTitle(session, { titleAutoApply, titleGenerationEnabled }) {
@@ -10,7 +12,7 @@ export function showAutomaticTitleHint(session) {
 
 // Name shown for a session in lists: its title, "New session" for an untitled draft, else its id.
 export function getSessionDisplayName(session) {
-    if (session.draft && !session.title) return 'New session'
+    if (session.draft && !session.title) return i18n.global.t('session.title.newSession')
     return session.title || session.id
 }
 

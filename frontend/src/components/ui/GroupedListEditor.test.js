@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createAppI18n } from '../../i18n/index.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -12,6 +13,7 @@ function fixture() {
     let onHoverGroup
     const setup = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
     const api = runInNewContext(`(function(){ ${setup}; return {expandedGroups, toggleGroup, drag} })()`, {
+        useI18n: () => createAppI18n().global,
         defineProps: () => ({ entries: [], itemName: 'snippet' }),
         defineEmits: () => () => {},
         ref: value => ({ value }),

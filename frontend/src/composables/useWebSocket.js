@@ -1,10 +1,12 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 import { useSummariesStore } from '../stores/summaries'
 import { refreshStatisticsSessions } from './statisticsRefresh.js'
 import { handleAgentEvent } from '../utils/agentLinkIndex'
 import { isLaunchedEphemeral } from '../utils/ephemeralSessions'
 // frontend/src/composables/useWebSocket.js
 
-import { ref, watch, defineAsyncComponent, onScopeDispose } from 'vue'
+import { ref, watch, h, defineAsyncComponent, onScopeDispose } from 'vue'
 import { useWebSocket as useVueWebSocket, useDebounceFn, useIntervalFn, useThrottleFn } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useDataStore } from '../stores/data'
@@ -23,7 +25,7 @@ import { handleResyncRequired } from '../utils/resync'
 import { truncateTitle } from '../utils/truncate'
 import { peerMessageRouting, peerRoutingText } from '../utils/peerMessageRouting'
 import { toWorkspaceProjectId } from '../utils/workspaceIds'
-import { getUpdateInstructionsHtml } from '../utils/updateInstructions.js'
+import { getUpdateInstructions } from '../utils/updateInstructions.js'
 import { createUpdateReminder, UPDATE_REMINDER_KEY } from '../utils/updateReminder.js'
 import { getProcessStateNotificationEffects, getUserTurnNotificationText } from '../utils/processStateNotifications.js'
 import { buildTitleSuggestionRequest } from '../utils/titleSuggestion.js'
@@ -672,7 +674,7 @@ export function sendValidateUsageDumpPath(filePath) {
         const sent = sendWsMessage({ type: 'validate_usage_dump_path', file_path: filePath })
         if (!sent) {
             __hmrState.usageDumpPathValidateResolve = null
-            resolve({ valid: false, message: 'Not connected' })
+            resolve({ valid: false, message: i18n.global.t('session.notifications.notConnected') })
         }
     })
 }
@@ -691,7 +693,7 @@ export function sendValidateUsageFile(provider, filePath) {
         const sent = sendWsMessage({ type: 'validate_usage_file', provider, file_path: filePath })
         if (!sent) {
             __hmrState.usageFileValidateResolvers.delete(provider)
-            resolve({ valid: false, message: 'Not connected' })
+            resolve({ valid: false, message: i18n.global.t('session.notifications.notConnected') })
         }
     })
 }
@@ -707,7 +709,7 @@ export function sendValidateTmuxConfigPath(filePath) {
         const sent = sendWsMessage({ type: 'validate_tmux_config_path', file_path: filePath })
         if (!sent) {
             __hmrState.tmuxConfigPathValidateResolve = null
-            resolve({ valid: false, message: 'Not connected' })
+            resolve({ valid: false, message: i18n.global.t('session.notifications.notConnected') })
         }
     })
 }
@@ -765,7 +767,7 @@ function buildNotificationBody(msg) {
     const projectName = msg.project_parent_name
         ? `${truncateTitle(msg.project_parent_name, 40)} › ${truncateTitle(msg.project_name, 40)}`
         : truncateTitle(msg.project_name, 50)
-    return `Project: ${projectName}\nSession: ${sessionTitle}`
+    return i18n.global.t('session.notifications.body', { project: projectName, session: sessionTitle })
 }
 
 /**
@@ -820,7 +822,7 @@ function notifyProcessStateChange(msg, previousState, route) {
         ephemeral,
     })
     if (ephemeral && !localSession) return
-    if (localSession) msg = { ...msg, session_title: localSession.title || 'Ephemeral session' }
+    if (localSession) msg = { ...msg, session_title: localSession.title || i18n.global.t('session.notifications.ephemeralSession') }
     const isViewingSession = route?.params?.sessionId === sessionId
     const effects = getProcessStateNotificationEffects(msg, previousState, {
         isViewingSession,
@@ -842,8 +844,11 @@ function notifyProcessStateChange(msg, previousState, route) {
         __hmrState.activeUserTurnToasts.add(sessionId)
         toast.session(sessionId, {
             type: 'info',
-            title: finishedTitle,
+            title: localUiMessage(ephemeral ? 'session.notifications.ephemeral'
+                : msg.background_work_in_progress?.shells > 0 ? 'session.notifications.turnFinished' : 'session.notifications.finished', { provider: providerLabel }),
             detail: finishedDetail,
+            ...(finishedDetail ? { detailMessage: localUiMessage('session.notifications.shells',
+                { count: msg.background_work_in_progress.shells }, msg.background_work_in_progress.shells) } : {}),
             duration: 15000,
             dismissOnVisit: true,
             dismissOnRead: true,
@@ -869,9 +874,8 @@ function notifyProcessStateChange(msg, previousState, route) {
     if (effects.showPendingRequestToast) {
         // Use the freshest (last-arrived) request to title the toast.
         const latest = msg.pending_requests[effects.newPendingCount - 1]
-        const pendingTitle = latest?.request_type === 'ask_user_question'
-            ? `🖐️ ${providerLabel} has a question for you`
-            : `🖐️ ${providerLabel} needs your approval`
+        const pendingTitle = localUiMessage(latest?.request_type === 'ask_user_question'
+            ? 'session.notifications.question' : 'session.notifications.approval', { provider: providerLabel })
         // dismissOnVisit only: reaching the session is enough to drop the toast,
         // even with the request still unanswered. Not dismissOnRead — a pending
         // request is not unread content, so that criterion would close the toast
@@ -886,7 +890,7 @@ function notifyProcessStateChange(msg, previousState, route) {
     // Browser notification
     if (effects.sendPendingRequestBrowser) {
         sendBrowserNotification(
-            `${providerLabel} needs your attention`,
+            i18n.global.t('session.notifications.attention', { provider: providerLabel }),
             buildNotificationBody(msg),
         )
     }
@@ -897,18 +901,19 @@ function notifyProcessStateChange(msg, previousState, route) {
         if (msg.kill_reason === 'error') {
             toast.session(sessionId, {
                 type: 'error',
-                title: `${providerLabel} terminated due to error`,
-                errorMessage: msg.error || 'Unknown error',
+                title: localUiMessage('session.notifications.terminated', { provider: providerLabel }),
+                errorMessage: msg.error || undefined,
+                ...(!msg.error ? { errorMessageDescriptor: localUiMessage('session.notifications.unknownError') } : {}),
             })
         } else if (msg.kill_reason === 'timeout_starting') {
             toast.session(sessionId, {
                 type: 'error',
-                title: `${providerLabel} stopped: failed to start within 1 minute`,
+                title: localUiMessage('session.notifications.startTimeout', { provider: providerLabel }),
             })
         } else if (msg.kill_reason === 'timeout_assistant_turn') {
             toast.session(sessionId, {
                 type: 'warning',
-                title: `${providerLabel} stopped: no activity for 3 hours`,
+                title: localUiMessage('session.notifications.activityTimeout', { provider: providerLabel }),
             })
         }
         // No per-session toast for kill_reason === 'auth_required':
@@ -923,7 +928,8 @@ function notifyProcessStateChange(msg, previousState, route) {
         if (['error', 'startup-failed', 'timeout_starting'].includes(msg.kill_reason)) {
             useDataStore().failPendingSendsForSession(sessionId, {
                 code: 'agent_died',
-                message: 'The agent stopped before confirming your message was received.',
+                message: i18n.global.t('session.notifications.agentStoppedBeforeAck'),
+                messageKey: 'session.notifications.agentStoppedBeforeAck',
             })
         }
     }
@@ -934,21 +940,59 @@ export function showUpdateToast(version) {
     updateReminder?.showManually(version)
 }
 
+// Instructions stay text nodes. The command remains code; translated text never becomes HTML.
+const UpdateToastContent = {
+    name: 'UpdateToastContent',
+    setup() {
+        return () => {
+            const { before, command, after } = getUpdateInstructions()
+            const instructions = [before]
+            if (command) instructions.push(' ', h('code', {
+                style: { background: 'var(--wa-color-neutral-fill-normal)', color: 'var(--wa-color-neutral-on-normal)',
+                    padding: '0.1em 0.4em', borderRadius: '3px', fontSize: '0.9em', overflowWrap: 'anywhere' },
+            }, command))
+            if (after) instructions.push(' ', after)
+            return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.25rem' } }, [
+                h('span', instructions),
+                h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' } }, [
+                    h('wa-button', { size: 'small', variant: 'brand',
+                        onClick: () => window.dispatchEvent(new CustomEvent('open-changelog')),
+                    }, i18n.global.t('session.notifications.viewChanges')),
+                ]),
+            ])
+        }
+    },
+}
+
+const ExtraUsageToastContent = {
+    name: 'ExtraUsageToastContent',
+    props: ['provider', 'extra'],
+    setup(props) {
+        return () => {
+            const label = getProviderLabel(props.provider)
+            const icon = getProviderIcon(props.provider)
+            const detail = formatExtraUsageStartedDetail(props.extra)
+            return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.2rem' } }, [
+                h('span', { style: { fontWeight: '600', display: 'inline-flex', alignItems: 'center' } }, [
+                    ...(icon ? [h('wa-icon', { family: 'brands', name: icon,
+                        style: { marginInlineEnd: '0.4em', color: getProviderIconColor(props.provider) || undefined } })] : []),
+                    i18n.global.t('session.notifications.extraUsageTitle', { provider: label }),
+                ]),
+                h('span', i18n.global.t('session.notifications.extraUsageSentence', { provider: label })),
+                ...(detail ? [h('span', detail)] : []),
+            ])
+        }
+    },
+}
+
 function createUpdateToast(version, onDismiss) {
-    const upgradeHint = getUpdateInstructionsHtml()
-    return toast.custom({
+    return toast.custom(UpdateToastContent, {
         type: 'info',
-        title: `TwiCC v${version} is available`,
+        title: i18n.global.t('session.notifications.updateAvailable', { version }),
+        titleKey: 'session.notifications.updateAvailable',
+        titleParams: { version },
         duration: Infinity,
         onManualClear: onDismiss,
-        html: `
-            <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.25rem;">
-                <span>${upgradeHint}</span>
-                <div style="display: flex; justify-content: flex-end; margin-top: 0.25rem;">
-                    <wa-button size="small" variant="brand" onclick="window.dispatchEvent(new CustomEvent('open-changelog'));">View changes</wa-button>
-                </div>
-            </div>
-        `,
     })
 }
 
@@ -970,17 +1014,20 @@ function formatExtraUsageStartedDetail(extra) {
         const usedAmount = extra.currency
             ? formatExtraUsageAmount(extra.used_credits ?? 0, extra.decimal_places)
             : null
-        const unit = usedAmount != null ? extra.currency : 'credits'
-        const used = usedAmount ?? (extra.used_credits ?? 0)
+        const numbers = new Intl.NumberFormat(i18n.global.locale.value)
+        const used = usedAmount ?? numbers.format(extra.used_credits ?? 0)
         const limit = usedAmount != null
             ? formatExtraUsageAmount(extra.monthly_limit, extra.decimal_places)
-            : extra.monthly_limit
-        return limit != null
-            ? `${used} of ${limit} ${unit} used.`
-            : `${used} ${unit} used.`
+            : extra.monthly_limit == null ? null : numbers.format(extra.monthly_limit)
+        return i18n.global.t(usedAmount != null
+            ? (limit != null ? 'session.notifications.moneyUsedOf' : 'session.notifications.moneyUsed')
+            : (limit != null ? 'session.notifications.creditsUsedOf' : 'session.notifications.creditsUsed'),
+        { used, limit, currency: extra.currency }, extra.monthly_limit ?? extra.used_credits ?? 0)
     }
     if (extra.remaining_credits != null) {
-        return `${Math.round(extra.remaining_credits)} credits remaining.`
+        return i18n.global.t('session.notifications.creditsRemaining', {
+            count: new Intl.NumberFormat(i18n.global.locale.value).format(Math.round(extra.remaining_credits)),
+        }, Math.round(extra.remaining_credits))
     }
     return ''
 }
@@ -1387,7 +1434,7 @@ export function useWebSocket() {
                         const peerName = peersStore.peerLabel(msg.peer.id)
                         toast.custom(PeerToastContent, {
                             type: 'warning',
-                            title: `"${peerName}" accepted your request — complete the code verification to activate`,
+                            title: localUiMessage('session.notifications.peerVerification', { peer: peerName }),
                             duration: 15000,
                             props: { mode: 'request', peer: msg.peer },
                         })
@@ -1406,7 +1453,7 @@ export function useWebSocket() {
                     usePeersStore().upsertPeer(msg.peer)
                     toast.custom(PeerToastContent, {
                         type: 'info',
-                        title: 'Peer request',
+                        title: localUiMessage('session.notifications.peerRequest'),
                         duration: 15000,
                         props: { mode: 'request', peer: msg.peer },
                     })
@@ -1414,7 +1461,7 @@ export function useWebSocket() {
                     // human waits on you, and the pairing cannot advance until
                     // you read your code to them.
                     notifyPeerEvent(
-                        `Peer request from ${msg.peer?.name || msg.peer?.remote_display_name || 'an instance'}`,
+                        i18n.global.t('session.notifications.peerRequestFrom', { peer: msg.peer?.name || msg.peer?.remote_display_name || i18n.global.t('session.notifications.instance') }),
                         msg.peer?.base_url || '',
                         () => window.dispatchEvent(new CustomEvent('twicc:open-peers-manager')),
                     )
@@ -1429,7 +1476,7 @@ export function useWebSocket() {
                     // two users verify, and a name alone can name the wrong
                     // instance. The body holds it, the title names the peer.
                     toast.info(msg.peer?.base_url || '', {
-                        title: `"${peersStore.peerLabel(msg.peer?.id)}" accepted your peer request`,
+                        title: localUiMessage('session.notifications.peerAccepted', { peer: peersStore.peerLabel(msg.peer?.id) }),
                     })
                 })
                 break
@@ -1449,10 +1496,10 @@ export function useWebSocket() {
                     // the toast's buttons are local-only anyway (open the
                     // review dialog, or just close), so a stale copy elsewhere
                     // costs nothing.
-                    const heading = `${msg.message?.reply_to_ref ? 'Reply' : 'Message'} from ${peerName}`
+                    const heading = i18n.global.t(msg.message?.reply_to_ref ? 'session.notifications.peerReply' : 'session.notifications.peerMessage', { peer: peerName })
                     toast.custom(PeerToastContent, {
                         type: 'info',
-                        title: heading,
+                        title: localUiMessage(msg.message?.reply_to_ref ? 'session.notifications.peerReply' : 'session.notifications.peerMessage', { peer: peerName }),
                         duration: 30000,
                         props: { mode: 'message', message: msg.message },
                     })
@@ -1495,8 +1542,8 @@ export function useWebSocket() {
                         toast.custom(PeerToastContent, {
                             type: 'info',
                             title: msg.message.status === 'done'
-                                ? `"${peerName}" marked your message${quoted} as done`
-                                : `Your message${quoted} to "${peerName}" was ${msg.message.status}`,
+                                ? localUiMessage('session.notifications.peerDone', { peer: peerName, title: quoted })
+                                : localUiMessage(msg.message.status === 'delivered' ? 'session.notifications.peerDelivered' : 'session.notifications.peerRefused', { peer: peerName, title: quoted }),
                             props: { mode: 'status', message: msg.message },
                         })
                     }
@@ -1685,15 +1732,18 @@ export function useWebSocket() {
                 // Show error toast for invalid session title
                 toast.session(msg.session_id, {
                     type: 'error',
-                    title: 'Invalid title',
-                    errorMessage: msg.error || 'Unknown error',
+                    title: localUiMessage('session.notifications.invalidTitle'),
+                    errorMessage: msg.error || undefined,
+                    ...(!msg.error ? { errorMessageDescriptor: localUiMessage('session.notifications.unknownError') } : {}),
                 })
                 // The whole send was aborted with the title — restore the
                 // message into the composer too.
                 if (msg.request_id) {
                     store.failInflightSend(msg.request_id, {
                         code: 'invalid_title',
-                        message: `Invalid session title: ${msg.error || 'unknown error'}`,
+                        message: i18n.global.t('session.notifications.invalidTitleDetail', { error: msg.error || i18n.global.t('session.notifications.unknownError') }),
+                        messageKey: msg.error ? 'session.notifications.invalidTitleDetail' : 'session.notifications.invalidTitleUnknown',
+                        messageParams: msg.error ? { error: msg.error } : {},
                     })
                 }
                 break
@@ -1722,28 +1772,17 @@ export function useWebSocket() {
                 if (!provider) break
                 const settings = useSettingsStore()
                 const label = getProviderLabel(provider)
-                const iconName = getProviderIcon(provider)
-                const iconColor = getProviderIconColor(provider)
-                const iconHtml = iconName
-                    ? `<wa-icon family="brands" name="${iconName}" style="margin-inline-end: 0.4em;${iconColor ? ` color: ${iconColor};` : ''}"></wa-icon>`
-                    : ''
                 const detail = formatExtraUsageStartedDetail(msg.extra_usage)
-                const sentence = `${label} is currently drawing from your extra usage credit, billed on top of your plan.`
-                toast.custom({
+                const sentence = i18n.global.t('session.notifications.extraUsageSentence', { provider: label })
+                toast.custom(ExtraUsageToastContent, {
                     type: 'warning',
                     duration: 60000,
-                    html: `
-                        <div style="display: flex; flex-direction: column; gap: 0.2rem;">
-                            <span style="font-weight: 600; display: inline-flex; align-items: center;">${iconHtml}${label} — Extra usage started</span>
-                            <span>${sentence}</span>
-                            ${detail ? `<span>${detail}</span>` : ''}
-                        </div>
-                    `,
+                    props: { provider, extra: msg.extra_usage },
                 })
                 playNotificationSound(settings.notifExtraUsageStartSound)
                 if (settings.notifExtraUsageStartBrowser) {
                     sendBrowserNotification(
-                        `${label} — Extra usage started`,
+                        i18n.global.t('session.notifications.extraUsageTitle', { provider: label }),
                         detail ? `${sentence}\n${detail}` : sentence,
                     )
                 }
@@ -1975,9 +2014,9 @@ export function useWebSocket() {
                 }
                 if (msg.code === 'provider_disabled') {
                     const providerLabel = getProviderLabel(msg.provider) || msg.provider
-                    toast.error(`Cannot send to ${providerLabel}: it is disabled. Enable it from Settings → Providers.`)
+                    toast.error(localUiMessage('session.notifications.providerDisabled', { provider: providerLabel }))
                 } else if (msg.code === 'invalid_synced_settings') {
-                    toast.error(msg.message || 'A settings value is invalid.')
+                    toast.error(msg.message || localUiMessage('session.notifications.settingsInvalid'))
                 } else {
                     console.warn('[ws] Server error message:', msg)
                 }

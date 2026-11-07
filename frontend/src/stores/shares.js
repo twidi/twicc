@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { defineStore } from 'pinia'
 import { apiFetch } from '../utils/api'
 
@@ -31,14 +32,14 @@ export const useSharesStore = defineStore('shares', {
             const res = await apiFetch('/api/shares/', {
                 method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
             })
-            if (!res.ok) throw await res.json().catch(() => ({ error: 'create failed' }))
+            if (!res.ok) throw await res.json().catch(() => ({ error: i18n.global.t('session.sharing.createFailed') }))
             const share = await res.json(); this.upsertShare(share); return share
         },
         async patchShare(id, fields) {
             const res = await apiFetch(`/api/shares/${id}/`, {
                 method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fields),
             })
-            if (!res.ok) throw await res.json().catch(() => ({ error: 'update failed' }))
+            if (!res.ok) throw await res.json().catch(() => ({ error: i18n.global.t('session.sharing.updateFailed') }))
             const share = await res.json(); this.upsertShare(share); return share
         },
         async revokeShare(id, revoked = true) {

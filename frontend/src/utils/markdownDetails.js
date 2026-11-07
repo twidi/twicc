@@ -26,7 +26,7 @@ const CLOSER_RE = /^<\/details>\s*$/i
 const SUMMARY_RE = /^<summary>(.*?)<\/summary>(.*)$/i
 const FENCE_RE = /^(`{3,}|~{3,})/
 
-const DEFAULT_SUMMARY = 'Details'
+import { i18n } from '../i18n/index.js'
 
 /** The text of `line` without its indentation. */
 function lineText(state, line) {
@@ -106,7 +106,7 @@ function detailsBlock(state, startLine, endLine, silent) {
 
     const open = state.push('details_open', 'details', 1)
     open.markup = '<details>'
-    open.info = summary || DEFAULT_SUMMARY
+    open.info = summary || ''
     open.meta = { open: /\bopen\b/i.test(opener[1]) }
     open.map = [startLine, closed ? closeLine + 1 : bodyEnd]
 
@@ -132,7 +132,8 @@ export function installDetailsBlocks(md) {
     md.renderer.rules.details_open = (tokens, idx) => {
         const token = tokens[idx]
         const openAttr = token.meta.open ? ' open' : ''
-        return `<wa-details class="md-details"${openAttr}><span slot="summary">${md.renderInline(token.info)}</span>`
+        const defaultAttr = token.info ? '' : ' data-default-summary'
+        return `<wa-details class="md-details"${openAttr}><span slot="summary"${defaultAttr}>${md.renderInline(token.info || i18n.global.t('session.markdown.details'))}</span>`
     }
     md.renderer.rules.details_close = () => '</wa-details>'
 }

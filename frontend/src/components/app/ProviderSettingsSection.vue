@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 /**
  * ProviderSettingsSection — the per-provider section of the Settings popover
  * (one per registered provider), editing that provider's persisted agent-
@@ -47,8 +51,8 @@ const PERMISSION_FIELDS = ['permission_mode', 'permission_mode_if_untrusted']
 // Section-specific labels — kept distinct from the generic ``getFieldLabel`` so
 // the existing UI strings stay stable ("Default permission mode", …).
 const PERMISSION_LABELS = {
-    permission_mode: 'Default permission mode',
-    permission_mode_if_untrusted: 'Default permission mode (untrusted projects)',
+    permission_mode: 'settings.providers.permissions.default',
+    permission_mode_if_untrusted: 'settings.providers.permissions.untrusted',
 }
 
 // ─── Matrix + task controls + switches (shared AgentSettingsDefaultsPicker) ──
@@ -89,7 +93,7 @@ const permissionRows = computed(() => {
         const value = h.getDefaultValue(field)
         return {
             field,
-            label: PERMISSION_LABELS[field],
+            label: t(PERMISSION_LABELS[field]),
             value: value === null || value === undefined ? '' : String(value),
             helpText: h.getFieldHelpText(field, ctx),
             // Concrete default → glyph for the closed select.
@@ -99,7 +103,7 @@ const permissionRows = computed(() => {
                 const disabledReason = disabled ? h.getChoiceDisabledReason(field, opt.value, ctx) : null
                 return {
                     value: String(opt.value),
-                    labelWithSuffix: disabled ? `${opt.label} (not available)` : opt.label,
+                    labelWithSuffix: disabled ? t('settings.providers.permissions.unavailable', { label: opt.label }) : opt.label,
                     description: disabledReason ?? opt.description ?? null,
                     disabled,
                     icon: opt.icon ?? null,

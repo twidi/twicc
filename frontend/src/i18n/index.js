@@ -39,5 +39,8 @@ export const i18n = createAppI18n(typeof window === 'undefined' ? DEFAULT_LOCALE
 export function setLocale(value, document = globalThis.document) {
     const locale = isSupportedLocale(value) ? value : DEFAULT_LOCALE
     i18n.global.locale.value = locale
-    if (document) document.documentElement.lang = locale
+    if (document) {
+        document.documentElement.lang = locale
+        document.documentElement.style?.setProperty('--twicc-loading-label', JSON.stringify(i18n.global.t('common.status.loading')))
+    }
 }

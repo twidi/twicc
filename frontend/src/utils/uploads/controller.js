@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/uploads/controller.js
 // The upload lifecycle controller (spec §6.2–§6.5, §6.7–§6.9, §6.12–§6.13).
 //
@@ -49,9 +51,9 @@ export const PROGRESS_THROTTLE_MS = 250
 
 /** Where the user finds an upload again, for the "retry it from …" toasts. */
 const PANEL_LOCATIONS = {
-    files: 'the Files tab',
-    artifacts: 'the Artifacts tab',
-    composer: 'the message composer',
+    files: 'files.upload.location.files',
+    artifacts: 'files.upload.location.artifacts',
+    composer: 'files.upload.location.composer',
 }
 
 /**
@@ -244,25 +246,25 @@ export function createUploadsController(deps) {
     // ── Toasts (§6.9) ────────────────────────────────────────────────────────
 
     function panelLocation(entry) {
-        return PANEL_LOCATIONS[entry.origin?.panel] || PANEL_LOCATIONS.files
+        return i18n.global.t(PANEL_LOCATIONS[entry.origin?.panel] || PANEL_LOCATIONS.files)
     }
 
     function failureToast(filename, message) {
-        toast.error(message, { title: `Upload failed: ${filename}`, duration: TOAST_DURATION_MS })
+        toast.error(message, { title: i18n.global.t('files.upload.failedTitle', { filename }), duration: TOAST_DURATION_MS })
     }
 
     function pausedToast(entry, message) {
         failureToast(
             entry.filename,
-            `${message || 'The upload stopped.'} You can retry it from ${panelLocation(entry)}.`,
+            i18n.global.t('files.upload.retryFrom', { message: message || i18n.global.t('files.upload.stopped'), location: panelLocation(entry) }),
         )
     }
 
     function networkToast() {
         if (networkToastShown) return
         networkToastShown = true
-        toast.error('The server cannot be reached. Uploads resume when the connection comes back.', {
-            title: 'Upload paused',
+        toast.error(i18n.global.t('files.upload.connectionLost'), {
+            title: i18n.global.t('files.upload.pausedTitle'),
             duration: TOAST_DURATION_MS,
         })
     }
@@ -272,15 +274,15 @@ export function createUploadsController(deps) {
         if (record.state === 'completed') {
             if (composer) return
             toast.success(record.target_dir, {
-                title: `Uploaded ${baseName(record.final_path) || record.filename}`,
+                title: i18n.global.t('files.upload.completedTitle', { filename: baseName(record.final_path) || record.filename }),
                 duration: TOAST_DURATION_MS,
                 copyPath: record.final_path || null,
             })
         } else if (record.state === 'failed') {
-            failureToast(record.filename, record.error || 'The server stopped the upload.')
+            failureToast(record.filename, record.error || i18n.global.t('files.upload.serverStopped'))
         } else if (record.state === 'cancelled' && !composer && !cancelledHere.has(record.id)) {
-            toast.error('The upload was cancelled in another tab or on another device.', {
-                title: `Upload cancelled: ${record.filename}`,
+            toast.error(i18n.global.t('files.upload.cancelledElsewhere'), {
+                title: i18n.global.t('files.upload.cancelledTitle', { filename: record.filename }),
                 duration: TOAST_DURATION_MS,
             })
         }
@@ -592,7 +594,7 @@ export function createUploadsController(deps) {
             const wasCancelling = entry.localState === 'cancelling'
             removeEntry(entry)
             if (wasLocal && !wasCancelling) {
-                failureToast(entry.filename, 'The upload is no longer on the server.')
+                failureToast(entry.filename, i18n.global.t('files.upload.gone'))
             }
         }
         nowRef.value = now()
@@ -713,7 +715,7 @@ export function createUploadsController(deps) {
             }
             return
         }
-        if (lastWasUpload500) pauseError(entry, 'Server error.')
+        if (lastWasUpload500) pauseError(entry, i18n.global.t('files.upload.serverError'))
         else pauseNetwork(entry)
     }
 
@@ -726,7 +728,7 @@ export function createUploadsController(deps) {
         }
         const record = entry.server
         if (!record) {
-            pauseError(entry, 'Unexpected answer from the server.')
+            pauseError(entry, i18n.global.t('files.upload.unexpectedAnswer'))
         } else if (record.state === 'active' && record.error) {
             pauseError(entry, record.error)
         } else if (record.state === 'active') {
@@ -844,7 +846,7 @@ export function createUploadsController(deps) {
                 if (onRejected) {
                     notifyRejected(onRejected, { client_id: clientId, filename: file.name, code: REJECTED_FILE_UNREADABLE })
                 } else {
-                    failureToast(file.name, 'The file could not be read.')
+                    failureToast(file.name, i18n.global.t('files.upload.fileUnreadable'))
                 }
                 continue
             }
@@ -975,7 +977,7 @@ export function createUploadsController(deps) {
         const entry = entries.get(key)
         if (!entry || entry.local || entry.server?.state !== 'active') return false
         const record = entry.server
-        const mismatch = 'The picked file is not the file of this upload.'
+        const mismatch = i18n.global.t('files.upload.fileMismatch')
         if (file.size !== record.size) {
             failureToast(entry.filename, mismatch)
             return false
@@ -984,7 +986,7 @@ export function createUploadsController(deps) {
         try {
             fingerprint = await fingerprintFile(file)
         } catch {
-            failureToast(entry.filename, 'The picked file could not be read.')
+            failureToast(entry.filename, i18n.global.t('files.upload.pickedUnreadable'))
             return false
         }
         if (!exists(entry) || entry.local || entry.server?.state !== 'active') return false

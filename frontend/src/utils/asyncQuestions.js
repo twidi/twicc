@@ -1,3 +1,4 @@
+export const ASYNC_QUESTION_RECOVERY_NOTICE_KEY = 'composer.questions.recoveryNotice'
 export const ASYNC_QUESTION_RECOVERY_NOTICE = 'These questions were handled elsewhere. Your answers are kept in your draft.'
 
 /** Native question resolution must settle these sends before generic audit or expiry. */
@@ -117,7 +118,7 @@ export function recoverResolvedAnswers({ draft = {}, choices = {}, snapshot, pen
     const resultDraft = { ...draft }
     if (recoveredText) resultDraft.message = draft.message ? `${recoveredText}\n\n${draft.message}` : recoveredText
     return { draft: resultDraft, choices: next, recoveredIds: next.recoveredIds,
-        notice: recoveredText ? ASYNC_QUESTION_RECOVERY_NOTICE : null }
+        notice: recoveredText ? ASYNC_QUESTION_RECOVERY_NOTICE_KEY : null }
 }
 
 /** Capture the submission boundary. New revisions alone do not change its identity. */

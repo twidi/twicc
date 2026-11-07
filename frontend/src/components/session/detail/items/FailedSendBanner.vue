@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, te } = useI18n()
 // Failure banner shown under a failed-send bubble (messaging pattern: an
 // undeliverable message stays in the conversation flow, marked failed, with
 // Retry / Edit / Delete actions). Provider-agnostic — the bubble itself is
@@ -53,8 +55,9 @@ const composerReadyAgain = computed(() =>
 
 const displayMessage = computed(() =>
     composerReadyAgain.value
-        ? 'The Claude CLI terminal was blocked and is ready again — retry to send your message.'
-        : (failedSend.value?.message || '')
+        ? t('session.failedSend.readyAgain')
+        : (failedSend.value?.messageKey && te(failedSend.value.messageKey)
+            ? t(failedSend.value.messageKey, failedSend.value.messageParams || {}) : (failedSend.value?.message || ''))
 )
 
 // A message made only of attachments whose attachments could not be preserved
@@ -157,7 +160,7 @@ async function retry() {
         })
         store.removeFailedSend(props.sessionId, entry.requestId)
     } catch {
-        toast.error('Failed to save the retry. Your message remains available for recovery.')
+        toast.error(t('session.failedSend.retrySaveFailed'))
     }
 }
 
@@ -196,7 +199,7 @@ async function edit() {
             store.removeFailedSend(props.sessionId, entry.requestId)
         }
     } catch {
-        toast.error('Failed to restore the message. Your message remains available for recovery.')
+        toast.error(t('session.failedSend.restoreFailed'))
     }
 }
 

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 // One edge gutter (thin rail) holding the icons of collapsed / responsively-hidden docks.
 // One icon PER TAB, anchored start/end mirroring the dock origin. A click dispatches the
 // item's action (swap | restore | overlay) up to the layout.
@@ -151,7 +153,7 @@ const startPlus = computed(() => plan.value.start < startIcons.value.length
 const endPlus = computed(() => plan.value.end < endIcons.value.length
     ? plusEntryFor(endIcons.value, plan.value.end) : null)
 function plusTitle(p) {
-    return `${p.hidden.length} more: ${p.hidden.map((e) => e.tab.label).join(', ')} — ${verb(p)}`
+    return t(`session.layout.gutter.more${actionKey(p)}`, { count: p.hidden.length, tabs: new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(p.hidden.map((e) => e.tab.label)) }, p.hidden.length)
 }
 
 // The peek is open on THIS chip: its edge holds the open overlay, the chip is its dock's active tab, and
@@ -162,24 +164,22 @@ function isOpen(entry) {
     return entry.item.action === 'overlay' && props.openOverlayEdge === props.gutter.edge && entry.active
         && entry.item.tabs.some((t) => t.id === props.openOverlayTabId)
 }
-function verb(entry) {
-    if (entry.item.action === 'swap') return 'show this column'
+function actionKey(entry) {
+    if (entry.item.action === 'swap') return 'showColumn'
     if (entry.item.action === 'restore') return 'restore'
-    return isOpen(entry) ? 'close overlay' : 'peek overlay'
+    return isOpen(entry) ? 'closeOverlay' : 'peekOverlay'
 }
-// A restore/swap chip's double-click maximizes its dock (see onClick); advertise it in the chip's
-// title. Overlay chips don't maximize on double-click (their second click just forces the peek open),
-// so they keep the plain single-action title.
+function chipLabel(entry) {
+    return t(`session.layout.gutter.${actionKey(entry)}`, { tab: entry.tab.label })
+}
+// Overlay chips only advertise their single-click action.
 function chipTitle(entry) {
-    const base = `${entry.tab.label} — ${verb(entry)}`
-    return entry.item.action === 'overlay' ? base : `${base} · double-click to maximize`
+    const key = actionKey(entry)
+    return t(`session.layout.gutter.${key}${entry.item.action === 'overlay' ? '' : 'Maximize'}`, { tab: entry.tab.label })
 }
-// Title for the rail's empty area (clicking anywhere acts on the pointed dock). The double-click hint
-// only holds when a restore/swap dock is here — an overlay-only rail double-click just forces the peek.
 const emptyAreaTitle = computed(() =>
-    props.gutter.items.some((it) => it.action !== 'overlay')
-        ? 'Click to open · double-click to maximize'
-        : 'Click to open'
+    t(props.gutter.items.some((it) => it.action !== 'overlay')
+        ? 'session.layout.gutter.openMaximize' : 'session.layout.gutter.open')
 )
 // Double-click on a rail chip = maximize that dock. A native dblclick is impossible on a restore/swap
 // chip: its first click moves the dock out of the rail, so the chip is gone before a dblclick could
@@ -280,7 +280,7 @@ onUnmounted(cancelPending)
                 :data-layout-dock-id="entry.item.dockId"
                 :class="{ active: entry.active, open: isOpen(entry) }"
                 :title="chipTitle(entry)"
-                :aria-label="`${entry.tab.label} — ${verb(entry)}`"
+                :aria-label="chipLabel(entry)"
                 @plain-click="onClick(entry)"
             >
                 <wa-icon :name="entry.tab.icon"></wa-icon>
@@ -313,7 +313,7 @@ onUnmounted(cancelPending)
                 :data-layout-dock-id="entry.item.dockId"
                 :class="{ active: entry.active, open: isOpen(entry) }"
                 :title="chipTitle(entry)"
-                :aria-label="`${entry.tab.label} — ${verb(entry)}`"
+                :aria-label="chipLabel(entry)"
                 @plain-click="onClick(entry)"
             >
                 <wa-icon :name="entry.tab.icon"></wa-icon>

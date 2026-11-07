@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/usage.js
 
 /**
@@ -65,7 +67,7 @@ export function formatBurnChip(quota) {
     if (quota.utilization >= 100) return { text: '100%+' }
     if (quota.burnRate != null && quota.burnRate > 0.05) {
         const b = quota.burnRate
-        return { text: '×' + b.toFixed(b < 10 ? 1 : 0) }
+        return { text: '×' + new Intl.NumberFormat(i18n.global.locale.value, { minimumFractionDigits: b < 10 ? 1 : 0, maximumFractionDigits: b < 10 ? 1 : 0 }).format(b) }
     }
     return null
 }
@@ -88,7 +90,7 @@ export function formatBurnChip(quota) {
 export function formatExtraUsageAmount(value, decimalPlaces) {
     if (value == null || decimalPlaces == null || decimalPlaces < 0) return null
     const amount = value / 10 ** decimalPlaces
-    return amount.toLocaleString(navigator.language, { maximumFractionDigits: decimalPlaces })
+    return amount.toLocaleString(i18n.global.locale.value, { maximumFractionDigits: decimalPlaces })
 }
 
 /**
@@ -311,17 +313,17 @@ function computePeriodCost(raw, resetsAt = null, windowMs = null) {
  * @returns {string} Formatted duration, e.g. "20h", "50min", "1h"
  */
 function formatDuration(ms, roundToHour) {
-    if (roundToHour) {
-        const hours = Math.round(ms / (60 * 60 * 1000))
-        return `${hours}h`
-    }
-
-    // Round to nearest 10 minutes
-    const totalMinutes = Math.round(ms / (10 * 60 * 1000)) * 10
-    if (totalMinutes < 60) return `${totalMinutes}min`
+    const formatUnit = (value, unit) => new Intl.NumberFormat(i18n.global.locale.value, {
+        style: 'unit', unit, unitDisplay: 'short',
+    }).format(value)
+    if (roundToHour) return formatUnit(Math.round(ms / 3_600_000), 'hour')
+    const totalMinutes = Math.round(ms / 600_000) * 10
+    if (totalMinutes < 60) return formatUnit(totalMinutes, 'minute')
     const hours = Math.floor(totalMinutes / 60)
     const mins = totalMinutes % 60
-    return mins > 0 ? `${hours}h${String(mins).padStart(2, '0')}` : `${hours}h`
+    return mins > 0
+        ? new Intl.ListFormat(i18n.global.locale.value, { style: 'short', type: 'unit' }).format([formatUnit(hours, 'hour'), formatUnit(mins, 'minute')])
+        : formatUnit(hours, 'hour')
 }
 
 /**
@@ -347,7 +349,7 @@ export function formatResetTime(resetsAt) {
     if (!resetsAt) return '?'
     const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
     const now = new Date()
-    const locale = navigator.language
+    const locale = i18n.global.locale.value
     const diffMs = reset - now
     const diffHours = diffMs / (1000 * 60 * 60)
     // < 24h: time only
@@ -363,10 +365,9 @@ export function formatResetTime(resetsAt) {
 }
 
 /**
- * A reset/cutoff moment split for use inside an English sentence: the clock follows the
- * browser locale, the day and month names stay English (a localized "samedi" in the middle
- * of an English phrase reads badly). Same windows as formatResetTime: under 24h only a time,
- * under 7 days a weekday + time, beyond a weekday + date (no time).
+ * A reset/cutoff moment split for localized sentences. All date parts use the
+ * selected application locale. Same windows as formatResetTime: under 24h only
+ * a time, under 7 days a weekday + time, beyond a weekday + date (no time).
  *
  * @param {string|number|Date|null} when
  * @returns {{time: string|null, day: string|null}}
@@ -375,11 +376,11 @@ export function formatQuotaMoment(when) {
     if (!when) return { time: null, day: null }
     const date = when instanceof Date ? when : new Date(when)
     const diffHours = (date - new Date()) / (1000 * 60 * 60)
-    const time = date.toLocaleTimeString(navigator.language, { hour: '2-digit', minute: '2-digit' })
-    const weekday = date.toLocaleDateString('en', { weekday: 'long' })
+    const time = date.toLocaleTimeString(i18n.global.locale.value, { hour: '2-digit', minute: '2-digit' })
+    const weekday = date.toLocaleDateString(i18n.global.locale.value, { weekday: 'long' })
     if (diffHours < 24) return { time, day: null }
     if (diffHours < 7 * 24) return { time, day: weekday }
-    return { time: null, day: `${weekday} ${date.getDate()} ${date.toLocaleDateString('en', { month: 'long' })}` }
+    return { time: null, day: date.toLocaleDateString(i18n.global.locale.value, { weekday: 'long', day: 'numeric', month: 'long' }) }
 }
 
 /**
@@ -391,7 +392,7 @@ export function formatQuotaMoment(when) {
 export function formatResetTimePrecise(resetsAt) {
     if (!resetsAt) return ''
     const reset = resetsAt instanceof Date ? resetsAt : new Date(resetsAt)
-    const locale = navigator.language
+    const locale = i18n.global.locale.value
     return reset.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 }
 

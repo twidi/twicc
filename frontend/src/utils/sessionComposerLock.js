@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 export function resolveSessionComposerLock({
     hasAnswerablePendingRequest,
     isComputePending,
@@ -5,14 +7,14 @@ export function resolveSessionComposerLock({
     if (hasAnswerablePendingRequest) {
         return {
             locked: true,
-            reason: 'Answer the pending request to send',
+            reason: i18n.global.t('composer.lock.pendingRequest'),
             presentation: 'paused',
         }
     }
     if (isComputePending) {
         return {
             locked: true,
-            reason: 'Wait for session preparation to finish before sending',
+            reason: i18n.global.t('composer.lock.preparing'),
             presentation: 'disabled',
         }
     }

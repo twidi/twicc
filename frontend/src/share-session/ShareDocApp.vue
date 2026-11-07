@@ -1,5 +1,7 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+import { computed, ref, onMounted } from 'vue'
 import MarkdownContent from '../components/ui/MarkdownContent.vue'
 // Singleton driven by MarkdownContent's openMediaPreview() — without it, clicking a
 // rendered image or Mermaid SVG has nowhere to open. Mirrors ShareSessionApp.
@@ -24,14 +26,14 @@ const updated = ref(false)
 const docKind = props.meta.docKind
     || (props.meta.docExt === 'mmd' || props.meta.docExt === 'mermaid' ? 'mermaid' : 'markdown')
 
+const imageMarkdown = computed(() => {
+    // Keep provider titles intact and make the fallback image alt follow the locale.
+    const alt = (props.meta.title || t('session.tools.image.name')).replace(/[[\]\n]/g, ' ')
+    return `![${alt}](<${props.meta.docUrl}>)`
+})
+
 async function load() {
-    if (docKind === 'image') {
-        // Angle-bracket URL form tolerates spaces/parens in the file path; strip
-        // brackets from the alt so a name can't break the ![]() syntax.
-        const alt = (props.meta.title || 'Image').replace(/[[\]\n]/g, ' ')
-        source.value = `![${alt}](<${props.meta.docUrl}>)`
-        return
-    }
+    if (docKind === 'image') return
     try {
         const res = await fetch(props.meta.docUrl, { credentials: 'same-origin' })
         if (!res.ok) throw new Error(String(res.status))
@@ -63,7 +65,7 @@ onMounted(() => {
                     </i18n-t>
                 </wa-callout>
                 <wa-callout v-if="error" variant="danger">{{ $t('sharing.document.unavailable') }}</wa-callout>
-                <MarkdownContent v-else :source="source" :show-toolbar="false"
+                <MarkdownContent v-else :source="docKind === 'image' ? imageMarkdown : source" :show-toolbar="false"
                                  :class="{ 'doc-image': docKind === 'image' }" />
             </div>
         </div>

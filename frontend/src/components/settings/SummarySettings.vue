@@ -1,9 +1,11 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { adaptOptions, effectiveAdapt, adaptHint } from '../../utils/ttsConfig'
-import { OPENROUTER_MODEL_DESCRIPTION, TITLE_SUGGESTION_MODEL_LABELS } from '../../constants'
+import { OPENROUTER_MODEL_DESCRIPTION_KEY, TITLE_SUGGESTION_MODEL_LABELS } from '../../constants'
 import SegmentedControl from '../ui/SegmentedControl.vue'
 
 const settings = useSettingsStore()
@@ -15,7 +17,7 @@ const effective = computed(() => effectiveAdapt(settings.summaryModel === 'auto'
 const choices = computed(() => adaptOptions(enabled.value, speech.keyPresent)
     .filter(option => option.value !== 'off')
     .map(option => option.value === 'openrouter' && !option.disabled
-        ? { ...option, title: `${option.label}: ${OPENROUTER_MODEL_DESCRIPTION}` } : option))
+        ? { ...option, title: `${option.label}: ${t(OPENROUTER_MODEL_DESCRIPTION_KEY)}` } : option))
 const choice = computed(() => effective.value === 'off' ? '' : effective.value)
 const hints = computed(() => adaptHint(effective.value, enabled.value, speech.keyPresent))
 const displacedPreference = computed(() => settings.summaryModel !== 'auto' && settings.summaryModel !== effective.value
@@ -35,7 +37,7 @@ const displacedPreference = computed(() => settings.summaryModel !== 'auto' && s
         </small>
         <small v-if="hints.noProvider">{{ $t('settings.summaries.noProvider') }}</small>
         <small v-if="!speech.keyPresent">{{ $t('settings.summaries.noKey') }}</small>
-        <small v-if="hints.openrouter">{{ $t('settings.summaries.openrouterHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</small>
+        <small v-if="hints.openrouter">{{ $t('settings.summaries.openrouterHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</small>
         <wa-switch :checked="settings.timelineSummaryEnabled" @change="settings.setTimelineSummaryEnabled($event.target.checked)">
             {{ $t('settings.summaries.timelineSpeech') }}
         </wa-switch>

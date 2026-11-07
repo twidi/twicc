@@ -127,7 +127,8 @@ async function load() {
         maybeSynthesize(data)
     } catch (e) {
         if (e.name === 'AbortError') return
-        error.value = e.message || 'Failed to load workflows'
+        error.value = e.message || null
+        if (!error.value) error.value = { key: 'workflows.loadFailed' }
     } finally {
         loading.value = false
     }
@@ -322,7 +323,7 @@ onBeforeUnmount(() => {
     <div class="workflows-pane">
         <div v-if="error" class="workflows-state workflows-error">
             <wa-icon name="triangle-exclamation"></wa-icon>
-            <span>{{ error }}</span>
+            <span>{{ typeof error === 'object' ? $t(error.key) : error }}</span>
         </div>
         <div v-else-if="loading && !hasLoaded" class="workflows-state">{{ $t('workflows.loading') }}</div>
         <div v-else-if="!rows.length" class="workflows-state">{{ $t('workflows.empty') }}</div>

@@ -7,7 +7,7 @@ import { showHelp } from './showHelp'
 
 const props = defineProps({
     helpKey: { type: String, required: true },
-    label: { type: String, default: 'Learn more' },
+    label: { type: String, default: null },
 })
 
 function onActivate() {
@@ -19,9 +19,9 @@ function onActivate() {
     <a
         class="help-text-link"
         href="#"
-        :aria-label="label"
+        :aria-label="label || $t('help.controls.learnMore')"
         @click.prevent="onActivate"
-    >{{ label }}</a>
+    >{{ label || $t('help.controls.learnMore') }}</a>
 </template>
 
 <style scoped>

@@ -1,4 +1,5 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 // WorkspaceManageDialog.vue - Dialog for managing workspaces (list + create/edit form)
 import ReorderHandle from '../ui/ReorderHandle.vue'
@@ -212,7 +213,7 @@ function scanNow() {
     const projects = dataStore.getListableProjects
     const patterns = formData.value.autoProjectPatterns
     if (patterns.length === 0) {
-        scanFeedback.value = t('workspace.edit.patterns.noneDefined')
+        scanFeedback.value = localUiMessage('workspace.edit.patterns.noneDefined')
         clearScanFeedbackLater()
         return
     }
@@ -225,8 +226,8 @@ function scanNow() {
         }
     }
     scanFeedback.value = added > 0
-        ? t('workspace.edit.patterns.projectsAdded', { count: added }, added)
-        : t('workspace.edit.patterns.noNewProjects')
+        ? localUiMessage('workspace.edit.patterns.projectsAdded', { count: added }, added)
+        : localUiMessage('workspace.edit.patterns.noNewProjects')
     clearScanFeedbackLater()
 }
 
@@ -242,12 +243,12 @@ function handleSave() {
     const trimmedName = formData.value.name.trim()
 
     if (!trimmedName) {
-        errorMessage.value = 'Name is required.'
+        errorMessage.value = localUiMessage('workspace.edit.name.errors.required')
         return
     }
 
     if (trimmedName.length > 20) {
-        errorMessage.value = 'Name must be 20 characters or less.'
+        errorMessage.value = localUiMessage('workspace.edit.name.errors.tooLong')
         return
     }
 
@@ -257,7 +258,7 @@ function handleSave() {
         return w.name.trim().toLowerCase() === trimmedName.toLowerCase()
     })
     if (isDuplicate) {
-        errorMessage.value = 'A workspace with this name already exists.'
+        errorMessage.value = localUiMessage('workspace.edit.name.errors.duplicate')
         return
     }
 
@@ -629,7 +630,7 @@ defineExpose({ open, close, openForWorkspace, openNew })
                         <wa-icon name="magnifying-glass-plus" slot="start"></wa-icon>
                         {{ $t('workspace.edit.patterns.addMatching') }}
                     </wa-button>
-                    <span v-if="scanFeedback" class="scan-feedback">{{ scanFeedback }}</span>
+                    <span v-if="scanFeedback" class="scan-feedback">{{ resolveUiMessage(scanFeedback) }}</span>
                 </div>
             </div>
 
@@ -649,7 +650,7 @@ defineExpose({ open, close, openForWorkspace, openNew })
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

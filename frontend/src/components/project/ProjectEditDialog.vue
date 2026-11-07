@@ -1,5 +1,6 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 // ProjectEditDialog.vue - Dialog for editing/creating projects
 import { ref, computed, watch, nextTick, useId } from 'vue'
 import { useDataStore } from '../../stores/data'
@@ -205,7 +206,7 @@ function removeWorkspace(visibleIndex) {
 function scanMatchingWorkspaces() {
     const dir = localDirectory.value.trim()
     if (!dir) {
-        workspaceScanFeedback.value = t('project.edit.workspaces.directoryRequired')
+        workspaceScanFeedback.value = localUiMessage('project.edit.workspaces.directoryRequired')
         clearWorkspaceScanFeedbackLater()
         return
     }
@@ -219,8 +220,8 @@ function scanMatchingWorkspaces() {
         }
     }
     workspaceScanFeedback.value = added > 0
-        ? `${added} workspace${added > 1 ? 's' : ''} added`
-        : t('project.edit.workspaces.noMatches')
+        ? localUiMessage('project.edit.workspaces.addedCount', { count: added }, added)
+        : localUiMessage('project.edit.workspaces.noMatches')
     clearWorkspaceScanFeedbackLater()
 }
 
@@ -485,12 +486,12 @@ function onIconFileChange(event) {
     if (event.target) event.target.value = '' // allow re-picking the same file
     if (!file) return
     if (file.size > 5 * 1024 * 1024) {
-        iconError.value = t('project.edit.icon.errors.tooLarge')
+        iconError.value = localUiMessage('project.edit.icon.errors.tooLarge')
         return
     }
     const reader = new FileReader()
     reader.onload = () => { pendingIcon.value = { type: 'set', image: reader.result }; iconError.value = '' }
-    reader.onerror = () => { iconError.value = t('project.edit.icon.errors.readFailed') }
+    reader.onerror = () => { iconError.value = localUiMessage('project.edit.icon.errors.readFailed') }
     reader.readAsDataURL(file)
 }
 
@@ -515,12 +516,12 @@ async function commitPendingIcon() {
             body: JSON.stringify(body),
         })
     } catch (error) {
-        iconError.value = t('project.edit.icon.errors.saveNetwork')
+        iconError.value = localUiMessage('project.edit.icon.errors.saveNetwork')
         return false
     }
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        iconError.value = data.error || 'Icon update failed.'
+        iconError.value = data.error || localUiMessage('project.edit.icon.errors.updateFailed')
         return false
     }
     store.updateProject(await response.json())
@@ -547,13 +548,13 @@ async function scanIcons() {
             body: JSON.stringify({ action: 'scan' }),
         })
     } catch (error) {
-        scanError.value = t('project.edit.errors.network')
+        scanError.value = localUiMessage('project.edit.errors.network')
         scanBusy.value = false
         return
     }
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        scanError.value = data.error || 'Scan failed.'
+        scanError.value = data.error || localUiMessage('project.edit.icon.errors.scanFailed')
         scanBusy.value = false
         return
     }
@@ -616,7 +617,7 @@ async function submitCreate({ createDirectory = false } = {}) {
             body: JSON.stringify(body),
         })
     } catch (error) {
-        errorMessage.value = t('project.edit.errors.network')
+        errorMessage.value = localUiMessage('project.edit.errors.network')
         directoryNotFound.value = false
         isSaving.value = false
         return
@@ -629,7 +630,7 @@ async function submitCreate({ createDirectory = false } = {}) {
             errorMessage.value = ''
         } else {
             directoryNotFound.value = false
-            errorMessage.value = data.error || 'Failed to create project'
+            errorMessage.value = data.error || localUiMessage('project.edit.errors.createFailed')
         }
         isSaving.value = false
         return
@@ -684,7 +685,7 @@ async function handleSave() {
 
     // Validate name length
     if (trimmedName.length > 25) {
-        errorMessage.value = t('project.edit.errors.nameTooLong')
+        errorMessage.value = localUiMessage('project.edit.errors.nameTooLong')
         return
     }
 
@@ -692,14 +693,14 @@ async function handleSave() {
         // --- Create mode ---
         const trimmedDirectory = localDirectory.value.trim()
         if (!trimmedDirectory) {
-            errorMessage.value = t('project.edit.errors.directoryRequired')
+            errorMessage.value = localUiMessage('project.edit.errors.directoryRequired')
             return
         }
 
         // Check name uniqueness client-side (same logic as edit mode)
         const isDuplicate = store.getProjects.some(p => p.name && p.name === trimmedName)
         if (trimmedName && isDuplicate) {
-            errorMessage.value = t('project.edit.errors.duplicateName')
+            errorMessage.value = localUiMessage('project.edit.errors.duplicateName')
             return
         }
 
@@ -712,7 +713,7 @@ async function handleSave() {
         const otherProjects = store.getProjects.filter(p => p.id !== props.project.id)
         const isDuplicate = otherProjects.some(p => p.name && p.name === trimmedName)
         if (trimmedName && isDuplicate) {
-            errorMessage.value = t('project.edit.errors.duplicateName')
+            errorMessage.value = localUiMessage('project.edit.errors.duplicateName')
             return
         }
 
@@ -760,14 +761,14 @@ async function handleSave() {
                 body: JSON.stringify(body),
             })
         } catch (error) {
-            errorMessage.value = t('project.edit.errors.network')
+            errorMessage.value = localUiMessage('project.edit.errors.network')
             isSaving.value = false
             return
         }
 
         if (!response.ok) {
             const data = await response.json()
-            errorMessage.value = data.error || 'Failed to save project'
+            errorMessage.value = data.error || localUiMessage('project.edit.errors.saveFailed')
             isSaving.value = false
             return
         }
@@ -962,8 +963,8 @@ defineExpose({
                                 </template>
                                 <div v-else class="icon-scan-empty">{{ $t('project.edit.icon.scanEmpty') }}</div>
                             </div>
-                            <wa-callout v-if="scanError" variant="danger" size="small" class="icon-error">{{ scanError }}</wa-callout>
-                            <wa-callout v-if="iconError" variant="danger" size="small" class="icon-error">{{ iconError }}</wa-callout>
+                            <wa-callout v-if="scanError" variant="danger" size="small" class="icon-error">{{ resolveUiMessage(scanError) }}</wa-callout>
+                            <wa-callout v-if="iconError" variant="danger" size="small" class="icon-error">{{ resolveUiMessage(iconError) }}</wa-callout>
                         </div>
 
                         <wa-divider></wa-divider>
@@ -1156,7 +1157,7 @@ defineExpose({
                                         <wa-icon name="magnifying-glass-plus" slot="start"></wa-icon>
                                         {{ $t('project.edit.workspaces.addMatching') }}
                                     </wa-button>
-                                    <span v-if="workspaceScanFeedback" class="scan-feedback">{{ workspaceScanFeedback }}</span>
+                                    <span v-if="workspaceScanFeedback" class="scan-feedback">{{ resolveUiMessage(workspaceScanFeedback) }}</span>
                                 </div>
                                 <p class="form-hint">
                                     {{ $t('project.edit.workspaces.autoAddHint') }}
@@ -1190,7 +1191,7 @@ defineExpose({
 
             <!-- Error message -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage) }}
             </wa-callout>
         </form>
 

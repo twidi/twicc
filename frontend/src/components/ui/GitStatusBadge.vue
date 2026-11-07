@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * GitStatusBadge — the per-file git status flag used across the Git tab.
  *
@@ -32,13 +34,13 @@ const STATUS_MAP = {
 
 /** Human label for the unmerged (conflict) two-letter porcelain codes. */
 const CONFLICT_LABELS = {
-    DD: 'both deleted',
-    AU: 'added by us',
-    UD: 'deleted by them',
-    UA: 'added by them',
-    DU: 'deleted by us',
-    AA: 'both added',
-    UU: 'both modified',
+    DD: 'common.git.conflict.DD',
+    AU: 'common.git.conflict.AU',
+    UD: 'common.git.conflict.UD',
+    UA: 'common.git.conflict.UA',
+    DU: 'common.git.conflict.DU',
+    AA: 'common.git.conflict.AA',
+    UU: 'common.git.conflict.UU',
 }
 
 /** One slot of the staged|unstaged code: a type-coloured letter, or a dim placeholder. */
@@ -50,7 +52,7 @@ function badgeSlot(status) {
         : { ch: status[0].toUpperCase(), cls: 'git-badge-modified' }
 }
 
-const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
+const statusLabel = status => STATUS_MAP[status] ? t(`common.git.status.${status}`) : status
 
 const badgeId = useId()
 
@@ -62,7 +64,7 @@ const badge = computed(() => {
     // Commit files: a single status letter.
     if (node.status) {
         const entry = STATUS_MAP[node.status] || { letter: node.status[0].toUpperCase(), cls: 'git-badge-modified' }
-        return { parts: [{ ch: entry.letter, cls: entry.cls }], tooltip: capitalize(node.status) }
+        return { parts: [{ ch: entry.letter, cls: entry.cls }], tooltip: statusLabel(node.status) }
     }
 
     // Conflicted (unmerged) files: the raw XY code in the conflict colour.
@@ -71,7 +73,7 @@ const badge = computed(() => {
         return {
             conflict: true,
             parts: [{ ch: code[0] }, { ch: code[1] }],
-            tooltip: 'Conflict — ' + (CONFLICT_LABELS[code] || 'unmerged'),
+            tooltip: t(CONFLICT_LABELS[code] || 'common.git.conflict.unmerged'),
         }
     }
 
@@ -83,14 +85,15 @@ const badge = computed(() => {
     if (unstaged === 'untracked' && !staged) {
         return {
             parts: [{ ch: '?', cls: 'git-badge-untracked' }, { ch: '?', cls: 'git-badge-untracked' }],
-            tooltip: 'Untracked',
+            tooltip: t('common.git.status.untracked'),
         }
     }
 
-    const tip = []
-    if (staged) tip.push(`Staged: ${staged}`)
-    if (unstaged) tip.push(`Unstaged: ${unstaged}`)
-    return { parts: [badgeSlot(staged), badgeSlot(unstaged)], tooltip: tip.join(' · ') }
+    const tooltip = staged && unstaged
+        ? t('common.git.badge.both', { staged: statusLabel(staged), unstaged: statusLabel(unstaged) })
+        : staged ? t('common.git.badge.staged', { status: statusLabel(staged) })
+        : t('common.git.badge.unstaged', { status: statusLabel(unstaged) })
+    return { parts: [badgeSlot(staged), badgeSlot(unstaged)], tooltip }
 })
 
 /** +added / −removed line counts (each a positive number or null), or null. */

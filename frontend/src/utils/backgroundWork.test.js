@@ -107,19 +107,19 @@ test('status lines: shells, then crons with the earliest future run', () => {
         active_crons: [cron(NOW + 3600), cron(NOW - 10), cron(NOW + 600)],
     }, NOW)
     assert.deepEqual(lines, [
-        { kind: 'shells', text: '1 background shell still running' },
-        { kind: 'crons', text: `3 active crons — next run at ${formatClockTime(NOW + 600)}` },
+        { kind: 'shells', text: '1 background shell still running', textKey: 'session.background.shellsStillRunning', textParams: { count: 1 }, textCount: 1 },
+        { kind: 'crons', text: `3 active crons — next run at ${formatClockTime(NOW + 600)}`, textKey: 'session.background.cronNextRun', textParams: { count: 3, time: formatClockTime(NOW + 600) }, textCount: 3 },
     ])
 })
 
 test('status lines: crons alone, count only when no run is in the future', () => {
     assert.deepEqual(
         buildBackgroundWorkStatusLines({ state: 'user_turn', active_crons: [cron(NOW - 5), cron(null)] }, NOW),
-        [{ kind: 'crons', text: '2 active crons' }],
+        [{ kind: 'crons', text: '2 active crons', textKey: 'session.background.cronCount', textParams: { count: 2, time: '' }, textCount: 2 }],
     )
     assert.deepEqual(
         buildBackgroundWorkStatusLines({ state: 'user_turn', background_work_in_progress: work(2) }, NOW),
-        [{ kind: 'shells', text: '2 background shells still running' }],
+        [{ kind: 'shells', text: '2 background shells still running', textKey: 'session.background.shellsStillRunning', textParams: { count: 2 }, textCount: 2 }],
     )
 })
 

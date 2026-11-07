@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/settingsDiff.js
 //
 // Wording of a `settings.changed` row (display design section 6.2). Pure: the provider labels
@@ -5,7 +7,7 @@
 // stores and the DOM).
 
 import { ARROW } from './eventTime.js'
-import { arrowPart, mergeTextParts, textPart, valuePart } from './parts.js'
+import { arrowPart, mergeTextParts, messageParts, textPart, valuePart } from './parts.js'
 
 /** The eight fields of the closed agent-settings bundle (the only keys a payload can carry). */
 const KNOWN_FIELDS = new Set([
@@ -14,9 +16,9 @@ const KNOWN_FIELDS = new Set([
 ])
 
 const REASON_PREFIXES = {
-    model_retired: 'Model upgraded (retired): ',
-    set_mode: 'Permission mode set: ',
-    'switch-hybrid': 'Hybrid switch: ',
+    model_retired: 'session.timeline.settings.retired',
+    set_mode: 'session.timeline.settings.mode',
+    'switch-hybrid': 'session.timeline.settings.hybrid',
 }
 
 /** Permission modes that run without asking: the row is a warning. */
@@ -35,8 +37,8 @@ export const MAX_SHOWN_CHANGES = 3
  */
 
 function formatValue(field, value, labels) {
-    if (value === null || value === undefined) return 'default'
-    if (typeof value === 'boolean') return value ? 'on' : 'off'
+    if (value === null || value === undefined) return i18n.global.t('session.timeline.settings.default')
+    if (typeof value === 'boolean') return value ? i18n.global.t('session.timeline.settings.on') : i18n.global.t('session.timeline.settings.off')
     if (!labels || !KNOWN_FIELDS.has(field)) return String(value)
     if (field === 'selected_model') return labels.model(value) || String(value)
     return labels.choice(field, value) ?? String(value)
@@ -62,14 +64,14 @@ export function describeSettingsChange(changes, reason, labels) {
         ? Object.entries(changes).filter(([, pair]) => Array.isArray(pair) && pair.length === 2)
         : []
     if (!entries.length) {
-        return { text: 'Settings changed', full: 'Settings changed', parts: [textPart('Settings changed')], severity: 'neutral' }
+        return { text: i18n.global.t('session.timeline.settings.changed'), full: i18n.global.t('session.timeline.settings.changed'), parts: [textPart(i18n.global.t('session.timeline.settings.changed'))], severity: 'neutral' }
     }
-    const prefix = Object.hasOwn(REASON_PREFIXES, reason) ? REASON_PREFIXES[reason] : ''
+    const messageKey = Object.hasOwn(REASON_PREFIXES, reason) ? REASON_PREFIXES[reason] : 'session.timeline.settings.plain'
     const lines = entries.map(([field, pair]) => formatChange(field, pair, labels))
     const shownLines = lines.slice(0, MAX_SHOWN_CHANGES)
     const hidden = lines.length - MAX_SHOWN_CHANGES
-    const more = hidden > 0 ? `, +${hidden} more` : ''
-    const parts = [textPart(prefix)]
+    const more = hidden > 0 ? i18n.global.t('session.timeline.settings.more', { count: hidden }) : ''
+    const parts = []
     // The field name is prose; the old and the new value are values, like the titles of a rename.
     shownLines.forEach(([name, before, after], index) => {
         parts.push(textPart(`${index ? ', ' : ''}${name}: `), valuePart(before), arrowPart(), valuePart(after))
@@ -78,9 +80,9 @@ export function describeSettingsChange(changes, reason, labels) {
     const permission = changes.permission_mode
     const opens = Array.isArray(permission) && OPEN_PERMISSION_MODES.has(permission[1])
     return {
-        text: `${prefix}${shownLines.map(asText).join(', ')}${more}`,
-        full: `${prefix}${lines.map(asText).join(', ')}`,
-        parts: mergeTextParts(parts).filter((part) => part.type !== 'text' || part.text !== ''),
+        text: i18n.global.t(messageKey, { changes: `${shownLines.map(asText).join(', ')}${more}` }),
+        full: i18n.global.t(messageKey, { changes: lines.map(asText).join(', ') }),
+        parts: mergeTextParts(messageParts(messageKey, { changes: parts })).filter((part) => part.type !== 'text' || part.text !== ''),
         severity: opens ? 'warning' : 'neutral',
     }
 }

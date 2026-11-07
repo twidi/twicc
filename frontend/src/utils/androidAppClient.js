@@ -1,3 +1,5 @@
+import { localUiError } from '../i18n/uiMessages.js'
+
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
 const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.acknowledge', 'tts.manual', 'tts.listen', 'tts.set_muted', 'tts.disable', 'tts.skip', 'tts.stop_all'])
@@ -21,7 +23,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         pending.delete(response.id)
         clearTimeout(entry.timer)
         if (response.ok) entry.resolve(response.state ?? null)
-        else entry.reject(new Error(typeof response.error === 'string' ? response.error : 'Could not complete this action. Reload this page and try again.'))
+        else entry.reject(typeof response.error === 'string' ? new Error(response.error) : localUiError('common.android.errors.actionFailed'))
     }
     function fromWindow(event) {
         if (event.source !== target || event.origin !== target.location.origin) return
@@ -38,16 +40,16 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
             return () => stateListeners.delete(listener)
         },
         async request(command, args = {}) {
-            if (closed) return Promise.reject(new Error('The connection to the Android app closed. Reload this page and try again.'))
+            if (closed) return Promise.reject(localUiError('common.android.errors.closed'))
             if (proxy && TTS_COMMANDS.has(command)) {
                 const deadline = Date.now() + timeoutMs
                 while (!documentToken && !closed) {
                     const token = target.__twiccNativeTtsDocument
                     if (typeof token === 'string' && token) { documentToken = token; break }
-                    if (Date.now() >= deadline) throw new Error('Speech is getting ready. Try again in a moment.')
+                    if (Date.now() >= deadline) throw localUiError('common.android.errors.speechPreparing')
                     await new Promise(resolve => setTimeout(resolve, 10))
                 }
-                if (closed) throw new Error('The connection to the Android app closed. Reload this page and try again.')
+                if (closed) throw localUiError('common.android.errors.closed')
             }
             const id = `${prefix}-${++sequence}`
             const request = { ...args, ...(documentToken && TTS_COMMANDS.has(command) ? { documentToken } : {}), protocol: 1, id, command }
@@ -55,15 +57,15 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
             try {
                 encoded = JSON.stringify(request)
                 const limit = TTS_COMMANDS.has(command) ? 12 * 1024 * 1024 : 16 * 1024
-                if (new TextEncoder().encode(encoded).byteLength > limit) return Promise.reject(new Error('This action contains too much data. Try a smaller selection.'))
+                if (new TextEncoder().encode(encoded).byteLength > limit) return Promise.reject(localUiError('common.android.errors.tooLarge'))
             } catch (error) {
                 console.warn('Android request serialization failed', error)
-                return Promise.reject(new Error('Could not complete this action. Reload this page and try again.'))
+                return Promise.reject(localUiError('common.android.errors.actionFailed'))
             }
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     pending.delete(id)
-                    reject(new Error('Could not contact the Android app. Reload this page and try again.'))
+                    reject(localUiError('common.android.errors.unreachable'))
                 }, timeoutMs)
                 pending.set(id, { resolve, reject, timer })
                 try {
@@ -73,7 +75,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
                     clearTimeout(timer)
                     pending.delete(id)
                     console.warn('Android request transport failed', error)
-                    reject(new Error('Could not contact the Android app. Reload this page and try again.'))
+                    reject(localUiError('common.android.errors.unreachable'))
                 }
             })
         },
@@ -82,7 +84,7 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
             stateListeners.clear()
             target.removeEventListener('message', fromWindow)
             if (proxy?.onmessage === fromProxy) proxy.onmessage = null
-            for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('The connection to the Android app closed. Reload this page and try again.')) }
+            for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(localUiError('common.android.errors.closed')) }
             pending.clear()
         },
     }

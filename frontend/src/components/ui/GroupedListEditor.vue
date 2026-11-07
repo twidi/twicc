@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { nextTick, ref } from 'vue'
 import ReorderHandle from './ReorderHandle.vue'
 import { isSnippetGroup } from '../../utils/snippetGroups'
@@ -9,6 +11,11 @@ const props = defineProps({
     itemName: { type: String, default: 'snippet' },
 })
 const emit = defineEmits(['add', 'edit', 'duplicate', 'delete', 'move', 'add-group', 'rename-group', 'delete-group'])
+// Known item names are semantic kinds, not translated noun fragments.
+function itemAction(action, group = '') {
+    const kind = ['snippet', 'combo'].includes(props.itemName) ? props.itemName : 'custom'
+    return t(`common.groups.items.${kind}.${action}`, { item: props.itemName, group })
+}
 const expandedGroups = ref(new Set())
 const editingGroupId = ref(null)
 
@@ -116,7 +123,7 @@ function addGroup() {
                                 type="button"
                                 class="group-toggle"
                                 :aria-expanded="expandedGroups.has(entry.id)"
-                                :aria-label="`${expandedGroups.has(entry.id) ? 'Collapse' : 'Expand'} ${entry.label} (${entry.items.length})`"
+                                :aria-label="$t(expandedGroups.has(entry.id) ? 'common.groups.collapseCount' : 'common.groups.expandCount', { group: entry.label, count: entry.items.length })"
                                 @click.stop="toggleGroup(entry.id)"
                             >
                                 <wa-icon :name="expandedGroups.has(entry.id) ? 'chevron-down' : 'chevron-right'" class="group-chevron" />
@@ -128,8 +135,8 @@ function addGroup() {
                                 <button
                                     type="button"
                                     class="action-btn"
-                                    :title="`Add ${itemName}`"
-                                    :aria-label="`Add ${itemName} to ${entry.label}`"
+                                    :title="itemAction('add')"
+                                    :aria-label="itemAction('addToGroup', entry.label)"
                                     @click.stop="emit('add', entry.id)"
                                 ><wa-icon name="plus" /></button>
                                 <button type="button" class="action-btn" :title="$t('common.groups.rename')" :aria-label="$t('common.groups.rename')" @click.stop="editGroup(entry)">
@@ -163,12 +170,12 @@ function addGroup() {
                             />
                             <div class="item-content"><slot name="item" :entry="item" :index="itemIndex" :groupId="entry.id" /></div>
                             <div class="item-actions">
-                                <button type="button" class="action-btn" :title="`Edit ${itemName}`" :aria-label="`Edit ${itemName}`" @click="emit('edit', itemIndex, entry.id)"><wa-icon name="pen-to-square" /></button>
-                                <button type="button" class="action-btn" :title="`Duplicate ${itemName}`" :aria-label="`Duplicate ${itemName}`" @click="emit('duplicate', itemIndex, entry.id)"><wa-icon name="copy" /></button>
-                                <button type="button" class="action-btn action-btn-danger" :title="`Delete ${itemName}`" :aria-label="`Delete ${itemName}`" @click="emit('delete', itemIndex, entry.id)"><wa-icon name="trash-can" /></button>
+                                <button type="button" class="action-btn" :title="itemAction('edit')" :aria-label="itemAction('edit')" @click="emit('edit', itemIndex, entry.id)"><wa-icon name="pen-to-square" /></button>
+                                <button type="button" class="action-btn" :title="itemAction('duplicate')" :aria-label="itemAction('duplicate')" @click="emit('duplicate', itemIndex, entry.id)"><wa-icon name="copy" /></button>
+                                <button type="button" class="action-btn action-btn-danger" :title="itemAction('delete')" :aria-label="itemAction('delete')" @click="emit('delete', itemIndex, entry.id)"><wa-icon name="trash-can" /></button>
                             </div>
                         </div>
-                        <span v-if="!entry.items.length" class="empty-group">{{ $t('common.groups.dropItem', { item: itemName }) }}</span>
+                        <span v-if="!entry.items.length" class="empty-group">{{ itemAction('drop') }}</span>
                     </div>
                 </template>
                 <template v-else>
@@ -181,9 +188,9 @@ function addGroup() {
                     />
                     <div class="item-content"><slot name="item" :entry="entry" :index="index" :groupId="null" /></div>
                     <div class="item-actions">
-                        <button type="button" class="action-btn" :title="`Edit ${itemName}`" :aria-label="`Edit ${itemName}`" @click="emit('edit', index, null)"><wa-icon name="pen-to-square" /></button>
-                        <button type="button" class="action-btn" :title="`Duplicate ${itemName}`" :aria-label="`Duplicate ${itemName}`" @click="emit('duplicate', index, null)"><wa-icon name="copy" /></button>
-                        <button type="button" class="action-btn action-btn-danger" :title="`Delete ${itemName}`" :aria-label="`Delete ${itemName}`" @click="emit('delete', index, null)"><wa-icon name="trash-can" /></button>
+                        <button type="button" class="action-btn" :title="itemAction('edit')" :aria-label="itemAction('edit')" @click="emit('edit', index, null)"><wa-icon name="pen-to-square" /></button>
+                        <button type="button" class="action-btn" :title="itemAction('duplicate')" :aria-label="itemAction('duplicate')" @click="emit('duplicate', index, null)"><wa-icon name="copy" /></button>
+                        <button type="button" class="action-btn action-btn-danger" :title="itemAction('delete')" :aria-label="itemAction('delete')" @click="emit('delete', index, null)"><wa-icon name="trash-can" /></button>
                     </div>
                 </template>
             </div>
@@ -193,7 +200,7 @@ function addGroup() {
                 <wa-icon name="folder-plus" /> {{ $t('common.groups.add') }}
             </button>
             <button type="button" class="add-item-btn" @click="emit('add', null)">
-                <wa-icon name="plus" /> {{ $t('common.groups.addItem', { item: itemName }) }}
+                <wa-icon name="plus" /> {{ itemAction('add') }}
             </button>
         </div>
         <form v-if="addingGroup" class="group-name-form new-group-form" @submit.prevent="addGroup" @keydown.esc.stop.prevent="addingGroup = false">

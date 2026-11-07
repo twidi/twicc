@@ -325,3 +325,27 @@ test('promotion summarizes the composer attachments of the send, else its legacy
     legacy.promoteEphemeralSession('draft', { text: '', medias: [{ name: 'a.png', mimeType: 'image/png', type: 'image', data: 'secret' }] })
     assert.deepEqual(legacy.sessions.draft.ephemeralPrompt.attachments, [{ name: 'a.png', media_type: 'image/png', kind: 'image' }])
 })
+
+
+test('admission fallback stores a presentation key and preserves backend error text', () => {
+    const fallback = fixture().store
+    fallback.promoteEphemeralSession('draft', { text: 'hello' })
+    fallback.failEphemeralAdmission({ draft_session_id: 'draft' })
+    assert.equal(fallback.sessions.draft.ephemeralResult.error, null)
+    assert.equal(fallback.sessions.draft.ephemeralResult.error_key, 'session.ephemeral.startFailed')
+    assert.equal(serializeDraftSession(fallback.sessions.draft).ephemeralResult.error_key, 'session.ephemeral.startFailed')
+
+    const external = fixture().store
+    external.promoteEphemeralSession('draft', { text: 'hello' })
+    external.failEphemeralAdmission({ draft_session_id: 'draft', error: 'Provider detail: unchanged' })
+    assert.equal(external.sessions.draft.ephemeralResult.error, 'Provider detail: unchanged')
+    assert.equal(Object.hasOwn(external.sessions.draft.ephemeralResult, 'error_key'), false)
+})
+
+test('nameless attachment fallback adds presentation metadata without changing the compatibility name', () => {
+    const [missing, named] = summarizeEphemeralAttachments([{}, { name: 'Attachment' }])
+    assert.equal(missing.name, 'Attachment')
+    assert.equal(missing.name_key, 'session.messages.attachmentFile')
+    assert.equal(named.name, 'Attachment')
+    assert.equal(Object.hasOwn(named, 'name_key'), false)
+})

@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+const { t, locale } = useI18n()
+
 import { ref, watch, computed, nextTick, useId, inject, onMounted, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
 import { base64UrlEncode, buildFileDownloadUrl, encodeFilePathSegments, triggerDownload } from '../../utils/download'
@@ -25,7 +29,7 @@ import { useFramePoolStore } from '../../stores/framePool'
 import { useTextSelectionComment } from '../../composables/useTextSelectionComment'
 
 // Stable identity — an inline literal would churn the frame descriptor watch.
-const HTML_PREVIEW_FRAME_ATTRS = { sandbox: 'allow-scripts allow-same-origin allow-forms', title: 'HTML preview' }
+const HTML_PREVIEW_FRAME_ATTRS = computed(() => ({ sandbox: 'allow-scripts allow-same-origin allow-forms', title: t('files.preview.htmlTitle') }))
 
 const props = defineProps({
     projectId: String,
@@ -583,7 +587,7 @@ function applyPickerState(state) {
 // Passed to the comment widget's "Include screenshot" switch; rejects cleanly
 // so the switch can revert.
 function captureElementScreenshot() {
-    if (!picker) return Promise.reject(new Error('select mode is off'))
+    if (!picker) return Promise.reject(new Error(t('files.errors.selectionOff')))
     return picker.capture()
 }
 
@@ -593,7 +597,7 @@ function captureElementScreenshot() {
 // Artifacts tab).
 async function attachElementScreenshot(dataUrl, options = {}) {
     const sessionId = composerSessionId.value
-    if (!sessionId) throw new Error('no session to attach to')
+    if (!sessionId) throw new Error(t('files.errors.noSession'))
     const blob = await (await fetch(dataUrl)).blob()
     const file = new File([blob], `artifact-capture-${Date.now()}.png`, { type: 'image/png' })
     return dataStore.addAttachment(sessionId, file, options)
@@ -611,16 +615,16 @@ const previewActions = computed(() => {
     const html = showHtmlPreview.value && isHtmlFile.value && !props.diffMode
     if (html && htmlPreviewSrc.value && inSessionContext.value) {
         actions.push({ id: responsiveButtonId, icon: 'mobile-screen-button', active: responsiveActive.value,
-            label: responsiveActive.value ? 'Exit responsive mode' : 'Responsive mode — preview at a device size',
+            label: responsiveActive.value ? t('browser.display.exitResponsive') : t('browser.display.responsive'),
             action: () => { responsiveActive.value = !responsiveActive.value } })
     }
     if (html && htmlPreviewSrc.value && canSelectElement.value) {
         actions.push({ id: selectButtonId, icon: 'arrow-pointer', active: selectModeActive.value,
-            label: selectModeActive.value ? 'Stop selecting an element' : 'Select an element',
+            label: selectModeActive.value ? t('browser.selection.stop') : t('browser.selection.start'),
             action: () => setSelectMode(!selectModeActive.value) })
     }
     if (html && artifactBookmark.value) {
-        actions.push({ id: previewOpenTabButtonId, icon: 'up-right-from-square', label: 'Open in new tab',
+        actions.push({ id: previewOpenTabButtonId, icon: 'up-right-from-square', label: t('files.preview.openNewTab'),
             href: `/artifacts/${artifactBookmark.value.id}/` })
     }
     return actions
@@ -1010,7 +1014,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         const data = await res.json()
 
         if (!res.ok) {
-            error.value = data.error || 'Failed to load file'
+            error.value = data.error || localUiMessage('files.errors.load')
             tooLarge.value = !!data.too_large
             currentContent.value = ''
             return
@@ -1039,7 +1043,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         // Reset dirty state after a tick so CodeMirror has processed the new content
         nextTick(() => codeEditorRef.value?.resetDirty())
     } catch (err) {
-        error.value = 'Network error: failed to load file'
+        error.value = localUiMessage('files.errors.loadNetwork')
         currentContent.value = ''
     } finally {
         loading.value = false
@@ -1175,7 +1179,7 @@ watch(
         if (available) {
             registerCommand({
                 id: toggleEditCommandId,
-                label: 'Toggle File Edit Mode',
+                labelKey: 'files.commands.toggleEdit',
                 icon: 'pen-to-square',
                 category: 'display',
                 toggled: () => isEditing.value,
@@ -1200,14 +1204,14 @@ watch(
         if (bookmarked !== null) {
             registerCommand({
                 id: bookmarkArtifactCommandId,
-                label: bookmarked ? 'Edit Artifact Bookmark…' : 'Bookmark This Artifact…',
+                labelKey: bookmarked ? 'files.commands.editBookmark' : 'files.commands.bookmarkArtifact',
                 icon: 'bookmark',
                 category: 'ui',
                 action: () => artifactBookmarkButtonRef.value?.openDialog(),
             })
             registerCommand({
                 id: shareArtifactCommandId,
-                label: 'Share This Artifact…',
+                labelKey: 'files.commands.shareArtifact',
                 icon: 'share-nodes',
                 category: 'ui',
                 // No share host configured → nothing to create, like the
@@ -1275,7 +1279,7 @@ async function save() {
         const data = await res.json()
 
         if (!res.ok || data.error) {
-            saveError.value = data.error || 'Failed to save file'
+            saveError.value = data.error || localUiMessage('files.errors.save')
             return
         }
 
@@ -1286,7 +1290,7 @@ async function save() {
             codeEditorRef.value?.resetDirty()
         }
     } catch (err) {
-        saveError.value = 'Network error: failed to save file'
+        saveError.value = localUiMessage('files.errors.saveNetwork')
     } finally {
         saving.value = false
     }
@@ -1393,9 +1397,11 @@ const isLoading = computed(() => loading.value || switching.value)
 defineExpose({ isDirty, isLoading, reload, scrollToLine, reloadHtmlPreview, isHtmlPreviewActive, focusContent, frameOverlayEl })
 
 function formatSize(bytes) {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    const unit = bytes < 1024 ? 'byte' : bytes < 1024 * 1024 ? 'kilobyte' : 'megabyte'
+    const value = unit === 'byte' ? bytes : unit === 'kilobyte' ? bytes / 1024 : bytes / 1024 / 1024
+    return new Intl.NumberFormat(locale.value, {
+        style: 'unit', unit, unitDisplay: 'short', maximumFractionDigits: unit === 'byte' ? 0 : 1,
+    }).format(value)
 }
 
 // --- CodeMirror editor event handlers ---
@@ -1840,7 +1846,7 @@ function goToNextDiff() {
                 </template>
                 <template v-else-if="error">
                     <wa-callout variant="danger" size="small">
-                        {{ error }}
+                        {{ resolveUiMessage(error, { t }) }}
                     </wa-callout>
                     <wa-button v-if="tooLarge && canDownload" size="small" @click="handleDownload">
                         <wa-icon slot="start" name="download"></wa-icon>
@@ -1861,7 +1867,7 @@ function goToNextDiff() {
         <!-- Save error message (overlays above the editor) -->
         <div v-if="saveError" class="editor-overlay">
             <wa-callout variant="danger" size="small">
-                {{ saveError }}
+                {{ resolveUiMessage(saveError, { t }) }}
             </wa-callout>
         </div>
 

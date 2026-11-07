@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { ephemeralPromptText } from './ephemeralContent.js'
 import { effortIconSrc } from '../utils/effortIcon'
 
@@ -7,7 +8,7 @@ import { effortIconSrc } from '../utils/effortIcon'
  * Shared because every provider that dates its models needs the same wording.
  */
 export function formatRetirementDate(isoDate) {
-    return new Date(isoDate + 'T00:00:00').toLocaleDateString(undefined, {
+    return new Date(isoDate + 'T00:00:00').toLocaleDateString(i18n.global.locale.value, {
         month: 'short', day: 'numeric', year: 'numeric',
     })
 }
@@ -698,8 +699,7 @@ export class BaseProviderHelpers {
         if (!storedModel) return null
         const resolved = this.resolveToAvailableModel(storedModel)
         if (resolved === storedModel) return null
-        return `${this.getModelLabelWithVersion(storedModel)} is no longer available `
-            + `— falling back to ${this.getModelLabelWithVersion(resolved)}.`
+        return i18n.global.t('agentSettings.model.fallback', { model: this.getModelLabelWithVersion(storedModel), fallback: this.getModelLabelWithVersion(resolved) })
     }
 
     // ─── Runtime context-max resolution ──────────────────────────────────
@@ -757,14 +757,14 @@ export class BaseProviderHelpers {
      */
     getFieldLabel(field) {
         const defaults = {
-            selected_model: 'Model',
-            permission_mode: 'Permission',
-            permission_mode_if_untrusted: 'Permission (untrusted)',
-            effort: 'Effort',
-            thinking_enabled: 'Thinking',
-            claude_in_chrome: 'Claude built-in Chrome MCP',
-            fast_mode: 'Fast mode',
-            context_max: 'Context',
+            selected_model: i18n.global.t('agentSettings.fields.model'),
+            permission_mode: i18n.global.t('agentSettings.fields.permission'),
+            permission_mode_if_untrusted: i18n.global.t('agentSettings.fields.untrustedPermission'),
+            effort: i18n.global.t('agentSettings.fields.effort'),
+            thinking_enabled: i18n.global.t('agentSettings.fields.thinking'),
+            claude_in_chrome: i18n.global.t('agentSettings.fields.chrome'),
+            fast_mode: i18n.global.t('agentSettings.fields.fast'),
+            context_max: i18n.global.t('agentSettings.fields.context'),
         }
         return defaults[field] ?? field
     }
@@ -808,7 +808,7 @@ export class BaseProviderHelpers {
         if (field === 'permission_mode' && context?.untrusted) {
             const allowed = this.getUntrustedPermissionModes()
             if (allowed.length && !allowed.includes(choiceValue)) {
-                return 'Unavailable on untrusted projects.'
+                return i18n.global.t('agentSettings.summary.untrustedUnavailable')
             }
         }
         return null
@@ -849,7 +849,7 @@ export class BaseProviderHelpers {
             && context?.clampedPermissionMode != null) {
             const label = this.getChoiceLabel('permission_mode', context.clampedPermissionMode)
                 ?? String(context.clampedPermissionMode)
-            return `Clamped to ${label} — untrusted project.`
+            return i18n.global.t('agentSettings.permission.clamped', { label })
         }
         return null
     }
@@ -948,7 +948,7 @@ export class BaseProviderHelpers {
         // when off. ``groupWithPrevious`` suppresses the summary separator.
         if (this.supportsAgentSetting('thinking_enabled')) {
             const on = eff('thinking_enabled') === true
-            parts.push({ field: 'thinking_enabled', on, forced: forced('thinking_enabled'), label: on ? 'Thinking' : 'No thinking', groupWithPrevious: true })
+            parts.push({ field: 'thinking_enabled', on, forced: forced('thinking_enabled'), label: on ? i18n.global.t('agentSettings.summary.thinking') : i18n.global.t('agentSettings.summary.noThinking'), groupWithPrevious: true })
         }
 
         // Permission mode — label prefixed by the coloured mode glyph (same
@@ -970,13 +970,13 @@ export class BaseProviderHelpers {
 
         // Fast mode — only when on.
         if (this.supportsAgentSetting('fast_mode') && eff('fast_mode')) {
-            parts.push({ field: 'fast_mode', on: true, forced: forced('fast_mode'), label: 'Fast mode' })
+            parts.push({ field: 'fast_mode', on: true, forced: forced('fast_mode'), label: i18n.global.t('agentSettings.summary.fastMode') })
         }
 
         // Chrome MCP — kept last.
         if (this.supportsAgentSetting('claude_in_chrome')) {
             const on = eff('claude_in_chrome') === true
-            parts.push({ field: 'claude_in_chrome', on, forced: forced('claude_in_chrome'), label: on ? 'Chrome MCP' : 'No Chrome MCP' })
+            parts.push({ field: 'claude_in_chrome', on, forced: forced('claude_in_chrome'), label: on ? i18n.global.t('agentSettings.summary.chromeMcp') : i18n.global.t('agentSettings.summary.noChromeMcp') })
         }
 
         return parts
@@ -1033,18 +1033,12 @@ export class BaseProviderHelpers {
      * Default uses the provider's ``label`` for the agent's display name.
      */
     getStartupWarningText(context) {
-        const label = this.constructor.label ?? 'Agent'
-        const prefix = context?.processStateName === 'assistant_turn'
-            ? `Once ${label} finishes its current work, the`
-            : 'The'
-        if (context?.hasCrons) {
-            const suffix = context.hasMessageText ? ', after which your message will be sent.' : '.'
-            return `${prefix} ${label} process will be stopped to apply these settings, then resumed to restart the current cron jobs${suffix}`
-        }
-        const suffix = context?.hasMessageText
-            ? 'Your message will be sent after the process restarts.'
-            : 'Your next message will resume the session.'
-        return `${prefix} ${label} process will be stopped to apply these settings. ${suffix}`
+        const label = this.constructor.label ?? i18n.global.t('agentSettings.agent')
+        const working = context?.processStateName === 'assistant_turn'
+        const key = context?.hasCrons
+            ? (context.hasMessageText ? 'cronMessage' : 'cron')
+            : (context?.hasMessageText ? 'message' : 'nextMessage')
+        return i18n.global.t(`agentSettings.startup.${working ? 'working' : 'idle'}.${key}`, { label })
     }
 
     /**
@@ -1055,10 +1049,10 @@ export class BaseProviderHelpers {
      * uses the provider's ``label`` for the agent's display name.
      */
     getIdleWarningText(context) {
-        const label = this.constructor.label ?? 'Agent'
+        const label = this.constructor.label ?? i18n.global.t('agentSettings.agent')
         return context?.hasMessageText
-            ? `Once ${label} finishes its current work, your changes will take effect and your message will be sent.`
-            : `Once ${label} finishes its current work, the new settings will take effect.`
+            ? i18n.global.t('agentSettings.idle.message', { label })
+            : i18n.global.t('agentSettings.idle.settings', { label })
     }
 
     /**
@@ -1103,7 +1097,7 @@ export class BaseProviderHelpers {
         return {
             value: entry.selected_model,
             label: baseLabel,
-            labelWithSuffix: disabled ? `${baseLabel} (not available)` : baseLabel,
+            labelWithSuffix: disabled ? i18n.global.t('agentSettings.model.unavailable', { label: baseLabel }) : baseLabel,
             disabled,
             description: disabled ? (entry.disable_reason || null) : null,
         }

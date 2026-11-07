@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 import { ref, computed, inject, watch, onScopeDispose, nextTick, getCurrentInstance, unref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -267,8 +269,16 @@ function rewriteContentMediaUrlsIn(root) {
 // a markdown block, nor a blockquote. In all of them, the buttons land on the
 // first line of the content.
 function blockToolsButton(action, icon, label) {
-    return `<button type="button" class="block-tools-btn floating-over-text" data-block-action="${action}"`
-        + ` title="${label}" aria-label="${label}"><wa-icon name="${icon}"></wa-icon></button>`
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'block-tools-btn floating-over-text'
+    button.dataset.blockAction = action
+    button.title = label
+    button.setAttribute('aria-label', label)
+    const glyph = document.createElement('wa-icon')
+    glyph.setAttribute('name', icon)
+    button.append(glyph)
+    return button.outerHTML
 }
 
 // The toolbar element for one block, ready to be placed by the caller. Falsy
@@ -320,10 +330,10 @@ function addCodeToolsIn(root) {
 
         const bar = blockToolsBar(
             MARKDOWN_LANGS.has(pre.dataset.language ?? '')
-                ? blockToolsButton('view', 'eye', 'Show rendered markdown')
+                ? blockToolsButton('view', 'eye', t('markdown.tools.showRendered'))
                 : '',
-            blockToolsButton('wrap', 'text-width', 'Toggle line wrapping'),
-            blockToolsButton('copy', 'copy', 'Copy code'),
+            blockToolsButton('wrap', 'text-width', t('markdown.tools.wrap')),
+            blockToolsButton('copy', 'copy', t('markdown.tools.copyCode')),
         )
 
         pre.replaceWith(wrapper)
@@ -387,7 +397,7 @@ async function applyCodeRendered(wrapper, rendered, isCurrent) {
         } catch {
             if (!isCurrent()) return false
             // Keep the raw block shown rather than swapping in an empty frame.
-            toast.error('Could not render this markdown block', { duration: 3000 })
+            toast.error(t('markdown.tools.renderFailed'), { duration: 3000 })
             return false
         }
         // The block may have been replaced (streaming) while the nested render
@@ -397,6 +407,7 @@ async function applyCodeRendered(wrapper, rendered, isCurrent) {
             const view = document.createElement('div')
             view.className = 'code-tools-rendered'
             view.innerHTML = html
+            refreshGeneratedSummariesIn(view)
             wrapper.append(view)
         }
     }
@@ -404,7 +415,7 @@ async function applyCodeRendered(wrapper, rendered, isCurrent) {
     if (!isCurrent()) return false
     wrapper.classList.toggle('is-rendered', rendered)
     viewBtn.querySelector('wa-icon')?.setAttribute('name', rendered ? 'code' : 'eye')
-    const label = rendered ? 'Show raw markdown' : 'Show rendered markdown'
+    const label = t(rendered ? 'markdown.tools.showRaw' : 'markdown.tools.showRendered')
     viewBtn.setAttribute('title', label)
     viewBtn.setAttribute('aria-label', label)
     return true
@@ -423,7 +434,7 @@ async function handleCodeToolsAction(button) {
 
     switch (button.dataset.blockAction) {
         case 'copy':
-            await copyText(pre.textContent ?? '', 'Code')
+            await copyText(pre.textContent ?? '', 'code')
             break
         case 'wrap': {
             // Read the effective value rather than our own state: with no
@@ -494,13 +505,25 @@ function addQuoteToolsIn(root, src) {
         const source = aligned ? sources[index] : ''
         if (!source.trim() && !(quote.textContent ?? '').trim()) return
         if (source) quote.dataset.quoteSource = source
-        quote.prepend(blockToolsBar(blockToolsButton('copy', 'copy', 'Copy quote')))
+        quote.prepend(blockToolsBar(blockToolsButton('copy', 'copy', t('markdown.tools.copyQuote'))))
     })
 }
 
 function handleQuoteToolsAction(button, quote) {
     if (button.dataset.blockAction !== 'copy') return
-    copyText(quote.dataset.quoteSource ?? (quote.textContent ?? '').trim(), 'Quote')
+    copyText(quote.dataset.quoteSource ?? (quote.textContent ?? '').trim(), 'quote')
+}
+
+// Change only generated summaries. User summaries and embedded frames keep their nodes.
+function refreshGeneratedSummariesIn(root) {
+    let changed = false
+    for (const summary of root?.querySelectorAll('[data-default-summary]') ?? []) {
+        const label = t('session.markdown.details')
+        if (summary.textContent === label) continue
+        summary.textContent = label
+        changed = true
+    }
+    return changed
 }
 
 // Everything that turns freshly parsed markdown HTML into its final shape. Runs
@@ -521,6 +544,7 @@ async function postProcessIn(root, theme, src, isCurrent) {
     addCodeToolsIn(root)
     if (!isCurrent()) return MARKDOWN_RENDER_CANCELLED
     addQuoteToolsIn(root, src)
+    refreshGeneratedSummariesIn(root)
     return mermaidOk
 }
 
@@ -560,7 +584,9 @@ function mermaidTheme() {
 function withRememberedDetails(html, scope) {
     const tmp = document.createElement('div')
     tmp.innerHTML = html
-    return applyRememberedDetailsIn(tmp, scope) ? tmp.innerHTML : html
+    const detailsChanged = applyRememberedDetailsIn(tmp, scope)
+    const summariesChanged = refreshGeneratedSummariesIn(tmp)
+    return detailsChanged || summariesChanged ? tmp.innerHTML : html
 }
 
 // wa-show / wa-hide bubble up from every wa-details below, including those of
@@ -642,6 +668,23 @@ onScopeDispose(() => {
     coordinator.dispose()
 })
 
+// Update generated controls without replacing rendered content or iframe nodes.
+watch([locale, blocks], async () => {
+    await nextTick()
+    refreshGeneratedSummariesIn(container.value)
+    for (const button of container.value?.querySelectorAll('[data-block-action]') ?? []) {
+        const action = button.dataset.blockAction
+        const wrapper = button.closest('.code-tools, blockquote')
+        const key = action === 'view'
+            ? (wrapper?.classList.contains('is-rendered') ? 'showRaw' : 'showRendered')
+            : action === 'wrap' ? 'wrap'
+                : wrapper?.matches('blockquote') ? 'copyQuote' : 'copyCode'
+        const label = t(`markdown.tools.${key}`)
+        button.title = label
+        button.setAttribute('aria-label', label)
+    }
+}, { flush: 'post' })
+
 const showRaw = ref(false)
 
 // The original text hides while its message shows the summary, except in the instance rendering the summary.
@@ -686,12 +729,12 @@ async function copyText(text, label) {
     } catch {
         ok = false
     }
-    if (ok) toast.success(`${label} copied to clipboard`, { duration: 2000 })
-    else toast.error(`Could not copy the ${label.toLowerCase()}`, { duration: 3000 })
+    if (ok) toast.success(t(`markdown.tools.copy.${label}.success`), { duration: 2000 })
+    else toast.error(t(`markdown.tools.copy.${label}.failed`), { duration: 3000 })
 }
 
 function copySource() {
-    copyText(props.source, 'Markdown')
+    copyText(props.source, 'markdown')
 }
 
 // Selector for media that should open in MediaPreviewDialog when clicked:
@@ -745,7 +788,8 @@ function buildImgItem(img) {
     return {
         type: 'image',
         src: img.src,
-        name: img.getAttribute('alt') || 'Image',
+        name: img.getAttribute('alt') || '',
+        nameKey: img.getAttribute('alt') ? null : 'markdown.media.image',
         link,
     }
 }
@@ -756,7 +800,7 @@ function buildSvgItem(svg) {
     return {
         type: 'image',
         src,
-        name: 'Mermaid diagram',
+        nameKey: 'markdown.media.mermaid',
         link: null,
     }
 }
@@ -871,7 +915,7 @@ function handleLinkClick(event) {
 
 <template>
     <div class="markdown-content-wrapper" :class="{ 'message-summary-hidden': summaryHidden }">
-        <wa-details v-if="showTocDetails" class="markdown-toc" summary="Table of contents">
+        <wa-details v-if="showTocDetails" class="markdown-toc" :summary="$t('markdown.toc.title')">
             <ul class="markdown-toc-list">
                 <li
                     v-for="(h, i) in headings"
@@ -879,7 +923,7 @@ function handleLinkClick(event) {
                     :style="{ paddingInlineStart: `${(h.level - tocMinLevel) * 1}rem` }"
                 >
                     <button type="button" class="markdown-toc-link" @click="scrollToHeading(i)">
-                        {{ h.text || 'Untitled' }}
+                        {{ h.text || $t('markdown.toc.untitled') }}
                     </button>
                 </li>
             </ul>
@@ -892,8 +936,8 @@ function handleLinkClick(event) {
                     size="small"
                     :variant="toolbarOpen ? 'brand' : 'neutral'"
                     appearance="filled"
-                    :title="toolbarOpen ? 'Hide actions' : 'Show actions'"
-                    :aria-label="toolbarOpen ? 'Hide actions' : 'Show actions'"
+                    :title="$t(toolbarOpen ? 'markdown.tools.hideActions' : 'markdown.tools.showActions')"
+                    :aria-label="$t(toolbarOpen ? 'markdown.tools.hideActions' : 'markdown.tools.showActions')"
                     :aria-expanded="toolbarOpen"
                     @click="toggleToolbar"
                 >
@@ -903,7 +947,7 @@ function handleLinkClick(event) {
                     size="small"
                     :variant="showRaw ? 'neutral' : 'brand'"
                     appearance="filled"
-                    :title="showRaw ? 'Show rendered markdown' : 'Show raw markdown'"
+                    :title="$t(showRaw ? 'markdown.tools.showRendered' : 'markdown.tools.showRaw')"
                     @click="toggleRaw"
                 >
                     <wa-icon :name="showRaw ? 'code' : 'eye'"></wa-icon>

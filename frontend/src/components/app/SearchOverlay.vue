@@ -1,4 +1,9 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 /**
  * SearchOverlay — Full-text search dialog with filters, results, and keyboard navigation.
  *
@@ -222,7 +227,7 @@ const activeWs = computed(() => {
     return wsId ? workspacesStore.getWorkspaceById(wsId) : null
 })
 
-const activeWsLabel = computed(() => activeWs.value ? `${activeWs.value.name} projects` : null)
+const activeWsLabel = computed(() => activeWs.value ? t('search.global.workspaceProjects', { workspace: activeWs.value.name }) : null)
 const activeWsColor = computed(() => activeWs.value?.color || null)
 
 /** Selectable workspaces for the filter dropdown */
@@ -315,12 +320,12 @@ async function performSearch(resetOffset = true) {
 
         if (!res.ok) {
             if (res.status === 503) {
-                error.value = 'Search index is still being built…'
+                error.value = localUiMessage('search.global.errors.indexBuilding')
             } else if (res.status === 400) {
                 const data = await res.json()
-                error.value = data.error || 'Invalid search query'
+                error.value = data.error || localUiMessage('search.global.errors.invalidQuery')
             } else {
-                error.value = 'Search error, please try again'
+                error.value = localUiMessage('search.global.errors.failed')
             }
             matchMode.value = 'all'
             return
@@ -341,7 +346,7 @@ async function performSearch(resetOffset = true) {
         totalSessions.value = data.total_sessions || 0
         selectedIndex.value = 0
     } catch (e) {
-        error.value = 'Network error, please try again'
+        error.value = localUiMessage('search.global.errors.network')
         // This path keeps `results`, so a stale 'any' would leave the partial-match
         // banner rendered above the error message.
         matchMode.value = 'all'
@@ -522,6 +527,10 @@ onBeforeUnmount(() => {
     debouncedSearch.cancel()
 })
 
+function sourceLabel(source) {
+    return ['user', 'assistant', 'title'].includes(source) ? t(`search.global.sources.${source}`) : source ?? ''
+}
+
 defineExpose({ open })
 </script>
 
@@ -687,7 +696,7 @@ defineExpose({ open })
 
             <!-- Error state -->
             <div v-if="error" class="search-error">
-                <wa-callout variant="danger">{{ error }}</wa-callout>
+                <wa-callout variant="danger">{{ resolveUiMessage(error) }}</wa-callout>
             </div>
 
             <!-- Results list -->
@@ -728,8 +737,8 @@ defineExpose({ open })
                             :key="mi"
                             class="result-snippet"
                         >
-                            <span :id="`search-role-${result.session_id}-${mi}`" class="snippet-role">{{ match.from?.[0]?.toUpperCase() }}</span>
-                            <AppTooltip :for="`search-role-${result.session_id}-${mi}`">{{ match.from }}</AppTooltip>
+                            <span :id="`search-role-${result.session_id}-${mi}`" class="snippet-role">{{ sourceLabel(match.from).slice(0, 1).toLocaleUpperCase() }}</span>
+                            <AppTooltip :for="`search-role-${result.session_id}-${mi}`">{{ sourceLabel(match.from) }}</AppTooltip>
                             <span class="snippet-text" v-html="match.snippet"></span>
                         </div>
                         <div v-if="result.matches.length > 3" class="snippet-more">

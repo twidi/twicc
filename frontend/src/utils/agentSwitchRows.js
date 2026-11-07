@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Switch/toggle row building for the agent-settings surfaces — shared between
 // the per-session popover (``AgentSettingsPopover``) and the per-provider
 // defaults editor (``ProviderSettingsSection``). Extracted from the popover's
@@ -57,7 +59,7 @@ export function buildSwitchRows(helpers, { fields = SWITCH_FIELD_WIDGETS, fieldC
             const big = choices[choices.length - 1]
             rows.push({
                 field, kind,
-                toggleLabel: `${big.label} ${label.toLowerCase()}`,
+                toggleLabel: i18n.global.t('session.agentSettings.contextWindow', { size: big.label }),
                 bigValue: big.value,
                 smallValue: small.value,
                 checked: valueFor(field) === big.value || !!ctx.isContextMaxForced,

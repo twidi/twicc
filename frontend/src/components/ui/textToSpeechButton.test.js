@@ -94,9 +94,10 @@ test('the button maps each state to its look and title', () => {
     assert.match(buttonSource, /<wa-spinner v-if="status === 'loading'">/)
     assert.match(buttonSource, /<wa-icon v-else :name="status === 'playing' \? 'stop' : 'volume-up'">/)
     assert.match(buttonSource, /:variant="status === 'playing' \? 'brand' : 'neutral'"/)
-    assert.match(buttonSource, /'Read aloud'/)
-    assert.match(buttonSource, /'Cancel the request'/)
-    assert.match(buttonSource, /'Stop reading'/)
+    assert.match(buttonSource, /idle: 'tts\.controls\.readAloud'/)
+    assert.match(buttonSource, /loading: 'tts\.controls\.cancelRequest'/)
+    assert.match(buttonSource, /playing: 'tts\.controls\.stopReading'/)
+    assert.match(buttonSource, /computed\(\(\) => t\(TITLES\[status\.value\]\)\)/)
 })
 
 test('a click plays when idle, stops otherwise, and toasts only real errors', () => {

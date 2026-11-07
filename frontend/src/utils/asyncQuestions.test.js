@@ -63,7 +63,7 @@ describe('async question pure transforms', () => {
         assert.ok(first.draft.message.endsWith(draft.message))
         assert.deepEqual(first.draft.mediaIds, ['image'])
         assert.deepEqual(first.recoveredIds, ['q1'])
-        assert.equal(first.notice, 'These questions were handled elsewhere. Your answers are kept in your draft.')
+        assert.equal(first.notice, questions.ASYNC_QUESTION_RECOVERY_NOTICE_KEY)
         const second = questions.recoverResolvedAnswers({ draft: first.draft, choices: first.choices, snapshot: resolved() })
         assert.equal(second.draft.message, first.draft.message)
         assert.deepEqual(record().choices.q1[2], { kind: 'other', value: 'My own answer' })

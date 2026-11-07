@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // WorktreeButton.vue - Compact "session in a worktree" control for the project
 // rows of the "New session" dropdowns. Two variants, picked from the project's
 // cached git_root (read reactively from the store — never re-checked per
@@ -71,7 +73,7 @@ async function onRefresh(e) {
     try {
         const res = await apiFetch(`/api/projects/${props.projectId}/resolve-git/`, { method: 'POST' })
         if (!res.ok) {
-            toast.error('Could not check this folder for a git repository.')
+            toast.error(t('project.worktrees.checkFailed'))
             return
         }
         const { git_root } = await res.json()
@@ -79,15 +81,15 @@ async function onRefresh(e) {
             // Mirror the broadcast locally so the control flips to the worktree
             // button immediately (reveal-just: the user clicks it to create).
             data.updateProject({ id: props.projectId, git_root })
-            toast.success('Git repository found.')
+            toast.success(t('project.worktrees.gitFound'))
         } else {
             // Still not a git repo — inline red ✕ feedback for a few seconds,
             // plus a toast so the result is unmissable.
             flashNoGit()
-            toast.info('No git repository found in this folder.')
+            toast.info(t('project.worktrees.gitNotFound'))
         }
     } catch {
-        toast.error('Could not check this folder for a git repository.')
+        toast.error(t('project.worktrees.checkFailed'))
     } finally {
         refreshing.value = false
     }

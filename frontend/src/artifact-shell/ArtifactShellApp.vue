@@ -3,7 +3,8 @@
 // the artifact's inner document and mounts the *same* broker host + consent
 // prompt the in-SPA preview uses, through the shared `useArtifactBroker`
 // composable — so an artifact behaves identically in both contexts.
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useArtifactBroker } from '../composables/useArtifactBroker'
 import ArtifactBrokerPrompt from '../components/artifacts/ArtifactBrokerPrompt.vue'
 import ShareFooter from '../share-session/ShareFooter.vue'
@@ -20,6 +21,7 @@ const props = defineProps({
     tokenPath: { type: [String, null], default: null },
 })
 
+const { locale } = useI18n()
 const iframeRef = ref(null)
 
 // Persist "Forever" onto the bookmark's allowlist. The page holds the TwiCC
@@ -52,6 +54,7 @@ function onDenied(url, kind) {
 // (the proxy answered `not_allowed`). A viewer can't grant anything, so show an
 // honest, dismissible notice instead of letting the page fail mysteriously.
 const blockedHosts = ref([])
+const blockedHostList = computed(() => new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(blockedHosts.value))
 function noteBlockedHost(hostKey) {
     if (!blockedHosts.value.includes(hostKey)) blockedHosts.value.push(hostKey)
 }
@@ -120,7 +123,7 @@ onMounted(() => {
     <ArtifactBrokerPrompt v-if="mode !== 'share'" :prompt="brokerPrompt" @decision="onBrokerDecision" />
     <div v-if="blockedHosts.length" class="share-blocked-banner">
         <i18n-t keypath="artifacts.shell.blockedHosts" scope="global" :plural="blockedHosts.length">
-            <template #hosts><code>{{ blockedHosts.join(', ') }}</code></template>
+            <template #hosts><code>{{ blockedHostList }}</code></template>
         </i18n-t>
         <a href="#" @click.prevent="blockedHosts = []">{{ $t('artifacts.shell.dismiss') }}</a>
     </div>

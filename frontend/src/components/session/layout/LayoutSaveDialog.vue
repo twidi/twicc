@@ -1,4 +1,5 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../../i18n/uiMessages'
 // Save the current session's layout to the named-layouts catalog: either overwrite an existing
 // named layout, or create a new one (name prefilled "Default"). On save it can also set the layout
 // as the default for new sessions at one or more scopes — worktree / project / global — each an
@@ -97,19 +98,19 @@ async function handleSave() {
         if (isNew.value) {
             const trimmed = newName.value.trim()
             if (!trimmed) {
-                errorMessage.value = 'Name cannot be empty.'
+                errorMessage.value = localUiMessage('session.layout.errors.emptyName')
                 return
             }
             const dup = existingLayouts.value.some((l) => l.name.trim().toLowerCase() === trimmed.toLowerCase())
             if (dup) {
-                errorMessage.value = `A layout named "${trimmed}" already exists.`
+                errorMessage.value = localUiMessage('session.layout.errors.duplicateName', { name: trimmed })
                 return
             }
             savedId.value = layoutsStore.upsertLayout({ name: trimmed, intention: props.intention })
         } else {
             const existing = layoutsStore.getLayoutById(target.value)
             if (!existing) {
-                errorMessage.value = 'That layout no longer exists.'
+                errorMessage.value = localUiMessage('session.layout.errors.missing')
                 return
             }
             savedId.value = layoutsStore.upsertLayout({ id: existing.id, name: existing.name, intention: props.intention })
@@ -117,7 +118,7 @@ async function handleSave() {
     }
     const id = savedId.value
     if (!id) {
-        errorMessage.value = 'Could not save the layout.'
+        errorMessage.value = localUiMessage('session.layout.errors.saveFailed')
         return
     }
 
@@ -141,7 +142,7 @@ async function handleSave() {
             }
         }
     } catch {
-        errorMessage.value = 'Could not set all defaults. Please retry.'
+        errorMessage.value = localUiMessage('session.layout.errors.defaultsFailed')
         isSaving.value = false
         return
     }
@@ -203,7 +204,7 @@ defineExpose({ open, close })
                 </p>
             </div>
 
-            <wa-callout v-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
+            <wa-callout v-if="errorMessage" variant="danger" size="small">{{ resolveUiMessage(errorMessage) }}</wa-callout>
         </form>
 
         <div slot="footer" class="dialog-footer">

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 // ProjectDetailHeader.vue - Header section of the project detail panel.
 // Shows the project/workspace name with its status icons (code comments, live process), then the
 // zones below: identity (directory path), the action buttons (archive, edit/manage), a stats container
@@ -96,8 +98,8 @@ const allProjects = computed(() => store.getProjects)
 
 // Display name
 const displayName = computed(() => {
-    if (isAllProjectsMode.value) return 'All Projects'
-    if (isWorkspaceMode.value) return workspace.value?.name || 'Workspace'
+    if (isAllProjectsMode.value) return t('project.scope.all')
+    if (isWorkspaceMode.value) return workspace.value?.name || t('project.scope.workspace')
     return store.getProjectDisplayName(props.projectId)
 })
 
@@ -162,7 +164,7 @@ const headerRef = ref(null)
 // The action buttons spell out their names when their row fits on one line (see useActionsRowLabels).
 const actionsRef = ref(null)
 const actionsLabels = useActionsRowLabels(headerRef, actionsRef, () => [
-    props.projectId, isArchived.value, compactHeight.value, rootFontSizePx.value,
+    props.projectId, isArchived.value, compactHeight.value, rootFontSizePx.value, locale.value,
 ])
 
 // The expanded overlay behaves like a popup: a click anywhere else closes it.

@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/backgroundBadge.js
 //
 // The badge of a `turn.ended` row that left work running (display design section 6.5).
@@ -17,8 +19,8 @@ export function describeBackgroundWork(work) {
     if (work.monitors > 0) parts.push(pluralize(work.monitors, 'monitor'))
     if (work.workflows > 0) parts.push(pluralize(work.workflows, 'workflow'))
     const wakeup = typeof work.scheduled_wakeup_at === 'string' ? Date.parse(work.scheduled_wakeup_at) : NaN
-    if (Number.isFinite(wakeup)) parts.push(`wake-up at ${formatClockTime(wakeup / 1000)}`)
-    if (work.goal === true) parts.push('goal')
+    if (Number.isFinite(wakeup)) parts.push(i18n.global.t('session.timeline.background.wakeup', { time: formatClockTime(wakeup / 1000) }))
+    if (work.goal === true) parts.push(i18n.global.t('session.timeline.background.goal'))
     if (!parts.length) return null
-    return { text: parts.join(', '), title: JSON.stringify(work) }
+    return { text: new Intl.ListFormat(i18n.global.locale.value, { style: 'short', type: 'unit' }).format(parts), title: JSON.stringify(work) }
 }

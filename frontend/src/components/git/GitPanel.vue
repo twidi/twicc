@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+const { t } = useI18n()
+
 import { ref, computed, watch, nextTick, provide, onMounted, onUnmounted, onActivated, onDeactivated, useId } from 'vue'
 import { apiFetch } from '../../utils/api'
 import { useSettingsStore } from '../../stores/settings'
@@ -100,8 +104,8 @@ const routeRootIssue = ref(null)
 const routeCommitIssue = ref(null)
 const routeFileIssue = ref(null)
 
-function makeRouteIssue(before, detail = null, after = '') {
-    return { before, detail, after }
+function makeRouteIssue(key, detail = null) {
+    return { key, detail }
 }
 
 // Transient sibling of routeFileIssue: shown (same look) when a file the user
@@ -127,7 +131,7 @@ let lastVanishedFilePath = null
 
 function showTransientFileGone(filePath) {
     lastVanishedFilePath = filePath
-    transientFileNotice.value = makeRouteIssue('File ', filePath, ' is no longer available in this view.')
+    transientFileNotice.value = makeRouteIssue('git.route.fileGone', filePath)
     armTransientFileNoticeTimer()
 }
 
@@ -346,7 +350,7 @@ const headerSelectedCommit = computed(() => {
     const issue = routeCommitIssue.value
     if (issue) {
         return {
-            message: `${issue.before ?? ''}${issue.detail ?? ''}${issue.after ?? ''}`,
+            message: t(issue.key, { detail: issue.detail ?? '' }),
         }
     }
     return selectedCommit.value
@@ -785,7 +789,7 @@ async function fetchDiff(file) {
         const data = await res.json()
 
         if (!res.ok || data.error) {
-            diffError.value = data.error || 'Failed to load diff'
+            diffError.value = data.error || localUiMessage('git.errors.loadDiff')
             diffTooLarge.value = !!data.too_large
             diffData.value = null
             return
@@ -797,7 +801,7 @@ async function fetchDiff(file) {
             diffData.value = data
         }
     } catch {
-        diffError.value = 'Network error'
+        diffError.value = localUiMessage('git.errors.network')
         diffData.value = null
     } finally {
         diffLoading.value = false
@@ -852,11 +856,7 @@ async function fetchGitLog() {
             // surface it as a route issue without switching to another root.
             if (res.status === 404 && selectedRootKey.value) {
                 missingRoots.value = new Set([...missingRoots.value, selectedRootKey.value])
-                routeRootIssue.value = makeRouteIssue(
-                    'Git root ',
-                    props.routeRootKey || selectedRootKey.value,
-                    ' is no longer available.',
-                )
+                routeRootIssue.value = makeRouteIssue('git.route.rootGone', props.routeRootKey || selectedRootKey.value)
                 entries.value = []
                 currentBranch.value = ''
                 headCommitHash.value = ''
@@ -870,7 +870,7 @@ async function fetchGitLog() {
                 return
             }
 
-            error.value = data.error || `Request failed (${res.status})`
+            error.value = data.error || localUiMessage('git.errors.requestStatus', { status: res.status })
             return
         }
 
@@ -895,7 +895,7 @@ async function fetchGitLog() {
             selectedBranch.value = targetBranch
         }
     } catch (e) {
-        error.value = 'Failed to load git history'
+        error.value = localUiMessage('git.errors.loadHistory')
     } finally {
         loading.value = false
     }
@@ -978,7 +978,7 @@ watch(
 
         const requestedRoot = roots.find(root => root.key === routeRootKey)
         if (!requestedRoot) {
-            routeRootIssue.value = makeRouteIssue('Git root ', routeRootKey, ' is not available.')
+            routeRootIssue.value = makeRouteIssue('git.route.rootUnavailable', routeRootKey)
             entries.value = []
             currentBranch.value = ''
             headCommitHash.value = ''
@@ -1002,7 +1002,7 @@ watch(
         }
 
         if (missingRoots.value.has(routeRootKey)) {
-            routeRootIssue.value = makeRouteIssue('Git root ', routeRootKey, ' is no longer available.')
+            routeRootIssue.value = makeRouteIssue('git.route.rootGone', routeRootKey)
             entries.value = []
             currentBranch.value = ''
             headCommitHash.value = ''
@@ -1073,7 +1073,7 @@ watch(
 
         const matchingCommit = entries.value.find(entry => entry.hash === targetCommitRef)
         if (!matchingCommit) {
-            routeCommitIssue.value = makeRouteIssue('Commit ', targetCommitRef, ' is no longer available.')
+            routeCommitIssue.value = makeRouteIssue('git.route.commitGone', targetCommitRef)
             syncingFromRoute = true
             selectedCommit.value = null
             clearSelectedFile()
@@ -1110,7 +1110,7 @@ watch(
                 syncingFromRoute = false
             }
             if (routeFilePath === null) {
-                routeFileIssue.value = makeRouteIssue('Requested file path is invalid.')
+                routeFileIssue.value = makeRouteIssue('files.route.invalidPath')
             } else {
                 lastVanishedFilePath = null
                 routeFileIssue.value = null
@@ -1151,7 +1151,7 @@ watch(
             } else {
                 // Case A: a dead deep-link to a file never shown — persistent, it
                 // explains why nothing is selected.
-                routeFileIssue.value = makeRouteIssue('File ', routeFilePath, ' is no longer available in this view.')
+                routeFileIssue.value = makeRouteIssue('git.route.fileGone', routeFilePath)
             }
             return
         }
@@ -1570,7 +1570,7 @@ onMounted(() => {
             <wa-callout variant="danger" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                 <div class="error-content">
-                    <div>{{ error }}</div>
+                    <div>{{ resolveUiMessage(error, { t }) }}</div>
                     <wa-button
                         variant="danger"
                         appearance="outlined"
@@ -1588,9 +1588,9 @@ onMounted(() => {
         <div v-else-if="routeIssueMessage && entries.length === 0" class="panel-state">
             <wa-callout variant="warning" class="pane-callout">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                <span>{{ routeIssueMessage.before }}</span>
-                <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
-                <span>{{ routeIssueMessage.after }}</span>
+                <i18n-t :keypath="routeIssueMessage.key" scope="global">
+                    <template #detail><span class="pane-callout-detail">{{ routeIssueMessage.detail }}</span></template>
+                </i18n-t>
             </wa-callout>
         </div>
 
@@ -1622,9 +1622,9 @@ onMounted(() => {
                         class="pane-callout"
                     >
                         <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                        <span>{{ routeIssueMessage.before }}</span>
-                        <span v-if="routeIssueMessage.detail" class="pane-callout-detail">{{ routeIssueMessage.detail }}</span>
-                        <span>{{ routeIssueMessage.after }}</span>
+                        <i18n-t :keypath="routeIssueMessage.key" scope="global">
+                    <template #detail><span class="pane-callout-detail">{{ routeIssueMessage.detail }}</span></template>
+                </i18n-t>
                     </wa-callout>
                 </div>
 
@@ -1705,7 +1705,7 @@ onMounted(() => {
                             <!-- Diff error -->
                             <div v-if="diffError" class="panel-placeholder">
                                 <wa-callout variant="danger" size="small">
-                                    {{ diffError }}
+                                    {{ resolveUiMessage(diffError, { t }) }}
                                 </wa-callout>
                                 <wa-button v-if="diffTooLarge" size="small" @click="handleDownload('file', { path: selectedFile })">
                                     <wa-icon slot="start" name="download"></wa-icon>
@@ -1905,7 +1905,7 @@ onMounted(() => {
                             />
                         </template>
                         <template #table>
-                            <GitLogTable timestamp-format="YYYY-MM-DD HH:mm" />
+                            <GitLogTable />
                         </template>
                     </GitLog>
                 </div>

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ElicitationUrlBody.vue (shared) — body sub-component for an
 // ``elicitationUrl`` pending request (request_type ``ask_user_question``,
 // mode ``url``) — an MCP server asking the user to open an external page
@@ -34,7 +36,7 @@ const openLinkId = useId()
 
 // Wire params.
 const input = computed(() => props.pendingRequest.tool_input || {})
-const serverName = computed(() => input.value.serverName || 'unknown server')
+const serverName = computed(() => input.value.serverName || t('session.approval.unknownServer'))
 const message = computed(() => input.value.message || '')
 const url = computed(() => input.value.url || '')
 
@@ -52,7 +54,7 @@ const isValidUrl = computed(() => {
 
 function copyUrl() {
     navigator.clipboard.writeText(url.value)
-    toast.success('URL copied to clipboard', { duration: 2000 })
+    toast.success(t('session.elicitation.url.copied'), { duration: 2000 })
 }
 
 function done() {

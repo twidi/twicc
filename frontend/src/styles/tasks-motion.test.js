@@ -236,7 +236,7 @@ test('6. TaskPane: template shape, progress header, computed (§6)', () => {
     assert.ok(elseAt >= 0 && headerAt > elseAt && scrollAt > headerAt, 'header v-if sits inside the template, before the scroll')
     assert.ok(flat.includes('<div v-if="progress.total > 0" class="task-progress">'), 'the header div')
     const label = flat.match(/<span class="task-progress-label">([^<]*)<\/span>/)
-    assert.equal(label[1], "{{ $t('session.tasks.progress', { done: progress.done, total: progress.total }) }}")
+    assert.equal(label[1], "{{ $t('session.tasks.progress', { done: n(progress.done), total: n(progress.total) }) }}")
     const { t } = createAppI18n().global
     assert.equal(t('session.tasks.progress', { done: 3, total: 5 }), '3 of 5 done')
     const track = attrsOf(openingTags(template, 'div').find((t) => t.includes('task-progress-track')))

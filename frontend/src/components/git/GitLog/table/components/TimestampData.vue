@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, useId, type CSSProperties, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+import 'dayjs/locale/pt-br'
 import utc from 'dayjs/plugin/utc'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import { useTableContext } from '../../composables/useTableContext'
@@ -30,6 +32,15 @@ const props = defineProps({
 // ---------------------------------------------------------------------------
 
 const { timestampFormat } = useTableContext()
+const { locale } = useI18n()
+
+function formatTimestamp() {
+  const date = new Date(props.timestamp)
+  if (!Number.isFinite(date.getTime())) return '-'
+  return new Intl.DateTimeFormat(locale.value, {
+    dateStyle: 'short', timeStyle: 'medium', timeZone: 'UTC',
+  }).format(date)
+}
 
 // ---------------------------------------------------------------------------
 // Computed
@@ -38,10 +49,13 @@ const { timestampFormat } = useTableContext()
 const timestampId = useId()
 
 const formattedTimestamp = computed(() => {
-  const commitDate = dayjs.utc(props.timestamp)
+  const commitDate = dayjs.utc(props.timestamp).locale(locale.value === 'pt-BR' ? 'pt-br' : 'en')
+  if (!commitDate.isValid()) return '-'
 
   if (dayjs.utc().diff(commitDate, 'week') >= 1) {
-    return commitDate.format(timestampFormat.value)
+    return timestampFormat.value && timestampFormat.value !== 'YYYY-MM-DD HH:mm:ss'
+      ? commitDate.format(timestampFormat.value)
+      : formatTimestamp()
   }
 
   return commitDate.fromNow()
@@ -49,7 +63,7 @@ const formattedTimestamp = computed(() => {
 
 const fullTimestamp = computed(() => {
   if (props.isPlaceholder) return undefined
-  return dayjs.utc(props.timestamp).format('YYYY-MM-DD HH:mm:ss')
+  return formatTimestamp()
 })
 </script>
 

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * Codex ``view_image`` tool-result renderer.
  *
@@ -30,12 +32,14 @@ const props = defineProps({
     // basename, falling back to a generic label.
     name: {
         type: String,
-        default: 'Image',
+        default: null,
     },
 })
 
+const displayName = computed(() => props.name || t('session.tools.image.name'))
+
 const previewItems = computed(() =>
-    props.images.map((src) => ({ type: 'image', src, name: props.name })),
+    props.images.map((src) => ({ type: 'image', src, name: displayName.value })),
 )
 
 const previewDialogRef = ref(null)
@@ -53,7 +57,7 @@ function openPreview(index) {
         >
             <img
                 :src="src"
-                :alt="name"
+                :alt="displayName"
                 class="view-image-img"
                 loading="lazy"
                 @click="openPreview(index)"

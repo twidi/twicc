@@ -1,51 +1,55 @@
+import { i18n } from '../i18n/index.js'
 import { ARTIFACT_ICON } from './artifactBookmark.js'
+
+export const OPEN_SIDEBAR_LABEL_KEY = 'sidebar.rail.open'
+export const CLOSE_SIDEBAR_LABEL_KEY = 'sidebar.rail.close'
 
 export const OPEN_SIDEBAR_LABEL = 'Open sidebar (Alt+Shift+B)'
 export const CLOSE_SIDEBAR_LABEL = 'Close sidebar (Alt+Shift+B)'
 
 export const RAIL_ITEM_DEFINITIONS = [
-    { id: 'home', icon: 'house', label: state => state.mode === 'home' ? 'Home' : 'Back to projects list', group: 'top' },
-    { id: 'sessions', icon: 'comments', label: 'Sessions', group: 'top' },
-    { id: 'artifacts', icon: ARTIFACT_ICON, label: 'Artifacts', group: 'top' },
+    { id: 'home', icon: 'house', label: state => state.mode === 'home' ? i18n.global.t('sidebar.rail.home') : i18n.global.t('sidebar.rail.projects'), group: 'top' },
+    { id: 'sessions', icon: 'comments', label: () => i18n.global.t('sidebar.rail.sessions'), group: 'top' },
+    { id: 'artifacts', icon: ARTIFACT_ICON, label: () => i18n.global.t('sidebar.rail.artifacts'), group: 'top' },
     {
         id: 'search',
         requires: state => state.mode === 'sessions',
         icon: 'magnifying-glass',
-        label: state => state.isMac ? 'Full-text search (⌘⇧F)' : 'Full-text search (Ctrl+Shift+F)',
+        label: state => state.isMac ? i18n.global.t('sidebar.rail.searchMac') : i18n.global.t('sidebar.rail.searchOther'),
         group: 'top',
     },
     {
         id: 'timeline', icon: 'clock-rotate-left', group: 'top',
-        label: state => state.listeningTimelineLabel ? `Listening timeline: ${state.listeningTimelineLabel}` : 'All Projects timeline',
+        label: state => state.listeningTimelineLabel ? i18n.global.t('sidebar.rail.listeningTimeline', { label: state.listeningTimelineLabel }) : i18n.global.t('sidebar.rail.allTimeline'),
     },
     {
         id: 'speech',
         icon: 'volume-up',
-        label: state => state.speechStatus === 'loading' ? 'Cancel the text-to-speech request' : 'Stop reading aloud',
+        label: state => state.speechStatus === 'loading' ? i18n.global.t('sidebar.rail.cancelSpeech') : i18n.global.t('sidebar.rail.stopSpeech'),
         group: 'bottom',
         requires: state => state.speechStatus === 'loading' || state.speechStatus === 'playing',
     },
-    { id: 'new-session', icon: 'plus', label: 'New session', group: 'bottom' },
+    { id: 'new-session', icon: 'plus', label: () => i18n.global.t('sidebar.rail.newSession'), group: 'bottom' },
     {
         id: 'palette',
         icon: 'bars-staggered',
-        label: state => state.isMac ? 'Open command palette (⌘K)' : 'Open command palette (Ctrl+K)',
+        label: state => state.isMac ? i18n.global.t('sidebar.rail.paletteMac') : i18n.global.t('sidebar.rail.paletteOther'),
         group: 'bottom',
     },
     {
         id: 'inbox',
         icon: 'envelope',
-        label: 'Peer inbox',
+        label: () => i18n.global.t('sidebar.rail.inbox'),
         group: 'bottom',
         requires: state => state.peerConfigured,
         badge: state => state.inboxCount,
     },
-    { id: 'settings', icon: 'gear', label: 'Settings', group: 'bottom' },
+    { id: 'settings', icon: 'gear', label: () => i18n.global.t('sidebar.rail.settings'), group: 'bottom' },
     {
         id: 'toggle',
         requires: state => state.mode !== 'home',
         icon: 'angles-left',
-        label: state => state.sidebarOpen ? CLOSE_SIDEBAR_LABEL : OPEN_SIDEBAR_LABEL,
+        label: state => i18n.global.t(state.sidebarOpen ? CLOSE_SIDEBAR_LABEL_KEY : OPEN_SIDEBAR_LABEL_KEY),
         group: 'bottom',
     },
 ]

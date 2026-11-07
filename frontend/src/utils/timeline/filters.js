@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/filters.js
 //
 // The filters of the Timeline tab (filters design sections 3.1 to 3.5 and 4.5): the view, the panel groups
@@ -9,33 +11,33 @@
 
 /** The views of section 4.1, in display order. `short` is the label of a narrow band (section 3.1). */
 export const VIEWS = [
-    { value: 'all', label: 'All', short: 'All' },
-    { value: 'messages', label: 'Messages', short: 'Messages' },
-    { value: 'without_turns', label: 'Activity', short: 'Activity' },
-    { value: 'waits_problems', label: 'Waits & problems', short: 'Waits' },
+    { value: 'all', get label() { return i18n.global.t('session.timeline.filters.all') }, get short() { return i18n.global.t('session.timeline.filters.all') } },
+    { value: 'messages', get label() { return i18n.global.t('session.timeline.filters.messages') }, get short() { return i18n.global.t('session.timeline.filters.messages') } },
+    { value: 'without_turns', get label() { return i18n.global.t('session.timeline.filters.activity') }, get short() { return i18n.global.t('session.timeline.filters.activity') } },
+    { value: 'waits_problems', get label() { return i18n.global.t('session.timeline.filters.waitsProblems') }, get short() { return i18n.global.t('session.timeline.filters.waits') } },
 ]
 
 /** The event families of section 4.2, in display order, each with a hint of what it holds. */
 export const FAMILIES = [
-    { value: 'sessions', label: 'Sessions', hint: 'created, renamed' },
-    { value: 'processes', label: 'Processes', hint: 'started, stopped' },
-    { value: 'turns', label: 'Turns', hint: 'started, ended' },
-    { value: 'messages', label: 'Messages', hint: 'user messages, assistant finals' },
-    { value: 'waits', label: 'Waiting for you', hint: 'approvals, questions' },
-    { value: 'settings', label: 'Settings', hint: 'model, effort, permissions' },
-    { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned, detached' },
-    { value: 'workflows', label: 'Workflows', hint: 'started, resumed, ended' },
-    { value: 'twicc', label: 'TwiCC', hint: 'started, stopped' },
+    { value: 'sessions', get label() { return i18n.global.t('session.timeline.filters.sessions') }, get hint() { return i18n.global.t('session.timeline.filters.createdRenamed') } },
+    { value: 'processes', get label() { return i18n.global.t('session.timeline.filters.processes') }, get hint() { return i18n.global.t('session.timeline.filters.startedStopped') } },
+    { value: 'turns', get label() { return i18n.global.t('session.timeline.filters.turns') }, get hint() { return i18n.global.t('session.timeline.filters.startedEnded') } },
+    { value: 'messages', get label() { return i18n.global.t('session.timeline.filters.messages') }, get hint() { return i18n.global.t('session.timeline.filters.messagesHint') } },
+    { value: 'waits', get label() { return i18n.global.t('session.timeline.filters.waitingYou') }, get hint() { return i18n.global.t('session.timeline.filters.approvalsQuestions') } },
+    { value: 'settings', get label() { return i18n.global.t('session.timeline.filters.settings') }, get hint() { return i18n.global.t('session.timeline.filters.settingsHint') } },
+    { value: 'organization', get label() { return i18n.global.t('session.timeline.filters.organization') }, get hint() { return i18n.global.t('session.timeline.filters.organizationHint') } },
+    { value: 'workflows', get label() { return i18n.global.t('session.timeline.filters.workflows') }, get hint() { return i18n.global.t('session.timeline.filters.startedResumedEnded') } },
+    { value: 'twicc', label: 'TwiCC', get hint() { return i18n.global.t('session.timeline.filters.startedStopped') } },
 ]
 
 /** The "Done by" values of section 4.3, in rule order. */
 export const AUTHORS = [
-    { value: 'unknown', label: 'Unknown' },
-    { value: 'automatic', label: 'Automatic' },
-    { value: 'you', label: 'You' },
-    { value: 'agent_cli_mcp', label: 'Agent via CLI/MCP' },
-    { value: 'external_mcp', label: 'External MCP' },
-    { value: 'session_agent', label: "The session's agent" },
+    { value: 'unknown', get label() { return i18n.global.t('session.timeline.filters.unknown') } },
+    { value: 'automatic', get label() { return i18n.global.t('session.timeline.filters.automatic') } },
+    { value: 'you', get label() { return i18n.global.t('session.timeline.filters.you') } },
+    { value: 'agent_cli_mcp', get label() { return i18n.global.t('session.timeline.filters.agentCliMcp') } },
+    { value: 'external_mcp', get label() { return i18n.global.t('session.timeline.filters.externalMcp') } },
+    { value: 'session_agent', get label() { return i18n.global.t('session.timeline.filters.sessionAgent') } },
 ]
 
 /** The provider keys (the backend `Provider` values). Their labels come from the provider helpers. */
@@ -47,17 +49,17 @@ const SHORT_ID_LENGTH = 8
 
 const FAMILY_KEYS = FAMILIES.map((family) => family.value)
 const AUTHOR_KEYS = AUTHORS.map((author) => author.value)
-const FAMILY_LABELS = Object.fromEntries(FAMILIES.map((family) => [family.value, family.label]))
-const AUTHOR_LABELS = Object.fromEntries(AUTHORS.map((author) => [author.value, author.label]))
+const FAMILY_LABELS = Object.fromEntries(FAMILIES.map((family) => [family.value, () => family.label]))
+const AUTHOR_LABELS = Object.fromEntries(AUTHORS.map((author) => [author.value, () => author.label]))
 
 /**
  * The panel groups, in pill order (section 3.3): the filters field, the query parameter, the pill label, the
  * constant order of the values and their labels (null for the providers: the caller names them).
  */
 const GROUPS = [
-    { group: 'families', param: 'families', label: 'Events', order: FAMILY_KEYS, valueLabels: FAMILY_LABELS },
-    { group: 'providers', param: 'provider', label: 'Provider', order: PROVIDERS, valueLabels: null },
-    { group: 'authors', param: 'authors', label: 'Done by', order: AUTHOR_KEYS, valueLabels: AUTHOR_LABELS },
+    { group: 'families', param: 'families', get label() { return i18n.global.t('session.timeline.filters.events') }, order: FAMILY_KEYS, valueLabels: FAMILY_LABELS },
+    { group: 'providers', param: 'provider', get label() { return i18n.global.t('session.timeline.filters.provider') }, order: PROVIDERS, valueLabels: null },
+    { group: 'authors', param: 'authors', get label() { return i18n.global.t('session.timeline.filters.doneBy') }, order: AUTHOR_KEYS, valueLabels: AUTHOR_LABELS },
 ]
 
 /**
@@ -156,7 +158,7 @@ function pill(group, label, values) {
         group, label, values,
         shown: values.slice(0, SHOWN_VALUES),
         more: Math.max(0, values.length - SHOWN_VALUES),
-        title: values.join(', '),
+        title: new Intl.ListFormat(i18n.global.locale.value, { style: 'short', type: 'unit' }).format(values),
     }
 }
 
@@ -183,13 +185,13 @@ export function groupPills(filters, { providerLabel }) {
     const pills = []
     for (const { group, label, order, valueLabels } of GROUPS) {
         const values = checkedValues(filters[group], order)
-        const labelOf = valueLabels ? (value) => valueLabels[value] : providerLabel
+        const labelOf = valueLabels ? (value) => valueLabels[value]() : providerLabel
         if (values.length) pills.push(pill(group, label, values.map(labelOf)))
     }
-    if (filters.includeMuted) pills.push(pill('includeMuted', 'Sessions', ['Muted included']))
+    if (filters.includeMuted) pills.push(pill('includeMuted', i18n.global.t('session.timeline.filters.sessions'), [i18n.global.t('session.timeline.filters.mutedIncluded')]))
     const session = sessionOf(filters)
     if (session) {
-        pills.push(pill('session', 'Session', [session.title || String(session.id).slice(0, SHORT_ID_LENGTH)]))
+        pills.push(pill('session', i18n.global.t('session.timeline.filters.session'), [session.title || String(session.id).slice(0, SHORT_ID_LENGTH)]))
     }
     return pills
 }

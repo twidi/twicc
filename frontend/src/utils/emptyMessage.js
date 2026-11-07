@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { getProviderLabel } from '../providers'
 
 /**
@@ -13,7 +14,7 @@ import { getProviderLabel } from '../providers'
  * @returns {string} Markdown source for the replacement text.
  */
 export function emptyAssistantMessageMarkdown(provider) {
-    return `*${getProviderLabel(provider)} had nothing to add here.*`
+    return i18n.global.t('session.messages.emptyAssistant', { provider: getProviderLabel(provider) })
 }
 
 /**

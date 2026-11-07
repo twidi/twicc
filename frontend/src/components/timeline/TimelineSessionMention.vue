@@ -80,7 +80,7 @@ const processTooltip = computed(() => (processState.value
             :background-shells="userTurnBackgroundShellCount(processState)"
             :unread="hasUnread"
             size="small"
-            :title="hasUnread ? `New content to read · ${processTooltip}` : processTooltip"
+            :title="hasUnread ? $t('session.list.unreadProcess', { status: processTooltip }) : processTooltip"
             class="timeline-session-process"
         />
         <wa-icon v-else-if="showPending" name="hand" :label="$t('session.status.awaitingResponse')" :title="$t('session.status.awaitingResponse')" class="timeline-session-process timeline-session-pending"></wa-icon>

@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Canonical derivation of a project's root directories.
 //
 // Every Files / Git / file-path-resolution site derives its roots from these
@@ -23,14 +25,14 @@ export function getWorktreeParent(project, store) {
  */
 function buildFileRootLabel(roles) {
     const has = (r) => roles.has(r)
-    if (has('parent_dir') && has('parent_git')) return 'Main repo directory (git root)'
-    if (has('parent_dir')) return 'Main repo directory'
-    if (has('parent_git')) return 'Main repo git root'
-    if (has('project_dir') && has('git_root')) return 'Project directory (git root)'
-    if (has('project_dir')) return 'Project directory'
-    if (has('git_root')) return 'Git root'
-    if (has('cwd')) return 'Working directory'
-    return 'Directory'
+    if (has('parent_dir') && has('parent_git')) return i18n.global.t('project.roots.mainDirectoryGit')
+    if (has('parent_dir')) return i18n.global.t('project.roots.mainDirectory')
+    if (has('parent_git')) return i18n.global.t('project.roots.mainGit')
+    if (has('project_dir') && has('git_root')) return i18n.global.t('project.roots.projectDirectoryGit')
+    if (has('project_dir')) return i18n.global.t('project.roots.projectDirectory')
+    if (has('git_root')) return i18n.global.t('project.roots.git')
+    if (has('cwd')) return i18n.global.t('project.roots.working')
+    return i18n.global.t('project.roots.directory')
 }
 
 /**
@@ -117,12 +119,12 @@ export function deriveGitRoots({ gitDirectory = null, projectGitRoot = null, par
 
     if (sessionGit && projectGit && sessionGit === projectGit) {
         // Worktree session git and project git resolve to the same path.
-        push('session', 'Git root', sessionGit)
+        push('session', i18n.global.t('project.roots.git'), sessionGit)
     } else {
-        push('session', 'Session git root', sessionGit)
-        push('project', 'Project git root', projectGit)
+        push('session', i18n.global.t('project.roots.sessionGit'), sessionGit)
+        push('project', i18n.global.t('project.roots.projectGit'), projectGit)
     }
-    push('parent', 'Main repo git root', parentGit)
+    push('parent', i18n.global.t('project.roots.mainGit'), parentGit)
     return roots
 }
 

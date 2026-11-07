@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
+
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '../../stores/settings'
@@ -154,7 +157,7 @@ const snippetsForProject = computed(() => {
         return {
             ...snippet,
             _disabled: true,
-            _disabledReason: `Not available: ${unavailable.map(p => p.label).join(', ')}`,
+            _disabledReason: t('terminal.snippets.unavailableList', { placeholders: new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(unavailable.map(p => p.label)) }),
         }
     })
 })
@@ -217,14 +220,14 @@ const ancestorScopes = computed(() => {
         if (ctx.startsWith('s:') && proj?.worktree_of) {
             // Session inside a git worktree: the worktree project itself, then
             // its main repository as "Project".
-            scopes.push({ scope: 'worktree', label: 'Worktree', contextKey: `p:${ownProjectId}`, projectId: ownProjectId })
-            scopes.push({ scope: 'project', label: 'Project', contextKey: `p:${mainRepoId}`, projectId: mainRepoId })
+            scopes.push({ scope: 'worktree', label: t('terminal.scopes.worktree'), contextKey: `p:${ownProjectId}`, projectId: ownProjectId })
+            scopes.push({ scope: 'project', label: t('terminal.scopes.project'), contextKey: `p:${mainRepoId}`, projectId: mainRepoId })
         } else if (ctx.startsWith('s:')) {
             // Session inside a plain project.
-            scopes.push({ scope: 'project', label: 'Project', contextKey: `p:${ownProjectId}`, projectId: ownProjectId })
+            scopes.push({ scope: 'project', label: t('terminal.scopes.project'), contextKey: `p:${ownProjectId}`, projectId: ownProjectId })
         } else if (proj?.worktree_of) {
             // Worktree-project panel: only its main repository sits above it.
-            scopes.push({ scope: 'project', label: 'Project', contextKey: `p:${mainRepoId}`, projectId: mainRepoId })
+            scopes.push({ scope: 'project', label: t('terminal.scopes.project'), contextKey: `p:${mainRepoId}`, projectId: mainRepoId })
         }
 
         // Workspaces containing the (main-repo) project — one section each.
@@ -233,7 +236,7 @@ const ancestorScopes = computed(() => {
         for (const ws of workspaces) {
             scopes.push({
                 scope: `workspace:${ws.id}`,
-                label: multiple ? `Workspace (${ws.name})` : 'Workspace',
+                label: multiple ? t('terminal.scopes.namedWorkspace', { name: ws.name }) : t('terminal.scopes.workspace'),
                 contextKey: `w:${ws.id}`,
                 wsId: ws.id,
                 cwd: workspacesStore.getTerminalCwd(ws.id),
@@ -242,7 +245,7 @@ const ancestorScopes = computed(() => {
     }
 
     // Global is the ancestor of every non-global panel.
-    scopes.push({ scope: 'global', label: 'Global', contextKey: 'global' })
+    scopes.push({ scope: 'global', label: t('terminal.scopes.global'), contextKey: 'global' })
     return scopes
 })
 
@@ -290,7 +293,9 @@ const seenOwnKeys = new Set()
 const INVALID_ROUTE_TERM_INDEX = -1
 
 // --- Terminal tab management ---
-const terminals = ref([{ index: 0, label: 'Main' }])
+const terminals = ref([{ index: 0, label: '' }])
+// Keep custom names separate from generated display labels.
+const displayTerminals = computed(() => terminals.value.map(term => ({ ...term, label: term.label || defaultLabel(term.index) })))
 const activeIndex = ref(0)
 const nextIndex = ref(1) // monotonically increasing counter
 
@@ -350,10 +355,10 @@ const activeApi = computed(() => poolStore.getApi(activeKey.value))
 const isActiveMain = computed(() => activeAttachedKey.value === null && activeIndex.value === 0)
 const unavailableRouteMessage = computed(() => {
     const v = unavailableRouteTermIndex.value
-    if (v === INVALID_ROUTE_TERM_INDEX) return 'Requested terminal is not available.'
+    if (v === INVALID_ROUTE_TERM_INDEX) return t('terminal.route.invalid')
     // String value = an attached parent terminal's pool key (internal format).
-    if (typeof v === 'string') return 'The attached terminal is no longer available.'
-    return `Terminal \`${v}\` is no longer available.`
+    if (typeof v === 'string') return t('terminal.route.attachedGone')
+    return t('terminal.route.gone', { index: v })
 })
 
 // Flattened toolbar state from the active terminal's API.
@@ -377,7 +382,7 @@ function activateOwnTab(index) {
 
 function createTerminal() {
     const index = nextIndex.value++
-    terminals.value.push({ index, label: `Term ${index + 1}` })
+    terminals.value.push({ index, label: '' })
     activateOwnTab(index)
 }
 
@@ -460,7 +465,7 @@ function onTerminalTabShow(event) {
 
 /** Default label for a terminal index (used when no custom label is set). */
 function defaultLabel(index) {
-    return index === 0 ? 'Main' : `Term ${index + 1}`
+    return index === 0 ? t('terminal.tabs.main') : t('terminal.tabs.numbered', { number: index + 1 })
 }
 
 /** Open the rename dialog for a terminal tab. */
@@ -481,7 +486,7 @@ function handleRename(index, label) {
     if (!term) return
 
     // Update local label immediately (optimistic)
-    term.label = label || defaultLabel(index)
+    term.label = label || ''
 
     // For tmux sessions, persist to backend
     if (usesTmux.value) {
@@ -935,12 +940,12 @@ const attachSections = computed(() => {
             if (ancestorsUseTmux.value) {
                 entries = (terminalTabsStore.indices[scope.contextKey] || []).map((index) => ({
                     index,
-                    label: terminalTabsStore.getLabel(scope.contextKey, index) || defaultLabel(index),
+                    label: terminalTabsStore.getLabel(scope.contextKey, index),
                 }))
             } else {
                 entries = poolStore.liveKeysForContext(scope.contextKey)
                     .map((key) => poolStore.descriptors[key])
-                    .map((d) => ({ index: d.index, label: d.label || defaultLabel(d.index) }))
+                    .map((d) => ({ index: d.index, label: d.label || '' }))
                     .sort((a, b) => a.index - b.index)
             }
             const items = entries.map(({ index, label }) => {
@@ -952,7 +957,8 @@ const attachSections = computed(() => {
                     scopeLabel: scope.label,
                     projectId: scope.projectId ?? null,
                     cwd: scope.cwd ?? null,
-                    label,
+                    label: label || defaultLabel(index),
+                    customLabel: label,
                     attached: myAttached.includes(key) || forcedKeys.value.includes(key),
                 }
             })
@@ -986,12 +992,13 @@ const attachedTabs = computed(() => {
             // from discovery); non-tmux → the live descriptor's client-side label
             // (terminalTabsStore.labels is fed only by tmux-only messages, so
             // getLabel() is '' in non-tmux mode). Forced tabs are tmux-only.
-            const foreignLabel = (ancestorsUseTmux.value
+            const customLabel = (ancestorsUseTmux.value
                 ? terminalTabsStore.getLabel(contextKey, index)
-                : (d?.label || terminalTabsStore.getLabel(contextKey, index))) || defaultLabel(index)
+                : (d?.label || terminalTabsStore.getLabel(contextKey, index))) || ''
+            const foreignLabel = customLabel || defaultLabel(index)
             return {
-                key, contextKey, index, projectId, cwd, forced, scopeLabel,
-                displayLabel: `${scopeLabel}: ${foreignLabel}`,
+                key, contextKey, index, projectId, cwd, forced, scopeLabel, customLabel,
+                displayLabel: t('terminal.tabs.scoped', { scope: scopeLabel, terminal: foreignLabel }),
             }
         })
         .filter(Boolean)
@@ -1035,7 +1042,7 @@ function attachTerminal(item) {
         sessionId: null, // ancestors are never sessions
         cwd: item.cwd,
         startMode: 'auto',
-        label: item.label,
+        label: item.customLabel || '',
         persist: !ancestorsUseTmux.value,
     })
     activeAttachedKey.value = item.key
@@ -1169,7 +1176,7 @@ watchEffect(() => {
                 sessionId: null,
                 cwd: tab.cwd,
                 startMode: 'auto',
-                label: tab.displayLabel,
+                label: tab.customLabel,
                 persist: false,
             }, slotEls[tab.key], isActive)
         } else {
@@ -1306,7 +1313,7 @@ function syncTerminalsFromBackend(backendIndices, oldIndices) {
         if (!localIndices.has(index)) {
             // Use label from store if available, otherwise default
             const storeLabel = terminalTabsStore.getLabel(props.contextKey, index)
-            const label = storeLabel || defaultLabel(index)
+            const label = storeLabel || ''
             terminals.value.push({ index, label })
         }
     }
@@ -1350,7 +1357,7 @@ watch(
                 term.label = storeLabel
             } else if (!storeLabel && terminalTabsStore.indices[props.contextKey]?.includes(term.index)) {
                 // Label was cleared in the store for a known backend terminal → reset to default
-                term.label = defaultLabel(term.index)
+                term.label = ''
             }
         }
     },
@@ -1463,7 +1470,7 @@ defineExpose({ activeIndex })
                     :panel="`term-${term.index}`"
                     @dblclick="onTabDblClick(term.index)"
                 >
-                    {{ term.label }}
+                    {{ term.label || defaultLabel(term.index) }}
                 </wa-tab>
 
                 <wa-button
@@ -1593,7 +1600,7 @@ defineExpose({ activeIndex })
                         :class="['autoattach-button', 'reduced-height', { 'autoattach-button--active': activeOwnAutoAttach }]"
                         @click="toggleAutoAttach"
                     >
-                        <wa-icon name="thumbtack" :label="activeOwnAutoAttach ? 'Disable auto-attach in children' : 'Auto-attach in children'"></wa-icon>
+                        <wa-icon name="thumbtack" :label="activeOwnAutoAttach ? $t('terminal.controls.disableAutoAttach') : $t('terminal.controls.enableAutoAttach')"></wa-icon>
                     </wa-button>
                     <AppTooltip for="terminal-autoattach-button">{{ activeOwnAutoAttach ? $t('terminal.controls.autoAttached') : $t('terminal.controls.autoAttach') }}</AppTooltip>
                 </template>
@@ -1685,7 +1692,7 @@ defineExpose({ activeIndex })
             :combos="terminalConfigStore.combos"
             :snippets="snippetsForProject"
             :context="snippetGroupContext"
-            :terminals="terminals"
+            :terminals="displayTerminals"
             :active-terminal-index="activeIndex"
             @key-input="(...args) => activeApi?.handleExtraKeyInput?.(...args)"
             @modifier-toggle="(...args) => activeApi?.handleExtraKeyModifierToggle?.(...args)"
@@ -1706,7 +1713,7 @@ defineExpose({ activeIndex })
         />
         <TerminalSnippetSendDialog
             ref="snippetSendDialogRef"
-            :terminals="terminals"
+            :terminals="displayTerminals"
             :active-terminal-index="activeIndex"
             :placeholder-context="placeholderContext"
             @send="handleSnippetSendDialogSend"

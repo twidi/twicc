@@ -42,7 +42,7 @@ async function render() {
     } catch (e) {
         if (mySeq !== renderSeq) return
         svg.value = ''
-        error.value = e?.message || 'Failed to render diagram'
+        error.value = e?.message || true
     }
 }
 
@@ -51,7 +51,7 @@ watch([() => props.code, theme], render, { immediate: true })
 
 <template>
     <div class="mermaid-pz-container">
-        <div v-if="error" class="mermaid-error">{{ error }}</div>
+        <div v-if="error" class="mermaid-error">{{ error === true ? $t('markdown.media.renderFailed') : error }}</div>
         <!-- v-show (not v-if) so the panzoom target element stays mounted across
              re-renders; usePanZoom binds to it once. -->
         <div

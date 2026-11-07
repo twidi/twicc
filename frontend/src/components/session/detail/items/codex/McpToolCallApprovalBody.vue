@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 import { canStealFocus } from '../../../../../utils/focusGuard'
@@ -20,7 +22,7 @@ const approveAlwaysId = useId()
 
 // Wire params: McpServerElicitationRequestParams (mode=form, approval-tagged).
 const input = computed(() => props.pendingRequest.tool_input || {})
-const serverName = computed(() => input.value.serverName || 'unknown server')
+const serverName = computed(() => input.value.serverName || t('session.approval.unknownServer'))
 const message = computed(() => input.value.message || '')
 const meta = computed(() => {
     const m = input.value._meta

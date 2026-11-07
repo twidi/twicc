@@ -1,3 +1,4 @@
+import { i18n } from '../../i18n/index.js'
 import { matchesStreamingBlock } from './streamMatching.js'
 import { buildEphemeralResultContent } from '../ephemeralContent.js'
 import { BaseProviderHelpers, formatRetirementDate } from '../baseHelpers'
@@ -29,10 +30,10 @@ import {
 // clear`` to remove it. ``plan`` switches the thread into Codex's Plan
 // collaboration mode (enter-only — it never toggles back to Default); an
 // optional prompt runs as a normal turn right after the switch.
-const BUILTIN_COMMANDS = [
-    { name: 'compact', plugin_name: null, is_builtin: true, is_global: true, description: 'Compact the conversation context into a summary', argument_hint: null },
-    { name: 'goal', plugin_name: null, is_builtin: true, is_global: true, description: "Set the session's goal (the objective Codex works toward), or 'clear' to remove it", argument_hint: '<objective> | clear' },
-    { name: 'plan', plugin_name: null, is_builtin: true, is_global: true, description: 'Enter Plan mode — Codex designs an implementation plan before touching code', argument_hint: '[prompt]' },
+const BUILTIN_COMMANDS = () => [
+    { name: 'compact', plugin_name: null, is_builtin: true, is_global: true, description: i18n.global.t('composer.commands.codex.compact'), argument_hint: null },
+    { name: 'goal', plugin_name: null, is_builtin: true, is_global: true, description: i18n.global.t('composer.commands.codex.goal'), argument_hint: i18n.global.t('composer.commands.codex.goalHint') },
+    { name: 'plan', plugin_name: null, is_builtin: true, is_global: true, description: i18n.global.t('composer.commands.codex.plan'), argument_hint: i18n.global.t('composer.commands.codex.planHint') },
 ]
 
 // Map of agent-setting wire names → store getter/setter for the persisted
@@ -79,18 +80,18 @@ const USAGE_FILE_FIELD_TO_STORE_BINDING = {
 
 // Statuspage display map: Statuspage v2 status values → footer rendering.
 // Matches the status strings broadcast by the backend statuspage task.
-const OPENAI_STATUS_DISPLAY = {
-    operational:          { label: 'Operational',      modifier: 'ok' },
-    degraded_performance: { label: 'Degraded',         modifier: 'warning' },
-    partial_outage:       { label: 'Partial outage',   modifier: 'warning' },
-    major_outage:         { label: 'Major outage',     modifier: 'error' },
-    under_maintenance:    { label: 'Maintenance',      modifier: 'info' },
-}
+const OPENAI_STATUS_DISPLAY = () => ({
+    operational:          { label: i18n.global.t('agentSettings.status.operational'),      modifier: 'ok' },
+    degraded_performance: { label: i18n.global.t('agentSettings.status.degraded'),         modifier: 'warning' },
+    partial_outage:       { label: i18n.global.t('agentSettings.status.partialOutage'),   modifier: 'warning' },
+    major_outage:         { label: i18n.global.t('agentSettings.status.majorOutage'),     modifier: 'error' },
+    under_maintenance:    { label: i18n.global.t('agentSettings.status.maintenance'),      modifier: 'info' },
+})
 
 // Per-field choice catalogue for the Codex provider.
 // ``selected_model`` is intentionally absent: the model list is served via
 // the model registry (see ``getModelRegistry``).
-const AGENT_SETTINGS_CHOICES = {
+const AGENT_SETTINGS_CHOICES = () => ({
     // ``icon``/``color`` drive the per-mode glyph shown in the permission
     // selects (see utils/permissionModeIcon.js + PermissionModeIcon.vue). Modes
     // mirror the same cross-provider tiers as Claude (claude_code/helpers.js):
@@ -100,53 +101,53 @@ const AGENT_SETTINGS_CHOICES = {
     permission_mode: [
         {
             value: PERMISSION_MODE.STRICT,
-            label: 'Strict',
-            description: 'Read-only. Writes are refused silently (no prompt).',
+            label: i18n.global.t('agentSettings.permission.strict'),
+            description: i18n.global.t('agentSettings.permission.strictDescription'),
             icon: 'shield-halved',
             color: 'var(--wa-color-blue-60)',
         },
         {
             value: PERMISSION_MODE.READ_ONLY,
-            label: 'Read-only',
-            description: 'Read-only. Any write requires confirmation.',
+            label: i18n.global.t('agentSettings.permission.readOnly'),
+            description: i18n.global.t('agentSettings.permission.readOnlyDescription'),
             icon: 'eye',
             color: 'var(--wa-color-green-60)',
         },
         {
             value: PERMISSION_MODE.AUTO,
-            label: 'Auto',
-            description: 'Writes freely in the project; asks to step outside.',
+            label: i18n.global.t('agentSettings.permission.auto'),
+            description: i18n.global.t('agentSettings.permission.codexAutoDescription'),
             icon: 'pen-to-square',
             color: 'var(--wa-color-yellow-60)',
         },
         {
             value: PERMISSION_MODE.AUTONOMOUS,
-            label: 'Autonomous',
-            description: 'Writes in the project; rejects requests to step outside.',
+            label: i18n.global.t('agentSettings.permission.autonomous'),
+            description: i18n.global.t('agentSettings.permission.autonomousDescription'),
             icon: 'shield-check',
             color: 'var(--wa-color-yellow-60)',
         },
         {
             value: PERMISSION_MODE.AUTO_REVIEW,
-            label: 'Auto-review',
-            description: 'Writes in the project; automatically reviews requests to step outside.',
+            label: i18n.global.t('agentSettings.permission.autoReview'),
+            description: i18n.global.t('agentSettings.permission.autoReviewDescription'),
             icon: 'shield-check',
             color: 'var(--wa-color-orange-60)',
         },
         {
             value: PERMISSION_MODE.YOLO,
             label: 'YOLO',
-            description: 'No restrictions.',
+            description: i18n.global.t('agentSettings.permission.yoloDescription'),
             icon: 'triangle-exclamation',
             color: 'var(--wa-color-red-60)',
         },
     ],
     effort: [
-        { value: EFFORT.LOW,    label: 'Low',    display_label: 'Low effort' },
-        { value: EFFORT.MEDIUM, label: 'Medium', display_label: 'Medium effort' },
-        { value: EFFORT.HIGH,   label: 'High',   display_label: 'High effort' },
-        { value: EFFORT.X_HIGH, label: 'xHigh',  display_label: 'xHigh effort' },
-        { value: EFFORT.MAX,    label: 'Max',    display_label: 'Max effort' },
+        { value: EFFORT.LOW,    label: i18n.global.t('agentSettings.effort.low'),    display_label: i18n.global.t('agentSettings.effort.lowDisplay') },
+        { value: EFFORT.MEDIUM, label: i18n.global.t('agentSettings.effort.medium'), display_label: i18n.global.t('agentSettings.effort.mediumDisplay') },
+        { value: EFFORT.HIGH,   label: i18n.global.t('agentSettings.effort.high'),   display_label: i18n.global.t('agentSettings.effort.highDisplay') },
+        { value: EFFORT.X_HIGH, label: i18n.global.t('agentSettings.effort.xhigh'),  display_label: i18n.global.t('agentSettings.effort.xhighDisplay') },
+        { value: EFFORT.MAX,    label: i18n.global.t('agentSettings.effort.max'),    display_label: i18n.global.t('agentSettings.effort.maxDisplay') },
         // ``ultra`` is temporarily disabled product-wide (see the backend switch
         // ``ULTRA_EFFORT_TEMPORARILY_DISABLED`` in codex/constants.py). Kept out
         // of the selectable efforts so it drops from the picker and the
@@ -157,11 +158,11 @@ const AGENT_SETTINGS_CHOICES = {
     fast_mode: [
         {
             value: true,
-            label: 'Enabled',
-            display_label: 'Fast mode',
-            description: 'Faster generation — 2x on GPT-6 Astra and GPT-6.1 Sol, 1.5x on other models; uses credits at 2.5x.',
+            label: i18n.global.t('agentSettings.enabled'),
+            display_label: i18n.global.t('agentSettings.summary.fastMode'),
+            description: i18n.global.t('agentSettings.codex.fastDescription'),
         },
-        { value: false, label: 'Disabled', display_label: 'No fast mode' },
+        { value: false, label: i18n.global.t('agentSettings.disabled'), display_label: i18n.global.t('agentSettings.summary.noFastMode') },
     ],
     // Not a user choice: the window is fixed by the model (272K for GPT-6 and
     // pre-5.6, 372K for the GPT-5.6 tiers) — for the selected model the
@@ -172,7 +173,7 @@ const AGENT_SETTINGS_CHOICES = {
         { value: CONTEXT_MAX.DEFAULT, label: '272K' },
         { value: CONTEXT_MAX.LARGE, label: '372K' },
     ],
-}
+})
 
 export class CodexHelpers extends BaseProviderHelpers {
     matchesStreamingBlock(parsed, itemKind, messageId, block) {
@@ -223,7 +224,7 @@ export class CodexHelpers extends BaseProviderHelpers {
         // skills-only (served from the backend ``Command`` table, no frontend
         // constant). See ``BUILTIN_COMMANDS`` above and the backend
         // ``agent/hardcoded_commands.py``.
-        return activationChar === '/' ? BUILTIN_COMMANDS : []
+        return activationChar === '/' ? BUILTIN_COMMANDS() : []
     }
 
     buildEphemeralResultContent(text) {
@@ -325,7 +326,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     getAgentSettingsChoices() {
-        return AGENT_SETTINGS_CHOICES
+        return AGENT_SETTINGS_CHOICES()
     }
 
     /**
@@ -413,7 +414,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     /**
-     * Decoration appended to a registry entry's label: the end-of-service date
+     * Complete registry entry label with the end-of-service date
      * when the model has one, otherwise the family version for a family's
      * latest, otherwise nothing.
      *
@@ -422,10 +423,10 @@ export class CodexHelpers extends BaseProviderHelpers {
      * both its family's latest *and* dated — and because a model about to
      * disappear has nothing useful to advertise about being the latest.
      */
-    _modelLabelSuffix(entry) {
-        if (entry?.retirement_date) return ` (until ${formatRetirementDate(entry.retirement_date)})`
-        if (entry?.latest) return ` (latest: ${entry.version})`
-        return ''
+    _modelLabelWithMetadata(entry, model) {
+        if (entry?.retirement_date) return i18n.global.t('agentSettings.model.until', { model, date: formatRetirementDate(entry.retirement_date) })
+        if (entry?.latest) return i18n.global.t('agentSettings.model.latest', { model, version: entry.version })
+        return model
     }
 
     // ─── Model capabilities ──────────────────────────────────────────────
@@ -531,7 +532,7 @@ export class CodexHelpers extends BaseProviderHelpers {
         if (field === 'context_max') {
             const windowSize = this.modelContextWindow(context?.effectiveModel)
             if (windowSize && choiceValue !== windowSize) {
-                return 'The context window is fixed by the model.'
+                return i18n.global.t('agentSettings.codex.fixedContext')
             }
         }
         return super.getChoiceDisabledReason(field, choiceValue, context)
@@ -540,7 +541,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     getFieldHelpText(field, context) {
         if (field === 'fast_mode') {
             if (!this.modelSupportsFast(context?.effectiveModel)) {
-                return 'Fast mode is not available for this model.'
+                return i18n.global.t('agentSettings.codex.fastUnavailable')
             }
             return null
         }
@@ -549,7 +550,7 @@ export class CodexHelpers extends BaseProviderHelpers {
             // GPT_56_CONTEXT_WINDOW_TEMPORARILY_REDUCED). Restore the
             // "272K up to GPT 5.5, 372K for the 5.6 tiers" wording when it returns.
             return super.getFieldHelpText(field, context)
-                ?? 'Fixed by the model: currently 272K across all Codex models.'
+                ?? i18n.global.t('agentSettings.codex.contextHelp')
         }
         return super.getFieldHelpText(field, context)
     }
@@ -557,7 +558,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     getFieldNotice(field, context) {
         if (field === 'fast_mode') {
             const on = (context?.selectedValue ?? context?.defaultValue) === true
-            const enabled = AGENT_SETTINGS_CHOICES.fast_mode.find(c => c.value === true)
+            const enabled = this.getFieldChoices('fast_mode').find(c => c.value === true)
             return {
                 icon: on ? 'triangle-exclamation' : 'circle-exclamation',
                 variant: on ? 'warning' : 'brand',
@@ -576,7 +577,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     getUsageExternalLink() {
         return {
             url: 'https://chatgpt.com/settings/usage?tab=overview',
-            label: 'View usage on chatgpt.com',
+            label: i18n.global.t('agentSettings.codex.usageLink'),
         }
     }
 
@@ -621,11 +622,11 @@ export class CodexHelpers extends BaseProviderHelpers {
     }
 
     getServiceStatusDisplay(status) {
-        const entry = OPENAI_STATUS_DISPLAY[status] ?? { label: status, modifier: 'ok' }
+        const entry = OPENAI_STATUS_DISPLAY()[status] ?? { label: status, modifier: 'ok' }
         return {
             ...entry,
             url: this.constructor.serviceStatusUrl,
-            tooltip: "Codex status on OpenAI's side",
+            tooltip: i18n.global.t('agentSettings.codex.statusTooltip'),
         }
     }
 
@@ -637,7 +638,7 @@ export class CodexHelpers extends BaseProviderHelpers {
         if (field === 'selected_model') {
             const resolved = this.resolveToAvailableModel(value)
             const entry = this.getModelRegistry().find(e => e.selected_model === resolved)
-            return `${this.getModelLabel(resolved)}${this._modelLabelSuffix(entry)}`
+            return this._modelLabelWithMetadata(entry, this.getModelLabel(resolved))
         }
         return super.getDefaultValueLabel(field, value)
     }
@@ -645,7 +646,7 @@ export class CodexHelpers extends BaseProviderHelpers {
     buildModelSelectGroups(registry) {
         const list = registry ?? []
         const option = e => this.buildModelOption(
-            e, `${this.getModelLabel(e.selected_model)}${this._modelLabelSuffix(e)}`,
+            e, this._modelLabelWithMetadata(e, this.getModelLabel(e.selected_model)),
         )
         return [
             { entries: list.filter(e => e.latest).map(option) },

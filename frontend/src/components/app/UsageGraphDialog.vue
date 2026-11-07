@@ -1,4 +1,9 @@
 <script setup>
+import { localUiError, localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 // UsageGraphDialog.vue - Dialog showing historical usage graphs (utilization & burn rate)
 // for 5-hour and 7-day quota periods. Uses SVG charts following the same approach
 // as ContributionSparklines.vue (gradient fills with polyline masks).
@@ -45,25 +50,25 @@ const errorMessage = ref('')
 // ── Period slider ───────────────────────────────────────────────────
 // Shared across both tabs. Each step defines range_days, bucket_minutes, and label.
 
-const RANGE_STEPS = [
-    { days: 0.25, bucket: 0,    label: '6 hours' },
-    { days: 0.5,  bucket: 0,    label: '12 hours' },
-    { days: 1,    bucket: 0,    label: '1 day' },
-    { days: 3,    bucket: 0,    label: '3 days' },
-    { days: 7,    bucket: 0,    label: '1 week' },
-    { days: 14,   bucket: 30,   label: '2 weeks' },
-    { days: 30,   bucket: 60,   label: '1 month' },
-    { days: 90,   bucket: 300,  label: '3 months' },
-    { days: 182,  bucket: 720,  label: '6 months' },
-    { days: 365,  bucket: 1440, label: '1 year' },
-]
+const RANGE_STEPS = computed(() => [
+    { days: 0.25, bucket: 0,    label: t('settings.usage.history.ranges.sixHours') },
+    { days: 0.5,  bucket: 0,    label: t('settings.usage.history.ranges.twelveHours') },
+    { days: 1,    bucket: 0,    label: t('settings.usage.history.ranges.oneDay') },
+    { days: 3,    bucket: 0,    label: t('settings.usage.history.ranges.threeDays') },
+    { days: 7,    bucket: 0,    label: t('settings.usage.history.ranges.oneWeek') },
+    { days: 14,   bucket: 30,   label: t('settings.usage.history.ranges.twoWeeks') },
+    { days: 30,   bucket: 60,   label: t('settings.usage.history.ranges.oneMonth') },
+    { days: 90,   bucket: 300,  label: t('settings.usage.history.ranges.threeMonths') },
+    { days: 182,  bucket: 720,  label: t('settings.usage.history.ranges.sixMonths') },
+    { days: 365,  bucket: 1440, label: t('settings.usage.history.ranges.oneYear') },
+])
 const DEFAULT_RANGE_INDEX = 4 // 1 week
 const rangeIndex = ref(DEFAULT_RANGE_INDEX)
-const currentRange = computed(() => RANGE_STEPS[rangeIndex.value])
+const currentRange = computed(() => RANGE_STEPS.value[rangeIndex.value])
 
 function onRangeChange(event) {
     const val = parseInt(event.target.value, 10)
-    if (!isNaN(val) && val >= 0 && val < RANGE_STEPS.length && val !== rangeIndex.value) {
+    if (!isNaN(val) && val >= 0 && val < RANGE_STEPS.value.length && val !== rangeIndex.value) {
         rangeIndex.value = val
     }
 }
@@ -181,7 +186,7 @@ async function fetchData({ isInitial = false, before = null, rangeDays = null, s
         if (before) url += `&before=${encodeURIComponent(before)}`
         const res = await fetch(url)
         if (!res.ok) {
-            throw new Error('Failed to fetch usage history')
+            throw localUiError('settings.usage.history.fetchError')
         }
         const json = await res.json()
 
@@ -220,7 +225,7 @@ async function fetchData({ isInitial = false, before = null, rangeDays = null, s
         }
     } catch (e) {
         if (myGeneration !== _fetchGeneration) return
-        if (!silent) errorMessage.value = e.message || 'Failed to load usage history'
+        if (!silent) errorMessage.value = e.uiMessage || e.message || localUiMessage('settings.usage.history.loadError')
     } finally {
         // Only clear loading state if this is still the current generation
         if (myGeneration === _fetchGeneration) {
@@ -418,7 +423,6 @@ const tStart = computed(() => tEnd.value - currentRange.value.days * 86400000)
 
 // ── Visible period label ───────────────────────────────────────────
 const visiblePeriodLabel = computed(() => {
-    const locale = navigator.language
     const startDate = new Date(tStart.value)
     const endDate = new Date(tEnd.value)
     const now = new Date()
@@ -429,7 +433,7 @@ const visiblePeriodLabel = computed(() => {
         hour: '2-digit', minute: '2-digit',
         ...(showYear ? { year: 'numeric' } : {}),
     }
-    return `${startDate.toLocaleString(locale, opts)} — ${endDate.toLocaleString(locale, opts)}`
+    return `${startDate.toLocaleString(locale.value, opts)} — ${endDate.toLocaleString(locale.value, opts)}`
 })
 
 // ── Panning clamp ──────────────────────────────────────────────────
@@ -638,7 +642,7 @@ const fhCurves = computed(() => {
     if (fhShowTemporal.value) {
         curves.push({
             key: 'temporal_pct',
-            label: 'Time elapsed',
+            label: t('settings.usage.history.elapsed'),
             decimals: 0,
             points: fhTemporalPoints.value,
             gradientId: 'usage-temporal-gradient-fh',
@@ -650,7 +654,7 @@ const fhCurves = computed(() => {
     curves.push(
         {
             key: 'utilization',
-            label: 'Utilization',
+            label: t('settings.usage.history.utilization'),
             decimals: 1,
             points: fhUtilPoints.value,
             gradientId: 'usage-util-gradient-fh',
@@ -660,7 +664,7 @@ const fhCurves = computed(() => {
         },
         {
             key: 'burn_rate',
-            label: 'Burn rate',
+            label: t('settings.usage.history.burnRate'),
             decimals: 0,
             points: fhBurnPoints.value,
             gradientId: 'usage-burn-gradient-fh',
@@ -670,7 +674,7 @@ const fhCurves = computed(() => {
         },
         {
             key: 'recent_long',
-            label: 'Burn rate (last 1h)',
+            label: t('settings.usage.history.burnLastHour'),
             decimals: 0,
             points: fhRecentLongPoints.value,
             gradientId: 'usage-recent-long-gradient-fh',
@@ -680,7 +684,7 @@ const fhCurves = computed(() => {
         },
         {
             key: 'recent_short',
-            label: 'Burn rate (last 30min)',
+            label: t('settings.usage.history.burnLastHalfHour'),
             decimals: 0,
             points: fhRecentShortPoints.value,
             gradientId: 'usage-recent-short-gradient-fh',
@@ -720,7 +724,7 @@ const sdCurves = computed(() => {
     if (sdShowTemporal.value) {
         curves.push({
             key: 'temporal_pct',
-            label: 'Time elapsed',
+            label: t('settings.usage.history.elapsed'),
             decimals: 0,
             points: sdTemporalPoints.value,
             gradientId: 'usage-temporal-gradient-sd',
@@ -732,7 +736,7 @@ const sdCurves = computed(() => {
     curves.push(
         {
             key: 'utilization',
-            label: 'Utilization',
+            label: t('settings.usage.history.utilization'),
             decimals: 1,
             points: sdUtilPoints.value,
             gradientId: 'usage-util-gradient-sd',
@@ -742,7 +746,7 @@ const sdCurves = computed(() => {
         },
         {
             key: 'burn_rate',
-            label: 'Burn rate',
+            label: t('settings.usage.history.burnRate'),
             decimals: 0,
             points: sdBurnPoints.value,
             gradientId: 'usage-burn-gradient-sd',
@@ -752,7 +756,7 @@ const sdCurves = computed(() => {
         },
         {
             key: 'recent_long',
-            label: 'Burn rate (last 24h)',
+            label: t('settings.usage.history.burnLastDay'),
             decimals: 0,
             points: sdRecentLongPoints.value,
             gradientId: 'usage-recent-long-gradient-sd',
@@ -762,7 +766,7 @@ const sdCurves = computed(() => {
         },
         {
             key: 'recent_short',
-            label: 'Burn rate (last 12h)',
+            label: t('settings.usage.history.burnLastHalfDay'),
             decimals: 0,
             points: sdRecentShortPoints.value,
             gradientId: 'usage-recent-short-gradient-sd',
@@ -842,8 +846,7 @@ const sdHoveredData = computed(() => {
 function formatTimestamp(isoStr) {
     if (!isoStr) return ''
     const date = new Date(isoStr)
-    const locale = navigator.language
-    return date.toLocaleString(locale, {
+    return date.toLocaleString(locale.value, {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -857,7 +860,7 @@ function formatTimestamp(isoStr) {
 function formatCurveValue(data, curve) {
     const val = data?.[curve.key]
     if (val == null) return '–'
-    return val.toFixed(curve.decimals) + '%'
+    return new Intl.NumberFormat(locale.value, { style: 'percent', minimumFractionDigits: curve.decimals, maximumFractionDigits: curve.decimals }).format(val / 100)
 }
 
 function onTabShow(event) {
@@ -939,7 +942,7 @@ function onTabShow(event) {
                             <wa-spinner></wa-spinner>
                             <span>{{ $t('settings.usage.history.loading') }}</span>
                         </div>
-                        <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
+                        <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ resolveUiMessage(errorMessage) }}</wa-callout>
                         <template v-else-if="fiveHourData.length > 0">
                             <div class="usage-chart-wrapper" :class="{ 'is-refreshing': isRefreshing }">
                                 <div v-if="isRefreshing" class="usage-chart-refresh-indicator">
@@ -1046,7 +1049,7 @@ function onTabShow(event) {
                             <wa-spinner></wa-spinner>
                             <span>{{ $t('settings.usage.history.loading') }}</span>
                         </div>
-                        <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
+                        <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ resolveUiMessage(errorMessage) }}</wa-callout>
                         <template v-else-if="sevenDayData.length > 0">
                             <div class="usage-chart-wrapper" :class="{ 'is-refreshing': isRefreshing }">
                                 <div v-if="isRefreshing" class="usage-chart-refresh-indicator">

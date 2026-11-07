@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // One session card of the Orchestration tree, rendered recursively. The card: title (link) + process-state
 // icon, agent-settings summary + project, time bar, dates/duration/turns/context with the cost at the right,
 // annotations. The left border carries the state bucket. Hidden sessions are dimmed and not linked.
@@ -39,11 +41,11 @@ const showCosts = visibleComputed(() => settingsStore.areCostsShown)
 // Process-state vocabulary from the topology payload. ``dead`` shows NO icon (a stopped session is the
 // common, expected state). The label stays as the tooltip and accessible name; no text is drawn.
 const PROCESS_STATUS = {
-    starting:            { label: 'Starting',        icon: 'hourglass-start', color: 'var(--wa-color-warning-60)' },
-    assistant_turn:      { label: 'Assistant turn',  icon: 'robot',           color: 'var(--wa-color-blue-60)',    pulse: 'work' },
-    awaiting_user_input: { label: 'Awaiting input',  icon: 'hand',            color: 'var(--wa-color-warning-60)', pulse: 'pending' },
-    user_turn:           { label: 'User turn',       icon: 'check',           color: 'var(--wa-color-success-60)' },
-    dead:                { label: 'Stopped',         icon: null,              color: 'var(--wa-color-neutral-50)' },
+    starting:            { label: 'session.orchestration.state.starting',        icon: 'hourglass-start', color: 'var(--wa-color-warning-60)' },
+    assistant_turn:      { label: 'session.orchestration.state.assistantTurn',  icon: 'robot',           color: 'var(--wa-color-blue-60)',    pulse: 'work' },
+    awaiting_user_input: { label: 'session.orchestration.state.awaitingInput',  icon: 'hand',            color: 'var(--wa-color-warning-60)', pulse: 'pending' },
+    user_turn:           { label: 'session.orchestration.state.userTurn',       icon: 'check',           color: 'var(--wa-color-success-60)' },
+    dead:                { label: 'session.orchestration.state.stopped',         icon: null,              color: 'var(--wa-color-neutral-50)' },
 }
 
 const nodeData = visibleComputed(() => nodesById.value[props.node.id] ?? null)
@@ -119,10 +121,11 @@ const isWorking = visibleComputed(() => bucket.value === 'working')
 const borderColor = visibleComputed(() => BUCKET_BORDER_COLORS[bucket.value])
 
 const status = visibleComputed(() => {
-    const base = PROCESS_STATUS[processState.value] ?? PROCESS_STATUS.dead
+    const definition = PROCESS_STATUS[processState.value] ?? PROCESS_STATUS.dead
+    const base = { ...definition, label: t(definition.label) }
     // A finished turn with a shell the agent left running: terminal icon, same green, breathing.
     const shells = userTurnBackgroundShellCount(nodeData.value?.process)
-    if (shells) return { ...base, icon: 'terminal', pulse: 'shell', label: `${base.label} — ${backgroundShellsRunningPhrase(shells)}` }
+    if (shells) return { ...base, icon: 'terminal', pulse: 'shell', label: t('session.orchestration.statusWithBackground', { status: base.label, background: backgroundShellsRunningPhrase(shells) }) }
     return base
 })
 
@@ -134,7 +137,7 @@ function fmtDate(iso) {
 }
 const startLabel = visibleComputed(() => fmtDate(nodeData.value?.session?.created_at))
 // A working node ends "now"; otherwise the last assistant message synced is the "finished" proxy.
-const endLabel = visibleComputed(() => (isWorking.value ? 'now' : fmtDate(nodeData.value?.session?.last_new_content_at)))
+const endLabel = visibleComputed(() => (isWorking.value ? t('session.orchestration.now') : fmtDate(nodeData.value?.session?.last_new_content_at)))
 // Working nodes use the panel's shared clock; only positive spans have a duration.
 const durationLabel = visibleComputed(() => {
     const c = nodeData.value?.session?.created_at
@@ -163,7 +166,7 @@ const contextUsageTooltip = visibleComputed(() => {
     const max = contextMax.value
     if (max == null) return null
     const label = providerHelpers.value?.getChoiceLabel('context_max', max) || `${Math.round(max / 1000)}K`
-    return `Context window usage (${label} max)`
+    return t('session.orchestration.contextUsage', { label })
 })
 const contextUsageColor = visibleComputed(() => {
     const pct = contextUsagePercentage.value
@@ -223,7 +226,7 @@ const expanded = ref(true)
                     type="button"
                     class="ocard-toggle"
                     :aria-expanded="expanded"
-                    :aria-label="expanded ? 'Collapse' : 'Expand'"
+                    :aria-label="expanded ? $t('session.orchestration.collapse') : $t('session.orchestration.expand')"
                     @click="expanded = !expanded"
                 >
                     <span>{{ descendantCount }}</span>

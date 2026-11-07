@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import assert from 'node:assert/strict'
 import { createAppI18n } from '../i18n/index.js'
 import { readFileSync } from 'node:fs'
@@ -147,16 +148,16 @@ async function saveTitle(session, input) {
     const localTitle = { value: input }
     const errorMessage = { value: '' }
     await new Function('props', 'localTitle', 'isSaving', 'errorMessage', 'store', 'emit', 'close',
-        'buildSessionTitlePatch', `${code}; return handleSave()`)(
+        'buildSessionTitlePatch', 'localUiMessage', `${code}; return handleSave()`)(
         { session }, localTitle, { value: false }, errorMessage,
         {
             renameSession: async (...args) => calls.push(['rename', ...args]),
             updateSession: value => calls.push(['local', value]),
             setDraftTitle: (...args) => calls.push(['draft', ...args]),
         },
-        name => calls.push([name]), () => calls.push(['close']), title.buildSessionTitlePatch,
+        name => calls.push([name]), () => calls.push(['close']), title.buildSessionTitlePatch, localUiMessage,
     )
-    return { calls, error: errorMessage.value }
+    return { calls, error: resolveUiMessage(errorMessage.value) }
 }
 
 test('real Save validates the unchanged automatic title through renameSession', async () => {

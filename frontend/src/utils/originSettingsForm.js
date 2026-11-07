@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Pure per-field preparation for the three origin settings.
 // Python owns validation, relationships, and canonical output.
 
@@ -9,20 +11,20 @@ export const PUBLIC_ORIGIN_ERROR = 'Enter a hostname or an HTTP(S) origin withou
 
 export function publicOriginErrorMessage(error) {
     const code = error?.replace(/^invalid_origin_/, '')
-    if (code === 'scheme') return 'The address must use HTTP or HTTPS.'
-    if (code === 'credentials') return 'The address must not contain a username or password.'
-    if (code === 'location_hostname') return 'The share host must be a different hostname from this app.'
-    if (code === 'retained_stored_value') return 'The stored address is not valid. Change it, then apply again.'
-    if (code === 'origin_conflict_share_external_hostname') return 'The Share host must use a different hostname from the External address.'
-    if (code === 'origin_conflict_share_peer_hostname') return 'The Share host must use a different hostname from the Peer address.'
-    if (code === 'origin_conflict_ambiguous_authority') return 'The Peer and External addresses must be the same origin or use different authorities.'
-    return PUBLIC_ORIGIN_ERROR
+    if (code === 'scheme') return i18n.global.t('settings.origins.errors.scheme')
+    if (code === 'credentials') return i18n.global.t('settings.origins.errors.credentials')
+    if (code === 'location_hostname') return i18n.global.t('settings.origins.errors.locationHostname')
+    if (code === 'retained_stored_value') return i18n.global.t('settings.origins.errors.stored')
+    if (code === 'origin_conflict_share_external_hostname') return i18n.global.t('settings.origins.errors.shareExternal')
+    if (code === 'origin_conflict_share_peer_hostname') return i18n.global.t('settings.origins.errors.sharePeer')
+    if (code === 'origin_conflict_ambiguous_authority') return i18n.global.t('settings.origins.errors.peerExternal')
+    return i18n.global.t('settings.origins.errors.invalid')
 }
 
 export function originSettingErrorMessage(errors, field, messageFor) {
     return errors
         .filter(error => error.field === field)
-        .map(error => error.message || messageFor(error.code))
+        .map(error => knownOriginError(error.code) ? messageFor(error.code) : error.message || messageFor(error.code))
         .join(' ')
 }
 
@@ -79,4 +81,8 @@ export function validateOriginSetting({ field, input, stored, locationHostname }
         ? [{ field, code: 'retained_stored_value' }]
         : []
     return { errors, warning, patch }
+}
+
+function knownOriginError(code) {
+    return typeof code === 'string' && (code.startsWith('invalid_origin_') || code.startsWith('origin_conflict_') || ['scheme', 'credentials', 'location_hostname', 'retained_stored_value'].includes(code))
 }

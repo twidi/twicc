@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/providersStatus.js
 //
 // Pure rules behind the provider-status toasts: given one provider's record
@@ -32,10 +34,10 @@ export const RESOLVED_ANNOUNCE_WINDOW_MS = 24 * 60 * 60_000
 // Statuspage levels → toast type + the sentence fragment placed after the
 // product name. A level absent here has no wording and raises no toast.
 export const OUTAGE_TOASTS = {
-    degraded_performance: { type: 'warning', phrase: 'is currently experiencing degraded performance' },
-    partial_outage: { type: 'warning', phrase: 'is currently experiencing a partial outage' },
-    major_outage: { type: 'error', phrase: 'is currently experiencing a major outage' },
-    under_maintenance: { type: 'info', phrase: 'is currently under maintenance' },
+    degraded_performance: { type: 'warning', get phrase() { return i18n.global.t('common.providerStatus.phrase.degraded_performance') } },
+    partial_outage: { type: 'warning', get phrase() { return i18n.global.t('common.providerStatus.phrase.partial_outage') } },
+    major_outage: { type: 'error', get phrase() { return i18n.global.t('common.providerStatus.phrase.major_outage') } },
+    under_maintenance: { type: 'info', get phrase() { return i18n.global.t('common.providerStatus.phrase.under_maintenance') } },
 }
 
 /**
@@ -121,7 +123,7 @@ export function planToast(record, now = Date.now()) {
 // ── Wording ─────────────────────────────────────────────────────────────────
 
 export function toastTitle(vendorLabel) {
-    return `${vendorLabel} status update`
+    return i18n.global.t('common.providerStatus.title', { vendor: vendorLabel })
 }
 
 /**
@@ -133,6 +135,7 @@ export function toastTitle(vendorLabel) {
  *   output (tests); ``now`` (epoch ms) for the "today" check.
  */
 export function formatIncidentWindow(startedAt, resolvedAt, { locale, timeZone, now = Date.now() } = {}) {
+    locale ??= i18n.global.locale.value
     const today = new Date(now).toLocaleDateString(locale, { timeZone })
     const format = (iso) => {
         const date = new Date(iso)
@@ -155,7 +158,7 @@ export function formatIncidentWindow(startedAt, resolvedAt, { locale, timeZone, 
 export function toastSentence(episode, { productLabel, vendorLabel }, windowOptions) {
     if (episode.kind === 'resolved') {
         const window = formatIncidentWindow(episode.startedAt, episode.resolvedAt, windowOptions)
-        return `${productLabel} issues on ${vendorLabel}'s side are now resolved (${window})`
+        return i18n.global.t('common.providerStatus.resolved', { product: productLabel, vendor: vendorLabel, window })
     }
-    return `${productLabel} ${OUTAGE_TOASTS[episode.status].phrase} on ${vendorLabel}'s side`
+    return i18n.global.t(`common.providerStatus.outage.${episode.status}`, { product: productLabel, vendor: vendorLabel })
 }

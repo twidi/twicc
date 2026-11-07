@@ -106,6 +106,15 @@ test('document language follows the selected locale, including fallback', () => 
     assert.equal(i18n.global.locale.value, 'en')
 })
 
+test('CSS loading text follows the locale as a quoted CSS string', () => {
+    const properties = new Map()
+    const document = { documentElement: { style: { setProperty: (key, value) => properties.set(key, value) } } }
+    for (const [locale, expected] of [['en', 'Loading...'], ['pt-BR', 'Carregando...'], ['unknown', 'Loading...']]) {
+        setLocale(locale, document)
+        assert.equal(properties.get('--twicc-loading-label'), JSON.stringify(expected))
+    }
+})
+
 test('component translations reference existing catalog messages', () => {
     function checkComponents(directory) {
         for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -123,4 +132,13 @@ test('component translations reference existing catalog messages', () => {
     const source = readFileSync(new URL('../components/app/SettingsPopover.vue', import.meta.url), 'utf8')
     assert.match(source, /:value\.prop="store.locale"/)
     assert.match(source, /@change="store.locale = \$event.target.value"/)
+})
+
+
+test('command argument markers render as literal text', () => {
+    for (const [locale, question, objective] of [['en', 'question', 'objective'], ['pt-BR', 'pergunta', 'objetivo']]) {
+        const composer = createAppI18n(locale).global
+        assert.equal(composer.t('composer.commands.claude_code.researchHint'), `<${question}>`)
+        assert.equal(composer.t('composer.commands.codex.goalHint'), `<${objective}> | clear`)
+    }
 })

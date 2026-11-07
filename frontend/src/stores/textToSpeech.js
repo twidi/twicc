@@ -1,8 +1,9 @@
+import { i18n } from '../i18n/index.js'
 import { defineStore } from 'pinia'
 import { generateUUID } from '../utils/crypto.js'
 import { isPcmType, parsePcmType, pcmToWavBlob } from '../utils/pcmAudio.js'
 import { createPcmStreamPlayer } from '../utils/pcmStreamPlayer.js'
-import { buffersSending, currentPlatform, playbackMode, speechEndResult, UNREACHABLE } from '../utils/speechOutcome.js'
+import { buffersSending, currentPlatform, playbackMode, speechEndResult, unreachableMessage } from '../utils/speechOutcome.js'
 import { createSpeechPlayer } from '../utils/speechPlayer.js'
 import {
     createScriptConfig,
@@ -107,7 +108,7 @@ async function speechErrorOf(response) {
     } catch {
         // Not a JSON body: fall back to the status.
     }
-    return { error: `Request failed (${response.status})` }
+    return { error: i18n.global.t('session.speech.errors.requestFailed', { status: response.status }) }
 }
 
 /** The backend's ending answer `{ state, error }`, or null: a failed request, a non-2xx answer, another body. */
@@ -154,11 +155,11 @@ function primePlayers() {
  * `{ ok: false, error }` when it cannot start, or ABORTED.
  */
 async function startPlayback(store, text, fields, { useCache, source, configId = null, scriptId = null, origin = null, owner = null, announcement = '', summaryRef = null, identity = null, nativeRequest = null }) {
-    if (store.nativeNegotiating) return { ok: false, error: 'Native speech is initializing. Try again.' }
+    if (store.nativeNegotiating) return { ok: false, error: i18n.global.t('session.speech.errors.initializing') }
     const native = nativeClients.get(store)?.client
     if (store.nativeMode) {
-        if (!native) return { ok: false, error: 'Native speech is unavailable. Reopen this page.' }
-        if (source === 'summary' && !nativeRequest) return { ok: false, error: 'The summary is no longer available' }
+        if (!native) return { ok: false, error: i18n.global.t('session.speech.errors.nativeUnavailable') }
+        if (source === 'summary' && !nativeRequest) return { ok: false, error: i18n.global.t('session.speech.errors.summaryGone') }
         const speech = { ...fields, cache: useCache, ...(source !== 'summary' ? { text } : {}),
             ...(configId ? { config_id: configId } : {}), ...(scriptId ? { script_id: scriptId } : {}),
             ...(origin ? { origin } : {}), ...(announcement ? { announcement } : {}) }
@@ -201,7 +202,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
                 && /^[0-9a-f]{64}$/.test(reference?.result_hash)
             if ((!live && !saved) || (reference?.id !== undefined && reference?.saved_id !== undefined)) {
                 backToIdle(store, mine)
-                return { ok: false, error: 'The summary is no longer available' }
+                return { ok: false, error: i18n.global.t('session.speech.errors.summaryGone') }
             }
         }
         const body = {
@@ -232,7 +233,7 @@ async function startPlayback(store, text, fields, { useCache, source, configId =
     } catch (error) {
         if (isAbortError(error) || generation !== mine) return ABORTED
         backToIdle(store, mine)
-        return { ok: false, error: UNREACHABLE }
+        return { ok: false, error: unreachableMessage() }
     }
     // The audio opened for a playback that a newer play or a stop replaced: nobody reads it.
     if (generation !== mine) {
@@ -574,7 +575,7 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
         play(text, { origin = null, owner = null, announcement = '' } = {}) {
             if (owner !== null && this.status !== 'idle') return Promise.resolve({ ...ABORTED, busy: true })
             const config = this.activeConfig
-            if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
+            if (!config) return Promise.resolve({ ok: false, error: i18n.global.t('session.speech.errors.noConfig') })
             const fields = speechFieldsOf(config)
             const scriptId = kindOf(fields) === 'script' ? config.id : null
             return startPlayback(this, text, fields, { useCache: true, source: origin ? 'selection' : 'message', scriptId, origin, owner, announcement })
@@ -586,8 +587,8 @@ export const useTextToSpeechStore = defineStore('textToSpeech', {
             if (typeof summaryRef !== 'function') Promise.resolve(summaryRef).catch(() => {})
             if (owner !== null && this.status !== 'idle') return Promise.resolve({ ...ABORTED, busy: true })
             const config = this.activeConfig
-            if (!config) return Promise.resolve({ ok: false, error: 'No active text-to-speech config' })
-            if (!identity || typeof identity !== 'object') return Promise.resolve({ ok: false, error: 'A summary identity is required' })
+            if (!config) return Promise.resolve({ ok: false, error: i18n.global.t('session.speech.errors.noConfig') })
+            if (!identity || typeof identity !== 'object') return Promise.resolve({ ok: false, error: i18n.global.t('session.speech.errors.identityRequired') })
             const fields = speechFieldsOf(config)
             const scriptId = kindOf(fields) === 'script' ? config.id : null
             return startPlayback(this, null, fields, {

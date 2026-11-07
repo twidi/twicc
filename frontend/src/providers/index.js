@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { ClaudeCodeHelpers, claudeCodeHelpers } from './claude_code/helpers'
 import { ClaudeCodeToolHelpers, claudeCodeToolHelpers } from './claude_code/toolHelpers'
 import { claudeCodeWsHandler, respondToPendingRequest as respondToClaudeCodePendingRequest } from './claude_code/ws'
@@ -76,7 +77,7 @@ export async function getEnabledProviders() {
  * ``'Agent'`` when the provider is unknown so callers don't have to guard.
  */
 export function getProviderLabel(provider) {
-    return PROVIDER_HELPERS[provider]?.constructor.label ?? 'Agent'
+    return PROVIDER_HELPERS[provider]?.constructor.label ?? i18n.global.t('agentSettings.agent')
 }
 
 /**

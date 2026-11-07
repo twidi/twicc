@@ -1,19 +1,20 @@
 // Shared, Vue-free metadata for the dockable layout UI (labels, placement options, edges).
 // The pure geometry/rules live in utils/layoutResolver.js; this is presentation-only.
 
+import { i18n } from '../../../i18n/index.js'
 import { DOCKS } from '../../../utils/layoutResolver'
 import { resolvePublicAssetUrl } from '../../../utils/publicAsset'
 
 export const CENTER = 'center'
 
 export const DOCK_LABELS = {
-    center: 'Main area',
-    'left-top': 'Left top',
-    'left-bottom': 'Left bottom',
-    'right-top': 'Right top',
-    'right-bottom': 'Right bottom',
-    'bottom-left': 'Bottom left',
-    'bottom-right': 'Bottom right',
+    get center() { return i18n.global.t('session.layout.placement.center') },
+    get 'left-top'() { return i18n.global.t('session.layout.placement.left-top') },
+    get 'left-bottom'() { return i18n.global.t('session.layout.placement.left-bottom') },
+    get 'right-top'() { return i18n.global.t('session.layout.placement.right-top') },
+    get 'right-bottom'() { return i18n.global.t('session.layout.placement.right-bottom') },
+    get 'bottom-left'() { return i18n.global.t('session.layout.placement.bottom-left') },
+    get 'bottom-right'() { return i18n.global.t('session.layout.placement.bottom-right') },
 }
 
 // Custom position-hinting icons (PyCharm-style: layout frame + a filled bar where the panel docks).
@@ -32,9 +33,9 @@ export const DOCK_ICONS = {
 // Merged single-entry placements, shown instead of the two docks of an edge while that edge is
 // empty. Each one places into the first dock of its edge ('left-top', 'right-top', 'bottom-left').
 export const MERGED_PLACEMENTS = {
-    left: { dockId: 'left-top', label: 'Left', icon: resolvePublicAssetUrl('icons/docks/left.svg') },
-    right: { dockId: 'right-top', label: 'Right', icon: resolvePublicAssetUrl('icons/docks/right.svg') },
-    bottom: { dockId: 'bottom-left', label: 'Bottom', icon: resolvePublicAssetUrl('icons/docks/bottom.svg') },
+    left: { dockId: 'left-top', get label() { return i18n.global.t('session.layout.placement.left') }, icon: resolvePublicAssetUrl('icons/docks/left.svg') },
+    right: { dockId: 'right-top', get label() { return i18n.global.t('session.layout.placement.right') }, icon: resolvePublicAssetUrl('icons/docks/right.svg') },
+    bottom: { dockId: 'bottom-left', get label() { return i18n.global.t('session.layout.placement.bottom') }, icon: resolvePublicAssetUrl('icons/docks/bottom.svg') },
 }
 
 // Order shown in the per-tab placement menu: Center first, then the six docks.

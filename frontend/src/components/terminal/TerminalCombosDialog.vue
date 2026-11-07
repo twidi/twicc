@@ -2,10 +2,13 @@
 // TerminalCombosDialog.vue - Dialog for managing custom key combos
 import GroupedListEditor from '../ui/GroupedListEditor.vue'
 import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { ref, computed, nextTick, useId } from 'vue'
 import { useTerminalConfigStore } from '../../stores/terminalConfig'
 import { formatCombo, formatComboNotation } from '../../utils/terminalComboNotation'
 
+const { t } = useI18n()
 const terminalConfigStore = useTerminalConfigStore()
 
 // ── Dialog refs ──────────────────────────────────────────────────────
@@ -70,10 +73,10 @@ const MODIFIERS = ['ctrl', 'alt', 'shift']
 
 // ── Computed ─────────────────────────────────────────────────────────
 const dialogLabel = computed(() => {
-    if (groupMode.value && view.value === 'form') return 'Add Group'
-    if (view.value === 'list') return 'Manage Combos'
-    if (editIndex.value !== null) return 'Edit Combo'
-    return 'Add Combo'
+    if (groupMode.value && view.value === 'form') return t('terminal.editor.addGroup')
+    if (view.value === 'list') return t('terminal.combos.title.manage')
+    if (editIndex.value !== null) return t('terminal.combos.title.edit')
+    return t('terminal.combos.title.add')
 })
 
 // ── Key display helper ───────────────────────────────────────────────
@@ -207,11 +210,11 @@ function handleSave() {
     if (groupMode.value) {
         const label = formData.value.label.trim()
         if (!label) {
-            errorMessage.value = 'Group name is required.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.groupRequired')
             return
         }
         if (!terminalConfigStore.addComboGroup(label)) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
             return
         }
         cancelForm()
@@ -220,24 +223,24 @@ function handleSave() {
     if (editIndex.value !== null) {
         const source = getGroupItems(terminalConfigStore.combos, editSourceGroupId.value)?.[editIndex.value]
         if (!source || JSON.stringify(source) !== editSourceSnapshot.value) {
-            errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+            errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
             return
         }
     }
     if (formData.value.groupId && !selectableGroups.value.some(group => group.id === formData.value.groupId)) {
-        errorMessage.value = 'The selected group no longer exists. Select another group.'
+        errorMessage.value = localUiMessage('terminal.editor.errors.groupMissing')
         return
     }
 
     if (!formData.value.steps || formData.value.steps.length === 0) {
-        errorMessage.value = 'At least one step is required.'
+        errorMessage.value = localUiMessage('terminal.combos.errors.stepRequired')
         return
     }
 
     // Every step must have a key
     const emptyStep = formData.value.steps.findIndex(s => !s.key)
     if (emptyStep >= 0) {
-        errorMessage.value = `Step ${emptyStep + 1} must have a key selected.`
+        errorMessage.value = localUiMessage('terminal.combos.errors.keyRequired', { number: emptyStep + 1 })
         return
     }
 
@@ -259,7 +262,7 @@ function handleSave() {
         return stepsMatch(combo.steps, cleanedData.steps)
     })
     if (isDuplicate && !warningMessage.value) {
-        warningMessage.value = 'A combo with identical steps already exists. Submit again to save anyway.'
+        warningMessage.value = localUiMessage('terminal.combos.duplicateWarning')
         return
     }
 
@@ -268,7 +271,7 @@ function handleSave() {
         ? terminalConfigStore.updateCombo(editIndex.value, cleanedData, editSourceGroupId.value, formData.value.groupId)
         : terminalConfigStore.addCombo(cleanedData, formData.value.groupId)
     if (!saved) {
-        errorMessage.value = 'This item or group changed. Reopen the item and try again.'
+        errorMessage.value = localUiMessage('terminal.editor.errors.itemChanged')
         return
     }
 
@@ -354,7 +357,7 @@ defineExpose({ open, close })
                     ref="labelInputRef"
                     :value="formData.label"
                     @input="formData.label = $event.target.value"
-                    :placeholder="groupMode ? 'e.g. tmux' : 'e.g. &quot;tmux:new&quot;'"
+                    :placeholder="groupMode ? $t('terminal.combos.groupPlaceholder') : $t('terminal.combos.labelPlaceholder')"
                     size="small"
                 />
                 <div v-if="!groupMode" class="form-hint">{{ $t('terminal.combos.labelHint') }}</div>
@@ -406,7 +409,7 @@ defineExpose({ open, close })
                                 type="text"
                                 maxlength="1"
                                 :value="step.key ? displayKeyLabel(step.key) : ''"
-                                :placeholder="'Pick below or click and press a key...'"
+                                :placeholder="$t('terminal.combos.keyPlaceholder')"
                                 autocomplete="off"
                                 autocorrect="off"
                                 autocapitalize="off"
@@ -446,12 +449,12 @@ defineExpose({ open, close })
 
             <!-- Warning (duplicate) -->
             <wa-callout v-if="warningMessage" variant="warning" size="small">
-                {{ warningMessage }}
+                {{ resolveUiMessage(warningMessage, { t }) }}
             </wa-callout>
 
             <!-- Error -->
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage, { t }) }}
             </wa-callout>
         </form>
 

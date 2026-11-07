@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n, locale } = useI18n()
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { apiFetch } from '../../../utils/api'
@@ -44,8 +46,8 @@ const isPartialMatch = computed(
 // otherwise carried by the badge colour alone, which no screen reader sees.
 const countLabel = computed(() =>
     isPartialMatch.value
-        ? 'Partial match — no message contains all your terms'
-        : 'Matches in this session'
+        ? t('session.search.partialMatch')
+        : t('session.search.matchesLabel')
 )
 
 // Whether navigation buttons should be enabled
@@ -83,9 +85,9 @@ async function performSearch() {
 
         if (!response.ok) {
             if (response.status === 503) {
-                error.value = 'Search index not available'
+                error.value = 'session.search.indexUnavailable'
             } else {
-                error.value = 'Search failed'
+                error.value = 'session.search.failed'
             }
             matchLineNums.value = []
             currentMatchIndex.value = -1
@@ -121,7 +123,7 @@ async function performSearch() {
             goToNext()
         }
     } catch (err) {
-        error.value = 'Search failed'
+        error.value = 'session.search.failed'
         matchLineNums.value = []
         currentMatchIndex.value = -1
         hasSearched.value = false
@@ -198,9 +200,9 @@ function handleKeydown(e) {
 // Badge display: "X / Y" when navigating, just count otherwise
 const badgeText = computed(() => {
     if (currentMatchIndex.value >= 0 && matchCount.value > 0) {
-        return `${currentMatchIndex.value + 1} / ${matchCount.value}`
+        return t('session.search.position', { current: n(currentMatchIndex.value + 1), total: n(matchCount.value) })
     }
-    return String(matchCount.value)
+    return n(matchCount.value)
 })
 
 /**

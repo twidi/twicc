@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { createAppI18n } from '../../../i18n/index.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -61,6 +62,7 @@ test('preview modifier clicks never enter multi-selection or emit drag selection
     const selectionStore = { active: true, selectedIds: new Set(['same-session']), enter() { entered++ } }
     let dragOptions
     const context = {
+        useI18n: () => createAppI18n().global,
         computed: getter => ({ get value() { return getter() } }),
         watch() {}, inject: () => null,
         useRoute: () => ({ params: { sessionId: 'open-session' }, query: {} }),
@@ -103,6 +105,7 @@ test('active preview keeps unread suppression without active row styling', () =>
         .replace(/import[\s\S]*?from ['"][^'"]+['"]\s*;?/g, '')
         .replace('export default', 'const component =')
     const context = {
+        useI18n: () => createAppI18n().global,
         computed: getter => ({ get value() { return getter() } }),
         watch() {}, inject: () => null,
         useRoute: () => ({ params: {}, query: {} }), useRouter: () => ({}),

@@ -1,3 +1,5 @@
+import { localUiError } from '../i18n/uiMessages.js'
+
 // Changelog parser and fetcher
 // Fetches CHANGELOG.md from GitHub, parses it into structured data for the ChangelogDialog.
 
@@ -13,7 +15,7 @@ const CHANGELOG_URL = GITHUB_RAW_BASE + 'CHANGELOG.md'
 export async function fetchChangelog(devMode = false) {
     const url = devMode ? '/api/changelog/' : CHANGELOG_URL
     const resp = await fetch(url)
-    if (!resp.ok) throw new Error(`Failed to fetch changelog: ${resp.status}`)
+    if (!resp.ok) throw localUiError('help.changelog.errors.fetch', { status: resp.status })
     const versions = parseChangelog(await resp.text())
     // In non-dev mode, only keep real releases (version starts with a digit)
     return devMode ? versions : versions.filter(v => /^\d/.test(v.version))

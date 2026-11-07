@@ -1,4 +1,9 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+import { resolveUiMessage } from './i18n/uiMessages.js'
+
+const { t } = useI18n()
+
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Notivue, Notification, lightTheme, slateTheme } from 'notivue'
@@ -167,7 +172,7 @@ for (const provider of getRegisteredProviders()) {
         if (show && !existing) {
             const item = toast.custom(ProviderAuthToastContent, {
                 type: 'warning',
-                title: `${helpers.constructor.label} CLI not authenticated`,
+                title: t('providers.auth.unauthenticatedTitle', { provider: helpers.constructor.label }),
                 duration: Infinity,
                 props: {
                     provider,
@@ -786,6 +791,30 @@ onBeforeUnmount(() => {
     window.removeEventListener('twicc:open-peer-compose', openPeerCompose)
 })
 
+// Persistent provider titles follow interface language changes while mounted.
+function notificationTitle(item) {
+    if (item.props?.titleMessage) return resolveUiMessage(item.props.titleMessage)
+    if (item.props?.titleKey) return t(item.props.titleKey, item.props.titleParams || {})
+    const contentProps = item.props?.contentProps
+    if (item.props?.content === ProviderAuthToastContent) {
+        const provider = contentProps?.provider
+        return t('providers.auth.unauthenticatedTitle', { provider: getProviderHelpers(provider)?.constructor.label ?? provider })
+    }
+    if (contentProps?.episode && contentProps.identity?.vendorLabel) {
+        return t('common.providerStatus.title', { vendor: contentProps.identity.vendorLabel })
+    }
+    return null
+}
+
+// Resolve only local message metadata. Notivue retains strings for its public payload.
+function notificationItem(item) {
+    if (!item.props?.messageMessage && !item.props?.titleMessage) return item
+    return { ...item,
+        ...(item.props.messageMessage ? { message: resolveUiMessage(item.props.messageMessage) } : {}),
+        ...(item.props.titleMessage ? { title: resolveUiMessage(item.props.titleMessage) } : {}),
+    }
+}
+
 // Notivue theme: glass toasts in the page scheme (styles/glass.css paints the layer).
 const toastTheme = computed(() => {
     const isDark = settingsStore.getEffectiveColorScheme === COLOR_SCHEME.DARK
@@ -898,8 +927,8 @@ const toastTheme = computed(() => {
          empty list, not the page). The clip only cuts what overflows below the
          viewport bottom, off-screen anyway, so it is removed. -->
     <Notivue v-slot="item" :styles="{ list: { clipPath: 'none' } }">
-        <CustomNotification v-if="item.props?.custom" :item="item" :theme="toastTheme" />
-        <Notification v-else :item="item" :theme="toastTheme" />
+        <CustomNotification v-if="item.props?.custom" :item="item" :title="notificationTitle(item)" :theme="toastTheme" />
+        <Notification v-else :item="notificationItem(item)" :theme="toastTheme" :close-aria-label="$t('common.actions.close')" />
     </Notivue>
 </template>
 

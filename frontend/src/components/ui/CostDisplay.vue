@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { locale } = useI18n()
 // CostDisplay.vue - Consistent cost display with optional dollar icon + formatted amount.
 // Renders: <span>[<wa-icon dollar-sign />] X.XX</span>
 // If cost is null/undefined, displays a dash instead.
@@ -25,8 +27,8 @@ const props = defineProps({
  */
 const formattedCost = computed(() => {
     if (props.cost == null) return null
-    if (props.cost < 0.01) return '0.00'
-    return props.cost.toFixed(2)
+    const value = props.cost < 0.01 ? 0 : props.cost
+    return new Intl.NumberFormat(locale.value, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)
 })
 </script>
 

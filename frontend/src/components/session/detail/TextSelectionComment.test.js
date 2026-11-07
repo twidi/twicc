@@ -67,7 +67,9 @@ async function loadComponent() {
     const touchTapFallbackStub = dataModule(
         fs.readFileSync(new URL('../../../utils/touchTapFallback.js', import.meta.url), 'utf8'),
     )
+    const i18nStub = dataModule(`import { createAppI18n } from '${new URL('../../../i18n/index.js', import.meta.url)}'; const composer = createAppI18n().global; export const useI18n = () => composer`)
     compiled = compiled
+        .replace("from 'vue-i18n'", `from '${i18nStub}'`)
         .replace("from 'vue'", `from '${vueStub}'`)
         .replace("from '../../../stores/codeComments'", `from '${codeCommentsStub}'`)
         .replace("from '../../../stores/settings'", `from '${settingsStub}'`)

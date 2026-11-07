@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 /**
  * McpConnectionDialog - review a pending external MCP request, or inspect and
  * rename an existing connection.
@@ -56,18 +58,18 @@ const name = ref(initialName())
 const code = ref('')
 const busy = ref(false)
 const formId = 'mcp-connection-detail-form'
-const title = computed(() => (props.review ? 'Review MCP connection' : 'MCP connection details'))
-const status = computed(() => (props.entry.revoked ? 'Revoked' : props.entry.active ? 'Active' : 'Awaiting OAuth completion'))
+const title = computed(() => (props.review ? t('mcp.connection.reviewTitle') : t('mcp.connection.detailsTitle')))
+const status = computed(() => (props.entry.revoked ? t('mcp.connection.state.revoked') : props.entry.active ? t('mcp.connection.state.active') : t('mcp.connection.state.awaitingOauth')))
 // Say where a prefilled name comes from, so the owner reads it as a claim to
 // confirm rather than as a name TwiCC established.
 const nameHint = computed(() =>
     props.review && props.entry.client_name
-        ? 'Used in message headers. The client declared this name — confirm, change, or clear it.'
-        : 'Used in message headers. Without a name, they read "message via external MCP".',
+        ? t('mcp.connection.claimedNameHint')
+        : t('mcp.connection.unnamedHint'),
 )
 
 function moment(iso) {
-    return iso ? new Date(iso).toLocaleString() : ''
+    return iso ? new Date(iso).toLocaleString(locale.value) : ''
 }
 
 // wa-button does not expose `form` as a property, and the footer button sits
@@ -105,7 +107,7 @@ async function act(action) {
         </div>
 
         <form :id="formId" class="mcp-detail" @submit.prevent="act(review ? 'approve' : 'rename')">
-            <div class="mcp-detail__client">{{ entry.client_name || 'External MCP client' }}</div>
+            <div class="mcp-detail__client">{{ entry.client_name || $t('mcp.connection.externalClient') }}</div>
 
             <wa-callout v-if="store.error || store.loadError" variant="danger" size="small">
                 {{ store.error || store.loadError }}

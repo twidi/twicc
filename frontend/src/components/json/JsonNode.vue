@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -56,10 +58,10 @@ const entries = computed(() => {
 
 const collapsedPreview = computed(() => {
     if (Array.isArray(props.data)) {
-        return `[${props.data.length} items]`
+        return t('json.node.items', { count: props.data.length }, props.data.length)
     }
     const keys = Object.keys(props.data)
-    return `{${keys.length} keys}`
+    return t('json.node.keys', { count: keys.length }, keys.length)
 })
 
 function handleToggle() {

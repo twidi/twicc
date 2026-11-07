@@ -123,7 +123,7 @@ test('a plain row: icon with severity, wording and the time on the right with th
     const [time] = byClass(root, 'timeline-time')
     assert.match(textOf(time), /^14:32/)
     // The time's tooltip shows the date in the format of the chat's message timestamps.
-    assert.match(rawText(byClass(root, 'app-tooltip')[0]), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/)
+    assert.match(rawText(byClass(root, 'app-tooltip')[0]), /^10\/14\/2026, \d{2}:32:07 [AP]M$/)
 })
 
 test('the group head: a header line (provider icon, title link) above its own event line', async (t) => {

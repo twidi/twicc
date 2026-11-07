@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n } = useI18n()
 // Structured body of one workflow run, rendered inside the run's wa-details.
 // Works identically for a running run (STATE 1, synthetic) and a finished one
 // (STATE 2, the real wf_*.json envelope); the differences are sourced per field:
@@ -172,7 +174,7 @@ const phaseRows = computed(() =>
         const cost = props.phasesCost?.[String(i + 1)]
         return {
             key: `${i}:${title}`,
-            title: title || `Phase ${i + 1}`,
+            title: title || t('workflows.detail.phaseNumber', { number: n(i + 1) }),
             detail,
             // Prefer the back's stamped phase.state; fall back to local derivation.
             statusKind: phaseStateByIndex.value[i + 1] || phaseStatusOf(list),
@@ -196,8 +198,8 @@ const unassignedRow = computed(() => {
     const costs = list.map((a) => a.cost).filter((c) => typeof c === 'number')
     return {
         key: '__unassigned__',
-        title: 'Unassigned',
-        detail: 'Agents not matched to a phase',
+        title: t('workflows.detail.unassigned'),
+        detail: t('workflows.detail.unassignedHint'),
         statusKind: phaseStatusOf(list),
         agentCount: list.length,
         cost: costs.length ? costs.reduce((sum, c) => sum + c, 0) : null,
@@ -298,8 +300,8 @@ function viewAgent(agentId) {
     )).catch(() => {})
 }
 
-function agentsLabel(n) {
-    return `${n} ${n === 1 ? 'agent' : 'agents'}`
+function agentsLabel(count) {
+    return t('workflows.detail.agentCount', { count, number: n(count) }, count)
 }
 </script>
 
@@ -330,7 +332,7 @@ function agentsLabel(n) {
         <wa-callout v-if="incompleteRun" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <i18n-t scope="global" keypath="workflows.detail.incomplete" :plural="phaseCompletion.completed">
-                <template #phases><strong>{{ $t('workflows.detail.completedPhases', { completed: phaseCompletion.completed, total: phaseCompletion.total }, phaseCompletion.total) }}</strong></template>
+                <template #phases><strong>{{ $t('workflows.detail.completedPhases', { completed: n(phaseCompletion.completed), total: n(phaseCompletion.total) }, phaseCompletion.total) }}</strong></template>
             </i18n-t>
         </wa-callout>
 

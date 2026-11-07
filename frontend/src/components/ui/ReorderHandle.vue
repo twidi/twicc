@@ -16,7 +16,7 @@ let cancel = () => {}
 
 function reorder(from, to) {
     emit('reorder', from, to)
-    announcement.value = `Moved to position ${to + 1} of ${props.count}.`
+    announcement.value = { position: to + 1, count: props.count }
 }
 
 function pointerdown(event) {
@@ -52,14 +52,14 @@ onBeforeUnmount(() => cancel())
             class="reorder-handle"
             :class="{ active }"
             :disabled="disabled ?? count < 2"
-            :aria-label="`Reorder item ${index + 1} of ${count}. Drag or use Up, Down, Home, and End keys.`"
+            :aria-label="$t('common.reorder.instructions', { position: index + 1, count })"
             :title="$t('common.reorder.drag')"
             @pointerdown="pointerdown"
             @keydown="keydown"
             @click.prevent
             @dragstart.prevent
         ><wa-icon name="grip-vertical" family="classic" variant="solid" /></button>
-        <span class="reorder-announcement" aria-live="polite">{{ announcement }}</span>
+        <span class="reorder-announcement" aria-live="polite">{{ announcement ? $t('common.reorder.moved', announcement) : '' }}</span>
     </span>
 </template>
 

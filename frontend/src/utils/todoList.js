@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Utilities for TodoWrite tool data.
  */
@@ -69,16 +71,18 @@ export function getTodoDescription(todos) {
     if (!todos || (Array.isArray(todos) && todos.length === 0)) return null
 
     if (!isValidTodos(todos)) {
-        return [{ text: 'Invalid todo list', invalid: true }]
+        return [{ text: i18n.global.t('tasks.description.invalid'), invalid: true }]
     }
 
+    const number = new Intl.NumberFormat(i18n.global.locale.value)
     const total = todos.length
+    const progress = done => i18n.global.t('tasks.description.progress', { done: number.format(done), total: number.format(total) })
     const completedCount = todos.filter(t => t.status === 'completed').length
 
     // Case 1: all completed
     if (completedCount === total) {
         return [
-            { text: total === 1 ? 'Task completed' : `All ${total} tasks completed`, status: 'completed' },
+            { text: i18n.global.t('tasks.description.completed', { count: number.format(total) }, total), status: 'completed' },
         ]
     }
 
@@ -86,7 +90,7 @@ export function getTodoDescription(todos) {
     const lastInProgress = findLast(todos, t => t.status === 'in_progress')
     if (lastInProgress) {
         return [
-            { text: `${completedCount + 1}/${total}` },
+            { text: progress(completedCount + 1) },
             { text: getLabel(lastInProgress), status: 'in_progress' },
         ]
     }
@@ -95,7 +99,7 @@ export function getTodoDescription(todos) {
     if (completedCount > 0) {
         const lastCompleted = findLast(todos, t => t.status === 'completed')
         return [
-            { text: `${completedCount}/${total}` },
+            { text: progress(completedCount) },
             { text: getLabel(lastCompleted), status: 'completed' },
         ]
     }
@@ -103,8 +107,8 @@ export function getTodoDescription(todos) {
     // Case 4: all pending
     const firstPending = todos[0]
     return [
-        { text: total === 1 ? '1 task' : `${total} tasks` },
-        { text: `next: ${getLabel(firstPending)}`, status: 'pending' },
+        { text: i18n.global.t('tasks.description.count', { count: number.format(total) }, total) },
+        { text: i18n.global.t('tasks.description.next', { task: getLabel(firstPending) }), status: 'pending' },
     ]
 }
 

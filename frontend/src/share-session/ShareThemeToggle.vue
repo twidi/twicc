@@ -8,7 +8,7 @@ import { useSettingsStore } from '../stores/settings'
 
 const ORDER = ['system', 'light', 'dark']
 const ICON = { system: 'circle-half-stroke', light: 'sun', dark: 'moon' }
-const LABEL = { system: 'Theme: system', light: 'Theme: light', dark: 'Theme: dark' }
+const LABEL_KEYS = { system: 'sharing.theme.system', light: 'sharing.theme.light', dark: 'sharing.theme.dark' }
 
 // Drive the scheme through the store (not applyShareColorScheme directly): the
 // store action updates the reactive _colorScheme AND applies it to the DOM, so
@@ -23,7 +23,7 @@ function cycle() {
 
 <template>
     <button type="button" class="share-theme-toggle"
-            :title="LABEL[scheme]" :aria-label="LABEL[scheme]" @click="cycle">
+            :title="$t(LABEL_KEYS[scheme])" :aria-label="$t(LABEL_KEYS[scheme])" @click="cycle">
         <wa-icon :name="ICON[scheme]"></wa-icon>
     </button>
 </template>

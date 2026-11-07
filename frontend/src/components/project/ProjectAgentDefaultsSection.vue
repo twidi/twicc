@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Per-project agent settings defaults, edited inside ProjectEditDialog (edit
 // mode only). Lets a project declare a default provider + per-provider agent
 // settings bundles that seed a new session's settings, inherited up the project
@@ -95,7 +97,7 @@ const inheritedProvider = computed(() => {
     return settingsStore.defaultProvider || null
 })
 const inheritedProviderLabel = computed(() =>
-    inheritedProvider.value ? getProviderLabel(inheritedProvider.value) : 'none'
+    inheritedProvider.value ? getProviderLabel(inheritedProvider.value) : t('project.agentDefaults.none')
 )
 
 // ─── Per-provider field helpers ──────────────────────────────────────────────
@@ -202,7 +204,7 @@ function loadSources(provider) {
     // "Reset all to inherit": clear every field for this provider. Only shown
     // when at least one field is currently set, since otherwise it's a no-op.
     if (Object.keys(localSettings.value[provider] || {}).length) {
-        sources.push({ key: 'inherit-all', label: 'Reset all to inherit', summaryParts: [{ text: 'every field inherits' }] })
+        sources.push({ key: 'inherit-all', label: t('project.agentDefaults.resetToInherit'), summaryParts: [{ text: t('project.agentDefaults.everyFieldInherits') }] })
     }
     // Ancestor projects that define their own defaults for this provider.
     for (const node of ancestorChain(props.project.id, store.projects)) {
@@ -210,15 +212,15 @@ function loadSources(provider) {
         const bundle = node.default_agent_settings?.[provider]
         if (bundle && Object.keys(bundle).length) {
             const name = node.name || node.directory || node.id
-            sources.push({ key: `ancestor:${node.id}`, label: `Project: ${name}` })
+            sources.push({ key: `ancestor:${node.id}`, label: t('project.agentDefaults.projectSource', { name }) })
         }
     }
     // The provider's global (synced) defaults.
-    sources.push({ key: 'global', label: 'Global defaults' })
+    sources.push({ key: 'global', label: t('project.agentDefaults.globalDefaults') })
     // Named presets.
     const presets = presetsStore.getPresets(provider) || []
     presets.forEach((preset, index) => {
-        sources.push({ key: `preset:${index}`, label: `Preset: ${preset.name}` })
+        sources.push({ key: `preset:${index}`, label: t('project.agentDefaults.presetSource', { name: preset.name }) })
     })
     // Resolve every partial source against the current project's inherited
     // baseline. The summary therefore matches the concrete settings a new
@@ -229,7 +231,7 @@ function loadSources(provider) {
             const parts = bundleSummaryParts(sourceBundle(provider, s.key), h, {
                 defaults: inheritedDefaultsFor(provider),
             })
-            return { ...s, summaryParts: parts.length ? parts : [{ text: 'all default' }] }
+            return { ...s, summaryParts: parts.length ? parts : [{ text: t('project.agentDefaults.allDefault') }] }
         })
         : sources
 }

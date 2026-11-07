@@ -1,3 +1,4 @@
+import { i18n } from '../../i18n/index.js'
 import { parseCodeModeScript } from './parseCodeModeScript.js'
 import { formatToolNameForHeader } from '../../utils/toolNames.js'
 
@@ -10,16 +11,16 @@ const WEB_RUN_TOOL_NAME = 'web__run'
 export const IMAGE_GEN_TOOL_NAME = 'image_gen__imagegen'
 
 const WEB_OPERATION_DEFINITIONS = [
-    { key: 'search_query', category: 'search', label: 'Search' },
-    { key: 'image_query', category: 'search', label: 'Image search' },
-    { key: 'open', category: 'fetch', label: 'Open' },
-    { key: 'click', category: 'fetch', label: 'Click' },
-    { key: 'find', category: 'fetch', label: 'Find' },
-    { key: 'screenshot', category: 'fetch', label: 'Screenshot' },
-    { key: 'finance', category: 'other', label: 'Finance' },
-    { key: 'weather', category: 'other', label: 'Weather' },
-    { key: 'sports', category: 'other', label: 'Sports' },
-    { key: 'time', category: 'other', label: 'Time' },
+    { key: 'search_query', category: 'search', labelKey: 'session.tools.web.search' },
+    { key: 'image_query', category: 'search', labelKey: 'session.tools.web.imageSearch' },
+    { key: 'open', category: 'fetch', labelKey: 'session.tools.web.open' },
+    { key: 'click', category: 'fetch', labelKey: 'session.tools.web.click' },
+    { key: 'find', category: 'fetch', labelKey: 'session.tools.web.find' },
+    { key: 'screenshot', category: 'fetch', labelKey: 'session.tools.web.screenshot' },
+    { key: 'finance', category: 'other', labelKey: 'session.tools.web.finance' },
+    { key: 'weather', category: 'other', labelKey: 'session.tools.web.weather' },
+    { key: 'sports', category: 'other', labelKey: 'session.tools.web.sports' },
+    { key: 'time', category: 'other', labelKey: 'session.tools.web.time' },
 ]
 
 function isObject(value) {
@@ -50,8 +51,9 @@ function fetchSummaryItems(input) {
     }
     for (const item of nonEmptyArray(input, 'click')) {
         if (typeof item.ref_id !== 'string' || !item.ref_id.trim()) continue
-        const suffix = Number.isInteger(item.id) ? ` · link ${item.id}` : ''
-        items.push(`${item.ref_id}${suffix}`)
+        items.push(Number.isInteger(item.id)
+            ? i18n.global.t('session.tools.web.linkReference', { reference: item.ref_id, id: item.id })
+            : item.ref_id)
     }
     for (const item of nonEmptyArray(input, 'find')) {
         if (typeof item.ref_id !== 'string' || !item.ref_id.trim()) continue
@@ -62,8 +64,9 @@ function fetchSummaryItems(input) {
     }
     for (const item of nonEmptyArray(input, 'screenshot')) {
         if (typeof item.ref_id !== 'string' || !item.ref_id.trim()) continue
-        const suffix = Number.isInteger(item.pageno) ? ` · page ${item.pageno + 1}` : ''
-        items.push(`${item.ref_id}${suffix}`)
+        items.push(Number.isInteger(item.pageno)
+            ? i18n.global.t('session.tools.web.pageReference', { reference: item.ref_id, page: item.pageno + 1 })
+            : item.ref_id)
     }
     return compactStrings(items)
 }
@@ -83,7 +86,7 @@ export function describeWebRun(input) {
 
     const categories = new Set(operations.map(({ category }) => category))
     let kind = 'web'
-    let summaryItems = operations.map(({ label }) => label)
+    let summaryItems = operations.map(({ labelKey }) => i18n.global.t(labelKey))
     if (categories.size === 1 && categories.has('search')) {
         kind = 'search'
         summaryItems = searchSummaryItems(input)
@@ -94,7 +97,7 @@ export function describeWebRun(input) {
 
     return {
         kind,
-        summaryItems: summaryItems.length > 0 ? summaryItems : operations.map(({ label }) => label),
+        summaryItems: summaryItems.length > 0 ? summaryItems : operations.map(({ labelKey }) => i18n.global.t(labelKey)),
         operationKeys: operations.map(({ key }) => key),
     }
 }
@@ -188,7 +191,7 @@ export function summarizeCodeModeCalls(input, getHeaderLabel = null) {
         const displayName = formatToolNameForHeader(call.name, forcedLabel)
         counts.set(displayName, (counts.get(displayName) ?? 0) + 1)
     }
-    return [...counts.entries()]
-        .map(([name, count]) => (count > 1 ? `${name} ×${count}` : name))
-        .join(', ')
+    return new Intl.ListFormat(i18n.global.locale.value, { style: 'short', type: 'unit' }).format(
+        [...counts.entries()].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)),
+    )
 }

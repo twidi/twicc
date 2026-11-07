@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * PeersManagerDialog - manage peer instances (cross-instance messaging).
  *
@@ -102,7 +105,7 @@ function errorText(payload) {
     if (Array.isArray(errors) && errors.length) {
         return errors.map(e => e.message || e.code).join(' — ')
     }
-    return payload?.error || payload?.reason || 'Request failed.'
+    return payload?.error || payload?.reason || localUiMessage('peer.compose.errors.request')
 }
 
 async function post(url, body) {
@@ -130,7 +133,7 @@ async function addPeer() {
     const name = addName.value.trim()
     const url = addUrl.value.trim()
     if (!name || !url) {
-        addError.value = 'Name and address are both required.'
+        addError.value = localUiMessage('peer.manager.errors.nameAddressRequired')
         return
     }
     addBusy.value = true
@@ -175,7 +178,7 @@ async function submitCode(peer) {
     rowErrors.value = { ...rowErrors.value, [peer.id]: '' }
     const code = (verifyCodes.value[peer.id] || '').trim()
     if (!/^\d{6}$/.test(code)) {
-        rowErrors.value = { ...rowErrors.value, [peer.id]: 'Enter the 6-digit code your peer reads to you.' }
+        rowErrors.value = { ...rowErrors.value, [peer.id]: localUiMessage('peer.manager.errors.code') }
         return
     }
     busy.value = { ...busy.value, [peer.id]: true }
@@ -269,9 +272,9 @@ function composeTo(peer) {
 
 function brokenReasonText(reason) {
     return {
-        remote_credential_rejected: 'Remote credentials rejected',
-        local_address_changed: 'Local address was changed',
-        local_address_disabled: 'Local address was disabled',
+        remote_credential_rejected: t('peer.manager.broken.credentials'),
+        local_address_changed: t('peer.manager.broken.addressChanged'),
+        local_address_disabled: t('peer.manager.broken.addressDisabled'),
     }[reason] || reason
 }
 
@@ -323,7 +326,7 @@ function onHide(event) {
             <h4 class="pm-section-title">{{ $t('peer.manager.incomingRequests') }}</h4>
             <div v-for="peer in incomingRequests" :key="peer.id" class="pm-request">
                 <div class="pm-request__claim">
-                    <span class="pm-request__name">{{ peer.remote_display_name || 'unnamed instance' }}</span>
+                    <span class="pm-request__name">{{ peer.remote_display_name || $t('peer.common.unnamedInstance') }}</span>
                     <span class="pm-request__url">{{ peer.base_url }}</span>
                     <wa-tag v-if="peer.reconnect_direction" size="small">{{ $t('peer.manager.reconnect') }}</wa-tag>
                     <span v-if="requestDate(peer)" class="pm-request__time">
@@ -382,7 +385,7 @@ function onHide(event) {
                         @click="refusePeer(peer)"
                     >{{ $t('peer.manager.refuse') }}</wa-button>
                 </div>
-                <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ rowErrors[peer.id] }}</wa-callout>
+                <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ resolveUiMessage(rowErrors[peer.id]) }}</wa-callout>
             </div>
         </template>
 
@@ -454,7 +457,7 @@ function onHide(event) {
                         </span>
                     </div>
                 </wa-callout>
-                <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ rowErrors[peer.id] }}</wa-callout>
+                <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ resolveUiMessage(rowErrors[peer.id]) }}</wa-callout>
             </div>
         </template>
 
@@ -472,9 +475,9 @@ function onHide(event) {
                     <wa-button size="small" @click="applyRename(peer)">{{ $t('peer.manager.confirmRename') }}</wa-button>
                 </template>
                 <template v-else>
-                    <span class="pm-peer__name">{{ peer.name || peer.remote_display_name || 'unnamed' }}</span>
+                    <span class="pm-peer__name">{{ peer.name || peer.remote_display_name || $t('peer.manager.unnamed') }}</span>
                     <wa-tag :variant="peer.state === 'active' ? 'success' : 'danger'" size="small">
-                        {{ peer.state }}
+                        {{ $t(`peer.manager.state.${peer.state}`) }}
                     </wa-tag>
                     <span v-if="peer.last_contact_at" class="pm-peer__contact">
                         <wa-relative-time
@@ -525,7 +528,7 @@ function onHide(event) {
                     </span>
                 </div>
             </wa-callout>
-            <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ rowErrors[peer.id] }}</wa-callout>
+            <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ resolveUiMessage(rowErrors[peer.id]) }}</wa-callout>
         </div>
 
         <!-- Add peer -->
@@ -546,7 +549,7 @@ function onHide(event) {
                 {{ $t('peer.manager.sendRequest') }}
             </wa-button>
         </form>
-        <wa-callout v-if="addError" variant="danger" size="small">{{ addError }}</wa-callout>
+        <wa-callout v-if="addError" variant="danger" size="small">{{ resolveUiMessage(addError) }}</wa-callout>
 
         <div slot="footer" class="pm-footer">
             <wa-button appearance="outlined" @click="openInbox">

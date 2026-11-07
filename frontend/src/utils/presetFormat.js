@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // Builds the icon summary parts for an agent-settings PRESET or a concrete
 // agent-settings BUNDLE, in the exact same visual vocabulary as the live
 // session summary (``BaseProviderHelpers.getSummaryParts``): model + effort
@@ -101,7 +103,7 @@ function richSummaryParts(helpers, bundle, current) {
         const on = val('thinking_enabled') === true
         parts.push({
             field: 'thinking_enabled', on, forced: forcedVs('thinking_enabled'),
-            label: on ? 'Thinking' : 'No thinking',
+            label: on ? i18n.global.t('agentSettings.summary.thinking') : i18n.global.t('agentSettings.summary.noThinking'),
             groupWithPrevious: parts.length > 0,
         })
     }
@@ -125,7 +127,7 @@ function richSummaryParts(helpers, bundle, current) {
         const iconInfo = helpers.getChoiceIcon('permission_mode', val('permission_mode_if_untrusted'))
         const label = helpers.getChoiceLabel('permission_mode', val('permission_mode_if_untrusted')) ?? ''
         parts.push({
-            text: `${label} (untrusted)`,
+            text: i18n.global.t('agentSettings.summary.untrusted', { label }),
             permissionIcon: iconInfo?.icon ?? null,
             permissionColor: iconInfo?.color ?? null,
             forced: false,
@@ -135,13 +137,13 @@ function richSummaryParts(helpers, bundle, current) {
     // Fast mode.
     if (shown('fast_mode')) {
         const on = val('fast_mode') === true
-        parts.push({ field: 'fast_mode', on, forced: forcedVs('fast_mode'), label: on ? 'Fast mode' : 'No fast mode' })
+        parts.push({ field: 'fast_mode', on, forced: forcedVs('fast_mode'), label: on ? i18n.global.t('agentSettings.summary.fastMode') : i18n.global.t('agentSettings.summary.noFastMode') })
     }
 
     // Chrome MCP — kept last.
     if (shown('claude_in_chrome')) {
         const on = val('claude_in_chrome') === true
-        parts.push({ field: 'claude_in_chrome', on, forced: forcedVs('claude_in_chrome'), label: on ? 'Chrome MCP' : 'No Chrome MCP' })
+        parts.push({ field: 'claude_in_chrome', on, forced: forcedVs('claude_in_chrome'), label: on ? i18n.global.t('agentSettings.summary.chromeMcp') : i18n.global.t('agentSettings.summary.noChromeMcp') })
     }
 
     return parts

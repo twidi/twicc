@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { computed, inject, markRaw, nextTick, onScopeDispose, reactive, shallowRef, toValue, watch } from 'vue'
 import { summarySourceKey, useSummariesStore } from '../stores/summaries.js'
 import { useSettingsStore } from '../stores/settings.js'
@@ -60,17 +62,18 @@ export function useMessageSummary(sourceRequest, visit = null) {
     const view = computed(() => group.value?.view ?? 'original')
     const available = computed(() => !!source.value)
     const generationAvailable = computed(() => !!descriptor.value?.eligible && routing.value.available)
-    const generationUnavailableReason = computed(() => !routing.value.available ? routing.value.unavailableReason
-        : descriptor.value?.unavailable_reason === 'incomplete' ? 'This message is not finished yet.'
-            : descriptor.value && !descriptor.value.eligible ? 'This source is unavailable for summary generation.' : '')
+    const generationUnavailableMessage = computed(() => !routing.value.available ? routing.value.unavailableReasonMessage || routing.value.unavailableReason
+        : descriptor.value?.unavailable_reason === 'incomplete' ? localUiMessage('session.summary.notFinished')
+            : descriptor.value && !descriptor.value.eligible ? localUiMessage('session.summary.sourceUnavailable') : '')
+    const generationUnavailableReason = computed(() => resolveUiMessage(generationUnavailableMessage.value))
     // Before the first answer, only a click can tell: a saved summary needs no engine.
     const canSummarize = computed(() => available.value && (!descriptor.value
         || !!(entry.value || descriptor.value.saved || descriptor.value.previous || generationAvailable.value)))
     const running = computed(() => entry.value?.state === 'running' || generation.value?.state === 'running')
     const toggleTitle = computed(() => {
-        if (view.value === 'summary') return 'Show original message'
+        if (view.value === 'summary') return i18n.global.t('session.summary.showOriginal')
         if (!canSummarize.value) return generationUnavailableReason.value
-        return entry.value?.text || descriptor.value?.saved || descriptor.value?.previous ? 'Show summary' : 'Summarize message'
+        return entry.value?.text || descriptor.value?.saved || descriptor.value?.previous ? i18n.global.t('session.summary.show') : i18n.global.t('session.summary.summarize')
     })
     const identity = computed(() => descriptor.value ? {
         sourceKey: descriptor.value.source_key, sourceHash: descriptor.value.source_hash, variant: 'summary',
@@ -88,7 +91,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         return () => subscription.ready.then(() => {
             const actual = subscription.entry.descriptor
             if (!actual || actual.source_key !== expected.source_key || actual.source_hash !== expected.source_hash
-                || actual.policy_key !== expected.policy_key) throw new Error('The message changed. Read the summary again.')
+                || actual.policy_key !== expected.policy_key) throw new Error(i18n.global.t('session.summary.changedReadAgain'))
             return { id: subscription.id }
         })
     })
@@ -141,11 +144,11 @@ export function useMessageSummary(sourceRequest, visit = null) {
         try {
             const loaded = await store.loadSaved(savedId)
             if (token !== operation || group.value !== target) return
-            if (loaded.source_key !== d.source_key || loaded.source_hash !== d.source_hash) throw new Error('The message changed. Try again.')
+            if (loaded.source_key !== d.source_key || loaded.source_hash !== d.source_hash) throw localUiError('session.summary.changedTryAgain')
             store.rememberSaved(loaded)
             target.savedId = loaded.id
         } catch (error) {
-            if (token === operation && group.value === target) target.error = error.message || 'Could not load the summary'
+            if (token === operation && group.value === target) target.error = error.uiMessage || error.message || localUiMessage('session.summary.loadFailed')
         } finally {
             target.loading = false
         }
@@ -171,7 +174,7 @@ export function useMessageSummary(sourceRequest, visit = null) {
         await lookup()
         if (!source.value || summarySourceKey(source.value) !== key) return
         if (!group.value || !canSummarize.value) {
-            toast.error(store.lookupErrors[key] || generationUnavailableReason.value || 'This message cannot be summarized.')
+            toast.error(store.lookupErrorMessages[key] || generationUnavailableMessage.value || localUiMessage('session.summary.cannotSummarize'))
             return
         }
         const target = group.value, d = descriptor.value
@@ -201,9 +204,9 @@ export function useMessageSummary(sourceRequest, visit = null) {
         descriptor, entry, generation, view, available, generationAvailable, generationUnavailableReason, canSummarize, identity, playbackReference, nativeSpeechRequest,
         running, toggleTitle,
         loading: computed(() => !!group.value?.loading),
-        error: computed(() => group.value?.error ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),
+        error: computed(() => resolveUiMessage(group.value?.error) ?? (source.value && store.lookupErrors[summarySourceKey(source.value)]) ?? null),
         errors: computed(() => [group.value?.error, source.value && store.lookupErrors[summarySourceKey(source.value)], entry.value?.error, generation.value?.error]
-            .filter((message, index, all) => message && all.indexOf(message) === index)),
+            .map(message => resolveUiMessage(message)).filter((message, index, all) => message && all.indexOf(message) === index)),
         // Original view included: the switch stays once the message has a summary to go back to.
         hasSummary: computed(() => view.value === 'summary' || !!(entry.value?.text || descriptor.value?.saved || descriptor.value?.previous)),
         isHost: computed(() => !!descriptor.value && source.value?.line_num === descriptor.value.first_line),

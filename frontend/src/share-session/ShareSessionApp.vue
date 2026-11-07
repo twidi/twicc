@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n } = useI18n()
 import { ref, reactive, provide, onMounted, onUnmounted, computed, watch } from 'vue'
 import ShareItemsList from './ShareItemsList.vue'
 import FrameHost from '../components/frames/FrameHost.vue'
@@ -35,7 +37,7 @@ const ready = computed(() => meta.ready !== false)
 store.setSession({
     id: meta.session_id, provider: meta.provider, project_id: 'share',
     type: meta.inline_artifacts_supported === true ? 'session' : 'subagent',
-    title: meta.title || 'Shared session',
+    title: meta.title || null,
     last_line: meta.last_line, git_directory: null, cwd: null, artifacts_dir: null,
     created_at: meta.created_at, last_updated_at: meta.last_updated_at,
     last_started_at: meta.last_started_at, last_stopped_at: meta.last_stopped_at,
@@ -59,7 +61,10 @@ function defaultDisplayMode() {
     const max = meta.max_display_mode || 'normal'
     return max === 'debug' ? 'normal' : max
 }
-const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
+function displayModeLabel(mode) {
+    const keys = { conversation: 'sharing.edit.conversation', simplified: 'sharing.edit.simplified', normal: 'sharing.edit.normal', debug: 'sharing.edit.debug' }
+    return keys[mode] ? t(keys[mode]) : mode
+}
 
 const providerIcon = computed(() => getProviderIcon(meta.provider))
 
@@ -318,7 +323,7 @@ onUnmounted(() => {
         <header class="share-header glass-sticky">
             <div class="share-title">
                 <ProviderIcon v-if="providerIcon" :provider="meta.provider" />
-                <strong>{{ meta.title || 'Shared session' }}</strong>
+                <strong>{{ meta.title || $t('sharing.session.fallbackTitle') }}</strong>
             </div>
             <wa-button id="share-menu-trigger" size="small" appearance="plain" class="share-menu-button">
                 <wa-icon name="bars" :label="$t('sharing.session.viewOptions')"></wa-icon>
@@ -328,7 +333,7 @@ onUnmounted(() => {
                     <label class="share-menu-field">{{ $t('sharing.session.detailLevel') }}
                         <wa-select size="small" :value="settings.displayMode"
                                    @change.stop="settings.setDisplayMode($event.target.value)">
-                            <wa-option v-for="m in displayModes" :key="m" :value="m">{{ capitalize(m) }}</wa-option>
+                            <wa-option v-for="m in displayModes" :key="m" :value="m">{{ displayModeLabel(m) }}</wa-option>
                         </wa-select>
                     </label>
                     <wa-switch size="small" :checked="settings.areMessageTimestampsShown"
@@ -344,7 +349,7 @@ onUnmounted(() => {
                             <wa-option value="dark">{{ $t('settings.general.colorScheme.dark') }}</wa-option>
                         </wa-select>
                     </label>
-                    <label class="share-menu-field">{{ $t('sharing.session.fontSize', { size: settings.getFontSize }) }}
+                    <label class="share-menu-field">{{ $t('sharing.session.fontSize', { size: n(settings.getFontSize) }) }}
                         <wa-slider size="small" :min.prop="12" :max.prop="32" :step.prop="1"
                                    :value.prop="settings.getFontSize"
                                    @input.stop="settings.setFontSize($event.target.value)"></wa-slider>

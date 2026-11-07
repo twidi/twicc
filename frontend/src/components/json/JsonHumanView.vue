@@ -677,7 +677,7 @@ const readDiffEditorRefs = reactive({})
                     :value.prop="value"
                     @change="onSelectChange"
                 >
-                    <wa-option v-for="opt in override.options" :key="opt" :value="opt">{{ opt || 'Allow all' }}</wa-option>
+                    <wa-option v-for="opt in override.options" :key="opt" :value="opt">{{ opt || $t('json.human.allowAll') }}</wa-option>
                 </wa-select>
             </div>
         </template>

@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 /**
  * QuotaTooltipContent - body of the 5h / 7d quota tooltips (the glass surface itself comes
  * from AppTooltip). Verdict first (on track / quota ends at HH:MM), then the usage and time
@@ -36,81 +40,87 @@ const exhausted = computed(() => (props.quota.utilization ?? 0) >= 100)
 const cutoffAt = computed(() => props.cost?.cutoffAt ?? null)
 const hasReset = computed(() => !!props.quota.resetsAt)
 const burnRate = computed(() => props.quota.burnRate)
+function formatPercent(ratio) {
+    return new Intl.NumberFormat(locale.value, { style: 'percent', maximumFractionDigits: 0 }).format(ratio)
+}
 // "at 13:55 on Saturday" / "at 13:55" / "on Saturday 12 October" — for sentences.
 function sentenceMoment(when) {
     const { time, day } = formatQuotaMoment(when)
-    return [time && `at ${time}`, day && `on ${day}`].filter(Boolean).join(' ')
+    if (time && day) return t('usage.quota.moment.timeDay', { time, day })
+    if (time) return t('usage.quota.moment.time', { time })
+    if (day) return t('usage.quota.moment.day', { day })
+    return ''
 }
 // "Saturday 13:55" / "13:55" / "Saturday 12 October" — compact, for the header.
 function compactMoment(when) {
     const { time, day } = formatQuotaMoment(when)
-    return [day, time].filter(Boolean).join(' ')
+    return day && time ? t('usage.quota.moment.compact', { day, time }) : day || time || ''
 }
 
 // Same wording as the sidebar: "1 h 13 min", "45 min", "2 d 3 h".
 function formatSpan(ms) {
     const minutes = Math.max(1, Math.round(ms / 60000))
-    if (minutes < 60) return `${minutes} min`
+    if (minutes < 60) return t('usage.quota.span.minutes', { minutes })
     const hours = Math.floor(minutes / 60)
     if (hours < 48) {
         const rest = minutes % 60
-        return rest ? `${hours} h ${String(rest).padStart(2, '0')} min` : `${hours} h`
+        return rest ? t('usage.quota.span.hoursMinutes', { hours, minutes: String(rest).padStart(2, '0') }) : t('usage.quota.span.hours', { hours })
     }
     const days = Math.floor(hours / 24)
     const restHours = hours % 24
-    return restHours ? `${days} d ${restHours} h` : `${days} d`
+    return restHours ? t('usage.quota.span.daysHours', { days, hours: restHours }) : t('usage.quota.span.days', { days })
 }
 
 const verdict = computed(() => {
     if (!hasReset.value) {
-        return { icon: 'circle-info', title: 'Period not started yet', sub: 'No usage recorded in this period.' }
+        return { icon: 'circle-info', title: t('usage.quota.notStarted'), sub: t('usage.quota.noUsage') }
     }
     if (exhausted.value) {
-        return { icon: 'triangle-exclamation', title: 'Quota exhausted', sub: `Back ${sentenceMoment(props.quota.resetsAt)}` }
+        return { icon: 'triangle-exclamation', title: t('usage.quota.exhausted'), sub: t('usage.quota.back', { moment: sentenceMoment(props.quota.resetsAt) }) }
     }
     if (cutoffAt.value) {
         const gapMs = new Date(props.quota.resetsAt) - new Date(cutoffAt.value)
         return {
             icon: 'triangle-exclamation',
-            title: `Quota runs out ${sentenceMoment(cutoffAt.value)}`,
-            sub: gapMs > 0 ? `Then ${formatSpan(gapMs)} without quota, until the reset` : 'At the current pace',
+            title: t('usage.quota.runsOut', { moment: sentenceMoment(cutoffAt.value) }),
+            sub: gapMs > 0 ? t('usage.quota.gap', { duration: formatSpan(gapMs) }) : t('usage.quota.currentPace'),
         }
     }
-    const left = `Up to ${Math.max(0, 100 - (props.quota.utilization ?? 0)).toFixed(0)}% of quota left to use in ${formatSpan(new Date(props.quota.resetsAt) - Date.now())}`
+    const left = t('usage.quota.left', { percent: formatPercent(Math.max(0, 100 - (props.quota.utilization ?? 0)) / 100), duration: formatSpan(new Date(props.quota.resetsAt) - Date.now()) })
     if (burnRate.value != null && burnRate.value >= 1) {
-        return { icon: 'circle-check', title: 'Right on the limit', sub: left }
+        return { icon: 'circle-check', title: t('usage.quota.onLimit'), sub: left }
     }
-    return { icon: 'circle-check', title: 'On track', sub: left }
+    return { icon: 'circle-check', title: t('usage.quota.onTrack'), sub: left }
 })
 
 // Pace figures: burn rate + the recent windows that carry a real measure (not a fallback).
 const paceItems = computed(() => {
     const items = []
     if (burnRate.value != null) {
-        items.push({ key: 'burn', label: 'Burn rate', value: `${(burnRate.value * 100).toFixed(0)}%`, hot: burnRate.value >= 1 })
+        items.push({ key: 'burn', label: t('usage.quota.burnRate'), value: formatPercent(burnRate.value), hot: burnRate.value >= 1 })
     }
     const long = props.quota.recentLong
     const short = props.quota.recentShort
     const longLabel = long?.rate != null && !long.isFallback ? formatRecentDelta(long.deltaMs, props.roundToHour) : null
-    if (longLabel) items.push({ key: 'long', label: `Last ${longLabel}`, value: `${(long.rate * 100).toFixed(0)}%` })
+    if (longLabel) items.push({ key: 'long', label: t('usage.quota.last', { duration: longLabel }), value: formatPercent(long.rate) })
     const shortLabel = short?.rate != null && !short.isFallback ? formatRecentDelta(short.deltaMs, props.roundToHour) : null
-    if (shortLabel && shortLabel !== longLabel) items.push({ key: 'short', label: `Last ${shortLabel}`, value: `${(short.rate * 100).toFixed(0)}%` })
+    if (shortLabel && shortLabel !== longLabel) items.push({ key: 'short', label: t('usage.quota.last', { duration: shortLabel }), value: formatPercent(short.rate) })
     return items
 })
 
 const costItems = computed(() => {
     const cost = props.cost
     if (!props.showCosts || !cost || cost.spent == null) return []
-    const items = [{ key: 'spent', label: 'Spent', value: cost.spent }]
-    if (cost.estimatedPeriod != null) items.push({ key: 'period', label: `Est. ${props.periodShort}`, value: cost.estimatedPeriod })
-    if (cost.estimatedMonthly != null) items.push({ key: 'month', label: 'Est. 30 days', value: cost.estimatedMonthly })
+    const items = [{ key: 'spent', label: t('usage.quota.spent'), value: cost.spent }]
+    if (cost.estimatedPeriod != null) items.push({ key: 'period', label: t('usage.quota.periodEstimate', { period: props.periodShort }), value: cost.estimatedPeriod })
+    if (cost.estimatedMonthly != null) items.push({ key: 'month', label: t('usage.quota.monthlyEstimate'), value: cost.estimatedMonthly })
     return items
 })
 
 // White reads on the red and green fills; only the light warning yellow needs dark text.
 const isWarning = computed(() => props.color === 'var(--wa-color-warning)')
-const usageFigure = computed(() => `${Math.round(props.quota.utilization ?? 0)}%`)
-const timeFigure = computed(() => `${Math.round(props.quota.timePct ?? 0)}%`)
+const usageFigure = computed(() => formatPercent((props.quota.utilization ?? 0) / 100))
+const timeFigure = computed(() => formatPercent((props.quota.timePct ?? 0) / 100))
 const usageWidth = computed(() => `${Math.min(props.quota.utilization ?? 0, 100)}%`)
 const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 0, 100))}%`)
 </script>
@@ -123,7 +133,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
                     type="button"
                     class="quota-tip-control"
                     :disabled="!canCycleProvider"
-                    :title="canCycleProvider ? 'Click to switch to the next provider' : undefined"
+                    :title="canCycleProvider ? $t('usage.quota.nextProvider') : undefined"
                     @click="emit('cycle-provider')"
                 >
                     <ProviderIcon class="quota-tip-provider-icon" :provider="provider" />
@@ -135,7 +145,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
                     type="button"
                     class="quota-tip-control quota-tip-period"
                     :disabled="!canCyclePeriod"
-                    :title="canCyclePeriod ? 'Click to switch between 5 hours and 7 days' : undefined"
+                    :title="canCyclePeriod ? $t('usage.quota.switchPeriod') : undefined"
                     @click="emit('cycle-period')"
                 >
                     <span>{{ periodLabel }}</span>

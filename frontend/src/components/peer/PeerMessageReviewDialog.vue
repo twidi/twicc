@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * PeerMessageReviewDialog — read a pending peer message and route it.
  *
@@ -130,7 +133,7 @@ const activeResolutionAction = computed(() =>
 )
 // Every provider accepts every attachment (the server decides how each file
 // is sent): delivery only needs an active provider.
-const NO_ACTIVE_PROVIDER_ERROR = 'No active provider is available. Activate a provider to continue.'
+const NO_ACTIVE_PROVIDER_ERROR = 'peer.review.errors.noProvider'
 
 // Ordinary request-lifetime state. The boolean carries no target identity or
 // reason. The generation invalidates every result from a closed or reused
@@ -163,9 +166,7 @@ const textSizeLabel = computed(() => formatPeerContentBytes(detail.value?.text_b
 const attachmentCount = computed(() => detail.value?.attachments_meta?.length || 0)
 const attachmentByteCount = computed(() => peerAttachmentBytes(detail.value?.attachments_meta))
 const attachmentSizeLabel = computed(() => formatPeerContentBytes(attachmentByteCount.value))
-const attachmentPrompt = computed(() => attachmentCount.value === 1
-    ? `This attachment is large (${attachmentSizeLabel.value}). Load it?`
-    : `These ${attachmentCount.value} attachments total ${attachmentSizeLabel.value}. Load them?`
+const attachmentPrompt = computed(() => t('peer.review.attachmentPrompt', { count: attachmentCount.value, size: attachmentSizeLabel.value }, attachmentCount.value)
 )
 // Attachment bytes are dropped 7 days after resolution — a late redelivery
 // carries the text only.
@@ -181,7 +182,7 @@ const headIcon = computed(() => {
     return isInbound.value ? 'arrow-down' : 'arrow-up'
 })
 const directionLabel = computed(() =>
-    isInbound.value ? `Received from ${peerName.value}` : `Sent to ${peerName.value}`
+    isInbound.value ? t('peer.routing.receivedFrom', { peer: peerName.value }) : t('peer.routing.sentTo', { peer: peerName.value })
 )
 const statusVariant = computed(() => {
     if (detail.value?.status === 'delivered' || detail.value?.status === 'done') return 'success'
@@ -204,13 +205,13 @@ const localRoute = computed(() => {
     if (!routing?.sessionId) return null
     return {
         label: routing.fromConversation
-            ? 'Session'
-            : isInbound.value ? 'Delivered to session' : 'Sent from session',
+            ? t('peer.routing.session')
+            : isInbound.value ? t('peer.routing.deliveredToSession') : t('peer.routing.sentFromSession'),
         title: routing.sessionTitle,
         display: peerRoutingSessionTitle(routing),
         projectId: routing.projectId,
         sessionId: routing.sessionId,
-        hint: routing.fromConversation ? 'from the conversation' : '',
+        hint: routing.fromConversation ? t('peer.routing.fromConversation') : '',
     }
 })
 
@@ -258,7 +259,7 @@ async function attachProject(projectId) {
             detail.value = { ...detail.value, project_id, effective_project }
         }
     } catch {
-        actionError.value = 'Request failed.'
+        actionError.value = localUiMessage('peer.compose.errors.request')
     } finally {
         attachingProject.value = false
     }
@@ -274,7 +275,7 @@ const replyRoute = computed(() => {
     const reply = detail.value?.reply_to_ref
     if (!reply?.title) return null
     return {
-        label: reply.direction === 'out' ? 'In reply to your' : 'In reply to their',
+        label: reply.direction === 'out' ? t('peer.routing.replyToYour') : t('peer.routing.replyToTheir'),
         title: reply.title,
         // The answered message is a local row: the dialog can show it. Absent
         // on rows serialized before the id joined the ref.
@@ -299,8 +300,8 @@ function openRepliedMessage() {
 const authorLine = computed(() => {
     if (origin.value.author !== 'human') return null
     return isInbound.value
-        ? `Written directly by ${peerName.value}'s user`
-        : 'Written directly by you'
+        ? t('peer.routing.peerUser', { peer: peerName.value })
+        : t('peer.routing.you')
 })
 
 /** Reply — the direct human answer to a received message. It opens the
@@ -475,10 +476,10 @@ function buildSessionRows(projectScopeId, textFilter, paginationTarget = null) {
     const nowMs = Date.now()
     const entries = candidates.map((session) => {
         if (session.pinned) {
-            return { session, sectionKey: 'n-pinned', separator: { label: 'Pinned' } }
+            return { session, sectionKey: 'n-pinned', separator: { label: t('peer.review.pinned') } }
         }
         if (processStates[session.id] != null) {
-            return { session, sectionKey: 'n-active', separator: { label: 'Active' } }
+            return { session, sectionKey: 'n-active', separator: { label: t('peer.review.active') } }
         }
         const bucket = dateBucketSeparator(session.mtime, nowMs)
         return { session, sectionKey: `n-${bucket.key}`, separator: bucket.entry }
@@ -623,7 +624,7 @@ const pickedProjectProvider = computed(() => activeProviderForProject(pickedProj
 const newSessionDeliveryState = computed(() =>
     deliveryTargetState(
         pickedProjectProvider.value,
-        pickedProjectId.value ? NO_ACTIVE_PROVIDER_ERROR : '',
+        pickedProjectId.value ? t(NO_ACTIVE_PROVIDER_ERROR) : '',
     ),
 )
 function isCurrentOpen(generation, messageId) {
@@ -849,7 +850,7 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
         )
         if (!isCurrentOpen(generation, messageId)) return
         if (!response.ok) {
-            loadError.value = 'Could not load the message.'
+            loadError.value = localUiMessage('peer.review.errors.load')
             return
         }
         loadedDetail = await response.json()
@@ -862,7 +863,7 @@ watch(() => [props.open, props.messageId], async ([open, messageId]) => {
     } catch {
         if (!isCurrentOpen(generation, messageId)) return
         // fetch rejects on network failure — never leave the dialog blank.
-        loadError.value = 'Could not load the message — is the server reachable?'
+        loadError.value = localUiMessage('peer.review.errors.loadNetwork')
         return
     }
 
@@ -972,11 +973,11 @@ function errorText(payload) {
     if (Array.isArray(errors) && errors.length) {
         return errors.map(e => e.message || e.code).join(' — ')
     }
-    return payload?.error || 'Request failed.'
+    return payload?.error || localUiMessage('peer.compose.errors.request')
 }
 
 const PEER_RESOLUTION_TIMEOUT_MS = 40_000
-const PEER_RESOLUTION_TIMEOUT_MESSAGE = 'The request did not complete in time. Refresh before trying again.'
+const PEER_RESOLUTION_TIMEOUT_MESSAGE = 'peer.review.errors.timeout'
 
 class PeerResolutionTimeoutError extends Error {}
 
@@ -1002,8 +1003,8 @@ async function requestPeerResolution(url, options = {}) {
 
 function setActionFailure(error) {
     actionError.value = error instanceof PeerResolutionTimeoutError
-        ? PEER_RESOLUTION_TIMEOUT_MESSAGE
-        : 'Network error — could not reach the server.'
+        ? localUiMessage(PEER_RESOLUTION_TIMEOUT_MESSAGE)
+        : localUiMessage('peer.review.errors.network')
 }
 
 /** Ask the backend to resolve the message as delivered; returns the envelope
@@ -1063,10 +1064,7 @@ async function rollbackDelivery(sessionId, addedRecords, { dropDraft }) {
 /** One message for every delivery failure (attachments, server, network):
  *  what failed, that the status did not move, and the way out. */
 function setDeliveryFailure() {
-    actionError.value = 'TwiCC could not prepare the composer. Nothing was delivered '
-        + 'and the message status did not change — you can try again, on this session '
-        + `or another one. If it keeps failing, use “Reply manually” to ask ${peerName.value} `
-        + 'to send it again.'
+    actionError.value = localUiMessage('peer.review.errors.delivery', { peer: peerName.value })
 }
 
 function navigateToComposer(sessionId, projectId) {
@@ -1115,7 +1113,7 @@ async function deliverToNewSession(projectId) {
     actionError.value = ''
     const provider = activeProviderForProject(projectId)
     if (!provider) {
-        actionError.value = NO_ACTIVE_PROVIDER_ERROR
+        actionError.value = localUiMessage(NO_ACTIVE_PROVIDER_ERROR)
         return
     }
     // Trust gate before mutation: if the user backs out, the message stays pending.
@@ -1224,7 +1222,7 @@ function onHide(event) {
         style="--width: min(720px, calc(100vw - 2rem))"
         @wa-hide="onHide"
     >
-        <wa-callout v-if="loadError" variant="danger" size="small">{{ loadError }}</wa-callout>
+        <wa-callout v-if="loadError" variant="danger" size="small">{{ resolveUiMessage(loadError) }}</wa-callout>
 
         <template v-if="detail">
             <!-- Header — the inbox row's header, verbatim: direction arrow,
@@ -1236,7 +1234,7 @@ function onHide(event) {
                 ></wa-icon>
                 <span class="pr-head__peer">{{ peerName }}</span>
                 <span class="pr-head__fill"></span>
-                <wa-tag :variant="statusVariant" size="small">{{ detail.status }}</wa-tag>
+                <wa-tag :variant="statusVariant" size="small">{{ $t(`peer.message.status.${detail.status}`) }}</wa-tag>
                 <span v-if="sentAt" class="pr-head__time">
                     <wa-relative-time
                         v-if="useRelativeTime"
@@ -1350,7 +1348,7 @@ function onHide(event) {
                 <button
                     v-if="replyRoute.messageId != null"
                     type="button" class="pr-route__title pr-route__title--link"
-                    :title="`Show “${replyRoute.title}”`"
+                    :title="$t('peer.review.showTitle', { title: replyRoute.title })"
                     @click="openRepliedMessage"
                 >“{{ replyRoute.title }}”</button>
                 <span v-else class="pr-route__title" :title="replyRoute.title">“{{ replyRoute.title }}”</span>
@@ -1362,7 +1360,7 @@ function onHide(event) {
                 <button
                     v-if="localRoute.sessionId"
                     type="button" class="pr-route__title pr-route__title--link"
-                    :title="`Open “${localRoute.title}”`"
+                    :title="$t('peer.review.openTitle', { title: localRoute.title })"
                     @click="openLocalSession"
                 >“{{ localRoute.display }}”</button>
                 <span v-else class="pr-route__title" :title="localRoute.title">“{{ localRoute.display }}”</span>
@@ -1408,13 +1406,13 @@ function onHide(event) {
                     v-if="deliveryGloballyBlocked"
                     variant="warning" size="small"
                 >
-                    {{ NO_ACTIVE_PROVIDER_ERROR }}
+                    {{ $t(NO_ACTIVE_PROVIDER_ERROR) }}
                 </wa-callout>
                 <template v-else>
                     <!-- The current status concerns every action; what a
                          delivery does is explained with the delivery pickers. -->
                     <p v-if="isRedeliverable || isResolved" class="pr-explainer">
-                        <template v-if="isRedeliverable">{{ $t('peer.review.alreadyDelivered') }}</template><template v-else>{{ $t('peer.review.alreadyResolved', { status: detail.status === 'done' ? $t('peer.review.doneStatus') : detail.status === 'refused' ? $t('peer.review.refusedStatus') : detail.status }) }}</template>
+                        <template v-if="isRedeliverable">{{ $t('peer.review.alreadyDelivered') }}</template><template v-else>{{ $t('peer.review.alreadyResolved', { status: detail.status === 'done' ? $t('peer.review.doneStatus') : detail.status === 'refused' ? $t('peer.review.refusedStatus') : $t(`peer.message.status.${detail.status}`) }) }}</template>
                     </p>
                 </template>
 
@@ -1569,7 +1567,7 @@ function onHide(event) {
                             <ProjectSelectOptions
                                 :projects="selectableProjects"
                                 :priority-project-ids="activeWorkspace?.projectIds || null"
-                                :priority-label="activeWorkspace ? `${activeWorkspace.name} projects` : null"
+                                :priority-label="activeWorkspace ? $t('peer.review.workspaceProjects', { workspace: activeWorkspace.name }) : null"
                                 :priority-color="activeWorkspace?.color || null"
                                 show-process-indicator
                                 include-worktrees
@@ -1626,7 +1624,7 @@ function onHide(event) {
                             v-if="actionError"
                             variant="danger" size="small"
                             class="pr-action-error"
-                        >{{ actionError }}</wa-callout>
+                        >{{ resolveUiMessage(actionError) }}</wa-callout>
                     </div>
                     <!-- Two filters, coarse then fine: the project (the same
                          selector as 'new session', plus the current sidebar
@@ -1656,7 +1654,7 @@ function onHide(event) {
                             <ProjectSelectOptions
                                 :projects="selectableProjects"
                                 :priority-project-ids="activeWorkspace?.projectIds || null"
-                                :priority-label="activeWorkspace ? `${activeWorkspace.name} projects` : null"
+                                :priority-label="activeWorkspace ? $t('peer.review.workspaceProjects', { workspace: activeWorkspace.name }) : null"
                                 :priority-color="activeWorkspace?.color || null"
                                 show-process-indicator
                                 include-worktrees
@@ -1718,7 +1716,7 @@ function onHide(event) {
                     v-if="actionError && (mode !== 'existing' || !existingPickerMounted)"
                     variant="danger" size="small"
                     class="pr-action-error"
-                >{{ actionError }}</wa-callout>
+                >{{ resolveUiMessage(actionError) }}</wa-callout>
             </template>
         </template>
 

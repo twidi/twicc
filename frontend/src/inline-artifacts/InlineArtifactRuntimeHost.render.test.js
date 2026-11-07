@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { useI18n } from 'vue-i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
@@ -14,7 +15,7 @@ function compileComponent(path, bindings) {
     const script = compiled.replace(/import \{([^}]+)\} from ['"]vue['"]/g,
         (_, names) => `const {${names.replace(/ as /g, ': ')}} = Vue`)
         .replace(/^import .*$/gm, '').replace('export default', 'return')
-    return new Function('Vue', ...Object.keys(bindings), script)(Vue, ...Object.values(bindings))
+    return new Function('Vue', 'useI18n', ...Object.keys(bindings), script)(Vue, useI18n, ...Object.values(bindings))
 }
 
 function fixture(t, fullscreen = true, ready = false, hidden = false, openedInTab = null) {

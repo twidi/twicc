@@ -1,4 +1,9 @@
 <script setup>
+import { localUiError, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BrandLogo from '../ui/BrandLogo.vue'
 import { getAndroidAppClient } from '../../utils/androidAppClient.js'
@@ -29,7 +34,7 @@ async function readState() {
     if (!value || typeof value.version !== 'string' || typeof value.engine !== 'string' ||
         typeof value.activeInstanceId !== 'string' || !Array.isArray(value.instances) ||
         !value.instances.every(item => item && ['id', 'name', 'address'].every(key => typeof item[key] === 'string'))) {
-        throw new Error('Unsupported Android app state.')
+        throw localUiError('navigation.android.unsupportedState')
     }
     if (!disposed) {
         state.value = value
@@ -49,7 +54,7 @@ async function handleNavigation(value) {
         ])
         if (!disposed) await navigateAndroidNotification(client, router, target)
     } catch (failure) {
-        if (!disposed) error.value = failure.message
+        if (!disposed) error.value = failure.uiMessage || failure.message
     } finally {
         if (navigationId === target.id) navigationId = null
     }
@@ -112,14 +117,14 @@ async function send(command, args) {
     try { await client.request(command, args) }
     catch (failure) {
         if (disposed) return
-        error.value = failure.message
+        error.value = failure.uiMessage || failure.message
         if (dropdown.value) dropdown.value.open = true
     }
 }
 
 async function refreshState() {
     try { await readState() }
-    catch (failure) { if (!disposed) error.value = failure.message }
+    catch (failure) { if (!disposed) error.value = failure.uiMessage || failure.message }
 }
 
 async function selectAction(event) {
@@ -170,7 +175,7 @@ async function confirmForceRefresh() {
                     <wa-dropdown-item value="forceRefresh"><wa-icon slot="icon" name="arrows-rotate" />{{ $t('navigation.android.forceRefresh') }}</wa-dropdown-item>
                     <wa-dropdown-item v-if="!railTarget" value="serverHome"><wa-icon slot="icon" name="house" />{{ $t('navigation.android.serverHome') }}</wa-dropdown-item>
                     <wa-dropdown-item value="openInBrowser"><wa-icon slot="icon" name="arrow-up-right-from-square" />{{ $t('navigation.android.browser') }}</wa-dropdown-item>
-                    <wa-callout v-if="error" variant="danger" role="alert">{{ error }}</wa-callout>
+                    <wa-callout v-if="error" variant="danger" role="alert">{{ resolveUiMessage(error) }}</wa-callout>
                 </wa-dropdown>
             </div>
         </Teleport>

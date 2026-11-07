@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import AppTooltip from '../../../../ui/AppTooltip.vue'
 import AutoReviewDenialBody from './AutoReviewDenialBody.vue'
@@ -73,6 +75,11 @@ const selfContainedBody = computed(() => SELF_CONTAINED_BODIES[toolName.value] |
 
 // Wire params (as injected by make_pending_request).
 const toolInput = computed(() => props.pendingRequest.tool_input || {})
+
+function fileChangeLabel(type) {
+    const keys = { add: 'session.approval.fileChange.add', delete: 'session.approval.fileChange.delete', update: 'session.approval.fileChange.update' }
+    return keys[type || 'update'] ? t(keys[type || 'update']) : type
+}
 
 // fileChange-specific fields. For a fileChange approval the diff isn't in the
 // wire params (spec §1.1.b) — it's spliced in as ``_item_payload`` (the
@@ -390,7 +397,7 @@ onBeforeUnmount(() => {
                             <wa-badge
                                 :variant="change.kind?.type === 'delete' ? 'danger'
                                     : change.kind?.type === 'add' ? 'success' : 'neutral'"
-                            >{{ change.kind?.type || 'update' }}</wa-badge>
+                            >{{ fileChangeLabel(change.kind?.type) }}</wa-badge>
                             <img
                                 v-if="fileIconFor(change.path)"
                                 :src="fileIconFor(change.path)"

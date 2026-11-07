@@ -57,6 +57,7 @@ function onChange(row, event) {
                     :name="row.notice.icon"
                     tabindex="0"
                     role="button"
+                    :label="row.notice.text"
                 ></wa-icon>
                 <AppTooltip
                     :for="`${uid}-notice-${row.field}`"

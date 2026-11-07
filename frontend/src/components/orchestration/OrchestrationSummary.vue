@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // The four summary tiles under the Orchestration header: the number of nodes, one icon row per non-empty
 // state (with a donut when there are several), total cost, cumulative duration. Counts are over the displayed nodes (descendants only for
 // sessions); cost and cumulative duration are passed in already resolved. Every tile is centred both ways.
@@ -19,18 +21,18 @@ const props = defineProps({
 const total = computed(() => BUCKET_ORDER.reduce((n, bucket) => n + props.counts[bucket], 0))
 
 const SESSION_STATES = [
-    { bucket: 'working', icon: 'robot', label: 'Working', color: BUCKET_COLORS.working },
-    { bucket: 'awaiting', icon: 'hand', label: 'Awaiting', color: BUCKET_COLORS.awaiting },
-    { bucket: 'idle', icon: 'check', label: 'Idle', color: BUCKET_COLORS.idle },
-    { bucket: 'stopped', icon: 'circle-stop', label: 'Stopped', color: BUCKET_COLORS.stopped },
+    { bucket: 'working', icon: 'robot', label: 'session.orchestration.working', color: BUCKET_COLORS.working },
+    { bucket: 'awaiting', icon: 'hand', label: 'session.orchestration.summary.awaiting', color: BUCKET_COLORS.awaiting },
+    { bucket: 'idle', icon: 'check', label: 'session.orchestration.summary.idle', color: BUCKET_COLORS.idle },
+    { bucket: 'stopped', icon: 'circle-stop', label: 'session.orchestration.state.stopped', color: BUCKET_COLORS.stopped },
 ]
 // A subagent is running or done (stopped, grey like a stopped session).
 const AGENT_STATES = [
-    { bucket: 'working', icon: 'robot', label: 'Running', color: BUCKET_COLORS.working },
-    { bucket: 'stopped', icon: 'circle-stop', label: 'Done', color: BUCKET_COLORS.stopped },
+    { bucket: 'working', icon: 'robot', label: 'session.orchestration.summary.running', color: BUCKET_COLORS.working },
+    { bucket: 'stopped', icon: 'circle-stop', label: 'session.orchestration.summary.done', color: BUCKET_COLORS.stopped },
 ]
 const stateRows = computed(() => (props.kind === 'agents' ? AGENT_STATES : SESSION_STATES)
-    .map(state => ({ ...state, count: props.counts[state.bucket] }))
+    .map(state => ({ ...state, label: t(state.label), count: props.counts[state.bucket] }))
     .filter(row => row.count > 0))
 
 // Conic gradient: one arc per non-empty bucket. The ring is only drawn with two states or more (a single state
@@ -48,7 +50,7 @@ const donut = computed(() => {
     return `conic-gradient(${stops.join(', ')})`
 })
 
-const countLabel = computed(() => (props.kind === 'agents' ? 'Subagents' : 'Spawned sessions'))
+const countLabel = computed(() => (props.kind === 'agents' ? t('session.orchestration.subagents') : t('session.orchestration.summary.spawnedSessions')))
 const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : formatDuration(props.cumulativeSeconds)))
 </script>
 
@@ -70,7 +72,7 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
                         :style="{ color: row.color }"
                         :title="row.label"
                         role="img"
-                        :aria-label="`${row.label}: ${row.count}`"
+                        :aria-label="$t('session.orchestration.summary.stateCount', { state: row.label, count: row.count })"
                     >
                         <wa-icon :name="row.icon"></wa-icon>
                         <span class="osum-state-count">{{ row.count }}</span>

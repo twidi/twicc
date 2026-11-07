@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n, locale } = useI18n()
 /**
  * SessionList - Virtual-scrolled list of sessions for a project.
  *
@@ -273,12 +275,12 @@ const separatorBeforeIds = computed(() => {
     // id -> { sectionKey, entry } — entry is the separator to render before the
     // section's first visible session.
     const classified = new Map()
-    if (extra) classified.set(extra.id, { sectionKey: 'extra', entry: { label: 'Selected' } })
+    if (extra) classified.set(extra.id, { sectionKey: 'extra', entry: { label: t('session.list.sections.selected') } })
     for (const s of crossFilterPinned) {
-        classified.set(s.id, { sectionKey: 'xpinned', entry: { label: 'Pinned elsewhere' } })
+        classified.set(s.id, { sectionKey: 'xpinned', entry: { label: t('session.list.sections.pinnedElsewhere') } })
     }
     for (const s of crossFilterActive) {
-        classified.set(s.id, { sectionKey: 'xactive', entry: { label: 'Active elsewhere' } })
+        classified.set(s.id, { sectionKey: 'xactive', entry: { label: t('session.list.sections.activeElsewhere') } })
     }
     for (const s of natural) {
         // Tree mode: only the roots are classified, from their effective state.
@@ -287,13 +289,13 @@ const separatorBeforeIds = computed(() => {
         let sectionKey, entry
         if (s.ephemeral && !s.draft) {
             sectionKey = 'n-ephemeral'
-            entry = { label: 'Ephemeral' }
+            entry = { label: t('session.list.sections.ephemeral') }
         } else if (effective ? effective.pinned : s.pinned) {
             sectionKey = 'n-pinned'
-            entry = { label: 'Pinned' }
+            entry = { label: t('session.list.sections.pinned') }
         } else if (effective ? effective.active : processStates[s.id] != null) {
             sectionKey = 'n-active'
-            entry = { label: 'Active' }
+            entry = { label: t('session.list.sections.active') }
         } else {
             const bucket = dateBucketSeparator(effective ? effective.dateKey : s.mtime, nowMs)
             sectionKey = `n-${bucket.key}`

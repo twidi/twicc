@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { i18n } from '../i18n/index.js'
 import { it } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { createSendFailureActions } from './ephemeralSessions.js'
@@ -143,7 +144,7 @@ function production(overrides = {}) {
     const pending = new Map(), frames = [], disk = { questions: choices(), draft: { message: '  Extra text  ' }, sends: {} }
     const state = { sessions: { s: { provider: 'codex' } }, localState: { draftMessages: { s: structuredClone(disk.draft) },
         asyncQuestionDrafts: { s: choices() }, asyncQuestionSnapshots: { s: ready() }, asyncQuestionNotices: {}, draftAppendSignals: {}, failedSends: {} } }
-    const deps = {
+    const deps = { i18n, t: i18n.global.t,
         pendingSends: () => Object.fromEntries([...pending, ...Object.entries(state.localState.failedSends.s || {}).map(([id, send]) =>
             [id, { ...send, status: send.code === 'send_uncertain' ? 'uncertain' : 'rejected' }])]),
         cancelDraftSave() {}, recover: async (id, draft, q) => { disk.draft = structuredClone(draft); disk.questions = structuredClone(q) },
@@ -263,6 +264,7 @@ it('staged media copies retain the existing cap without duplicate SDK blobs', ()
 
 const dataSource = readFileSync(new URL('../stores/data.js', import.meta.url), 'utf8')
 function storeActions(deps, names) {
+    deps = { i18n, ...deps }
     const source = names.map(name => {
         let start = dataSource.indexOf(`        ${name}(`)
         if (start < 0) start = dataSource.indexOf(`        async ${name}(`)
@@ -301,7 +303,7 @@ for (const status of ['staged', 'dispatched']) it(`reload after ${status} retain
 })
 it('correlated uncertain failure stays locked while a definite failure releases only its batches', () => {
     const h = production()
-    const deps = { isLaunchedEphemeral: () => false, PROCESS_STATE: { STARTING: 'starting' },
+    const deps = { i18n, t: i18n.global.t, isLaunchedEphemeral: () => false, PROCESS_STATE: { STARTING: 'starting' },
         saveInflightSend: async () => {} }
     h.state.localState.draftAliases = {}; h.state.processStates = {}
     h.state.dropDiscardedSendFailure = () => false
@@ -350,7 +352,7 @@ it('production composer sends answer-only after a staged hybrid change and keeps
         releaseAttachments() { assert.fail('A successful send never releases its refs') },
         clearAttachmentsForSession() { assert.fail('A question send must not globally clear attachments') },
     }
-    const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false }, messageText,
+    const deps = { i18n, t: i18n.global.t, props: { sessionId: 's', projectId: 'p', sendingLocked: false }, messageText,
         asyncQuestionSendClassification: ref({ hasAnswers: true, canSend: true, commandBlocked: false, settingsOnly: false }),
         canSendAttachmentsOnly: ref(true), isHybridStaged: ref(true), isDisabled: ref(false), isDraft: ref(false),
         isComposerCommand: ref(false), asyncQuestionSnapshot: ref(ready()), asyncQuestionDraft: ref(choices()),
@@ -383,7 +385,7 @@ it('a failed question dispatch keeps the attachment records and releases nothing
         releaseAttachments() { assert.fail('A failed send never releases its refs') },
         getDraftMessage: () => ({ message: '  Extra text  ' }), clearDraftMessage() { assert.fail('The draft stays') },
     }
-    const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false }, messageText: ref('  Extra text  '),
+    const deps = { i18n, t: i18n.global.t, props: { sessionId: 's', projectId: 'p', sendingLocked: false }, messageText: ref('  Extra text  '),
         asyncQuestionSendClassification: ref({ hasAnswers: true, canSend: true, commandBlocked: false, settingsOnly: false }),
         canSendAttachmentsOnly: ref(true), isHybridStaged: ref(false), isDisabled: ref(false), isDraft: ref(false),
         isComposerCommand: ref(false), asyncQuestionSnapshot: ref(ready()), asyncQuestionDraft: ref(choices()),
@@ -406,7 +408,7 @@ it('production Retry sends raw text and structured answers under a fresh identit
     const start = source.indexOf('async function retry()'), end = source.indexOf('\n/** Put', start)
     const entry = { ...outgoing(), requestId: 'failed', medias: [], code: 'send_failed' }
     let sent
-    const deps = {
+    const deps = { i18n, t: i18n.global.t,
         getEntry: () => entry, snapshotAttachmentRefs, retryState: { value: questions.asyncQuestionRetryState(entry, ready()) },
         props: { sessionId: 's', projectId: 'p' }, generateUUID: () => 'fresh',
         resizeMediasForSend: async values => values, getProviderHelpers: () => ({}), getProviderStore: () => ({}),
@@ -466,7 +468,7 @@ function delayedComposer({ sendWsMessage, ...overrides } = {}) {
             for (const id of ids) { const at = records.findIndex(item => item.id === id); if (at >= 0) records.splice(at, 1) }
         },
     })
-    const deps = { props: { sessionId: 's', projectId: 'p', sendingLocked: false },
+    const deps = { i18n, t: i18n.global.t, props: { sessionId: 's', projectId: 'p', sendingLocked: false },
         messageText: { get value() { return messageText.value }, set value(value) { h.state.localState.draftMessages.s = { message: value } } },
         asyncQuestionSendClassification: ref({ hasAnswers: true, canSend: true, commandBlocked: false, settingsOnly: false }),
         canSendAttachmentsOnly: ref(true), isHybridStaged: ref(false), isDisabled: ref(false), isDraft: ref(false),
@@ -481,8 +483,8 @@ function delayedComposer({ sendWsMessage, ...overrides } = {}) {
     const widget = readFileSync(new URL('../components/message/AsyncQuestions.vue', import.meta.url), 'utf8')
         .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
     h.state.getAsyncQuestionDraft = () => h.state.localState.asyncQuestionDrafts.s
-    const updateChoices = new Function('computed', 'defineProps', 'defineEmits', 'useDataStore', 'toast',
-        `${widget}; return updateChoices`)(computed, () => ({ sessionId: 's', snapshot: ready() }), () => () => {}, () => h.state, deps.toast)
+    const updateChoices = new Function('computed', 'defineProps', 'defineEmits', 'useDataStore', 'toast', 'useI18n',
+        `${widget}; return updateChoices`)(computed, () => ({ sessionId: 's', snapshot: ready() }), () => () => {}, () => h.state, deps.toast, () => i18n.global)
     for (const setting of ['Model', 'PermissionMode', 'Effort', 'Thinking', 'ClaudeInChrome', 'FastMode', 'ContextMax']) {
         deps['selected' + setting] = ref(null); deps['active' + setting] = ref(null)
     }
@@ -551,7 +553,7 @@ async function retryCaptured(h, captured = outgoing()) {
     h.disk.sends.failed = structuredClone(entry)
     h.state.getSession = () => ({ provider: 'codex' })
     h.state.applyCreationSendMode = () => {}
-    const deps = { getEntry: () => entry, snapshotAttachmentRefs,
+    const deps = { i18n, t: i18n.global.t, getEntry: () => entry, snapshotAttachmentRefs,
         retryState: { value: questions.asyncQuestionRetryState(entry, ready()) }, props: { sessionId: 's', projectId: 'p' },
         generateUUID: () => 'retry', resizeMediasForSend: async values => values, getProviderHelpers: () => ({}),
         getProviderStore: () => ({}), mediasToSdkFormat: () => ({ images: [], documents: [] }),
@@ -738,7 +740,7 @@ it('Retry of a failed send with answers and refs re-sends both under a fresh ide
     const start = source.indexOf('async function retry()'), end = source.indexOf('\n/** Put', start)
     const entry = { ...withAttachments(), requestId: 'failed', code: 'send_failed' }
     let sent
-    const deps = {
+    const deps = { i18n, t: i18n.global.t,
         getEntry: () => entry, snapshotAttachmentRefs, retryState: { value: questions.asyncQuestionRetryState(entry, ready()) },
         props: { sessionId: 's', projectId: 'p' }, generateUUID: () => 'fresh',
         resizeMediasForSend: async () => assert.fail('Refs are never resized'), getProviderHelpers: () => ({}), getProviderStore: () => ({}),
@@ -787,7 +789,7 @@ it('Delete of a failed send with answers and refs releases the refs exactly once
     const source = readFileSync(new URL('../components/session/detail/items/FailedSendBanner.vue', import.meta.url), 'utf8')
     const start = source.indexOf('function discard()'), end = source.indexOf('\n}\n', start)
     const entry = { ...withAttachments(), requestId: 'failed', code: 'send_failed' }, removed = [], released = []
-    const deps = {
+    const deps = { i18n, t: i18n.global.t,
         actionInProgress: { value: false }, uncertain: { value: false }, getEntry: () => entry, snapshotAttachmentRefs,
         props: { sessionId: 's' },
         store: { removeFailedSend: (...args) => removed.push(args), releaseAttachments: refs => released.push(refs) },
@@ -801,7 +803,7 @@ it('an uncertain failed send keeps its refs: Delete and Edit are refused', () =>
     const source = readFileSync(new URL('../components/session/detail/items/FailedSendBanner.vue', import.meta.url), 'utf8')
     const start = source.indexOf('function discard()'), end = source.indexOf('\n}\n', start)
     const entry = { ...withAttachments(), requestId: 'failed', code: 'send_uncertain' }
-    const deps = {
+    const deps = { i18n, t: i18n.global.t,
         actionInProgress: { value: false }, uncertain: { value: true }, getEntry: () => entry, snapshotAttachmentRefs,
         props: { sessionId: 's' },
         store: { removeFailedSend: () => assert.fail('Uncertain'), releaseAttachments: () => assert.fail('Uncertain') },

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ref, computed, useId } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSharesStore } from '../../stores/shares'
@@ -30,7 +32,7 @@ async function revokeAll() {
     revokingAll.value = true
     try {
         await Promise.all(active.map((s) => store.revokeShare(s.id, true)))
-        toast.success('Active links revoked')
+        toast.success(t('sharing.links.revokedAll'))
     } finally {
         revokingAll.value = false
         revokeAllConfirm.value = false
@@ -40,13 +42,17 @@ async function revokeAll() {
 // Per-share expanded "Recent views" panel: id -> accesses[] (null = loading).
 const accesses = ref({})
 const route = useRoute()
+function statusLabel(status) {
+    const keys = { active: 'sharing.links.status.active', expired: 'sharing.links.status.expired', revoked: 'sharing.links.status.revoked' }
+    return keys[status] ? t(keys[status]) : status
+}
 function creatorBadge(share) {
     return shareCreatorBadge(share.created_by, route)
 }
 function copy(s) {
     const url = shareAbsoluteUrl(s)
-    if (!url) { toast.error?.('Configure a share host in Settings → Sharing first.'); return }
-    navigator.clipboard.writeText(url); toast.success('Share URL copied')
+    if (!url) { toast.error?.(t('sharing.links.hostRequired')); return }
+    navigator.clipboard.writeText(url); toast.success(t('sharing.edit.urlCopied'))
 }
 // Inline delete confirmation (same "Delete?" check/cross pattern as the workspace manager).
 const deleteConfirmId = ref(null) // share ID pending delete confirmation
@@ -85,9 +91,9 @@ async function toggleViews(s) {
         <div v-for="s in shares" :key="s.id" class="share-row">
             <div class="share-row-main">
                 <wa-tag size="small" :variant="s.status === 'active' ? 'success' : (s.status === 'expired' ? 'warning' : 'neutral')">
-                    {{ s.status }}
+                    {{ statusLabel(s.status) }}
                 </wa-tag>
-                <span class="share-label">{{ s.label || '(no label)' }}</span>
+                <span class="share-label">{{ s.label || $t('sharing.links.noLabel') }}</span>
                 <wa-tag v-if="creatorBadge(s)" size="small" variant="brand" class="share-agent-badge">
                     <wa-icon name="robot"></wa-icon>
                     <router-link v-if="creatorBadge(s).to" :to="creatorBadge(s).to">

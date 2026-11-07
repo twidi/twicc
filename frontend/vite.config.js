@@ -1,7 +1,27 @@
-import { rm } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+
+// The asset-failure panel must work even when every application module fails.
+// Embed only its catalog messages into the inline guard, in dev and production.
+export const injectRecoveryMessages = {
+    name: 'twicc-inject-recovery-messages',
+    async transformIndexHtml(html) {
+        const keys = ['startup.assetsUnavailable.description', 'common.actions.retry']
+        const locales = await Promise.all(['en', 'pt-BR'].map(async locale => {
+            const catalog = JSON.parse(await readFile(new URL(`./src/i18n/locales/${locale}.json`, import.meta.url), 'utf8'))
+            const messages = Object.fromEntries(keys.map(key => {
+                if (typeof catalog[key] !== 'string') throw new Error(`Missing recovery message: ${locale}:${key}`)
+                return [key, catalog[key]]
+            }))
+            return [locale, messages]
+        }))
+        // A catalog message must never terminate its containing script element.
+        const serialized = JSON.stringify(Object.fromEntries(locales)).replace(/</g, '\\u003c')
+        return html.replace('"__TWICC_RECOVERY_MESSAGES__"', () => serialized)
+    },
+}
 
 // Backend port for proxy (passed by devctl.py via environment)
 const backendPort = process.env.BACKEND_PORT || '3500'
@@ -54,6 +74,7 @@ export default defineConfig(({ command }) => ({
             }
         }),
         injectBrowserCompanion,
+        injectRecoveryMessages,
         dropReadmeOnlyAssets,
     ],
     // Use /static/ base only for production build (Django serves static files)

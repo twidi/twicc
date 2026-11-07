@@ -6,6 +6,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { nextTick } from 'vue'
+import { i18n } from '../i18n/index.js'
 import { installDraftStorageBlockedNotice, DRAFT_STORAGE_BLOCKED_MESSAGE } from './draftStorageBlockedNotice.js'
 
 let moduleSeq = 0
@@ -356,4 +358,35 @@ test('removing the notice before the mount also removes a still-shown notice', a
     assert.equal(doc.children.length, 1)
     remove()
     assert.equal(doc.children.length, 0)
+})
+
+
+test('the mounted blocked notice follows locale changes and removes its watcher during cleanup', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    const doc = createDocumentFake()
+    let callback, unsubscribed = false
+    const remove = installDraftStorageBlockedNotice(listener => {
+        callback = listener
+        listener(true)
+        return () => { unsubscribed = true }
+    }, doc)
+    context.after(remove)
+    const [notice] = doc.children
+    assert.equal(notice.textContent, i18n.global.t('composer.storage.upgradeBlocked'))
+    i18n.global.locale.value = 'pt-BR'
+    await nextTick()
+    assert.equal(notice.textContent, i18n.global.t('composer.storage.upgradeBlocked'))
+    assert.notEqual(notice.textContent, DRAFT_STORAGE_BLOCKED_MESSAGE)
+    callback(false)
+    assert.equal(doc.children.length, 0)
+    callback(true)
+    assert.equal(doc.children.length, 1)
+    remove()
+    assert.equal(unsubscribed, true)
+    assert.equal(doc.children.length, 0)
+    const removedText = notice.textContent
+    i18n.global.locale.value = 'en'
+    await nextTick()
+    assert.equal(notice.textContent, removedText)
 })

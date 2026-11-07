@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { defineStore, acceptHMRUpdate } from 'pinia'
 
 /**
@@ -33,7 +34,7 @@ export const usePeersStore = defineStore('peers', {
         peerLabel() {
             return (peerId) => {
                 const peer = this.getPeerById(peerId)
-                return peer?.name || peer?.remote_display_name || peer?.base_url || 'unknown peer'
+                return peer?.name || peer?.remote_display_name || peer?.base_url || i18n.global.t('session.peers.unknown')
             }
         },
     },

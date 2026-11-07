@@ -1,3 +1,5 @@
+import { i18n } from './i18n/index.js'
+
 // frontend/src/constants.js
 
 /**
@@ -131,10 +133,10 @@ export const PROCESS_STATE = {
  * Human-friendly names for each process state.
  */
 export const PROCESS_STATE_NAMES = {
-    [PROCESS_STATE.STARTING]: 'Starting',
-    [PROCESS_STATE.ASSISTANT_TURN]: 'Assistant turn',
-    [PROCESS_STATE.USER_TURN]: 'User turn',
-    [PROCESS_STATE.DEAD]: 'Dead',
+    get [PROCESS_STATE.STARTING]() { return i18n.global.t('session.processState.starting') },
+    get [PROCESS_STATE.ASSISTANT_TURN]() { return i18n.global.t('session.processState.assistant_turn') },
+    get [PROCESS_STATE.USER_TURN]() { return i18n.global.t('session.processState.user_turn') },
+    get [PROCESS_STATE.DEAD]() { return i18n.global.t('session.processState.dead') },
 }
 
 /**
@@ -206,6 +208,7 @@ export const TITLE_SUGGESTION_MODEL = Object.freeze({
 /** The shortest source text a summary is offered for. Same value as MIN_SOURCE_CHARS in summaries/sources.py. */
 export const SUMMARY_MIN_CHARS = 500
 
+export const OPENROUTER_MODEL_DESCRIPTION_KEY = 'settings.models.openrouterDescription'
 export const OPENROUTER_MODEL_DESCRIPTION = 'Qwen3.8 27B on Cerebras'
 
 const TITLE_SUGGESTION_MODEL_VALUES = new Set(Object.values(TITLE_SUGGESTION_MODEL))

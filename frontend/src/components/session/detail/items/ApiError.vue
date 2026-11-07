@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed } from 'vue'
 import { parseApiErrorString, stripAnthropicDocsUrl } from '../../../../utils/errorParsing'
 import { useDataStore } from '../../../../stores/data'
@@ -74,7 +76,7 @@ function extractBastardErrorInfo(data) {
     // Fallback: display raw text
     return {
         type: 'unknown_error',
-        message: textContent || 'Unknown error',
+        message: textContent || t('session.apiError.unknown'),
         status: null,
         retryAttempt: null,
         maxRetries: null
@@ -88,7 +90,7 @@ const errorInfo = computed(() => {
         || (props.data?.provider === 'codex' && props.data?.isApiErrorMessage === true)) {
         return {
             type: props.data?.error?.type || 'unknown_error',
-            message: props.data?.error?.message || 'Unknown error',
+            message: props.data?.error?.message || t('session.apiError.unknown'),
             status: null,
             retryAttempt: null,
             maxRetries: null,
@@ -104,7 +106,7 @@ const errorInfo = computed(() => {
     const error = props.data?.error?.error?.error
     return {
         type: error?.type || 'unknown_error',
-        message: stripAnthropicDocsUrl(error?.message || 'Unknown error'),
+        message: stripAnthropicDocsUrl(error?.message || t('session.apiError.unknown')),
         status: props.data?.error?.status,
         retryAttempt: props.data?.retryAttempt,
         maxRetries: props.data?.maxRetries

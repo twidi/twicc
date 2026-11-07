@@ -165,12 +165,10 @@ export function formatDaySeparatorLabel(timestampMs) {
  */
 export function formatFullDateTime(timestampMs) {
     if (!timestampMs) return '-'
-    const d = new Date(timestampMs)
-    const pad = (n) => String(n).padStart(2, '0')
-    return (
-        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-        `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-    )
+    return new Intl.DateTimeFormat(i18n.global.locale.value, {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).format(new Date(timestampMs))
 }
 
 /**
@@ -213,9 +211,9 @@ export function formatDuration(seconds) {
 export function formatRelative(timestampMs) {
     if (!timestampMs) return '-'
     const deltaSec = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000))
-    if (deltaSec < 60) return 'just now'
-    if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`
-    if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`
-    if (deltaSec < 7 * 86400) return `${Math.floor(deltaSec / 86400)}d ago`
+    if (deltaSec < 60) return i18n.global.t('common.time.justNow')
+    if (deltaSec < 3600) return new Intl.RelativeTimeFormat(i18n.global.locale.value, { style: 'narrow' }).format(-Math.floor(deltaSec / 60), 'minute')
+    if (deltaSec < 86400) return new Intl.RelativeTimeFormat(i18n.global.locale.value, { style: 'narrow' }).format(-Math.floor(deltaSec / 3600), 'hour')
+    if (deltaSec < 7 * 86400) return new Intl.RelativeTimeFormat(i18n.global.locale.value, { style: 'narrow' }).format(-Math.floor(deltaSec / 86400), 'day')
     return formatDate(Math.floor(timestampMs / 1000), { smart: true })
 }

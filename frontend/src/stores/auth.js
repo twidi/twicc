@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 // frontend/src/stores/auth.js
 
 import { defineStore, acceptHMRUpdate } from 'pinia'
@@ -142,13 +144,14 @@ export const useAuthStore = defineStore('auth', {
                     if (!this.needsLogin) {
                         return { success: true }
                     }
-                    return { success: false, error: data.error }
+                    return { success: false, error: i18n.global.t('auth.errors.noPassword'), errorMessage: localUiMessage('auth.errors.noPassword') }
                 } else {
-                    return { success: false, error: data.error || 'Invalid password' }
+                    return { success: false, error: data.error === 'Invalid password' ? i18n.global.t('auth.errors.invalidPassword') : data.error || i18n.global.t('auth.errors.invalidPassword'),
+                        ...(!data.error || data.error === 'Invalid password' ? { errorMessage: localUiMessage('auth.errors.invalidPassword') } : {}) }
                 }
             } catch (e) {
                 console.error('Login failed:', e)
-                return { success: false, error: 'Network error' }
+                return { success: false, error: i18n.global.t('auth.errors.network'), errorMessage: localUiMessage('auth.errors.network') }
             }
         },
 

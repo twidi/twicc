@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+
 /**
  * FileTreePanel - Shared component encapsulating a file tree with search,
  * keyboard navigation, options dropdown, and scroll-to-path functionality.
@@ -203,7 +206,7 @@ const props = defineProps({
     },
     searchPlaceholder: {
         type: String,
-        default: 'Filter files...',
+        default: null,
     },
     /**
      * Where an upload started from this tree belongs (`{ panel, key }`, spec
@@ -241,12 +244,12 @@ function closeFileTree() {
  */
 const headerPlaceholder = computed(() => {
     if (isSearching.value && !searchTree.value?.children?.length && searchResponded.value) {
-        return 'No matches'
+        return t('files.search.noMatches')
     }
     if (!props.rootPath && !props.hasExtraTree) {
-        return props.mode === 'git' ? 'No changes' : 'No directory'
+        return props.mode === 'git' ? t('files.search.noChanges') : t('files.directories.none')
     }
-    return 'Select a file'
+    return t('files.selection.file')
 })
 
 // ─── Search state ────────────────────────────────────────────────────────────
@@ -1415,7 +1418,7 @@ defineExpose({
                 <wa-input
                     ref="searchInputRef"
                     :value="searchQuery"
-                    :placeholder="searchPlaceholder"
+                    :placeholder="searchPlaceholder || $t('files.search.placeholder')"
                     size="small"
                     with-clear
                     class="files-search-input"

@@ -1,6 +1,8 @@
+import { i18n } from '../i18n/index.js'
+
 // Bootstrap metadata lives outside stores to avoid circular imports.
 const fallback = {
-    before: 'Stop TwiCC, update it with the package manager used to install it, then restart.',
+    get before() { return i18n.global.t('settings.updates.fallbackInstructions') },
     command: null,
     after: '',
 }
@@ -14,6 +16,10 @@ function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[char])
+}
+
+export function getUpdateInstructions() {
+    return { before: instructions.before, command: instructions.command, after: instructions.after }
 }
 
 export function getUpdateInstructionsHtml() {

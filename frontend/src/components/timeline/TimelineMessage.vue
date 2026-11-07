@@ -80,7 +80,7 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
             :id="regionId"
             role="region"
             :aria-labelledby="labelledBy || undefined"
-            :aria-label="labelledBy ? undefined : 'Message'"
+            :aria-label="labelledBy ? undefined : $t('timeline.message.regionLabel')"
             class="timeline-message-body"
         >
             <MessageSummaryControls v-if="summary?.hasSummary" :summary="summary" />

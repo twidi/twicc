@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 import { defineStore } from 'pinia'
 
 // The synthetic "no docks" layout. Injected in code (never stored in layouts.json), always present
@@ -41,7 +42,7 @@ export const useLayoutsStore = defineStore('layouts', {
         /** Everything selectable: the synthetic single pane first, then the named layouts (alphabetical).
          *  Drives every layout picker (session selector, project/global default pickers). */
         selectableLayouts: (state) => [
-            { id: SINGLE_PANE_ID, name: SINGLE_PANE_NAME, synthetic: true },
+            { id: SINGLE_PANE_ID, name: i18n.global.t('session.layout.singlePane'), synthetic: true },
             ...sortByName(state.layouts),
         ],
 

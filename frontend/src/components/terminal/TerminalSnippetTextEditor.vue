@@ -100,7 +100,7 @@ defineExpose({ focus })
                     type="button"
                     class="picker-key placeholder-key"
                     @click="insertPlaceholder(p.id)"
-                    :title="`Insert {${p.id}}`"
+                    :title="$t('terminal.snippets.placeholders.insert', { placeholder: `{${p.id}}` })"
                 >{{ p.label }}</button>
             </div>
         </div>

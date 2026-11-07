@@ -10,6 +10,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { reactive } from 'vue'
+import { i18n } from '../i18n/index.js'
+import { localUiError } from '../i18n/uiMessages.js'
 
 import { buildTimelineUrl, createFeedState, createTimelineFeed } from '../utils/timeline/feed.js'
 
@@ -17,9 +19,9 @@ function loadComposable(apiFetch) {
     const source = readFileSync(new URL('./useTimelineFeed.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .*$/gm, '').replace(/^export /gm, '')
     return new Function(
-        'apiFetch', 'buildTimelineUrl', 'createFeedState', 'createTimelineFeed', 'reactive',
+        'apiFetch', 'buildTimelineUrl', 'createFeedState', 'createTimelineFeed', 'reactive', 'localUiError',
         `${body}\nreturn { fetchTimelinePage, useTimelineFeed }`,
-    )(apiFetch, buildTimelineUrl, createFeedState, createTimelineFeed, reactive)
+    )(apiFetch, buildTimelineUrl, createFeedState, createTimelineFeed, reactive, localUiError)
 }
 
 const okBody = { events: [], has_more: false, truncated: false, latest_id: null, sessions: {} }
@@ -54,4 +56,18 @@ test('the feed of the composable sends the query of setScope on every request', 
 test('fetchTimelinePage rejects on a failed response', async () => {
     const { fetchTimelinePage } = loadComposable(async () => ({ ok: false, status: 500 }))
     await assert.rejects(fetchTimelinePage({ projectIds: [], query: {}, before: null, afterId: null }), /500/)
+})
+
+
+test('retained failed page message follows locale changes with its status intact', async context => {
+    context.after(() => { i18n.global.locale.value = 'en' })
+    const { useTimelineFeed } = loadComposable(async () => ({ ok: false, status: 503 }))
+    const feed = useTimelineFeed()
+    feed.setScope([], {})
+    await feed.idle()
+    const error = feed.state.loadError.error
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, i18n.global.t('session.timeline.requestFailed', { status: 503 }))
+    i18n.global.locale.value = 'pt-BR'
+    assert.equal(error.message, i18n.global.t('session.timeline.requestFailed', { status: 503 }))
 })

@@ -128,7 +128,7 @@ async function searchMessages(generation) {
         historyHasMore.value = !!payload.history_has_more
     } catch (error) {
         if (controller.signal.aborted || generation !== searchGeneration) return
-        searchError.value = 'Could not search peer messages.'
+        searchError.value = 'peer.inbox.searchError'
     } finally {
         if (generation === searchGeneration) {
             searching.value = false
@@ -258,7 +258,7 @@ function onHide(event) {
             <span>{{ $t('peer.inbox.searching') }}</span>
         </div>
         <wa-callout v-else-if="searchError" variant="danger" size="small">
-            {{ searchError }}
+            {{ $t(searchError) }}
         </wa-callout>
 
         <template v-if="pendingRequests.length">
@@ -269,7 +269,7 @@ function onHide(event) {
                 @click="openManager"
             >
                 <wa-icon name="user-plus" class="pi-row__icon"></wa-icon>
-                <span class="pi-row__title">{{ peer.remote_display_name || 'unnamed instance' }}</span>
+                <span class="pi-row__title">{{ peer.remote_display_name || $t('peer.common.unnamedInstance') }}</span>
                 <span class="pi-row__meta">{{ peer.base_url }}</span>
                 <span class="pi-row__hint">{{ $t('peer.inbox.reviewInManager') }}</span>
             </button>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, type CSSProperties, type PropType } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTheme } from '../../composables/useTheme'
 import type { Commit } from '../../types'
 
@@ -17,6 +18,7 @@ const props = defineProps({
 // ---------------------------------------------------------------------------
 
 const { getTooltipBackground } = useTheme()
+const { t, locale } = useI18n()
 
 // ---------------------------------------------------------------------------
 // Computed values
@@ -28,11 +30,15 @@ const tooltipVars = computed<CSSProperties>(() => ({
 }))
 
 const parentsText = computed(() =>
-  props.commit.parents.length > 0 ? props.commit.parents.join(', ') : 'None',
+  props.commit.parents.length > 0
+    ? new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(props.commit.parents)
+    : t('git.commit.tooltip.none'),
 )
 
 const childrenText = computed(() =>
-  props.commit.children.length > 0 ? props.commit.children.join(', ') : 'None',
+  props.commit.children.length > 0
+    ? new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' }).format(props.commit.children)
+    : t('git.commit.tooltip.none'),
 )
 </script>
 

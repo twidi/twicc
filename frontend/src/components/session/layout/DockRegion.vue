@@ -115,7 +115,7 @@ function onEmptyBarDblClick(event) {
         <!-- Flex row [scrollable tabs][fixed controls], like TerminalPanel's actions bar: the
              window buttons must stay visible while the tab strip scrolls, and never sit over a
              tab — they live beside the scroll area, not inside it. -->
-        <div class="dock-topbar" :class="{ 'tabnav-dimmed': !isRouteActive }" :title="maximized ? 'Double-click to restore' : 'Double-click to maximize'">
+        <div class="dock-topbar" :class="{ 'tabnav-dimmed': !isRouteActive }" :title="maximized ? $t('session.layout.doubleClickRestore') : $t('session.layout.doubleClickMaximize')">
         <TabBar class="dock-tabnav" :active="activeTabId" crossfade @crossfade-start="emit('crossfade-start')" @wa-tab-show.stop="onShow" @click="onEmptyBarClick" @dblclick="onEmptyBarDblClick">
             <!-- Clicking a tab header activates it: focuses its filter + claims the route (onTabClick).
                  wa-tab-show handles switching to a *different* tab; the claim also covers clicking the

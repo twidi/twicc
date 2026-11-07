@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { locale } = useI18n()
 // Settings → Help panel. Sibling of TipsSettings.vue. Lists every help page
 // available for the current environment and lets the user reopen any of them
 // (always without the "Don't show this again" switch — manual opens never
@@ -19,7 +21,7 @@ const env = computed(() => ({
 }))
 
 const availableHelp = computed(() => {
-    return helpStore.getAvailableHelp(env.value).sort((a, b) => a.title.localeCompare(b.title))
+    return helpStore.getAvailableHelp(env.value).sort((a, b) => a.title.localeCompare(b.title, locale.value))
 })
 
 function onClickHelp(key) {

@@ -1,4 +1,9 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useDataStore } from '../../stores/data'
 import { useWorkspacesStore } from '../../stores/workspaces'
@@ -67,7 +72,7 @@ async function refreshCount() {
     if (!iso) {
         // Defensive: shouldn't happen since wa-select only emits known presets,
         // but bail gracefully rather than send a malformed request.
-        error.value = `Unknown duration preset: ${currentPreset.value}`
+        error.value = localUiMessage('session.bulkArchive.errors.unknownPreset', { preset: currentPreset.value })
         return
     }
 
@@ -90,7 +95,7 @@ async function refreshCount() {
         hasArchivedInScope.value = res.has_archived_in_scope ?? false
     } catch (err) {
         if (err.name === 'AbortError') return
-        error.value = err.message || 'Failed to fetch count.'
+        error.value = err.uiMessage || err.message || localUiMessage('session.bulkArchive.errors.count')
     }
 }
 
@@ -130,7 +135,7 @@ async function handleConfirm() {
     if (count.value === 0 || count.value === null || submitting.value) return
     const iso = presetToDate(currentPreset.value)
     if (!iso) {
-        error.value = `Unknown duration preset: ${currentPreset.value}`
+        error.value = localUiMessage('session.bulkArchive.errors.unknownPreset', { preset: currentPreset.value })
         return
     }
     submitting.value = true
@@ -145,7 +150,7 @@ async function handleConfirm() {
         emit('archived', { count: res.count })
         emit('update:open', false)
     } catch (err) {
-        error.value = err.message || 'Failed to archive sessions.'
+        error.value = err.uiMessage || err.message || localUiMessage('session.bulkArchive.errors.archive')
     } finally {
         submitting.value = false
     }
@@ -253,7 +258,7 @@ function handleDialogHide(event) {
                 {{ $t('session.bulkArchive.exclusions') }}
             </div>
 
-            <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
+            <wa-callout v-if="error" variant="danger">{{ resolveUiMessage(error) }}</wa-callout>
         </form>
 
         <wa-button slot="footer" appearance="plain" :disabled="submitting" @click="handleCancel">

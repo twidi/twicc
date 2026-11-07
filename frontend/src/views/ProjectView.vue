@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 import { createRailScopeNavigation, isRailScopeRootNavigation, openSidebarCheckbox } from '../utils/railScopeNavigation.js'
 import { computed, ref, watch, onMounted, onUnmounted, onBeforeUnmount, provide, nextTick, shallowRef } from 'vue'
 import { useElementHover, useMediaQuery } from '@vueuse/core'
@@ -28,7 +32,7 @@ import ArtifactBookmarksSidebarControls from '../components/artifacts/ArtifactBo
 import ArtifactBookmarkList from '../components/artifacts/ArtifactBookmarkList.vue'
 import SidebarRail from '../components/sidebar/SidebarRail.vue'
 import NewSessionProjectPicker from '../components/project/NewSessionProjectPicker.vue'
-import { OPEN_SIDEBAR_LABEL } from '../utils/sidebarRail'
+import { OPEN_SIDEBAR_LABEL_KEY } from '../utils/sidebarRail'
 import { lastSessionsLocation, lastArtifactsLocation, memoryScope, resetSidebarViewMemory } from '../utils/sidebarViewMemory'
 import ArtifactsBrowserView from './ArtifactsBrowserView.vue'
 import SessionSelectionBar from '../components/session/list/SessionSelectionBar.vue'
@@ -158,14 +162,14 @@ function launchProviderAuthInTerminal(loginCommand) {
 
 function disableProvider(provider) {
     setProviderEnabled(provider, false)
-    toast.success(`${getProviderLabel(provider)} provider disabled`, { duration: 2000 })
+    toast.success(t('providers.auth.disabledToast', { provider: getProviderLabel(provider) }), { duration: 2000 })
     // Callout disappears on its own: the provider leaves ``enabledProviders``,
     // which empties its slot in ``unauthenticatedProviders``.
 }
 
 function copyLoginCommand(loginCommand) {
     navigator.clipboard.writeText(loginCommand)
-    toast.success('Command copied to clipboard', { duration: 2000 })
+    toast.success(t('providers.auth.commandCopied'), { duration: 2000 })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,8 +275,8 @@ function quotaTooltipData(period) {
         quota: sevenDay ? quotaSevenDay.value : quotaFiveHour.value,
         cost: sevenDay ? quotaSevenDayCost.value : quotaFiveHourCost.value,
         color: sevenDay ? quotaSevenDayRingColor.value : quotaFiveHourRingColor.value,
-        periodLabel: sevenDay ? '7 days' : '5 hours',
-        periodShort: sevenDay ? '7d' : '5h',
+        periodLabel: sevenDay ? t('usage.period.sevenDays') : t('usage.period.fiveHours'),
+        periodShort: sevenDay ? t('usage.period.sevenDaysShort') : t('usage.period.fiveHoursShort'),
         roundToHour: sevenDay,
     }
 }
@@ -352,11 +356,15 @@ const quotaExtraUsageChipText = computed(() => {
     const extra = quotaExtraUsage.value
     if (!extra || extra.utilization == null) return null
     const money = quotaExtraUsageMoney.value
-    if (!money) return `${Math.round(extra.utilization)}%`
+    if (!money) return new Intl.NumberFormat(locale.value, { style: 'percent', maximumFractionDigits: 0 }).format(extra.utilization / 100)
     return money.limit != null
         ? `${money.used} ${money.currency} / ${money.limit}`
         : `${money.used} ${money.currency}`
 })
+
+function formatCreditCount(value) {
+    return typeof value === 'number' ? new Intl.NumberFormat(locale.value).format(value) : value
+}
 
 function resetsAtToDate(resetsAt) {
     if (!resetsAt) return new Date()
@@ -388,8 +396,7 @@ const quotaLastUpdateFormatted = computed(() => {
     const fetchedAt = quotaComputed.value?.fetchedAt
     if (!fetchedAt) return '?'
     const date = new Date(fetchedAt)
-    const locale = navigator.language
-    return date.toLocaleString(locale, {
+    return date.toLocaleString(locale.value, {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -885,7 +892,7 @@ function openBulkArchiveDialog(preset) {
 }
 
 function handleBulkArchived({ count }) {
-    toast.success(`Archived ${count} session${count > 1 ? 's' : ''}.`)
+    toast.success(t('project.sessions.archivedToast', { count }, count))
 }
 
 // Handle session options dropdown selection
@@ -1490,14 +1497,14 @@ onMounted(() => {
     registerCommands([
         {
             id: 'ui.toggle-sidebar',
-            label: 'Toggle Sidebar',
+            labelKey: 'commands.context.toggleSidebar',
             icon: 'table-columns',
             category: 'ui',
             action: () => { toggleSidebar() },
         },
         {
             id: 'ui.focus-search',
-            label: 'Focus Session Filter',
+            labelKey: 'commands.context.focusSessionFilter',
             icon: 'magnifying-glass',
             category: 'ui',
             action: () => {
@@ -1506,7 +1513,7 @@ onMounted(() => {
         },
         {
             id: 'ui.focus-project-selector',
-            label: 'Focus Project Selector',
+            labelKey: 'commands.context.focusProjectSelector',
             icon: 'folder-tree',
             category: 'ui',
             // Open the sidebar's project/workspace switcher. On desktop, expand
@@ -1711,12 +1718,12 @@ function openPeerInbox() {
             @toggle-sidebar="handleRailToggle"
         />
         <button id="sidebar-toggle-button" ref="floatingToggleEl" type="button"
-                class="sidebar-toggle rail-button" :aria-label="OPEN_SIDEBAR_LABEL" @click="handleFloatingToggle">
+                class="sidebar-toggle rail-button" :aria-label="$t(OPEN_SIDEBAR_LABEL_KEY)" @click="handleFloatingToggle">
             <wa-icon name="angles-right"></wa-icon>
             <PeerInboxBadge v-if="peersStore.inboxCount > 0" :count="peersStore.inboxCount" />
             <wa-icon v-if="tts.status !== 'idle'" name="volume-up" class="sidebar-toggle-speech-mark" aria-hidden="true"></wa-icon>
         </button>
-        <AppTooltip for="sidebar-toggle-button" placement="top">{{ OPEN_SIDEBAR_LABEL }}</AppTooltip>
+        <AppTooltip for="sidebar-toggle-button" placement="top">{{ $t(OPEN_SIDEBAR_LABEL_KEY) }}</AppTooltip>
 
         <wa-split-panel
             ref="projectSplitRef"
@@ -2263,7 +2270,7 @@ function openPeerInbox() {
                                 <div class="usage-lane-fill" :style="{ width: quotaExtraUsageRingValue + '%', '--usage-fill': quotaExtraUsageRingColor }"></div>
                             </div>
                             <span v-else-if="quotaExtraUsage.remainingCredits != null" class="usage-balance">
-                                <span class="usage-balance-dot" :style="{ background: quotaExtraUsageRingColor }"></span>{{ $t('usage.extra.credits', { count: Math.round(quotaExtraUsage.remainingCredits).toLocaleString() }, Math.round(quotaExtraUsage.remainingCredits)) }}
+                                <span class="usage-balance-dot" :style="{ background: quotaExtraUsageRingColor }"></span>{{ $t('usage.extra.credits', { count: formatCreditCount(Math.round(quotaExtraUsage.remainingCredits)) }, Math.round(quotaExtraUsage.remainingCredits)) }}
                             </span>
                         </div>
                         <span v-if="quotaExtraUsageChipText" class="usage-burn-chip usage-burn-chip-neutral">{{ quotaExtraUsageChipText }}</span>
@@ -2281,15 +2288,15 @@ function openPeerInbox() {
                                 <template v-if="quotaExtraUsageMoney">
                                     <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.used') }}</span><span>{{ quotaExtraUsageMoney.used }} {{ quotaExtraUsageMoney.currency }}</span></div>
                                     <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.monthlyLimit') }}</span><span><template v-if="quotaExtraUsageMoney.limit != null">{{ quotaExtraUsageMoney.limit }} {{ quotaExtraUsageMoney.currency }}</template><template v-else>?</template></span></div>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.usage') }}</span><span>{{ quotaExtraUsage.utilization.toFixed(1) }}%</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.usage') }}</span><span>{{ new Intl.NumberFormat(locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(quotaExtraUsage.utilization / 100) }}</span></div>
                                 </template>
                                 <template v-else>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.used') }}</span><span>{{ $t('usage.extra.credits', { count: quotaExtraUsage.usedCredits ?? 0 }, quotaExtraUsage.usedCredits ?? 0) }}</span></div>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.monthlyLimit') }}</span><span>{{ $t('usage.extra.credits', { count: quotaExtraUsage.monthlyLimit ?? '?' }, quotaExtraUsage.monthlyLimit ?? 2) }}</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.used') }}</span><span>{{ $t('usage.extra.credits', { count: formatCreditCount(quotaExtraUsage.usedCredits ?? 0) }, quotaExtraUsage.usedCredits ?? 0) }}</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.monthlyLimit') }}</span><span>{{ $t('usage.extra.credits', { count: formatCreditCount(quotaExtraUsage.monthlyLimit ?? '?') }, quotaExtraUsage.monthlyLimit ?? 2) }}</span></div>
                                 </template>
                             </template>
                             <template v-else-if="quotaExtraUsage.remainingCredits != null">
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.remaining') }}</span><span>{{ $t('usage.extra.credits', { count: Math.round(quotaExtraUsage.remainingCredits) }, Math.round(quotaExtraUsage.remainingCredits)) }}</span></div>
+                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.remaining') }}</span><span>{{ $t('usage.extra.credits', { count: formatCreditCount(Math.round(quotaExtraUsage.remainingCredits)) }, Math.round(quotaExtraUsage.remainingCredits)) }}</span></div>
                             </template>
                             <div v-if="quotaExtraUsage.utilization != null" class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.reset') }}</span><span>{{ formatResetTime(extraUsageResetDate()) }}</span></div>
                             <div class="quota-tooltip-buttons">

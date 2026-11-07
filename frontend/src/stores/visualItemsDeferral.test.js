@@ -11,7 +11,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
-import { toRaw } from 'vue'
+import { toRaw, watch, nextTick } from 'vue'
+import { i18n } from '../i18n/index.js'
 import { DISPLAY_LEVEL, DISPLAY_MODE, PROCESS_STATE, SYNTHETIC_ITEM } from '../constants.js'
 import { computeVisualItems, visualItemEqual, insertDaySeparators, makeBackgroundWorkStatusItem, markLiveTimestampAnchor } from '../utils/visualItems.js'
 import { getParsedContent, setParsedContent, hasContent } from '../utils/parsedContent.js'
@@ -483,4 +484,38 @@ for (const landing of ['own group', 'internal group']) test(`a stream that start
     if (landing === 'own group') assert.ok(shown.segments.includes('["tools:4:4",[4],true,false]'), `the persisted line opens: ${shown.segments}`)
     else assert.equal(shown.internal, '{"4":[1]}', 'the internal group holding the thinking opens')
     assert.deepEqual(run(false), shown)
+})
+
+
+test('locale refresh updates loaded day labels and preserves deferred rows until the view returns', async context => {
+    context.after(() => { i18n.global.locale.value = 'en' })
+    i18n.global.locale.value = 'en'
+    const { store } = makeStore()
+    const view = {}
+    store.registerVisualItemsView('main', view)
+    const row = (line, kind, timestamp) => ({ line_num: line, kind, display_level: DISPLAY_LEVEL.ALWAYS,
+        group_head: null, group_tail: null, timestamp,
+        content: JSON.stringify({ type: 'user', message: { content: 'Unchanged original source' } }) })
+    store.addSessionItems('main', [row(1, 'user_message', '2020-01-02T12:00:00Z'),
+        row(2, 'assistant_message', '2020-01-03T12:00:00Z')])
+    const original = store.localState.sessionVisualItems.main
+    const label = original.find(row => row.isDaySeparator).dayLabel
+    store.unregisterVisualItemsView('main', view)
+    store.sessionItems.otherLoaded = []
+    store.localState.sessionEventHistory.eventOnly = { snapshot: null }
+    store.localState.optimisticMessages.optimisticOnly = {}
+    const calls = [], recompute = store.recomputeVisualItems
+    store.recomputeVisualItems = id => { calls.push(id); if (id === 'main') recompute(id) }
+    store.refreshLocalizedSyntheticContent = () => {}
+    const localeStart = source.indexOf('watch(i18n.global.locale, () => {')
+    const localeEnd = source.indexOf('\n    })', localeStart) + '\n    })'.length
+    const stop = new Function('watch', 'i18n', 'store', 'return ' + source.slice(localeStart, localeEnd))(watch, i18n, store)
+    context.after(stop)
+    i18n.global.locale.value = 'pt-BR'
+    await nextTick()
+    assert.deepEqual(new Set(calls), new Set(['main', 'otherLoaded', 'eventOnly', 'optimisticOnly']))
+    assert.equal(store.localState.sessionVisualItems.main, original, 'hidden session preserves its deferred rows')
+    store.registerVisualItemsView('main', view)
+    assert.notEqual(store.localState.sessionVisualItems.main.find(row => row.isDaySeparator).dayLabel, label)
+    assert.equal(store.sessionItems.main[0].content, row(1, 'user_message', '2020-01-02T12:00:00Z').content)
 })

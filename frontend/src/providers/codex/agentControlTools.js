@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 /**
  * Pure rules for Codex's multi-agent v2 control tools
  * (`collaboration__followup_task` / `collaboration__send_message` /
@@ -7,10 +9,10 @@
  * rendering").
  *
  * `codex/toolHelpers.js` cannot be imported under Node (extensionless
- * imports, `.vue` components), so these rules live in this import-free
+ * imports, `.vue` components), so these rules live in this standalone
  * module and the helper delegates.
  *
- * Imports nothing, so `node --test` loads it directly.
+ * Uses an explicit JavaScript import so `node --test` loads it directly.
  */
 
 export const FOLLOWUP_TASK_TOOL_NAME = 'collaboration__followup_task'
@@ -20,9 +22,9 @@ export const INTERRUPT_AGENT_TOOL_NAME = 'collaboration__interrupt_agent'
 // Control tool name -> header label, shown only on a control card (an
 // interaction is set).
 const HEADER_LABEL_BY_TOOL = {
-    [FOLLOWUP_TASK_TOOL_NAME]: 'Follow-up task',
-    [SEND_MESSAGE_TOOL_NAME]: 'Send message',
-    [INTERRUPT_AGENT_TOOL_NAME]: 'Interrupt agent',
+    [FOLLOWUP_TASK_TOOL_NAME]: 'session.tools.control.followupTask',
+    [SEND_MESSAGE_TOOL_NAME]: 'session.tools.control.sendMessage',
+    [INTERRUPT_AGENT_TOOL_NAME]: 'session.tools.control.interruptAgent',
 }
 
 // The two collaboration tools whose ``message`` argument is Codex
@@ -35,7 +37,8 @@ const ENCRYPTED_MESSAGE_TOOLS = new Set([FOLLOWUP_TASK_TOOL_NAME, SEND_MESSAGE_T
  */
 export function agentControlHeaderLabel(name, agentInteraction) {
     if (!agentInteraction) return null
-    return HEADER_LABEL_BY_TOOL[name] ?? null
+    const key = HEADER_LABEL_BY_TOOL[name]
+    return key ? i18n.global.t(key) : null
 }
 
 /**
@@ -58,5 +61,5 @@ export function agentControlExpectedCount(name, agentInteraction) {
  */
 export function maskEncryptedMessage(name, input) {
     if (!input || !ENCRYPTED_MESSAGE_TOOLS.has(name) || !('message' in input)) return input
-    return { ...input, message: 'encrypted message' }
+    return { ...input, message: i18n.global.t('session.tools.control.encrypted') }
 }

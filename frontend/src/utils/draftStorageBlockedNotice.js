@@ -1,3 +1,6 @@
+import { watch } from 'vue'
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/draftStorageBlockedNotice.js
 // Startup notice for a blocked draft-storage upgrade (spec 2026-10-03 §9.1).
 //
@@ -39,7 +42,7 @@ export function installDraftStorageBlockedNotice(subscribe, doc = document) {
             lineHeight: '1.5',
             zIndex: '2147483647',
         })
-        notice.textContent = DRAFT_STORAGE_BLOCKED_MESSAGE
+        notice.textContent = i18n.global.t('composer.storage.upgradeBlocked')
         doc.body.appendChild(notice)
     }
 
@@ -48,9 +51,13 @@ export function installDraftStorageBlockedNotice(subscribe, doc = document) {
         notice = null
     }
 
+    const stopLocaleWatch = watch(i18n.global.locale, () => {
+        if (notice) notice.textContent = i18n.global.t('composer.storage.upgradeBlocked')
+    })
     const unsubscribe = subscribe(blocked => (blocked ? show() : hide()))
     return () => {
         unsubscribe()
+        stopLocaleWatch()
         hide()
     }
 }

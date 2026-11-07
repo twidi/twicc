@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n } = useI18n()
 /**
  * Codex canonical image-generation renderer.
  *
@@ -77,7 +79,7 @@ const imageSrc = computed(() => {
 // Derive a human filename for the preview dialog title — fall back to a
 // generic label when ``saved_path`` is missing.
 const imageName = computed(() => {
-    if (!savedPath.value) return 'Generated image'
+    if (!savedPath.value) return t('session.tools.image.generatedName')
     const idx = savedPath.value.lastIndexOf('/')
     return idx >= 0 ? savedPath.value.slice(idx + 1) : savedPath.value
 })

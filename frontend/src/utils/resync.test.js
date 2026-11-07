@@ -2,12 +2,15 @@
 //
 // Run with:  node --test src/utils/resync.test.js   (from the frontend dir)
 //
-// Only the policy is tested here: it is pure, so it needs no DOM. The wiring
-// around it (sessionStorage, visibilitychange, the toast) is thin glue over
-// this decision.
+// Policy tests need no DOM. The render test exercises the real toast component
+// with real messages, without loading the WebSocket and store dependency graph.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { h } from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { i18n } from '../i18n/index.js'
 import { decideResyncAction, RELOAD_COOLDOWN_MS } from './resync.js'
 
 const NOW = 1_700_000_000_000
@@ -72,4 +75,34 @@ test('a corrupted or absent stamp is treated as "never reloaded"', () => {
         decideResyncAction({ visible: true, lastReload: null, now: NOW }),
         'reload',
     )
+})
+
+
+test('the persistent resync toast renders translated text and keeps its reload action', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    const source = readFileSync(new URL('./resync.js', import.meta.url), 'utf8')
+    const handler = source.slice(source.indexOf('function showResyncToast()'), source.indexOf('/** Test seam:'))
+        .replace("import('../composables/useToast')", 'Promise.resolve({ toast })')
+    let notification, reloads = 0, prevented = false
+    const showResyncToast = new Function('h', 'i18n', 'toast', 'window', `${handler}; return showResyncToast`)(
+        h, i18n, { custom(content, options) { notification = { content, options } } },
+        { location: { reload() { reloads++ } } },
+    )
+    showResyncToast()
+    await Promise.resolve()
+    assert.equal(notification.options.duration, Infinity)
+    assert.equal(notification.options.type, 'warning')
+    assert.equal(notification.options.title, i18n.global.t('session.resync.title'))
+    assert.ok((await renderToString(h(notification.content))).includes(i18n.global.t('session.resync.description')))
+    i18n.global.locale.value = 'pt-BR'
+    const body = notification.content.setup()()
+    assert.equal(body.children[0].children, i18n.global.t('session.resync.description'))
+    const link = body.children[1]
+    assert.equal(link.type, 'a')
+    assert.equal(link.children, i18n.global.t('session.resync.reload'))
+    assert.notEqual(link.children, 'Reload now')
+    link.props.onClick({ preventDefault() { prevented = true } })
+    assert.equal(prevented, true)
+    assert.equal(reloads, 1)
 })

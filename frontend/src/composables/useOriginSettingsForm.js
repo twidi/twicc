@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 /**
  * The Settings form for the three public origins (External / Share / Peer).
  *
@@ -83,6 +84,17 @@ export function useOriginSettingsForm({
     const errors = fieldMap(() => ref(''))
     // Peer-only: plain HTTP is allowed but worth a warning, next to the error.
     const peerBaseUrlWarning = ref('')
+    const validationErrors = fieldMap(() => ref([]))
+    const displayErrors = fieldMap(field => computed(() => {
+        if (errors[field].value === NOT_CONNECTED_ERROR) return i18n.global.t('settings.origins.notConnected')
+        if (errors[field].value === CONNECTION_LOST_ERROR) return i18n.global.t('settings.origins.connectionLost')
+        if (errors[field].value === PUBLIC_ORIGIN_ERROR) return publicOriginErrorMessage('invalid_origin')
+        return validationErrors[field].value.length
+            ? originSettingErrorMessage(validationErrors[field].value, field, publicOriginErrorMessage)
+            : errors[field].value
+    }))
+    const displayPeerWarning = computed(() => peerBaseUrlWarning.value
+        ? i18n.global.t('settings.origins.plainHttp') : '')
     const peerBaseUrlConfirmation = ref(false)
 
     // Correlation ids of writes whose result has not arrived yet.
@@ -100,6 +112,7 @@ export function useOriginSettingsForm({
     /** Reload one field from the store — used when its Settings section opens. */
     function seedField(field) {
         inputs[field].value = storedValue(field)
+        validationErrors[field].value = []
         errors[field].value = storedOriginError(inputs[field].value)
         if (field === 'peerBaseUrl') peerBaseUrlConfirmation.value = false
     }
@@ -109,6 +122,7 @@ export function useOriginSettingsForm({
         discardOriginSettingWrites(pendingWrites, field)
         inputs[field].value = value
         errors[field].value = ''
+        validationErrors[field].value = []
         if (field === 'peerBaseUrl') {
             peerBaseUrlWarning.value = ''
             peerBaseUrlConfirmation.value = false
@@ -116,11 +130,13 @@ export function useOriginSettingsForm({
     }
 
     function setError(field, fieldErrors) {
-        errors[field].value = originSettingErrorMessage(fieldErrors, field, publicOriginErrorMessage)
+        errors[field].value = ''
+        validationErrors[field].value = fieldErrors
     }
 
     async function apply(field, confirmed = false) {
         errors[field].value = ''
+        validationErrors[field].value = []
         if (field === 'peerBaseUrl') {
             peerBaseUrlWarning.value = ''
             peerBaseUrlConfirmation.value = false
@@ -161,6 +177,7 @@ export function useOriginSettingsForm({
         if (!result) return
         if (result.status === 'accepted') {
             errors[result.field].value = ''
+            validationErrors[result.field].value = []
             inputs[result.field].value = result.value
             return
         }
@@ -180,6 +197,7 @@ export function useOriginSettingsForm({
     function prefillPeerBaseUrlFromPublic() {
         inputs.peerBaseUrl.value = usablePublicOrigin(settingsStore.getPublicBaseUrl)
         errors.peerBaseUrl.value = ''
+        validationErrors.peerBaseUrl.value = []
         peerBaseUrlWarning.value = ''
         peerBaseUrlConfirmation.value = false
     }
@@ -223,7 +241,7 @@ export function useOriginSettingsForm({
     return {
         // Field-indexed handles, for callers that iterate (and for tests).
         originInputs: inputs,
-        originErrors: errors,
+        originErrors: displayErrors,
         applyOriginSetting: apply,
         onOriginInputChange: onInputChange,
         handleOriginSettingsResult: handleResult,
@@ -234,20 +252,20 @@ export function useOriginSettingsForm({
 
         // Flat handles, bound directly by the template.
         publicBaseUrlInput: inputs.publicBaseUrl,
-        publicBaseUrlError: errors.publicBaseUrl,
+        publicBaseUrlError: displayErrors.publicBaseUrl,
         publicBaseUrlApplyIcon: applyIcon.publicBaseUrl,
         onPublicBaseUrlInputChange: event => onInputChange('publicBaseUrl', event.target.value),
         onPublicBaseUrlApply: () => apply('publicBaseUrl'),
 
         shareBaseUrlInput: inputs.shareBaseUrl,
-        shareBaseUrlError: errors.shareBaseUrl,
+        shareBaseUrlError: displayErrors.shareBaseUrl,
         shareBaseUrlApplyIcon: applyIcon.shareBaseUrl,
         onShareBaseUrlInputChange: event => onInputChange('shareBaseUrl', event.target.value),
         onShareBaseUrlApply: () => apply('shareBaseUrl'),
 
         peerBaseUrlInput: inputs.peerBaseUrl,
-        peerBaseUrlError: errors.peerBaseUrl,
-        peerBaseUrlWarning,
+        peerBaseUrlError: displayErrors.peerBaseUrl,
+        peerBaseUrlWarning: displayPeerWarning,
         peerBaseUrlConfirmation,
         peerBaseUrlApplyIcon: applyIcon.peerBaseUrl,
         onPeerBaseUrlInputChange: event => onInputChange('peerBaseUrl', event.target.value),

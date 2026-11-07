@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 import { computed, ref } from 'vue'
 import { useTipsStore } from '../../stores/tips'
 import { useSettingsStore } from '../../stores/settings'
@@ -16,7 +18,7 @@ const env = computed(() => ({
 }))
 
 const availableTips = computed(() => {
-    return tipsStore.getAvailableTips(env.value).sort((a, b) => a.title.localeCompare(b.title))
+    return tipsStore.getAvailableTips(env.value).sort((a, b) => a.title.localeCompare(b.title, locale.value))
 })
 
 const seenCount = computed(() => Object.keys(tipsStore.seenTips).length)
@@ -27,10 +29,10 @@ function isSeen(key) {
 
 function seenLabel(key) {
     const iso = tipsStore.seenTips[key]
-    if (!iso) return 'Not yet seen'
+    if (!iso) return t('settings.tips.notSeen')
     const ms = Date.parse(iso)
-    if (Number.isNaN(ms)) return 'Seen'
-    return `Seen ${formatRelative(ms)}`
+    if (Number.isNaN(ms)) return t('settings.tips.seen')
+    return t('settings.tips.seenAt', { time: formatRelative(ms) })
 }
 
 function onToggle(value) {

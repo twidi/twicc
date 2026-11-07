@@ -5,7 +5,10 @@
  * Shows the target directory and a "Copy path" button that copies the full
  * path of the uploaded file.
  */
+import { useI18n } from 'vue-i18n'
 import { toast } from '../../composables/useToast'
+
+const { t } = useI18n()
 
 const props = defineProps({
     /** Notivue item reference — passed by CustomNotification (unused here, but standard signature) */
@@ -28,9 +31,9 @@ const props = defineProps({
 async function copyPath() {
     try {
         await navigator.clipboard.writeText(props.path)
-        toast.success('Path copied to clipboard', { duration: 2000 })
+        toast.success(t('files.clipboard.pathCopied'), { duration: 2000 })
     } catch {
-        toast.error('Could not copy the path', { duration: 2000 })
+        toast.error(t('files.clipboard.pathFailed'), { duration: 2000 })
     }
 }
 </script>

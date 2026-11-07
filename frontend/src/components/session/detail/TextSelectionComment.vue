@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 // TextSelectionComment.vue — Ephemeral floating widget for commenting on selected
 // text in the session view. Shows a small button on text selection; clicking it
 // expands a panel with a textarea + "Add to message" action. Nothing is persisted
@@ -87,9 +89,10 @@ const selectionSendPending = computed(() => !!selectionCommentSend?.pending)
 const settingsStore = useSettingsStore()
 
 const placeholderText = computed(() => {
-    if (settingsStore.isTouchDevice) return 'Optional comment...'
-    const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
-    return `Optional comment... (${keys} to add to message)`
+    if (settingsStore.isTouchDevice) return t('session.selectionComment.placeholder')
+    const shortcuts = settingsStore.isMac ? ['⌘↵', 'Ctrl↵'] : ['Ctrl↵', 'Meta↵']
+    const keys = new Intl.ListFormat(locale.value, { type: 'disjunction' }).format(shortcuts)
+    return t('session.selectionComment.keyboardPlaceholder', { keys })
 })
 
 // The help hint (discard-on-click-outside note) is dismissible: once
@@ -419,7 +422,7 @@ async function onIncludeToggle(event) {
     try {
         const dataUrl = await props.captureScreenshot()
         if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-            throw new Error('no image returned')
+            throw new Error(t('session.selectionComment.noImage'))
         }
         // Persistent mode: another element was picked meanwhile — the capture
         // shows the wrong one.
@@ -429,7 +432,7 @@ async function onIncludeToggle(event) {
         // worth a toast (the watcher above already reset the switch).
         if (version !== selectionVersion || !ready.value) return
         includeScreenshot.value = false
-        toast.error(`Screenshot failed: ${e?.message || e}`)
+        toast.error(t('session.selectionComment.screenshotFailed', { error: e?.message || e }))
     } finally {
         if (version === selectionVersion) screenshotLoading.value = false
     }
@@ -441,7 +444,7 @@ async function onIncludeToggle(event) {
 // guard there keeps the widget alive while the preview is up.
 function openShotPreview() {
     if (!screenshotDataUrl.value) return
-    openMediaPreview([{ type: 'image', src: screenshotDataUrl.value, name: 'Screenshot' }])
+    openMediaPreview([{ type: 'image', src: screenshotDataUrl.value, name: t('session.selectionComment.screenshot') }])
 }
 
 function getFormattedComment() {
@@ -478,8 +481,8 @@ async function sendToAgent() {
         })
     } catch (error) {
         toast.error(screenshot && attach
-            ? `Couldn't attach screenshot: ${error?.message || error}`
-            : `Couldn't send selection: ${error?.message || error}`)
+            ? t('session.selectionComment.attachFailed', { error: error?.message || error })
+            : t('session.selectionComment.sendFailed', { error: error?.message || error }))
     } finally {
         submitting.value = false
     }
@@ -499,7 +502,7 @@ async function addToMessage({ fromKeyboard = false } = {}) {
         }
     } catch (e) {
         submitting.value = false
-        toast.error(`Couldn't attach screenshot: ${e?.message || e}`)
+        toast.error(t('session.selectionComment.attachFailed', { error: e?.message || e }))
         return
     }
 
@@ -527,7 +530,7 @@ async function addToMessage({ fromKeyboard = false } = {}) {
 
 function copy() {
     navigator.clipboard.writeText(props.selectedText)
-    toast.success('Copied to clipboard', { duration: 2000 })
+    toast.success(t('session.selectionComment.copied'), { duration: 2000 })
     props.clearSourceSelection?.()
     close()
 }
@@ -626,9 +629,9 @@ defineExpose({ isExpanded: expanded })
                 variant="neutral"
                 appearance="filled"
                 size="small"
-                :aria-label="summaryGeneration.lookupFailed ? 'Retry summary availability' : 'Summarize selection'"
+                :aria-label="summaryGeneration.lookupFailed ? $t('session.summary.retryAvailability') : $t('session.selectionComment.summarize')"
                 :disabled="!summaryGeneration.available && !summaryGeneration.lookupFailed"
-                :title="summaryGeneration.lookupFailed ? `Retry summary availability: ${summaryGeneration.unavailableReason}` : summaryGeneration.available ? 'Summarize selection' : summaryGeneration.unavailableReason"
+                :title="summaryGeneration.lookupFailed ? $t('session.selectionComment.summaryRetryTooltip', { reason: summaryGeneration.unavailableReason }) : summaryGeneration.available ? $t('session.selectionComment.summarize') : summaryGeneration.unavailableReason"
                 @mousedown.prevent
                 @pointerdown="tapFallback.down('summary', $event)"
                 @pointerup="onTapUp('summary', $event)"

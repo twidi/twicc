@@ -378,7 +378,7 @@ test('an owned playback failure clears its owner', async () => {
     await until(() => fakePlayer.handlers)
     assert.equal(store.playback.owner, 'listener-a')
     fakePlayer.handlers.onError('refused')
-    assert.deepEqual(await pending, { ok: false, error: REFUSED })
+    assert.deepEqual(await pending, { ok: false, reason: 'refused', error: REFUSED })
     assert.equal(store.playback.owner, null)
     assert.equal(store.status, 'idle')
 })
@@ -555,7 +555,7 @@ test('an open failure suspends the pcm context', async () => {
 
 test('a pcm type without a rate and channels is refused', async () => {
     store._openSpeech = async () => opened('a1', 'audio/pcm')
-    assert.deepEqual(await store.play('hello'), { ok: false, error: REFUSED })
+    assert.deepEqual(await store.play('hello'), { ok: false, reason: 'refused', error: REFUSED })
     assert.deepEqual(fakePcmPlayer.calls, [])
     assert.deepEqual(fakePlayer.calls, [])
     assert.deepEqual(endings, ['a1'])
@@ -847,7 +847,7 @@ test('a refused play resolves REFUSED', async () => {
     const pending = store.play('hello')
     await until(() => fakePlayer.handlers)
     fakePlayer.handlers.onError('refused')
-    assert.deepEqual(await pending, { ok: false, error: REFUSED })
+    assert.deepEqual(await pending, { ok: false, reason: 'refused', error: REFUSED })
     assert.equal(store.status, 'idle')
 })
 

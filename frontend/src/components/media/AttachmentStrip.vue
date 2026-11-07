@@ -161,7 +161,7 @@ watch(() => props.items, (items) => {
                     <button
                         type="button"
                         class="strip-tile strip-tile-button"
-                        :aria-label="`Preview ${entry.item.name}`"
+                        :aria-label="$t('media.attachments.previewLabel', { name: entry.item.name })"
                         @click="openPreview(entry.item.id)"
                     >
                         <img :src="entry.thumbnail" :alt="entry.item.name" @error="onThumbnailError(entry.item.src)" />
@@ -172,7 +172,7 @@ watch(() => props.items, (items) => {
                     v-else-if="entry.request"
                     type="button"
                     class="strip-file strip-file-button is-link"
-                    :aria-label="`Open ${entry.item.name} in the Artifacts tab`"
+                    :aria-label="$t('media.attachments.openLabel', { name: entry.item.name })"
                     @click="openArtifact(entry.request)"
                 >
                     <span class="strip-tile strip-tile-icon">
@@ -198,17 +198,17 @@ watch(() => props.items, (items) => {
                     v-if="entry.tile.uploading"
                     class="strip-tile-progress"
                     :value="entry.tile.progress"
-                    :label="`Upload of ${entry.item.name}`"
+                    :label="$t('media.attachments.uploadLabel', { name: entry.item.name })"
                 ></wa-progress-bar>
                 <span v-if="entry.tile.error" class="strip-tile-badge">
-                    <wa-icon name="exclamation" :label="entry.tile.statusText || 'Upload failed'"></wa-icon>
+                    <wa-icon name="exclamation" :label="entry.tile.statusText || $t('media.attachments.uploadFailed')"></wa-icon>
                 </span>
                 <template v-if="entry.tile.retryable">
                     <button
                         :id="entry.retryId"
                         type="button"
                         class="strip-tile-action strip-tile-retry"
-                        :aria-label="`Retry the upload of ${entry.item.name}`"
+                        :aria-label="$t('media.attachments.retryLabel', { name: entry.item.name })"
                         @click="retry(entry.item.id)"
                     >
                         <wa-icon name="rotate-right"></wa-icon>
@@ -220,7 +220,7 @@ watch(() => props.items, (items) => {
                     :ref="el => setRemoveButton(entry.item.id, el)"
                     type="button"
                     class="strip-tile-action strip-tile-remove"
-                    :aria-label="`Remove ${entry.item.name}`"
+                    :aria-label="$t('media.attachments.removeLabel', { name: entry.item.name })"
                     @click="remove(entry.item.id)"
                 >
                     <wa-icon name="xmark"></wa-icon>

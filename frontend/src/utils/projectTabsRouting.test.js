@@ -49,10 +49,10 @@ test('the palette: a Timeline command on the bare route and a Stats command on /
     const block = (id) => source.slice(source.indexOf(`id: '${id}'`), source.indexOf('},\n        {', source.indexOf(`id: '${id}'`)))
     const timeline = block('nav.project-tab.timeline')
     const stats = block('nav.project-tab.stats')
-    assert.match(timeline, /label: 'Switch to Timeline Tab'/)
+    assert.match(timeline, /labelKey: 'navigation.commands.timelineTab'/)
     assert.match(timeline, /when: \(\) => isOnProjectDetail\(\)/)
     assert.match(timeline, /isAllProjectsMode\(\) \? 'projects-all' : 'project'/)
-    assert.match(stats, /label: 'Switch to Stats Tab'/)
+    assert.match(stats, /labelKey: 'navigation.commands.statsTab'/)
     assert.match(stats, /when: \(\) => isOnProjectDetail\(\)/)
     assert.match(stats, /isAllProjectsMode\(\) \? 'projects-stats' : 'project-stats'/)
     assert.ok(source.indexOf("id: 'nav.project-tab.timeline'") < source.indexOf("id: 'nav.project-tab.stats'"))
@@ -60,8 +60,8 @@ test('the palette: a Timeline command on the bare route and a Stats command on /
 
 test('the settings panel text follows the fixed map', () => {
     const source = read('../components/app/SettingsPopover.vue')
-    assert.match(source, /label: 'Project home tabs'/)
-    assert.match(source, /keys: \['Alt', 'Shift', '1–5'\], description: 'Jump to tab \(Timeline, Stats, Files, Git, Terminal\)'/)
+    assert.match(source, /label: t\('settings.shortcuts.groups.projectTabs'\)/)
+    assert.match(source, /keys: \['Alt', 'Shift', '1–5'\], description: t\('settings.shortcuts.jumpProjectTab'\)/)
     assert.ok(!source.includes("'1–4'"))
 })
 

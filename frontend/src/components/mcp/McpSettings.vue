@@ -1,4 +1,5 @@
 <script setup>
+import { localUiMessage } from '../../i18n/uiMessages'
 /**
  * McpSettings - the "External MCP" settings section: dedicated origin,
  * enablement, the copyable endpoint, and the entry point to the connection
@@ -47,7 +48,7 @@ async function toggle(event) {
 
 async function copyEndpoint() {
     try { await navigator.clipboard.writeText(endpoint.value) }
-    catch { store.error = 'Cannot copy the MCP URL. Select and copy it manually.' }
+    catch { store.error = localUiMessage('mcp.settings.copyError') }
 }
 
 function manage() { window.dispatchEvent(new CustomEvent('twicc:open-mcp-manager')) }

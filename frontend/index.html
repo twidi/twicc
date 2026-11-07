@@ -5,6 +5,13 @@
     <!-- This guard must run before every stylesheet and module, including the entry module. -->
     <script data-twicc-recovery>
     (() => {
+        // Vite embeds this catalog subset so recovery does not need any app bundle.
+        const messages = "__TWICC_RECOVERY_MESSAGES__";
+        let locale = 'en';
+        try {
+            if (JSON.parse(window.localStorage.getItem('twicc-settings') || '{}')?.locale === 'pt-BR') locale = 'pt-BR';
+        } catch {}
+        document.documentElement.lang = locale;
         const key = 'twicc:asset-recovery';
         const parameter = '__twicc_reload';
         const cooldown = 60000;
@@ -27,13 +34,15 @@
         }
 
         function showError() {
+            const currentLocale = document.documentElement.lang;
+            const recoveryLocale = Object.hasOwn(messages, currentLocale) ? currentLocale : 'en';
             const panel = document.createElement('section');
             panel.setAttribute('role', 'alert');
             panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:2rem;text-align:center;font:16px system-ui,sans-serif;color-scheme:light dark;background:Canvas;color:CanvasText';
             const message = document.createElement('p');
-            message.textContent = 'TwiCC could not load its files. Check your connection, then retry.';
+            message.textContent = messages[recoveryLocale]['startup.assetsUnavailable.description'];
             const button = document.createElement('button');
-            button.textContent = 'Retry';
+            button.textContent = messages[recoveryLocale]['common.actions.retry'];
             button.style.cssText = 'padding:.75rem 1.5rem;font:inherit;cursor:pointer';
             button.onclick = reload;
             panel.append(message, button);

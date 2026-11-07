@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Shared error parsing utilities.
  *
@@ -62,7 +64,7 @@ export function parseApiErrorString(text) {
  */
 export function parseProcessError(errorMessage) {
     if (!errorMessage) {
-        return { summary: 'Unknown error', status: null }
+        return { summary: i18n.global.t('common.errors.unknown'), status: null }
     }
 
     // Strip the "Claude reported error: " prefix if present

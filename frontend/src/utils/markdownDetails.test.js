@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import MarkdownIt from 'markdown-it'
 
 import { installDetailsBlocks } from './markdownDetails.js'
+import { i18n } from '../i18n/index.js'
 
 function makeMd() {
     const md = MarkdownIt({ html: false, breaks: true })
@@ -34,7 +35,7 @@ test('summary on the opener line and the open attribute', () => {
 
 test('defaults the summary when absent', () => {
     const html = makeMd().render('<details>\n\nbody\n\n</details>')
-    assert.match(html, /<span slot="summary">Details<\/span>/)
+    assert.match(html, /<span slot="summary" data-default-summary>Details<\/span>/)
 })
 
 test('keeps a fenced block and nested details intact', () => {
@@ -80,4 +81,18 @@ test('leaves non-matching HTML escaped', () => {
     assert.match(md.render('<details>trailing</details>'), /&lt;details&gt;/)
     assert.match(md.render('<div>x</div>'), /&lt;div&gt;/)
     assert.match(md.render('    <details>\n    code'), /<pre>/)
+})
+
+
+test('generated summaries follow the locale while explicit summaries preserve user content', context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    const md = makeMd()
+    i18n.global.locale.value = 'pt-BR'
+    const fallback = md.render('<details>\n\nbody\n\n</details>')
+    assert.ok(fallback.includes(`<span slot="summary" data-default-summary>${i18n.global.t('session.markdown.details')}</span>`))
+    assert.ok(!fallback.includes('>Details</span>'))
+    const explicit = md.render('<details>\n<summary>Details</summary>\n\nbody\n\n</details>')
+    assert.ok(explicit.includes('<span slot="summary">Details</span>'))
+    assert.ok(!explicit.includes('data-default-summary'))
 })

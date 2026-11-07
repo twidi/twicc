@@ -71,12 +71,12 @@ const BUILT_IN_TABS = {
     },
 }
 
-const TAB_LABELS = {
-    essentials: 'Essentials',
-    more: 'More',
-    fkeys: 'F-keys',
-    custom: 'Custom',
-    snippets: 'Snippets',
+const TAB_LABEL_KEYS = {
+    essentials: 'terminal.extraKeys.tabs.essentials',
+    more: 'terminal.extraKeys.tabs.more',
+    fkeys: 'terminal.extraKeys.tabs.functionKeys',
+    custom: 'terminal.extraKeys.tabs.custom',
+    snippets: 'terminal.extraKeys.tabs.snippets',
 }
 
 const tabIds = computed(() => {
@@ -223,7 +223,7 @@ function keyClasses(keyDef) {
                 :class="{ active: activeTab === id }"
                 @pointerdown.prevent="activeTab = id"
             >
-                {{ TAB_LABELS[id] }}
+                {{ $t(TAB_LABEL_KEYS[id]) }}
             </button>
         </div>
 
@@ -237,7 +237,7 @@ function keyClasses(keyDef) {
                         :class="keyClasses(keyDef)"
                         @click="handlePasteClick"
                     >
-                        {{ keyDef.label }}
+                        {{ $t('terminal.extraKeys.paste') }}
                     </button>
                     <!-- Modifier button -->
                     <button

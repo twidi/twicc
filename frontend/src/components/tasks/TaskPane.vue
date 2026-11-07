@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { n } = useI18n()
 // Read-only view of a session's latest task/todo/plan snapshot, rendered with
 // the SAME provider-agnostic component as the conversation timeline
 // (TodoContent). The data lives on Session.tasks — normalised across providers
@@ -33,7 +35,7 @@ const progress = computed(() => countTasks(tasks.value?.items))
         </div>
         <template v-else>
             <div v-if="progress.total > 0" class="task-progress">
-                <span class="task-progress-label">{{ $t('session.tasks.progress', { done: progress.done, total: progress.total }) }}</span>
+                <span class="task-progress-label">{{ $t('session.tasks.progress', { done: n(progress.done), total: n(progress.total) }) }}</span>
                 <div
                     class="task-progress-track"
                     role="progressbar"

@@ -32,7 +32,7 @@ import { useActionsRowLabels } from '../../../composables/useActionsRowLabels'
 import { useCodeCommentsStore } from '../../../stores/codeComments'
 import { getSessionUnavailableReason } from '../../../utils/sessionAvailability.js'
 
-const { t } = useI18n()
+const { t, n, locale } = useI18n()
 
 const props = defineProps({
     sessionId: {
@@ -108,7 +108,7 @@ const isProviderEnabled = computed(() => {
 const displayName = computed(() => {
     if (props.mode === 'subagent') {
         const { name, isFallback } = getAgentDisplay(props.sessionId, store)
-        return isFallback ? `Agent "${name}"` : name
+        return isFallback ? t('session.agent.fallbackName', { name }) : name
     }
     // For draft sessions without a title, show "New session"
     if (session.value?.draft && !session.value?.title) {
@@ -158,7 +158,7 @@ const contextUsagePercentage = computed(() => {
 const contextUsageTooltip = computed(() => {
     const helpers = getProviderHelpers(session.value?.provider)
     const label = helpers?.getChoiceLabel('context_max', contextMax.value) || `${Math.round(contextMax.value / 1000)}K`
-    return `Context window usage (${label} max)`
+    return t('session.stats.context.usageTooltip', { maximum: label })
 })
 
 // Get indicator color for context usage based on thresholds
@@ -187,7 +187,7 @@ const displayDirectory = computed(() => {
 function copyToClipboard(value, label) {
     if (!value) return
     navigator.clipboard.writeText(value)
-    toast.success(`${label} copied to clipboard`, { duration: 2000 })
+    toast.success(t(label), { duration: 2000 })
 }
 
 // Directory split in "parent folders" + "last folder" so the template can emphasise the folder
@@ -252,15 +252,15 @@ function formatMemory(bytes) {
     const gb = mb / 1024
 
     if (gb >= 1) {
-        return `${gb.toFixed(1)} GB`
+        return `${n(gb, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`
     }
     if (mb >= 10) {
-        return `${Math.round(mb)} MB`
+        return `${n(Math.round(mb))} MB`
     }
     if (mb >= 1) {
-        return `${mb.toFixed(1)} MB`
+        return `${n(mb, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`
     }
-    return `${Math.round(kb)} KB`
+    return `${n(Math.round(kb))} KB`
 }
 
 // Only assistant_turn should animate
@@ -397,7 +397,7 @@ function toggleCompact() {
 const actionsRef = ref(null)
 const actionsLabels = useActionsRowLabels(headerRef, actionsRef, () => [
     props.sessionId, session.value?.draft, session.value?.ephemeral, session.value?.archived,
-    settingsStore.isDevMode, compactHeight.value, rootFontSizePx.value,
+    settingsStore.isDevMode, compactHeight.value, rootFontSizePx.value, locale.value,
 ])
 
 // The compact panel is a popup: a click anywhere else closes it. The panel is
@@ -717,13 +717,13 @@ defineExpose({
                  branch. For a draft, displayDirectory falls back to the project path and there is no
                  branch yet, so only the folder shows. -->
             <div v-if="displayDirectory || session.git_branch" class="session-git-info">
-                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory" @click="copyToClipboard(displayDirectory, 'Directory')">
+                <span v-if="displayDirectory" :id="`session-header-${sessionId}-git-directory`" class="git-info-item git-directory" @click="copyToClipboard(displayDirectory, 'session.directory.copied')">
                     <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
                     <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
                 </span>
                 <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
 
-                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch" @click="copyToClipboard(session.git_branch, 'Branch')">
+                <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch" @click="copyToClipboard(session.git_branch, 'session.git.branchCopied')">
                     <wa-icon auto-width name="code-branch"></wa-icon>
                     <span class="git-branch-name">{{ session.git_branch }}</span>
                 </span>

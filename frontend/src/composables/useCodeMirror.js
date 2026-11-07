@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 // frontend/src/composables/useCodeMirror.js
 // Foundation composable for CodeMirror 6 editors.
 // Provides language resolution, theme/font extensions, and a reactive extension
@@ -6,14 +7,49 @@
 import { watch } from 'vue'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, dropCursor, rectangularSelection, crosshairCursor } from '@codemirror/view'
-import { foldGutter, indentOnInput, bracketMatching, indentUnit } from '@codemirror/language'
+import { codeFolding, foldEffect, foldedRanges, unfoldEffect, foldGutter, indentOnInput, bracketMatching, indentUnit } from '@codemirror/language'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { indentWithTab } from '@codemirror/commands'
-import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, closeSearchPanel, searchPanelOpen, getSearchQuery, setSearchQuery } from '@codemirror/search'
 import { minimalSetup } from 'codemirror'
 import { githubDarkInit, githubLightInit } from '@uiw/codemirror-theme-github'
 import { getLanguageFromPath } from '../utils/languages'
 import { getSurfaceColor, getSelectionColor } from '../utils/theme'
+
+const EDITOR_PHRASE_KEYS = {
+    "Find": "session.editor.phrases.find",
+    "Replace": "session.editor.phrases.replaceInput",
+    "next": "session.editor.phrases.next",
+    "previous": "session.editor.phrases.previous",
+    "all": "session.editor.phrases.all",
+    "match case": "session.editor.phrases.matchCase",
+    "regexp": "session.editor.phrases.regexp",
+    "by word": "session.editor.phrases.byWord",
+    "replace": "session.editor.phrases.replace",
+    "replace all": "session.editor.phrases.replaceAll",
+    "close": "session.editor.phrases.close",
+    "Go to line": "session.editor.phrases.goToLine",
+    "go": "session.editor.phrases.go",
+    "Control character": "session.editor.phrases.controlCharacter",
+    "Selection deleted": "session.editor.phrases.selectionDeleted",
+    "Folded lines": "session.editor.phrases.foldedLines",
+    "Unfolded lines": "session.editor.phrases.unfoldedLines",
+    "to": "session.editor.phrases.to",
+    "folded code": "session.editor.phrases.foldedCode",
+    "unfold": "session.editor.phrases.unfold",
+    "Fold line": "session.editor.phrases.foldLine",
+    "Unfold line": "session.editor.phrases.unfoldLine",
+    "Completions": "session.editor.phrases.completions",
+    "replaced match on line $": "session.editor.phrases.replacedLine",
+    "replaced $ matches": "session.editor.phrases.replacedMatches",
+    "current match": "session.editor.phrases.currentMatch",
+    "on line": "session.editor.phrases.onLine"
+}
+
+function editorPhrases() {
+    return EditorState.phrases.of(Object.fromEntries(Object.entries(EDITOR_PHRASE_KEYS)
+        .map(([phrase, key]) => [phrase, i18n.global.t(key)])))
+}
 
 // ─── a) Language map ─────────────────────────────────────────────────────────
 
@@ -238,7 +274,6 @@ const STATIC_EXTENSIONS = [
     rectangularSelection(),
     crosshairCursor(),
     indentOnInput(),
-    foldGutter(),
     search(),
     highlightSelectionMatches(),
     highlightActiveLineGutter(),
@@ -371,6 +406,7 @@ export function detectIndent(content) {
  */
 export function useCodeMirrorExtensions(options, { initialTheme = false, initialFontSize = 16 } = {}) {
     // ── Compartments ─────────────────────────────────────────────────────────
+    const localeCompartment = new Compartment()
     const languageCompartment = new Compartment()
     const themeCompartment = new Compartment()
     const fontSizeCompartment = new Compartment()
@@ -389,6 +425,10 @@ export function useCodeMirrorExtensions(options, { initialTheme = false, initial
     // renders correctly on first paint, without waiting for useSettingsWatcher.
     const extensions = [
         ...STATIC_EXTENSIONS,
+        localeCompartment.of([editorPhrases(), foldGutter(), codeFolding({
+            // A new phrase facet value gives folded placeholders a new widget identity.
+            preparePlaceholder: state => state.facet(EditorState.phrases),
+        })]),
         languageCompartment.of([]),  // populated async after view creation
         themeCompartment.of(createThemeExtension(initialTheme === 'dark' || initialTheme === true)),
         fontSizeCompartment.of(createFontSizeExtension(initialFontSize)),
@@ -421,6 +461,19 @@ export function useCodeMirrorExtensions(options, { initialTheme = false, initial
         }
 
         switch (option) {
+            case 'locale': {
+                const folds = []
+                foldedRanges(view.state).between(0, view.state.doc.length, (from, to) => folds.push({ from, to }))
+                view.dispatch({ effects: [
+                    localeCompartment.reconfigure([editorPhrases(), foldGutter(), codeFolding({
+                        preparePlaceholder: state => state.facet(EditorState.phrases),
+                    })]),
+                    // Recreate only folding widgets. The document, history and selection stay in state.
+                    ...folds.map(range => unfoldEffect.of(range)),
+                    ...folds.map(range => foldEffect.of(range)),
+                ] })
+                break
+            }
             case 'language':
                 dispatch(languageCompartment, value ?? [])
                 break
@@ -492,7 +545,50 @@ export function useSettingsWatcher(getView, cmExtensions, overrides = {}) {
     //   useCodeMirror.js → stores/settings.js  (fine, no back-edge)
     // But if settings.js ever imports from this file, we'd get a cycle.
     // Using async import() here ensures no module-level static edge.
-    const stops = []
+    const stops = [watch(i18n.global.locale, () => {
+        const view = getView()
+        if (!view) return
+        const previousControlPhrase = view.state.phrase('Control character')
+        const searchWasOpen = searchPanelOpen(view.state)
+        const focused = view.dom.ownerDocument.activeElement
+        const searchQuery = searchWasOpen ? getSearchQuery(view.state) : null
+        const searchInput = searchWasOpen && focused?.closest?.('.cm-search')
+            ? { name: focused.name, from: focused.selectionStart, to: focused.selectionEnd, direction: focused.selectionDirection } : null
+        cmExtensions.reconfigure(view, 'locale')
+        // These native controls create DOM only when they first open.
+        const lineDialog = view.dom.querySelector('.cm-goto-line')
+        if (lineDialog) {
+            const label = lineDialog.querySelector('label')
+            if (label?.firstChild?.nodeType === 3) label.firstChild.nodeValue = `${view.state.phrase('Go to line')}: `
+            const submit = lineDialog.querySelector('button[type=submit]')
+            if (submit) submit.textContent = view.state.phrase('go')
+            lineDialog.querySelector('.cm-dialog-close')?.setAttribute('aria-label', view.state.phrase('close'))
+        }
+        for (const list of view.dom.querySelectorAll('.cm-tooltip-autocomplete [role=listbox]')) {
+            list.setAttribute('aria-label', view.state.phrase('Completions'))
+        }
+        for (const marker of view.dom.querySelectorAll('.cm-specialChar')) {
+            const suffix = marker.getAttribute('aria-label')?.slice(previousControlPhrase.length) || ''
+            const description = view.state.phrase('Control character') + suffix
+            marker.setAttribute('aria-label', description)
+            marker.title = description
+        }
+        // CodeMirror builds its search labels only when the panel opens.
+        // The query lives in editor state, so reopening preserves it.
+        if (searchWasOpen) {
+            closeSearchPanel(view)
+            openSearchPanel(view)
+            view.dispatch({ effects: setSearchQuery.of(searchQuery) })
+            const target = searchInput ? [...view.dom.querySelectorAll('.cm-search input')]
+                .find(input => input.name === searchInput.name) : focused
+            if (target?.isConnected) {
+                target.focus({ preventScroll: true })
+                if (searchInput && typeof searchInput.from === 'number') {
+                    target.setSelectionRange(searchInput.from, searchInput.to, searchInput.direction)
+                }
+            }
+        }
+    })]
     let cancelled = false
     ;(async () => {
         const { useSettingsStore } = await import('../stores/settings')

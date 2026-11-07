@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
+
 import { computed, ref, useId } from 'vue'
 import AppTooltip from '../ui/AppTooltip.vue'
 import MarkdownContent from '../ui/MarkdownContent.vue'
@@ -48,11 +51,11 @@ const emit = defineEmits(['toggle-git-log'])
 /** Display text for the commit selector. */
 const commitLabel = computed(() => {
     if (!props.selectedCommit) {
-        return 'Uncommitted changes'
+        return t('git.index.uncommittedChanges')
     }
     // For the index pseudo-commit
     if (props.selectedCommit.hash === 'index') {
-        return 'Uncommitted changes'
+        return t('git.index.uncommittedChanges')
     }
     return props.selectedCommit.message || props.selectedCommit.hash
 })
@@ -96,7 +99,7 @@ function formatGitDate(isoStr) {
     if (!isoStr) return null
     const d = new Date(isoStr)
     if (isNaN(d)) return isoStr
-    return d.toLocaleString(navigator.language, {
+    return d.toLocaleString(locale.value, {
         day: '2-digit', month: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit',
     })
@@ -131,7 +134,7 @@ function toggleGitLog() {
 function copyBranch(event) {
     event.stopPropagation()
     navigator.clipboard.writeText(props.selectedBranch)
-    toast.success('Branch copied to clipboard', { duration: 2000 })
+    toast.success(t('git.clipboard.branchCopied'), { duration: 2000 })
 }
 
 function stopProp(event) {
@@ -142,7 +145,7 @@ function copyHash() {
     const hash = commitDetail.value?.hash || props.selectedCommit?.hash
     if (!hash) return
     navigator.clipboard.writeText(hash)
-    toast.success('Commit hash copied to clipboard', { duration: 2000 })
+    toast.success(t('git.clipboard.hashCopied'), { duration: 2000 })
 }
 </script>
 

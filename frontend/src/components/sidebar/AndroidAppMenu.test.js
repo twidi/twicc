@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { localUiError, localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -26,7 +27,7 @@ async function load(nativeState = state, forceFixed = false, backendVersion = '1
     const script = compileScript(descriptor, { id: 'menu' }).content
         .replace(/^import .*$/gm, '').replace('export default', 'const component =')
     const component = runInNewContext(`${script}; component`, {
-        ...Vue, markAndroidApp() {}, observeAndroidPush() {}, disposeAndroidPush() {}, BrandLogo: {}, getAndroidAppClient: () => client,
+        useI18n: () => createAppI18n().global, ...Vue, localUiError, localUiMessage, resolveUiMessage, markAndroidApp() {}, observeAndroidPush() {}, disposeAndroidPush() {}, BrandLogo: {}, getAndroidAppClient: () => client,
         watchAndroidMenuPlacement: (_, onTarget) => { hooks.target = onTarget; return { refresh() {}, stop() {} } },
         onMounted: fn => { hooks.mount = fn }, onBeforeUnmount: fn => { hooks.unmount = fn },
         window: { addEventListener() {}, removeEventListener() {}, getComputedStyle: button => ({ visibility: button.visibility }) },

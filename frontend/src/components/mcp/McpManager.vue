@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * McpManager - external MCP connections and pending approval requests.
  *
@@ -58,9 +60,9 @@ const notifications = new Map()
 const active = computed(() => store.connections.filter(connection => !connection.revoked))
 const revoked = computed(() => store.connections.filter(connection => connection.revoked))
 const groups = computed(() => [
-    { title: 'Pending requests', kind: 'request', rows: store.pendingRequests },
-    { title: 'Active', kind: 'connection', rows: active.value },
-    { title: 'Revoked', kind: 'connection', rows: revoked.value },
+    { title: t('mcp.manager.pendingRequests'), kind: 'request', rows: store.pendingRequests },
+    { title: t('mcp.connection.state.active'), kind: 'connection', rows: active.value },
+    { title: t('mcp.connection.state.revoked'), kind: 'connection', rows: revoked.value },
 ].filter(group => group.rows.length))
 const current = computed(() => (selected.value?.kind === 'request'
     ? store.pendingRequests.find(row => row.id === selected.value.id)
@@ -71,8 +73,8 @@ const current = computed(() => (selected.value?.kind === 'request'
 const configLoaded = computed(() => 'mcpBaseUrl' in store.config)
 const disabledReason = computed(() => {
     if (!configLoaded.value) return ''
-    if (!store.config.mcpBaseUrl) return 'External MCP is disabled — set your MCP address in Settings › External MCP first.'
-    if (!store.config.externalMcpEnabled) return 'External MCP is turned off — enable it in Settings › External MCP to accept new connections.'
+    if (!store.config.mcpBaseUrl) return t('mcp.manager.addressRequired')
+    if (!store.config.externalMcpEnabled) return t('mcp.manager.enableRequired')
     return ''
 })
 
@@ -82,9 +84,9 @@ function tagVariant(group, entry) {
     return entry.active ? 'success' : 'warning'
 }
 function tagLabel(group, entry) {
-    if (group.kind === 'request') return 'pending'
-    if (entry.revoked) return 'revoked'
-    return entry.active ? 'active' : 'connecting'
+    if (group.kind === 'request') return t('mcp.manager.tag.pending')
+    if (entry.revoked) return t('mcp.manager.tag.revoked')
+    return entry.active ? t('mcp.manager.tag.active') : t('mcp.manager.tag.connecting')
 }
 
 // A pending request lapses on a deadline nobody broadcasts (see the store's
@@ -151,7 +153,7 @@ watch(() => store.pendingRequests, requests => {
     }
     for (const request of requests) {
         if (!notifications.has(request.id)) notifications.set(request.id, toast.custom(McpToast, {
-            title: 'MCP connection request', duration: Infinity, persistent: true,
+            titleKey: 'mcp.manager.requestToast', duration: Infinity, persistent: true,
             props: { requestId: request.id, clientName: request.client_name },
         }))
     }
@@ -163,7 +165,7 @@ watch(() => store.config.externalMcpEnabled && store.protection.paused ? store.p
     incident => {
         securityNotification?.clear()
         securityNotification = incident ? toast.custom(McpSecurityToast, {
-            title: 'Suspected OAuth abuse', duration: Infinity, persistent: true,
+            titleKey: 'mcp.manager.securityToast', duration: Infinity, persistent: true,
         }) : null
     })
 
@@ -221,7 +223,7 @@ onBeforeUnmount(() => {
                     <wa-tag :variant="tagVariant(group, entry)" size="small">{{ tagLabel(group, entry) }}</wa-tag>
                     <span
                         class="mcp-connection__time"
-                        :title="group.kind === 'request' || !entry.last_used_at ? 'Created' : 'Last used'"
+                        :title="group.kind === 'request' || !entry.last_used_at ? $t('mcp.connection.created') : $t('mcp.connection.lastUsed')"
                     >
                         <wa-relative-time
                             v-if="useRelativeTime"

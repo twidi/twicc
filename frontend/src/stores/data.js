@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiError } from '../i18n/uiMessages.js'
 import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
 import { buildTimelineUrl } from '../utils/timeline/feed.js'
 import { normalizeChatTimestamp, placeSessionEvents } from '../utils/chatEvents/placement.js'
@@ -18,7 +20,7 @@ import { agentLinkState, setAgentLink as cacheAgentLink, clearAgentLinks as clea
 import { createEphemeralActions, createSendFailureActions, ephemeralFields, serializeDraftSession, isLaunchedEphemeral } from '../utils/ephemeralSessions'
 import { saveEphemeralControl, deleteEphemeralControl, loadEphemeralControls } from '../utils/ephemeralStorage'
 import { defineStore, acceptHMRUpdate } from 'pinia'
-import { toRaw } from 'vue'
+import { toRaw, watch } from 'vue'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
 import { getProjectActivityIndex } from '../utils/projectProcessActivity.js'
 import { getPrefixSuffixBoundaries } from '../utils/contentVisibility'
@@ -206,10 +208,21 @@ async function readJsonWithProgress(res, onBytes) {
  * cut off mid-download); a retry superseding a load never reaches here. `fetch` rejects with a
  * `TypeError` when the network is unreachable.
  */
+function fetchFailureDescriptor(error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { key: 'session.data.errors.noData' }
+    if (error instanceof TypeError) return { key: 'session.data.errors.network' }
+    if (error?.uiMessageKey) return { key: error.uiMessageKey, params: error.uiMessageParams }
+    return error?.message ? null : { key: 'session.data.errors.unexpected' }
+}
+
+function localizedFetchError(key, params) {
+    return Object.assign(new Error(i18n.global.t(key, params || {})), { uiMessageKey: key, uiMessageParams: params })
+}
+
 function describeFetchFailure(error) {
-    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'No data received for 30 seconds'
-    if (error instanceof TypeError) return 'Network unreachable'
-    return error?.message || 'Unexpected error'
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return i18n.global.t('session.data.errors.noData')
+    if (error instanceof TypeError) return i18n.global.t('session.data.errors.network')
+    return error?.message || i18n.global.t('session.data.errors.unexpected')
 }
 const itemsCoverageInFlight = new Map() // sessionId -> Promise<boolean>
 // Sessions whose last recompute allows a DEBUG_ONLY-only append to skip the next one.
@@ -1307,8 +1320,11 @@ export const useDataStore = defineStore('data', {
             state.localState.projects[projectId]?.sessionsLoadingError ?? false,
         didSessionItemsFailToLoad: (state) => (sessionId) =>
             state.localState.sessions[sessionId]?.itemsLoadingError ?? false,
-        getSessionItemsLoadingErrorReason: (state) => (sessionId) =>
-            state.localState.sessions[sessionId]?.itemsLoadingErrorReason ?? null,
+        getSessionItemsLoadingErrorReason: (state) => (sessionId) => {
+            const local = state.localState.sessions[sessionId]
+            const descriptor = local?.itemsLoadingErrorMessage
+            return descriptor ? i18n.global.t(descriptor.key, descriptor.params || {}) : local?.itemsLoadingErrorReason ?? null
+        },
 
         // Local state getters - fetched
         areProjectSessionsFetched: (state) => (projectId) =>
@@ -1589,7 +1605,7 @@ export const useDataStore = defineStore('data', {
         ...createSessionEventHistoryActions({ fetchPage: async ({ sessionId, before, afterId, signal }) => {
             // Opening a session keeps its full event history, independently of timeline display preferences.
             const response = await apiFetch(buildTimelineUrl({ query: { session: sessionId, view: 'without_turns', include_muted: '1' }, limit: 100, before, afterId }), { signal })
-            if (!response.ok) throw new Error(`Session event request failed (${response.status})`)
+            if (!response.ok) throw localUiError('session.data.errors.events', { status: response.status })
             return response.json()
         } }),
 
@@ -1785,7 +1801,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to update project')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.updateProject'))
                 }
 
                 const updatedProject = await response.json()
@@ -2678,7 +2694,7 @@ export const useDataStore = defineStore('data', {
             const res = await apiFetch(url)
 
             if (!res.ok) {
-                throw new Error(`Failed to load sessions: ${res.status}`)
+                throw localUiError('session.data.errors.sessions', { status: res.status })
             }
 
             return await res.json()
@@ -2878,7 +2894,7 @@ export const useDataStore = defineStore('data', {
                     return null
                 }
                 if (!response.ok) {
-                    throw new Error(`Failed to load session: ${response.status}`)
+                    throw localUiError('session.data.errors.session', { status: response.status })
                 }
                 const session = await response.json()
                 this.updateSessionFromServer(session)
@@ -2921,7 +2937,7 @@ export const useDataStore = defineStore('data', {
             try {
                 const res = await apiFetch(`/api/artifact-bookmarks/${id}/`)
                 if (res.status === 404) { delete this.artifactBookmarks[id]; return null }
-                if (!res.ok) throw new Error(`Failed to load artifact bookmark: ${res.status}`)
+                if (!res.ok) throw localUiError('session.data.errors.bookmark', { status: res.status })
                 const b = await res.json()
                 this.artifactBookmarks[b.id] = b
                 return b
@@ -2940,7 +2956,7 @@ export const useDataStore = defineStore('data', {
             })
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}))
-                throw new Error(err?.error || 'Failed to create artifact bookmark')
+                throw err?.error ? new Error(err.error) : localUiError('session.data.errors.createBookmark')
             }
             const b = await res.json()
             // Through the live entry point: the artifacts list plays the new row's entrance.
@@ -2953,14 +2969,14 @@ export const useDataStore = defineStore('data', {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(patch),
             })
-            if (!res.ok) throw new Error('Failed to update artifact bookmark')
+            if (!res.ok) throw localUiError('session.data.errors.updateBookmark')
             const b = await res.json()
             this.artifactBookmarks[b.id] = b
             return b
         },
         async deleteArtifactBookmark(id) {
             const res = await apiFetch(`/api/artifact-bookmarks/${id}/`, { method: 'DELETE' })
-            if (!res.ok) throw new Error('Failed to delete artifact bookmark')
+            if (!res.ok) throw localUiError('session.data.errors.deleteBookmark')
             delete this.artifactBookmarks[id]
         },
         /**
@@ -3021,7 +3037,7 @@ export const useDataStore = defineStore('data', {
                                 onBytes(0)
                                 if (!res.ok) {
                                     await applyUnavailableRefusal(res, refusal)
-                                    throw new Error(`Server error (${res.status})`)
+                                    throw localizedFetchError('session.data.errors.server', { status: res.status })
                                 }
                                 return readJsonWithProgress(res, onBytes)
                             }),
@@ -3029,7 +3045,7 @@ export const useDataStore = defineStore('data', {
                     // An unloaded session, or a load superseded by a retry, must not be populated by an old load.
                     if (controller.signal.aborted || this.localState.sessions[sessionId] !== local
                         || !local.itemsFetched) return false
-                    if (!metadata) throw metadataFailure || new Error('Could not load the session structure')
+                    if (!metadata) throw metadataFailure || localizedFetchError('session.data.errors.structure')
 
                     // Keep live lines delivered during a first load, including
                     // lines beyond the REST snapshots' bounds.
@@ -3042,6 +3058,7 @@ export const useDataStore = defineStore('data', {
                     this.recomputeVisualItems(sessionId)
                     local.itemsLoadingError = false
                     local.itemsLoadingErrorReason = null
+                    local.itemsLoadingErrorMessage = null
                     this.auditInflightSends(sessionId)
                     return true
                 } catch (error) {
@@ -3059,6 +3076,7 @@ export const useDataStore = defineStore('data', {
                         local.itemsFetched = wasFetched
                         local.itemsLoadingError = true
                         local.itemsLoadingErrorReason = describeFetchFailure(error)
+                        local.itemsLoadingErrorMessage = fetchFailureDescriptor(error)
                     }
                     return false
                 } finally {
@@ -3884,8 +3902,19 @@ export const useDataStore = defineStore('data', {
          * Recompute visual items for ALL sessions.
          * Called when display mode changes (affects all sessions).
          */
+        refreshLocalizedSyntheticContent() {
+            for (const [sessionId, session] of Object.entries(this.sessions)) {
+                const prompt = session.ephemeralPrompt
+                const item = this.localState.optimisticMessages[sessionId]
+                if (!isLaunchedEphemeral(session) || !prompt || !item) continue
+                setParsedContent(item, getProviderHelpers(session.provider).buildEphemeralUserMessageContent(
+                    prompt.text, prompt.attachments, session.ephemeralStartedAt,
+                ))
+            }
+        },
+
         recomputeAllVisualItems() {
-            for (const sessionId of new Set([...Object.keys(this.sessionItems), ...Object.keys(this.localState.sessionEventHistory || {})])) {
+            for (const sessionId of new Set([...Object.keys(this.sessionItems), ...Object.keys(this.localState.sessionEventHistory || {}), ...Object.keys(this.localState.optimisticMessages || {})])) {
                 this.recomputeVisualItems(sessionId)
             }
         },
@@ -4175,7 +4204,9 @@ export const useDataStore = defineStore('data', {
             const code = info.code || 'send_failed'
             if (code !== 'send_uncertain') this.releaseAsyncQuestionSendLock(sessionId, requestId)
             else this.lockAsyncQuestionSend(sessionId, requestId, entry.asyncQuestions || entry.async_questions)
-            const message = info.message || 'The message could not be delivered.'
+            const messageKey = info.messageKey || (!info.message ? 'session.sendFailure.notDelivered' : null)
+            const messageParams = info.messageParams || {}
+            const message = messageKey ? i18n.global.t(messageKey, messageParams) : info.message
             const failedAt = info.failedAt || Date.now()
             const failedSend = {
                 requestId,
@@ -4186,6 +4217,8 @@ export const useDataStore = defineStore('data', {
                 mediasDropped: !!entry.mediasDropped,
                 code,
                 message,
+                messageKey,
+                messageParams,
                 sentAt: entry.sentAt || failedAt,
                 asyncQuestions: entry.async_questions || entry.asyncQuestions,
                 rawText: entry.rawText,
@@ -4198,7 +4231,7 @@ export const useDataStore = defineStore('data', {
                 this.localState.failedSends[sessionId] = {}
             }
             this.localState.failedSends[sessionId][requestId] = failedSend
-            saveInflightSend(requestId, { ...entry, failed: { code, message, failedAt } }).catch(err =>
+            saveInflightSend(requestId, { ...entry, failed: { code, message, messageKey, messageParams, failedAt } }).catch(err =>
                 console.warn('Failed to persist send failure:', err)
             )
             this.recomputeVisualItems(sessionId)
@@ -4240,6 +4273,8 @@ export const useDataStore = defineStore('data', {
                 text: failedSend.text,
                 code: failedSend.code,
                 message: failedSend.message,
+                messageKey: failedSend.messageKey,
+                messageParams: failedSend.messageParams,
                 mediasDropped: failedSend.mediasDropped,
                 sentAt: failedSend.sentAt,
             }
@@ -4322,7 +4357,7 @@ export const useDataStore = defineStore('data', {
                     continue
                 }
                 if (retainsAsyncQuestionSend(entry) && ['staged', 'dispatched'].includes(entry.status)) {
-                    this._applySendFailure(requestId, entry, { code: 'send_uncertain', message: 'Delivery is not confirmed. Waiting for source evidence.' })
+                    this._applySendFailure(requestId, entry, { code: 'send_uncertain', message: i18n.global.t('session.sendFailure.waitingEvidence'), messageKey: 'session.sendFailure.waitingEvidence' })
                     continue
                 }
                 if (!inflightSends.has(requestId)) inflightSends.set(requestId, entry)
@@ -4394,13 +4429,13 @@ export const useDataStore = defineStore('data', {
                 if (linesToFetch.some(n => itemsNow[n - 1] && !hasContent(itemsNow[n - 1]))) return
             }
 
-            const message = 'This message could not be confirmed as delivered — '
-                + 'it may never have reached the agent (interrupted connection?).'
+            const messageKey = 'session.sendFailure.unconfirmed'
+            const message = i18n.global.t(messageKey)
             for (const id of candidates) {
                 const entry = inflightSends.get(id)
                 if (!entry || !this.shouldAuditInflightSend(id)) continue // resolved or accepted during the content fetch
                 inflightSends.delete(id)
-                this._applySendFailure(id, entry, { code: 'delivery_unconfirmed', message })
+                this._applySendFailure(id, entry, { code: 'delivery_unconfirmed', message, messageKey })
             }
         },
 
@@ -4673,7 +4708,7 @@ export const useDataStore = defineStore('data', {
                     if (!await applyUnavailableRefusal(res, refusal)) {
                         console.error('Failed to load session metadata:', res.status, res.statusText)
                     }
-                    onFailure?.(new Error(`Server error (${res.status})`))
+                    onFailure?.(localizedFetchError('session.data.errors.server', { status: res.status }))
                     return null
                 }
                 return await readJsonWithProgress(res, onBytes)
@@ -6173,7 +6208,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to rename session')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.rename'))
                 }
 
                 const updatedSession = await response.json()
@@ -6221,7 +6256,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to dismiss the goal')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.dismissGoal'))
                 }
 
                 const updatedSession = await response.json()
@@ -6429,7 +6464,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to update session')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -6540,7 +6575,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to update session')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -6583,7 +6618,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || 'Failed to update session')
+                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -7336,7 +7371,12 @@ export const useDataStore = defineStore('data', {
  *   tree roots among active entries, shared by every sidebar list and the rail.
  */
 export function initDataStore() {
-    getTreeRootWindows(useDataStore())
+    const store = useDataStore()
+    getTreeRootWindows(store)
+    watch(i18n.global.locale, () => {
+        store.refreshLocalizedSyntheticContent()
+        store.recomputeAllVisualItems()
+    })
 }
 
 // Pinia HMR support: hot-replace actions/getters without full page reload.

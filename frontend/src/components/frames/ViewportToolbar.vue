@@ -61,9 +61,9 @@ function swap() {
         >
             <wa-option
                 v-for="preset in VIEWPORT_PRESETS"
-                :key="preset.label"
+                :key="`${preset.width}x${preset.height}`"
                 :value="`${preset.width}x${preset.height}`"
-            >{{ preset.label }} — {{ preset.width }}×{{ preset.height }}</wa-option>
+            >{{ preset.labelKey ? $t(preset.labelKey) : preset.label }} — {{ preset.width }}×{{ preset.height }}</wa-option>
         </wa-select>
         <div class="viewport-dimensions">
             <wa-input

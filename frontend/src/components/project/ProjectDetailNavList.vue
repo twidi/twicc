@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ProjectDetailNavList.vue - Horizontal navigation list of workspaces and/or projects.
 //
 // Quick navigation displayed in header panels:
@@ -87,7 +89,7 @@ const items = computed(() => {
         result.push({
             type: 'up',
             id: 'all-projects',
-            label: 'All Projects',
+            label: t('project.scope.all'),
             to: { name: 'projects-all' },
         })
 
@@ -112,7 +114,7 @@ const items = computed(() => {
         result.push({
             type: 'up',
             id: 'all-projects',
-            label: 'All Projects',
+            label: t('project.scope.all'),
             to: { name: 'projects-all' },
         })
 

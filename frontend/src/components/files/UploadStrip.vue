@@ -120,7 +120,7 @@ function onResumeInputChange(event) {
                         <wa-progress-bar
                             class="upload-progress"
                             :value="line.percent"
-                            :label="`Upload of ${line.entry.filename}: ${line.percent}%`"
+                            :label="$t('files.upload.progressLabel', { name: line.entry.filename, percent: line.percent })"
                         ></wa-progress-bar>
                         <span class="upload-percent">{{ line.percent }}%</span>
                         <span v-if="line.actions.text" class="upload-state">{{ line.actions.text }}</span>
@@ -149,7 +149,7 @@ function onResumeInputChange(event) {
                                 size="small"
                                 appearance="plain"
                                 class="upload-cancel"
-                                :aria-label="`Cancel the upload of ${line.entry.filename}`"
+                                :aria-label="$t('files.upload.cancelLabel', { name: line.entry.filename })"
                                 @click="uploads.cancel(line.entry.key)"
                             ><wa-icon name="xmark" :label="$t('common.actions.cancel')"></wa-icon></wa-button>
                         </div>

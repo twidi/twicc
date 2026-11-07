@@ -21,7 +21,9 @@ function compileProtection() {
         templateOptions: { compilerOptions: { isCustomElement } },
     }).content
         .replace(/from (['"])vue\1/g, `from '${import.meta.resolve('vue')}'`)
+    .replace(/from (['"])vue-i18n\1/g, `from '${import.meta.resolve('vue-i18n')}'`)
         .replace("from '../../stores/mcp'", `from '${new URL('../../stores/mcp.js', import.meta.url)}'`)
+    .replace(/from (['"])\.\.\/\.\.\/i18n\/uiMessages(?:\.js)?\1/g, `from '${new URL('../../i18n/uiMessages.js', import.meta.url)}'`)
 }
 const protectionModule = dataModule(compileProtection())
 const { descriptor } = parse(fs.readFileSync(componentUrl, 'utf8'), {
@@ -33,7 +35,9 @@ const compiled = compileScript(descriptor, {
     templateOptions: { compilerOptions: { isCustomElement } },
 }).content
     .replace(/from (['"])vue\1/g, `from '${import.meta.resolve('vue')}'`)
+    .replace(/from (['"])vue-i18n\1/g, `from '${import.meta.resolve('vue-i18n')}'`)
     .replace("from '../../stores/mcp'", `from '${new URL('../../stores/mcp.js', import.meta.url)}'`)
+    .replace(/from (['"])\.\.\/\.\.\/i18n\/uiMessages(?:\.js)?\1/g, `from '${new URL('../../i18n/uiMessages.js', import.meta.url)}'`)
     .replace("from '../help/HelpFeatureLink.vue'", `from '${dataModule('export default { render: () => null }')}'`)
     .replace("from './McpProtection.vue'", `from '${protectionModule}'`)
 const component = (await import(dataModule(compiled))).default

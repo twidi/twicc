@@ -1,4 +1,9 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 // Provider-agnostic dialog to manage the agent settings presets of a given
 // provider. Opens the list view by default; "Add" / "Edit" switch to a form
 // built on the shared matrix design: the model × effort picker (matrix +
@@ -45,7 +50,7 @@ const emit = defineEmits(['update:open'])
 const providerHelpers = computed(() => getProviderHelpers(props.provider))
 const presetsStore = useAgentSettingsPresetsStore()
 const benchmarkTaskStore = useBenchmarkTaskStore()
-const providerLabel = computed(() => providerHelpers.value?.constructor?.label ?? 'Agent')
+const providerLabel = computed(() => providerHelpers.value?.constructor?.label ?? t('settings.presets.agent'))
 
 // Preset records use historical key names (``model``, ``thinking``) while
 // the helpers' rendering hooks are keyed on wire names
@@ -82,7 +87,7 @@ function presetSummary(preset) {
         defaults: presetDefaults.value,
         untrusted: props.untrusted,
     })
-    return parts.length ? parts : [{ text: 'all default' }]
+    return parts.length ? parts : [{ text: t('settings.presets.allDefault') }]
 }
 
 const view = ref('list')
@@ -97,8 +102,8 @@ const submitButtonRef = ref(null)
 const presets = computed(() => presetsStore.getPresets(props.provider))
 
 const dialogLabel = computed(() => {
-    if (view.value === 'list') return `${providerLabel.value} settings presets`
-    return editIndex.value === null ? 'Add preset' : 'Edit preset'
+    if (view.value === 'list') return t('settings.presets.dialogTitle', { provider: providerLabel.value })
+    return editIndex.value === null ? t('settings.presets.addTitle') : t('settings.presets.editTitle')
 })
 
 // Fields owned by the shared picker (matrix + switches). Everything the picker
@@ -256,15 +261,15 @@ function handleSave() {
     errorMessage.value = ''
     const trimmedName = formData.value.name.trim()
     if (!trimmedName) {
-        errorMessage.value = 'Name is required'
+        errorMessage.value = localUiMessage('settings.presets.nameRequired')
         return
     }
     if (RESERVED_PRESET_NAMES.has(trimmedName)) {
-        errorMessage.value = `"${trimmedName}" is a reserved name and cannot be used`
+        errorMessage.value = localUiMessage('settings.presets.reservedName', { name: trimmedName })
         return
     }
     if (presetsStore.findIndexByName(props.provider, trimmedName, editIndex.value) !== -1) {
-        errorMessage.value = 'A preset with this name already exists'
+        errorMessage.value = localUiMessage('settings.presets.duplicateName')
         return
     }
     // Picker-owned fields have no explicit "Default" control: a value equal to
@@ -395,7 +400,7 @@ function handleSave() {
                 </wa-select>
             </div>
 
-            <wa-callout v-if="errorMessage" variant="danger">{{ errorMessage }}</wa-callout>
+            <wa-callout v-if="errorMessage" variant="danger">{{ resolveUiMessage(errorMessage) }}</wa-callout>
         </form>
 
         <div slot="footer" class="dialog-footer">

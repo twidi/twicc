@@ -1,18 +1,20 @@
-import { formatFullDateTime } from './date'
+import { i18n } from '../i18n/index.js'
+
+import { formatFullDateTime } from './date.js'
 
 // Duration presets shared by full-text search, bulk archive, and the sidebar's
 // session-list date separators. Order matches display order in lists, from the
 // most recent threshold to the oldest.
 export const DURATION_PRESETS = [
-    { value: '24h', label: '24 hours' },
-    { value: '3d',  label: '3 days' },
-    { value: '7d',  label: '7 days' },
-    { value: '10d', label: '10 days' },
-    { value: '20d', label: '20 days' },
-    { value: '30d', label: '30 days' },
-    { value: '2m',  label: '2 months' },
-    { value: '3m',  label: '3 months' },
-    { value: '6m',  label: '6 months' },
+    { value: '24h', get label() { return i18n.global.t('common.dates.presets.24hours') } },
+    { value: '3d',  get label() { return i18n.global.t('common.dates.presets.3days') } },
+    { value: '7d',  get label() { return i18n.global.t('common.dates.presets.7days') } },
+    { value: '10d', get label() { return i18n.global.t('common.dates.presets.10days') } },
+    { value: '20d', get label() { return i18n.global.t('common.dates.presets.20days') } },
+    { value: '30d', get label() { return i18n.global.t('common.dates.presets.30days') } },
+    { value: '2m',  get label() { return i18n.global.t('common.dates.presets.2months') } },
+    { value: '3m',  get label() { return i18n.global.t('common.dates.presets.3months') } },
+    { value: '6m',  get label() { return i18n.global.t('common.dates.presets.6months') } },
 ]
 
 /**
@@ -99,7 +101,7 @@ export function sessionPresetBucket(mtime, nowMs) {
 export function dateBucketSeparator(ts, nowMs) {
     const { key, duration, cutoffMs } = sessionPresetBucket(ts, nowMs)
     const entry = key === 'recent'
-        ? { label: 'Last 24 hours' }
-        : { label: duration, prefix: 'Older than ', title: formatFullDateTime(cutoffMs) }
+        ? { label: i18n.global.t('common.dates.presets.last24Hours') }
+        : { label: duration, fullLabel: i18n.global.t('common.dates.presets.olderThan', { duration }), prefix: i18n.global.t('common.dates.presets.olderThan', { duration: '' }), title: formatFullDateTime(cutoffMs) }
     return { key, entry }
 }

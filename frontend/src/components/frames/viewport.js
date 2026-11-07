@@ -11,9 +11,9 @@ export const VIEWPORT_PRESETS = [
     { label: 'iPad Mini', width: 768, height: 1024 },
     { label: 'iPad Pro 11"', width: 834, height: 1194 },
     { label: 'iPad Pro 12.9"', width: 1024, height: 1366 },
-    { label: 'Laptop', width: 1280, height: 800 },
-    { label: 'Laptop L', width: 1440, height: 900 },
-    { label: 'Desktop', width: 1920, height: 1080 },
+    { labelKey: 'preview.viewport.presets.laptop', width: 1280, height: 800 },
+    { labelKey: 'preview.viewport.presets.largeLaptop', width: 1440, height: 900 },
+    { labelKey: 'preview.viewport.presets.desktop', width: 1920, height: 1080 },
 ]
 
 export const VIEWPORT_MIN = 100

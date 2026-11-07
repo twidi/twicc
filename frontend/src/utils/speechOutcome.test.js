@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { i18n } from '../i18n/index.js'
 import {
     REFUSED,
     UNREACHABLE,
@@ -50,9 +51,22 @@ test('error + failed shows the backend message', () => {
 
 test('error refused + complete or running is a refusal', () => {
     for (const state of ['complete', 'running']) {
-        assert.deepEqual(speechEndResult(refused(true), backend(state)), { ok: false, error: REFUSED }, state)
-        assert.deepEqual(speechEndResult(refused(false), backend(state)), { ok: false, error: REFUSED }, state)
+        assert.deepEqual(speechEndResult(refused(true), backend(state)), { ok: false, reason: 'refused', error: REFUSED }, state)
+        assert.deepEqual(speechEndResult(refused(false), backend(state)), { ok: false, reason: 'refused', error: REFUSED }, state)
     }
+})
+
+test('a localized refusal retains its stable control reason', context => {
+    const previous = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previous })
+    i18n.global.locale.value = 'pt-BR'
+    const result = speechEndResult(refused(), backend('complete'))
+    assert.equal(result.reason, 'refused')
+    assert.equal(result.error, i18n.global.t('session.speech.errors.refused'))
+    assert.notEqual(result.error, REFUSED)
+    assert.deepEqual(speechEndResult(refused(), backend('failed', 'Provider-specific error')), {
+        ok: false, error: 'Provider-specific error',
+    })
 })
 
 test('error network after the start + complete or running is a cut', () => {

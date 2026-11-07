@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Display metadata for a command-invocation prefix (the character a user types
  * to invoke a provider command, e.g. ``/`` for Claude Code; Codex also has
@@ -19,12 +21,12 @@ const ACTIVATION_CHAR_METADATA = {
     '/': {
         icon: 'slash',
         iconStyle: { transform: 'scaleX(-1)' },
-        tooltip: 'Insert a /command',
+        get tooltip() { return i18n.global.t('composer.commands.insertSlash') },
     },
     '$': {
         icon: 'dollar-sign',
         iconStyle: null,
-        tooltip: 'Insert a $command',
+        get tooltip() { return i18n.global.t('composer.commands.insertDollar') },
     },
 }
 

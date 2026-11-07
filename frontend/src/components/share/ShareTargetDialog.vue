@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Per-target share manager: lists every share of one session / artifact and lets
 // the owner manage them or create another. Opened by the share buttons when the
 // target already has links (an empty target jumps straight to the create dialog).
@@ -42,7 +44,7 @@ async function pushAll() {
     pushingAll.value = true
     try {
         await Promise.all(outdated.value.map((s) => store.propagateShare(s.id)))
-        toast.success('Update pushed to all outdated links')
+        toast.success(t('sharing.links.updatedAll'))
     } finally {
         pushingAll.value = false
     }
@@ -66,7 +68,7 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
 
 <template>
     <wa-dialog ref="dialogRef" :open="open"
-               :label="defaultTitle ? `Shared links — ${defaultTitle}` : 'Shared links'"
+               :label="defaultTitle ? $t('sharing.links.targetTitle', { title: defaultTitle }) : $t('sharing.links.title')"
                style="--width: min(720px, calc(100vw - 2rem))" @wa-hide="onHide">
         <wa-callout v-if="outdated.length" variant="warning" class="outdated-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>

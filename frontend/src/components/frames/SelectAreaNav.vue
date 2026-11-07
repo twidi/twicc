@@ -5,6 +5,7 @@
 // and executes the emitted actions. Lives in the `header` slot of the
 // persistent TextSelectionComment.
 import { computed, useId } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AppTooltip from '../ui/AppTooltip.vue'
 import { useSettingsStore } from '../../stores/settings'
 
@@ -18,8 +19,9 @@ defineEmits(['nav', 'clear'])
 
 const instanceId = useId()
 const settingsStore = useSettingsStore()
+const { t } = useI18n()
 
-const hint = computed(() => (settingsStore.isTouchDevice ? 'Tap an element to comment' : 'Click an element to comment'))
+const hint = computed(() => (t(settingsStore.isTouchDevice ? 'preview.selection.tapHint' : 'preview.selection.clickHint')))
 </script>
 
 <template>

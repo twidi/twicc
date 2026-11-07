@@ -1,3 +1,4 @@
+import { i18n } from '../../i18n/index.js'
 /**
  * The task a parent agent hands to a subagent (Codex multi-agent v2).
  *
@@ -25,7 +26,7 @@ const NEW_TASK_HEADER = 'Message Type: NEW_TASK'
 const TASK_NAME_PREFIX = 'Task name:'
 const PAYLOAD_MARKER = 'Payload:'
 const HEADER_LINE_RE = /^(Message Type|Task name|Sender|Payload):/
-const ENCRYPTED_NOTICE = 'The prompt is encrypted by Codex and cannot be displayed.'
+const ENCRYPTED_NOTICE_KEY = 'session.messages.encryptedPrompt'
 
 /** The envelope's leading plain-text block, or '' for any other shape. */
 function envelopeText(parsed) {
@@ -66,6 +67,6 @@ export function interAgentTaskMarkdown(parsed) {
     const parts = []
     if (taskName) parts.push(`**${taskName}**`)
     if (payload) parts.push(payload)
-    else if (encrypted) parts.push(`*${ENCRYPTED_NOTICE}*`)
+    else if (encrypted) parts.push(`*${i18n.global.t(ENCRYPTED_NOTICE_KEY)}*`)
     return parts.join('\n\n')
 }

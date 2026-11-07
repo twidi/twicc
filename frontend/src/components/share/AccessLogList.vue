@@ -1,11 +1,13 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { n, locale } = useI18n()
 // Shared date/ip/user-agent access log list: per-share "Recent views"
 // (ShareListPanel) and per-host denial details (ArtifactBookmarkDialog).
 // Rows: { at, ip, user_agent, count? } — count > 1 shows a ×N badge.
 import { ref } from 'vue'
 
 defineProps({ entries: { type: Array, required: true } })
-function when(iso) { try { return new Date(iso).toLocaleString() } catch { return '' } }
+function when(iso) { try { return new Date(iso).toLocaleString(locale.value) } catch { return '' } }
 const expandedUa = ref({})
 function toggleUa(i) { expandedUa.value[i] = !expandedUa.value[i] }
 </script>
@@ -14,11 +16,11 @@ function toggleUa(i) { expandedUa.value[i] = !expandedUa.value[i] }
     <ul class="access-log">
         <li v-for="(a, i) in entries" :key="i">
             <span class="when">{{ when(a.at) }}</span>
-            <span v-if="a.count > 1" class="count">×{{ a.count }}</span>
+            <span v-if="a.count > 1" class="count">×{{ n(a.count) }}</span>
             <code v-if="a.ip">{{ a.ip }}</code>
             <span v-if="a.user_agent" class="ua" :class="{ 'ua--expanded': expandedUa[i] }"
                   role="button" tabindex="0"
-                  :title="expandedUa[i] ? '' : 'Click to show the full user agent'"
+                  :title="expandedUa[i] ? '' : $t('sharing.access.showUserAgent')"
                   @click="toggleUa(i)" @keydown.enter="toggleUa(i)">{{ a.user_agent }}</span>
         </li>
     </ul>

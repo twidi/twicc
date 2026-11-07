@@ -1,6 +1,10 @@
 <script setup>
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { apiFetch } from '../../utils/api'
+
+const { t } = useI18n()
 
 const props = defineProps({
     apiPrefix: { type: String, required: true },
@@ -47,14 +51,14 @@ async function handleDelete() {
             body: JSON.stringify({ path: targetPath.value }),
         })
     } catch {
-        errorMessage.value = 'Network error. Please try again.'
+        errorMessage.value = localUiMessage('files.errors.networkRetry')
         isDeleting.value = false
         return
     }
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || `Failed to delete (HTTP ${response.status})`
+        errorMessage.value = data.error || localUiMessage('files.errors.deleteHttp', { status: response.status })
         isDeleting.value = false
         return
     }
@@ -70,7 +74,7 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        :label="`Delete ${nodeType}`"
+        :label="$t(nodeType === 'directory' ? 'files.delete.title.directory' : 'files.delete.title.file')"
         class="delete-dialog"
     >
         <div class="dialog-content">
@@ -84,7 +88,7 @@ defineExpose({ open, close })
                 {{ $t('files.delete.directoryWarning') }}
             </p>
             <wa-callout v-if="errorMessage" variant="danger" size="small">
-                {{ errorMessage }}
+                {{ resolveUiMessage(errorMessage, { t }) }}
             </wa-callout>
         </div>
         <div slot="footer" class="dialog-footer">

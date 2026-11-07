@@ -1,4 +1,7 @@
 <script setup>
+import { localUiMessage, resolveUiMessage } from '../../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // The single home for managing the named-layouts catalog: rename + delete. Opened from both the
 // settings "Layouts" section and the main-area layout menu (one reusable surface — the rename/delete
 // logic lives here only). Visual language (action buttons, inline "Delete?" confirmation, icons)
@@ -6,7 +9,7 @@
 // project's default offers a single reassignment target before removal; resolution is
 // dangling-tolerant regardless, so the reassignment is cleanup, not correctness.
 import { ref, computed, nextTick } from 'vue'
-import { useLayoutsStore, SINGLE_PANE_ID, SINGLE_PANE_NAME } from '../../../stores/layouts'
+import { useLayoutsStore, SINGLE_PANE_ID } from '../../../stores/layouts'
 import { useSettingsStore } from '../../../stores/settings'
 import { useDataStore } from '../../../stores/data'
 import { apiFetch } from '../../../utils/api'
@@ -39,8 +42,8 @@ const namedLayouts = computed(() => layoutsStore.getAllLayouts)
 // going away). "Auto" is omitted when only the global default references the layout: the global
 // default has no parent scope to inherit from.
 const reassignOptions = computed(() => [
-    { id: SINGLE_PANE_ID, name: SINGLE_PANE_NAME },
-    ...(deleteRefs.value.projects.length ? [{ id: INHERIT, name: 'Auto (inherited from parent scope)' }] : []),
+    { id: SINGLE_PANE_ID, name: t('session.layout.singlePane') },
+    ...(deleteRefs.value.projects.length ? [{ id: INHERIT, name: t('session.layout.manage.inheritOption') }] : []),
     ...namedLayouts.value.filter((l) => l.id !== deletingId.value),
 ])
 
@@ -87,14 +90,14 @@ function commitRename() {
     const id = editingId.value
     const trimmed = editingName.value.trim()
     if (!trimmed) {
-        editError.value = 'Name cannot be empty.'
+        editError.value = localUiMessage('session.layout.errors.emptyName')
         return
     }
     const dup = namedLayouts.value.some(
         (l) => l.id !== id && l.name.trim().toLowerCase() === trimmed.toLowerCase(),
     )
     if (dup) {
-        editError.value = `A layout named "${trimmed}" already exists.`
+        editError.value = localUiMessage('session.layout.errors.duplicateName', { name: trimmed })
         return
     }
     layoutsStore.renameLayout(id, trimmed)
@@ -142,7 +145,7 @@ async function confirmDelete() {
                 }),
             )
         } catch {
-            deleteError.value = 'Could not reassign all projects. Please retry.'
+            deleteError.value = localUiMessage('session.layout.errors.reassignFailed')
             isDeleting.value = false
             return
         }
@@ -249,7 +252,7 @@ defineExpose({ open, close })
                         v-if="editingId === l.id && editError"
                         variant="danger"
                         size="small"
-                    >{{ editError }}</wa-callout>
+                    >{{ resolveUiMessage(editError) }}</wa-callout>
 
                     <!-- Reassignment, shown only when deleting a referenced layout. The inline
                          "Delete?" confirmation stays above; here we just collect the target. -->
@@ -274,7 +277,7 @@ defineExpose({ open, close })
                                 :label="o.name"
                             >{{ o.name }}</wa-option>
                         </wa-select>
-                        <wa-callout v-if="deleteError" variant="danger" size="small">{{ deleteError }}</wa-callout>
+                        <wa-callout v-if="deleteError" variant="danger" size="small">{{ resolveUiMessage(deleteError) }}</wa-callout>
                     </div>
                 </div>
             </div>

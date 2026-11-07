@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * PeerInboxRow — one message row of the peer inbox, in labelled lines.
  *
@@ -58,7 +60,7 @@ const peerLabel = computed(() => peersStore.peerLabel(props.message.peer_id))
  *  ate the width the peer name needs on a phone; the wording survives as the
  *  icon's label and tooltip. */
 const directionLabel = computed(() =>
-    isInbound.value ? `Received from ${peerLabel.value}` : `Sent to ${peerLabel.value}`
+    isInbound.value ? t('peer.routing.receivedFrom', { peer: peerLabel.value }) : t('peer.routing.sentTo', { peer: peerLabel.value })
 )
 
 // A pending inbound message is mail waiting to be opened; a resolved one is
@@ -97,8 +99,8 @@ const routes = computed(() => {
         lines.push({
             key: 'author',
             label: isInbound.value
-                ? `Written directly by ${peerLabel.value}'s user`
-                : 'Written directly by you',
+                ? t('peer.routing.peerUser', { peer: peerLabel.value })
+                : t('peer.routing.you'),
             title: '',
             display: '',
             projectId: null,
@@ -108,7 +110,7 @@ const routes = computed(() => {
     if (reply?.title) {
         lines.push({
             key: 'reply',
-            label: reply.direction === 'out' ? 'In reply to your' : 'In reply to their',
+            label: reply.direction === 'out' ? t('peer.routing.replyToYour') : t('peer.routing.replyToTheir'),
             title: reply.title,
             display: shortTitle(reply.title),
             projectId: null,
@@ -128,7 +130,7 @@ const routes = computed(() => {
     if (routing?.sessionId && !routing.fromConversation) {
         lines.push({
             key: 'local',
-            label: isInbound.value ? 'Delivered to session' : 'Sent from session',
+            label: isInbound.value ? t('peer.routing.deliveredToSession') : t('peer.routing.sentFromSession'),
             title: routing.sessionTitle,
             display: peerRoutingSessionTitle(routing),
             projectId: routing.projectId,
@@ -138,23 +140,23 @@ const routes = computed(() => {
         // message is about, by the nearest thread row that has one.
         lines.push({
             key: 'session',
-            label: 'Session',
+            label: t('peer.routing.session'),
             title: routing.sessionTitle,
             display: peerRoutingSessionTitle(routing),
             projectId: routing.projectId,
-            hint: 'from the conversation',
+            hint: t('peer.routing.fromConversation'),
         })
     } else if (routing?.projectId) {
         // A bare project: attached by hand, or inherited from a thread row
         // that only has one. The badge alone on its line.
         lines.push({
             key: 'project',
-            label: 'In project',
+            label: t('peer.routing.project'),
             title: '',
             display: '',
             projectId: routing.projectId,
             projectOnly: true,
-            hint: routing.fromConversation ? 'from the conversation' : '',
+            hint: routing.fromConversation ? t('peer.routing.fromConversation') : '',
         })
     }
     return lines
@@ -206,7 +208,7 @@ const timestampSeconds = computed(() =>
                 <wa-icon name="paperclip" auto-width></wa-icon>
                 {{ attachments.purged ? $t('peer.inbox.purgedAttachmentCount', { count: attachments.count }, attachments.count) : attachments.count }}
             </span>
-            <wa-tag v-if="showStatus" :variant="statusVariant" size="small">{{ message.status }}</wa-tag>
+            <wa-tag v-if="showStatus" :variant="statusVariant" size="small">{{ $t(`peer.message.status.${message.status}`) }}</wa-tag>
             <span v-if="date" class="pir__time">
                 <wa-relative-time
                     v-if="useRelativeTime"

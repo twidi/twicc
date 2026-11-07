@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, inject, onBeforeUnmount, useId, watch } from 'vue'
 import InlineArtifactFrameOwner from './InlineArtifactFrameOwner.vue'
 import FloatingPreviewTools from '../components/frames/FloatingPreviewTools.vue'
@@ -16,7 +18,7 @@ const expandPreviewHost = inject('expandPreviewHost', null)
 const host = installInlineRuntimeHost({ runtime: props.runtime, window, expandPreviewHost })
 const errorToolsId = useId()
 const errorActions = entry => [{ id: `inline-error-reload-${errorToolsId}-${entry.frameId}`,
-    label: 'Reload', icon: 'rotate-right', action: () => props.runtime.reload(entry.artifactKey) }]
+    label: t('common.actions.reload'), icon: 'rotate-right', action: () => props.runtime.reload(entry.artifactKey) }]
 const failedEntries = computed(() => [...props.runtime.entries.values()].filter(entry =>
     props.runtime.active.value && (entry.loadState === 'error' || entry.descriptor.status === 'error') && (entry.attachment && entry.geometryVisible || props.runtime.fullscreenArtifactKey.value === entry.artifactKey)))
 function errorStyle(entry) {

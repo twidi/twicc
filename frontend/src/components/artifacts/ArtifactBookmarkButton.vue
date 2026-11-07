@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ArtifactBookmarkButton.vue — an icon-only bookmark toggle, styled like the
 // session pin button (coloured when bookmarked, quiet/grey otherwise). Hosts the
 // create/edit dialog. Placed in the file-path header (desktop) and the mobile
@@ -51,17 +53,17 @@ const bookmark = computed(() => store.artifactBookmarkFor(props.sessionId, props
 const { pendingCount } = useNetworkDenials(bookmark)
 
 const BOOKMARK_TOOLTIP = {
-    project: 'Bookmarked in project',
-    workspace: 'Bookmarked in workspace',
-    all: 'Bookmarked everywhere',
+    project: 'artifacts.bookmarks.markedProject',
+    workspace: 'artifacts.bookmarks.markedWorkspace',
+    all: 'artifacts.bookmarks.markedAll',
 }
 const bookmarkTooltip = computed(() => {
     if (pendingCount.value > 0) {
-        return `${pendingCount.value} network host${pendingCount.value > 1 ? 's' : ''} awaiting your decision`
+        return t('artifacts.browser.pendingHosts', { count: pendingCount.value }, pendingCount.value)
     }
     return bookmark.value
-        ? (BOOKMARK_TOOLTIP[bookmark.value.scope] || 'Bookmarked')
-        : 'Bookmark this artifact'
+        ? t(BOOKMARK_TOOLTIP[bookmark.value.scope] || 'artifacts.bookmarks.marked')
+        : t('artifacts.bookmarks.addTooltip')
 })
 
 function openDialog() {
@@ -85,14 +87,14 @@ const shareVariant = computed(() =>
     outdatedShareCount.value > 0 ? 'warning' : (activeShareCount.value > 0 ? 'brand' : 'neutral')
 )
 const shareTooltip = computed(() => {
-    if (!sharingEnabled.value) return 'Configure a share host in Settings → Sharing to create links'
+    if (!sharingEnabled.value) return t('artifacts.sharing.configureLinks')
     if (outdatedShareCount.value > 0) {
-        return `Share artifact — ${outdatedShareCount.value} update${outdatedShareCount.value > 1 ? 's' : ''} to push`
+        return t('artifacts.browser.shareUpdates', { count: outdatedShareCount.value }, outdatedShareCount.value)
     }
     if (activeShareCount.value > 0) {
-        return `Share artifact (${activeShareCount.value} active link${activeShareCount.value > 1 ? 's' : ''})`
+        return t('artifacts.browser.shareLinks', { count: activeShareCount.value }, activeShareCount.value)
     }
-    return bookmark.value ? 'Share artifact' : 'Share artifact (bookmarks it first)'
+    return bookmark.value ? t('artifacts.sharing.share') : t('artifacts.sharing.bookmarkFirst')
 })
 async function shareArtifact() {
     if (!sharingEnabled.value) return
@@ -107,7 +109,7 @@ async function shareArtifact() {
                 sessionId: props.sessionId, relativePath: props.relativePath, name, scope: 'project',
             })
         } catch (err) {
-            toast.error(err?.message || 'Failed to bookmark artifact')
+            toast.error(err?.message || t('artifacts.bookmarks.errors.create'))
             return
         }
     }

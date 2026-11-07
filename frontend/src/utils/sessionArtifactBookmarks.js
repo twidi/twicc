@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 /**
  * Resolve the artifact bookmarks visible from a real project context. Session
  * tabs and the dedicated Artifacts view share these inclusion rules.
@@ -61,6 +63,6 @@ export function computeSessionArtifactBookmarks({
     return rows.sort((a, b) => {
         if (a.updated_at < b.updated_at) return 1
         if (a.updated_at > b.updated_at) return -1
-        return String(a.name || '').localeCompare(String(b.name || ''))
+        return String(a.name || '').localeCompare(String(b.name || ''), i18n.global.locale.value)
     })
 }

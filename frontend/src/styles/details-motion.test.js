@@ -67,7 +67,7 @@ test('motion.css: loading line, guarded by :has(), with its spinner keyframes', 
     assert.equal(before['border-block-start-color'], 'var(--wa-color-brand-fill-loud)')
     assert.equal(before.animation, 'motion-spin 2s linear infinite')
     const after = declarations(block(`${LOADING}::after`).body)
-    assert.equal(after.content, "'Loading...'")
+    assert.equal(after.content, 'var(--twicc-loading-label)')
     assert.equal(after.color, 'var(--wa-color-text-quiet)')
 
     const spin = block('@keyframes motion-spin')

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // ProjectDetailPanel.vue - Detail panel shown when no session is selected.
 // Delegates header display to ProjectDetailHeader, then shows tabbed content.
 
@@ -165,9 +167,9 @@ const filesAvailableRoots = computed(() => {
     // All-projects mode
     if (props.projectId === ALL_PROJECTS_ID) {
         if (!homeDir.value) return []
-        const roots = [{ key: 'home', label: 'Home directory', path: homeDir.value }]
+        const roots = [{ key: 'home', label: t('project.fileRoots.home'), path: homeDir.value }]
         if (homeDir.value !== '/') {
-            roots.push({ key: 'root', label: 'System root', path: '/' })
+            roots.push({ key: 'root', label: t('project.fileRoots.system'), path: '/' })
         }
         return roots
     }
@@ -177,7 +179,7 @@ const filesAvailableRoots = computed(() => {
         const roots = []
         const lca = terminalCwd.value  // reuse the LCA already computed for terminal
         if (!lca) return []
-        roots.push({ key: 'common', label: 'Common directory', path: lca })
+        roots.push({ key: 'common', label: t('project.fileRoots.common'), path: lca })
 
         // Add unique project directories that differ from LCA
         const seen = new Set([lca])

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Provider-agnostic agent-settings popover anchored on the trigger button
 // rendered by MessageInput. Every render decision (which fields appear,
 // which options are disabled, what the help text says, what the startup
@@ -29,7 +31,7 @@ const props = defineProps({
     settings: { type: Object, required: true },
     isDraft: { type: Boolean, default: false },
     messageText: { type: String, default: '' },
-    buttonLabel: { type: String, default: 'Send' },
+    buttonLabel: { type: String, default: '' },
     // True while a pending request locks sending: the Send/Apply button is hidden,
     // so the "click X to apply" hint is replaced with one explaining the changes
     // will apply once the request is answered.
@@ -269,7 +271,7 @@ const selectRows = computed(() => {
                     value: String(opt.value),
                     label: opt.label,
                     description: disabledReason ?? opt.description ?? null,
-                    labelWithSuffix: disabled ? `${opt.label} (not available)` : opt.label,
+                    labelWithSuffix: disabled ? t('agentSettings.model.unavailable', { label: opt.label }) : opt.label,
                     disabled,
                     icon: opt.icon ?? null,
                     color: opt.color ?? null,
@@ -527,7 +529,7 @@ onBeforeUnmount(() => {
                 <wa-callout v-if="!isDraft && hasDropdownsChanged" variant="brand" class="settings-info-callout">
                     <wa-icon name="circle-info" slot="icon"></wa-icon>
                     <template v-if="sendingLocked">{{ $t('session.agentSettings.popover.pending') }}</template>
-                    <template v-else>{{ $t('session.agentSettings.popover.applyHint', { button: buttonLabel }) }}</template>
+                    <template v-else>{{ $t('session.agentSettings.popover.applyHint', { button: buttonLabel || $t('composer.actions.send') }) }}</template>
                 </wa-callout>
                 <wa-callout v-if="startupSettingsWarning" variant="warning" class="startup-warning-callout">
                     <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>

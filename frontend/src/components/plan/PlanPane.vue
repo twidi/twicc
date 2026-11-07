@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // Plan tab: a selector over every plan-like document the session touched
 // (``Session.plan_paths`` — native Claude plan + pattern-detected docs, both
 // providers) above a read-only rendered preview (FilePane in renderOnly mode:
@@ -174,8 +176,8 @@ const paneScope = computed(() => {
 // --- Labels -------------------------------------------------------------------
 
 function entryLabel(entry) {
-    const base = entry.source === 'claude_plan' ? 'Claude plan' : entry.path
-    return entry.exists === false ? `${base} (missing)` : base
+    const base = entry.source === 'claude_plan' ? t('session.plan.claudePlan') : entry.path
+    return entry.exists === false ? t('session.plan.missing', { document: base }) : base
 }
 
 // --- Live refresh ----------------------------------------------------------------

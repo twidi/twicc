@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 // ContributionGraph.vue - Pure presentation component for a GitHub-style contribution heatmap.
 // Receives pre-fetched daily activity data via props.
 // Supports three modes: 'messages' (user message count), 'sessions' (session count), and 'cost' (USD cost).
@@ -91,25 +95,29 @@ const heatmapMax = computed(() => {
  * Sessions mode: "N sessions on Jan 1, 2026"
  * Cost mode: "$1.23 on Jan 1, 2026"
  */
-function tooltipFormatter(item, unit) {
+function tooltipFormatter(item) {
     const date = item.date
-    const dateStr = date.toLocaleDateString('en-US', {
+    const dateStr = date.toLocaleDateString(locale.value, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
     })
     const count = item.count || 0
     if (isCostMode.value) {
-        if (count === 0) {
-            return `No cost on ${dateStr}`
-        }
-        return `$${count.toFixed(2)} on ${dateStr}`
+        return count === 0
+            ? t('activity.heatmap.noCostOn', { date: dateStr })
+            : t('activity.heatmap.costOn', { cost: new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD' }).format(count), date: dateStr })
     }
-    if (count === 0) {
-        return `No ${unit} on ${dateStr}`
-    }
-    return `${count} ${count === 1 ? unit.replace(/s$/, '') : unit} on ${dateStr}`
+    return t(isSessionsMode.value ? 'activity.heatmap.sessionsOn' : 'activity.heatmap.turnsOn', { count, date: dateStr }, count)
 }
+
+const heatmapLocale = computed(() => ({
+    months: Array.from({ length: 12 }, (_, month) => new Intl.DateTimeFormat(locale.value, { month: 'short' }).format(new Date(2026, month, 1))),
+    days: Array.from({ length: 7 }, (_, day) => new Intl.DateTimeFormat(locale.value, { weekday: 'short' }).format(new Date(2026, 0, 4 + day))),
+    on: t('activity.heatmap.on'),
+    less: t('activity.heatmap.less'),
+    more: t('activity.heatmap.more'),
+}))
 </script>
 
 <template>
@@ -117,14 +125,15 @@ function tooltipFormatter(item, unit) {
         <h3 class="contribution-graph-title">{{ isCostMode ? $t('activity.graph.costPerDay') : isSessionsMode ? $t('activity.graph.sessionsPerDay') : $t('activity.graph.messageTurnsPerDay') }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
-            :key="`${rangeColor.join(',')}-${mode}`"
+            :key="`${rangeColor.join(',')}-${mode}-${locale}`"
             :values="heatmapValues"
             :end-date="endDate"
             :max="heatmapMax"
             :range-color="rangeColor"
             :round="2"
             :tooltip="true"
-            :tooltip-unit="isCostMode ? 'cost' : isSessionsMode ? 'sessions created' : 'message turns'"
+            :locale="heatmapLocale"
+            :no-data-text="$t('activity.heatmap.noActivity')"
             :tooltip-formatter="tooltipFormatter"
             :dark-mode="isDark"
         />

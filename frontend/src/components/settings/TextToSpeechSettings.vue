@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, locale } = useI18n()
 /**
  * TextToSpeechSettings - the "Text to Speech" settings section: the OpenRouter key status,
  * the shared test text, and the configs (synced via <data_dir>/tts.json). Each config is a
@@ -21,7 +23,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
-import { OPENROUTER_MODEL_DESCRIPTION } from '../../constants'
+import { OPENROUTER_MODEL_DESCRIPTION_KEY } from '../../constants'
 import {
     DEFAULT_TEST_TEXT,
     adaptHint,
@@ -88,7 +90,7 @@ onMounted(() => {
 })
 
 function lastTestWhen(lastTest) {
-    return new Date(lastTest.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    return new Date(lastTest.at).toLocaleString(locale.value, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
 function testStateOf(config) {
@@ -134,9 +136,9 @@ function hasVoiceChoice(config) {
 
 // What the open model list says when it is empty.
 function modelsEmptyText() {
-    if (store.modelsStatus === 'loading') return 'Loading the models...'
-    if (store.modelsStatus === 'failed') return 'The model list did not load'
-    return 'No match'
+    if (store.modelsStatus === 'loading') return t('settings.textToSpeech.loadingModelsText')
+    if (store.modelsStatus === 'failed') return t('settings.textToSpeech.modelsLoadError')
+    return t('settings.textToSpeech.noMatch')
 }
 
 const retryingModels = ref(false)
@@ -149,11 +151,11 @@ async function retryModels() {
 
 // Why there is no voice to pick: the hint shown instead of the voice picker.
 function noVoiceHint(config) {
-    if (!config.model) return 'Choose a model first.'
-    if (isModelListed(config)) return 'No voice to choose for this model.'
-    if (store.modelsStatus === 'loading') return 'Loading the voices...'
-    if (store.modelsStatus === 'failed') return 'The voice list did not load.'
-    return 'This model is not in the OpenRouter list.'
+    if (!config.model) return t('settings.textToSpeech.chooseModelFirst')
+    if (isModelListed(config)) return t('settings.textToSpeech.noVoiceChoice')
+    if (store.modelsStatus === 'loading') return t('settings.textToSpeech.loadingVoices')
+    if (store.modelsStatus === 'failed') return t('settings.textToSpeech.voicesLoadError')
+    return t('settings.textToSpeech.modelNotListed')
 }
 
 // A script config tests without the OpenRouter key.
@@ -164,12 +166,13 @@ function canTest(config) {
 
 // The icon before a config's name tells its kind apart.
 const KIND_ICONS = {
-    openrouter: { name: 'globe', label: 'OpenRouter config' },
-    script: { name: 'terminal', label: 'Script config' },
+    openrouter: { name: 'globe', label: 'settings.textToSpeech.kind.openrouter' },
+    script: { name: 'terminal', label: 'settings.textToSpeech.kind.script' },
 }
 
 function kindIconOf(config) {
-    return KIND_ICONS[kindOf(config)]
+    const icon = KIND_ICONS[kindOf(config)]
+    return { ...icon, label: t(icon.label) }
 }
 
 // A script config has no price: its last test shows no cost.
@@ -189,8 +192,8 @@ const lastTestTexts = computed(() => Object.fromEntries(store.configs.map((confi
 
 function testStatsTitle(config) {
     return isPriced(config)
-        ? 'Last test run: cost per 1,000 characters, per minute of audio, generation time per 1,000 characters, and time to the first audio'
-        : 'Last test run: generation time per 1,000 characters, and time to the first audio'
+        ? t('settings.textToSpeech.pricedTestTitle')
+        : t('settings.textToSpeech.scriptTestTitle')
 }
 
 function commit(id, patch) {
@@ -306,11 +309,11 @@ function testIconOf(config) {
 }
 
 function testButtonTitle(config) {
-    if (isTestBusy(config)) return 'Stop the test'
-    if (canTest(config)) return 'Test this config'
-    if (testLoading()) return 'Another test is loading'
-    if (kindOf(config) === 'script') return 'Test: needs a command, a sample rate for PCM, and a test text'
-    return 'Test: needs the key, a model and a test text'
+    if (isTestBusy(config)) return t('settings.textToSpeech.stopTest')
+    if (canTest(config)) return t('settings.textToSpeech.testConfig')
+    if (testLoading()) return t('settings.textToSpeech.otherTestLoading')
+    if (kindOf(config) === 'script') return t('settings.textToSpeech.scriptTestRequirements')
+    return t('settings.textToSpeech.testRequirements')
 }
 
 function onSummaryPlay(config) {
@@ -425,7 +428,7 @@ function answerNo(id) {
             </div>
             <span v-if="adaptHints.noProvider" class="setting-group-hint">{{ $t('settings.textToSpeech.noProvider') }}</span>
             <span v-else class="setting-group-hint">{{ $t('settings.textToSpeech.adaptHint') }}</span>
-            <span v-if="adaptHints.openrouter" class="setting-group-hint">{{ $t('settings.textToSpeech.openRouterAdaptHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</span>
+            <span v-if="adaptHints.openrouter" class="setting-group-hint">{{ $t('settings.textToSpeech.openRouterAdaptHint', { model: $t(OPENROUTER_MODEL_DESCRIPTION_KEY) }) }}</span>
         </div>
 
         <div class="setting-group">
@@ -496,7 +499,7 @@ function answerNo(id) {
                             class="tts-activation tts-activation-on"
                             size="small"
                             appearance="plain"
-                            :title.attr="'Active: click to deactivate'"
+                            :title.attr="t('settings.textToSpeech.deactivateTitle')"
                             @click="store.deactivateConfig()"
                         >
                             <wa-icon name="circle-dot" :label="$t('settings.textToSpeech.deactivate')"></wa-icon>
@@ -507,7 +510,7 @@ function answerNo(id) {
                             size="small"
                             appearance="plain"
                             :disabled="!isConfigValidated(config)"
-                            :title.attr="isConfigValidated(config) ? 'Activate: use this config to read messages' : 'Test and confirm this config first'"
+                            :title.attr="isConfigValidated(config) ? t('settings.textToSpeech.activateTitle') : t('settings.textToSpeech.validateFirst')"
                             @click="store.activateConfig(config.id)"
                         >
                             <wa-icon name="circle" variant="regular" :label="$t('settings.textToSpeech.activate')"></wa-icon>
@@ -657,7 +660,7 @@ function answerNo(id) {
                                     :input-id="`tts-${config.id}-model`"
                                     :label="$t('common.labels.model')"
                                     size="small"
-                                    :placeholder="store.modelsStatus === 'loading' ? 'Loading the models...' : 'Choose a model'"
+                                    :placeholder="store.modelsStatus === 'loading' ? t('settings.textToSpeech.loadingModelsText') : t('settings.textToSpeech.chooseModel')"
                                     :empty-text="modelsEmptyText()"
                                     :model-value="config.model"
                                     :options="modelOptionsFor(config)"

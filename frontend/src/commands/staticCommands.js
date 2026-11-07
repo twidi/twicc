@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 /**
  * Static commands — registered once at app startup from App.vue.
  *
@@ -57,13 +59,13 @@ const FLAG_ICON_FIELDS = new Set(['thinking_enabled', 'fast_mode', 'claude_in_ch
 // targets one agent-setting wire-name; ``selected_model`` is handled out
 // of band because it consumes the model registry's groupings.
 const PROVIDER_DEFAULTS_SIMPLE_FIELDS = [
-    { field: 'effort',                       idSuffix: 'effort',               label: 'Change Default Effort…',                       icon: 'gauge' },
-    { field: 'permission_mode',              idSuffix: 'permission',           label: 'Change Default Permission Mode…',              icon: 'shield-halved' },
-    { field: 'permission_mode_if_untrusted', idSuffix: 'permission-untrusted', label: 'Change Default Permission Mode (Untrusted)…',   icon: 'shield-halved' },
-    { field: 'thinking_enabled',             idSuffix: 'thinking',             label: 'Change Default Thinking…',                     ...flagCommandIcon('thinking_enabled') },
-    { field: 'context_max',                  idSuffix: 'context',              label: 'Change Default Context Size…',                 icon: 'window-maximize' },
-    { field: 'claude_in_chrome',             idSuffix: 'chrome',               label: 'Change Default Claude in Chrome MCP…',         ...flagCommandIcon('claude_in_chrome') },
-    { field: 'fast_mode',                    idSuffix: 'fast-mode',            label: 'Change Default Fast Mode…',                    ...flagCommandIcon('fast_mode') },
+    { field: 'effort',                       idSuffix: 'effort',               labelKey: 'navigation.commands.defaultEffort',                       icon: 'gauge' },
+    { field: 'permission_mode',              idSuffix: 'permission',           labelKey: 'navigation.commands.defaultPermission',              icon: 'shield-halved' },
+    { field: 'permission_mode_if_untrusted', idSuffix: 'permission-untrusted', labelKey: 'navigation.commands.defaultPermissionUntrusted',   icon: 'shield-halved' },
+    { field: 'thinking_enabled',             idSuffix: 'thinking',             labelKey: 'navigation.commands.defaultThinking',                     ...flagCommandIcon('thinking_enabled') },
+    { field: 'context_max',                  idSuffix: 'context',              labelKey: 'navigation.commands.defaultContext',                 icon: 'window-maximize' },
+    { field: 'claude_in_chrome',             idSuffix: 'chrome',               labelKey: 'navigation.commands.defaultChrome',         ...flagCommandIcon('claude_in_chrome') },
+    { field: 'fast_mode',                    idSuffix: 'fast-mode',            labelKey: 'navigation.commands.defaultFast',                    ...flagCommandIcon('fast_mode') },
 ]
 
 // Resolve the per-choice icon props for a nested "Change Default …" sub-item,
@@ -109,7 +111,7 @@ function buildProviderDefaultsCommands(settings) {
         if (helpers.supportsAgentSetting('selected_model')) {
             commands.push({
                 id: `${category}.model`,
-                label: 'Change Default Model…',
+                labelKey: 'navigation.commands.defaultModel',
                 icon: 'robot',
                 category,
                 when: whenEnabled,
@@ -135,11 +137,11 @@ function buildProviderDefaultsCommands(settings) {
             })
         }
 
-        for (const { field, idSuffix, label, icon, iconFamily, iconColor } of PROVIDER_DEFAULTS_SIMPLE_FIELDS) {
+        for (const { field, idSuffix, labelKey, icon, iconFamily, iconColor } of PROVIDER_DEFAULTS_SIMPLE_FIELDS) {
             if (!helpers.supportsAgentSetting(field)) continue
             commands.push({
                 id: `${category}.${idSuffix}`,
-                label,
+                labelKey,
                 icon,
                 iconFamily,
                 iconColor,
@@ -447,18 +449,18 @@ export function initStaticCommands(router) {
         try {
             const res = await apiFetch(`/api/projects/${projectId}/resolve-git/`, { method: 'POST' })
             if (!res.ok) {
-                toast.error('Could not check this folder for a git repository.')
+                toast.error(localUiMessage('navigation.commands.checkGitFailed'))
                 return
             }
             const { git_root } = await res.json()
             if (!git_root) {
-                toast.info('No git repository found in this folder.')
+                toast.info(localUiMessage('navigation.commands.noGitRepository'))
                 return
             }
             data.updateProject({ id: projectId, git_root })
             window.dispatchEvent(new CustomEvent('twicc:open-worktree-dialog', { detail: { projectId } }))
         } catch {
-            toast.error('Could not check this folder for a git repository.')
+            toast.error(localUiMessage('navigation.commands.checkGitFailed'))
         }
     }
 
@@ -518,17 +520,17 @@ export function initStaticCommands(router) {
     // ── Display mode labels ───────────────────────────────────────────────
 
     const DISPLAY_MODE_LABELS = {
-        [DISPLAY_MODE.CONVERSATION]: 'Conversation',
-        [DISPLAY_MODE.SIMPLIFIED]: 'Simplified',
-        [DISPLAY_MODE.NORMAL]: 'Detailed',
+        [DISPLAY_MODE.CONVERSATION]: 'navigation.commands.displayConversation',
+        [DISPLAY_MODE.SIMPLIFIED]: 'navigation.commands.displaySimplified',
+        [DISPLAY_MODE.NORMAL]: 'navigation.commands.displayDetailed',
     }
 
     // ── Color scheme labels ────────────────────────────────────────────────
 
     const COLOR_SCHEME_LABELS = {
-        [COLOR_SCHEME.SYSTEM]: 'System',
-        [COLOR_SCHEME.LIGHT]: 'Light',
-        [COLOR_SCHEME.DARK]: 'Dark',
+        [COLOR_SCHEME.SYSTEM]: 'navigation.commands.schemeSystem',
+        [COLOR_SCHEME.LIGHT]: 'navigation.commands.schemeLight',
+        [COLOR_SCHEME.DARK]: 'navigation.commands.schemeDark',
     }
 
     // ── Commands ──────────────────────────────────────────────────────────
@@ -539,14 +541,14 @@ export function initStaticCommands(router) {
 
         {
             id: 'nav.home',
-            label: 'Go to Home',
+            labelKey: 'navigation.commands.home',
             icon: 'house',
             category: 'navigation',
             action: () => router.push({ name: 'home' }),
         },
         {
             id: 'nav.project',
-            label: 'Go to Project\u2026',
+            labelKey: 'navigation.commands.project',
             icon: 'folder',
             category: 'navigation',
             items: () => {
@@ -559,7 +561,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.session',
-            label: 'Go to Session\u2026',
+            labelKey: 'navigation.commands.session',
             icon: 'message',
             category: 'navigation',
             items: () => buildSessionNavItems({
@@ -569,14 +571,14 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.all-projects',
-            label: 'Go to All Projects',
+            labelKey: 'navigation.commands.allProjects',
             icon: 'layer-group',
             category: 'navigation',
             action: () => router.push({ name: 'projects-all' }),
         },
         {
             id: 'nav.workspace',
-            label: 'Go to Workspace\u2026',
+            labelKey: 'navigation.commands.workspace',
             icon: 'layer-group',
             category: 'navigation',
             items: () => {
@@ -598,7 +600,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.artifacts-list',
-            label: 'Go to Artifacts List',
+            labelKey: 'navigation.commands.artifacts',
             icon: ARTIFACT_ICON,
             category: 'navigation',
             // Switch the sidebar to its Artifacts (bookmarks) mode, keeping the
@@ -620,7 +622,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.sessions-list',
-            label: 'Go to Sessions List',
+            labelKey: 'navigation.commands.sessions',
             icon: 'comments',
             category: 'navigation',
             // The inverse: back to the Sessions sidebar, keeping the current
@@ -641,14 +643,14 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.search',
-            label: 'Search Sessions\u2026',
+            labelKey: 'navigation.commands.searchSessions',
             icon: 'magnifying-glass',
             category: 'navigation',
             action: () => window.dispatchEvent(new CustomEvent('twicc:open-search')),
         },
         {
             id: 'nav.find-in-session',
-            label: 'Search in Session\u2026',
+            labelKey: 'navigation.commands.searchSession',
             icon: 'magnifying-glass',
             category: 'navigation',
             when: () => route.name === 'session' || route.name === 'projects-session',
@@ -656,7 +658,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.chat',
-            label: 'Switch to Chat Tab',
+            labelKey: 'navigation.commands.chatTab',
             icon: 'comment',
             category: 'navigation',
             when: () => !!toolTabsSessionId(),
@@ -674,7 +676,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.files',
-            label: 'Switch to Files Tab',
+            labelKey: 'navigation.commands.filesTab',
             icon: 'file-code',
             category: 'navigation',
             when: () => !!toolTabsSessionId(),
@@ -692,7 +694,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.git',
-            label: 'Switch to Git Tab',
+            labelKey: 'navigation.commands.gitTab',
             icon: 'code-branch',
             category: 'navigation',
             when: () => {
@@ -718,7 +720,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.terminal',
-            label: 'Switch to Terminal Tab',
+            labelKey: 'navigation.commands.terminalTab',
             icon: 'terminal',
             category: 'navigation',
             when: () => !!toolTabsSessionId(),
@@ -736,7 +738,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.artifacts',
-            label: 'Switch to Artifacts Tab',
+            labelKey: 'navigation.commands.artifactsTab',
             icon: 'images',
             category: 'navigation',
             // Not for a draft: it has no artifacts folder yet.
@@ -758,7 +760,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.orchestration',
-            label: 'Switch to Orchestration Tab',
+            labelKey: 'navigation.commands.orchestrationTab',
             icon: 'sitemap',
             category: 'navigation',
             // Only sessions that belong to a spawned-session orchestration tree
@@ -782,7 +784,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.plan',
-            label: 'Switch to Plan Tab',
+            labelKey: 'navigation.commands.planTab',
             icon: 'list-check',
             category: 'navigation',
             // Only sessions with at least one tracked plan-like document
@@ -806,7 +808,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.tasks',
-            label: 'Switch to Tasks Tab',
+            labelKey: 'navigation.commands.tasksTab',
             icon: 'square-check',
             category: 'navigation',
             // Only sessions that carry a task/todo/plan snapshot expose the tab
@@ -830,7 +832,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.workflows',
-            label: 'Switch to Workflows Tab',
+            labelKey: 'navigation.commands.workflowsTab',
             icon: 'sitemap',
             category: 'navigation',
             // Only sessions with at least one workflow run expose the tab
@@ -854,7 +856,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.tab.browser',
-            label: 'Switch to Browser Tab',
+            labelKey: 'navigation.commands.browserTab',
             icon: 'globe',
             category: 'navigation',
             when: () => !!toolTabsSessionId(),
@@ -877,7 +879,7 @@ export function initStaticCommands(router) {
         // dispatch (the visible panel handles them). The pickers mark the current tab.
         {
             id: 'nav.terminal.prev',
-            label: 'Go to Previous Terminal',
+            labelKey: 'navigation.commands.previousTerminal',
             icon: 'terminal',
             category: 'navigation',
             when: () => TERMINAL_ROUTES.has(route.name) && terminalIndices().length >= 2,
@@ -885,7 +887,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.terminal.next',
-            label: 'Go to Next Terminal',
+            labelKey: 'navigation.commands.nextTerminal',
             icon: 'terminal',
             category: 'navigation',
             when: () => TERMINAL_ROUTES.has(route.name) && terminalIndices().length >= 2,
@@ -893,7 +895,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.terminal.pick',
-            label: 'Go to Terminal…',
+            labelKey: 'navigation.commands.terminal',
             icon: 'terminal',
             category: 'navigation',
             when: () => TERMINAL_ROUTES.has(route.name) && terminalIndices().length >= 2,
@@ -902,7 +904,7 @@ export function initStaticCommands(router) {
                 const activeIdx = ctx ? terminalTabsStore.active[ctx] : null
                 return terminalIndices().map((termIndex, pos) => ({
                     id: String(termIndex),
-                    label: terminalTabsStore.getLabel(ctx, termIndex) || (termIndex === 0 ? 'Main' : `Term ${termIndex + 1}`),
+                    label: terminalTabsStore.getLabel(ctx, termIndex) || (termIndex === 0 ? i18n.global.t('navigation.commands.mainTerminal') : i18n.global.t('navigation.commands.terminalNumber', { number: termIndex + 1 })),
                     active: termIndex === activeIdx,
                     action: () => window.dispatchEvent(new CustomEvent('twicc:terminal-tab-shortcut', { detail: { type: 'direct', index: pos + 1 } })),
                 }))
@@ -910,7 +912,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.workflow.prev',
-            label: 'Go to Previous Workflow',
+            labelKey: 'navigation.commands.previousWorkflow',
             icon: 'sitemap',
             category: 'navigation',
             when: () => WORKFLOW_ROUTES.has(route.name) && workflowRunList().length >= 2,
@@ -918,7 +920,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.workflow.next',
-            label: 'Go to Next Workflow',
+            labelKey: 'navigation.commands.nextWorkflow',
             icon: 'sitemap',
             category: 'navigation',
             when: () => WORKFLOW_ROUTES.has(route.name) && workflowRunList().length >= 2,
@@ -926,7 +928,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.workflow.pick',
-            label: 'Go to Workflow…',
+            labelKey: 'navigation.commands.workflow',
             icon: 'sitemap',
             category: 'navigation',
             when: () => WORKFLOW_ROUTES.has(route.name) && workflowRunList().length >= 2,
@@ -944,7 +946,7 @@ export function initStaticCommands(router) {
         // Project detail panel tabs
         {
             id: 'nav.project-tab.timeline',
-            label: 'Switch to Timeline Tab',
+            labelKey: 'navigation.commands.timelineTab',
             icon: 'clock-rotate-left',
             category: 'navigation',
             when: () => isOnProjectDetail(),
@@ -960,7 +962,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.project-tab.stats',
-            label: 'Switch to Stats Tab',
+            labelKey: 'navigation.commands.statsTab',
             icon: 'chart-line',
             category: 'navigation',
             when: () => isOnProjectDetail(),
@@ -975,7 +977,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.project-tab.files',
-            label: 'Switch to Files Tab (Project)',
+            labelKey: 'navigation.commands.projectFilesTab',
             icon: 'file-code',
             category: 'navigation',
             when: () => isOnProjectDetail(),
@@ -990,7 +992,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.project-tab.git',
-            label: 'Switch to Git Tab (Project)',
+            labelKey: 'navigation.commands.projectGitTab',
             icon: 'code-branch',
             category: 'navigation',
             when: () => {
@@ -1011,7 +1013,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'nav.project-tab.terminal',
-            label: 'Switch to Terminal Tab (Project)',
+            labelKey: 'navigation.commands.projectTerminalTab',
             icon: 'terminal',
             category: 'navigation',
             when: () => isOnProjectDetail(),
@@ -1029,7 +1031,7 @@ export function initStaticCommands(router) {
 
         {
             id: 'create.session',
-            label: 'New Session in Current Project',
+            labelKey: 'navigation.commands.newCurrentSession',
             icon: 'plus',
             category: 'creation',
             when: () => !!routeProjectId(),
@@ -1045,7 +1047,7 @@ export function initStaticCommands(router) {
                 if (p.worktree_of) {
                     const parent = data.getProject(p.worktree_of)
                     return {
-                        prefix: 'New Session in',
+                        messageKey: 'navigation.commands.newSessionInTarget',
                         label: worktreeLabel(p) || data.getProjectDisplayName(p.id),
                         path: p.directory ?? null,
                         project: { color: p.color ?? parent?.color ?? null, icon_url: resolveProjectIconUrl(p.id, data.projects), untrusted: data.untrustedProjectIds.has(p.id) },
@@ -1053,7 +1055,7 @@ export function initStaticCommands(router) {
                     }
                 }
                 return {
-                    prefix: 'New Session in',
+                    messageKey: 'navigation.commands.newSessionInTarget',
                     label: data.getProjectDisplayName(p.id),
                     path: p.directory ?? null,
                     project: { color: p.color ?? null, icon_url: resolveProjectIconUrl(p.id, data.projects), untrusted: data.untrustedProjectIds.has(p.id) },
@@ -1069,7 +1071,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'create.session-in',
-            label: 'New Session in\u2026',
+            labelKey: 'navigation.commands.newSession',
             icon: 'square-plus',
             category: 'creation',
             items: () => {
@@ -1088,7 +1090,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'create.session-in-new-worktree',
-            label: 'New Session in New Worktree…',
+            labelKey: 'navigation.commands.newWorktreeSession',
             icon: 'code-branch',
             category: 'creation',
             // Shown for every non-worktree project (a worktree can't have
@@ -1110,7 +1112,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'create.project',
-            label: 'New Project',
+            labelKey: 'navigation.commands.newProject',
             icon: 'folder-plus',
             category: 'creation',
             action: () => {
@@ -1119,7 +1121,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'create.workspace',
-            label: 'New Workspace',
+            labelKey: 'navigation.commands.newWorkspace',
             icon: 'layer-group',
             category: 'creation',
             action: () => {
@@ -1131,29 +1133,29 @@ export function initStaticCommands(router) {
 
         {
             id: 'display.color-scheme',
-            label: 'Change Color Scheme\u2026',
+            labelKey: 'navigation.commands.colorScheme',
             icon: 'circle-half-stroke',
             category: 'display',
             items: () => [
-                { id: COLOR_SCHEME.SYSTEM, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.SYSTEM], action: () => changeColorScheme(COLOR_SCHEME.SYSTEM), active: settings.colorScheme === COLOR_SCHEME.SYSTEM },
-                { id: COLOR_SCHEME.LIGHT, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.LIGHT], action: () => changeColorScheme(COLOR_SCHEME.LIGHT), active: settings.colorScheme === COLOR_SCHEME.LIGHT },
-                { id: COLOR_SCHEME.DARK, label: COLOR_SCHEME_LABELS[COLOR_SCHEME.DARK], action: () => changeColorScheme(COLOR_SCHEME.DARK), active: settings.colorScheme === COLOR_SCHEME.DARK },
+                { id: COLOR_SCHEME.SYSTEM, label: i18n.global.t(COLOR_SCHEME_LABELS[COLOR_SCHEME.SYSTEM]), action: () => changeColorScheme(COLOR_SCHEME.SYSTEM), active: settings.colorScheme === COLOR_SCHEME.SYSTEM },
+                { id: COLOR_SCHEME.LIGHT, label: i18n.global.t(COLOR_SCHEME_LABELS[COLOR_SCHEME.LIGHT]), action: () => changeColorScheme(COLOR_SCHEME.LIGHT), active: settings.colorScheme === COLOR_SCHEME.LIGHT },
+                { id: COLOR_SCHEME.DARK, label: i18n.global.t(COLOR_SCHEME_LABELS[COLOR_SCHEME.DARK]), action: () => changeColorScheme(COLOR_SCHEME.DARK), active: settings.colorScheme === COLOR_SCHEME.DARK },
             ],
         },
         {
             id: 'display.mode',
-            label: 'Change Display Mode\u2026',
+            labelKey: 'navigation.commands.displayMode',
             icon: 'eye',
             category: 'display',
             items: () => [
-                { id: DISPLAY_MODE.CONVERSATION, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.CONVERSATION], action: () => settings.setDisplayMode(DISPLAY_MODE.CONVERSATION), active: settings.displayMode === DISPLAY_MODE.CONVERSATION },
-                { id: DISPLAY_MODE.SIMPLIFIED, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.SIMPLIFIED], action: () => settings.setDisplayMode(DISPLAY_MODE.SIMPLIFIED), active: settings.displayMode === DISPLAY_MODE.SIMPLIFIED },
-                { id: DISPLAY_MODE.NORMAL, label: DISPLAY_MODE_LABELS[DISPLAY_MODE.NORMAL], action: () => settings.setDisplayMode(DISPLAY_MODE.NORMAL), active: settings.displayMode === DISPLAY_MODE.NORMAL },
+                { id: DISPLAY_MODE.CONVERSATION, label: i18n.global.t(DISPLAY_MODE_LABELS[DISPLAY_MODE.CONVERSATION]), action: () => settings.setDisplayMode(DISPLAY_MODE.CONVERSATION), active: settings.displayMode === DISPLAY_MODE.CONVERSATION },
+                { id: DISPLAY_MODE.SIMPLIFIED, label: i18n.global.t(DISPLAY_MODE_LABELS[DISPLAY_MODE.SIMPLIFIED]), action: () => settings.setDisplayMode(DISPLAY_MODE.SIMPLIFIED), active: settings.displayMode === DISPLAY_MODE.SIMPLIFIED },
+                { id: DISPLAY_MODE.NORMAL, label: i18n.global.t(DISPLAY_MODE_LABELS[DISPLAY_MODE.NORMAL]), action: () => settings.setDisplayMode(DISPLAY_MODE.NORMAL), active: settings.displayMode === DISPLAY_MODE.NORMAL },
             ],
         },
         {
             id: 'display.toggle-costs',
-            label: 'Toggle Show Costs',
+            labelKey: 'navigation.commands.toggleCosts',
             icon: 'coins',
             category: 'display',
             toggled: () => settings.areCostsShown,
@@ -1161,7 +1163,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-compact',
-            label: 'Toggle Compact Session List',
+            labelKey: 'navigation.commands.toggleCompact',
             icon: 'bars',
             category: 'display',
             toggled: () => settings.isCompactSessionList,
@@ -1169,7 +1171,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-sessions-as-tree',
-            label: 'Toggle Show Orchestrated Sessions As Tree',
+            labelKey: 'navigation.commands.toggleTree',
             icon: 'sitemap',
             category: 'display',
             toggled: () => settings.isShowSessionsAsTree,
@@ -1177,7 +1179,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-provider-icons',
-            label: 'Toggle Show Provider Icons',
+            labelKey: 'navigation.commands.toggleProviderIcons',
             icon: 'icons',
             category: 'display',
             toggled: () => settings.isShowProviderIcons,
@@ -1185,7 +1187,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-show-archived-sessions',
-            label: 'Toggle Show Archived Sessions',
+            labelKey: 'navigation.commands.toggleArchivedSessions',
             icon: 'box-archive',
             category: 'display',
             toggled: () => settings.isShowArchivedSessions,
@@ -1193,7 +1195,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-show-archived-projects',
-            label: 'Toggle Show Archived Projects',
+            labelKey: 'navigation.commands.toggleArchivedProjects',
             icon: 'box-archive',
             category: 'display',
             toggled: () => settings.isShowArchivedProjects,
@@ -1201,7 +1203,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-show-archived-workspaces',
-            label: 'Toggle Show Archived Workspaces',
+            labelKey: 'navigation.commands.toggleArchivedWorkspaces',
             icon: 'box-archive',
             category: 'display',
             toggled: () => settings.isShowArchivedWorkspaces,
@@ -1209,7 +1211,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-active-across-filters',
-            label: 'Toggle Show Active Sessions Across Projects',
+            labelKey: 'navigation.commands.toggleActive',
             icon: 'signal',
             category: 'display',
             toggled: () => settings.isShowActiveAcrossFilters,
@@ -1217,7 +1219,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-user-turn-toast',
-            label: 'Toggle "Finished Working" Toast',
+            labelKey: 'navigation.commands.toggleToast',
             icon: 'bell',
             category: 'display',
             // One channel among four (Settings → Notifications → Agent finished
@@ -1228,21 +1230,21 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.font-increase',
-            label: 'Increase Font Size',
+            labelKey: 'navigation.commands.increaseFont',
             icon: 'magnifying-glass-plus',
             category: 'display',
             action: () => settings.setFontSize(Math.min(settings.fontSize + 1, 32)),
         },
         {
             id: 'display.font-decrease',
-            label: 'Decrease Font Size',
+            labelKey: 'navigation.commands.decreaseFont',
             icon: 'magnifying-glass-minus',
             category: 'display',
             action: () => settings.setFontSize(Math.max(settings.fontSize - 1, 12)),
         },
         {
             id: 'display.toggle-editor-word-wrap',
-            label: 'Toggle Editor Word Wrap',
+            labelKey: 'navigation.commands.toggleEditorWrap',
             icon: 'text-width',
             category: 'display',
             toggled: () => settings.isEditorWordWrap,
@@ -1250,7 +1252,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-editor-diff-layout',
-            label: 'Toggle Editor Side-by-Side Diff',
+            labelKey: 'navigation.commands.toggleEditorDiff',
             icon: 'columns',
             category: 'display',
             toggled: () => settings.isDiffSideBySide,
@@ -1258,7 +1260,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-show-diffs',
-            label: 'Toggle Auto Open Live Edit Diffs',
+            labelKey: 'navigation.commands.toggleLiveDiff',
             icon: 'code-compare',
             category: 'display',
             toggled: () => settings.isShowDiffs,
@@ -1266,7 +1268,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-session-diff-word-wrap',
-            label: 'Toggle Session Diff Word Wrap',
+            labelKey: 'navigation.commands.toggleSessionDiffWrap',
             icon: 'text-width',
             category: 'display',
             toggled: () => settings.isToolDiffWordWrap,
@@ -1274,7 +1276,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'display.toggle-session-diff-layout',
-            label: 'Toggle Session Side-by-Side Diff',
+            labelKey: 'navigation.commands.toggleSessionDiff',
             icon: 'columns',
             category: 'display',
             toggled: () => settings.isToolDiffSideBySide,
@@ -1285,7 +1287,7 @@ export function initStaticCommands(router) {
 
         {
             id: 'terminal.toggle-mac-option-is-meta',
-            label: 'Toggle Terminal Option Key (⌥) as Meta',
+            labelKey: 'navigation.commands.toggleMeta',
             icon: 'keyboard',
             category: 'terminal',
             when: () => settings.isMac,
@@ -1301,7 +1303,7 @@ export function initStaticCommands(router) {
 
         {
             id: 'ui.default-provider',
-            label: 'Change Default Provider…',
+            labelKey: 'navigation.commands.defaultProvider',
             icon: 'plug',
             category: 'ui',
             when: () => settings.enabledProviders.length > 1,
@@ -1316,7 +1318,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.manage-workspaces',
-            label: 'Manage Workspaces',
+            labelKey: 'navigation.commands.manageWorkspaces',
             icon: 'layer-group',
             category: 'ui',
             action: () => {
@@ -1325,7 +1327,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.share-session',
-            label: 'Share Session…',
+            labelKey: 'navigation.commands.shareSession',
             icon: 'share-nodes',
             category: 'ui',
             // Current session only, and only when a share host is configured (a
@@ -1343,7 +1345,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.manage-shares',
-            label: 'Manage Shared Links',
+            labelKey: 'navigation.commands.manageShares',
             icon: 'share-nodes',
             category: 'ui',
             // Only when a share host is configured (no host → no links to manage).
@@ -1355,7 +1357,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.peer-inbox',
-            label: 'Open Peer Inbox',
+            labelKey: 'navigation.commands.peerInbox',
             icon: 'envelope',
             category: 'ui',
             // The three peer commands share the condition that decides whether
@@ -1367,7 +1369,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.peer-compose',
-            label: 'Write to a Peer…',
+            labelKey: 'navigation.commands.writePeer',
             icon: 'paper-plane',
             category: 'ui',
             // Also needs someone to write to — the compose dialog's peer select
@@ -1377,7 +1379,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.manage-peers',
-            label: 'Manage Peers',
+            labelKey: 'navigation.commands.managePeers',
             icon: 'user-group',
             category: 'ui',
             when: () => peerSystemConfigured.value,
@@ -1385,7 +1387,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.help',
-            label: 'Open Help Page…',
+            labelKey: 'navigation.commands.help',
             icon: 'circle-question',
             category: 'ui',
             // Same list as Settings → Help: every page whose constraints match
@@ -1400,7 +1402,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.edit-project',
-            label: 'Edit Current Project',
+            labelKey: 'navigation.commands.editCurrentProject',
             icon: 'pencil',
             category: 'ui',
             when: () => !!routeProjectId(),
@@ -1412,7 +1414,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.archive-project',
-            label: 'Archive Current Project',
+            labelKey: 'navigation.commands.archiveCurrentProject',
             icon: 'box-archive',
             category: 'ui',
             when: () => {
@@ -1423,7 +1425,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.unarchive-project',
-            label: 'Unarchive Current Project',
+            labelKey: 'navigation.commands.unarchiveCurrentProject',
             icon: 'box-open',
             category: 'ui',
             when: () => {
@@ -1434,7 +1436,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.edit-workspace',
-            label: 'Edit Current Workspace',
+            labelKey: 'navigation.commands.editCurrentWorkspace',
             icon: 'pencil',
             category: 'ui',
             when: () => !!route.query.workspace,
@@ -1444,7 +1446,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.archive-workspace',
-            label: 'Archive Current Workspace',
+            labelKey: 'navigation.commands.archiveCurrentWorkspace',
             icon: 'box-archive',
             category: 'ui',
             when: () => {
@@ -1455,7 +1457,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.unarchive-workspace',
-            label: 'Unarchive Current Workspace',
+            labelKey: 'navigation.commands.unarchiveCurrentWorkspace',
             icon: 'box-open',
             category: 'ui',
             when: () => {
@@ -1466,7 +1468,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.edit-project-pick',
-            label: 'Edit Project…',
+            labelKey: 'navigation.commands.editProject',
             icon: 'pen-to-square',
             category: 'ui',
             items: () => {
@@ -1479,7 +1481,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.archive-project-pick',
-            label: 'Archive Project…',
+            labelKey: 'navigation.commands.archiveProject',
             icon: 'box-archive',
             category: 'ui',
             when: () => data.getProjects.some(p => !p.archived),
@@ -1493,7 +1495,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.unarchive-project-pick',
-            label: 'Unarchive Project…',
+            labelKey: 'navigation.commands.unarchiveProject',
             icon: 'box-open',
             category: 'ui',
             // Lists every archived project regardless of the "show archived
@@ -1510,7 +1512,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.edit-workspace-pick',
-            label: 'Edit Workspace…',
+            labelKey: 'navigation.commands.editWorkspace',
             icon: 'pen-to-square',
             category: 'ui',
             when: () => workspaces.getSelectableWorkspaces.length > 0,
@@ -1533,7 +1535,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.archive-workspace-pick',
-            label: 'Archive Workspace…',
+            labelKey: 'navigation.commands.archiveWorkspace',
             icon: 'box-archive',
             category: 'ui',
             when: () => workspaces.workspaces.some(ws => !ws.archived),
@@ -1552,7 +1554,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.unarchive-workspace-pick',
-            label: 'Unarchive Workspace…',
+            labelKey: 'navigation.commands.unarchiveWorkspace',
             icon: 'box-open',
             category: 'ui',
             // Lists every archived workspace regardless of the "show archived
@@ -1573,7 +1575,7 @@ export function initStaticCommands(router) {
         },
         {
             id: 'ui.settings',
-            label: 'Open Settings',
+            labelKey: 'navigation.commands.settings',
             icon: 'gear',
             category: 'ui',
             action: () => {

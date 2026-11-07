@@ -31,7 +31,7 @@ defineProps({
                 :background-shells="line.kind === 'shells' ? 1 : 0"
                 :has-active-crons="line.kind === 'crons'"
             />
-            <span class="background-work-status__phrase" :class="{ 'background-work-status__phrase--live': line.kind === 'shells' }">{{ line.text }}<span v-if="line.kind === 'shells'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
+            <span class="background-work-status__phrase" :class="{ 'background-work-status__phrase--live': line.kind === 'shells' }">{{ line.textKey ? $t(line.textKey, line.textParams || {}, line.textCount ?? 1) : line.text }}<span v-if="line.kind === 'shells'" class="background-work-status__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
         </AgentStatusLine>
     </div>
 </template>

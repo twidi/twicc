@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t, n } = useI18n()
 // Compact task progress shown next to the Tasks tab label: `done/total` while work remains, a green
 // check once every task is done. Renders nothing without tasks. Shared by the center tab strip, the
 // dock tab bars, the gutter chips (and their measurement mirrors) and the layout overlay.
@@ -19,15 +21,15 @@ const total = computed(() => props.progress?.total ?? 0)
 const allDone = computed(() => total.value > 0 && props.progress.done === total.value)
 const label = computed(() => {
     if (!total.value) return ''
-    if (allDone.value) return total.value === 1 ? 'Task done' : `All ${total.value} tasks done`
-    return `${props.progress.done} of ${total.value} tasks done`
+    if (allDone.value) return t('session.tasks.allDone', { count: total.value, total: n(total.value) }, total.value)
+    return t('session.tasks.doneCount', { done: n(props.progress.done), total: n(total.value) })
 })
 </script>
 
 <template>
     <span v-if="total > 0" :id="id" class="task-tab-progress" :class="{ done: allDone }" :aria-label="label">
         <wa-icon v-if="allDone" name="check" class="task-tab-check"></wa-icon>
-        <span v-else class="task-tab-count">{{ progress.done }}/{{ total }}</span>
+        <span v-else class="task-tab-count">{{ n(progress.done) }}/{{ n(total) }}</span>
         <AppTooltip :for="id">{{ label }}</AppTooltip>
     </span>
 </template>

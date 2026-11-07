@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/projectTabs.js
 //
 // The tabs of a scope page (global, workspace, project, worktree) and how they map to routes and
@@ -11,11 +13,11 @@
 import { buildTabRouteName } from './granularRoutes.js'
 
 export const PROJECT_TABS = Object.freeze([
-    { id: 'timeline', label: 'Timeline', icon: 'clock-rotate-left' },
-    { id: 'stats', label: 'Stats', icon: 'chart-simple' },
-    { id: 'files', label: 'Files', icon: 'folder' },
-    { id: 'git', label: 'Git', icon: 'code-branch' },
-    { id: 'terminal', label: 'Terminal', icon: 'terminal' },
+    { id: 'timeline', get label() { return i18n.global.t('project.tabs.timeline') }, icon: 'clock-rotate-left' },
+    { id: 'stats', get label() { return i18n.global.t('project.tabs.stats') }, icon: 'chart-simple' },
+    { id: 'files', get label() { return i18n.global.t('project.tabs.files') }, icon: 'folder' },
+    { id: 'git', get label() { return i18n.global.t('project.tabs.git') }, icon: 'code-branch' },
+    { id: 'terminal', get label() { return i18n.global.t('project.tabs.terminal') }, icon: 'terminal' },
 ])
 
 /** Alt+Shift+digit → tab id. Fixed: a missing tab (Git without a git root) leaves its key unused. */

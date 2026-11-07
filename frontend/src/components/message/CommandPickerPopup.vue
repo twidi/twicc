@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * CommandPickerPopup - A popup for selecting a provider command triggered by
  * an activation character (e.g. ``/`` for Claude Code; Codex will eventually
@@ -92,22 +94,20 @@ const PAGE_SIZE = 10
 
 function commandTag(cmd) {
     const scope = cmd.is_global ? 'global' : 'project'
-    if (cmd.is_workflow) {
-        if (cmd.is_builtin) return 'built-in workflow'
-        if (cmd.plugin_name) return `${cmd.plugin_name} plugin workflow, ${scope}`
-        return `workflow, ${scope}`
-    }
-    if (cmd.is_builtin) return 'built-in'
-    if (cmd.plugin_name) return `${cmd.plugin_name} plugin, ${scope}`
-    return scope
+    const kind = cmd.is_workflow
+        ? (cmd.is_builtin ? 'builtinWorkflow' : cmd.plugin_name ? 'pluginWorkflow' : 'workflow')
+        : (cmd.is_builtin ? 'builtin' : cmd.plugin_name ? 'plugin' : 'scope')
+    return t(`composer.commands.tags.${kind}.${scope}`, { plugin: cmd.plugin_name })
 }
 
 // ─── Filtered commands ────────────────────────────────────────────────────
 
 const filteredCommands = computed(() => {
     const query = searchQuery.value.trim().toLowerCase()
-    if (!query) return allCommands.value
-    return allCommands.value.filter(cmd => {
+    const builtins = getProviderHelpers(props.provider)?.getBuiltInCommands(props.activationChar) ?? []
+    const commands = [...builtins, ...allCommands.value].sort((a, b) => a.name.localeCompare(b.name))
+    if (!query) return commands
+    return commands.filter(cmd => {
         if (cmd.name.toLowerCase().includes(query)) return true
         if (cmd.plugin_name && cmd.plugin_name.toLowerCase().includes(query)) return true
         return false
@@ -145,11 +145,7 @@ async function fetchCommands() {
             return
         }
         const data = await res.json()
-        const helpers = getProviderHelpers(props.provider)
-        const builtins = helpers ? helpers.getBuiltInCommands(props.activationChar) : []
-        const all = [...builtins, ...(data.commands || [])]
-        all.sort((a, b) => a.name.localeCompare(b.name))
-        allCommands.value = all
+        allCommands.value = data.commands || []
     } catch (err) {
         error.value = err.message
         allCommands.value = []

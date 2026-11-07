@@ -1,3 +1,5 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/eventTime.js
 //
 // Time and text helpers of the timeline display (docs/plans/2026-10-15-timeline-display-design.md).
@@ -65,7 +67,7 @@ export function shiftEventTime(timestamp, deltaMs) {
  */
 export function formatClock(ms, { locale, timeZone } = {}) {
     if (!Number.isFinite(ms)) return ''
-    return new Date(ms).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', timeZone })
+    return new Date(ms).toLocaleTimeString(locale ?? i18n.global.locale.value, { hour: '2-digit', minute: '2-digit', timeZone })
 }
 
 /** The mark before an estimated time ("~14:32"). */
@@ -121,7 +123,7 @@ export function timeColumnSizer(options) {
  */
 export function formatFullTime(ms, { locale, timeZone } = {}) {
     if (!Number.isFinite(ms)) return ''
-    return new Date(ms).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'medium', timeZone })
+    return new Date(ms).toLocaleString(locale ?? i18n.global.locale.value, { dateStyle: 'medium', timeStyle: 'medium', timeZone })
 }
 
 /**

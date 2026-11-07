@@ -1,3 +1,4 @@
+import { i18n } from '../i18n/index.js'
 /**
  * useCommandRegistry composable — Singleton registry for command palette commands.
  *
@@ -24,7 +25,8 @@
  * Command schema:
  *   {
  *     id: string,              // unique identifier (e.g. 'session.archive')
- *     label: string,           // display label
+ *     label: string,           // display label (or labelKey for a reactive catalog message)
+ *     labelKey: string,        // optional global catalog key, resolved by availableCommands
  *     icon: string,            // Web Awesome icon name (Font Awesome 6 kebab-case)
  *     category: string,        // grouping key (one of CATEGORIES keys)
  *     action: () => void,      // executed on selection (for commands without items)
@@ -48,17 +50,17 @@ import { getRegisteredProviders, getProviderHelpers } from '../providers'
 export const CATEGORIES = computed(() => {
     const providerCategories = getRegisteredProviders().map(provider => {
         const label = getProviderHelpers(provider).constructor.label ?? provider
-        return { key: `provider:${provider}`, label: `${label} Defaults` }
+        return { key: `provider:${provider}`, label: i18n.global.t('navigation.commandCategories.providerDefaults', { provider: label }) }
     })
     return [
-        { key: 'navigation', label: 'Navigation' },
-        { key: 'session',    label: 'Session' },
-        { key: 'layout',     label: 'Layout' },
-        { key: 'creation',   label: 'Creation' },
-        { key: 'display',    label: 'Display' },
-        { key: 'terminal',   label: 'Terminal' },
+        { key: 'navigation', label: i18n.global.t('navigation.commandCategories.navigation') },
+        { key: 'session',    label: i18n.global.t('navigation.commandCategories.session') },
+        { key: 'layout',     label: i18n.global.t('navigation.commandCategories.layout') },
+        { key: 'creation',   label: i18n.global.t('navigation.commandCategories.creation') },
+        { key: 'display',    label: i18n.global.t('navigation.commandCategories.display') },
+        { key: 'terminal',   label: i18n.global.t('navigation.commandCategories.terminal') },
         ...providerCategories,
-        { key: 'ui',         label: 'UI' },
+        { key: 'ui',         label: i18n.global.t('navigation.commandCategories.ui') },
     ]
 })
 
@@ -100,7 +102,7 @@ const availableCommands = computed(() => {
     const result = []
     for (const command of commandMap.value.values()) {
         if (command.when && !command.when()) continue
-        result.push(command)
+        result.push(command.labelKey ? { ...command, label: i18n.global.t(command.labelKey) } : command)
     }
     return result
 })

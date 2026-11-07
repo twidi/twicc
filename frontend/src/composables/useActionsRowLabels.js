@@ -30,7 +30,9 @@ export function useActionsRowLabels(headerRef, actionsRef, resetKey) {
         return buttons[buttons.length - 1].offsetTop - buttons[0].offsetTop > 2
     }
 
-    watch([headerWidth, labels], () => {
+    // A reset can leave wrappedAt at zero and labels unchanged. Still measure
+    // after the translated labels render, even when the pane width stays fixed.
+    watch([headerWidth, labels, resetKey], () => {
         if (labels.value && rowWraps()) {
             wrappedAt.value = Math.max(wrappedAt.value, headerWidth.value)
         }

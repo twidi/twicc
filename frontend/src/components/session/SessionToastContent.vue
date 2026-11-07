@@ -1,4 +1,7 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 /**
  * SessionToastContent - Rich content for session-related toast notifications.
  *
@@ -30,6 +33,15 @@ const props = defineProps({
     },
     errorMessage: {
         type: String,
+        default: null,
+    },
+    /** Local application error, translated while the toast remains visible. */
+    errorMessageDescriptor: {
+        type: Object,
+        default: null,
+    },
+    detailMessage: {
+        type: Object,
         default: null,
     },
     /** Neutral detail line below the session title (e.g. "1 background shell still running") */
@@ -75,12 +87,15 @@ const processState = computed(() => store.processStates[props.sessionId])
 const projectId = computed(() => session.value?.project_id || processState.value?.project_id)
 
 
-const sessionTitle = computed(() => session.value?.title || processState.value?.session_title || 'Unknown')
+const sessionTitle = computed(() => session.value?.title || processState.value?.session_title || t('session.toast.unknownTitle'))
+
+const resolvedErrorMessage = computed(() => resolveUiMessage(props.errorMessageDescriptor || props.errorMessage))
+const resolvedDetail = computed(() => resolveUiMessage(props.detailMessage || props.detail))
 
 /** Parsed error info (clean message + optional HTTP status). */
 const parsedError = computed(() => {
-    if (!props.errorMessage) return null
-    return parseProcessError(props.errorMessage)
+    if (!resolvedErrorMessage.value) return null
+    return parseProcessError(resolvedErrorMessage.value)
 })
 
 /** Whether we're already viewing this session. */
@@ -168,8 +183,8 @@ function goToSession() {
             <span class="session-toast-label">{{ $t('session.toast.sessionLabel') }}</span>
             <span class="session-toast-title">{{ sessionTitle }}</span>
         </span>
-        <span v-if="detail" class="session-toast-detail">{{ detail }}</span>
-        <span v-if="parsedError" class="session-toast-error" :title="errorMessage">
+        <span v-if="resolvedDetail" class="session-toast-detail">{{ resolvedDetail }}</span>
+        <span v-if="parsedError" class="session-toast-error" :title="resolvedErrorMessage">
             {{ parsedError.summary }}<span v-if="parsedError.status" class="error-status"> ({{ parsedError.status }})</span>
         </span>
         <div v-if="!isCurrentSession" class="session-toast-actions">

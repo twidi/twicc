@@ -151,7 +151,7 @@ test('the list price reads per million units', () => {
     assert.equal(formatTtsModelPrice({ prompt: 0.00000062, completion: 0 }), '$0.62/M in')
     assert.equal(formatTtsModelPrice({ prompt: 0.0000005, completion: 0.000006 }), '$0.5/M in · $6/M out')
     assert.equal(formatTtsModelPrice({ prompt: 0.000015, completion: null }), '$15/M in')
-    assert.equal(formatTtsModelPrice({ prompt: 0, completion: 0.0025 }), '$2500/M out')
+    assert.equal(formatTtsModelPrice({ prompt: 0, completion: 0.0025 }), '$2,500/M out')
     assert.equal(formatTtsModelPrice({ prompt: 0, completion: 0 }), 'Free')
     assert.equal(formatTtsModelPrice({ prompt: null, completion: null }), '')
     assert.equal(formatTtsModelPrice(undefined), '')

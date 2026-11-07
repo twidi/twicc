@@ -21,9 +21,13 @@
  */
 
 import { ref, watch, nextTick, useId, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { apiFetch } from '../../utils/api'
 import FileTreePanel from './FileTreePanel.vue'
 import { usePopupMotion } from '../../composables/usePopupMotion'
+
+const { t } = useI18n()
 
 const props = defineProps({
     modelValue: {
@@ -68,7 +72,9 @@ async function fetchTree(dirPath) {
     )
     if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || 'Failed to load directory')
+        throw Object.assign(new Error(data.error || ''), {
+            uiMessage: data.error || localUiMessage('files.errors.loadDirectory'),
+        })
     }
     return await res.json()
 }
@@ -154,7 +160,7 @@ async function openPopup() {
             tree.value = data
         }
     } catch (e) {
-        error.value = e.message || 'Failed to load directory'
+        error.value = e.uiMessage || e.message || localUiMessage('files.errors.loadDirectory')
     } finally {
         loading.value = false
     }
@@ -189,7 +195,7 @@ async function toggleHidden() {
     try {
         tree.value = await fetchTree(rootPath.value)
     } catch (e) {
-        error.value = e.message || 'Failed to load directory'
+        error.value = e.uiMessage || e.message || localUiMessage('files.errors.loadDirectory')
     } finally {
         loading.value = false
     }
@@ -208,7 +214,7 @@ async function navigateUp() {
         rootPath.value = parentPath
         tree.value = data
     } catch (e) {
-        error.value = e.message || 'Failed to load directory'
+        error.value = e.uiMessage || e.message || localUiMessage('files.errors.loadDirectory')
     } finally {
         loading.value = false
     }
@@ -336,7 +342,7 @@ onBeforeUnmount(() => {
                         size="small"
                         class="hidden-toggle"
                         :class="{ 'hidden-toggle-active': showHidden }"
-                        :title="showHidden ? 'Hide hidden directories' : 'Show hidden directories'"
+                        :title="$t(showHidden ? 'files.directories.hideHidden' : 'files.directories.showHidden')"
                         @click="toggleHidden"
                     >
                         <wa-icon :name="showHidden ? 'eye' : 'eye-slash'" :label="$t('files.directories.toggleHidden')"></wa-icon>
@@ -348,7 +354,7 @@ onBeforeUnmount(() => {
                     ref="fileTreePanelRef"
                     :tree="tree"
                     :loading="loading"
-                    :error="error"
+                    :error="resolveUiMessage(error, { t })"
                     :root-path="rootPath"
                     :lazy-load-fn="lazyLoadDir"
                     :show-refresh="false"

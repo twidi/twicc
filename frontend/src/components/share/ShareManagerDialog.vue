@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 // The global "Shared links" screen. Rather than one flat list (where an
 // unlabelled link gives no clue what it points at), links are grouped by the
 // object they share — one session or one artifact — each group headed by its
@@ -32,7 +34,7 @@ const groups = computed(() => {
                 key,
                 kind: s.kind,
                 icon: isArtifact ? ARTIFACT_ICON : 'comment',
-                kindLabel: isArtifact ? 'Artifact' : 'Session',
+                kindLabel: isArtifact ? t('sharing.links.artifactKind') : t('sharing.links.sessionKind'),
                 title: (isArtifact ? s.target_name : s.target_title) || '',
                 shares: [],
             }
@@ -54,7 +56,7 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
             <div class="sm-group__header">
                 <wa-icon :name="g.icon" class="sm-group__icon"></wa-icon>
                 <span class="sm-group__kind">{{ g.kindLabel }}</span>
-                <span class="sm-group__title">{{ g.title || (g.kind === 'artifact' ? 'Unnamed artifact' : 'Untitled session') }}</span>
+                <span class="sm-group__title">{{ g.title || (g.kind === 'artifact' ? $t('sharing.links.unnamedArtifact') : $t('sharing.links.untitledSession')) }}</span>
                 <span class="sm-group__count">{{ $t('sharing.links.count', { count: g.shares.length }, g.shares.length) }}</span>
             </div>
             <ShareListPanel :shares="g.shares" @edit="editing = $event" />

@@ -12,17 +12,19 @@ responses, project names, saved snippets, terminal output or file contents.
 
 ## Current coverage
 
-The direct-template migration covers applicable interface text reported by the
-official Vue I18n ESLint rules. This includes settings panels, navigation,
-dialogs, session controls, tool panels and public-viewer controls. Both catalogs
-contain 1,835 messages. Dates rendered by the shared date utility follow the
-selected language. The HTML `lang` attribute follows it too, including Web
-Awesome controls that use the document language.
+The frontend audit includes local interface text in templates, scripts, shared
+metadata, provider presentation helpers, generated DOM and HTML, CSS loading
+labels, editor controls, and standalone entry points. Both catalogs have the
+same message keys. Dates, numbers, lists and plurals use the selected language.
+The HTML `lang` attribute follows it too, including Web Awesome controls that
+use the document language.
 
-This is an incremental migration. Labels and messages built in scripts,
-dictionaries, provider helpers or the backend still need a file-by-file review.
-Long help pages and tips need a separate content translation workflow. A clean
-lint result does not establish complete interface coverage.
+`docs/i18n-frontend-checklist.md` records the status of the complete file-by-file
+pass and independent reviews. A clean lint result alone does not establish
+complete interface coverage. Backend-generated literal interface text remains
+an explicit external finding for a backend pass. Long help pages, tips and their
+media need a separate content translation workflow; their headings and controls
+belong to the frontend interface pass.
 
 The share viewer and artifact shell install the same translation plugin for
 reused components. Their language preference belongs to their browser origin;
@@ -151,6 +153,96 @@ review. User names, provider content, files and terminal output stay unchanged.
 Run `node --test eslint.i18n.test.js` to check the configured detection scope.
 The existing `src/i18n/index.test.js` also checks catalog key/parameter parity,
 message compilation, fallback and reactive locale changes.
+
+## File-by-file frontend audit
+
+`docs/i18n-frontend-checklist.md` records frontend application sources and their audit states.
+Its current working copy stays uncommitted until the complete pass finishes.
+A completed checklist is committed with the validated translations. That commit
+becomes the reference for a later pass. At the start of that pass, uncheck all
+items in the working copy. Commit the checklist again only after completing the
+new pass. The last commit that changes this file must always represent a
+completed audit, never partial progress.
+
+Find the baseline from Git, not from a date or the current branch tip:
+
+```bash
+baseline_commit=$(git log -1 --format=%H -- docs/i18n-frontend-checklist.md)
+git diff --name-status --find-renames "$baseline_commit" -- frontend/
+git ls-files --others --exclude-standard -- frontend/
+```
+
+The diff includes committed, staged and unstaged changes since the baseline.
+The second listing identifies untracked files, which the diff cannot show.
+If no completed checklist commit exists, perform the initial full source audit.
+Do not substitute an unrelated commit as the baseline.
+
+Reconcile the current frontend files with the inventory using its scope rules.
+Add every new in-scope file as unchecked, including new files outside existing source directories.
+Remove deleted entries and update renamed paths. Reassess files whose roles change.
+An absent file is not automatically an omission: deliberate exclusions stay excluded.
+Never add them as missing or unverified files just to match the directory listing.
+
+Start from a complete frontend application source inventory. Include standalone
+entry points, Vue components, JavaScript, TypeScript, HTML, CSS, display metadata
+and translation catalogs. Include configuration only when it directly supplies
+interface messages: `frontend/vite.config.js` injects startup recovery messages
+into `frontend/index.html`.
+
+Keep help/tip interface components and metadata sources in this source inventory.
+Their controls and titles are translated. The catalogs contain 12 help titles
+and 54 tip titles per locale. Long Markdown bodies need a separate content pass.
+
+Do not add checkboxes for images, icons, screenshots, videos, public assets,
+help/tip Markdown, authoring guides, tests, harnesses, fixtures or benchmark data.
+Exclude package manifests, lockfiles and tooling/build configuration without
+interface messages. List these exclusions once in the scope, not as checked files.
+The checklist's **Deliberate exclusions** table defines recognition rules for every later pass.
+Apply them to new files too. Generated output and dependencies also stay outside the inventory.
+Classify by role: runtime display dictionaries remain in scope even when they resemble fixture data.
+Public executable code and configuration that supplies interface messages also remain in scope.
+Inspect unknown file types before classifying them. Retain application helpers even when they contain no interface text.
+
+Read each production file in full. Identify all output paths: template text and
+expressions, bound attributes and component props, structured options, slots,
+DOM writes, generated HTML, toasts, notifications, titles, validation messages,
+formatting and library configuration. Official lint supplements this review.
+
+Follow displayed values through local expressions, helpers, imports and shared
+metadata. Record unresolved dependencies against the originating consumer and
+the owning source file. A dependency lookup is not a complete audit of that
+source file. Group requests for the same shared definition so it is handled
+once. Verify affected consumers after changing a shared display contract.
+
+Keep machine values, stored settings, routes, protocol identifiers, prompts and
+user/provider content unchanged. Shared presentation metadata can expose message
+keys; consumers resolve those keys reactively. Presentation helpers can translate
+at call time or return a key with named parameters. Never freeze translated
+labels at module initialization. Use complete messages for composed sentences,
+locale-aware plurals and lists, and named rich slots for inline elements.
+
+Persist local validation and notification messages with `localUiMessage()`
+from `src/i18n/uiMessages.js`. Resolve them with `resolveUiMessage()` during
+rendering or in a reactive getter. Keep external error prose as plain strings.
+Use `localUiError()` when callers require an `Error`: it retains a string
+`message` and a `uiMessage` descriptor. Preserve that descriptor across local
+catch/cache boundaries. Never send these UI descriptors to the backend or a
+provider. Recheck visible cached errors and persistent notifications while
+changing locale; changing only the next-created message is insufficient.
+
+Each file receives an implementation audit and an independent review. Reviewers
+read the whole production file, not only its diff. Check an item only after its
+findings and relevant dependencies are resolved. If a later change invalidates
+a reviewed file or its display dependencies, reopen the affected checks. Add new
+files and account for renamed or removed files before declaring completion.
+Record backend-supplied literal display text as an external finding; do not
+silently mark it translated or alter backend behavior during a frontend pass.
+
+Before completion, verify catalog key/parameter parity, message compilation,
+official lint, relevant tests, production bundles and browser locale changes.
+Future passes compare code with the last completed checklist commit. Unchanged
+files can carry their prior review forward only when relevant dependencies and
+translation contracts are unchanged.
 
 ## Adding a language
 

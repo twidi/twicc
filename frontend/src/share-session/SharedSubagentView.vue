@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed, provide } from 'vue'
 import { INLINE_ARTIFACT_CONTEXT } from '../inline-artifacts/context.js'
 import ShareItemsList from './ShareItemsList.vue'
@@ -13,7 +15,7 @@ const current = computed(() => props.stack[props.stack.length - 1])
 // Same label as the owner's subagent tabs: the session slug, else the short id.
 const agentLabel = (id) => {
     const { name, isFallback } = getAgentDisplay(id, store)
-    return isFallback ? `Agent "${name}"` : name
+    return isFallback ? t('session.agent.fallbackName', { name }) : name
 }
 </script>
 

@@ -1,3 +1,5 @@
+import { localUiError } from '../../i18n/uiMessages.js'
+
 import { toRaw } from 'vue'
 import { createSessionEventHistory, createSessionEventHistoryState } from './history.js'
 import { bindTimelineEvents } from '../timeline/liveEvents.js'
@@ -29,7 +31,7 @@ export function createSessionEventHistoryActions({ fetchPage, eventTarget = () =
             const controller = createSessionEventHistory({ sessionId, state,
                 fetchPage: async params => {
                     const deadline = new AbortController()
-                    const timer = setTimeout(() => deadline.abort(new Error('Session event request timed out')), 30000)
+                    const timer = setTimeout(() => deadline.abort(localUiError('session.events.errors.timeout')), 30000)
                     try { return await fetchPage({ ...params, signal: AbortSignal.any([params.signal, deadline.signal]) }) }
                     finally { clearTimeout(timer) }
                 },

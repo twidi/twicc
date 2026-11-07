@@ -1,4 +1,8 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 import { ref, computed, watchEffect } from 'vue'
 import {
     GitLog,
@@ -20,12 +24,12 @@ const colorScheme = computed(() => (isDark.value ? 'dark' : 'light'))
 // Colour palette
 // ---------------------------------------------------------------------------
 
-const PALETTE_OPTIONS = [
-    { label: 'Rainbow Light', value: 'rainbow-light' },
-    { label: 'Rainbow Dark', value: 'rainbow-dark' },
-    { label: 'Neon Aurora Light', value: 'neon-aurora-light' },
-    { label: 'Neon Aurora Dark', value: 'neon-aurora-dark' },
-]
+const PALETTE_OPTIONS = computed(() => [
+    { label: t('git.test.options.rainbowLight'), value: 'rainbow-light' },
+    { label: t('git.test.options.rainbowDark'), value: 'rainbow-dark' },
+    { label: t('git.test.options.auroraLight'), value: 'neon-aurora-light' },
+    { label: t('git.test.options.auroraDark'), value: 'neon-aurora-dark' },
+])
 
 const selectedPalette = ref('neon-aurora-dark')
 
@@ -47,15 +51,15 @@ const graphColumnWidth = ref(DEFAULT_NODE_SIZE + NODE_BORDER_WIDTH * 2)
 // Break point theme
 // ---------------------------------------------------------------------------
 
-const BREAK_POINT_THEME_OPTIONS = [
-    { label: 'Dot', value: 'dot' },
-    { label: 'Slash', value: 'slash' },
-    { label: 'Arrow', value: 'arrow' },
-    { label: 'Ring', value: 'ring' },
-    { label: 'Line', value: 'line' },
-    { label: 'Double line', value: 'double-line' },
-    { label: 'Zig-zag', value: 'zig-zag' },
-]
+const BREAK_POINT_THEME_OPTIONS = computed(() => [
+    { label: t('git.test.options.dot'), value: 'dot' },
+    { label: t('git.test.options.slash'), value: 'slash' },
+    { label: t('git.test.options.arrow'), value: 'arrow' },
+    { label: t('git.test.options.ring'), value: 'ring' },
+    { label: t('git.test.options.line'), value: 'line' },
+    { label: t('git.test.options.doubleLine'), value: 'double-line' },
+    { label: t('git.test.options.zigzag'), value: 'zig-zag' },
+])
 
 const selectedBreakPointTheme = ref('dot')
 
@@ -104,8 +108,8 @@ const displayedCommit = computed(() =>
 )
 
 const displayedCommitLabel = computed(() => {
-    if (selectedCommit.value) return 'Selected'
-    if (previewedCommit.value) return 'Previewed (hover)'
+    if (selectedCommit.value) return t('git.test.options.selected')
+    if (previewedCommit.value) return t('git.test.options.previewed')
     return null
 })
 </script>

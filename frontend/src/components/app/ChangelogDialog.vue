@@ -1,4 +1,9 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
+import { useI18n } from 'vue-i18n'
+
+const { t, locale } = useI18n()
+
 import { ref, computed, watch, nextTick } from 'vue'
 import { useDataStore } from '../../stores/data.js'
 import { useSettingsStore } from '../../stores/settings.js'
@@ -76,24 +81,24 @@ const badgeVariant = computed(() => {
 const badgeLabel = computed(() => {
     const cat = currentEntry.value?.category
     if (!cat) return ''
-    return cat.charAt(0).toUpperCase() + cat.slice(1)
+    return ['summary', 'added', 'changed', 'fixed', 'removed', 'deprecated', 'security'].includes(cat) ? t(`changelog.category.${cat}`) : cat
 })
 
 const dialogLabel = computed(() => {
-    if (isSponsorScreen.value) return 'Enjoying TwiCC?'
+    if (isSponsorScreen.value) return t('changelog.sponsorTitle')
     const v = selectedVersion.value
-    if (!v) return "What's New"
+    if (!v) return t('changelog.title')
     if (v === COMBINED_VERSION_KEY) {
         const entry = currentEntry.value
         const prevV = selectedVersionData.value?._previousVersion
         const sourceV = entry?._sourceVersion
         if (prevV && sourceV) {
-            return `What's new since v${prevV}: v${sourceV}`
+            return t('changelog.sinceTitle', { previous: prevV, version: sourceV })
         }
-        return "What's New"
+        return t('changelog.title')
     }
-    if (/^\d/.test(v)) return `What's New in v${v}`
-    return `What's New (${v})`
+    if (/^\d/.test(v)) return t('changelog.versionTitle', { version: v })
+    return t('changelog.namedTitle', { version: v })
 })
 
 // Find the initial version to display
@@ -157,7 +162,8 @@ function onImageClick(event) {
     const items = imgs.map(el => ({
         type: 'image',
         src: el.src,
-        name: el.getAttribute('alt') || 'Image',
+        name: el.getAttribute('alt'),
+        nameKey: 'changelog.image',
     }))
     openMediaPreview(items, Math.max(0, imgs.indexOf(clicked)))
 }
@@ -196,7 +202,7 @@ async function open({ availableUpdates = false } = {}) {
         await nextTick()
         await renderCurrentEntry()
     } catch (e) {
-        error.value = `Could not load changelog: ${e.message}`
+        error.value = e.uiMessage || e.message
     } finally {
         loading.value = false
     }
@@ -242,7 +248,7 @@ defineExpose({ open, close })
         </div>
 
         <!-- Error -->
-        <wa-callout v-else-if="error" variant="danger">{{ error }}</wa-callout>
+        <wa-callout v-else-if="error" variant="danger">{{ $t('changelog.loadError', { error: resolveUiMessage(error) }) }}</wa-callout>
 
         <!-- Sponsor screen: always the last screen after the real entries -->
         <div v-else-if="isSponsorScreen" class="changelog-sponsor">
@@ -305,7 +311,7 @@ defineExpose({ open, close })
                         :value="v.version"
                         :label="versionOptionLabel(v)"
                         class="version-option"
-                    ><span class="version-option-content"><span class="version-option-name">{{ versionOptionLabel(v) }}</span><span v-if="v.date" class="version-option-date">{{ v.date }}</span></span></wa-option>
+                    ><span class="version-option-content"><span class="version-option-name">{{ versionOptionLabel(v) }}</span><span v-if="v.date" class="version-option-date">{{ new Date(`${v.date}T00:00:00`).toLocaleDateString(locale) }}</span></span></wa-option>
                 </wa-select>
             </div>
             <div class="changelog-footer-right">

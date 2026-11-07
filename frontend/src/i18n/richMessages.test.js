@@ -33,7 +33,7 @@ function messageRender(file, key) {
 async function renderMessage(file, key, locale, data = {}, override) {
     const instance = createAppI18n(locale)
     if (override) instance.global.mergeLocaleMessage(locale, { [key]: override })
-    const app = Vue.createSSRApp({ render: messageRender(file, key), data: () => data })
+    const app = Vue.createSSRApp({ render: messageRender(file, key), data: () => ({ n: instance.global.n, ...data }) })
     app.use(instance)
     return (await renderToString(app)).replace(/<!--[\s\S]*?-->/g, '')
 }
@@ -109,7 +109,7 @@ test('artifact host warnings escape host names and retain count selection', asyn
     for (const locale of ['en', 'pt-BR']) {
         for (const blockedHosts of [['<host>&'], ['<host>&', 'other.test']]) {
             const html = await renderMessage('../artifact-shell/ArtifactShellApp.vue', 'artifacts.shell.blockedHosts', locale,
-                { blockedHosts })
+                { blockedHosts, blockedHostList: new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(blockedHosts) })
             assert.match(html, /<code>&lt;host&gt;&amp;/)
             assert.doesNotMatch(html, /<host>|undefined/)
             assert.match(html, locale === 'en'

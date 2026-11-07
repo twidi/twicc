@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 import { truncateTitle } from './truncate.js'
 
 /** Session titles in routing lines (inbox rows, toasts, notifications): long
@@ -25,7 +27,7 @@ export function peerMessageRouting(message) {
     if (local) {
         return {
             sessionId: local.id,
-            sessionTitle: local.title || 'Untitled session',
+            sessionTitle: local.title || i18n.global.t('session.title.untitled'),
             projectId: local.project_id || null,
             fromConversation: false,
         }
@@ -34,7 +36,7 @@ export function peerMessageRouting(message) {
     if (session?.id) {
         return {
             sessionId: session.id,
-            sessionTitle: session.title || 'Untitled session',
+            sessionTitle: session.title || i18n.global.t('session.title.untitled'),
             projectId: session.project_id || null,
             fromConversation: true,
         }
@@ -82,8 +84,6 @@ export function peerRoutingSessionTitle(routing) {
 export function peerRoutingText(routing, projectLabel) {
     if (!routing) return ''
     const project = routing.projectId ? projectLabel(routing.projectId) : ''
-    const parts = []
-    if (routing.sessionId) parts.push(`session “${peerRoutingSessionTitle(routing)}”`)
-    if (project) parts.push(`in ${project}`)
-    return parts.join(' ')
+    if (routing.sessionId) return i18n.global.t(project ? 'workspace.peers.routing.sessionProject' : 'workspace.peers.routing.session', { session: peerRoutingSessionTitle(routing), project })
+    return project ? i18n.global.t('workspace.peers.routing.project', { project }) : ''
 }

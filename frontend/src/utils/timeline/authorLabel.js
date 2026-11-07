@@ -1,8 +1,11 @@
+import { i18n } from '../../i18n/index.js'
+
 // frontend/src/utils/timeline/authorLabel.js
 //
 // The "by ..." label that follows a row's wording (display design section 6.3). Chosen from `actor`
 // and `via` TOGETHER, never from a NULL `via` alone: NULL means "unknown" (old rows) or "automatic".
 
+import { messageParts } from './parts.js'
 import { truncateText } from './eventTime.js'
 import { sessionMention } from './sessions.js'
 
@@ -43,19 +46,19 @@ export function describeAuthor(event, { sessions, isSubagent }) {
     const withVia = (suffix) => (suffix ? ` ${suffix}` : '')
     if (actor === 'user') {
         if (via === 'ui' || via === null || via === undefined) return NO_LABEL
-        if (typeof via === 'string' && Object.hasOwn(VIA_SUFFIX, via)) return { kind: 'text', parts: [text(`by you${withVia(VIA_SUFFIX[via])}`)], unknown: false }
+        if (typeof via === 'string' && Object.hasOwn(VIA_SUFFIX, via)) return { kind: 'text', parts: [text(i18n.global.t('session.timeline.author.byYou', { via: withVia(VIA_SUFFIX[via]) }))], unknown: false }
     } else if (actor === 'agent') {
         if (via === null || via === undefined) return NO_LABEL
         if (via === 'cli' || via === 'mcp_internal') {
             const suffix = withVia(VIA_SUFFIX[via])
-            if (!event.actor_ref) return { kind: 'text', parts: [text(`by an agent${suffix}`)], unknown: false }
+            if (!event.actor_ref) return { kind: 'text', parts: [text(i18n.global.t('session.timeline.author.byAgent', { via: suffix }))], unknown: false }
             const mention = sessionMention(event.actor_ref, sessions, { isSubagent })
-            return { kind: 'session', parts: [text('by '), { type: 'session', mention }, text(suffix)], unknown: false }
+            return { kind: 'session', parts: messageParts('session.timeline.author.session', { session: { type: 'session', mention }, via: text(suffix) }), unknown: false }
         }
     } else if (actor === 'external') {
         if (via === 'mcp_external') {
             const name = event.actor_name ? truncateText(event.actor_name, 80).text : null
-            const label = name ? `by ${name} (external MCP)` : 'by an external MCP client'
+            const label = name ? i18n.global.t('session.timeline.author.externalNamed', { name }) : i18n.global.t('session.timeline.author.external')
             return { kind: 'text', parts: [text(label)], unknown: false }
         }
     } else if (actor === 'system') {

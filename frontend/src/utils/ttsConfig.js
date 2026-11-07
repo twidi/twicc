@@ -1,3 +1,6 @@
+import { i18n } from '../i18n/index.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
+
 // Pure rules for the text-to-speech configs (shape normalized by src/twicc/tts/config.py).
 
 import { PROVIDER, TITLE_SUGGESTION_MODEL_LABELS } from '../constants.js'
@@ -13,9 +16,9 @@ export const MAX_PCM_RATE = 384000
 export const MAX_PCM_CHANNELS = 8
 
 export const SCRIPT_OUTPUT_OPTIONS = [
-    { value: 'stream', label: 'Audio stream' },
-    { value: 'whole', label: 'Whole audio' },
-    { value: 'path', label: 'File path' },
+    { value: 'stream', get label() { return i18n.global.t('settings.speech.output.stream') } },
+    { value: 'whole', get label() { return i18n.global.t('settings.speech.output.whole') } },
+    { value: 'path', get label() { return i18n.global.t('settings.speech.output.path') } },
 ]
 
 export const SCRIPT_FORMAT_OPTIONS = [
@@ -100,16 +103,14 @@ export function ttsConfigAutoName(config, models = []) {
     if (kindOf(config) === 'script') {
         // The base name of the command's first word.
         const program = (config.command ?? '').trim().split(/\s+/)[0].split('/').pop()
-        return program ? `Script · ${program}` : 'Unnamed script'
+        return program ? i18n.global.t('settings.speech.scriptName', { program }) : i18n.global.t('settings.speech.unnamedScript')
     }
     const model = config.model ? (models.find(entry => entry.id === config.model)?.name || config.model) : ''
-    return [model, config.voice].filter(Boolean).join(' · ') || 'Unnamed config'
+    return [model, config.voice].filter(Boolean).join(' · ') || i18n.global.t('settings.speech.unnamedConfig')
 }
 
-// One listed unit price per million units, short: 0.62, 15, 2500.
-function perMillion(price) {
-    const value = price * 1e6
-    return value >= 100 ? value.toFixed(0) : String(Number(value.toPrecision(3)))
+function formatPrice(value, significantDigits = 3) {
+    return new Intl.NumberFormat(i18n.global.locale.value, { style: 'currency', currency: 'USD', maximumSignificantDigits: significantDigits, ...(significantDigits === 2 ? { minimumSignificantDigits: 2 } : {}) }).format(value)
 }
 
 /**
@@ -121,10 +122,10 @@ export function formatTtsModelPrice(pricing) {
     const completion = pricing?.completion ?? null
     if (prompt === null && completion === null) return ''
     // "Free" only when both prices are known zeros; a missing one is unknown, not free.
-    if (prompt === 0 && completion === 0) return 'Free'
+    if (prompt === 0 && completion === 0) return i18n.global.t('settings.speech.free')
     const parts = []
-    if (prompt) parts.push(`$${perMillion(prompt)}/M in`)
-    if (completion) parts.push(`$${perMillion(completion)}/M out`)
+    if (prompt) parts.push(i18n.global.t('settings.speech.priceIn', { price: formatPrice(prompt * 1e6) }))
+    if (completion) parts.push(i18n.global.t('settings.speech.priceOut', { price: formatPrice(completion * 1e6) }))
     return parts.join(' · ')
 }
 
@@ -144,10 +145,10 @@ export function ttsModelFacts(models, modelId) {
 export function ttsStreamingLabel(model) {
     const streams = model?.streams
     if (!Array.isArray(streams)) return ''
-    if (!streams.length) return 'No streaming'
+    if (!streams.length) return i18n.global.t('settings.speech.noStreaming')
     const formats = Array.isArray(model.formats) ? model.formats : []
-    if (formats.every(format => streams.includes(format))) return 'Streaming'
-    return `Streaming in ${streams.map(format => FORMAT_LABELS[format] ?? format).join(' and ')}`
+    if (formats.every(format => streams.includes(format))) return i18n.global.t('settings.speech.streaming')
+    return i18n.global.t('settings.speech.streamingFormats', { formats: new Intl.ListFormat(i18n.global.locale.value, { type: 'conjunction' }).format(streams.map(format => FORMAT_LABELS[format] ?? format)) })
 }
 
 /** The format switch options: a format the model does not accept stays shown, disabled. */
@@ -156,7 +157,7 @@ export function ttsFormatOptions(model) {
     return Object.entries(FORMAT_LABELS).map(([value, label]) => (
         !formats || formats.includes(value)
             ? { value, label }
-            : { value, label, disabled: true, title: `${label}: not supported by this model` }
+            : { value, label, disabled: true, title: i18n.global.t('settings.speech.unsupported', { format: label }) }
     ))
 }
 
@@ -172,18 +173,18 @@ export function formatAfterModelChange(format, model) {
  */
 export function ttsStreamingNote(model, format) {
     if (!Array.isArray(model?.streams)) return ''
-    if (model.streams.includes(format)) return 'Streaming: the audio starts while it is generated.'
+    if (model.streams.includes(format)) return i18n.global.t('settings.speech.streamingNote')
     return Array.isArray(model.whole_formats) && model.whole_formats.includes(format)
-        ? 'No streaming: the audio starts once it is fully generated.'
-        : 'No streaming: the audio starts once its first part is generated.'
+        ? i18n.global.t('settings.speech.wholeNote')
+        : i18n.global.t('settings.speech.firstPartNote')
 }
 
 /** What the output kind of a script config does: a whole audio or a file path starts after its first part. */
 export function scriptStreamingNote(config) {
-    if (config.output === 'stream') return 'Streaming: the audio starts while it is generated.'
+    if (config.output === 'stream') return i18n.global.t('settings.speech.streamingNote')
     return config.max_chars
-        ? 'No streaming: the audio starts once its first part is generated.'
-        : 'No streaming: the audio starts once it is fully generated.'
+        ? i18n.global.t('settings.speech.firstPartNote')
+        : i18n.global.t('settings.speech.wholeNote')
 }
 
 /** The audio format the browser receives: a script's WAV and PCM both reach it as PCM. */
@@ -218,13 +219,13 @@ export function ttsModelOptions(models, currentModel) {
     const options = models.map(model => ({
         value: model.id,
         label: model.name,
-        description: [formatTtsModelPrice(model.pricing) || 'No list price', ttsStreamingLabel(model)]
+        description: [formatTtsModelPrice(model.pricing) || i18n.global.t('settings.speech.noPrice'), ttsStreamingLabel(model)]
             .filter(Boolean).join(' · '),
         keywords: model.id,
     })).sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
     if (!currentModel || models.some(model => model.id === currentModel)) return options
     // Not loaded (or OpenRouter unreachable) says nothing about the model: no mention then.
-    const description = models.length ? 'Not in the OpenRouter list' : ''
+    const description = models.length ? i18n.global.t('settings.speech.notListed') : ''
     return [{ value: currentModel, label: currentModel, description }, ...options]
 }
 
@@ -235,7 +236,7 @@ export function ttsModelOptions(models, currentModel) {
 export function ttsVoiceOptions(voices, currentVoice, { listed = true } = {}) {
     const options = voices.map(voice => ({ value: voice, label: voice }))
     if (!currentVoice || voices.includes(currentVoice)) return options
-    const description = listed ? "Not in this model's list" : ''
+    const description = listed ? i18n.global.t('settings.speech.voiceNotListed') : ''
     return [{ value: currentVoice, label: currentVoice, description }, ...options]
 }
 
@@ -272,7 +273,7 @@ export function patchTtsConfig(config, patch) {
 
 export function duplicateTtsConfig(config, id) {
     // An unnamed config stays unnamed: its copy shows the same automatic name until edited.
-    const name = config.name ? `${config.name} (copy)` : ''
+    const name = config.name ? i18n.global.t('settings.speech.copy', { name: config.name }) : ''
     return { ...config, id, name, validated: config.validated && { ...config.validated } }
 }
 
@@ -287,12 +288,12 @@ export function isTtsAvailable({ keyPresent, configs, activeId }) {
 
 // Two significant digits, no trailing zero: 0.4, 1.1, 12.
 function shortNumber(value) {
-    return value >= 10 ? String(Math.round(value)) : String(Number(value.toPrecision(2)))
+    return new Intl.NumberFormat(i18n.global.locale.value, value >= 10 ? { maximumFractionDigits: 0 } : { maximumSignificantDigits: 2 }).format(value)
 }
 
 function pendingPrice(lastTest) {
     // No generation id: OpenRouter's lookup cannot run, the price will not come.
-    return lastTest.generation_id ? 'price pending…' : 'price unknown'
+    return lastTest.generation_id ? i18n.global.t('settings.speech.pricePending') : i18n.global.t('settings.speech.priceUnknown')
 }
 
 /**
@@ -307,11 +308,11 @@ export function ttsTestStats(lastTest, { priced = true } = {}) {
     if (priced && lastTest.cost == null) {
         parts.push(pendingPrice(lastTest))
     } else if (priced) {
-        parts.push(`${shortNumber((lastTest.cost / lastTest.chars) * 1000 * 100)}¢ / 1k ch`)
-        if (lastTest.audio_seconds) parts.push(`${shortNumber((lastTest.cost / lastTest.audio_seconds) * 60 * 100)}¢ / mn`)
+        parts.push(i18n.global.t('settings.speech.costPerCharacters', { value: shortNumber((lastTest.cost / lastTest.chars) * 1000 * 100) }))
+        if (lastTest.audio_seconds) parts.push(i18n.global.t('settings.speech.costPerMinute', { value: shortNumber((lastTest.cost / lastTest.audio_seconds) * 60 * 100) }))
     }
-    parts.push(`${shortNumber(lastTest.generation_ms / lastTest.chars)} s / 1k ch`)
-    if (lastTest.first_audio_ms != null) parts.push(`1st audio ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
+    parts.push(i18n.global.t('settings.speech.timePerCharacters', { value: shortNumber(lastTest.generation_ms / lastTest.chars) }))
+    if (lastTest.first_audio_ms != null) parts.push(i18n.global.t('settings.speech.firstAudio', { value: shortNumber(lastTest.first_audio_ms / 1000) }))
     return parts.join(' · ')
 }
 
@@ -328,12 +329,12 @@ function audioLength(seconds) {
  */
 export function ttsLastTestFacts(lastTest, { priced = true } = {}) {
     if (!lastTest?.chars) return ''
-    const parts = [`${lastTest.chars.toLocaleString('en')} chars`]
-    if (lastTest.parts > 1) parts.push(`${lastTest.parts} parts`)
-    if (lastTest.audio_seconds) parts.push(`${audioLength(lastTest.audio_seconds)} of audio`)
-    parts.push(`generated in ${shortNumber(lastTest.generation_ms / 1000)} s`)
-    if (lastTest.first_audio_ms != null) parts.push(`first audio after ${shortNumber(lastTest.first_audio_ms / 1000)} s`)
-    if (priced) parts.push(lastTest.cost == null ? pendingPrice(lastTest) : `$${lastTest.cost.toPrecision(2)}`)
+    const parts = [i18n.global.t('settings.speech.characters', { count: new Intl.NumberFormat(i18n.global.locale.value).format(lastTest.chars) })]
+    if (lastTest.parts > 1) parts.push(i18n.global.t('settings.speech.parts', { count: lastTest.parts }, lastTest.parts))
+    if (lastTest.audio_seconds) parts.push(i18n.global.t('settings.speech.audioLength', { length: audioLength(lastTest.audio_seconds) }))
+    parts.push(i18n.global.t('settings.speech.generationTime', { time: shortNumber(lastTest.generation_ms / 1000) }))
+    if (lastTest.first_audio_ms != null) parts.push(i18n.global.t('settings.speech.firstAudioDelay', { time: shortNumber(lastTest.first_audio_ms / 1000) }))
+    if (priced) parts.push(lastTest.cost == null ? pendingPrice(lastTest) : formatPrice(lastTest.cost, 2))
     return parts.join(' · ')
 }
 
@@ -355,13 +356,13 @@ const ADAPT_CHOICES = new Set(['haiku', 'luna', OPENROUTER_ADAPT, 'off'])
 export const ADAPT_PROVIDER_LABELS = { [PROVIDER.CLAUDE_CODE]: 'Claude', [PROVIDER.CODEX]: 'Codex' }
 
 const ADAPT_REASON_TEXTS = {
-    off: 'the option is off',
-    no_provider: 'no Claude or Codex provider is running',
-    failed: 'the model failed',
-    stalled: 'the model did not answer in time',
-    empty: 'the model gave no text',
+    get off() { return i18n.global.t('settings.speech.adaptReason.off') },
+    get no_provider() { return i18n.global.t('settings.speech.adaptReason.no_provider') },
+    get failed() { return i18n.global.t('settings.speech.adaptReason.failed') },
+    get stalled() { return i18n.global.t('settings.speech.adaptReason.stalled') },
+    get empty() { return i18n.global.t('settings.speech.adaptReason.empty') },
     // No parentheses: the text goes inside the "failed (…)" of a named engine.
-    refused: 'the call was refused; check the key and the credits',
+    get refused() { return i18n.global.t('settings.speech.adaptReason.refused') },
 }
 
 // The reasons of an engine that ran and failed (the others: no engine ran).
@@ -401,10 +402,10 @@ export function effectiveAdapt(stored, enabledProviders, keyPresent = false) {
 export function summaryGenerationAvailability(model, enabledProviders, keyPresent = false, openrouterEligible = true) {
     const requested = model === 'auto' ? null : model
     const engine = effectiveAdapt(requested, enabledProviders, keyPresent && openrouterEligible)
-    return { engine, available: engine !== 'off', unavailableReason: engine === 'off'
-        ? (requested === 'openrouter' && keyPresent && !openrouterEligible
-            ? 'This source exceeds the OpenRouter text limit. Enable Claude or Codex for summary generation.'
-            : 'No summary engine is available. Enable Claude or Codex, or configure and select OpenRouter.') : '' }
+    const unavailableKey = engine === 'off' ? (requested === 'openrouter' && keyPresent && !openrouterEligible
+        ? 'settings.speech.sourceLimit' : 'settings.speech.noSummaryEngine') : null
+    return { engine, available: engine !== 'off', unavailableReason: unavailableKey ? i18n.global.t(unavailableKey) : '',
+        unavailableReasonMessage: unavailableKey ? localUiMessage(unavailableKey) : null }
 }
 
 /**
@@ -417,13 +418,13 @@ export function adaptOptions(enabledProviders, keyPresent = false) {
         const label = TITLE_SUGGESTION_MODEL_LABELS[value]
         return enabled.has(provider)
             ? { value, label }
-            : { value, label, disabled: true, title: `${label}: ${ADAPT_PROVIDER_LABELS[provider]} is disabled` }
+            : { value, label, disabled: true, title: i18n.global.t('settings.speech.providerDisabled', { model: label, provider: ADAPT_PROVIDER_LABELS[provider] }) }
     })
     const openrouterLabel = TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT]
     const openrouter = keyPresent
         ? { value: OPENROUTER_ADAPT, label: openrouterLabel }
-        : { value: OPENROUTER_ADAPT, label: openrouterLabel, disabled: true, title: `${openrouterLabel}: its key is not set` }
-    return [...engines, openrouter, { value: 'off', label: 'Off' }]
+        : { value: OPENROUTER_ADAPT, label: openrouterLabel, disabled: true, title: i18n.global.t('settings.speech.missingKey', { model: openrouterLabel }) }
+    return [...engines, openrouter, { value: 'off', label: i18n.global.t('settings.speech.off') }]
 }
 
 /**
@@ -451,19 +452,19 @@ export function adaptHint(choice, enabledProviders, keyPresent = false) {
  */
 export function ttsAdaptationFacts(lastTest) {
     const fallback = ADAPT_REASON_TEXTS[lastTest?.fallback_reason]
-    const withFallback = text => (fallback ? `${text} · ${TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT]} failed (${fallback})` : text)
+    const withFallback = text => (fallback ? i18n.global.t('settings.speech.adaptationFallback', { text, engine: TITLE_SUGGESTION_MODEL_LABELS[OPENROUTER_ADAPT], reason: fallback }) : text)
     const engine = lastTest?.adapted_by
     if (engine && TITLE_SUGGESTION_MODEL_LABELS[engine]) {
-        const parts = [`Adapted by ${TITLE_SUGGESTION_MODEL_LABELS[engine]}`]
+        const parts = [i18n.global.t('settings.speech.adaptedBy', { engine: TITLE_SUGGESTION_MODEL_LABELS[engine] })]
         // No wait for an adaptation served from the cache.
-        if (lastTest.adapt_first_ms != null) parts.push(`first text ${shortNumber(lastTest.adapt_first_ms / 1000)} s`)
+        if (lastTest.adapt_first_ms != null) parts.push(i18n.global.t('settings.speech.firstText', { time: shortNumber(lastTest.adapt_first_ms / 1000) }))
         return withFallback(parts.join(' · '))
     }
     const reason = ADAPT_REASON_TEXTS[lastTest?.adapt_reason]
     if (!reason) return ''
     const failedEngine = TITLE_SUGGESTION_MODEL_LABELS[lastTest.adapt_engine]
     if (failedEngine && ADAPT_FAILURE_REASONS.has(lastTest.adapt_reason)) {
-        return withFallback(`Not adapted: ${failedEngine} failed (${reason})`)
+        return withFallback(i18n.global.t('settings.speech.notAdaptedEngine', { engine: failedEngine, reason }))
     }
-    return withFallback(`Not adapted: ${reason}`)
+    return withFallback(i18n.global.t('settings.speech.notAdapted', { reason }))
 }

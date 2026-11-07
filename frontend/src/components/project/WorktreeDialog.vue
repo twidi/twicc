@@ -1,4 +1,7 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+const { t } = useI18n()
 // WorktreeDialog.vue - Dialog to start a session in a git worktree of a
 // project: either CREATE a new worktree (the "New" tab) or OPEN an EXISTING
 // worktree of the repo that has no session yet (the "Existing" tab).
@@ -83,7 +86,7 @@ const branchSuggestions = computed(() => {
 
 const pathPlaceholder = computed(() => {
     const root = parentProject.value?.git_root || '/path/to/repo'
-    return `e.g. ${root}/.worktrees/<branch>`
+    return t('project.worktrees.pathExample', { path: `${root}/.worktrees/<branch>` })
 })
 
 // Branch name turned into a single safe folder name (the project convention:
@@ -202,7 +205,7 @@ async function fetchWorktrees() {
         response = await apiFetch(`/api/projects/${projectId}/worktrees/`)
     } catch (error) {
         if (parentProject.value?.id === projectId) {
-            existingError.value = 'Failed to load worktrees.'
+            existingError.value = localUiMessage('project.worktrees.loadFailed')
             loadingWorktrees.value = false
         }
         return
@@ -211,7 +214,7 @@ async function fetchWorktrees() {
     if (parentProject.value?.id !== projectId) return
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        existingError.value = data.error || 'Failed to load worktrees.'
+        existingError.value = data.error || localUiMessage('project.worktrees.loadFailed')
         loadingWorktrees.value = false
         return
     }
@@ -313,7 +316,7 @@ function applySuggestion(suggestion) {
 // Options of the "Start from" picker: Current HEAD first, then the branches in
 // the order given by the backend (most recently committed first).
 const startFromOptions = computed(() => [
-    { value: '', label: 'Current HEAD' },
+    { value: '', label: t('project.worktrees.currentHead') },
     ...branches.value.map(b => ({ value: b.name, label: b.name })),
 ])
 
@@ -337,11 +340,11 @@ function worktreeLeaf(wt) {
     return seg || p
 }
 
-// Short, muted tag shown after the branch in the dropdown: 'unavailable' when
-// the worktree's folder is gone, 'detached' when it has no branch, else none.
+// Short, muted tag shown after the branch in the dropdown: "unavailable" when
+// the worktree's folder is gone, "detached" when it has no branch, else none.
 function optionTag(wt) {
-    if (!wt.usable) return 'unavailable'
-    if (!wt.branch) return 'detached'
+    if (!wt.usable) return t('project.worktrees.unavailableTag')
+    if (!wt.branch) return t('project.worktrees.detachedTag')
     return ''
 }
 
@@ -355,11 +358,11 @@ async function handleCreate() {
     const branch = trimmedBranch.value
     const path = localPath.value.trim()
     if (!branch) {
-        errorMessage.value = 'Branch is required'
+        errorMessage.value = localUiMessage('project.worktrees.branchRequired')
         return
     }
     if (!path || !path.startsWith('/')) {
-        errorMessage.value = 'Path must be an absolute path'
+        errorMessage.value = localUiMessage('project.worktrees.absolutePathRequired')
         return
     }
 
@@ -382,14 +385,14 @@ async function handleCreate() {
             body: JSON.stringify(body),
         })
     } catch (error) {
-        errorMessage.value = 'Network error. Please try again.'
+        errorMessage.value = localUiMessage('project.worktrees.networkError')
         isCreating.value = false
         return
     }
 
     if (!response.ok) {
         const data = await response.json()
-        errorMessage.value = data.error || 'Failed to create worktree'
+        errorMessage.value = data.error || localUiMessage('project.worktrees.createFailed')
         isCreating.value = false
         return
     }
@@ -423,14 +426,14 @@ async function handleOpenExisting() {
             body: JSON.stringify({ path: wt.path }),
         })
     } catch (error) {
-        existingError.value = 'Network error. Please try again.'
+        existingError.value = localUiMessage('project.worktrees.networkError')
         isOpening.value = false
         return
     }
 
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        existingError.value = data.error || 'Failed to open worktree'
+        existingError.value = data.error || localUiMessage('project.worktrees.openFailed')
         isOpening.value = false
         return
     }
@@ -550,7 +553,7 @@ defineExpose({
                     </div>
 
                     <wa-callout v-if="errorMessage" variant="danger" size="small" class="error-callout">
-                        {{ errorMessage }}
+                        {{ resolveUiMessage(errorMessage) }}
                     </wa-callout>
                 </form>
             </wa-tab-panel>
@@ -579,7 +582,7 @@ defineExpose({
                     </template>
 
                     <wa-callout v-if="existingError" variant="danger" size="small" class="error-callout">
-                        {{ existingError }}
+                        {{ resolveUiMessage(existingError) }}
                     </wa-callout>
                 </div>
             </wa-tab-panel>

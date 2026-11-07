@@ -1,10 +1,15 @@
+import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 
 const pendingRefresh = new WeakMap()
 
 export const useMcpStore = defineStore('mcp', {
     state: () => ({
-        connections: [], requests: [], config: {}, protection: {}, error: '', loadError: '', loading: false,
+        connections: [], requests: [], config: {}, protection: {}, errorMessage: '', loadErrorMessage: '', loading: false,
+        get error() { return resolveUiMessage(this.errorMessage) },
+        set error(message) { this.errorMessage = message },
+        get loadError() { return resolveUiMessage(this.loadErrorMessage) },
+        set loadError(message) { this.loadErrorMessage = message },
         // Reference instant for the TTL filter below, advanced by McpManager.
         clock: Date.now(),
     }),
@@ -35,14 +40,14 @@ export const useMcpStore = defineStore('mcp', {
             const task = (async () => {
             try {
                 const response = await this.request()
-                if (!response.ok) throw new Error('Cannot load MCP connections.')
+                if (!response.ok) throw localUiError('settings.mcp.loadFailed')
                 const data = await response.json()
                 this.connections = data.connections
                 this.requests = data.requests
                 this.config = data.config
                 this.protection = data.protection || {}
                 this.loadError = ''
-            } catch (error) { this.loadError = error.message }
+            } catch (error) { this.loadError = error.uiMessage || error.message || localUiMessage('settings.mcp.loadFailed') }
             finally { this.loading = false; pendingRefresh.delete(this) }
             })()
             pendingRefresh.set(this, task)
@@ -57,11 +62,11 @@ export const useMcpStore = defineStore('mcp', {
                     body: JSON.stringify({ action, ...fields }),
                 })
                 const data = await response.json()
-                if (!response.ok) throw new Error(data.error || 'MCP action failed.')
+                if (!response.ok) throw data.error ? new Error(data.error) : localUiError('settings.mcp.actionFailed')
                 await pendingRefresh.get(this)
                 await this.refresh()
                 return true
-            } catch (error) { this.error = error.message; return false }
+            } catch (error) { this.error = error.uiMessage || error.message || localUiMessage('settings.mcp.actionFailed'); return false }
         },
     },
 })

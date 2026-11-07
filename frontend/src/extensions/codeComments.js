@@ -3,6 +3,10 @@
 // Renders a textarea widget below annotated lines. Communicates with the
 // host component via callbacks (no Vue/Pinia dependency).
 
+import { watch } from 'vue'
+import { i18n } from '../i18n/index.js'
+const { t } = i18n.global
+
 import { StateField, StateEffect } from '@codemirror/state'
 import { EditorView, Decoration, WidgetType, ViewPlugin } from '@codemirror/view'
 
@@ -48,7 +52,7 @@ class CodeCommentWidget extends WidgetType {
         textarea.className = 'cm-code-comment-textarea'
         textarea.value = content
         textarea.rows = 3
-        textarea.placeholder = 'Add a comment...'
+        textarea.placeholder = t('code.comments.placeholder')
 
         // Track buttons that depend on textarea content
         const contentDependentBtns = []
@@ -93,7 +97,7 @@ class CodeCommentWidget extends WidgetType {
 
         const cancelBtn = document.createElement('button')
         cancelBtn.className = 'cm-code-comment-cancel'
-        cancelBtn.textContent = 'Cancel'
+        cancelBtn.textContent = t('common.actions.cancel')
         cancelBtn.type = 'button'
         cancelBtn.addEventListener('click', (e) => {
             e.stopPropagation()
@@ -107,7 +111,7 @@ class CodeCommentWidget extends WidgetType {
         if (this.callbacks.onAddToMessage) {
             const addBtn = document.createElement('button')
             addBtn.className = 'cm-code-comment-add-to-msg'
-            addBtn.textContent = 'Add to message'
+            addBtn.textContent = t('code.comments.addToMessage')
             addBtn.type = 'button'
             addBtn.addEventListener('click', (e) => {
                 e.stopPropagation()
@@ -136,7 +140,8 @@ class CodeCommentWidget extends WidgetType {
             const updateAddAll = (count) => {
                 if (count >= 2) {
                     addAllBtn.style.display = ''
-                    addAllBtn.textContent = `Add all (${count})`
+                    addAllBtn.dataset.count = count
+                    addAllBtn.textContent = t('code.comments.addAll', { count }, count)
                 } else {
                     addAllBtn.style.display = 'none'
                 }
@@ -164,13 +169,11 @@ class CodeCommentWidget extends WidgetType {
             helpWrap.className = 'cm-code-comment-help'
 
             const helpSpan = document.createElement('span')
-            helpSpan.textContent = 'Annotate code lines for your next message. '
-                + 'Use "Add to message" to insert the formatted comment into the message input. '
-                + 'You can annotate multiple lines across files and send them all at once.'
+            helpSpan.textContent = t('code.comments.help')
 
             const dismissLink = document.createElement('a')
             dismissLink.className = 'cm-code-comment-help-dismiss'
-            dismissLink.textContent = 'Don\u2019t show again'
+            dismissLink.textContent = t('code.comments.dismissHelp')
             dismissLink.href = '#'
             dismissLink.addEventListener('click', (e) => {
                 e.preventDefault()
@@ -186,6 +189,22 @@ class CodeCommentWidget extends WidgetType {
         }
 
         wrap.appendChild(actions)
+        // Keep widget text current without replacing the textarea or its selection.
+        wrap._ccStopLocale = watch(i18n.global.locale, () => {
+            textarea.placeholder = t('code.comments.placeholder')
+            cancelBtn.textContent = t('common.actions.cancel')
+            const add = wrap.querySelector('.cm-code-comment-add-to-msg')
+            if (add) add.textContent = t('code.comments.addToMessage')
+            const all = wrap.querySelector('.cm-code-comment-add-all-to-msg')
+            if (all?.dataset.count) {
+                const count = Number(all.dataset.count)
+                all.textContent = t('code.comments.addAll', { count }, count)
+            }
+            const help = wrap.querySelector('.cm-code-comment-help > span')
+            if (help) help.textContent = t('code.comments.help')
+            const dismiss = wrap.querySelector('.cm-code-comment-help-dismiss')
+            if (dismiss) dismiss.textContent = t('code.comments.dismissHelp')
+        })
 
         // Set initial disabled state for content-dependent buttons
         updateBtnState()
@@ -196,6 +215,10 @@ class CodeCommentWidget extends WidgetType {
         }
 
         return wrap
+    }
+
+    destroy(dom) {
+        dom._ccStopLocale?.()
     }
 
     eq(other) {
@@ -319,6 +342,10 @@ function createHoverButtonPlugin(callbacks, field) {
             icon.setAttribute('variant', 'regular')
             icon.className = 'cm-code-comment-add-btn-icon'
             this.btn.appendChild(icon)
+            this.stopLocale = watch(i18n.global.locale, () => {
+                this.btn.title = t('code.comments.add')
+                this.btn.setAttribute('aria-label', this.btn.title)
+            }, { immediate: true })
 
             this.handleMouseMove = this.handleMouseMove.bind(this)
             this.handleMouseLeave = this.handleMouseLeave.bind(this)
@@ -403,6 +430,7 @@ function createHoverButtonPlugin(callbacks, field) {
         }
 
         destroy() {
+            this.stopLocale()
             this.view.dom.removeEventListener('mousemove', this.handleMouseMove)
             this.view.dom.removeEventListener('mouseleave', this.handleMouseLeave)
             this.hide()

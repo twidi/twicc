@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 const muteUpdateStates = new WeakMap()
 
 function getMuteUpdateState(sessions, sessionId) {
@@ -54,7 +56,7 @@ export async function applySessionMuteOnUserTurn(sessions, apiFetch, projectId, 
             )
             if (!response.ok) {
                 const data = await response.json()
-                throw new Error(data.error || 'Failed to update session notifications')
+                throw new Error(data.error || i18n.global.t('session.notifications.errors.update'))
             }
             const updatedSession = await response.json()
             state.confirmedHasValue = true

@@ -1,4 +1,6 @@
 <script setup>
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { computed } from 'vue'
 import { useDataStore } from '../../stores/data'
 import { toast } from '../../composables/useToast'
@@ -33,7 +35,7 @@ function updateChoices(batch, choices) {
     }
     store.setAsyncQuestionDraft(props.sessionId, record).catch(error => {
         console.warn('Failed to save question answers:', error?.name || 'Error')
-        toast.error('Failed to save question answers. Your answers remain in this browser.')
+        toast.error(t('session.questions.errors.saveAnswers'))
     })
 }
 </script>

@@ -34,6 +34,7 @@
 
 import { markRaw, defineAsyncComponent } from 'vue'
 import { push } from 'notivue'
+import { resolveUiMessage } from '../i18n/uiMessages.js'
 
 // Lazy import to avoid circular dependency
 // (useToast → SessionToastContent → data.js → useWebSocket → useToast)
@@ -48,8 +49,12 @@ const SessionToastContent = defineAsyncComponent(() => import('../components/ses
  */
 function success(message, options = {}) {
     const pushOptions = {
-        message,
-        title: options.title,
+        message: resolveUiMessage(message),
+        title: resolveUiMessage(options.title),
+        props: {
+            ...(message?.type === 'local-ui-message' ? { messageMessage: message } : {}),
+            ...(options.title?.type === 'local-ui-message' ? { titleMessage: options.title } : {}),
+        },
     }
     // Only set duration if explicitly provided, otherwise use Notivue's default
     if (options.duration !== undefined) {
@@ -65,8 +70,12 @@ function success(message, options = {}) {
  */
 function error(message, options = {}) {
     const pushOptions = {
-        message,
-        title: options.title,
+        message: resolveUiMessage(message),
+        title: resolveUiMessage(options.title),
+        props: {
+            ...(message?.type === 'local-ui-message' ? { messageMessage: message } : {}),
+            ...(options.title?.type === 'local-ui-message' ? { titleMessage: options.title } : {}),
+        },
     }
     // Only set duration if explicitly provided, otherwise use Notivue's default
     if (options.duration !== undefined) {
@@ -82,8 +91,12 @@ function error(message, options = {}) {
  */
 function warning(message, options = {}) {
     const pushOptions = {
-        message,
-        title: options.title,
+        message: resolveUiMessage(message),
+        title: resolveUiMessage(options.title),
+        props: {
+            ...(message?.type === 'local-ui-message' ? { messageMessage: message } : {}),
+            ...(options.title?.type === 'local-ui-message' ? { titleMessage: options.title } : {}),
+        },
     }
     // Only set duration if explicitly provided, otherwise use Notivue's default
     if (options.duration !== undefined) {
@@ -99,8 +112,12 @@ function warning(message, options = {}) {
  */
 function info(message, options = {}) {
     const pushOptions = {
-        message,
-        title: options.title,
+        message: resolveUiMessage(message),
+        title: resolveUiMessage(options.title),
+        props: {
+            ...(message?.type === 'local-ui-message' ? { messageMessage: message } : {}),
+            ...(options.title?.type === 'local-ui-message' ? { titleMessage: options.title } : {}),
+        },
     }
     // Only set duration if explicitly provided, otherwise use Notivue's default
     if (options.duration !== undefined) {
@@ -124,6 +141,7 @@ function info(message, options = {}) {
  * @param {Object} [options] - Options (only when first arg is a component)
  * @param {string} [options.type='info'] - Notification type: 'success', 'error', 'warning', 'info'
  * @param {string} [options.title] - Optional title
+ * @param {string} [options.titleKey] - Interface catalog key for a live title
  * @param {string} [options.html] - Raw HTML content (alternative to component)
  * @param {Object} [options.props] - Props to pass to the content component
  * @param {number} [options.duration] - Duration in ms
@@ -150,11 +168,13 @@ function custom(componentOrOptions, options = {}) {
 
     const pushOptions = {
         message: '',
-        title: opts.title,
+        title: resolveUiMessage(opts.title),
         ...(opts.onManualClear ? { onManualClear: opts.onManualClear } : {}),
         props: {
             custom: true,
             persistent: opts.persistent === true,
+            ...(opts.titleKey ? { titleKey: opts.titleKey, titleParams: opts.titleParams || {} } : {}),
+            ...(opts.title?.type === 'local-ui-message' ? { titleMessage: opts.title } : {}),
             ...(component ? { content: markRaw(component), contentProps: opts.props || {} } : {}),
             ...(opts.html ? { html: opts.html } : {}),
             ...(opts.style ? { style: opts.style } : {}),
@@ -191,9 +211,13 @@ function session(sessionId, options = {}) {
     return custom(SessionToastContent, {
         type: options.type || 'info',
         title: options.title,
+        titleKey: options.titleKey,
+        titleParams: options.titleParams,
         duration: options.duration,
         props: {
             sessionId,
+            ...(options.errorMessageDescriptor ? { errorMessageDescriptor: options.errorMessageDescriptor } : {}),
+            ...(options.detailMessage ? { detailMessage: options.detailMessage } : {}),
             ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
             ...(options.detail ? { detail: options.detail } : {}),
             ...(options.dismissOnVisit ? { dismissOnVisit: true } : {}),

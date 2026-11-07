@@ -9,7 +9,7 @@ defineProps({
     kind: { type: String, required: true },
     label: { type: String, default: null },
 })
-const LABELS = { running: 'Running', completed: 'Completed', interrupted: 'Interrupted', pending: 'Pending' }
+const LABEL_KEYS = { running: 'workflows.states.running', completed: 'workflows.states.completed', interrupted: 'workflows.states.interrupted', pending: 'workflows.states.pending' }
 </script>
 
 <template>
@@ -18,7 +18,7 @@ const LABELS = { running: 'Running', completed: 'Completed', interrupted: 'Inter
         <wa-icon v-else-if="kind === 'interrupted'" name="circle-stop" class="wf-state-icon wf-state-interrupted"></wa-icon>
         <wa-icon v-else-if="kind === 'pending'" name="hourglass-start" class="wf-state-icon wf-state-pending"></wa-icon>
         <wa-icon v-else name="circle-check" class="wf-state-icon wf-state-done"></wa-icon>
-        <span>{{ label || LABELS[kind] || kind }}</span>
+        <span>{{ label || (LABEL_KEYS[kind] ? $t(LABEL_KEYS[kind]) : kind) }}</span>
     </span>
 </template>
 

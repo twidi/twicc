@@ -1,3 +1,5 @@
+import { i18n } from '../i18n/index.js'
+
 // frontend/src/utils/composerAttachments.js
 // Composer attachments (spec 2026-10-03 §9.1, §9.2): every file added to the
 // composer is uploaded to the server staging store, and the draft keeps only a
@@ -365,16 +367,14 @@ export function legacyFailedCount(failed, sessionId, legacyIds) {
 export function attachmentBadge({ count, chipStates = [], legacyFailed = 0, ready = true }) {
     const failedChips = chipStates.filter(state => state === ATTACHMENT_STATE.FAILED || state === ATTACHMENT_STATE.MISSING).length
     const attention = failedChips + legacyFailed
-    const parts = [`${count} file${count > 1 ? 's' : ''} attached`]
-    if (failedChips) parts.push(`${failedChips} need${failedChips > 1 ? '' : 's'} attention`)
+    const parts = [i18n.global.t('composer.attachments.count', { count }, count)]
+    if (failedChips) parts.push(i18n.global.t('composer.attachments.attention', { count: failedChips }, failedChips))
     if (legacyFailed) {
-        parts.push(legacyFailed > 1
-            ? `${legacyFailed} older attachments could not be converted — remove them`
-            : '1 older attachment could not be converted — remove it')
+        parts.push(i18n.global.t('composer.attachments.legacyAttention', { count: legacyFailed }, legacyFailed))
     }
     if (!attention) {
-        if (chipStates.includes(ATTACHMENT_STATE.UPLOADING)) parts.push('uploading')
-        else if (!ready) parts.push('preparing older attachments')
+        if (chipStates.includes(ATTACHMENT_STATE.UPLOADING)) parts.push(i18n.global.t('composer.attachments.uploadingBadge'))
+        else if (!ready) parts.push(i18n.global.t('composer.attachments.legacyPreparing'))
     }
     return { label: parts.join(' · '), attention, variant: attention ? 'danger' : 'primary' }
 }
@@ -452,7 +452,7 @@ export function sendComposerMessage({ payload, records, send, register = null, f
  */
 export function formatAttachmentSize(bytes) {
     const size = Number.isFinite(bytes) && bytes > 0 ? bytes : 0
-    if (size < 1024) return `${size} B`
+    if (size < 1024) return `${new Intl.NumberFormat(i18n.global.locale.value).format(size)} B`
     const units = ['KB', 'MB', 'GB', 'TB']
     let value = size / 1024
     let unit = 0
@@ -460,7 +460,7 @@ export function formatAttachmentSize(bytes) {
         value /= 1024
         unit += 1
     }
-    return `${value.toFixed(1)} ${units[unit]}`
+    return `${new Intl.NumberFormat(i18n.global.locale.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)} ${units[unit]}`
 }
 
 function chipStatusText(state, retryable, pauseReason) {
@@ -468,13 +468,13 @@ function chipStatusText(state, retryable, pauseReason) {
         case ATTACHMENT_STATE.READY:
             return ''
         case ATTACHMENT_STATE.FAILED:
-            return retryable ? 'Upload failed' : 'Upload interrupted, attach the file again'
+            return retryable ? i18n.global.t('composer.attachments.uploadFailed') : i18n.global.t('composer.attachments.uploadInterrupted')
         case ATTACHMENT_STATE.MISSING:
-            return 'File no longer available'
+            return i18n.global.t('composer.attachments.missing')
         default:
-            if (pauseReason === 'error') return 'Upload paused'
-            if (pauseReason === 'network') return 'Waiting for the connection'
-            return 'Uploading'
+            if (pauseReason === 'error') return i18n.global.t('composer.attachments.uploadPaused')
+            if (pauseReason === 'network') return i18n.global.t('composer.attachments.waitingConnection')
+            return i18n.global.t('composer.attachments.uploading')
     }
 }
 
@@ -549,7 +549,7 @@ export function legacyMediaStripItem(media, { failed = false } = {}) {
         state: failed ? ATTACHMENT_STATE.FAILED : '',
         progress: 0,
         retryable: false,
-        statusText: failed ? 'Could not be converted, remove it' : 'Preparing',
+        statusText: failed ? i18n.global.t('composer.attachments.legacyFailed') : i18n.global.t('composer.attachments.preparing'),
         src: null,
     }
     if (kind === 'image' && media?.data) item.src = `data:${media.mimeType || 'image/png'};base64,${media.data}`
