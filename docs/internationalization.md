@@ -29,6 +29,32 @@ belong to the frontend interface pass.
 The share viewer and artifact shell install the same translation plugin for
 reused components. Their language preference belongs to their browser origin;
 it does not change the language on another origin or device.
+Public sharing does not require localization; see the deliberate exclusions below.
+
+### Pages that deliberately stay English
+
+These pages do not require translation. They are not deferred translation work.
+
+| Page | Source |
+| --- | --- |
+| Public sharing, including shared session/document/artifact viewers and the recent-share list | `src/twicc/share/` and the public viewers under `frontend/src/share-session/` |
+| Share password form | `src/twicc/share/templates/share_auth.html` |
+| Unavailable share | `src/twicc/share/html.py`, `_UNAVAILABLE_PAGE` |
+| Standalone artifact password form | `src/twicc/artifacts/templates/artifact_auth.html` |
+| External MCP authorization waiting page | `src/twicc/mcp/oauth/routes.py`, `WAIT_PAGE`, served at `/mcp/oauth/wait` |
+| Telemetry collector information page, outside the application | `telemetry-collector/public/index.html` |
+| Standard Django error pages | Framework-generated responses, including 404 and 500 |
+
+Apply these exclusions by role, not by the presence of JavaScript.
+The MCP waiting page is independent of the Vue application.
+The MCP approval dialog inside TwiCC remains in scope and is translated.
+Telemetry dialogs and settings inside TwiCC also remain in scope and are translated.
+The application's sharing controls and private artifact viewer remain in scope.
+The artifact shell serves both private and public pages; keep this distinction when auditing shared code.
+
+This decision records translation scope. It does not remove existing translations
+or change the locale behavior of the existing Vue share viewers.
+Do not classify these exclusions as missing translations during later passes.
 
 ## Implementation
 
@@ -264,8 +290,9 @@ translated catalogs are the exception to the English source convention.
 
 Only messages intended for the browser interface require translation metadata.
 Console logs, terminal output, CLI/MCP responses, prompts and provider/user content remain English or verbatim.
-Long help/tip bodies and JavaScript-free pages remain separate content passes.
-Mixed HTML modules stay in scope for their JavaScript-enabled shells; their deferred bodies stay unchanged.
+Long help/tip bodies remain a separate content pass.
+The pages listed under **Pages that deliberately stay English** are excluded, not deferred.
+Mixed HTML modules stay in scope for their application-facing paths; preserve the excluded pages.
 
 Backend code does not select the browser locale or translate messages.
 `src/twicc/core/ui_messages.py` creates descriptors containing `key`, `params` and optional `count`.

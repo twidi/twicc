@@ -42,7 +42,8 @@ An excluded file is not missing, unchecked or awaiting review. Give it no checkb
 | Backend-only outputs | Console logs, terminal output, CLI/MCP replies, prompts and provider transcripts | Keep English prose and original content. |
 | CLI/MCP-only sources | Command wrappers and protocol-only modules without a browser consumer | Exclude by role; shared browser dependencies remain in scope. |
 | Backend tests and migrations | `tests/`, test settings, database migration files and test fixtures | Verify these separately; they are not interface source inventory. |
-| JavaScript-free pages | Server-rendered unavailable/auth/error bodies with no frontend runtime | Handle in a separate content pass, like long help/tip bodies. |
+| Deliberately English pages | Public sharing; standalone share/artifact password forms; unavailable-share page; `/mcp/oauth/wait` | No translation work is required. See the exact sources and boundaries in `docs/internationalization.md`, **Pages that deliberately stay English**. |
+| Pages outside the application | `telemetry-collector/public/index.html` and standard Django error pages | Outside the interface translation scope. |
 | Generated files and dependencies | Build output, caches and `node_modules/` | Audit application sources instead. |
 
 Classify files by their role, not only their extension or directory.
@@ -51,6 +52,10 @@ Audit their source files normally, but do not report these labels as missing tra
 Do not exclude runtime display dictionaries as fixtures or benchmark data.
 Do not exclude application code because its current audit finds no interface text.
 Public executable code or configuration that supplies interface messages belongs in scope.
+The explicit English-page exclusions take precedence over this general rule.
+Keep shared modules in scope when they also supply application interface messages.
+MCP approval, telemetry dialogs/settings and sharing controls inside TwiCC remain in scope.
+Existing translations in public Vue viewers do not create a requirement to localize public sharing.
 If a file changes role, reassess its exclusion and add it when it becomes application source.
 For an unknown file type, inspect its role before deciding whether it belongs in scope.
 
@@ -981,7 +986,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/android_push/validation.py` — Registration validation returns protocol error codes consumed by API; no prose rendered as interface feedback.
 - [x] `src/twicc/android_push/views.py` — Browser-facing method and sign-in errors add metadata; registration machine codes remain unchanged.
 - [x] `src/twicc/artifacts/__init__.py` — Empty package marker; no presentation output.
-- [x] `src/twicc/artifacts/broker_html.py` — Mixed source: artifact JS shell exposes bookmarkId/title to parent entry title localization; no-JS error bodies deferred.
+- [x] `src/twicc/artifacts/broker_html.py` — Private artifact Vue shell exposes bookmarkId/title to the frontend entry for title localization. Artifact document content stays verbatim; no separate error-page content pass is required here.
 - [x] `src/twicc/artifacts/data_store.py` — Artifact grant/storage records contain host keys and identifiers; no presentation prose.
 - [x] `src/twicc/artifacts/denial_tracking.py` — Denial records contain normalized hosts, counts, timestamps; normalization exceptions originate in proxy.
 - [x] `src/twicc/artifacts/proxy.py` — Host normalization raises tagged validation errors for browser bookmark settings; proxy transport diagnostics stay raw.
@@ -995,7 +1000,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/auth/middleware.py` — Browser password-required responses carry metadata; RPC middleware protocol payloads remain unchanged.
 - [x] `src/twicc/auth/session_auth.py` — Session authentication resolves credentials and flags; no browser-owned prose.
 - [x] `src/twicc/auth/tokens.py` — Token creation and validation return tokens or validity; no interface labels.
-- [x] `src/twicc/auth/views.py` — Login/setup/password-change JSON errors preserve English/status and add semantic metadata with rate-limit seconds.
+- [x] `src/twicc/auth/views.py` — Login/setup/password-change JSON errors preserve English/status and add semantic metadata with rate-limit seconds. The standalone artifact password form deliberately stays English.
 - [x] `src/twicc/auth/websocket_origin.py` — Origin validation returns policy booleans; technical origin values remain unchanged.
 - [x] `src/twicc/browser_probe.py` — Browser response errors and owned availability reasons carry ui_message/reason_ui_message. X-Frame-Options/CSP and upstream diagnostics remain verbatim.
 - [x] `src/twicc/channel_layer.py` — Bounded channel-layer infrastructure and transport failure diagnostic. Frontend consumes failure as reconnect/log behavior, not display prose.
@@ -1297,14 +1302,14 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/settings.py` — Django environment and server configuration. Parent requests Claude compute version 117 to 118 and Codex 58 to 59, so existing computed tool links retain UI error provenance. No restart performed.
 - [x] `src/twicc/settings_migration.py` — Legacy settings migration and diagnostics only; stored user values unchanged.
 - [x] `src/twicc/share/__init__.py` — Empty package marker; no presentation output.
-- [x] `src/twicc/share/artifact_views.py` — Artifact share content and no-JS unavailable HTML stay verbatim/deferred; JS shell title handled by frontend entry.
+- [x] `src/twicc/share/artifact_views.py` — Public artifact content stays verbatim. Public sharing and unavailable-page text deliberately stay English; no content translation pass is pending.
 - [x] `src/twicc/share/consumer.py` — Share websocket authentication and update frames use machine close codes and content payloads.
 - [x] `src/twicc/share/display.py` — Shared content display metadata contains user titles, paths, and technical kind values; keep content unchanged.
 - [x] `src/twicc/share/headers.py` — HTTP headers and share CSP setup are protocol configuration; no presentation prose.
-- [x] `src/twicc/share/html.py` — Mixed source: JS shell titles expose stable share mode/kind to parent frontend entries; no-JS unavailable and recent-empty bodies deferred.
-- [x] `src/twicc/share/inline_artifact_views.py` — Inline artifact share endpoints serve file content and no-JS error bodies; bodies deferred.
+- [x] `src/twicc/share/html.py` — Public Vue shells expose stable share mode/kind to frontend entries. Public sharing and the standalone unavailable page require no localization; no content translation pass is pending.
+- [x] `src/twicc/share/inline_artifact_views.py` — Public inline artifact endpoints serve original file content and protocol responses. Public sharing and standard Django error pages require no localization.
 - [x] `src/twicc/share/owner_views.py` — Owner share mutation responses add primary and per-row validation metadata; retain code/reason and RPC model shape.
-- [x] `src/twicc/share/password_views.py` — Server-rendered JavaScript-free password form and failure page are explicitly deferred.
+- [x] `src/twicc/share/password_views.py` — Standalone share password form and its validation messages deliberately stay English; no content translation pass is pending.
 - [x] `src/twicc/share/resolver.py` — Share resolution returns records/state codes; no browser-owned prose generated.
 - [x] `src/twicc/share/router.py` — Routes share resource kinds and redirects; no presentation prose.
 - [x] `src/twicc/share/session_views.py` — Shared transcript JSON range error adds metadata; session/provider content and technical errors remain unchanged.
@@ -1383,7 +1388,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 ## Deferred content and preserved external data
 
 - Long help/tip Markdown bodies and their media remain a separate content pass.
-- JavaScript-free server pages remain a separate content pass.
+- Public sharing, standalone share/artifact password forms, the MCP waiting page, collector information and standard Django errors require no translation. See the deliberate exclusions above; these are not deferred work.
 - Provider/user text, model answers, terminal/CLI/MCP output and file contents remain verbatim.
 - Raw OS, upstream SDK, browser and remote-server diagnostics remain verbatim where no TwiCC-owned message exists.
 - Known TwiCC-owned UI messages require semantic metadata; an English diagnostic is not a substitute for their translation.
