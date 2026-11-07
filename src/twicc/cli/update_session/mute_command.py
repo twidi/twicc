@@ -1,8 +1,9 @@
 """``twicc update-session <ID> mute | notify`` sub-commands.
 
-Both commands update the per-session gate for finished-working notifications.
-``mute`` suppresses those notifications. ``notify`` enables them, subject to
-the existing global notification settings.
+Both commands update the per-session gate for finished-working notifications
+and the unread state (unread icon, project/workspace badges, favicon).
+``mute`` suppresses both. ``notify`` enables them, subject to the existing
+global notification settings.
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ def update_mute_cmd(
         ),
     ),
 ) -> None:
-    """Suppress only this session's finished-working notifications."""
+    """Suppress this session's finished-working notifications and unread state."""
     _run_mute_on_user_turn_update(
         ctx.obj,
         mute_on_user_turn=True,
@@ -98,7 +99,7 @@ def update_notify_cmd(
         ),
     ),
 ) -> None:
-    """Enable finished-working notifications for this session.
+    """Enable finished-working notifications and unread state for this session.
 
     Existing global notification settings still apply.
     """

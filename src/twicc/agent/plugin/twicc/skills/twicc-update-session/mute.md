@@ -1,6 +1,6 @@
 # `update-session <SESSION_ID> mute` / `notify` — mute or restore notifications
 
-Suppress or restore a session's finished-working notifications. MCP tools: `mcp__twicc__update_session_mute`, `mcp__twicc__update_session_notify`. Read `SKILL.md` first: it resolves `$TWICC`.
+Suppress or restore a session's finished-working notifications and unread state. MCP tools: `mcp__twicc__update_session_mute`, `mcp__twicc__update_session_notify`. Read `SKILL.md` first: it resolves `$TWICC`.
 
 ## Usage
 
@@ -9,8 +9,8 @@ $TWICC update-session '<SESSION_ID>' mute
 $TWICC update-session '<SESSION_ID>' notify
 ```
 
-- `mute` suppresses only the session's finished-working notifications. Questions and approvals still notify.
-- `notify` restores the per-session finished-working notification path; global notification settings still apply.
+- `mute` suppresses the session's finished-working notifications and its unread state (unread icon, project/workspace badges, favicon). Questions and approvals still notify.
+- `notify` restores the per-session notification and unread path; global notification settings still apply.
 - Both are independent of hidden visibility and do not restart the agent.
 
 ## Examples

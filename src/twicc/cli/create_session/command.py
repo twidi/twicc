@@ -168,10 +168,13 @@ def create_session_cmd(
         "--hidden",
         help=(
             "Create the session as hidden — invisible from every list, "
-            "search, broadcast, and counter shown to the user, while still "
-            "counted in cost aggregates. Requires a non-interactive "
-            "permission_mode (bypassPermissions/dontAsk for Claude Code; "
-            "yolo/strict for Codex) and question_widget=False."
+            "search, broadcast, and counter shown to the user. Use it when "
+            "you create the session for your own work (a test, a check, a "
+            "throwaway task) and the user has no reason to see it. Leave it "
+            "off if the user may want to follow or open the session. "
+            "Requires a non-interactive permission_mode "
+            "(bypassPermissions/dontAsk for Claude Code; yolo/strict for "
+            "Codex) and question_widget=False."
         ),
     ),
     mute_on_user_turn: bool = typer.Option(
@@ -179,8 +182,11 @@ def create_session_cmd(
         "--mute-on-user-turn",
         help=(
             "Suppress this session's finished-working toast, sound, browser "
-            "notification, and Apprise user-turn event. Questions, approvals, "
-            "failures, and usage alerts remain enabled."
+            "notification, and Apprise user-turn event, and its unread state "
+            "(unread icon, project/workspace badges, favicon). Use it when "
+            "the user may look at the session but does not need to be told "
+            "when it ends, for example a sub-session you wait on yourself. "
+            "Questions, approvals, failures, and usage alerts remain enabled."
         ),
     ),
     tree_detached: bool = typer.Option(

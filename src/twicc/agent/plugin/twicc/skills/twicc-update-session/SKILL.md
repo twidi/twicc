@@ -16,7 +16,7 @@ Change one existing session without sending a message. This file is the index; e
 - Archive (also stops the agent) / unarchive → `archive` / `unarchive`.
 - Pin to project / workspace / globally, or unpin → `pin <MODE>` / `unpin`.
 - Hide from all listings and broadcasts / unhide → `hide` / `unhide`.
-- Suppress or restore finished-working notifications → `mute` / `notify`.
+- Suppress or restore finished-working notifications and unread state → `mute` / `notify`.
 - Show a spawned session detached from its spawner in the sidebar tree, or nest it again → `detach-tree` / `attach-tree`.
 - Several sessions at once (every sub-command except `title`) → `$TWICC update-sessions` (skill: `twicc-update-sessions`).
 
@@ -86,7 +86,7 @@ Server (exit 3): every local code — the common ones above and each sub-command
 | `archive` / `unarchive` | Archive (stops the agent) or unarchive. | `archive.md` |
 | `pin` / `unpin` | Pin to project / workspace / all, or unpin. | `pin.md` |
 | `hide` / `unhide` | Hide from all listings and broadcasts, or unhide. | `hide.md` |
-| `mute` / `notify` | Suppress or restore finished-working notifications. | `mute.md` |
+| `mute` / `notify` | Suppress or restore finished-working notifications and unread state. | `mute.md` |
 | `detach-tree` / `attach-tree` | Show a spawned session detached from its spawner in the sidebar tree, or restore its nesting. | `detach-tree.md` |
 
 ## Related commands

@@ -11,7 +11,7 @@ Apply the SAME change to every targeted session in one call: the batch sibling o
 ## When to use
 
 - Hide or unhide several sessions at once → `hide` / `unhide`.
-- Suppress or restore finished-working notifications for several sessions → `mute` / `notify`.
+- Suppress or restore finished-working notifications and unread state for several sessions → `mute` / `notify`.
 - Show several spawned sessions detached from their spawner in the sidebar tree, or nest them again → `detach-tree` / `attach-tree`.
 - Archive / unarchive, or pin / unpin a set of sessions → `archive` / `pin` / etc.
 - Tag every session in an orchestration with the same annotation → `annotations` with `--spawned-by self` or `--descendants self`.
@@ -96,7 +96,7 @@ One object keyed by session_id, plus a summary:
 | `archive` / `unarchive` | Archive (stops the agent) or unarchive. | `archive.md` |
 | `pin` / `unpin` | Pin with one scope, or unpin. | `pin.md` |
 | `hide` / `unhide` | Hide (per-session preconditions), or unhide. | `hide.md` |
-| `mute` / `notify` | Suppress or restore finished-working notifications. | `mute.md` |
+| `mute` / `notify` | Suppress or restore finished-working notifications and unread state. | `mute.md` |
 | `detach-tree` / `attach-tree` | Show sessions detached from their spawner in the sidebar tree, or restore their nesting. | `detach-tree.md` |
 
 ## Related commands

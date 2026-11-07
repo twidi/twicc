@@ -257,7 +257,7 @@ def _mute(
     annotation: list[str] = typer.Option([], "--annotation", help=_ANNOTATION_HELP),  # noqa: B008
     timeout: int = typer.Option(30, "--timeout", help=_TIMEOUT_HELP),
 ) -> None:
-    """Suppress finished-working notifications for every targeted session."""
+    """Suppress finished-working notifications and unread state for every targeted session."""
     run_batch(
         session_ids or [],
         kind="session:update_mute_on_user_turn",
@@ -282,7 +282,7 @@ def _notify(
     annotation: list[str] = typer.Option([], "--annotation", help=_ANNOTATION_HELP),  # noqa: B008
     timeout: int = typer.Option(30, "--timeout", help=_TIMEOUT_HELP),
 ) -> None:
-    """Enable finished-working notifications for every targeted session.
+    """Enable finished-working notifications and unread state for every targeted session.
 
     Existing global notification settings still apply.
     """

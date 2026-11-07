@@ -10,7 +10,7 @@ $TWICC create-session [--hidden] [--question-widget|--no-question-widget] [--mut
 
 ### `--mute-on-user-turn`
 
-Suppresses only this session's finished-working notifications (toast, sound, browser notification, and Apprise user-turn event). Choose it when a controlling agent will read and handle the result. Questions and approvals still notify. Independent of `--hidden`; does not change global notification settings.
+Suppresses this session's finished-working notifications (toast, sound, browser notification, and Apprise user-turn event) and its unread state (unread icon, project/workspace badges, favicon). Choose it when a controlling agent will read and handle the result, or when the user may open the session but needs no alert when it ends. Questions and approvals still notify. Independent of `--hidden`; does not change global notification settings.
 
 ### `--tree-detached`
 
