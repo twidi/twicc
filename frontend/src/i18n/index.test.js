@@ -5,12 +5,14 @@ import { baseCompile } from '@intlify/message-compiler'
 import { createRenderer, h, nextTick } from 'vue'
 import { createAppI18n, DEFAULT_LOCALE, i18n, isSupportedLocale, readInitialLocale, setLocale, loadLocaleMessages } from './index.js'
 import en from './locales/en.json' with { type: 'json' }
+import de from './locales/de.json' with { type: 'json' }
 import es from './locales/es.json' with { type: 'json' }
 import fr from './locales/fr.json' with { type: 'json' }
 import ptBR from './locales/pt-BR.json' with { type: 'json' }
 
 // These rendering tests exercise both catalogs; production loads them on demand.
 await loadLocaleMessages('pt-BR')
+await loadLocaleMessages('de')
 await loadLocaleMessages('es')
 await loadLocaleMessages('fr')
 
@@ -18,20 +20,22 @@ const storage = value => ({ getItem: () => value })
 
 test('English is the default; only registered locales are accepted', () => {
     assert.equal(DEFAULT_LOCALE, 'en')
-    for (const value of [undefined, null, '', 'pt', 'de', '__proto__', {}, 1]) {
+    for (const value of [undefined, null, '', 'pt', 'it', '__proto__', {}, 1]) {
         assert.equal(isSupportedLocale(value), false)
         assert.equal(createAppI18n(value).global.locale.value, 'en')
     }
     assert.equal(isSupportedLocale('pt-BR'), true)
     assert.equal(isSupportedLocale('fr'), true)
     assert.equal(isSupportedLocale('es'), true)
+    assert.equal(isSupportedLocale('de'), true)
 })
 
 test('saved locale is restored before login; corrupt or unavailable storage is harmless', () => {
     assert.equal(readInitialLocale(storage('{"locale":"pt-BR","colorScheme":"dark"}')), 'pt-BR')
     assert.equal(readInitialLocale(storage('{"locale":"fr"}')), 'fr')
     assert.equal(readInitialLocale(storage('{"locale":"es"}')), 'es')
-    for (const value of [null, '{', 'null', '{}', '{"locale":"de"}', '{"locale":12}']) {
+    assert.equal(readInitialLocale(storage('{"locale":"de"}')), 'de')
+    for (const value of [null, '{', 'null', '{}', '{"locale":"it"}', '{"locale":12}']) {
         assert.equal(readInitialLocale(storage(value)), 'en')
     }
     assert.equal(readInitialLocale({ getItem() { throw new Error('Storage denied') } }), 'en')
@@ -40,8 +44,9 @@ test('saved locale is restored before login; corrupt or unavailable storage is h
 test('all messages compile and every translation covers the English keys', () => {
     assert.deepEqual(Object.keys(ptBR).sort(), Object.keys(en).sort())
     assert.deepEqual(Object.keys(fr).sort(), Object.keys(en).sort())
+    assert.deepEqual(Object.keys(de).sort(), Object.keys(en).sort())
     assert.deepEqual(Object.keys(es).sort(), Object.keys(en).sort())
-    for (const [locale, messages] of Object.entries({ en, es, fr, 'pt-BR': ptBR })) {
+    for (const [locale, messages] of Object.entries({ en, de, es, fr, 'pt-BR': ptBR })) {
         for (const [key, message] of Object.entries(messages)) {
             assert.equal(typeof message, 'string', `${locale}.${key}`)
             assert.ok(message.trim(), `${locale}.${key} must not be empty`)
@@ -65,6 +70,15 @@ test('Portuguese interpolates and pluralizes complete session and project messag
     assert.equal(t('session.selection.count', { count: 1 }, 1), '1 selecionada')
     assert.equal(t('session.selection.count', { count: 2 }, 2), '2 selecionadas')
     assert.equal(t('composer.status.startingProvider', { provider: 'Codex' }), 'Iniciando processo do Codex...')
+})
+
+test('German interpolates and uses the default plural rule, so zero is plural', () => {
+    const { t } = createAppI18n('de').global
+    for (const [count, noun] of [[0, 'Sitzungen'], [1, 'Sitzung'], [2, 'Sitzungen']]) {
+        assert.equal(t('common.sessionCount', { count }, count), `${count} ${noun}`)
+    }
+    assert.equal(t('workspace.projectCount', { count: 0 }, 0), '0 Projekte')
+    assert.equal(t('workspace.projectCount', { count: 1 }, 1), '1 Projekt')
 })
 
 test('Spanish interpolates and uses the default plural rule, so zero is plural', () => {

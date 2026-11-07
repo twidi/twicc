@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Settings → General → Language** to switch between **English**,
-**Español**, **Français** and **Português (Brasil)**. The change is immediate. The preference is saved in
+**Deutsch**, **Español**, **Français** and **Português (Brasil)**. The change is immediate. The preference is saved in
 this browser's existing `twicc-settings` localStorage entry and restored before
 the login screen is mounted. It is deliberately local to the browser, like
 the color scheme; it does not change the language on other devices.
@@ -59,8 +59,10 @@ Do not classify these exclusions as missing translations during later passes.
 
 `frontend/src/i18n/index.js` configures Vue I18n in Composition API mode with
 English fallback. `locales/en.json` is the source catalog, and
-`locales/es.json`, `locales/fr.json` and `locales/pt-BR.json` contain the Spanish,
-French and Brazilian Portuguese translations. Spanish is neutral international Spanish
+`locales/de.json`, `locales/es.json`, `locales/fr.json` and `locales/pt-BR.json` contain the German,
+Spanish, French and Brazilian Portuguese translations. German is standard modern German
+addressed with the informal `du` form; it uses the default plural rule, so zero is plural.
+Spanish is neutral international Spanish
 addressed with the informal `tú` form; it uses the default plural rule, so zero is plural.
 French uses the `vous` form and a custom plural rule
 (`pluralRules` in `index.js`): zero and one take the singular form. Messages
@@ -89,7 +91,7 @@ Keep code splitting enabled in the SPA, artifact-shell and share-viewer builds.
 Otherwise the bundler inlines optional catalogs into their entry bundles.
 Standalone viewer chunks stay at the bundle root because backend routes accept
 one asset path segment. Tests that render a translation explicitly call
-`await loadLocaleMessages('pt-BR')`, `'es'` or `'fr'`; production never preloads every supported locale.
+`await loadLocaleMessages('pt-BR')`, `'de'`, `'es'` or `'fr'`; production never preloads every supported locale.
 
 Components use `$t('key')` in templates or `useI18n().t` in setup code. Build
 translated option arrays and labels in `computed()` so switching languages

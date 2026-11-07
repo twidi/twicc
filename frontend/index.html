@@ -10,7 +10,7 @@
         let locale = 'en';
         try {
             const saved = JSON.parse(window.localStorage.getItem('twicc-settings') || '{}')?.locale;
-            if (saved === 'pt-BR' || saved === 'fr' || saved === 'es') locale = saved;
+            if (saved === 'pt-BR' || saved === 'fr' || saved === 'es' || saved === 'de') locale = saved;
         } catch {}
         document.documentElement.lang = locale;
         const key = 'twicc:asset-recovery';
