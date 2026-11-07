@@ -2460,6 +2460,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if not rows:
             return
 
+        from twicc.android_push.delivery import dismiss_sessions
+
+        # Use the read timestamp so a delayed write preserves newer notifications.
+        dismiss_sessions([session_id], sent_at=now.isoformat())
+
         session = await sync_to_async(Session.objects.filter(id=session_id).first)()
         if session and not session.hidden:
             await self.channel_layer.group_send(
@@ -2518,6 +2523,11 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             )
         if not rows:
             return
+
+        if not unread:
+            from twicc.android_push.delivery import dismiss_sessions
+
+            dismiss_sessions([session_id], sent_at=now.isoformat())
 
         session = await sync_to_async(Session.objects.filter(id=session_id).first)()
         if session and not session.hidden:

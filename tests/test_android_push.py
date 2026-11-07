@@ -407,3 +407,64 @@ def test_push_timestamps_describe_the_event_not_delayed_delivery(monkeypatch):
     asyncio.run(scenario())
     assert {payload['type'] for payload in sent} == {'twicc.notification', 'twicc.dismiss_sessions'}
     assert all(payload['sent_at'] == event_time.isoformat() for payload in sent)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('messages,already_read,expected', [
+    ([{'type': 'session_viewed', 'session_id': 'a'}], False, ['a']),
+    ([{'type': 'mark_session_read_state', 'session_id': 'a', 'unread': False}], False, ['a']),
+    ([{'type': 'mark_session_read_state', 'session_id': sid, 'unread': False} for sid in ('a', 'b')], False, ['a', 'b']),
+    ([{'type': 'mark_session_read_state', 'session_id': 'a', 'unread': False}], True, ['a']),
+    ([{'type': 'mark_session_read_state', 'session_id': 'a', 'unread': True}], True, []),
+    ([{'type': 'mark_session_read_state', 'session_id': 'missing', 'unread': False}], False, []),
+    ([{'type': 'session_viewed', 'session_id': 'missing'}], False, []),
+    ([{'type': 'mark_session_read_state', 'session_id': 'a'}], False, []),
+], ids=['viewed', 'mark-read', 'bulk-mark-read', 'already-read', 'mark-unread', 'missing-mark-read', 'missing-viewed', 'invalid-mark'])
+def test_read_actions_dismiss_only_the_target_sessions(push_server, monkeypatch, messages, already_read, expected):
+    from channels.layers import InMemoryChannelLayer
+    from datetime import timedelta
+    from django.utils import timezone
+    from tests.db_write_helpers import run_with_direct_writes
+    from twicc.android_push import delivery
+    from twicc.asgi import WSConsumer
+    from twicc.core.models import Project, Session
+
+    project = Project.objects.create(id='p', directory='/tmp/android-push-read')
+    before = timezone.now() - timedelta(days=1) if already_read else None
+    for sid in ('a', 'b', 'other'):
+        Session.objects.create(id=sid, project=project, provider='codex', file_path=f'{sid}.jsonl', last_viewed_at=before)
+    client, _ = push_server
+    body = registration()
+    body['preferences'] = choices(user_turn=False)
+    token = client.post('/api/android-push/', data=body, content_type='application/json').json()['token']
+    response = Client().put('/api/auth/android-push/',
+        data={'device_id': body['device_id'], 'subscription': subscription()},
+        content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {token}')
+    assert response.status_code == 200
+    monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: True)
+    sent = []
+
+    async def capture(device, payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(delivery, '_send_one', capture)
+
+    async def scenario():
+        consumer = WSConsumer()
+        consumer.channel_layer = InMemoryChannelLayer()
+        for message in messages:
+            await consumer.receive_json(message)
+        if delivery._tasks:
+            await asyncio.gather(*list(delivery._tasks))
+
+    run_with_direct_writes(scenario)
+    assert [sid for payload in sent for sid in payload['session_ids']] == expected
+    assert all(payload['type'] == 'twicc.dismiss_sessions' for payload in sent)
+    assert all('title' not in payload and 'body' not in payload for payload in sent)
+    for payload in sent:
+        assert payload['sent_at'] == Session.objects.get(id=payload['session_ids'][0]).last_viewed_at.isoformat()
+    for sid in expected:
+        assert Session.objects.get(id=sid).last_viewed_at > (before or timezone.now() - timedelta(minutes=1))
+    assert Session.objects.get(id='other').last_viewed_at == before
+    if any(message.get('unread') is True for message in messages):
+        assert Session.objects.get(id='a').last_viewed_at is None

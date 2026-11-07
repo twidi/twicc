@@ -15,13 +15,13 @@ _tasks: set[asyncio.Task] = set()
 _session_path = re.compile(r"/projects?/[A-Za-z0-9_-]{1,255}/session/([A-Za-z0-9_-]{1,255})/?")
 
 
-def dismiss_sessions(session_ids):
+def dismiss_sessions(session_ids, *, sent_at=None):
     """Clear these sessions on enrolled phones, including while a browser is active."""
     ids = tuple(dict.fromkeys(session_ids))
     if not ids:
         return
     try:
-        task = asyncio.get_running_loop().create_task(send_dismissals(ids, sent_at=datetime.now(UTC).isoformat()))
+        task = asyncio.get_running_loop().create_task(send_dismissals(ids, sent_at=sent_at or datetime.now(UTC).isoformat()))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
     except RuntimeError:

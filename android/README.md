@@ -360,6 +360,11 @@ foreground. Other sessions and instances still notify. Backgrounding or locking
 the phone permits notifications for every session. Login, loading, error screens,
 and the instance manager do not suppress a session. Speech controls stay separate.
 
+Marking a session as read also clears its notifications, including through bulk
+actions or from another device. Viewing a session in a browser does the same.
+Other sessions keep their notifications. Marking a session as unread does not
+restore cleared notifications.
+
 Archiving or hiding a session clears its notifications in the matching instance.
 This also applies to changes made from another device, while Android is in the
 background. Other sessions and instances keep their notifications. Unarchiving
