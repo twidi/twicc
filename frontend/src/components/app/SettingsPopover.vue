@@ -1564,7 +1564,7 @@ function onChangelogClose() {
                                     {{ $t('apply') }}
                                 </wa-button>
                             </div>
-                            <i18n-t keypath="worktree_template_hint" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="worktree_template_hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #relative><code>../</code></template>
                                 <template #gitRoot><code>{git_root}</code></template>
                                 <template #projectName><code>{project_name}</code></template>
@@ -1931,7 +1931,7 @@ function onChangelogClose() {
                                     :label="l.name"
                                 >{{ l.name }}</wa-option>
                             </wa-select>
-                            <i18n-t keypath="save_layout_hint" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="save_layout_hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #button><wa-icon name="chevron-down" class="inline-hint-icon"></wa-icon></template>
                             </i18n-t>
                         </div>
@@ -2105,7 +2105,7 @@ function onChangelogClose() {
                                     {{ $t('apply') }}
                                 </wa-button>
                             </div>
-                            <i18n-t keypath="tmux_config_hint" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="tmux_config_hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #mouseOff><code>mouse off</code></template>
                             </i18n-t>
                             <wa-callout
@@ -2123,7 +2123,7 @@ function onChangelogClose() {
                                 size="small"
                             >{{ $t('enabled') }}</wa-switch>
                             <span class="setting-group-hint">
-                                <i18n-t keypath="copy_on_select_hint" tag="span">
+                                <i18n-t keypath="copy_on_select_hint" scope="global" tag="span">
                                     <template #shortcut><kbd>{{ isMac ? '⌘V' : 'Ctrl+V' }}</kbd></template>
                                 </i18n-t>
                                 <span v-if="isLinux"> {{ $t('clipboard_primary_hint') }}</span>
@@ -2136,7 +2136,7 @@ function onChangelogClose() {
                                 @change="onMacOptionIsMetaChange"
                                 size="small"
                             >{{ $t('use_as_meta_key') }}</wa-switch>
-                            <i18n-t keypath="option_meta_hint" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="option_meta_hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #back><kbd>⌥B</kbd></template>
                                 <template #forward><kbd>⌥F</kbd></template>
                                 <template #lastArgument><kbd>⌥.</kbd></template>
