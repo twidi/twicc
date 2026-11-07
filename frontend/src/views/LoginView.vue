@@ -96,18 +96,18 @@ async function handleSubmit() {
             <div class="login-header">
                 <BrandLogo :size="64" animated />
                 <h1 class="login-title">TwiCC</h1>
-                <p class="login-subtitle">{{ $t('password_required_to_continue') }}</p>
+                <p class="login-subtitle">{{ $t('auth.login.passwordRequired') }}</p>
             </div>
 
             <wa-divider></wa-divider>
 
             <form @submit.prevent="handleSubmit" class="login-form">
                 <div class="form-group">
-                    <label class="form-label">{{ $t('password') }}</label>
+                    <label class="form-label">{{ $t('auth.login.passwordLabel') }}</label>
                     <wa-input
                         ref="passwordInput"
                         type="password"
-                        :placeholder="$t('enter_password')"
+                        :placeholder="$t('auth.login.passwordPlaceholder')"
                         :value="password"
                         @input="password = $event.target.value"
                         @wa-input="password = $event.target.value"
@@ -120,7 +120,7 @@ async function handleSubmit() {
 
                 <wa-callout v-if="error" variant="danger" size="small" class="login-error">
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                    {{ error === 'Invalid password' ? $t('invalid_password') : error === 'Network error' ? $t('network_error') : error }}
+                    {{ error === 'Invalid password' ? $t('auth.login.errors.invalidPassword') : error === 'Network error' ? $t('auth.login.errors.network') : error }}
                 </wa-callout>
 
                 <wa-button
@@ -132,7 +132,7 @@ async function handleSubmit() {
                     class="login-button"
                 >
                     <wa-icon slot="start" name="right-to-bracket"></wa-icon>
-                    {{ $t('sign_in') }}
+                    {{ $t('auth.login.signIn') }}
                 </wa-button>
             </form>
         </wa-card>

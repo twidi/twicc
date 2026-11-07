@@ -64,7 +64,7 @@ test('the popover delegates the origin wiring instead of holding it', () => {
 })
 
 test('the former External URL label is now External address', () => {
-    assert.match(popoverSource, /\$t\('external_address'\).*<wa-icon/)
+    assert.match(popoverSource, /\$t\('settings\.general\.externalAddress\.label'\).*<wa-icon/)
     assert.doesNotMatch(popoverSource, />External URL <wa-icon/)
 })
 

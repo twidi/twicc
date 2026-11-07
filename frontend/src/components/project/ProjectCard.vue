@@ -89,7 +89,7 @@ function handleMenuSelect(event) {
                 <ProjectBadge :project-id="project.id" class="project-title" />
                 <CodeCommentsIndicator :project-ids="[project.id]" />
                 <AggregatedProcessIndicator :project-ids="[project.id]" size="small" />
-                <wa-tag v-if="project.archived" variant="neutral" size="small" class="archived-tag">{{ $t('archived') }}</wa-tag>
+                <wa-tag v-if="project.archived" variant="neutral" size="small" class="archived-tag">{{ $t('common.status.archived') }}</wa-tag>
                 <div class="project-menu" @click.stop>
                     <wa-dropdown
                         placement="bottom-end"
@@ -102,22 +102,22 @@ function handleMenuSelect(event) {
                             appearance="plain"
                             size="small"
                         >
-                            <wa-icon name="ellipsis-v" :label="$t('project_menu')"></wa-icon>
+                            <wa-icon name="ellipsis-v" :label="$t('project.card.menuLabel')"></wa-icon>
                         </wa-button>
                         <wa-dropdown-item value="edit">
                             <wa-icon slot="icon" name="pencil"></wa-icon>
-                            {{ $t('edit') }}
+                            {{ $t('common.actions.edit') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="!project.archived" value="archive">
                             <wa-icon slot="icon" name="box-archive"></wa-icon>
-                            {{ $t('archive') }}
+                            {{ $t('common.actions.archive') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="project.archived" value="unarchive">
                             <wa-icon slot="icon" name="box-open"></wa-icon>
-                            {{ $t('unarchive') }}
+                            {{ $t('common.actions.unarchive') }}
                         </wa-dropdown-item>
                     </wa-dropdown>
-                    <AppTooltip :for="`project-menu-trigger-${project.id}`">{{ $t('project_actions') }}</AppTooltip>
+                    <AppTooltip :for="`project-menu-trigger-${project.id}`">{{ $t('project.card.actionsTooltip') }}</AppTooltip>
                 </div>
             </div>
             <div v-if="project.directory" class="project-directory">
@@ -128,12 +128,12 @@ function handleMenuSelect(event) {
                 <div class="project-meta">
                     <span :id="`sessions-count-${project.id}`" class="sessions-count">
                         <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                        <span>{{ project.sessions_count }} {{ $t('session') }}{{ project.sessions_count !== 1 ? 's' : '' }}</span>
+                        <span>{{ project.sessions_count }} {{ $t('session.labels.singular') }}{{ project.sessions_count !== 1 ? 's' : '' }}</span>
                     </span>
-                    <AppTooltip :for="`sessions-count-${project.id}`">{{ $t('number_of_sessions') }}</AppTooltip>
+                    <AppTooltip :for="`sessions-count-${project.id}`">{{ $t('project.card.sessionCountTooltip') }}</AppTooltip>
                     <template v-if="showCosts">
                         <CostDisplay :id="`project-cost-${project.id}`" :cost="project.total_cost" class="project-cost" />
-                        <AppTooltip :for="`project-cost-${project.id}`">{{ $t('total_project_cost') }}</AppTooltip>
+                        <AppTooltip :for="`project-cost-${project.id}`">{{ $t('project.card.costTooltip') }}</AppTooltip>
                     </template>
                     <span :id="`project-mtime-${project.id}`" class="project-mtime">
                         <wa-icon auto-width name="clock" variant="regular"></wa-icon>
@@ -145,7 +145,7 @@ function handleMenuSelect(event) {
                 <div :id="`project-sparkline-${project.id}`" class="project-graph">
                     <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />
                 </div>
-                <AppTooltip :for="`project-sparkline-${project.id}`">{{ $t('project_activity_message_turns_per_week') }}</AppTooltip>
+                <AppTooltip :for="`project-sparkline-${project.id}`">{{ $t('project.card.activityTooltip') }}</AppTooltip>
             </div>
         </div>
     </wa-card>

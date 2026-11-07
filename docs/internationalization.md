@@ -43,18 +43,42 @@ unchanged. Use named interpolation and whole-message plural forms rather
 than appending English suffixes:
 
 ```vue
-{{ $t('project_count', { count }, count) }}
+{{ $t('workspace.projectCount', { count }, count) }}
 ```
 
 ```json
 {
-    "project_count": "{count} project | {count} projects"
+    "workspace.projectCount": "{count} project | {count} projects"
 }
 ```
 
 Vue I18n treats `@`, `{`, `}` and `|` as message syntax. Use literal
 interpolation when these characters are text, for example `{'@'}`.
 Keep identifiers such as `tmux`, Git commands and keyboard chords intact.
+
+### Message key names
+
+Catalogs store flat, dotted keys. Each key names the message's purpose and
+context, rather than copying the English text. Use lower camel case within
+each segment, for example `settings.general.language.label`,
+`project.edit.icon.errors.tooLarge` or `session.sharing.unavailableHistory`.
+Keep related keys together in alphabetical order in both catalogs.
+
+The first segment identifies the domain: `auth`, `composer`, `help`, `home`,
+`navigation`, `project`, `session`, `settings` or `workspace`. Use `common` for
+messages with the same meaning across domains, such as `common.actions.cancel`.
+Do not share keys only because their current English text is identical.
+
+Use roles such as `label`, `hint`, `tooltip`, `placeholder` or `errors` when
+they distinguish messages within a feature. Existing sentence fragments use
+`Prefix` or `Suffix` where applicable; their names do not imply that they form
+complete messages. Completing coverage and combining fragments are separate
+changes from naming keys.
+
+When renaming a key, inspect every translation call and `<i18n-t keypath>` that
+uses it, including conditional keys. Update both catalogs and relevant tests.
+Do not change route names, setting values or API identifiers that happen to
+match an old key. Keep the message text and interpolation parameters unchanged.
 
 ## Adding a language
 

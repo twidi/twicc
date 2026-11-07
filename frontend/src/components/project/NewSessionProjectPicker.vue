@@ -33,7 +33,7 @@ const workspaceVisibleProjectIds = computed(() =>
     activeWorkspaceId.value ? workspacesStore.getVisibleProjectIds(activeWorkspaceId.value) : []
 )
 const activeWsLabel = computed(() =>
-    activeWorkspace.value ? t('workspace_projects', { workspace: activeWorkspace.value.name }) : null
+    activeWorkspace.value ? t('project.picker.workspaceProjects', { workspace: activeWorkspace.value.name }) : null
 )
 const nonStaleProjects = computed(() =>
     store.getListableProjects.filter(p => (showArchivedProjects.value || !p.archived) && !p.stale)
@@ -93,7 +93,7 @@ function openWorktreeDialog(project) {
         <slot name="trigger" />
         <wa-dropdown-item value="__new_project__">
             <wa-icon slot="icon" name="plus"></wa-icon>
-            {{ $t('new_project') }}
+            {{ $t('project.actions.create') }}
         </wa-dropdown-item>
 
         <!-- Workspace projects first (when workspace active) -->
@@ -142,7 +142,7 @@ function openWorktreeDialog(project) {
         <!-- Other projects -->
         <template v-if="activeWsLabel && (splitNamedProjects.others.length || splitFlatTree.others.length)">
             <wa-divider></wa-divider>
-            <wa-dropdown-item disabled class="section-header-item">{{ $t('other_projects') }}</wa-dropdown-item>
+            <wa-dropdown-item disabled class="section-header-item">{{ $t('project.list.otherSection') }}</wa-dropdown-item>
         </template>
         <wa-divider v-else-if="splitNamedProjects.others.length"></wa-divider>
         <template v-for="p in splitNamedProjects.others" :key="p.id">

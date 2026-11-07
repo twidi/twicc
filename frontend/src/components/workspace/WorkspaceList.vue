@@ -25,7 +25,7 @@ const visibleWorkspaces = computed(() =>
 <template>
     <div>
         <div class="section-header">
-            <span class="section-label">{{ $t('workspaces') }} <HelpIconButton help-key="workspaces" :label="$t('what_s_a_workspace')" /></span>
+            <span class="section-label">{{ $t('common.entities.workspaces') }} <HelpIconButton help-key="workspaces" :label="$t('help.workspaces')" /></span>
             <div class="header-actions">
                 <wa-switch
                     v-if="hasArchivedWorkspaces"
@@ -34,7 +34,7 @@ const visibleWorkspaces = computed(() =>
                     :checked="showArchivedWorkspaces"
                     @change="(e) => settingsStore.setShowArchivedWorkspaces(e.target.checked)"
                 >
-                    {{ $t('show_archived') }}
+                    {{ $t('common.filters.showArchived') }}
                 </wa-switch>
                 <wa-button
                     id="ws-list-manage-btn"
@@ -45,7 +45,7 @@ const visibleWorkspaces = computed(() =>
                 >
                     <wa-icon name="gear"></wa-icon>
                 </wa-button>
-                <AppTooltip for="ws-list-manage-btn">{{ $t('manage_workspaces') }}</AppTooltip>
+                <AppTooltip for="ws-list-manage-btn">{{ $t('workspace.actions.manage') }}</AppTooltip>
                 <wa-button
                     id="ws-list-create-btn"
                     variant="neutral"
@@ -55,12 +55,12 @@ const visibleWorkspaces = computed(() =>
                 >
                     <wa-icon name="plus"></wa-icon>
                 </wa-button>
-                <AppTooltip for="ws-list-create-btn">{{ $t('new_workspace') }}</AppTooltip>
+                <AppTooltip for="ws-list-create-btn">{{ $t('workspace.actions.create') }}</AppTooltip>
             </div>
         </div>
         <wa-callout v-if="!visibleWorkspaces.length" variant="brand" class="workspace-hint">
             <wa-icon slot="icon" name="lightbulb"></wa-icon>
-            {{ $t('workspaces_let_you_group_projects_together_so_you_can') }} <wa-icon name="plus" auto-width></wa-icon> {{ $t('button_above') }}
+            {{ $t('workspace.list.introPrefix') }} <wa-icon name="plus" auto-width></wa-icon> {{ $t('workspace.list.introSuffix') }}
         </wa-callout>
         <div v-else class="workspace-cards">
             <WorkspaceCard

@@ -44,15 +44,15 @@ test('all messages compile and Brazilian Portuguese covers the English keys', ()
 
 test('Portuguese interpolates and pluralizes complete session and project messages', () => {
     const { t } = createAppI18n('pt-BR').global
-    assert.equal(t('all_sessions', { count: 1 }, 1), '1 sessão')
-    assert.equal(t('all_sessions', { count: 2 }, 2), 'Todas as 2 sessões')
-    assert.equal(t('project_count', { count: 1 }, 1), '1 projeto')
-    assert.equal(t('project_count', { count: 3 }, 3), '3 projetos')
-    assert.equal(t('stop_processes', 2), 'Parar os processos')
-    assert.equal(t('selected_sessions', { count: 1 }, 1), '1 selecionada')
-    assert.equal(t('selected_sessions', { count: 2 }, 2), '2 selecionadas')
-    assert.equal(t('starting_provider', { provider: 'Codex' }), 'Iniciando processo do Codex...')
-    assert.equal(t('anywhere_file_paths'), 'Em qualquer lugar: @ = caminhos de arquivos')
+    assert.equal(t('home.allSessions', { count: 1 }, 1), '1 sessão')
+    assert.equal(t('home.allSessions', { count: 2 }, 2), 'Todas as 2 sessões')
+    assert.equal(t('workspace.projectCount', { count: 1 }, 1), '1 projeto')
+    assert.equal(t('workspace.projectCount', { count: 3 }, 3), '3 projetos')
+    assert.equal(t('session.selection.stopProcesses', 2), 'Parar os processos')
+    assert.equal(t('session.selection.count', { count: 1 }, 1), '1 selecionada')
+    assert.equal(t('session.selection.count', { count: 2 }, 2), '2 selecionadas')
+    assert.equal(t('composer.status.startingProvider', { provider: 'Codex' }), 'Iniciando processo do Codex...')
+    assert.equal(t('composer.shortcuts.filePaths'), 'Em qualquer lugar: @ = caminhos de arquivos')
 })
 
 test('a missing translation falls back to English', () => {
@@ -73,7 +73,7 @@ test('language changes update mounted templates immediately', async () => {
     })
     const instance = createAppI18n()
     const root = { children: [] }
-    const app = renderer.createApp({ render() { return h('p', this.$t('welcome_to_twicc')) } })
+    const app = renderer.createApp({ render() { return h('p', this.$t('home.welcome')) } })
     app.use(instance).mount(root)
     assert.equal(root.children[0].text, 'Welcome to TwiCC')
     instance.global.locale.value = 'pt-BR'

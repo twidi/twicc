@@ -7,7 +7,7 @@ const read = () => readFileSync(new URL('./SidebarRail.vue', import.meta.url), '
 
 test('rail has keyed groups, native accessible buttons, and a stable Settings fragment', () => {
     const source = read()
-    assert.match(source, /<nav :aria-label="\$t\('main_navigation'\)" class="sidebar-rail">\s*<div class="panel-card">/)
+    assert.match(source, /<nav :aria-label="\$t\('navigation\.ariaLabel'\)" class="sidebar-rail">\s*<div class="panel-card">/)
     assert.equal((source.match(/<template v-for="item in (top|bottom)" :key="item.id">/g) ?? []).length, 2)
     assert.equal((source.match(/class="rail-spacer"/g) ?? []).length, 1)
     assert.ok(source.indexOf('item in top') < source.indexOf('class="rail-spacer"'))
@@ -58,7 +58,7 @@ test('rail SFC compiles its script, template, and scoped style', async () => {
         ? [prop.name, prop.value?.content ?? ''] : [prop.rawName, prop.exp?.content ?? '']))
     const [nav] = children(descriptor.template.ast)
     assert.equal(nav.tag, 'nav')
-    assert.equal(attrs(nav)[':aria-label'], "$t('main_navigation')")
+    assert.equal(attrs(nav)[':aria-label'], "$t('navigation.ariaLabel')")
     const [card] = children(nav)
     assert.equal(attrs(card).class, 'panel-card')
     const [androidMenu, top, firstDivider, spacer, secondDivider, bottom] = children(card)

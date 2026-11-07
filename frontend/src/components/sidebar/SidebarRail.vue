@@ -169,17 +169,17 @@ function projectColor(projectId) {
 }
 const items = computed(() => {
     const labels = {
-        home: t(props.mode === 'home' ? 'navigation_home' : 'navigation_back'),
-        sessions: t('sessions'), artifacts: t('artifacts'),
+        home: t(props.mode === 'home' ? 'navigation.home' : 'navigation.backToProjects'),
+        sessions: t('common.entities.sessions'), artifacts: t('navigation.artifacts'),
         timeline: speech.activePageId
-            ? t('listening_timeline', { label: speech.activeLabel })
-            : t('all_projects_timeline'),
-        speech: t(tts.status === 'loading' ? 'cancel_text_to_speech_request' : 'stop_reading_aloud'),
-        search: t('navigation_search', { shortcut: settingsStore.isMac ? '⌘⇧F' : 'Ctrl+Shift+F' }),
-        'new-session': t('new_session'),
-        palette: t('navigation_palette', { shortcut: settingsStore.isMac ? '⌘K' : 'Ctrl+K' }),
-        inbox: t('navigation_inbox'), settings: t('settings'),
-        toggle: t(props.sidebarOpen ? 'navigation_close' : 'navigation_open'),
+            ? t('navigation.listeningTimeline', { label: speech.activeLabel })
+            : t('navigation.timeline'),
+        speech: t(tts.status === 'loading' ? 'navigation.cancelSpeechRequest' : 'navigation.stopSpeech'),
+        search: t('navigation.search', { shortcut: settingsStore.isMac ? '⌘⇧F' : 'Ctrl+Shift+F' }),
+        'new-session': t('session.actions.create'),
+        palette: t('navigation.commandPalette', { shortcut: settingsStore.isMac ? '⌘K' : 'Ctrl+K' }),
+        inbox: t('navigation.peerInbox'), settings: t('settings.trigger.label'),
+        toggle: t(props.sidebarOpen ? 'navigation.closeSidebar' : 'navigation.openSidebar'),
     }
     return resolveRailItems({
         mode: props.mode,
@@ -221,7 +221,7 @@ async function stopSpeech() {
 </script>
 
 <template>
-    <nav :aria-label="$t('main_navigation')" class="sidebar-rail">
+    <nav :aria-label="$t('navigation.ariaLabel')" class="sidebar-rail">
         <div class="panel-card">
             <AndroidAppMenuAnchor />
             <template v-for="item in top" :key="item.id">

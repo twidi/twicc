@@ -24,7 +24,7 @@ function handleRetry() {
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <div class="error-content">
                 <div class="error-message">
-                    <slot>{{ $t('an_error_occurred_while_loading_data') }}</slot>
+                    <slot>{{ $t('common.errors.loadData') }}</slot>
                 </div>
                 <div v-if="detail" class="error-detail">{{ detail }}</div>
                 <wa-button
@@ -36,7 +36,7 @@ function handleRetry() {
                     @click="handleRetry"
                 >
                     <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
-                    {{ $t('retry') }}
+                    {{ $t('common.actions.retry') }}
                 </wa-button>
             </div>
         </wa-callout>

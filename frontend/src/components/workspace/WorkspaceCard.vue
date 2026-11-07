@@ -124,7 +124,7 @@ function handleMenuSelect(event) {
                 <span class="workspace-name"><wa-icon name="layer-group" auto-width :style="workspace.color ? { color: workspace.color } : null"></wa-icon> {{ workspace.name }}</span>
                 <CodeCommentsIndicator :project-ids="visibleProjectIds" />
                 <AggregatedProcessIndicator :project-ids="visibleProjectIds" size="small" />
-                <wa-tag v-if="workspace.archived" variant="neutral" size="small" class="archived-tag">{{ $t('archived') }}</wa-tag>
+                <wa-tag v-if="workspace.archived" variant="neutral" size="small" class="archived-tag">{{ $t('common.status.archived') }}</wa-tag>
                 <div class="workspace-menu" @click.stop>
                     <wa-dropdown
                         placement="bottom-end"
@@ -137,22 +137,22 @@ function handleMenuSelect(event) {
                             appearance="plain"
                             size="small"
                         >
-                            <wa-icon name="ellipsis-v" :label="$t('workspace_menu')"></wa-icon>
+                            <wa-icon name="ellipsis-v" :label="$t('workspace.card.menuLabel')"></wa-icon>
                         </wa-button>
                         <wa-dropdown-item value="manage">
                             <wa-icon slot="icon" name="gear"></wa-icon>
-                            {{ $t('manage') }}
+                            {{ $t('common.actions.manage') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="!workspace.archived" value="archive">
                             <wa-icon slot="icon" name="box-archive"></wa-icon>
-                            {{ $t('archive') }}
+                            {{ $t('common.actions.archive') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item v-if="workspace.archived" value="unarchive">
                             <wa-icon slot="icon" name="box-open"></wa-icon>
-                            {{ $t('unarchive') }}
+                            {{ $t('common.actions.unarchive') }}
                         </wa-dropdown-item>
                     </wa-dropdown>
-                    <AppTooltip :for="`workspace-menu-trigger-${workspace.id}`">{{ $t('workspace_actions') }}</AppTooltip>
+                    <AppTooltip :for="`workspace-menu-trigger-${workspace.id}`">{{ $t('workspace.card.actionsTooltip') }}</AppTooltip>
                 </div>
             </div>
             <div v-if="listableProjectIds.length" class="workspace-projects">
@@ -164,18 +164,18 @@ function handleMenuSelect(event) {
                 />
             </div>
             <div v-else class="workspace-empty">
-                {{ $t('no_visible_projects') }}
+                {{ $t('workspace.card.noVisibleProjects') }}
             </div>
             <div class="workspace-meta-wrapper">
                 <div class="workspace-meta">
                     <span :id="`workspace-sessions-${workspace.id}`" class="sessions-count">
                         <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                        <span>{{ totalSessionsCount }} {{ $t('session') }}{{ totalSessionsCount !== 1 ? 's' : '' }}</span>
+                        <span>{{ totalSessionsCount }} {{ $t('session.labels.singular') }}{{ totalSessionsCount !== 1 ? 's' : '' }}</span>
                     </span>
-                    <AppTooltip :for="`workspace-sessions-${workspace.id}`">{{ $t('total_sessions_across_workspace_projects') }}</AppTooltip>
+                    <AppTooltip :for="`workspace-sessions-${workspace.id}`">{{ $t('workspace.card.sessionCountTooltip') }}</AppTooltip>
                     <template v-if="showCosts">
                         <CostDisplay :id="`workspace-cost-${workspace.id}`" :cost="totalCost" class="workspace-cost" />
-                        <AppTooltip :for="`workspace-cost-${workspace.id}`">{{ $t('total_workspace_cost') }}</AppTooltip>
+                        <AppTooltip :for="`workspace-cost-${workspace.id}`">{{ $t('workspace.card.costTooltip') }}</AppTooltip>
                     </template>
                     <template v-if="lastMtime">
                         <span :id="`workspace-mtime-${workspace.id}`" class="workspace-mtime">
@@ -189,7 +189,7 @@ function handleMenuSelect(event) {
                 <div :id="`workspace-sparkline-${workspace.id}`" class="workspace-graph">
                     <ActivitySparkline :id-suffix="`ws-${workspace.id}`" :data="workspaceWeeklyActivity" />
                 </div>
-                <AppTooltip :for="`workspace-sparkline-${workspace.id}`">{{ $t('workspace_activity_message_turns_per_week') }}</AppTooltip>
+                <AppTooltip :for="`workspace-sparkline-${workspace.id}`">{{ $t('workspace.card.activityTooltip') }}</AppTooltip>
             </div>
         </div>
     </wa-card>

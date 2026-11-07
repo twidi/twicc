@@ -101,7 +101,7 @@ const providerSections = computed(() =>
         return {
             id: `provider_${provider}`,
             provider,
-            label: t('provider_settings', { provider: label }),
+            label: t('settings.sections.providerSettings', { provider: label }),
             navLabel: label,
             icon: getProviderIcon(provider),
             synced: true,
@@ -111,21 +111,21 @@ const providerSections = computed(() =>
 )
 
 const sections = computed(() => [
-    { id: 'general',       label: t('general') },
-    { id: 'notifications', label: t('notifications') },
-    { id: 'providers',     label: t('providers'), synced: true },
+    { id: 'general',       label: t('settings.sections.general') },
+    { id: 'notifications', label: t('settings.sections.notifications') },
+    { id: 'providers',     label: t('settings.sections.providers'), synced: true },
     ...providerSections.value.filter(s => s.enabled),
-    { id: 'sessions',      label: t('sessions') },
-    { id: 'layouts',       label: t('layouts'), synced: true },
-    { id: 'title',         label: t('title_suggestion'), navLabel: t('titles'), synced: true },
-    { id: 'editor',        label: t('editor') },
-    { id: 'terminal',      label: t('terminal') },
-    { id: 'sharing',       label: t('sharing'), synced: true },
-    { id: 'usage',         label: t('providers_quotas_usage'), navLabel: t('usage') },
-    { id: 'summaries',     label: t('summaries'), synced: true },
-    { id: 'tts',           label: t('text_to_speech'), synced: true },
-    { id: 'mcp',           label: t('external_mcp'), navLabel: t('mcp'), synced: true },
-    { id: 'peers',         label: t('peers'), synced: true, badge: peersStore.inboxCount },
+    { id: 'sessions',      label: t('common.entities.sessions') },
+    { id: 'layouts',       label: t('settings.sections.layouts'), synced: true },
+    { id: 'title',         label: t('settings.sections.titleSuggestion'), navLabel: t('settings.sections.titles'), synced: true },
+    { id: 'editor',        label: t('settings.sections.editor') },
+    { id: 'terminal',      label: t('settings.sections.terminal') },
+    { id: 'sharing',       label: t('settings.sections.sharing'), synced: true },
+    { id: 'usage',         label: t('settings.sections.providerUsage'), navLabel: t('settings.sections.usage') },
+    { id: 'summaries',     label: t('settings.sections.summaries'), synced: true },
+    { id: 'tts',           label: t('settings.sections.textToSpeech'), synced: true },
+    { id: 'mcp',           label: t('settings.sections.externalMcp'), navLabel: t('settings.sections.mcp'), synced: true },
+    { id: 'peers',         label: t('settings.sections.peers'), synced: true, badge: peersStore.inboxCount },
 ])
 
 const activeSection = ref('general')
@@ -215,9 +215,9 @@ const activeSectionObj = computed(() =>
 )
 
 const activeSectionLabel = computed(() => {
-    if (activeSection.value === 'shortcuts') return t('keyboard_shortcuts')
-    if (activeSection.value === 'tips') return t('tips')
-    if (activeSection.value === 'help') return t('help')
+    if (activeSection.value === 'shortcuts') return t('settings.shortcuts.title')
+    if (activeSection.value === 'tips') return t('settings.sections.tips')
+    if (activeSection.value === 'help') return t('settings.sections.help')
     return activeSectionObj.value?.label ?? ''
 })
 
@@ -369,7 +369,7 @@ const shortcutGroups = computed(() => {
             ]
         },
         {
-            label: t('message_input'),
+            label: t('composer.input.label'),
             shortcuts: [
                 { keys: [mod, '↵'], description: 'Send message' },
                 { keys: ['Alt', 'Shift', 'O'], description: 'Open / close Agent Settings popover' },
@@ -424,7 +424,7 @@ const shortcutGroups = computed(() => {
             ]
         },
         {
-            label: t('terminal'),
+            label: t('settings.sections.terminal'),
             shortcuts: [
                 { keys: ['Ctrl', 'C'], description: 'Copy selected text (instead of SIGINT)' },
                 { keys: ['Ctrl', 'Shift', 'C'], description: 'Copy selected text' },
@@ -436,16 +436,16 @@ const shortcutGroups = computed(() => {
 
 // Color scheme options for the select
 const colorSchemeOptions = computed(() => [
-    { value: COLOR_SCHEME.SYSTEM, label: t('system') },
-    { value: COLOR_SCHEME.LIGHT, label: t('light') },
-    { value: COLOR_SCHEME.DARK, label: t('dark') },
+    { value: COLOR_SCHEME.SYSTEM, label: t('settings.general.colorScheme.system') },
+    { value: COLOR_SCHEME.LIGHT, label: t('settings.general.colorScheme.light') },
+    { value: COLOR_SCHEME.DARK, label: t('settings.general.colorScheme.dark') },
 ])
 
 // Session time format options for the select
 const sessionTimeFormatOptions = computed(() => [
-    { value: SESSION_TIME_FORMAT.TIME, label: t('time') },
-    { value: SESSION_TIME_FORMAT.RELATIVE_SHORT, label: t('relative_short') },
-    { value: SESSION_TIME_FORMAT.RELATIVE_NARROW, label: t('relative_narrow') },
+    { value: SESSION_TIME_FORMAT.TIME, label: t('settings.general.timeDisplay.absolute') },
+    { value: SESSION_TIME_FORMAT.RELATIVE_SHORT, label: t('settings.general.timeDisplay.relativeShort') },
+    { value: SESSION_TIME_FORMAT.RELATIVE_NARROW, label: t('settings.general.timeDisplay.relativeNarrow') },
 ])
 
 const notificationSettingsRef = ref(null)
@@ -489,8 +489,8 @@ function reasonFor(p) {
 }
 function transitionLabelFor(p) {
     const state = providerStateFor(p)
-    if (state === 'starting') return t('starting')
-    if (state === 'stopping') return t('stopping')
+    if (state === 'starting') return t('session.process.starting')
+    if (state === 'stopping') return t('session.process.stopping')
     return null
 }
 function onToggleProvider(p, event) {
@@ -853,9 +853,9 @@ watch(
 
 // Display mode options for the select
 const displayModeOptions = computed(() => [
-    { value: DISPLAY_MODE.CONVERSATION, label: t('conversation') },
-    { value: DISPLAY_MODE.SIMPLIFIED, label: t('simplified') },
-    { value: DISPLAY_MODE.NORMAL, label: t('detailed') },
+    { value: DISPLAY_MODE.CONVERSATION, label: t('settings.sessions.displayMode.conversation') },
+    { value: DISPLAY_MODE.SIMPLIFIED, label: t('settings.sessions.displayMode.simplified') },
+    { value: DISPLAY_MODE.NORMAL, label: t('settings.sessions.displayMode.detailed') },
 ])
 
 
@@ -949,9 +949,9 @@ function onTelemetryEnabledChange(event) {
 async function resetTelemetryInstanceId() {
     const result = await requestTelemetryInstanceIdReset()
     if (result.instance_id) {
-        toast.success(t('telemetry_instance_id_reset'))
+        toast.success(t('settings.general.telemetry.resetSuccess'))
     } else {
-        toast.error(t('failed_to_reset_telemetry_instance_id'))
+        toast.error(t('settings.general.telemetry.resetError'))
     }
 }
 
@@ -1351,9 +1351,9 @@ function onChangelogClose() {
 
 <template>
     <wa-button id="settings-trigger" :class="{ 'settings-trigger--icon-only': props.triggerIconOnly }" variant="brand" :appearance="props.triggerAppearance" size="small">
-        <wa-icon name="gear"></wa-icon><span class="settings-trigger-label">{{ props.triggerLabel ?? $t('settings') }}</span>
+        <wa-icon name="gear"></wa-icon><span class="settings-trigger-label">{{ props.triggerLabel ?? $t('settings.trigger.label') }}</span>
     </wa-button>
-    <AppTooltip for="settings-trigger" :placement="props.tooltipPlacement">{{ props.triggerLabel ?? $t('toggle_settings') }}</AppTooltip>
+    <AppTooltip for="settings-trigger" :placement="props.tooltipPlacement">{{ props.triggerLabel ?? $t('settings.trigger.tooltip') }}</AppTooltip>
     <Teleport to="body">
         <wa-popover ref="popoverRef" v-popover-focus-fix for="settings-trigger" :placement="props.placement" class="settings-popover" @wa-show.self="onPopoverShow" @wa-after-hide.self="onPopoverAfterHide">
             <div class="settings-layout">
@@ -1387,21 +1387,21 @@ function onChangelogClose() {
                             :class="{ active: activeSection === 'shortcuts' }"
                             @click="selectSection('shortcuts')"
                         >
-                            {{ $t('shortcuts') }}
+                            {{ $t('settings.sections.shortcuts') }}
                         </button>
                         <button
                             class="settings-nav-item tips-nav-item"
                             :class="{ active: activeSection === 'tips' }"
                             @click="selectSection('tips')"
                         >
-                            {{ $t('tips') }}
+                            {{ $t('settings.sections.tips') }}
                         </button>
                         <button
                             class="settings-nav-item help-nav-item"
                             :class="{ active: activeSection === 'help' }"
                             @click="selectSection('help')"
                         >
-                            {{ $t('help') }}
+                            {{ $t('settings.sections.help') }}
                         </button>
                     </nav>
 
@@ -1436,10 +1436,10 @@ function onChangelogClose() {
 
                     <!-- General Section -->
                     <section v-if="activeSection === 'general'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('general') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.general') }}</h3>
                         <div class="setting-group">
                             <wa-select
-                                :label="$t('language')"
+                                :label="$t('settings.general.language.label')"
                                 :value.prop="store.locale"
                                 @change="store.locale = $event.target.value"
                                 size="small"
@@ -1448,10 +1448,10 @@ function onChangelogClose() {
                                     {{ locale.label }}
                                 </wa-option>
                             </wa-select>
-                            <span class="setting-group-hint">{{ $t('language_hint') }}</span>
+                            <span class="setting-group-hint">{{ $t('settings.general.language.hint') }}</span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('external_address') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.general.externalAddress.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
                                 <wa-input
                                     ref="publicBaseUrlInputRef"
@@ -1467,27 +1467,27 @@ function onChangelogClose() {
                                     @click="onPublicBaseUrlApply"
                                 >
                                     <wa-icon :name="publicBaseUrlApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
                             <wa-callout v-if="publicBaseUrlError" variant="danger" size="small">{{ publicBaseUrlError }}</wa-callout>
                             <span class="setting-group-hint">
-                                {{ $t('where_you_reach_twicc_from_your_devices_used_to') }}
-                                <HelpIconButton help-key="external-url" :label="$t('about_tunnels_remote_access')" />
+                                {{ $t('settings.general.externalAddress.hint') }}
+                                <HelpIconButton help-key="external-url" :label="$t('help.externalAccess')" />
                             </span>
                         </div>
                         <wa-divider></wa-divider>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('reduce_effects') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.reduceEffects.label') }}</label>
                             <wa-switch
                                 :checked="reduceEffects"
                                 @change="onReduceEffectsChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
-                            <span class="setting-group-hint">{{ $t('turns_off_animations_glass_blur_and_other_costly_effects') }}</span>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
+                            <span class="setting-group-hint">{{ $t('settings.general.reduceEffects.hint') }}</span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('color_scheme') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.colorScheme.label') }}</label>
                             <wa-select
                                 :value.prop="colorScheme"
                                 @change="onColorSchemeChange"
@@ -1501,7 +1501,7 @@ function onChangelogClose() {
                             </wa-select>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('font_size_value', { size: fontSize }) }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.fontSize.label', { size: fontSize }) }}</label>
                             <wa-slider
                                 :min.prop="12"
                                 :max.prop="32"
@@ -1512,16 +1512,16 @@ function onChangelogClose() {
                             ></wa-slider>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('keep_the_icon_bar_visible_when_the_sidebar_is') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.keepRailVisible.label') }}</label>
                             <wa-switch
                                 :checked="sidebarRailVisibleWhenClosed"
                                 @change="onSidebarRailVisibleWhenClosedChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
                         <wa-divider></wa-divider>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('time_display') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.timeDisplay.label') }}</label>
                             <wa-select
                                 :value.prop="sessionTimeFormat"
                                 @change="onSessionTimeFormatChange"
@@ -1536,16 +1536,16 @@ function onChangelogClose() {
                             </wa-select>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('show_costs') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.general.showCosts.label') }}</label>
                             <wa-switch
                                 :checked="showCosts"
                                 @change="onShowCostsChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
                         <wa-divider></wa-divider>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('worktree_directory_template') }} <wa-icon name="cloud" class="synced-icon"></wa-icon><HelpIconButton help-key="worktrees" :label="$t('what_s_a_worktree')" /></label>
+                            <label class="setting-group-label">{{ $t('settings.general.worktreeDirectory.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon><HelpIconButton help-key="worktrees" :label="$t('help.worktrees')" /></label>
                             <div class="setting-input-apply-row">
                                 <wa-input
                                     :value="worktreeDirInput"
@@ -1561,10 +1561,10 @@ function onChangelogClose() {
                                     :disabled="!worktreeTemplateValidation.valid"
                                 >
                                     <wa-icon :name="worktreeDirApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
-                            <i18n-t keypath="worktree_template_hint" scope="global" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="settings.general.worktreeDirectory.hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #relative><code>../</code></template>
                                 <template #gitRoot><code>{git_root}</code></template>
                                 <template #projectName><code>{project_name}</code></template>
@@ -1581,30 +1581,30 @@ function onChangelogClose() {
                         </div>
                         <wa-divider></wa-divider>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('anonymous_telemetry') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.general.telemetry.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
                                 :checked="telemetryEnabled"
                                 @change="onTelemetryEnabledChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                             <span class="setting-group-hint">
-                                {{ $t('anonymous_usage_statistics_counters_only_never_content_messages_titles') }}
-                                <a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener">{{ $t('what_is_collected') }}</a>
+                                {{ $t('settings.general.telemetry.hint') }}
+                                <a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener">{{ $t('settings.general.telemetry.collectionLink') }}</a>
                             </span>
                             <div v-if="telemetryEnabled" class="telemetry-actions">
-                                <wa-button size="small" appearance="outlined" @click="showTelemetryPayload = true">{{ $t('view_last_payload') }}</wa-button>
-                                <wa-button size="small" appearance="outlined" @click="resetTelemetryInstanceId">{{ $t('reset_instance_id') }}</wa-button>
+                                <wa-button size="small" appearance="outlined" @click="showTelemetryPayload = true">{{ $t('settings.general.telemetry.viewPayload') }}</wa-button>
+                                <wa-button size="small" appearance="outlined" @click="resetTelemetryInstanceId">{{ $t('settings.general.telemetry.resetInstanceId') }}</wa-button>
                             </div>
                         </div>
                     </section>
 
                     <!-- Providers section -->
                     <section v-if="activeSection === 'providers'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('providers') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.providers') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                         <div class="activated-providers-block">
-                            <h4>{{ $t('activated_providers') }}</h4>
+                            <h4>{{ $t('settings.providers.enabled.label') }}</h4>
                             <p class="hint">
-                                {{ $t('disabling_a_provider_stops_all_of_its_background_tasks') }}
+                                {{ $t('settings.providers.enabled.hint') }}
                             </p>
                             <div class="provider-switches">
                                 <div v-for="p in getRegisteredProviders()" :key="p" class="provider-switch-row">
@@ -1632,7 +1632,7 @@ function onChangelogClose() {
                             </div>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('default_provider_for_new_sessions') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.providers.defaultProvider.label') }}</label>
                             <wa-select
                                 :value.prop="defaultProvider"
                                 @change="onDefaultProviderChange"
@@ -1678,11 +1678,11 @@ function onChangelogClose() {
                     <!-- Sharing Section -->
                     <section v-if="activeSection === 'sharing'" class="settings-section">
                         <div class="settings-section-heading">
-                            <h3 class="settings-section-title">{{ $t('sharing') }}</h3>
-                            <HelpFeatureLink help-key="sharing" :label="$t('what_is_sharing')" />
+                            <h3 class="settings-section-title">{{ $t('settings.sections.sharing') }}</h3>
+                            <HelpFeatureLink help-key="sharing" :label="$t('help.sharing')" />
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('share_host') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.sharing.host.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
                                 <wa-input
                                     ref="shareBaseUrlInputRef"
@@ -1698,37 +1698,37 @@ function onChangelogClose() {
                                     @click="onShareBaseUrlApply"
                                 >
                                     <wa-icon :name="shareBaseUrlApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
                             <wa-callout v-if="shareBaseUrlError" variant="danger" size="small">{{ shareBaseUrlError }}</wa-callout>
                             <span class="setting-group-hint">
-                                {{ $t('dedicated_share_host_a_hostname_distinct_from_this_app') }}
+                                {{ $t('settings.sharing.host.hint') }}
                             </span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('agent_sharing') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.sharing.agentPermissions.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
                                 :checked="allowAgentSessionShares"
                                 @change="onAllowAgentSessionSharesChange"
                                 size="small"
-                            >{{ $t('session_shares') }}</wa-switch>
+                            >{{ $t('settings.sharing.agentPermissions.sessionShares') }}</wa-switch>
                             <span class="setting-group-hint">
-                                {{ $t('allows_agents_to_create_session_shares_whose_target_belongs') }}
+                                {{ $t('settings.sharing.agentPermissions.sessionSharesHint') }}
                             </span>
                             <wa-switch
                                 :checked="allowAgentArtifactShares"
                                 @change="onAllowAgentArtifactSharesChange"
                                 size="small"
-                            >{{ $t('artifact_shares') }}</wa-switch>
+                            >{{ $t('settings.sharing.agentPermissions.artifactShares') }}</wa-switch>
                             <span class="setting-group-hint">
-                                {{ $t('allows_agents_to_create_artifact_shares_whose_target_belongs') }}
+                                {{ $t('settings.sharing.agentPermissions.artifactSharesHint') }}
                             </span>
                         </div>
                         <div class="setting-group">
                             <wa-button size="small" variant="neutral" appearance="accent" @click="showShareManager = true">
                                 <wa-icon name="share-nodes" slot="start"></wa-icon>
-                                {{ $t('shared_links') }}
+                                {{ $t('settings.sharing.manageLinks') }}
                             </wa-button>
                         </div>
                     </section>
@@ -1736,7 +1736,7 @@ function onChangelogClose() {
                     <!-- Peers Section -->
                     <section v-if="activeSection === 'peers'" class="settings-section">
                         <div class="settings-section-heading">
-                            <h3 class="settings-section-title">{{ $t('peers') }}</h3>
+                            <h3 class="settings-section-title">{{ $t('settings.sections.peers') }}</h3>
                             <PeerHelpLink />
                         </div>
                         <!-- Once the feature is usable, these are the daily
@@ -1748,14 +1748,14 @@ function onChangelogClose() {
                             <wa-button size="small" variant="neutral" appearance="accent" @click="openPeersManager">
                                 <wa-icon name="user-group" slot="start"></wa-icon>
                                 <span class="peer-action-label">
-                                    {{ $t('manage_peers') }}
+                                    {{ $t('settings.peers.manage') }}
                                     <PeerInboxBadge :count="peersStore.pendingRequests.length" inline />
                                 </span>
                             </wa-button>
                             <wa-button size="small" variant="neutral" appearance="accent" @click="openPeerInbox">
                                 <wa-icon name="envelope" slot="start"></wa-icon>
                                 <span class="peer-action-label">
-                                    {{ $t('open_inbox') }}
+                                    {{ $t('settings.peers.openInbox') }}
                                     <PeerInboxBadge :count="peersStore.pendingInboundMessages.length" inline />
                                 </span>
                             </wa-button>
@@ -1764,13 +1764,13 @@ function onChangelogClose() {
                              only meaningful when the actions are there. -->
                         <wa-divider v-if="hasPeerActions"></wa-divider>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('your_name') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.peers.name.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
                                 <wa-input
                                     :value="peerDisplayNameInput"
                                     @input="onPeerDisplayNameInputChange"
                                     @keydown.enter="onPeerDisplayNameApply"
-                                    :placeholder="$t('e_g_stephane_laptop')"
+                                    :placeholder="$t('settings.peers.name.placeholder')"
                                     size="small"
                                 ></wa-input>
                                 <wa-button
@@ -1779,15 +1779,15 @@ function onChangelogClose() {
                                     @click="onPeerDisplayNameApply"
                                 >
                                     <wa-icon :name="peerDisplayNameApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
                             <span class="setting-group-hint">
-                                {{ $t('shown_to_peers_in_your_pairing_requests_so_they') }}
+                                {{ $t('settings.peers.name.hint') }}
                             </span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('your_address') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.peers.address.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
                                 <wa-input
                                     ref="peerBaseUrlInputRef"
@@ -1803,7 +1803,7 @@ function onChangelogClose() {
                                     @click="onPeerBaseUrlApply"
                                 >
                                     <wa-icon :name="peerBaseUrlApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
                             <wa-callout v-if="peerBaseUrlError" variant="danger" size="small">{{ peerBaseUrlError }}</wa-callout>
@@ -1811,16 +1811,16 @@ function onChangelogClose() {
                             <wa-callout v-if="peerBaseUrlConfirmation" variant="warning" size="small">
                                 <div class="peer-address-confirmation">
                                     <span>
-                                        {{ $t('changing_this_address_disables_active_peer_relationships_and_clears') }}
+                                        {{ $t('settings.peers.address.changeWarning') }}
                                     </span>
                                     <div class="peer-address-confirmation__actions">
-                                        <wa-button size="small" variant="brand" @click="confirmPeerBaseUrlApply">{{ $t('continue') }}</wa-button>
+                                        <wa-button size="small" variant="brand" @click="confirmPeerBaseUrlApply">{{ $t('common.actions.continue') }}</wa-button>
                                         <wa-button
                                             size="small"
                                             variant="neutral"
                                             appearance="outlined"
                                             @click="cancelPeerBaseUrlApply"
-                                        >{{ $t('cancel') }}</wa-button>
+                                        >{{ $t('common.actions.cancel') }}</wa-button>
                                     </div>
                                 </div>
                             </wa-callout>
@@ -1832,19 +1832,19 @@ function onChangelogClose() {
                                 type="button" class="settings-link-button"
                                 @click="prefillPeerBaseUrlFromPublic"
                             >
-                                {{ $t('use_the_external_address_from_general_settings') }}
+                                {{ $t('settings.peers.address.useExternalAddress') }}
                             </button>
                             <span class="setting-group-hint">
-                                {{ $t('your_address_advertised_to_peers_empty_disables_peer_messaging') }}
+                                {{ $t('settings.peers.address.hint') }}
                             </span>
                         </div>
                     </section>
 
                     <!-- Sessions Section -->
                     <section v-if="activeSection === 'sessions'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('sessions') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('common.entities.sessions') }}</h3>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('display_mode') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.displayMode.label') }}</label>
                             <wa-select
                                 :value.prop="displayMode"
                                 @change="onDisplayModeChange"
@@ -1858,50 +1858,50 @@ function onChangelogClose() {
                             </wa-select>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('diffs') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.diffs.label') }}</label>
                             <wa-switch
                                 :checked="showDiffs"
                                 @change="onShowDiffsChange"
                                 size="small"
-                            >{{ $t('auto_open_edits') }}</wa-switch>
+                            >{{ $t('settings.sessions.diffs.autoOpenEdits') }}</wa-switch>
                             <wa-switch
                                 :checked="toolDiffWordWrap"
                                 @change="onToolDiffWordWrapChange"
                                 size="small"
-                            >{{ $t('word_wrap') }}</wa-switch>
+                            >{{ $t('common.display.wordWrap') }}</wa-switch>
                             <wa-switch
                                 :checked="toolDiffSideBySide"
                                 @change="onToolDiffSideBySideChange"
                                 size="small"
-                            >{{ $t('side_by_side') }}</wa-switch>
-                            <span class="setting-group-hint">{{ $t('inactive_if_the_screen_is_too_narrow') }}</span>
+                            >{{ $t('settings.sessions.diffs.sideBySide') }}</wa-switch>
+                            <span class="setting-group-hint">{{ $t('common.display.sideBySideNarrowHint') }}</span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('message_timestamps') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.timestamps.label') }}</label>
                             <wa-switch
                                 :checked="showMessageTimestamps"
                                 @change="onShowMessageTimestampsChange"
                                 size="small"
-                            >{{ $t('show_time_under_each_message_block') }}</wa-switch>
+                            >{{ $t('settings.sessions.timestamps.showTime') }}</wa-switch>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('auto_unpin_on_archive') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.autoUnpinOnArchive.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
                                 :checked="autoUnpinOnArchive"
                                 @change="onAutoUnpinOnArchiveChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('compact_session_list') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.compactList.label') }}</label>
                             <wa-switch
                                 :checked="compactSessionList"
                                 @change="onCompactSessionListChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('session_cache_value', { count: maxCachedSessions }) }}</label>
+                            <label class="setting-group-label">{{ $t('settings.sessions.cache.label', { count: maxCachedSessions }) }}</label>
                             <wa-slider
                                 :min.prop="1"
                                 :max.prop="50"
@@ -1910,15 +1910,15 @@ function onChangelogClose() {
                                 @input="onMaxCachedSessionsChange"
                                 size="small"
                             ></wa-slider>
-                            <span class="setting-group-hint">{{ $t('number_of_sessions_kept_in_memory_for_instant_switching') }}</span>
+                            <span class="setting-group-hint">{{ $t('settings.sessions.cache.hint') }}</span>
                         </div>
                     </section>
 
                     <!-- Layouts Section -->
                     <section v-if="activeSection === 'layouts'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('layouts') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.layouts') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('default_layout_for_new_sessions') }}</label>
+                            <label class="setting-group-label">{{ $t('common.layouts.defaultForNewSessions') }}</label>
                             <wa-select
                                 :value.prop="defaultLayoutId"
                                 @change="onDefaultLayoutChange"
@@ -1931,35 +1931,35 @@ function onChangelogClose() {
                                     :label="l.name"
                                 >{{ l.name }}</wa-option>
                             </wa-select>
-                            <i18n-t keypath="save_layout_hint" scope="global" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="settings.layouts.saveHint" scope="global" tag="span" class="setting-group-hint">
                                 <template #button><wa-icon name="chevron-down" class="inline-hint-icon"></wa-icon></template>
                             </i18n-t>
                         </div>
                         <div class="setting-group">
                             <wa-button appearance="accent" size="small" @click="onManageLayouts">
                                 <wa-icon slot="start" name="sliders"></wa-icon>
-                                {{ $t('manage_layouts') }}
+                                {{ $t('settings.layouts.manage') }}
                             </wa-button>
                         </div>
                     </section>
 
                     <!-- Title Suggestion Section -->
                     <section v-if="activeSection === 'title'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('title_suggestion') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.titleSuggestion') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
                         <div class="setting-group">
                             <wa-switch
                                 :checked="titleGenerationEnabled"
                                 @change="onTitleGenerationChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                             <wa-switch
                                 v-if="titleGenerationEnabled"
                                 :checked="titleAutoApply"
                                 @change="onTitleAutoApplyChange"
                                 size="small"
-                            >{{ $t('automatic_titles') }}</wa-switch>
+                            >{{ $t('settings.titles.automaticTitles') }}</wa-switch>
                             <wa-radio-group
-                                :label="$t('model')"
+                                :label="$t('common.labels.model')"
                                 name="title-suggestion-model"
                                 size="small"
                                 :value="titleSuggestionModel"
@@ -1969,13 +1969,13 @@ function onChangelogClose() {
                                 @keydown="onTitleSuggestionModelKeydown"
                             >
                                 <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                    {{ $t('match_session_provider') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('for_claude_code') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('for_codex') }}
+                                    {{ $t('settings.titles.model.matchProviderPrefix') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('settings.titles.model.claudeSuffix') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('settings.titles.model.codexSuffix') }}
                                 </wa-radio>
                                 <wa-radio
                                     :value="TITLE_SUGGESTION_MODEL.HAIKU"
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                                 >
-                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('for_every_session') }}
+                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('settings.titles.model.everySessionSuffix') }}
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                                         class="radio-note"
@@ -1985,7 +1985,7 @@ function onChangelogClose() {
                                     :value="TITLE_SUGGESTION_MODEL.LUNA"
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                 >
-                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('for_every_session') }}
+                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('settings.titles.model.everySessionSuffix') }}
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                         class="radio-note"
@@ -2008,18 +2008,18 @@ function onChangelogClose() {
                                 </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">
-                                {{ $t('if_the_selected_model_cannot_be_used') }}
+                                {{ $t('settings.titles.model.fallbackHint') }}
                                 <template v-if="titleSuggestionModelIsDisplaced">
                                     <template v-if="displacedTitleModelIsOpenRouter">
-                                        {{ $t('your_choice_returns_after_openrouter_setup') }}
+                                        {{ $t('settings.titles.model.openRouterSetupHint') }}
                                     </template>
                                     <template v-else>
-                                        {{ $t('your_choice_is_kept_and_comes_back_as_soon') }}
+                                        {{ $t('settings.titles.model.disabledProviderHint') }}
                                     </template>
                                 </template>
                             </span>
                             <div v-if="titleGenerationEnabled" class="title-prompt-section">
-                                <label class="setting-group-label">{{ $t('system_prompt') }}</label>
+                                <label class="setting-group-label">{{ $t('settings.titles.systemPrompt.label') }}</label>
                                 <wa-textarea
                                     :value.prop="titleSystemPromptInput"
                                     @input="onTitleSystemPromptChange"
@@ -2029,7 +2029,7 @@ function onChangelogClose() {
                                     class="title-prompt-textarea"
                                 ></wa-textarea>
                                 <div class="title-prompt-hint">
-                                    <span>{{ $t('use') }} <code>{text}</code> {{ $t('as_placeholder_press_apply_to_save') }}</span>
+                                    <span>{{ $t('common.fragments.usePrefix') }} <code>{text}</code> {{ $t('settings.titles.systemPrompt.placeholderSuffix') }}</span>
                                     <div class="title-prompt-actions">
                                         <wa-button
                                             v-if="!isDefaultPrompt"
@@ -2037,14 +2037,14 @@ function onChangelogClose() {
                                             appearance="outlined"
                                             size="small"
                                             @click.stop="resetTitleSystemPrompt"
-                                        >{{ $t('reset_to_default') }}</wa-button>
+                                        >{{ $t('common.actions.resetToDefault') }}</wa-button>
                                         <wa-button
                                             size="small"
                                             variant="neutral"
                                             @click.stop="onTitleSystemPromptApply"
                                         >
                                             <wa-icon :name="titleSystemPromptApplyIcon" slot="start"></wa-icon>
-                                            {{ $t('apply') }}
+                                            {{ $t('common.actions.apply') }}
                                         </wa-button>
                                     </div>
                                 </div>
@@ -2054,43 +2054,43 @@ function onChangelogClose() {
 
                     <!-- Editor Section -->
                     <section v-if="activeSection === 'editor'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('editor') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.editor') }}</h3>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('display') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.editor.display.label') }}</label>
                             <wa-switch
                                 :checked="editorWordWrap"
                                 @change="onEditorWordWrapChange"
                                 size="small"
-                            >{{ $t('word_wrap') }}</wa-switch>
+                            >{{ $t('common.display.wordWrap') }}</wa-switch>
                             <wa-switch
                                 :checked="diffSideBySide"
                                 @change="onDiffSideBySideChange"
                                 size="small"
-                            >{{ $t('diff_side_by_side') }}</wa-switch>
-                            <span class="setting-group-hint">{{ $t('inactive_if_the_screen_is_too_narrow') }}</span>
+                            >{{ $t('settings.editor.display.sideBySide') }}</wa-switch>
+                            <span class="setting-group-hint">{{ $t('common.display.sideBySideNarrowHint') }}</span>
                         </div>
                     </section>
 
                     <!-- Terminal Section -->
                     <section v-if="activeSection === 'terminal'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('terminal') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.terminal') }}</h3>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('persistent_sessions_tmux') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.terminal.persistence.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
                                 :checked="terminalUseTmux"
                                 @change="onTmuxChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
-                            <span class="setting-group-hint">{{ $t('tmux_sessions_are_destroyed_when_their_agent_session_is') }}</span>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
+                            <span class="setting-group-hint">{{ $t('settings.terminal.persistence.hint') }}</span>
                         </div>
                         <div class="setting-group" v-if="terminalUseTmux">
-                            <label class="setting-group-label">{{ $t('tmux_config_file') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.terminal.config.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="usage-file-input-row">
                                 <wa-input
                                     :value="tmuxConfigPathInput"
                                     @input="onTmuxConfigPathInputChange"
                                     @keydown.enter="onTmuxConfigPathApply"
-                                    :placeholder="$t('tmux_config_placeholder')"
+                                    :placeholder="$t('settings.terminal.config.placeholder')"
                                     size="small"
                                     :disabled="tmuxConfigValidating"
                                 ></wa-input>
@@ -2102,10 +2102,10 @@ function onChangelogClose() {
                                 >
                                     <wa-spinner v-if="tmuxConfigValidating" slot="start"></wa-spinner>
                                     <wa-icon v-else :name="tmuxConfigApplyIcon" slot="start"></wa-icon>
-                                    {{ $t('apply') }}
+                                    {{ $t('common.actions.apply') }}
                                 </wa-button>
                             </div>
-                            <i18n-t keypath="tmux_config_hint" scope="global" tag="span" class="setting-group-hint">
+                            <i18n-t keypath="settings.terminal.config.hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #mouseOff><code>mouse off</code></template>
                             </i18n-t>
                             <wa-callout
@@ -2116,27 +2116,27 @@ function onChangelogClose() {
                             >{{ tmuxConfigValidation.message }}</wa-callout>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('copy_on_select') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.terminal.copyOnSelect.label') }}</label>
                             <wa-switch
                                 :checked="terminalCopyOnSelect"
                                 @change="onCopyOnSelectChange"
                                 size="small"
-                            >{{ $t('enabled') }}</wa-switch>
+                            >{{ $t('common.status.enabled') }}</wa-switch>
                             <span class="setting-group-hint">
-                                <i18n-t keypath="copy_on_select_hint" scope="global" tag="span">
+                                <i18n-t keypath="settings.terminal.copyOnSelect.hint" scope="global" tag="span">
                                     <template #shortcut><kbd>{{ isMac ? '⌘V' : 'Ctrl+V' }}</kbd></template>
                                 </i18n-t>
-                                <span v-if="isLinux"> {{ $t('clipboard_primary_hint') }}</span>
+                                <span v-if="isLinux"> {{ $t('settings.terminal.copyOnSelect.primaryClipboardHint') }}</span>
                             </span>
                         </div>
                         <div class="setting-group" v-if="isMac">
-                            <label class="setting-group-label">{{ $t('option_key') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.terminal.optionKey.label') }}</label>
                             <wa-switch
                                 :checked="terminalMacOptionIsMeta"
                                 @change="onMacOptionIsMetaChange"
                                 size="small"
-                            >{{ $t('use_as_meta_key') }}</wa-switch>
-                            <i18n-t keypath="option_meta_hint" scope="global" tag="span" class="setting-group-hint">
+                            >{{ $t('settings.terminal.optionKey.useAsMeta') }}</wa-switch>
+                            <i18n-t keypath="settings.terminal.optionKey.hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #back><kbd>⌥B</kbd></template>
                                 <template #forward><kbd>⌥F</kbd></template>
                                 <template #lastArgument><kbd>⌥.</kbd></template>
@@ -2154,37 +2154,37 @@ function onChangelogClose() {
 
                     <!-- Providers quotas/usage Section -->
                     <section v-if="activeSection === 'usage'" class="settings-section">
-                        <h3 class="settings-section-title">{{ $t('providers_quotas_usage') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('settings.sections.providerUsage') }}</h3>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('show_extra_usage_quota') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.usage.extraQuota.label') }}</label>
                             <wa-switch
                                 :checked="extraUsageOnlyWhenNeeded"
                                 @change="onExtraUsageOnlyWhenNeededChange"
                                 size="small"
-                            >{{ $t('only_when_needed') }}</wa-switch>
+                            >{{ $t('settings.usage.extraQuota.onlyWhenNeeded') }}</wa-switch>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('five_hour_usage_quota') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                            <label class="setting-group-label">{{ $t('settings.usage.fiveHourQuota.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <wa-switch
                                 :checked="hideFiveHourUsage"
                                 @change="onHideFiveHourUsageChange"
                                 size="small"
-                            >{{ $t('hide') }}</wa-switch>
+                            >{{ $t('settings.usage.fiveHourQuota.hide') }}</wa-switch>
                             <span class="setting-group-hint">
-                                {{ $t('five_hour_usage_quota_hint', enabledProviders.size) }}
+                                {{ $t('settings.usage.fiveHourQuota.hint', enabledProviders.size) }}
                             </span>
                         </div>
                         <div class="setting-group">
-                            <label class="setting-group-label">{{ $t('when_extra_usage_starts') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.usage.extraUsageNotification.label') }}</label>
                             <wa-switch
                                 :checked="notifyOnExtraUsageStart"
                                 @change="onNotifyOnExtraUsageStartChange"
                                 size="small"
-                            >{{ $t('notify_me') }}</wa-switch>
+                            >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
                             <span class="setting-group-hint">
-                                {{ $t('alerts_you_when_a_provider_starts_consuming_its_extra') }}
-                                <a href="#" @click.prevent="selectSection('notifications')">{{ $t('notifications') }}</a>
-                                {{ $t('tab_for_sound_browser_and_pushed_device_options') }}
+                                {{ $t('settings.usage.extraUsageNotification.hintPrefix') }}
+                                <a href="#" @click.prevent="selectSection('notifications')">{{ $t('settings.sections.notifications') }}</a>
+                                {{ $t('settings.usage.extraUsageNotification.hintSuffix') }}
                             </span>
                         </div>
                         <template v-for="(provider, idx) in usageProviders" :key="provider">
@@ -2198,14 +2198,14 @@ function onChangelogClose() {
                                     {{ getProviderLabel(provider) }}
                                 </h4>
                             <div v-if="supportsWakeup(provider)" class="setting-group">
-                                <label class="setting-group-label">{{ $t('quota_wake_up') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+                                <label class="setting-group-label">{{ $t('settings.usage.wakeUp.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                                 <div class="wakeup-time-row">
                                     <wa-select
                                         :value="getWakeupHour(provider)"
                                         @change="onWakeupHourChange(provider, $event)"
                                         size="small"
                                     >
-                                        <wa-option value="">{{ $t('off') }}</wa-option>
+                                        <wa-option value="">{{ $t('common.status.off') }}</wa-option>
                                         <wa-option v-for="opt in WAKEUP_HOUR_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</wa-option>
                                     </wa-select>
                                     <span class="wakeup-time-colon" :class="{ 'is-off': !getWakeupHour(provider) }">:</span>
@@ -2225,7 +2225,7 @@ function onChangelogClose() {
                                     @change="onUsageFileEnabledChange(provider, $event)"
                                     size="small"
                                     :disabled="getDumpEnabled(provider)"
-                                >{{ $t('read_usage_from_file') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
+                                >{{ $t('settings.usage.readFile.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                                 <template v-if="getReadEnabled(provider)">
                                     <div class="usage-file-input-row">
                                         <wa-input
@@ -2244,10 +2244,10 @@ function onChangelogClose() {
                                         >
                                             <wa-spinner v-if="usageFileValidating[provider]" slot="start"></wa-spinner>
                                             <wa-icon v-else :name="readApplyIcon(provider)" slot="start"></wa-icon>
-                                            {{ $t('apply') }}
+                                            {{ $t('common.actions.apply') }}
                                         </wa-button>
                                     </div>
-                                    <span class="setting-group-hint">{{ $t('press_apply_or_enter_to_validate_and_save_the') }}</span>
+                                    <span class="setting-group-hint">{{ $t('settings.usage.filePath.hint') }}</span>
                                     <wa-callout
                                         v-if="usageFileValidation[provider] && !usageFileValidation[provider].valid"
                                         variant="danger"
@@ -2262,7 +2262,7 @@ function onChangelogClose() {
                                     @change="onUsageDumpEnabledChange(provider, $event)"
                                     size="small"
                                     :disabled="getReadEnabled(provider)"
-                                >{{ $t('dump_usage_to_file') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
+                                >{{ $t('settings.usage.dumpFile.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                                 <template v-if="getDumpEnabled(provider)">
                                     <div class="usage-file-input-row">
                                         <wa-input
@@ -2281,10 +2281,10 @@ function onChangelogClose() {
                                         >
                                             <wa-spinner v-if="usageDumpValidating[provider]" slot="start"></wa-spinner>
                                             <wa-icon v-else :name="dumpApplyIcon(provider)" slot="start"></wa-icon>
-                                            {{ $t('apply') }}
+                                            {{ $t('common.actions.apply') }}
                                         </wa-button>
                                     </div>
-                                    <span class="setting-group-hint">{{ $t('press_apply_or_enter_to_validate_and_save_the') }}</span>
+                                    <span class="setting-group-hint">{{ $t('settings.usage.filePath.hint') }}</span>
                                     <wa-callout
                                         v-if="usageDumpValidation[provider] && !usageDumpValidation[provider].valid"
                                         variant="danger"
@@ -2301,28 +2301,28 @@ function onChangelogClose() {
                              switches above, where the actual settings are stored. -->
                         <wa-divider></wa-divider>
                         <div class="setting-group usage-mode-explanation">
-                            <label class="setting-group-label">{{ $t('about_quota_wake_up') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.usage.wakeUp.helpTitle') }}</label>
                             <span class="setting-group-hint">
-                                {{ $t('a_provider_s_5_hour_quota_window_starts_on') }}
+                                {{ $t('settings.usage.wakeUp.helpDescription') }}
                             </span>
                         </div>
                         <div class="setting-group usage-mode-explanation">
-                            <label class="setting-group-label">{{ $t('about_read_mode') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.usage.readFile.helpTitle') }}</label>
                             <span class="setting-group-hint">
-                                {{ $t('if_you_already_maintain_a_json_file_with_usage') }}
+                                {{ $t('settings.usage.readFile.helpDescription') }}
                             </span>
                         </div>
                         <div class="setting-group usage-mode-explanation">
-                            <label class="setting-group-label">{{ $t('about_dump_mode') }}</label>
+                            <label class="setting-group-label">{{ $t('settings.usage.dumpFile.helpTitle') }}</label>
                             <span class="setting-group-hint">
-                                {{ $t('save_the_raw_api_response_to_a_json_file') }}
+                                {{ $t('settings.usage.dumpFile.helpDescription') }}
                             </span>
                         </div>
                     </section>
 
                     <!-- Keyboard Shortcuts Section -->
                     <section v-if="activeSection === 'shortcuts'" class="settings-section shortcuts-section">
-                        <h3 class="settings-section-title">{{ $t('keyboard_shortcuts') }}</h3>
+                        <h3 class="settings-section-title">{{ $t('settings.shortcuts.title') }}</h3>
                         <div v-for="group in shortcutGroups" :key="group.label" class="shortcut-group">
                             <h4 class="shortcut-group-title">{{ group.label }}</h4>
                             <div class="shortcut-list">
@@ -2348,13 +2348,13 @@ function onChangelogClose() {
             <wa-divider></wa-divider>
             <p class="settings-notice">
                 <wa-icon name="cloud" class="synced-icon"></wa-icon>
-                {{ $t('sections_and_settings_marked_with_a_cloud_icon_are') }}
+                {{ $t('settings.syncHint') }}
             </p>
             <wa-divider></wa-divider>
             <footer v-if="currentVersion" class="settings-footer">
                 <span class="settings-footer-version">
                     <BrandLogo :size="16" class="settings-footer-logo" />
-                    <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">{{ $t('twicc_v') }}{{ currentVersion }}</a><template v-if="store.isDevMode"> {{ $t('dev') }}</template>
+                    <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">{{ $t('settings.about.currentVersionPrefix') }}{{ currentVersion }}</a><template v-if="store.isDevMode"> {{ $t('settings.about.devBadge') }}</template>
                     <template v-if="latestVersion">
                         &rarr;
                         <wa-button
@@ -2365,16 +2365,16 @@ function onChangelogClose() {
                             @click="onShowUpdateInstructions"
                         >
                             <wa-icon slot="start" name="arrow-up"></wa-icon>
-                            {{ $t('v') }}{{ latestVersion.version }} {{ $t('available_how_to_update') }}
+                            {{ $t('settings.about.latestVersionPrefix') }}{{ latestVersion.version }} {{ $t('settings.about.updateAvailableSuffix') }}
                         </wa-button>
                     </template>
                 </span>
                 ·
-                <a href="#" class="settings-footer-changes" @click.prevent="openChangelog()">{{ $t('changes') }}</a>
+                <a href="#" class="settings-footer-changes" @click.prevent="openChangelog()">{{ $t('settings.about.changelog') }}</a>
                 ·
                 <a :href="SPONSOR_URL" target="_blank" rel="noopener" class="settings-footer-sponsor">
                     <span class="settings-footer-sponsor-icon"></span>
-                    {{ $t('sponsor') }}
+                    {{ $t('settings.about.sponsor') }}
                 </a>
                 ·
                 <a
@@ -2399,7 +2399,7 @@ function onChangelogClose() {
                     name="repeat"
                     @click="cycleStatusProvider"
                 ></wa-icon>
-                <AppTooltip v-if="currentStatusDisplay && hasMultipleStatusProviders" :for="statusNextButtonId">{{ $t('switch_to_the_next_provider') }}</AppTooltip>
+                <AppTooltip v-if="currentStatusDisplay && hasMultipleStatusProviders" :for="statusNextButtonId">{{ $t('settings.status.nextProvider') }}</AppTooltip>
                 <wa-button
                     v-if="showLogout"
                     :id="logoutButtonId"
@@ -2411,7 +2411,7 @@ function onChangelogClose() {
                 >
                     <wa-icon name="right-from-bracket"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="showLogout" :for="logoutButtonId">{{ $t('logout') }}</AppTooltip>
+                <AppTooltip v-if="showLogout" :for="logoutButtonId">{{ $t('auth.logout') }}</AppTooltip>
             </footer>
         </wa-popover>
         <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />

@@ -113,7 +113,7 @@ const displayName = computed(() => {
     }
     // For draft sessions without a title, show "New session"
     if (session.value?.draft && !session.value?.title) {
-        return t('new_session')
+        return t('session.actions.create')
     }
     return session.value?.title || props.sessionId
 })
@@ -204,11 +204,11 @@ const displayDirectoryParts = computed(() => {
 // Tooltip for directory: indicate whether it's the resolved git directory, the
 // cwd fallback, or — for a draft — the target project's git root / directory.
 const displayDirectoryTooltip = computed(() => {
-    if (session.value?.git_directory) return t('git_working_directory')
-    if (session.value?.cwd) return t('working_directory_cwd')
+    if (session.value?.git_directory) return t('session.directory.gitWorktree')
+    if (session.value?.cwd) return t('session.directory.cwd')
     if (session.value?.draft) {
         const project = store.getProject(session.value?.project_id)
-        return project?.git_root ? t('project_git_root') : t('project_directory')
+        return project?.git_root ? t('session.directory.projectGitRoot') : t('session.directory.project')
     }
     return null
 })
@@ -459,15 +459,15 @@ function toggleSessionSearch() {
     window.dispatchEvent(new CustomEvent('twicc:toggle-session-search', { detail: { handled: false } }))
 }
 
-const searchTooltip = computed(() => t('search_conversation', { shortcut: settingsStore.isMac ? '⌘F' : 'Ctrl+F' }))
+const searchTooltip = computed(() => t('session.search.openTooltip', { shortcut: settingsStore.isMac ? '⌘F' : 'Ctrl+F' }))
 
 /**
  * Label shown on the pin button tooltip, reflecting the current pin mode.
  */
-const PIN_MODE_LABELS = computed(() => ({ project: t('project'), workspace: t('workspace'), all: t('all_projects') }))
+const PIN_MODE_LABELS = computed(() => ({ project: t('common.entities.project'), workspace: t('common.entities.workspace'), all: t('session.pin.allProjects') }))
 const pinTooltip = computed(() => {
-    if (!session.value?.pinned) return t('pin_session')
-    return t('pinned_scope', { scope: PIN_MODE_LABELS.value[session.value.pinned] || session.value.pinned })
+    if (!session.value?.pinned) return t('session.pin.tooltip')
+    return t('session.pin.scopeTooltip', { scope: PIN_MODE_LABELS.value[session.value.pinned] || session.value.pinned })
 })
 
 // The mute button suppresses two things at once: the "finished working"
@@ -475,8 +475,8 @@ const pinTooltip = computed(() => {
 // state. The unread half always applies, so the button is never a no-op.
 const muteTooltip = computed(() => (
     session.value?.mute_on_user_turn
-        ? t('muted_click_to_restore_the_finished_working_notification_and')
-        : t('notifications_on_click_to_silence_the_finished_working_notification')
+        ? t('session.notifications.unmuteTooltip')
+        : t('session.notifications.muteTooltip')
 ))
 
 function handleMuteToggle() {
@@ -516,21 +516,21 @@ defineExpose({
                 v-if="session.ephemeral"
                 :id="`session-header-${sessionId}-ephemeral-icon`"
                 name="ghost"
-                :label="$t('ephemeral_session')"
+                :label="$t('session.status.ephemeral')"
                 class="session-state-icon session-state-icon--ephemeral"
                 :class="session.ephemeralPhase"
             ></wa-icon>
-            <AppTooltip v-if="session.ephemeral" :for="`session-header-${sessionId}-ephemeral-icon`">{{ $t('ephemeral_session') }}</AppTooltip>
+            <AppTooltip v-if="session.ephemeral" :for="`session-header-${sessionId}-ephemeral-icon`">{{ $t('session.status.ephemeral') }}</AppTooltip>
 
             <!-- Stale marker: the session's files are gone from disk. Same family as draft. -->
             <wa-icon
                 v-if="session.stale"
                 :id="`session-header-${sessionId}-stale-icon`"
                 name="circle-xmark"
-                :label="$t('session_files_deleted')"
+                :label="$t('session.status.filesDeletedLabel')"
                 class="session-state-icon session-state-icon--stale"
             ></wa-icon>
-            <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-icon`">{{ $t('session_files_were_deleted_from_disk') }}</AppTooltip>
+            <AppTooltip v-if="session.stale" :for="`session-header-${sessionId}-stale-icon`">{{ $t('session.status.filesDeletedTooltip') }}</AppTooltip>
 
             <!-- Archived marker: the sidebar's archive icon, in its yellow. A state, so it shows in every
                  header state; the unarchive button, with the actions, is the way out. -->
@@ -538,10 +538,10 @@ defineExpose({
                 v-if="session.archived"
                 :id="`session-header-${sessionId}-archived-icon`"
                 name="box-archive"
-                :label="$t('archived_session')"
+                :label="$t('session.status.archived')"
                 class="session-state-icon session-state-icon--archived"
             ></wa-icon>
-            <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-archived-icon`">{{ $t('archived_session') }}</AppTooltip>
+            <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-archived-icon`">{{ $t('session.status.archived') }}</AppTooltip>
 
             <!-- Draft marker: a state, not an action, so it shows whether the compact panel is open or not.
                  Archived has its own marker above. -->
@@ -549,10 +549,10 @@ defineExpose({
                 v-if="!session.archived && session.draft && !processState"
                 :id="`session-header-${sessionId}-draft-icon`"
                 name="pencil"
-                :label="$t('draft')"
+                :label="$t('session.status.draft')"
                 class="session-state-icon session-state-icon--draft"
             ></wa-icon>
-            <AppTooltip v-if="!session.archived && session.draft && !processState" :for="`session-header-${sessionId}-draft-icon`">{{ $t('draft') }}</AppTooltip>
+            <AppTooltip v-if="!session.archived && session.draft && !processState" :for="`session-header-${sessionId}-draft-icon`">{{ $t('session.status.draft') }}</AppTooltip>
 
             <!-- Worktree marker: only when the session's project is a git worktree.
                  Its tooltip restates that the session runs in a worktree and embeds the same
@@ -566,7 +566,7 @@ defineExpose({
             ></wa-icon>
             <AppTooltip v-if="isProjectWorktree" :for="`session-header-${sessionId}-worktree`">
                 <div class="worktree-title-tooltip">
-                    <span>{{ $t('this_session_runs_in_a_git_worktree') }}</span>
+                    <span>{{ $t('session.worktree.tooltip') }}</span>
                     <ProjectBadge :project-id="session.project_id" />
                 </div>
             </AppTooltip>
@@ -598,7 +598,7 @@ defineExpose({
                         name="hand"
                         class="pending-request-indicator"
                     ></wa-icon>
-                    <AppTooltip v-if="hasPendingRequest" :for="`session-header-${sessionId}-compact-pending`">{{ $t('waiting_for_your_response') }}</AppTooltip>
+                    <AppTooltip v-if="hasPendingRequest" :for="`session-header-${sessionId}-compact-pending`">{{ $t('session.status.awaitingResponse') }}</AppTooltip>
 
                     <ProcessIndicator
                         v-else-if="processState"
@@ -638,7 +638,7 @@ defineExpose({
                 <ProjectBadge :project-id="session.project_id" />
                 <wa-icon name="arrow-up" auto-width class="session-project-up"></wa-icon>
             </router-link>
-            <AppTooltip v-if="session.project_id" :for="`session-header-${sessionId}-project-link`">{{ $t('go_to_the_project') }}</AppTooltip>
+            <AppTooltip v-if="session.project_id" :for="`session-header-${sessionId}-project-link`">{{ $t('session.project.openTooltip') }}</AppTooltip>
 
             <!-- Compact controls (compact height only), in one pill like the outlined buttons at the top of the
                  sidebar: the interrupt and stop buttons (panel closed only: the panel has the same buttons) and
@@ -656,9 +656,9 @@ defineExpose({
                     :disabled="interrupting"
                     @click.stop="handleInterrupt"
                 >
-                    <wa-icon name="circle-stop" :label="$t('interrupt')"></wa-icon>
+                    <wa-icon name="circle-stop" :label="$t('session.process.interrupt')"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-compact-interrupt-button`">{{ $t('interrupt_the_current_turn_keeps_the_session_alive') }}</AppTooltip>
+                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-compact-interrupt-button`">{{ $t('session.process.interruptTooltip') }}</AppTooltip>
 
                 <wa-button
                     v-if="canStopProcess"
@@ -670,9 +670,9 @@ defineExpose({
                     :class="{ forcing: stoppingProcess }"
                     @click.stop="handleStopProcess($event)"
                 >
-                    <wa-icon :name="stoppingProcess ? 'skull-crossbones' : 'ban'" :label="stoppingProcess ? $t('force_kill') : $t('stop')"></wa-icon>
+                    <wa-icon :name="stoppingProcess ? 'skull-crossbones' : 'ban'" :label="stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stop')"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-compact-stop-button`">{{ stoppingProcess ? $t('force_kill') : $t('stop_provider', { provider: providerLabel }) }}</AppTooltip>
+                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-compact-stop-button`">{{ stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stopProviderTooltip', { provider: providerLabel }) }}</AppTooltip>
 
                 <wa-button
                     v-if="canArchiveWithProcess"
@@ -683,7 +683,7 @@ defineExpose({
                     class="compact-live-button reduced-height"
                     @click.stop="handleArchive"
                 >
-                    <wa-icon name="box-archive" :label="$t('archive')"></wa-icon>
+                    <wa-icon name="box-archive" :label="$t('common.actions.archive')"></wa-icon>
                 </wa-button>
                 <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-compact-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
             </div>
@@ -698,7 +698,7 @@ defineExpose({
                 :class="['compact-tool-button', 'reduced-height', { 'compact-tool-button--active': isCompactExpanded, 'compact-tool-button--pending': hasPendingRequest }]"
                 @click.stop="toggleCompact"
             >
-                <wa-icon name="screwdriver-wrench" :label="$t('toggle_details')"></wa-icon>
+                <wa-icon name="screwdriver-wrench" :label="$t('session.header.toggleDetails')"></wa-icon>
                 <wa-icon class="compact-tool-chevron" :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'"></wa-icon>
             </wa-button>
             </div>
@@ -721,7 +721,7 @@ defineExpose({
                     <wa-icon auto-width name="code-branch"></wa-icon>
                     <span class="git-branch-name">{{ session.git_branch }}</span>
                 </span>
-                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">{{ $t('git_branch_click_to_copy') }}</AppTooltip>
+                <AppTooltip v-if="session.git_branch" :for="`session-header-${sessionId}-git-branch`">{{ $t('session.git.copyBranchTooltip') }}</AppTooltip>
             </div>
 
             <!-- Action buttons (main session), right under the identity row: part of the compact panel, and
@@ -737,8 +737,8 @@ defineExpose({
                     class="search-button reduced-height"
                     @click="toggleSessionSearch"
                 >
-                    <wa-icon auto-width name="magnifying-glass" :label="$t('search')"></wa-icon>
-                    <span class="action-label">{{ $t('search') }}</span>
+                    <wa-icon auto-width name="magnifying-glass" :label="$t('common.actions.search')"></wa-icon>
+                    <span class="action-label">{{ $t('common.actions.search') }}</span>
                 </wa-button>
                 <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-search-button`">{{ searchTooltip }}</AppTooltip>
 
@@ -757,20 +757,20 @@ defineExpose({
                         size="small"
                         :class="['pin-button', 'reduced-height', { 'pin-button--active': session.pinned }]"
                     >
-                        <wa-icon auto-width name="thumbtack" :label="$t('pin')"></wa-icon>
-                        <span class="action-label">{{ $t('pin') }}</span>
+                        <wa-icon auto-width name="thumbtack" :label="$t('session.pin.label')"></wa-icon>
+                        <span class="action-label">{{ $t('session.pin.label') }}</span>
                     </wa-button>
                     <wa-dropdown-item type="checkbox" :checked="!session.pinned" value="none">
-                        {{ $t('not_pinned') }}
+                        {{ $t('session.pin.none') }}
                     </wa-dropdown-item>
                     <wa-dropdown-item type="checkbox" :checked="session.pinned === 'project'" value="project">
-                        {{ $t('pin_in_project') }}
+                        {{ $t('session.pin.project') }}
                     </wa-dropdown-item>
                     <wa-dropdown-item type="checkbox" :checked="session.pinned === 'workspace'" value="workspace">
-                        {{ $t('pin_in_workspace') }}
+                        {{ $t('session.pin.workspace') }}
                     </wa-dropdown-item>
                     <wa-dropdown-item type="checkbox" :checked="session.pinned === 'all'" value="all">
-                        {{ $t('pin_everywhere') }}
+                        {{ $t('session.pin.everywhere') }}
                     </wa-dropdown-item>
                 </wa-dropdown>
                 <AppTooltip v-if="!session.draft && !session.ephemeral" :for="`session-header-${sessionId}-pin-button`">{{ pinTooltip }}</AppTooltip>
@@ -788,9 +788,9 @@ defineExpose({
                 >
                     <wa-icon
                         :name="session.mute_on_user_turn ? 'bell-slash' : 'bell'"
-                        :label="session.mute_on_user_turn ? $t('muted') : $t('notifications_on')"
+                        :label="session.mute_on_user_turn ? $t('session.notifications.mutedLabel') : $t('session.notifications.enabledLabel')"
                     ></wa-icon>
-                    <span class="action-label">{{ session.mute_on_user_turn ? $t('muted') : $t('mute') }}</span>
+                    <span class="action-label">{{ session.mute_on_user_turn ? $t('session.notifications.mutedLabel') : $t('session.notifications.mute') }}</span>
                 </wa-button>
                 <AppTooltip
                     v-if="!session.draft && !session.ephemeral"
@@ -807,8 +807,8 @@ defineExpose({
                     class="archive-button reduced-height"
                     @click="handleArchive"
                 >
-                    <wa-icon auto-width name="box-archive" :label="$t('archive')"></wa-icon>
-                    <span class="action-label">{{ $t('archive') }}</span>
+                    <wa-icon auto-width name="box-archive" :label="$t('common.actions.archive')"></wa-icon>
+                    <span class="action-label">{{ $t('common.actions.archive') }}</span>
                 </wa-button>
                 <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) : 'Archive session' }}</AppTooltip>
 
@@ -822,10 +822,10 @@ defineExpose({
                     class="archive-button archive-button--archived reduced-height"
                     @click="handleUnarchive"
                 >
-                    <wa-icon auto-width name="box-archive" :label="$t('unarchive')"></wa-icon>
-                    <span class="action-label">{{ $t('unarchive') }}</span>
+                    <wa-icon auto-width name="box-archive" :label="$t('common.actions.unarchive')"></wa-icon>
+                    <span class="action-label">{{ $t('common.actions.unarchive') }}</span>
                 </wa-button>
-                <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-unarchive-button`">{{ $t('unarchive_session') }}</AppTooltip>
+                <AppTooltip v-if="session.archived" :for="`session-header-${sessionId}-unarchive-button`">{{ $t('session.actions.unarchiveTooltip') }}</AppTooltip>
 
                 <!-- Rename button (only for main session) -->
                 <wa-button
@@ -838,10 +838,10 @@ defineExpose({
                     :disabled="!isProviderEnabled"
                     @click="openRenameDialog"
                 >
-                    <wa-icon auto-width name="pencil" :label="$t('rename')"></wa-icon>
-                    <span class="action-label">{{ $t('rename') }}</span>
+                    <wa-icon auto-width name="pencil" :label="$t('common.actions.rename')"></wa-icon>
+                    <span class="action-label">{{ $t('common.actions.rename') }}</span>
                 </wa-button>
-                <AppTooltip :for="`session-header-${sessionId}-rename-button`">{{ isProviderEnabled ? $t('rename_session') : $t('cannot_rename_provider_is_disabled') }}</AppTooltip>
+                <AppTooltip :for="`session-header-${sessionId}-rename-button`">{{ isProviderEnabled ? $t('session.actions.renameTooltip') : $t('session.actions.renameDisabledTooltip') }}</AppTooltip>
 
                 <!-- Debug view toggle (dev mode only, main session): forces the debug
                      display mode for this session without touching the global setting -->
@@ -854,10 +854,10 @@ defineExpose({
                     :class="['debug-button', 'reduced-height', { 'debug-button--active': isSessionDebugForced }]"
                     @click="toggleSessionDebug"
                 >
-                    <wa-icon auto-width name="bug" :label="$t('debug_view')"></wa-icon>
-                    <span class="action-label">{{ $t('debug') }}</span>
+                    <wa-icon auto-width name="bug" :label="$t('session.debug.viewLabel')"></wa-icon>
+                    <span class="action-label">{{ $t('session.debug.label') }}</span>
                 </wa-button>
-                <AppTooltip v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? $t('debug_view_forced_for_this_session_click_to_restore') : $t('force_the_debug_view_for_this_session_only') }}</AppTooltip>
+                <AppTooltip v-if="mode === 'session' && !session.ephemeral && settingsStore.isDevMode" :for="`session-header-${sessionId}-debug-button`">{{ isSessionDebugForced ? $t('session.debug.restoreGlobalTooltip') : $t('session.debug.forceTooltip') }}</AppTooltip>
 
                 <!-- Share button (main session only) -->
                 <wa-button
@@ -870,15 +870,15 @@ defineExpose({
                     :disabled="!sharingEnabled || shareBlocked"
                     @click="openShare"
                 >
-                    <wa-icon auto-width name="share-nodes" :label="$t('share')"></wa-icon>
-                    <span class="action-label">{{ $t('share') }}</span>
+                    <wa-icon auto-width name="share-nodes" :label="$t('common.actions.share')"></wa-icon>
+                    <span class="action-label">{{ $t('common.actions.share') }}</span>
                 </wa-button>
                 <AppTooltip :for="`session-header-${sessionId}-share-button`">
                     {{ !sharingEnabled
-                        ? $t('configure_a_share_host_in_settings_sharing_to_create')
+                        ? $t('session.sharing.missingHostTooltip')
                         : shareBlocked
-                            ? $t('session_history_unavailable_for_sharing')
-                            : (activeShareCount > 0 ? $t('share_active_links', { count: activeShareCount }, activeShareCount) : $t('share_session')) }}
+                            ? $t('session.sharing.unavailableHistory')
+                            : (activeShareCount > 0 ? $t('session.sharing.activeLinksTooltip', { count: activeShareCount }, activeShareCount) : $t('session.sharing.tooltip')) }}
                 </AppTooltip>
 
                 <!-- Pending request indicator (shown when waiting for user response) -->
@@ -888,7 +888,7 @@ defineExpose({
                     name="hand"
                     class="pending-request-indicator"
                 ></wa-icon>
-                <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-header-${sessionId}-pending-request`">{{ $t('waiting_for_your_response') }}</AppTooltip>
+                <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-header-${sessionId}-pending-request`">{{ $t('session.status.awaitingResponse') }}</AppTooltip>
             </div>
 
             <!-- Stats container (not shown for draft sessions): labelled segments + the context ring -->
@@ -896,71 +896,71 @@ defineExpose({
                 <div class="stats-grid">
 
                     <div :id="`session-header-${sessionId}-messages`" class="stat">
-                        <span class="stat-label">{{ $t('messages') }}</span>
+                        <span class="stat-label">{{ $t('session.stats.messages.label') }}</span>
                         <span class="stat-value">
                             <wa-icon auto-width name="comment" variant="regular"></wa-icon>
                             <span>{{ session.user_message_count ?? '??' }}</span>
                         </span>
                     </div>
-                    <AppTooltip :for="`session-header-${sessionId}-messages`">{{ $t('number_of_message_turns') }}</AppTooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-messages`">{{ $t('session.stats.messages.tooltip') }}</AppTooltip>
 
                     <!-- Debug only -->
                     <div :id="`session-header-${sessionId}-lines`" class="stat stat-debug">
-                        <span class="stat-label">{{ $t('lines') }}</span>
+                        <span class="stat-label">{{ $t('session.stats.lines.label') }}</span>
                         <span class="stat-value">
                             <wa-icon auto-width name="bars"></wa-icon>
                             <span>{{ session.last_line }}</span>
                         </span>
                     </div>
-                    <AppTooltip :for="`session-header-${sessionId}-lines`">{{ $t('lines_in_the_jsonl_file') }}</AppTooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-lines`">{{ $t('session.stats.lines.tooltip') }}</AppTooltip>
 
                     <div :id="`session-header-${sessionId}-mtime`" class="stat">
-                        <span class="stat-label">{{ $t('activity') }}</span>
+                        <span class="stat-label">{{ $t('session.stats.activity.label') }}</span>
                         <span class="stat-value">
                             <wa-icon auto-width name="clock" variant="regular"></wa-icon>
                             <span>{{ formatDate(session.mtime, { smart: true }) }}</span>
                         </span>
                     </div>
-                    <AppTooltip :for="`session-header-${sessionId}-mtime`">{{ $t('last_activity') }}</AppTooltip>
+                    <AppTooltip :for="`session-header-${sessionId}-mtime`">{{ $t('session.stats.activity.tooltip') }}</AppTooltip>
 
                     <template v-if="showCosts && totalCost != null">
                         <div :id="`session-header-${sessionId}-cost`" class="stat">
-                            <span class="stat-label">{{ $t('cost') }}</span>
+                            <span class="stat-label">{{ $t('session.stats.cost.label') }}</span>
                             <CostDisplay :cost="totalCost" class="stat-value" />
                         </div>
-                        <AppTooltip :for="`session-header-${sessionId}-cost`">{{ $t('total_session_cost') }}</AppTooltip>
+                        <AppTooltip :for="`session-header-${sessionId}-cost`">{{ $t('session.stats.cost.tooltip') }}</AppTooltip>
                     </template>
 
                     <!-- Debug only -->
                     <template v-if="showCosts && costBreakdown">
                         <div :id="`session-header-${sessionId}-cost-breakdown`" class="stat stat-debug">
-                            <span class="stat-label">{{ $t('cost_split') }}</span>
+                            <span class="stat-label">{{ $t('session.stats.costSplit.label') }}</span>
                             <span class="stat-value">
                                 <CostDisplay :cost="costBreakdown.self" />
                                 <span class="cost-breakdown-separator">+</span>
                                 <CostDisplay :cost="costBreakdown.subagents" />
                             </span>
                         </div>
-                        <AppTooltip :for="`session-header-${sessionId}-cost-breakdown`">{{ $t('main_agent_cost_sub_agents_cost') }}</AppTooltip>
+                        <AppTooltip :for="`session-header-${sessionId}-cost-breakdown`">{{ $t('session.stats.costSplit.tooltip') }}</AppTooltip>
                     </template>
 
                     <template v-if="formattedModel">
                         <div :id="`session-header-${sessionId}-model`" class="stat">
-                            <span class="stat-label">{{ $t('model') }}</span>
+                            <span class="stat-label">{{ $t('common.labels.model') }}</span>
                             <span class="stat-value">
                                 <ProviderIcon v-if="providerIcon" :provider="session?.provider" />
                                 <wa-icon v-else auto-width name="robot" variant="classic"></wa-icon>
                                 <span>{{ formattedModel }}</span>
                             </span>
                         </div>
-                        <AppTooltip :for="`session-header-${sessionId}-model`">{{ $t('last_used_model') }}</AppTooltip>
+                        <AppTooltip :for="`session-header-${sessionId}-model`">{{ $t('session.stats.model.tooltip') }}</AppTooltip>
                     </template>
 
                 </div>
 
                 <template v-if="contextUsagePercentage != null">
                     <div class="stat stat-context">
-                        <span class="stat-label">{{ $t('context') }}</span>
+                        <span class="stat-label">{{ $t('session.stats.context.label') }}</span>
                         <wa-progress-ring
                             :id="`session-header-${sessionId}-context`"
                             class="context-usage-ring"
@@ -1002,7 +1002,7 @@ defineExpose({
                         :id="`session-header-${sessionId}-process-duration`"
                         class="process-duration"
                     />
-                    <AppTooltip v-if="processState?.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">{{ $t('assistant_turn_duration') }}</AppTooltip>
+                    <AppTooltip v-if="processState?.state === PROCESS_STATE.ASSISTANT_TURN && processState.state_changed_at" :for="`session-header-${sessionId}-process-duration`">{{ $t('session.process.turnDurationTooltip') }}</AppTooltip>
 
                     <span
                         v-if="processState?.memory"
@@ -1011,10 +1011,10 @@ defineExpose({
                     >
                         {{ formatMemory(processState.memory) }}
                     </span>
-                    <AppTooltip v-if="processState?.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} {{ $t('memory_usage') }}</AppTooltip>
+                    <AppTooltip v-if="processState?.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} {{ $t('session.process.memoryUsageSuffix') }}</AppTooltip>
                 </span>
 
-                <wa-button-group v-if="canInterruptTurn || canStopProcess || canStopAgent" class="process-actions" :label="$t('process_controls')">
+                <wa-button-group v-if="canInterruptTurn || canStopProcess || canStopAgent" class="process-actions" :label="$t('session.process.controlsLabel')">
                     <wa-button
                         v-if="canInterruptTurn"
                         :id="`session-header-${sessionId}-interrupt-button`"
@@ -1027,7 +1027,7 @@ defineExpose({
                         @click="handleInterrupt"
                     >
                         <wa-icon slot="start" auto-width name="circle-stop"></wa-icon>
-                        {{ $t('interrupt') }}
+                        {{ $t('session.process.interrupt') }}
                     </wa-button>
 
                     <wa-button
@@ -1051,7 +1051,7 @@ defineExpose({
                                 class="stop-overlay-spinner"
                             ></wa-spinner>
                         </span>
-                        {{ stoppingProcess ? $t('force_kill') : $t('stop') }}
+                        {{ stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stop') }}
                     </wa-button>
 
                     <wa-button
@@ -1079,17 +1079,17 @@ defineExpose({
                         @click="handleStopAgent"
                     >
                         <wa-icon slot="start" auto-width name="ban"></wa-icon>
-                        {{ $t('stop_agent') }}
+                        {{ $t('session.process.stopAgent') }}
                     </wa-button>
                 </wa-button-group>
                 <!-- Same v-if as the buttons: wa-tooltip resolves its anchor once, when it connects, and
                      never re-resolves. The interrupt button only appears in ASSISTANT_TURN, after this
                      block mounted, so an always-mounted tooltip would stay anchorless. Tooltips live
                      outside the button group so they do not take part in its joined layout. -->
-                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">{{ $t('interrupt_the_current_turn_keeps_the_session_alive') }}</AppTooltip>
-                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? $t('force_kill') : $t('stop_provider', { provider: providerLabel }) }}</AppTooltip>
+                <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">{{ $t('session.process.interruptTooltip') }}</AppTooltip>
+                <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stopProviderTooltip', { provider: providerLabel }) }}</AppTooltip>
                 <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-process-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
-                <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">{{ $t('stop_this_agent') }}</AppTooltip>
+                <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">{{ $t('session.process.stopAgentTooltip') }}</AppTooltip>
             </div>
 
         </div><!-- /.session-collapsible-rows -->
@@ -1105,7 +1105,7 @@ defineExpose({
             size="small"
             @click="isCompactExpanded = !isCompactExpanded"
         >
-            <wa-icon :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'" :label="$t('toggle_details')"></wa-icon>
+            <wa-icon :name="isCompactExpanded ? 'chevron-up' : 'chevron-down'" :label="$t('session.header.toggleDetails')"></wa-icon>
         </wa-button>
     </header>
 

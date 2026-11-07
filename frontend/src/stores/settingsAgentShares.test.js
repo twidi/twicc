@@ -36,7 +36,7 @@ test('the switch copy carries both consent disclosures, per switch (§4/§14)', 
     const popoverSource = readFileSync(
         new URL('../components/app/SettingsPopover.vue', import.meta.url), 'utf8')
     for (const kind of ['session', 'artifact']) {
-        const key = `allows_agents_to_create_${kind}_shares_whose_target_belongs`
+        const key = `settings.sharing.agentPermissions.${kind}SharesHint`
         assert.ok(popoverSource.includes(`$t('${key}')`))
         const copy = en[key]
         assert.match(copy,

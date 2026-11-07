@@ -71,27 +71,27 @@ defineExpose({ focus })
                 value="show-archived"
                 :checked="showArchivedSessions"
             >
-                {{ $t('show_archived_sessions') }}
+                {{ $t('session.list.showArchived') }}
             </wa-dropdown-item>
             <wa-dropdown-item value="archive-older">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
-                {{ trimmedSearchQuery ? $t('archive_filtered_sessions_older_than') : $t('archive_sessions_older_than') }}
-                <wa-dropdown-item slot="submenu" value="archive-older-24h">{{ $t('24_hours') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-3d">{{ $t('3_days') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-7d">{{ $t('7_days') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-10d">{{ $t('10_days') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-20d">{{ $t('20_days') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-30d">{{ $t('30_days') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-2m">{{ $t('2_months') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-3m">{{ $t('3_months') }}</wa-dropdown-item>
-                <wa-dropdown-item slot="submenu" value="archive-older-6m">{{ $t('6_months') }}</wa-dropdown-item>
+                {{ trimmedSearchQuery ? $t('session.list.archiveOlderFiltered') : $t('session.list.archiveOlder') }}
+                <wa-dropdown-item slot="submenu" value="archive-older-24h">{{ $t('session.list.archiveAge.hours24') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-3d">{{ $t('session.list.archiveAge.days3') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-7d">{{ $t('session.list.archiveAge.days7') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-10d">{{ $t('session.list.archiveAge.days10') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-20d">{{ $t('session.list.archiveAge.days20') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-30d">{{ $t('session.list.archiveAge.days30') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-2m">{{ $t('session.list.archiveAge.months2') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-3m">{{ $t('session.list.archiveAge.months3') }}</wa-dropdown-item>
+                <wa-dropdown-item slot="submenu" value="archive-older-6m">{{ $t('session.list.archiveAge.months6') }}</wa-dropdown-item>
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
                 value="compact-view"
                 :checked="compactView"
             >
-                {{ $t('compact_view') }}
+                {{ $t('session.list.compactView') }}
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
@@ -115,7 +115,7 @@ defineExpose({ focus })
                 value="multi-select"
                 :checked="multiSelectActive"
             >
-                {{ $t('multi_select_mode') }}
+                {{ $t('session.list.multiSelect') }}
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item
@@ -123,18 +123,18 @@ defineExpose({ focus })
                 value="show-active"
                 :checked="showActiveAcrossFilters"
             >
-                <div>{{ $t('show_active_sessions_across_projects') }}</div>
-                <div class="session-option-hint">{{ $t('all_with_a_running_process_or_unread_content') }}</div>
+                <div>{{ $t('session.list.activeAcrossProjects.label') }}</div>
+                <div class="session-option-hint">{{ $t('session.list.activeAcrossProjects.hint') }}</div>
             </wa-dropdown-item>
         </wa-dropdown>
-        <AppTooltip for="session-options-button">{{ $t('session_list_options') }}</AppTooltip>
+        <AppTooltip for="session-options-button">{{ $t('session.list.optionsTooltip') }}</AppTooltip>
 
         <!-- Search/filter input -->
         <wa-input
             ref="searchInputRef"
             :value="searchQuery"
             @input="emit('update:searchQuery', $event.target.value)"
-            :placeholder="$t('filter_sessions')"
+            :placeholder="$t('session.list.filterPlaceholder')"
             size="small"
             with-clear
             class="session-search"

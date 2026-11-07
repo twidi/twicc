@@ -111,9 +111,9 @@ const confirmLabel = computed(() => {
     if (!confirmState.value) return ''
     const { mode, sessionIds } = confirmState.value
     const n = sessionIds.length
-    if (mode === 'archive') return t('archive_selection', { count: n }, n)
-    if (mode === 'stop') return t('stop_selection', { count: n }, n)
-    return t('discard_selection', { count: n }, n)
+    if (mode === 'archive') return t('session.selection.archiveConfirmation', { count: n }, n)
+    if (mode === 'stop') return t('session.selection.stopConfirmation', { count: n }, n)
+    return t('session.selection.discardConfirmation', { count: n }, n)
 })
 
 const confirmMessage = computed(() => {
@@ -127,8 +127,8 @@ const confirmButtonLabel = computed(() => {
     if (!confirmState.value) return ''
     const { mode } = confirmState.value
     if (mode === 'archive') return 'Stop and archive'
-    if (mode === 'stop') return t('stop')
-    return t('delete_6c657465')
+    if (mode === 'stop') return t('session.process.stop')
+    return t('common.actions.delete')
 })
 
 function cancelConfirm() {
@@ -254,7 +254,7 @@ function handleActionSelect(event) {
 
 <template>
     <div class="session-selection-bar">
-        <span class="selection-count">{{ $t('selected_sessions', { count }, count) }}</span>
+        <span class="selection-count">{{ $t('session.selection.count', { count }, count) }}</span>
 
         <wa-dropdown placement="bottom-end" @wa-select="handleActionSelect">
             <wa-button
@@ -265,55 +265,55 @@ function handleActionSelect(event) {
                 with-caret
                 :disabled="count === 0"
             >
-                {{ $t('actions') }}
+                {{ $t('session.selection.actionsLabel') }}
             </wa-button>
 
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked(null)" :disabled="pinTargets(null).length === 0" value="pin-none">
-                {{ $t('not_pinned') }}
+                {{ $t('session.pin.none') }}
                 <span slot="details" class="affected-count">{{ pinTargets(null).length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('project')" :disabled="pinTargets('project').length === 0" value="pin-project">
-                {{ $t('pin_in_project') }}
+                {{ $t('session.pin.project') }}
                 <span slot="details" class="affected-count">{{ pinTargets('project').length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('workspace')" :disabled="pinTargets('workspace').length === 0" value="pin-workspace">
-                {{ $t('pin_in_workspace') }}
+                {{ $t('session.pin.workspace') }}
                 <span slot="details" class="affected-count">{{ pinTargets('workspace').length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item type="checkbox" :checked="isPinModeChecked('all')" :disabled="pinTargets('all').length === 0" value="pin-all">
-                {{ $t('pin_everywhere') }}
+                {{ $t('session.pin.everywhere') }}
                 <span slot="details" class="affected-count">{{ pinTargets('all').length }}</span>
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item :disabled="markReadCandidates.length === 0" value="mark-read">
                 <wa-icon slot="icon" name="eye-slash"></wa-icon>
-                {{ $t('mark_as_read') }}
+                {{ $t('session.actions.markRead') }}
                 <span slot="details" class="affected-count">{{ markReadCandidates.length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="markUnreadCandidates.length === 0" value="mark-unread">
                 <wa-icon slot="icon" name="eye"></wa-icon>
-                {{ $t('mark_as_unread') }}
+                {{ $t('session.actions.markUnread') }}
                 <span slot="details" class="affected-count">{{ markUnreadCandidates.length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="archiveTargets.length === 0" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
-                {{ $t('archive') }}
+                {{ $t('common.actions.archive') }}
                 <span slot="details" class="affected-count">{{ archiveTargets.length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="unarchiveTargets.length === 0" value="unarchive">
                 <wa-icon slot="icon" name="box-open"></wa-icon>
-                {{ $t('unarchive') }}
+                {{ $t('common.actions.unarchive') }}
                 <span slot="details" class="affected-count">{{ unarchiveTargets.length }}</span>
             </wa-dropdown-item>
             <wa-divider></wa-divider>
             <wa-dropdown-item :disabled="stopTargets.length === 0" value="stop">
                 <wa-icon slot="icon" name="ban"></wa-icon>
-                {{ $t('stop_processes', stopTargets.length) }}
+                {{ $t('session.selection.stopProcesses', stopTargets.length) }}
                 <span slot="details" class="affected-count">{{ stopTargets.length }}</span>
             </wa-dropdown-item>
             <wa-dropdown-item :disabled="draftTargets.length === 0" value="delete-drafts" variant="danger">
                 <wa-icon slot="icon" name="trash"></wa-icon>
-                {{ $t('discard') }}
+                {{ $t('session.actions.discard') }}
                 <span slot="details" class="affected-count">{{ draftTargets.length }}</span>
             </wa-dropdown-item>
         </wa-dropdown>
@@ -325,15 +325,15 @@ function handleActionSelect(event) {
             size="small"
             @click="selectionStore.exit()"
         >
-            <wa-icon name="xmark" :label="$t('exit_selection_mode')"></wa-icon>
+            <wa-icon name="xmark" :label="$t('session.selection.exit')"></wa-icon>
         </wa-button>
-        <AppTooltip for="selection-bar-exit">{{ $t('exit_selection_mode') }}</AppTooltip>
+        <AppTooltip for="selection-bar-exit">{{ $t('session.selection.exit') }}</AppTooltip>
 
         <!-- Aggregated batch confirmation -->
         <wa-dialog :open="confirmState !== null" :label="confirmLabel" @wa-hide="handleDialogHide">
             <p class="confirm-message">{{ confirmMessage }}</p>
             <wa-button slot="footer" variant="neutral" appearance="plain" @click="cancelConfirm">
-                {{ $t('cancel') }}
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button slot="footer" variant="danger" @click="runConfirmed">
                 {{ confirmButtonLabel }}

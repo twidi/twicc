@@ -246,7 +246,7 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             :value="query"
             @input="query = $event.target.value"
             @keydown="handleKeydown"
-            :placeholder="$t('search_in_session')"
+            :placeholder="$t('session.search.placeholder')"
             size="small"
             class="search-input"
             clearable
@@ -276,31 +276,31 @@ defineExpose({ open, reset, openWithQuery, goToNext, goToPrevious })
             id="session-search-prev"
             class="nav-button"
             :disabled="!canNavigate"
-            :aria-label="$t('previous_match')"
+            :aria-label="$t('session.search.previousLabel')"
             @click="goToPrevious"
         >
             <wa-icon name="chevron-up"></wa-icon>
         </button>
-        <AppTooltip for="session-search-prev">{{ $t('previous_match_shift_enter_shift_f3') }}</AppTooltip>
+        <AppTooltip for="session-search-prev">{{ $t('session.search.previousTooltip') }}</AppTooltip>
         <button
             id="session-search-next"
             class="nav-button"
             :disabled="!canNavigate"
-            :aria-label="$t('next_match')"
+            :aria-label="$t('session.search.nextLabel')"
             @click="goToNext"
         >
             <wa-icon name="chevron-down"></wa-icon>
         </button>
-        <AppTooltip for="session-search-next">{{ $t('next_match_enter_f3') }}</AppTooltip>
+        <AppTooltip for="session-search-next">{{ $t('session.search.nextTooltip') }}</AppTooltip>
         <button
             id="session-search-close"
             class="nav-button close-button"
-            :aria-label="$t('close_search')"
+            :aria-label="$t('session.search.closeLabel')"
             @click="emit('close')"
         >
             <wa-icon name="x"></wa-icon>
         </button>
-        <AppTooltip for="session-search-close">{{ $t('close_escape') }}</AppTooltip>
+        <AppTooltip for="session-search-close">{{ $t('session.search.closeTooltip') }}</AppTooltip>
     </div>
 </template>
 
