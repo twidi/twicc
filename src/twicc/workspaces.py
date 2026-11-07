@@ -21,6 +21,7 @@ import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.atomic_json import locked_json_file
 from twicc.paths import get_workspaces_path
 
@@ -134,19 +135,19 @@ def validate_workspace_name(
     trimmed = (name or "").strip()
     if not trimmed:
         return [WorkspaceMutationError(field, "invalid_name",
-                                       "Name cannot be empty (or whitespace only).")]
+                                       ui_message_text("Name cannot be empty (or whitespace only).", 'backend.workspaces.name_required'))]
     if len(trimmed) > MAX_WORKSPACE_NAME_LENGTH:
         return [WorkspaceMutationError(field, "invalid_name",
-                                       f"Name must be ≤ {MAX_WORKSPACE_NAME_LENGTH} characters "
-                                       f"(got {len(trimmed)}).")]
+                                       ui_message_text(f"Name must be ≤ {MAX_WORKSPACE_NAME_LENGTH} characters "
+                                       f"(got {len(trimmed)}).", 'backend.workspaces.name_length', {"maximum": MAX_WORKSPACE_NAME_LENGTH, "length": len(trimmed)}))]
     lower = trimmed.lower()
     for ws in existing_workspaces:
         if current_id is not None and ws.get("id") == current_id:
             continue
         if (ws.get("name") or "").strip().lower() == lower:
             return [WorkspaceMutationError(field, "duplicate_name",
-                                           f"A workspace named {trimmed!r} already exists "
-                                           f"(id: {ws.get('id')!r}).")]
+                                           ui_message_text(f"A workspace named {trimmed!r} already exists "
+                                           f"(id: {ws.get('id')!r}).", 'backend.workspaces.duplicate_name', {"name": repr(trimmed), "id": repr(ws.get("id"))}))]
     return []
 
 
@@ -156,8 +157,8 @@ def validate_color(color: str | None, *, field: str = "color") -> list[Workspace
         return []
     if not _HEX_COLOR_RE.match(color):
         return [WorkspaceMutationError(field, "invalid_color",
-                                       f"Color must be a CSS hex value (#rgb, #rrggbb, or "
-                                       f"#rrggbbaa); got {color!r}.")]
+                                       ui_message_text(f"Color must be a CSS hex value (#rgb, #rrggbb, or "
+                                       f"#rrggbbaa); got {color!r}.", 'backend.workspaces.invalid_color', {"color": repr(color)}))]
     return []
 
 
@@ -179,10 +180,10 @@ def validate_browser_url(url: str | None, *, field: str = "browser_url") -> list
         return []
     if not url.startswith(("http://", "https://")):
         return [WorkspaceMutationError(field, "invalid_value",
-                                       f"{field} must be an http(s) URL.")]
+                                       ui_message_text(f"{field} must be an http(s) URL.", 'backend.workspaces.url_required', {"field": field}))]
     if len(url) > 2000:
         return [WorkspaceMutationError(field, "invalid_value",
-                                       f"{field} must be 2000 characters or less.")]
+                                       ui_message_text(f"{field} must be 2000 characters or less.", 'backend.workspaces.url_length', {"field": field}))]
     return []
 
 
@@ -205,7 +206,7 @@ def normalize_browser_url_entries(
     """
     if not isinstance(value, list):
         return None, [WorkspaceMutationError(field, "invalid_value",
-                                             f"{field} must be a list of entries.")]
+                                             ui_message_text(f"{field} must be a list of entries.", 'backend.workspaces.entries_required', {"field": field}))]
     canonical: list[dict] = []
     seen_urls: set[str] = set()
     defaults = 0
@@ -213,43 +214,43 @@ def normalize_browser_url_entries(
         where = f"{field}[{i}]"
         if not isinstance(entry, dict):
             return None, [WorkspaceMutationError(field, "invalid_value",
-                                                 f"{where} must be an object.")]
+                                                 ui_message_text(f"{where} must be an object.", 'backend.workspaces.entry_object_required', {"field": where}))]
         url = entry.get("url")
         if not isinstance(url, str):
             return None, [WorkspaceMutationError(field, "invalid_value",
-                                                 f"{where}.url must be a string.")]
+                                                 ui_message_text(f"{where}.url must be a string.", 'backend.workspaces.entry_url_string', {"field": where}))]
         url = normalize_browser_url(url)
         if url is None:
             return None, [WorkspaceMutationError(field, "invalid_value",
-                                                 f"{where}.url cannot be empty.")]
+                                                 ui_message_text(f"{where}.url cannot be empty.", 'backend.workspaces.entry_url_required', {"field": where}))]
         url_errors = validate_browser_url(url, field=f"{where}.url")
         if url_errors:
             return None, url_errors
         if url in seen_urls:
             return None, [WorkspaceMutationError(field, "duplicate_url",
-                                                 f"{field} lists {url!r} more than once.")]
+                                                 ui_message_text(f"{field} lists {url!r} more than once.", 'backend.workspaces.duplicate_url', {"field": field, "url": repr(url)}))]
         seen_urls.add(url)
 
         label = entry.get("label")
         if label is not None and not isinstance(label, str):
             return None, [WorkspaceMutationError(field, "invalid_value",
-                                                 f"{where}.label must be a string or null.")]
+                                                 ui_message_text(f"{where}.label must be a string or null.", 'backend.workspaces.entry_label_string', {"field": where}))]
         label = (label or "").strip() or None
         if label is not None and len(label) > MAX_BROWSER_URL_LABEL_LENGTH:
             return None, [WorkspaceMutationError(
                 field, "invalid_value",
-                f"{where}.label must be ≤ {MAX_BROWSER_URL_LABEL_LENGTH} characters "
-                f"(got {len(label)}).")]
+                ui_message_text(f"{where}.label must be ≤ {MAX_BROWSER_URL_LABEL_LENGTH} characters "
+                f"(got {len(label)}).", 'backend.workspaces.entry_label_length', {"field": where, "maximum": MAX_BROWSER_URL_LABEL_LENGTH, "length": len(label)}))]
 
         default = entry.get("default", False)
         if not isinstance(default, bool):
             return None, [WorkspaceMutationError(field, "invalid_value",
-                                                 f"{where}.default must be a boolean.")]
+                                                 ui_message_text(f"{where}.default must be a boolean.", 'backend.workspaces.entry_default_boolean', {"field": where}))]
         if default:
             defaults += 1
             if defaults > 1:
                 return None, [WorkspaceMutationError(field, "multiple_defaults",
-                                                     f"{field} flags more than one entry as default.")]
+                                                     ui_message_text(f"{field} flags more than one entry as default.", 'backend.workspaces.multiple_defaults', {"field": field}))]
 
         item: dict = {"url": url}
         if label is not None:
@@ -331,7 +332,7 @@ def clean_browser_url_ops(payload: dict) -> tuple[dict, list[WorkspaceMutationEr
     clear = payload.get("clear_browser_urls", False)
     if not isinstance(clear, bool):
         errors.append(WorkspaceMutationError("clear_browser_urls", "invalid_payload",
-                                             "clear_browser_urls must be a boolean."))
+                                             ui_message_text("clear_browser_urls must be a boolean.", 'backend.workspaces.clear_urls_boolean')))
     else:
         ops["clear_browser_urls"] = clear
 
@@ -341,12 +342,12 @@ def clean_browser_url_ops(payload: dict) -> tuple[dict, list[WorkspaceMutationEr
             return None
         if not isinstance(raw, str):
             errors.append(WorkspaceMutationError(field, "invalid_payload",
-                                                 f"{field} must be a string or null."))
+                                                 ui_message_text(f"{field} must be a string or null.", 'backend.workspaces.string_or_null', {"field": field})))
             return None
         url = normalize_browser_url(raw)
         if url is None:
             errors.append(WorkspaceMutationError(flag, "invalid_value",
-                                                 f"{flag} cannot be empty."))
+                                                 ui_message_text(f"{flag} cannot be empty.", 'backend.workspaces.flag_required', {"field": flag})))
             return None
         errors.extend(validate_browser_url(url, field=flag))
         return url
@@ -363,34 +364,34 @@ def clean_browser_url_ops(payload: dict) -> tuple[dict, list[WorkspaceMutationEr
     if add is not None:
         if not isinstance(add, dict):
             errors.append(WorkspaceMutationError("add_browser_url", "invalid_payload",
-                                                 "add_browser_url must be an object or null."))
+                                                 ui_message_text("add_browser_url must be an object or null.", 'backend.workspaces.add_url_object')))
         else:
             url = add.get("url")
             if not isinstance(url, str):
                 errors.append(WorkspaceMutationError("add_browser_url", "invalid_payload",
-                                                     "add_browser_url.url must be a string."))
+                                                     ui_message_text("add_browser_url.url must be a string.", 'backend.workspaces.add_url_string')))
             else:
                 url = normalize_browser_url(url)
                 if url is None:
                     errors.append(WorkspaceMutationError("--add-browser-url", "invalid_value",
-                                                         "--add-browser-url cannot be empty."))
+                                                         ui_message_text("--add-browser-url cannot be empty.", 'backend.workspaces.add_url_required')))
                 else:
                     errors.extend(validate_browser_url(url, field="--add-browser-url"))
             label = add.get("label")
             if label is not None and not isinstance(label, str):
                 errors.append(WorkspaceMutationError("add_browser_url", "invalid_payload",
-                                                     "add_browser_url.label must be a string or null."))
+                                                     ui_message_text("add_browser_url.label must be a string or null.", 'backend.workspaces.add_label_string')))
             else:
                 label = (label or "").strip() or None
                 if label is not None and len(label) > MAX_BROWSER_URL_LABEL_LENGTH:
                     errors.append(WorkspaceMutationError(
                         "--browser-url-label", "invalid_value",
-                        f"--browser-url-label must be ≤ {MAX_BROWSER_URL_LABEL_LENGTH} "
-                        f"characters (got {len(label)})."))
+                        ui_message_text(f"--browser-url-label must be ≤ {MAX_BROWSER_URL_LABEL_LENGTH} "
+                        f"characters (got {len(label)}).", 'backend.workspaces.browser_label_length', {"maximum": MAX_BROWSER_URL_LABEL_LENGTH, "length": len(label)})))
             set_default = add.get("set_default", False)
             if not isinstance(set_default, bool):
                 errors.append(WorkspaceMutationError("add_browser_url", "invalid_payload",
-                                                     "add_browser_url.set_default must be a boolean."))
+                                                     ui_message_text("add_browser_url.set_default must be a boolean.", 'backend.workspaces.add_default_boolean')))
             if not errors:
                 ops["add_browser_url"] = {"url": url, "label": label, "set_default": set_default}
 
@@ -418,7 +419,7 @@ def validate_pattern(pattern: str, *, field: str = "pattern") -> list[WorkspaceM
     trimmed = (pattern or "").strip()
     if not trimmed:
         return [WorkspaceMutationError(field, "invalid_pattern",
-                                       "Pattern cannot be empty (or whitespace only).")]
+                                       ui_message_text("Pattern cannot be empty (or whitespace only).", 'backend.workspaces.pattern_required'))]
     return []
 
 
@@ -670,7 +671,7 @@ async def update_workspace_atomic(
             if ws is None:
                 return WorkspaceMutationResult(False, None, None, [
                     WorkspaceMutationError("WORKSPACE_ID", "workspace_not_found",
-                                           f"Workspace {workspace_id!r} not found."),
+                                           ui_message_text(f"Workspace {workspace_id!r} not found.", 'backend.workspaces.id_missing', {"id": repr(workspace_id)})),
                 ])
 
             errors: list[WorkspaceMutationError] = []
@@ -717,8 +718,8 @@ async def update_workspace_atomic(
                         return WorkspaceMutationResult(False, workspace_id, None, [
                             WorkspaceMutationError(
                                 "--set-default-browser-url", "url_not_found",
-                                f"URL {set_default_browser_url!r} is not in the workspace's "
-                                "saved browser URLs."),
+                                ui_message_text(f"URL {set_default_browser_url!r} is not in the workspace's "
+                                "saved browser URLs.", 'backend.workspaces.saved_url_missing', {"url": repr(set_default_browser_url)})),
                         ])
                 ws["browserUrls"] = entries
 
@@ -768,7 +769,7 @@ async def delete_workspace_atomic(workspace_id: str) -> WorkspaceMutationResult:
             if idx is None:
                 return WorkspaceMutationResult(False, None, None, [
                     WorkspaceMutationError("WORKSPACE_ID", "workspace_not_found",
-                                           f"Workspace {workspace_id!r} not found."),
+                                           ui_message_text(f"Workspace {workspace_id!r} not found.", 'backend.workspaces.id_missing', {"id": repr(workspace_id)})),
                 ])
             del workspaces[idx]
             txn.write()

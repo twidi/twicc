@@ -1161,7 +1161,10 @@ class TestPre56Regression:
         link = ToolResultLink.objects.get(session=codex_session, tool_use_id="call_ec_2")
         assert link.tool_name == "exec_command"
         assert link.error == "Exit code 1"
-        assert json.loads(link.extra) == {"is_terminated": True}
+        assert json.loads(link.extra) == {
+            "is_terminated": True,
+            "error_ui_message": {"key": "backend.codex.exitCode", "params": {"code": 1}},
+        }
 
 
 # ---------------------------------------------------------------------------

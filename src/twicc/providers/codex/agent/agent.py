@@ -68,11 +68,13 @@ from twicc.agent.shell_notice import (
 from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import UiMessageError, ui_message, ui_message_text
 from twicc.core.services.attachments.manifest import build_manifest
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
 
 from ..permission_modes import resolve_codex_turn_overrides
+from ..provider_errors import CodexUiRuntimeError
 from ..sdk_wrappers import TwiccAsyncCodex, TwiccAsyncThread, service_tier_from_fast_mode, steer_with_message_id
 from .active_tools import active_tool_from_item
 from .approvals import (
@@ -919,7 +921,8 @@ class CodexAgent(BaseAgent):
         manager and pick up on the NEXT ``_run_turn``.
         """
         if self.state == AgentState.DEAD:
-            raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
+            raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead",
+                                    ui_message=ui_message("backend.codex.agentDead"))
 
         if not kwargs.get("shell_notice"):
             self._note_external_send()
@@ -941,7 +944,7 @@ class CodexAgent(BaseAgent):
                 except TransportClosedError:
                     raise
                 except Exception as e:
-                    raise RuntimeError(f"Steer failed: {e}") from e
+                    raise CodexUiRuntimeError(f"Steer failed: {e}", "backend.codex.steerFailed", {"diagnostic": str(e)}, cause=e) from e
                 self.last_activity = time.time()
                 return True
 
@@ -970,16 +973,16 @@ class CodexAgent(BaseAgent):
                     timeout=5.0,
                 )
             except TimeoutError as e:
-                raise RuntimeError(
-                    "Cannot steer: turn handshake did not complete in time",
+                raise CodexUiRuntimeError(
+                    "Cannot steer: turn handshake did not complete in time", "backend.codex.steerHandshakeTimeout",
                 ) from e
 
             turn_handle = self._current_turn
             if turn_handle is None:
                 # Ready was set then cleared between wait and read — turn
                 # ended. Caller can retry on the next state-change event.
-                raise RuntimeError(
-                    "Cannot steer: turn ended before steer could be issued",
+                raise CodexUiRuntimeError(
+                    "Cannot steer: turn ended before steer could be issued", "backend.codex.steerTurnEnded",
                 )
 
             turn_input = await self._build_turn_input(text, images, content=content)
@@ -997,7 +1000,7 @@ class CodexAgent(BaseAgent):
                     return await self._send_after_rejected_steer(
                         turn_input, submission=submission, completion_token=completion_token,
                     )
-                raise RuntimeError(f"Steer failed: {e}") from e
+                raise CodexUiRuntimeError(f"Steer failed: {e}", "backend.codex.steerFailed", {"diagnostic": str(e)}, cause=e) from e
 
             self.last_activity = time.time()
             return True
@@ -1042,7 +1045,8 @@ class CodexAgent(BaseAgent):
         except Exception as exc:
             if (not isinstance(exc, JsonRpcError) or exc.code not in {-32600, -32602}
                 or (submission and submission.get("provider_delivered"))):
-                raise RuntimeError(f"Normal send failed after rejected steer: {exc}") from exc
+                raise CodexUiRuntimeError(f"Normal send failed after rejected steer: {exc}",
+                                        "backend.codex.sendAfterSteerFailed", {"diagnostic": str(exc)}, cause=exc) from exc
             self._logger.warning(
                 "Codex normal send rejected after steer for session %s: %s",
                 self.session_id, exc,
@@ -1052,13 +1056,15 @@ class CodexAgent(BaseAgent):
             # the rejected handle's ID.
             current_turn = self._current_turn
             if current_turn is None:
-                raise RuntimeError(f"Cannot retry steer: no active turn after normal send failed: {exc}") from exc
+                raise CodexUiRuntimeError(f"Cannot retry steer: no active turn after normal send failed: {exc}",
+                                        "backend.codex.steerRetryUnavailable", {"diagnostic": str(exc)}, cause=exc) from exc
             try:
                 await self._steer_question_submission(current_turn, turn_input, submission, completion_token=completion_token)
             except TransportClosedError:
                 raise
             except Exception as final_exc:
-                raise RuntimeError(f"Steer failed after normal send failed: {final_exc}") from final_exc
+                raise CodexUiRuntimeError(f"Steer failed after normal send failed: {final_exc}",
+                                        "backend.codex.steerAfterSendFailed", {"diagnostic": str(final_exc)}, cause=final_exc) from final_exc
             self.last_activity = time.time()
             return True
 
@@ -1110,6 +1116,7 @@ class CodexAgent(BaseAgent):
                     error = None if task.cancelled() else task.exception()
                     future.set_exception(error or SendDeliveryError(
                         "Message delivery remains unresolved; do not retry", code="send_uncertain",
+                        ui_message=ui_message("backend.codex.deliveryUncertain"),
                     ))
 
             self._turn_task.add_done_callback(done)
@@ -1530,11 +1537,13 @@ class CodexAgent(BaseAgent):
         # context is consumed.
         inline_entries = [entry for entry in content.manifest.entries if entry.mode == "inline"]
         if len(inline_entries) != len(content.native_parts):
-            raise ValueError("The native parts do not match the inline manifest entries")
+            raise UiMessageError("The native parts do not match the inline manifest entries",
+                                 "backend.codex.attachmentNativePartsMismatch")
         items: list[InputItem] = []
         for part in content.native_parts:
             if part.kind != "image":
-                raise ValueError(f"Codex has no native input for a {part.kind} attachment")
+                raise UiMessageError(f"Codex has no native input for a {part.kind} attachment",
+                                     "backend.codex.attachmentNativeUnsupported", {"kind": part.kind})
             data = base64.b64encode(part.data).decode("ascii")
             items.append(ImageInput(url=f"data:{part.media_type};base64,{data}"))
         items.append(TextInput(build_manifest(content.manifest)))
@@ -1590,7 +1599,8 @@ class CodexAgent(BaseAgent):
         if turn_handle is None:
             try:
                 if self.state == AgentState.DEAD:
-                    raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead")
+                    raise SendDeliveryError("Cannot send message: agent is dead", code="agent_dead",
+                                    ui_message=ui_message("backend.codex.agentDead"))
                 turn_input = await self._build_turn_input(text, images, content=content)
                 turn_handle = await self._open_turn(
                 turn_input, **({"submission": submission} if submission else {}),
@@ -1616,13 +1626,16 @@ class CodexAgent(BaseAgent):
                     logger.exception("Cannot persist failed Codex turn admission for %s", self.session_id)
                     status = "uncertain"
                 if submission is not None and (status == "uncertain" or submission.get("provider_delivered")):
-                    e = SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
+                    e = SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain",
+                                          ui_message=ui_message("backend.codex.deliveryUncertain"))
                 if submission is not None and not submission["_delivery_future"].done():
                     submission["_delivery_future"].set_exception(e)
                 if completion_token is not None:
                     self._completion_input_settled(completion_token, status)
                     self._completion_scheduled_tokens.discard(completion_token)
-                await self._handle_error(f"Failed to open turn: {e}", exc=e)
+                await self._handle_error(f"Failed to open turn: {e}", exc=e,
+                                         error_ui_message=getattr(e, "ui_message", None) or ui_message(
+                                             "backend.codex.openTurnFailed", {"diagnostic": str(e)}))
                 return
 
         await self._link_async_question_turn(turn_handle.id)
@@ -1653,7 +1666,9 @@ class CodexAgent(BaseAgent):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            await self._handle_error(f"Turn run failed: {e}", exc=e)
+            await self._handle_error(f"Turn run failed: {e}", exc=e,
+                                     error_ui_message=getattr(e, "ui_message", None) or ui_message(
+                                         "backend.codex.turnRunFailed", {"diagnostic": str(e)}))
             return
         finally:
             self._current_turn = None
@@ -2051,7 +2066,7 @@ class CodexAgent(BaseAgent):
         # Same composition as the snapshot path — one source, one wording.
         label = self.current_status_label()
         if label is not None:
-            await self._broadcast_process_label(label)
+            await self._broadcast_process_label(label, self.current_status_label_ui_message())
 
     def current_status_label(self) -> str | None:
         # Recomputed, never stored: the count is read off the live set at the
@@ -2067,6 +2082,17 @@ class CodexAgent(BaseAgent):
         if not count:
             return "waiting"
         return f"waiting for {count} subagent{'s' if count > 1 else ''}"
+
+    def current_status_label_ui_message(self) -> dict | None:
+        """Describe TwiCC's status from state, without parsing its English label."""
+        if self._manual_compaction:
+            return ui_message("backend.codex.compacting")
+        if not (self._subagent_wait_label_active or self._subagent_hold_active):
+            return None
+        count = len(self._live_subagents)
+        if not count:
+            return ui_message("backend.codex.waiting")
+        return ui_message("backend.codex.waitingForSubagents", {"count": count}, count=count)
 
     async def _clear_subagent_wait_label(self) -> None:
         """Drop the waiting label if it is currently shown (no-op otherwise)."""
@@ -2099,7 +2125,8 @@ class CodexAgent(BaseAgent):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            await self._handle_error("Could not observe ephemeral subagents", exc=exc)
+            await self._handle_error("Could not observe ephemeral subagents", exc=exc,
+                                     error_ui_message=ui_message("backend.codex.ephemeralSubagentsUnavailable"))
 
     async def _prune_finished_subagents(self) -> None:
         """Forget the children that no longer run.
@@ -2180,7 +2207,7 @@ class CodexAgent(BaseAgent):
         await self._notify_state_change()
         label = self.current_status_label()
         if label is not None:
-            await self._broadcast_process_label(label)
+            await self._broadcast_process_label(label, self.current_status_label_ui_message())
         return True
 
     def in_subagent_hold(self) -> bool:
@@ -2262,7 +2289,7 @@ class CodexAgent(BaseAgent):
                 if self._subagent_wait_label_active:
                     label = self.current_status_label()
                     if label is not None:
-                        await self._broadcast_process_label(label)
+                        await self._broadcast_process_label(label, self.current_status_label_ui_message())
                 return
 
             if self._manual_compaction or self._goal_continuation_active:
@@ -2279,7 +2306,7 @@ class CodexAgent(BaseAgent):
             if self._live_subagents:
                 label = self.current_status_label()
                 if label is not None:
-                    await self._broadcast_process_label(label)
+                    await self._broadcast_process_label(label, self.current_status_label_ui_message())
                 return
 
             self._logger.info(
@@ -2338,7 +2365,7 @@ class CodexAgent(BaseAgent):
             if self._subagent_wait_label_active or self._subagent_hold_active:
                 label = self.current_status_label()
                 if label is not None:
-                    await self._broadcast_process_label(label)
+                    await self._broadcast_process_label(label, self.current_status_label_ui_message())
 
     async def compact(self) -> None:
         """Kick off a server-side context compaction on the live thread.
@@ -2369,7 +2396,7 @@ class CodexAgent(BaseAgent):
         self._set_state(AgentState.ASSISTANT_TURN)
         self.last_activity = time.time()
         await self._notify_state_change()
-        await self._broadcast_process_label("compacting")
+        await self._broadcast_process_label("compacting", ui_message("backend.codex.compacting"))
         # Give the manual /compact a persistent transcript line. The compaction
         # RPC writes only the ``compacted`` summary (the divider), never a "the
         # user asked to compact" line, so without this the command survives only
@@ -2400,7 +2427,8 @@ class CodexAgent(BaseAgent):
                 self.session_id, e,
             )
             await self.notify_compacted()
-            raise RuntimeError(f"Compaction failed: {e}") from e
+            raise CodexUiRuntimeError(f"Compaction failed: {e}", "backend.codex.compactionFailed",
+                                    {"diagnostic": str(e)}, cause=e) from e
         # Arm the safety net: end the synthetic turn after a generous delay if
         # the ``compacted`` line never lands (server-side failure).
         self._compaction_timeout_task = asyncio.create_task(
@@ -2513,7 +2541,7 @@ class CodexAgent(BaseAgent):
         try:
             objective = args.strip()
             if not objective:
-                raise RuntimeError("Usage: /goal <objective>  or  /goal clear")
+                raise CodexUiRuntimeError("Usage: /goal <objective>  or  /goal clear", "backend.codex.goalUsage")
             if objective.lower() == "clear":
                 await self._thread.goal_clear()
                 # Clearing prevents future continuations but does not end the active turn.
@@ -2553,7 +2581,7 @@ class CodexAgent(BaseAgent):
             )
             if isinstance(e, RuntimeError):
                 raise
-            raise RuntimeError(f"/goal failed: {e}") from e
+            raise CodexUiRuntimeError(f"/goal failed: {e}", "backend.codex.goalFailed", {"diagnostic": str(e)}, cause=e) from e
         if self._goal_monitor is not None and (self._turn_task is None or self._turn_task.done()):
             self._turn_task = asyncio.create_task(self._run_goal_continuation(self._goal_monitor))
         await self._settle_after_command(settle_state, "goal_command_done")
@@ -2596,7 +2624,9 @@ class CodexAgent(BaseAgent):
             raise
         except Exception as e:
             if self.state != AgentState.DEAD:
-                await self._handle_error(f"Goal continuation failed: {e}", exc=e)
+                await self._handle_error(f"Goal continuation failed: {e}", exc=e,
+                                         error_ui_message=getattr(e, "ui_message", None) or ui_message(
+                                             "backend.codex.goalContinuationFailed", {"diagnostic": str(e)}))
             return
         finally:
             await stream.aclose()
@@ -2751,7 +2781,7 @@ class CodexAgent(BaseAgent):
             self.agent_settings.selected_model,
         )
         if not sdk_model:
-            raise RuntimeError("No model resolved for this session")
+            raise CodexUiRuntimeError("No model resolved for this session", "backend.codex.modelUnresolved")
         return CollaborationMode(
             mode=mode,
             settings=CollaborationModeSettings(
@@ -2803,7 +2833,7 @@ class CodexAgent(BaseAgent):
             await self._settle_after_command(AgentState.USER_TURN, "plan_command_done")
             if isinstance(e, RuntimeError):
                 raise
-            raise RuntimeError(f"/plan failed: {e}") from e
+            raise CodexUiRuntimeError(f"/plan failed: {e}", "backend.codex.planFailed", {"diagnostic": str(e)}, cause=e) from e
 
         self._logger.info(
             "Codex /plan: session %s switched to Plan collaboration mode",
@@ -2955,7 +2985,8 @@ class CodexAgent(BaseAgent):
         # user" outputs may be written and picked up by the watcher during
         # the interrupt round-trip's await, so the termination signal must
         # already be in place. Rolled back below if the interrupt fails.
-        marked = self._mark_inflight_tools_user_terminated("User interrupted the turn")
+        marked = self._mark_inflight_tools_user_terminated(
+            ui_message_text("User interrupted the turn", "backend.codex.turnInterrupted"))
         try:
             await turn_handle.interrupt()
             if getattr(self, "ephemeral", False):
@@ -3167,7 +3198,7 @@ class CodexAgent(BaseAgent):
         await super()._transition_to_dead()
 
     async def _handle_error(
-        self, error_message: str, exc: Exception | None = None,
+        self, error_message: str, exc: Exception | None = None, *, error_ui_message: dict | None = None,
     ) -> None:
         """Surface a runtime error as a clean DEAD transition."""
         if getattr(self, "ephemeral", False):
@@ -3179,6 +3210,7 @@ class CodexAgent(BaseAgent):
                 exc_info=exc,
             )
         self.error = error_message
+        self.error_ui_message = error_ui_message or getattr(exc, "ui_message", None)
         self.kill_reason = "error"
         try:
             await self._codex.close()
@@ -3521,6 +3553,7 @@ class CodexAgent(BaseAgent):
             # ``codex login status`` poll (up to 30s away).
             self._cancel_all_pending_futures()
             self.error = payload.error.message
+            self.error_ui_message = None
             self.kill_reason = "auth_required" if is_auth_error else "error"
             self.last_activity = time.time()
             await self._transition_to_dead()
@@ -4086,7 +4119,7 @@ class CodexAgent(BaseAgent):
             granted = response.get("permissions")
             if not granted:
                 # Empty granted profile = user refused permissions.
-                self._user_terminated_tool_ids[item_id] = "User refused permissions"
+                self._user_terminated_tool_ids[item_id] = ui_message_text("User refused permissions", "backend.codex.permissionsRefused")
                 self._logger.debug(
                     "Codex decision recorded: session=%s itemId=%s "
                     "outcome=permissions_denied reason=%r",
@@ -4103,7 +4136,7 @@ class CodexAgent(BaseAgent):
         # command / file
         decision = response.get("decision")
         if decision == "decline":
-            self._user_terminated_tool_ids[item_id] = "User denied this action"
+            self._user_terminated_tool_ids[item_id] = ui_message_text("User denied this action", "backend.codex.actionDenied")
             self._logger.debug(
                 "Codex decision recorded: session=%s itemId=%s "
                 "outcome=decline reason=%r",
@@ -4111,7 +4144,7 @@ class CodexAgent(BaseAgent):
             )
             return
         if decision == "cancel":
-            self._user_terminated_tool_ids[item_id] = "User cancelled this turn"
+            self._user_terminated_tool_ids[item_id] = ui_message_text("User cancelled this turn", "backend.codex.turnCancelled")
             # Also mark every other in-flight function-call item. The user
             # asked for "tous les tools qui n'ont pas été terminés doivent
             # être marqués" — we iterate _items_by_id which holds every
@@ -4121,7 +4154,7 @@ class CodexAgent(BaseAgent):
                 if other_id == item_id:
                     continue
                 if payload.get("type") in self._CANCELLABLE_ITEM_TYPES:
-                    self._user_terminated_tool_ids[other_id] = "User cancelled this turn"
+                    self._user_terminated_tool_ids[other_id] = ui_message_text("User cancelled this turn", "backend.codex.turnCancelled")
                     siblings_marked.append(other_id)
                     self._logger.debug(
                         "Codex cancel: marking sibling session=%s itemId=%r type=%r",

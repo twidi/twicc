@@ -17,6 +17,7 @@ from django.conf import settings
 
 from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
     AgentSettingCategory,
@@ -398,8 +399,9 @@ class CodexHelpers(BaseProviderHelpers):
 
         missing = USAGE_REQUIRED_KEYS - payload.keys()
         if missing:
-            return False, f"Missing required keys: {', '.join(sorted(missing))}"
-        return True, "Valid Codex usage file"
+            return False, ui_message_text(f"Missing required keys: {', '.join(sorted(missing))}",
+                                          "backend.codex.usageMissingKeys", {"keys": ", ".join(sorted(missing))})
+        return True, ui_message_text("Valid Codex usage file", "backend.codex.usageFileValid")
 
     def extract_family_and_version(
         self, model_id: str,

@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 // The summary of a text selection, inside the floating selection panel. It owns
@@ -72,7 +73,7 @@ onBeforeUnmount(() => {
     <div v-if="entry?.text" class="tsc-summary-text" aria-live="polite" :aria-busy="entry.state === 'running'">
         <MarkdownContent :source="entry.text" :show-toolbar="false" />
     </div>
-    <wa-callout v-if="entry?.error" variant="danger">{{ entry.error }}</wa-callout>
+    <wa-callout v-if="entry?.errorMessage || entry?.error" variant="danger">{{ resolveUiMessage(entry.errorMessage || entry.error) }}</wa-callout>
     <div class="tsc-summary-footer">
         <div class="tsc-summary-links">
             <SummaryGenerationLinks

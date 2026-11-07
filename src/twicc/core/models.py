@@ -1905,6 +1905,7 @@ class Command(models.Model):
     name = models.CharField(max_length=200)  # e.g. "commit", "superpowers:brainstorming"
     activation_char = models.CharField(max_length=1)  # Prefix character used to invoke the command (e.g. "/" or "$")
     plugin_name = models.CharField(max_length=100, null=True, blank=True)  # e.g. "superpowers" when shipped by a plugin
+    # Product decision: discovered descriptions and their default labels stay verbatim.
     description = models.TextField()
     argument_hint = models.CharField(max_length=200, null=True, blank=True)  # e.g. "[review-aspects]"
     # Whether this row is a built-in command shipped by the provider's
@@ -2205,6 +2206,8 @@ class PeerMessage(models.Model):
     )
     status = models.CharField(max_length=12, choices=PeerMessageStatus.choices)
     error = models.CharField(max_length=255, blank=True, default="")
+    # Local presentation metadata only; unknown historical and external errors keep null.
+    error_ui_message = models.JSONField(null=True, blank=True, default=None)
     # Inbound rows: the note added at delivery time (design §6.2).
     recipient_note = models.TextField(blank=True, default="")
     delivered_to_session = models.ForeignKey(

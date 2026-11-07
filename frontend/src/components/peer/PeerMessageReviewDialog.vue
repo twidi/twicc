@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiErrors } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -969,11 +970,7 @@ async function onActionChange(event) {
 }
 
 function errorText(payload) {
-    const errors = payload?.errors
-    if (Array.isArray(errors) && errors.length) {
-        return errors.map(e => e.message || e.code).join(' — ')
-    }
-    return payload?.error || localUiMessage('peer.compose.errors.request')
+    return remoteUiErrors(payload, localUiMessage('peer.compose.errors.request'))
 }
 
 const PEER_RESOLUTION_TIMEOUT_MS = 40_000

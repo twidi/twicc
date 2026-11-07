@@ -153,6 +153,9 @@ class AgentInfo(NamedTuple):
     # (see :func:`build_background_work` for the shape), recomputed on every
     # read like ``label``.
     background_work_in_progress: dict | None = None
+    # Optional browser presentation metadata. Legacy English fields remain unchanged.
+    error_ui_message: dict | None = None
+    label_ui_message: dict | None = None
 
     @property
     def memory_rss_human(self) -> str | None:
@@ -174,6 +177,8 @@ def serialize_agent_info(info: AgentInfo) -> dict:
     }
     if info.error is not None:
         data["error"] = info.error
+    if info.error_ui_message is not None:
+        data["error_ui_message"] = info.error_ui_message
     if info.memory_rss is not None:
         data["memory"] = info.memory_rss
     if info.kill_reason is not None:
@@ -208,6 +213,8 @@ def serialize_agent_info(info: AgentInfo) -> dict:
         data["stopping"] = True
     if info.label:
         data["label"] = info.label
+    if info.label_ui_message is not None:
+        data["label_ui_message"] = info.label_ui_message
     if info.background_work_in_progress:
         data["background_work_in_progress"] = info.background_work_in_progress
     return data

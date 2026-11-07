@@ -1,14 +1,16 @@
 """Feed an independently owned summary reader to the existing speech pumps."""
+
 from collections import deque
 from typing import TYPE_CHECKING
 
 from twicc.tts.openrouter import SpeechError
 from twicc.tts.parts import PartSplitter
+from twicc.core.ui_messages import ui_message_text
 
 if TYPE_CHECKING:
     from twicc.summaries.service import SummaryReader
 
-SUMMARY_STOPPED = 'The summary stopped before the end'
+SUMMARY_STOPPED = ui_message_text('The summary stopped before the end', 'backend.tts.summaryStopped')
 
 
 class SummaryParts:

@@ -80,6 +80,7 @@ def set_startup_progress(
         "total": total,
         "completed": completed,
         "detail": detail,
+        **({"detail_ui_message": detail.ui_message} if getattr(detail, "ui_message", None) is not None else {}),
     }
     return True
 
@@ -112,6 +113,7 @@ async def broadcast_startup_progress(
         "total": total,
         "completed": completed,
         "detail": detail,
+        **({"detail_ui_message": detail.ui_message} if getattr(detail, "ui_message", None) is not None else {}),
     }
 
     channel_layer = get_channel_layer()

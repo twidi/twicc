@@ -7,6 +7,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { applySessionMuteOnUserTurn } from './sessionMute.js'
+import { i18n } from '../i18n/index.js'
+import { resolveUiMessage } from '../i18n/uiMessages.js'
 
 function deferred() {
     let resolve
@@ -185,4 +187,38 @@ test('removes an optimistic mute key when the first PATCH fails', async () => {
     )
 
     assert.equal(Object.hasOwn(sessions.session_1, 'mute_on_user_turn'), false)
+})
+
+test('failed mute updates retain backend message identity through rollback and locale changes', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    i18n.global.locale.value = 'en'
+    const sessions = { session_1: { id: 'session_1', mute_on_user_turn: false } }
+    const apiFetch = async () => ({ ok: false, json: async () => ({
+        error: 'Session session_1 not found', code: 'session_not_found',
+        ui_message: { key: 'backend.websocket.session_missing', params: { session_id: 'session_1' } },
+    }) })
+    let failure
+    await assert.rejects(applySessionMuteOnUserTurn(sessions, apiFetch, 'project_1', 'session_1', true), error => {
+        failure = error
+        return error instanceof Error && error.code === 'session_not_found'
+    })
+    assert.equal(sessions.session_1.mute_on_user_turn, false)
+    assert.equal(resolveUiMessage(failure.uiMessage), i18n.global.t('backend.websocket.session_missing', { session_id: 'session_1' }))
+    i18n.global.locale.value = 'pt-BR'
+    assert.equal(failure.message, i18n.global.t('backend.websocket.session_missing', { session_id: 'session_1' }))
+    assert.equal(resolveUiMessage(failure.uiMessage), failure.message)
+})
+
+test('empty mute-error payload retains the local fallback across locale changes', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    i18n.global.locale.value = 'en'
+    let failure
+    await assert.rejects(applySessionMuteOnUserTurn({}, async () => ({ ok: false, json: async () => ({}) }), 'p', 's', true), error => {
+        failure = error
+        return error.message === i18n.global.t('session.notifications.errors.update')
+    })
+    i18n.global.locale.value = 'pt-BR'
+    assert.equal(failure.message, i18n.global.t('session.notifications.errors.update'))
 })

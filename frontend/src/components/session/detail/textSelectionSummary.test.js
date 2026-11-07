@@ -8,6 +8,7 @@ import * as touch from '../../../utils/touchTapFallback.js'
 import * as ttsConfig from '../../../utils/ttsConfig.js'
 import * as constants from '../../../constants.js'
 import * as selectionRead from '../../../utils/selectionRead.js'
+import * as uiMessages from '../../../i18n/uiMessages.js'
 const read = file => readFileSync(new URL(file, import.meta.url), 'utf8')
 
 const selectionWidgetDeps = (store, settings, speech, body) => ({
@@ -60,6 +61,7 @@ test('no dialog remains and no unused summary content component', () => {
 })
 
 const bodyDeps = (store, speech, settings, Button) => ({
+    '../../../i18n/uiMessages.js': uiMessages,
     '../../../stores/summaries': { useSummariesStore: () => store },
     '../../../stores/settings': { useSettingsStore: () => settings },
     '../../../composables/useTemporarySummaryGeneration': temporaryGeneration,

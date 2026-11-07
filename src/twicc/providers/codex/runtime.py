@@ -41,6 +41,8 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_message_text
+
 logger = logging.getLogger(__name__)
 
 CODEX_VERSION = "0.167.0"
@@ -83,6 +85,10 @@ _EXECUTABLES = (
 class CodexRuntimeError(RuntimeError):
     """Base error for Codex runtime provisioning."""
 
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.ui_message = getattr(message, "ui_message", None)
+
 
 class CodexRuntimeUnsupportedPlatform(CodexRuntimeError):
     """The current OS/arch has no published Codex binary."""
@@ -115,10 +121,12 @@ def _platform_tag() -> str:
             return "macosx_11_0_arm64"
         if machine == "x86_64":
             return "macosx_10_9_x86_64"
-    raise CodexRuntimeUnsupportedPlatform(
+    raise CodexRuntimeUnsupportedPlatform(ui_message_text(
         f"No Codex binary for system={system!r} machine={machine!r}. "
-        f"Supported: {sorted(_WHEELS)}."
-    )
+        f"Supported: {sorted(_WHEELS)}.",
+        "backend.codex.runtimeUnsupportedPlatform",
+        {"system": system, "machine": machine, "supported": repr(sorted(_WHEELS))},
+    ))
 
 
 def _cache_root() -> Path:
@@ -205,9 +213,11 @@ def _verify_sha256(path: Path, expected: str) -> None:
     got = digest.hexdigest()
     if got != expected:
         path.unlink(missing_ok=True)
-        raise CodexRuntimeIntegrityError(
-            f"sha256 mismatch for {path.name}: expected {expected}, got {got}"
-        )
+        raise CodexRuntimeIntegrityError(ui_message_text(
+            f"sha256 mismatch for {path.name}: expected {expected}, got {got}",
+            "backend.codex.runtimeIntegrityFailed",
+            {"name": path.name, "expected": expected, "actual": got},
+        ))
 
 
 def _cleanup_previous_runtimes() -> None:

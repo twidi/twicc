@@ -10,6 +10,7 @@ import re
 import subprocess
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message, ui_message_text
 from twicc.file_content import IMAGE_EXTENSIONS, MAX_FILE_SIZE
 
 # Maximum number of entries returned to the frontend.
@@ -358,7 +359,7 @@ def create_worktree(
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return False, str(exc)
     if result.returncode != 0:
-        return False, result.stderr.strip() or "git worktree add failed"
+        return False, result.stderr.strip() or ui_message_text("git worktree add failed", "backend.git.worktree_add_failed")
     return True, ""
 
 
@@ -515,26 +516,26 @@ def get_commit_detail(git_directory: str, commit_hash: str) -> dict:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("Git show timed out")
+        raise GitError(ui_message_text("Git show timed out", 'backend.git.git_show_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"Git show failed: {stderr}" if stderr else "Git show failed")
+        raise GitError(ui_message_text(f"Git show failed: {stderr}" if stderr else "Git show failed", 'backend.git.git_show_failed', {"detail": f": {stderr}" if stderr else ""}))
 
     stdout = result.stdout
     # Split on NUL: fixed fields before, body after.
     nul_pos = stdout.find("\0")
     if nul_pos == -1:
-        raise GitError("Unexpected git show output format")
+        raise GitError(ui_message_text("Unexpected git show output format", 'backend.git.unexpected_show_output'))
 
     fixed_part = stdout[:nul_pos]
     body_raw = stdout[nul_pos + 1:]
 
     parts = fixed_part.split(_FIELD_SEP)
     if len(parts) != 8:
-        raise GitError("Unexpected git show output format")
+        raise GitError(ui_message_text("Unexpected git show output format", 'backend.git.unexpected_show_output'))
 
     hash_, message, committer_date, author_date, author_name, author_email, committer_name, committer_email = parts
 
@@ -803,7 +804,10 @@ def get_index_files(git_directory: str) -> dict | None:
 
     return {
         "stats": _compute_stats(files),
-        "tree": _build_file_tree(files, root_name="Uncommitted files"),
+        "tree": {
+            **_build_file_tree(files, root_name="Uncommitted files"),
+            "name_ui_message": ui_message("backend.git.uncommitted_files"),
+        },
     }
 
 
@@ -839,13 +843,13 @@ def _parse_commit_files(git_directory: str, commit_hash: str) -> list[dict]:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("Git diff-tree timed out")
+        raise GitError(ui_message_text("Git diff-tree timed out", 'backend.git.git_diff-tree_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"Git diff-tree failed: {stderr}" if stderr else "Git diff-tree failed")
+        raise GitError(ui_message_text(f"Git diff-tree failed: {stderr}" if stderr else "Git diff-tree failed", 'backend.git.git_diff-tree_failed', {"detail": f": {stderr}" if stderr else ""}))
 
     files = []
 
@@ -912,7 +916,10 @@ def get_commit_files(git_directory: str, commit_hash: str) -> dict:
 
     return {
         "stats": _compute_stats(files),
-        "tree": _build_file_tree(files, root_name=f"Commit {short_hash}"),
+        "tree": {
+            **_build_file_tree(files, root_name=f"Commit {short_hash}"),
+            "name_ui_message": ui_message("backend.git.commit_files", {"hash": short_hash}),
+        },
     }
 
 
@@ -967,13 +974,13 @@ def get_git_log(git_directory: str, branch: str | None = None) -> dict:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("Git log timed out")
+        raise GitError(ui_message_text("Git log timed out", 'backend.git.git_log_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"Git log failed: {stderr}" if stderr else "Git log failed")
+        raise GitError(ui_message_text(f"Git log failed: {stderr}" if stderr else "Git log failed", 'backend.git.git_log_failed', {"detail": f": {stderr}" if stderr else ""}))
 
     stdout = result.stdout
     if not stdout.strip():
@@ -1109,10 +1116,10 @@ def get_index_file_diff(git_directory: str, file_path: str) -> dict:
     try:
         size = os.path.getsize(abs_path)
     except OSError:
-        return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
+        return {"original": None, "modified": None, "binary": False, "error": ui_message_text("Cannot read file", 'backend.git.read_failed')}
 
     if size > MAX_FILE_SIZE:
-        return {"original": None, "modified": None, "binary": False, "error": "File too large", "too_large": True}
+        return {"original": None, "modified": None, "binary": False, "error": ui_message_text("File too large", 'backend.git.file_too_large'), "too_large": True}
 
     try:
         with open(abs_path, "r", encoding="utf-8") as f:
@@ -1124,7 +1131,7 @@ def get_index_file_diff(git_directory: str, file_path: str) -> dict:
             return {"original": None, "modified": modified_image, "binary": True, "image": True, "error": None}
         return {"original": None, "modified": None, "binary": True, "error": None}
     except OSError:
-        return {"original": None, "modified": None, "binary": False, "error": "Cannot read file"}
+        return {"original": None, "modified": None, "binary": False, "error": ui_message_text("Cannot read file", 'backend.git.read_failed')}
 
     return {"original": original, "modified": modified, "binary": False, "error": None}
 
@@ -1177,7 +1184,7 @@ def validate_path_in_repo(git_directory: str, file_path: str) -> str:
     """
     abs_path = os.path.normpath(os.path.join(git_directory, file_path))
     if not abs_path.startswith(os.path.normpath(git_directory) + os.sep) and abs_path != os.path.normpath(git_directory):
-        raise GitError("Path is outside the repository")
+        raise GitError(ui_message_text("Path is outside the repository", 'backend.git.path_outside_repository'))
     return abs_path
 
 
@@ -1196,13 +1203,13 @@ def git_stage(git_directory: str, file_path: str) -> None:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("git add timed out")
+        raise GitError(ui_message_text("git add timed out", 'backend.git.git_add_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"git add failed: {stderr}" if stderr else "git add failed")
+        raise GitError(ui_message_text(f"git add failed: {stderr}" if stderr else "git add failed", 'backend.git.git_add_failed', {"detail": f": {stderr}" if stderr else ""}))
 
 
 def git_unstage(git_directory: str, file_path: str) -> None:
@@ -1220,13 +1227,13 @@ def git_unstage(git_directory: str, file_path: str) -> None:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("git restore --staged timed out")
+        raise GitError(ui_message_text("git restore --staged timed out", 'backend.git.git_restore_staged_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"git restore --staged failed: {stderr}" if stderr else "git restore --staged failed")
+        raise GitError(ui_message_text(f"git restore --staged failed: {stderr}" if stderr else "git restore --staged failed", 'backend.git.git_restore_staged_failed', {"detail": f": {stderr}" if stderr else ""}))
 
 
 def git_discard(git_directory: str, file_path: str) -> None:
@@ -1246,13 +1253,13 @@ def git_discard(git_directory: str, file_path: str) -> None:
             timeout=_GIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise GitError("git restore timed out")
+        raise GitError(ui_message_text("git restore timed out", 'backend.git.git_restore_timeout'))
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        raise GitError(f"git restore failed: {stderr}" if stderr else "git restore failed")
+        raise GitError(ui_message_text(f"git restore failed: {stderr}" if stderr else "git restore failed", 'backend.git.git_restore_failed', {"detail": f": {stderr}" if stderr else ""}))
 
 
 # ---------------------------------------------------------------------------
@@ -1311,7 +1318,7 @@ def _spawn_git(git_directory: str, args: list[str]) -> GitProcessStream:
             bufsize=_STREAM_CHUNK_SIZE,
         )
     except FileNotFoundError:
-        raise GitError("Git is not installed or not in PATH")
+        raise GitError(ui_message_text("Git is not installed or not in PATH", 'backend.git.not_installed'))
     return GitProcessStream(proc)
 
 
@@ -1750,3 +1757,7 @@ def path_has_worktree_marker(directory: str) -> bool:
 
 class GitError(Exception):
     """Raised when a git operation fails."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.ui_message = getattr(message, "ui_message", None)

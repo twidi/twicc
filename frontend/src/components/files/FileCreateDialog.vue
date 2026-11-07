@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { ref, useId, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
@@ -84,7 +85,7 @@ async function handleSave() {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || localUiMessage('files.errors.createHttp', { status: response.status })
+        errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.createHttp', { status: response.status }))
         isSaving.value = false
         return
     }

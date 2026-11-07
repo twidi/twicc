@@ -26,6 +26,7 @@ import re
 from datetime import datetime, UTC
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message, ui_message_text
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
@@ -81,14 +82,14 @@ def validate_title(value) -> tuple[str, PeerError | None]:
     two sides must agree on what a valid title is.
     """
     if value is not None and not isinstance(value, str):
-        return "", PeerError("title", "invalid", "title must be a string")
+        return "", PeerError("title", "invalid", ui_message_text("title must be a string", 'backend.peer_messages.title_string'))
     flat = _WHITESPACE_RUN_RE.sub(" ", value or "").strip()
     if not flat:
-        return "", PeerError("title", "empty_title", "title is required")
+        return "", PeerError("title", "empty_title", ui_message_text("title is required", 'backend.peer_messages.title_required'))
     if len(flat) > PEER_MESSAGE_TITLE_MAX_CHARS:
         return "", PeerError(
             "title", "title_too_long",
-            f"title exceeds {PEER_MESSAGE_TITLE_MAX_CHARS} characters",
+            ui_message_text(f"title exceeds {PEER_MESSAGE_TITLE_MAX_CHARS} characters", 'backend.peer_messages.title_limit', {"max": PEER_MESSAGE_TITLE_MAX_CHARS}),
         )
     return flat, None
 
@@ -100,7 +101,7 @@ def validate_reply_to(value) -> tuple[str, PeerError | None]:
     if not isinstance(value, str) or PEER_MESSAGE_ID_PATTERN.fullmatch(value) is None:
         return "", PeerError(
             "reply_to", "invalid_reply_to",
-            "reply_to must be a valid peer message id",
+            ui_message_text("reply_to must be a valid peer message id", 'backend.peer_messages.reply_id'),
         )
     return value, None
 
@@ -310,15 +311,15 @@ async def attach_project(message, project_id: str | None) -> tuple[bool, list[Pe
     async with _resolution_lock(message.pk):
         message = await _fresh_message(message.pk)
         if message is None:
-            return False, [PeerError("message", "not_found", "Message no longer exists.")]
+            return False, [PeerError("message", "not_found", ui_message_text("Message no longer exists.", 'backend.peer_messages.message_missing'))]
         if message.origin_session_id or message.delivered_to_session_id:
             return False, [PeerError(
-                "message", "bad_state", "This message is tied to a session; its project follows that session.",
+                "message", "bad_state", ui_message_text("This message is tied to a session; its project follows that session.", 'backend.peer_messages.message_project_session'),
             )]
         if project_id:
             exists = await sync_to_async(lambda: Project.objects.filter(id=project_id).exists())()
             if not exists:
-                return False, [PeerError("project_id", "project_not_found", "Project not found.")]
+                return False, [PeerError("project_id", "project_not_found", ui_message_text("Project not found.", 'backend.peer_messages.project_not_found'))]
 
         def _apply():
             message.project_id = project_id or None
@@ -348,15 +349,15 @@ def _peer_send_error(peer) -> PeerError | None:
         return PeerError(
             "peer",
             "peer_broken",
-            "This peer no longer accepts messages. Ask your user to check it in Settings › Peers.",
+            ui_message_text("This peer no longer accepts messages. Ask your user to check it in Settings › Peers.", 'backend.peer_messages.peer_broken'),
         )
     if peer.state != PeerState.ACTIVE:
-        return PeerError("peer", "not_active", "This peer relationship is not active.")
+        return PeerError("peer", "not_active", ui_message_text("This peer relationship is not active.", 'backend.peer_messages.peer_not_active'))
     if not peer_credentials_are_active(peer):
         return PeerError(
             "peer",
             "local_origin_changed",
-            "This peer was paired at another local address. Ask your user to reconnect it.",
+            ui_message_text("This peer was paired at another local address. Ask your user to reconnect it.", 'backend.peer_messages.peer_origin_changed'),
         )
     return None
 
@@ -442,7 +443,7 @@ async def _serialize_for_broadcast(message) -> dict | None:
     fresh, effective_project = await sync_to_async(_load)()
     if fresh is None:
         return None
-    return serialize_peer_message(fresh, effective_project=effective_project)
+    return serialize_peer_message(fresh, effective_project=effective_project, include_ui_messages=True)
 
 
 async def broadcast_peer_message_received(message) -> None:
@@ -500,12 +501,12 @@ def _raw_entries(payload: dict) -> tuple[list[dict], PeerError | None]:
     if "attachments" in payload:
         if any(key in payload for key in _LEGACY_PAYLOAD_KEYS):
             return [], PeerError("payload", "invalid_attachments",
-                                 "attachments cannot be combined with images or documents")
+                                 ui_message_text("attachments cannot be combined with images or documents", 'backend.peer_messages.attachments_conflict'))
         entries = payload["attachments"]
         if not isinstance(entries, list):
-            return [], PeerError("attachments", "invalid", "attachments must be a list")
+            return [], PeerError("attachments", "invalid", ui_message_text("attachments must be a list", 'backend.peer_messages.attachments_list'))
         if not all(_entry_ok(entry) for entry in entries):
-            return [], PeerError("attachments", "invalid_entry", "malformed attachment entry")
+            return [], PeerError("attachments", "invalid_entry", ui_message_text("malformed attachment entry", 'backend.peer_messages.attachment_entry'))
         return entries, None
     blocks: dict[str, list] = {}
     for key in _LEGACY_PAYLOAD_KEYS:
@@ -531,14 +532,14 @@ def prepare_inbound_payload(payload) -> tuple[InboundPayload | None, list[PeerEr
     from twicc.core.services.attachments.staging import AttachmentError, name_max_bytes, normalize_filename
 
     if not isinstance(payload, dict):
-        return None, [PeerError("payload", "invalid", "payload must be an object")]
+        return None, [PeerError("payload", "invalid", ui_message_text("payload must be an object", 'backend.peer_messages.payload_object'))]
     errors: list[PeerError] = []
     unknown = set(payload) - _PAYLOAD_KEYS
     if unknown:
         errors.append(PeerError("payload", "unknown_keys", f"unknown payload keys: {sorted(unknown)}"))
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip():
-        errors.append(PeerError("text", "empty_text", "text is required"))
+        errors.append(PeerError("text", "empty_text", ui_message_text("text is required", 'backend.peer_messages.text_required')))
     entries, entries_error = _raw_entries(payload)
     if entries_error is not None:
         errors.append(entries_error)
@@ -559,7 +560,7 @@ def prepare_inbound_payload(payload) -> tuple[InboundPayload | None, list[PeerEr
         try:
             base64.b64decode(entry["data"], validate=True)
         except (binascii.Error, ValueError):
-            return None, [PeerError("attachments", "invalid_entry", "attachment data is not valid base64")]
+            return None, [PeerError("attachments", "invalid_entry", ui_message_text("attachment data is not valid base64", 'backend.peer_messages.attachment_base64'))]
 
     max_bytes = name_max_bytes()
     clean_entries = [
@@ -604,7 +605,7 @@ def _encode_staged_attachments(refs) -> tuple[list[dict], list[dict]]:
         try:
             data = content_location(entry).read_bytes()
         except OSError as exc:
-            raise AttachmentError(ERROR_MISSING, "Attachment not found") from exc
+            raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.peer_messages.attachment_missing')) from exc
         media_type = mimetypes.guess_type(entry.filename)[0] or inline.OCTET_STREAM
         wire.append({"name": entry.filename, "media_type": media_type,
                      "data": base64.b64encode(data).decode("ascii")})
@@ -613,10 +614,13 @@ def _encode_staged_attachments(refs) -> tuple[list[dict], list[dict]]:
 
 
 _REJECTED_WITH_ATTACHMENTS = (
-    "The remote instance rejected the message. It may be too old to receive attachments."
+    ui_message_text("The remote instance rejected the message. It may be too old to receive attachments.", 'backend.peer_messages.rejected_attachments')
 )
-_TOO_LARGE = "The remote instance, or a proxy in front of it, refused the message size."
-_TOO_LARGE_WITH_ATTACHMENTS = _TOO_LARGE + " An older instance also refuses any attachment."
+_TOO_LARGE = ui_message_text("The remote instance, or a proxy in front of it, refused the message size.", 'backend.peer_messages.too_large')
+_TOO_LARGE_WITH_ATTACHMENTS = ui_message_text(
+    _TOO_LARGE + " An older instance also refuses any attachment.",
+    "backend.peer_messages.too_large_attachments",
+)
 
 
 def _rejection_text(http_status: int | None, response_body: dict, *, has_attachments: bool) -> str:
@@ -630,7 +634,7 @@ def _rejection_text(http_status: int | None, response_body: dict, *, has_attachm
         return _TOO_LARGE_WITH_ATTACHMENTS if has_attachments else _TOO_LARGE
     if http_status == 400 and has_attachments:
         return _REJECTED_WITH_ATTACHMENTS
-    return outbound.response_error_message(response_body, "The remote instance rejected the message.")
+    return outbound.response_error_message(response_body, ui_message_text("The remote instance rejected the message.", 'backend.peer_messages.rejected'))
 
 
 # ── Send (outbound) ─────────────────────────────────────────────────────────
@@ -675,18 +679,18 @@ async def send_peer_message_from_payload(
         not isinstance(requested_id, str) or PEER_MESSAGE_ID_PATTERN.fullmatch(requested_id) is None
     ):
         errors.append(PeerError(
-            "message_id", ERROR_INVALID_MESSAGE_ID, "message_id must be a valid peer message id",
+            "message_id", ERROR_INVALID_MESSAGE_ID, ui_message_text("message_id must be a valid peer message id", 'backend.peer_messages.message_id_invalid'),
         ))
     if not peer_ref:
-        errors.append(PeerError("peer", "missing", "peer is required"))
+        errors.append(PeerError("peer", "missing", ui_message_text("peer is required", 'backend.peer_messages.peer_required')))
     if title_error is not None:
         errors.append(title_error)
     if reply_to_error is not None:
         errors.append(reply_to_error)
     if not text:
-        errors.append(PeerError("text", "empty_text", "text is required"))
+        errors.append(PeerError("text", "empty_text", ui_message_text("text is required", 'backend.peer_messages.text_required')))
     if project_id and not await sync_to_async(lambda: Project.objects.filter(id=project_id).exists())():
-        errors.append(PeerError("project_id", "project_not_found", "Project not found."))
+        errors.append(PeerError("project_id", "project_not_found", ui_message_text("Project not found.", 'backend.peer_messages.project_not_found')))
     if errors:
         return PeerSendResult(False, None, None, errors, {})
 
@@ -699,7 +703,7 @@ async def send_peer_message_from_payload(
     peer = await sync_to_async(_resolve_peer)()
     if peer is None:
         return PeerSendResult(False, None, None, [PeerError(
-            "peer", "not_found", f"No peer matches {peer_ref!r} (by id or exact name).",
+            "peer", "not_found", ui_message_text(f"No peer matches {peer_ref!r} (by id or exact name).", 'backend.peer_messages.peer_not_found', {"peer": repr(peer_ref)}),
         )], {})
     if peer_error := _peer_send_error(peer):
         return PeerSendResult(False, None, peer.id, [peer_error], {})
@@ -710,7 +714,7 @@ async def send_peer_message_from_payload(
     if reply_to and reply_to_message is None:
         return PeerSendResult(False, None, peer.id, [PeerError(
             "reply_to", "unknown_reply_to",
-            "No message with this id exists for the selected peer.",
+            ui_message_text("No message with this id exists for the selected peer.", 'backend.peer_messages.reply_unknown'),
         )], {})
 
     message_id = requested_id or mint_message_id()
@@ -757,8 +761,8 @@ async def send_peer_message_from_payload(
     if len(body) > inline.INLINE_MAX_REQUEST_BYTES:
         return PeerSendResult(False, None, peer.id, [PeerError(
             "payload", ERROR_MESSAGE_TOO_LARGE,
-            f"The message (text and attachments) is {inline.format_mb(len(body))} once encoded; "
-            f"the limit is {inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}. {inline.PEER_TOO_LARGE_HINT}",
+            ui_message_text(f"The message (text and attachments) is {inline.format_mb(len(body))} once encoded; "
+            f"the limit is {inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}. {inline.PEER_TOO_LARGE_HINT}", 'backend.peer_messages.encoded_too_large', {"size": inline.format_mb(len(body)), "limit": inline.format_mb(inline.INLINE_MAX_REQUEST_BYTES)}),
         )], {})
 
     message = PeerMessage(
@@ -780,13 +784,13 @@ async def send_peer_message_from_payload(
     def _store_outbound():
         fresh_peer = Peer.objects.filter(pk=peer.pk).first()
         if fresh_peer is None:
-            return None, PeerError("peer", "not_found", "Peer no longer exists.")
+            return None, PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peer_messages.peer_missing'))
         if peer_error := _peer_send_error(fresh_peer):
             return fresh_peer, peer_error
         # Defensive: a reused id ends here, never with an IntegrityError.
         if PeerMessage.objects.filter(peer=fresh_peer, message_id=message_id).exists():
             return fresh_peer, PeerError(
-                "message_id", ERROR_INVALID_MESSAGE_ID, "This message id is already used for this peer.",
+                "message_id", ERROR_INVALID_MESSAGE_ID, ui_message_text("This message id is already used for this peer.", 'backend.peer_messages.message_id_used'),
             )
         message.peer = fresh_peer
         message.save(force_insert=True)
@@ -836,8 +840,9 @@ async def send_peer_message_from_payload(
         def _fail_broken():
             message.status = PeerMessageStatus.FAILED
             message.error = "peer_rejected_token"
+            message.error_ui_message = ui_message("backend.peer_messages.peer_rejected_token")
             message.resolved_at = now
-            message.save(update_fields=["status", "error", "resolved_at"])
+            message.save(update_fields=["status", "error", "error_ui_message", "resolved_at"])
             fresh_peer = Peer.objects.filter(pk=peer.pk).first()
             if fresh_peer is not None and _same_credentials(fresh_peer):
                 mark_peer_broken(fresh_peer)
@@ -852,8 +857,8 @@ async def send_peer_message_from_payload(
         await broadcast_peer_message_updated(message)
         return PeerSendResult(False, message_id, peer.id, [PeerError(
             "peer", "peer_broken",
-            "This peer no longer accepts messages (revoked or unreachable). "
-            "Ask your user to check the relationship in Settings › Peers.",
+            ui_message_text("This peer no longer accepts messages (revoked or unreachable). "
+            "Ask your user to check the relationship in Settings › Peers.", 'backend.peer_messages.peer_rejected_token'),
         )], {})
 
     error_detail = detail or _rejection_text(http_status, response_body, has_attachments=bool(attachments))
@@ -862,14 +867,15 @@ async def send_peer_message_from_payload(
     def _fail():
         message.status = PeerMessageStatus.FAILED
         message.error = error_detail[:255]
+        message.error_ui_message = getattr(error_detail, "ui_message", None)
         message.resolved_at = now
-        message.save(update_fields=["status", "error", "resolved_at"])
+        message.save(update_fields=["status", "error", "error_ui_message", "resolved_at"])
 
     await run_under_db_write_lock(lambda: sync_to_async(_fail)())
     await broadcast_peer_message_updated(message)
     return PeerSendResult(False, message_id, peer.id, [PeerError(
         "peer", error_code, (
-            f"The message could not be delivered to the peer ({error_detail})."
+            ui_message_text(f"The message could not be delivered to the peer ({error_detail}).", 'backend.peer_messages.delivery_failed', {"detail": str(error_detail)})
             if http_status is None else error_detail
         ),
     )], {})
@@ -1213,12 +1219,12 @@ def _delivery_guards(message, *, allow_redeliver: bool = False) -> list[PeerErro
 
     errors: list[PeerError] = []
     if message.direction != PeerMessageDirection.IN:
-        errors.append(PeerError("message", "bad_state", "This message is not an inbound message."))
+        errors.append(PeerError("message", "bad_state", ui_message_text("This message is not an inbound message.", 'backend.peer_messages.not_inbound')))
     elif message.status == PeerMessageStatus.PENDING:
         if message.purged_at is not None:
-            errors.append(PeerError("message", "purged", "This message's attachments were purged."))
+            errors.append(PeerError("message", "purged", ui_message_text("This message's attachments were purged.", 'backend.peer_messages.attachments_purged')))
     elif message.status == PeerMessageStatus.DELIVERED and not allow_redeliver:
-        errors.append(PeerError("message", "bad_state", "This message was already delivered."))
+        errors.append(PeerError("message", "bad_state", ui_message_text("This message was already delivered.", 'backend.peer_messages.already_delivered')))
     return errors
 
 
@@ -1232,9 +1238,12 @@ def _resolution_guards(message, target) -> list[PeerError]:
     from twicc.core.models import PeerMessageDirection
 
     if message.direction != PeerMessageDirection.IN:
-        return [PeerError("message", "bad_state", "This message is not an inbound message.")]
+        return [PeerError("message", "bad_state", ui_message_text("This message is not an inbound message.", 'backend.peer_messages.not_inbound'))]
     if message.status == target:
-        return [PeerError("message", "bad_state", f"This message is already {target}.")]
+        return [PeerError("message", "bad_state", ui_message_text(
+            f"This message is already {target}.",
+            "backend.peer_messages.already_done" if target == "done" else "backend.peer_messages.already_refused",
+        ))]
     return []
 
 
@@ -1335,7 +1344,7 @@ async def mark_delivered(
     async with _resolution_lock(message.pk):
         message = await _fresh_message(message.pk)
         if message is None:
-            return False, None, [PeerError("message", "not_found", "Message no longer exists.")]
+            return False, None, [PeerError("message", "not_found", ui_message_text("Message no longer exists.", 'backend.peer_messages.message_missing'))]
         guards = _delivery_guards(message, allow_redeliver=redeliver)
         if guards:
             return False, None, guards
@@ -1347,7 +1356,7 @@ async def mark_delivered(
                 ).exists()
             )()
             if not exists:
-                return False, None, [PeerError("session_id", "session_not_found", "Target session not found.")]
+                return False, None, [PeerError("session_id", "session_not_found", ui_message_text("Target session not found.", 'backend.peer_messages.target_session_missing'))]
             # The UI prefills that session's composer: refused when nothing may write to it.
             unavailable = await aunavailable_reason_by_id(session_id)
             if unavailable is not None:
@@ -1382,9 +1391,9 @@ async def link_delivered_session(message, session_id: str) -> tuple[bool, list[P
     async with _resolution_lock(message.pk):
         message = await _fresh_message(message.pk)
         if message is None:
-            return False, [PeerError("message", "not_found", "Message no longer exists.")]
+            return False, [PeerError("message", "not_found", ui_message_text("Message no longer exists.", 'backend.peer_messages.message_missing'))]
         if message.direction != PeerMessageDirection.IN or message.status != PeerMessageStatus.DELIVERED:
-            return False, [PeerError("message", "bad_state", "This message is not a delivered inbound message.")]
+            return False, [PeerError("message", "bad_state", ui_message_text("This message is not a delivered inbound message.", 'backend.peer_messages.not_delivered_inbound'))]
         if message.delivered_to_session_id:
             # Already routed somewhere (a redelivery happened first): that
             # target is the current truth, this late link is stale.
@@ -1396,7 +1405,7 @@ async def link_delivered_session(message, session_id: str) -> tuple[bool, list[P
             ).exists()
         )()
         if not exists:
-            return False, [PeerError("session_id", "session_not_found", "Target session not found.")]
+            return False, [PeerError("session_id", "session_not_found", ui_message_text("Target session not found.", 'backend.peer_messages.target_session_missing'))]
 
         def _apply():
             message.delivered_to_session_id = session_id
@@ -1416,7 +1425,7 @@ async def _resolve_without_agent(message, target) -> tuple[bool, list[PeerError]
     async with _resolution_lock(message.pk):
         message = await _fresh_message(message.pk)
         if message is None:
-            return False, [PeerError("message", "not_found", "Message no longer exists.")]
+            return False, [PeerError("message", "not_found", ui_message_text("Message no longer exists.", 'backend.peer_messages.message_missing'))]
         guards = _resolution_guards(message, target)
         if guards:
             return False, guards

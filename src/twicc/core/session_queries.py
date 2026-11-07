@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+import orjson
+
 from django.db.models import Count, Max, Min, Q
 
 from twicc.core.content_storage.readers import load_current
@@ -30,6 +32,38 @@ TOOL_STATE_ANNOTATIONS = {
     "extra": Max("extra"),
     "error": Max("error"),
 }
+
+
+def _correlated_error_extra(extra: str | None, error_extra: str | None) -> str | None:
+    """Keep the existing richest extra, with provenance from the selected error's row only."""
+    try:
+        data = orjson.loads(extra) if extra else {}
+    except orjson.JSONDecodeError:
+        return extra
+    if not isinstance(data, dict):
+        return extra
+    try:
+        selected = orjson.loads(error_extra) if error_extra else {}
+    except orjson.JSONDecodeError:
+        selected = {}
+    metadata = selected.get("error_ui_message") if isinstance(selected, dict) else None
+    if metadata == data.get("error_ui_message"):
+        return extra
+    data.pop("error_ui_message", None)
+    if metadata is not None:
+        data["error_ui_message"] = metadata
+    return orjson.dumps(data).decode() if data else None
+
+
+def aggregate_tool_state(links_qs) -> dict:
+    """Aggregate one live call, keeping error text and its provenance on the same source row."""
+    aggregated = links_qs.aggregate(**TOOL_STATE_ANNOTATIONS)
+    selected = None
+    if aggregated["error"] is not None:
+        selected = (links_qs.filter(error=aggregated["error"]).order_by("id")
+                    .values_list("extra", flat=True).first())
+    aggregated["extra"] = _correlated_error_extra(aggregated["extra"], selected)
+    return aggregated
 
 
 def parse_line_ranges(raw_ranges) -> Q | None:
@@ -76,16 +110,25 @@ def aggregate_tool_states(links_qs) -> dict:
     """
     aggregated = links_qs.values("tool_use_id").annotate(**TOOL_STATE_ANNOTATIONS)
     line_nums_by_tool: dict[str, list[int]] = {}
-    for tool_use_id, line_num in (
-        links_qs.order_by("tool_result_line_num").values_list("tool_use_id", "tool_result_line_num")
+    selected_errors: dict[str, tuple[str, int, str | None]] = {}
+    for tool_use_id, line_num, error, extra, row_id in (
+        links_qs.order_by("tool_result_line_num", "id").values_list(
+            "tool_use_id", "tool_result_line_num", "error", "extra", "id",
+        )
     ):
         line_nums_by_tool.setdefault(tool_use_id, []).append(line_num)
+        selected = selected_errors.get(tool_use_id)
+        if error is not None and (selected is None or error > selected[0]
+                                  or (error == selected[0] and row_id < selected[1])):
+            selected_errors[tool_use_id] = (error, row_id, extra)
     return {
         entry["tool_use_id"]: {
             "result_count": entry["result_count"],
             "completed_at": entry["completed_at"].isoformat() if entry["completed_at"] else None,
             "error": entry["error"],
-            "extra": entry["extra"],
+            "extra": _correlated_error_extra(
+                entry["extra"], selected_errors.get(entry["tool_use_id"], (None, None, None))[2],
+            ),
             "tool_result_line_nums": line_nums_by_tool.get(entry["tool_use_id"], []),
         }
         for entry in aggregated

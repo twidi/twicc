@@ -28,6 +28,7 @@ from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from twicc.tts.openrouter import fetch_speech_models
 from twicc.tts.service import SPEECH_FAILED, SpeechError, open_speech
 from twicc.tts.streams import AudioStream, ending_of, get_stream, release_stream
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -41,18 +42,19 @@ RANGE_ANSWER = "full"
 # The largest slice of audio that a read yields at once.
 READ_SLICE = 64 * 1024
 
-AUDIO_GONE = "The audio is no longer available"
-AUDIO_CUT = "The audio stopped before the end"
+AUDIO_GONE = ui_message_text("The audio is no longer available", 'backend.tts.audioGone')
+AUDIO_CUT = ui_message_text("The audio stopped before the end", 'backend.tts.audioCut')
 
 _RANGE_PATTERN = re.compile(r"bytes=(\d+)-(\d*)")
 
 
 def _error(message: str, status: int, **extra) -> JsonResponse:
-    return JsonResponse({"error": message, **extra}, status=status)
+    metadata = getattr(message, "ui_message", None)
+    return JsonResponse({"error": message, **({"ui_message": metadata} if metadata else {}), **extra}, status=status)
 
 
 def _method_not_allowed(allowed: str) -> JsonResponse:
-    response = _error("Method not allowed", 405)
+    response = _error(ui_message_text("Method not allowed", 'backend.common.methodNotAllowed'), 405)
     response["Allow"] = allowed
     return response
 
@@ -83,15 +85,15 @@ async def tts_speech(request):
         try:
             body = request.body
         except RequestDataTooBig:
-            return _error("The text is too long to send", 413)
+            return _error(ui_message_text("The text is too long to send", 'backend.tts.textTooLong'), 413)
         try:
             data = orjson.loads(body)
         except orjson.JSONDecodeError:
-            return _error("Invalid JSON", 400)
+            return _error(ui_message_text("Invalid JSON", 'backend.common.invalidJson'), 400)
         opened = await open_speech(data)
         return JsonResponse({"audio_id": opened.audio_id, "content_type": opened.content_type})
     except SpeechError as error:
-        return _error(error.message, error.status, **error.extra)
+        return _error(error.message, error.status, **({"ui_message": error.ui_message} if error.ui_message else {}), **error.extra)
     except Exception:
         logger.exception("TTS speech request failed")
         return _error(SPEECH_FAILED, 500)

@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 const { t, locale } = useI18n()
@@ -1014,7 +1015,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         const data = await res.json()
 
         if (!res.ok) {
-            error.value = data.error || localUiMessage('files.errors.load')
+            error.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.load'))
             tooLarge.value = !!data.too_large
             currentContent.value = ''
             return
@@ -1030,7 +1031,7 @@ async function fetchFileContent(filePath, { isSwitch = false } = {}) {
         }
 
         if (data.error) {
-            error.value = data.error
+            error.value = remoteUiMessage(data)
             tooLarge.value = !!data.too_large
             currentContent.value = ''
             return
@@ -1279,7 +1280,7 @@ async function save() {
         const data = await res.json()
 
         if (!res.ok || data.error) {
-            saveError.value = data.error || localUiMessage('files.errors.save')
+            saveError.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.save'))
             return
         }
 

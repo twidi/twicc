@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -198,7 +199,9 @@ async function handleSave() {
             createdUrl.value = shareAbsoluteUrl(share)
         }
     } catch (e) {
-        error.value = (e?.errors?.[0]?.message) || e?.reason || e?.error || localUiMessage('sharing.edit.saveFailed')
+        const first = e?.errors?.[0]
+        error.value = first?.errorMessage || (first ? remoteUiMessage(first, first.message) : null)
+            || e?.errorMessage || remoteUiMessage(e, e?.reason || e?.error || localUiMessage('sharing.edit.saveFailed'))
     }
 }
 

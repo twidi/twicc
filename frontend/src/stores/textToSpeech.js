@@ -1,3 +1,4 @@
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { i18n } from '../i18n/index.js'
 import { defineStore } from 'pinia'
 import { generateUUID } from '../utils/crypto.js'
@@ -104,7 +105,7 @@ function isAbortError(error) {
 async function speechErrorOf(response) {
     try {
         const data = await response.json()
-        if (typeof data?.error === 'string' && data.error) return { error: data.error, summaryChanged: data.summary_changed === true }
+        if (typeof data?.error === 'string' && data.error) return { error: remoteUiMessage(data, data.error), summaryChanged: data.summary_changed === true }
     } catch {
         // Not a JSON body: fall back to the status.
     }
@@ -117,7 +118,7 @@ async function readEnding(store, audioId) {
         const response = await store._fetchEnding(audioId, AbortSignal.timeout(ENDING_TIMEOUT_MS))
         if (!response.ok) return null
         const data = await response.json()
-        return BACKEND_STATES.has(data?.state) ? { state: data.state, error: data.error ?? null } : null
+        return BACKEND_STATES.has(data?.state) ? { state: data.state, error: remoteUiMessage(data, data.error ?? null) } : null
     } catch {
         return null
     }

@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
@@ -58,7 +59,7 @@ async function handleDelete() {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || localUiMessage('files.errors.deleteHttp', { status: response.status })
+        errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.deleteHttp', { status: response.status }))
         isDeleting.value = false
         return
     }

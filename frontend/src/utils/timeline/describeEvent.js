@@ -157,7 +157,7 @@ function describeProcessEnded(event, data, context) {
         const bound = formatClock(parseOccurredAt(data.upper_bound), context.time)
         if (bound) tooltip.push(i18n.global.t('session.timeline.detectedBoot', { time: bound }))
     }
-    const error = event.reason === 'error' ? asString(data.error) : null
+    const error = event.reason === 'error' ? asString(resolveUiMessage(remoteUiMessage(data, data.error))) : null
     return {
         icon: 'power-off', severity, parts: [text(label)], tags: [cause], tooltip,
         detail: error ? splitFirstLine(error) : null,
@@ -390,3 +390,5 @@ export function describeEvent(event, context) {
         tooltip: lines.join('\n'),
     }
 }
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'

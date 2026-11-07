@@ -6,6 +6,7 @@ import orjson
 from django.http import JsonResponse
 from twicc.android_push import storage
 from twicc.android_push.validation import subscription
+from twicc.core.ui_messages import ui_error
 
 
 def response(value: dict, status=200):
@@ -27,7 +28,7 @@ def enrollment(request):
     if request.method == "GET":
         return response(storage.configuration())
     if request.method != "POST":
-        return response({"error": "Method not allowed"}, 405)
+        return response(ui_error("Method not allowed", 'backend.common.methodNotAllowed'), 405)
     try:
         value = body(request)
         name = value["name"]
@@ -40,7 +41,7 @@ def enrollment(request):
             raise ValueError("Invalid preferences")
         token = storage.enroll(value["device_id"], name.strip(), preferences, value["enabled"])
     except (ValueError, TypeError, KeyError, AttributeError):
-        return response({"error": "Invalid Android notification registration."}, 400)
+        return response(ui_error("Invalid Android notification registration.", 'backend.androidPush.invalidRegistration'), 400)
     return response({**storage.configuration(), "token": token})
 
 
@@ -48,7 +49,7 @@ def native_registration(request):
     # /api/auth/ is reachable without a login cookie. This capability only
     # changes/removes its own device subscription; it grants no TwiCC data access.
     if request.method not in ("PUT", "DELETE"):
-        return response({"error": "Method not allowed"}, 405)
+        return response(ui_error("Method not allowed", 'backend.common.methodNotAllowed'), 405)
     try:
         value = body(request)
         authorization = request.headers.get("Authorization", "")
@@ -56,7 +57,7 @@ def native_registration(request):
         with storage.lock:
             device = storage.grant_device(value["device_id"], token)
             if device is None:
-                return response({"error": "Sign in to renew Android notifications."}, 401)
+                return response(ui_error("Sign in to renew Android notifications.", 'backend.androidPush.renewSignIn'), 401)
             if request.method == "DELETE":
                 storage.device_path(value["device_id"]).unlink(missing_ok=True)
             else:
@@ -76,5 +77,5 @@ def native_registration(request):
                     device["preferences"] = choices
                 storage.save_device(device)
     except (ValueError, TypeError, KeyError, AttributeError):
-        return response({"error": "Invalid Android notification registration."}, 400)
+        return response(ui_error("Invalid Android notification registration.", 'backend.androidPush.invalidRegistration'), 400)
     return response({"ok": True})

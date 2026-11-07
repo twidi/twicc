@@ -21,6 +21,7 @@ import stat
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_error
 import orjson
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils.http import content_disposition_header
@@ -35,8 +36,8 @@ logger = logging.getLogger(__name__)
 STREAM_CHUNK_SIZE = 64 * 1024
 
 
-def _error(message: str, status: int) -> JsonResponse:
-    return JsonResponse({"error": message}, status=status)
+def _error(message: str, status: int, key: str) -> JsonResponse:
+    return JsonResponse(ui_error(message, key), status=status)
 
 
 def _json_view(*methods: str):
@@ -46,7 +47,7 @@ def _json_view(*methods: str):
         @functools.wraps(view)
         async def wrapper(request, *args, **kwargs):
             if request.method not in methods:
-                response = _error("Method not allowed", 405)
+                response = _error("Method not allowed", 405, 'backend.attachments.method_not_allowed')
                 response["Allow"] = ", ".join(methods)
                 return response
             try:
@@ -54,7 +55,7 @@ def _json_view(*methods: str):
             except Exception as exc:
                 if not locks.was_logged(exc):
                     logger.exception("Composer attachments view %s failed", view.__name__)
-                return _error("Internal server error", 500)
+                return _error("Internal server error", 500, 'backend.attachments.internal_error')
 
         return wrapper
 
@@ -170,7 +171,7 @@ def _prepare_content(ref: AttachmentRef) -> tuple[io.RawIOBase, int, str, bool, 
 async def _content(ref: AttachmentRef) -> HttpResponse:
     prepared = await asyncio.to_thread(_prepare_content, ref)
     if prepared is None:
-        return _error("Attachment not found", 404)
+        return _error("Attachment not found", 404, 'backend.attachments.not_found')
     file, size, media_type, inline, name = prepared
     response = StreamingHttpResponse(FileStream(file, size), content_type=media_type)
     response["Content-Length"] = str(size)
@@ -185,7 +186,7 @@ async def attachment_content(request, bucket: str, attachment_id: str):
     """``GET <bucket>/<id>/content``: the entry's staged file, or its promoted file."""
     ref = _path_ref(bucket, attachment_id)
     if ref is None:
-        return _error("Invalid attachment reference", 400)
+        return _error("Invalid attachment reference", 400, 'backend.attachments.invalid_ref')
     return await _content(ref)
 
 
@@ -197,14 +198,14 @@ async def attachment_detail(request, bucket: str, attachment_id: str):
     """``DELETE <bucket>/<id>/``: release one entry; ``204`` even when it is absent."""
     ref = _path_ref(bucket, attachment_id)
     if ref is None:
-        return _error("Invalid attachment reference", 400)
+        return _error("Invalid attachment reference", 400, 'backend.attachments.invalid_ref')
     try:
         # Guarded: a client disconnect never interrupts a release half-way.
         await locks.run_guarded(lifecycle.release_refs((ref,)), label=f"release({bucket}/{attachment_id})")
     except lifecycle.SettleError:
-        return _error("Cannot cancel the upload of this attachment", 500)
+        return _error("Cannot cancel the upload of this attachment", 500, 'backend.attachments.cancel_failed')
     except OSError:
-        return _error("Cannot remove the attachment", 500)
+        return _error("Cannot remove the attachment", 500, 'backend.attachments.remove_failed')
     return HttpResponse(status=204)
 
 
@@ -217,7 +218,7 @@ async def attachments_status(request):
     body = _parse_body(request)
     refs = _parse_refs(body.get("refs")) if body is not None else None
     if refs is None:
-        return _error("Expected {refs: [{bucket, id}]}", 400)
+        return _error("Expected {refs: [{bucket, id}]}", 400, 'backend.attachments.refs_expected')
     statuses = await asyncio.to_thread(lifecycle.status_refs, refs)
     return JsonResponse({"statuses": statuses})
 
@@ -228,6 +229,6 @@ async def attachments_touch(request):
     body = _parse_body(request)
     refs = _parse_refs(body.get("refs")) if body is not None else None
     if refs is None or body.get("holder") not in lifecycle.HOLDERS:
-        return _error("Expected {refs: [{bucket, id}], holder: 'draft' | 'snapshot'}", 400)
+        return _error("Expected {refs: [{bucket, id}], holder: 'draft' | 'snapshot'}", 400, 'backend.attachments.touch_expected')
     await asyncio.to_thread(lifecycle.touch_refs, refs, holder=body["holder"])
     return HttpResponse(status=204)

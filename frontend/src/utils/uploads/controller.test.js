@@ -7,6 +7,8 @@ import assert from 'node:assert/strict'
 import { createUploadsController, PROBE_AFTER_MS, TOAST_DURATION_MS } from './controller.js'
 import { fingerprintFile } from './ids.js'
 import { RETRY_DELAYS } from './transport.js'
+import { i18n } from '../../i18n/index.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 
 const TAB = 'tab-1'
 const ORIGIN = { panel: 'files', key: 'session:s1' }
@@ -262,7 +264,7 @@ test('a file that cannot be read: error toast, no entry', async () => {
     await h.controller.startUploads({ files: [broken], targetDir: '/p', apiPrefix: '/api', origin: ORIGIN })
     assert.equal(h.list().length, 0)
     assert.equal(h.errorToasts().length, 1)
-    assert.match(h.errorToasts()[0].title, /bad\.bin/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].title), /bad\.bin/)
 })
 
 test('pump: at most 3 entries hold a slot; the slot count is derived', async () => {
@@ -391,7 +393,7 @@ test('a 500 with X-Twicc-Upload after the retries → error pause; without it �
     assert.equal(entry.localState, 'paused')
     assert.equal(entry.pauseReason, 'error')
     assert.equal(h.errorToasts().length, 1)
-    assert.match(h.errorToasts()[0].message, /retry it from the Files tab/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].message), /retry it from the Files tab/)
 
     const h2 = createHarness()
     h2.server.POST = () => respond(500, null, { upload: false })
@@ -582,7 +584,7 @@ test('onError 507 → error pause with the disk-space reason; the File stays', a
     assert.equal(entry.localState, 'paused')
     assert.equal(entry.pauseReason, 'error')
     assert.equal(entry.local, true)
-    assert.match(h.errorToasts()[0].message, /disk space/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].message), /disk space/)
 })
 
 test('onError with start() failing (no originalRequest) → error pause', async () => {
@@ -639,7 +641,7 @@ test('a retryable status while the record is active with error → error pause w
     h.lastUpload().options.onError(tusError(500, { upload: true }))
     await flush()
     assert.equal(entry.pauseReason, 'error')
-    assert.match(h.errorToasts()[0].message, /copy failed/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].message), /copy failed/)
 })
 
 test('a callback of a replaced tus.Upload does nothing', async () => {
@@ -814,7 +816,7 @@ test('rule 7: active with error → error pause; short offset after finalizing �
     h.controller.applyServerRecord(next(entry.server, { state: 'active', offset: 5, error: 'disk full' }), { fromWs: true })
     assert.equal(entry.localState, 'paused')
     assert.equal(entry.pauseReason, 'error')
-    assert.match(h.errorToasts()[0].message, /disk full/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].message), /disk full/)
 })
 
 test('rule 0: a WebSocket record ignored by rules 1–4 still restarts; a GET item does not', async () => {
@@ -1509,8 +1511,38 @@ test('composer: a paused transfer toast names the message composer', async () =>
     h.lastUpload().options.onError(tusError(507, { upload: true }))
     await flush()
     assert.equal(h.errorToasts().length, 1)
-    assert.match(h.errorToasts()[0].message, /from the message composer\.$/)
-    assert.doesNotMatch(h.errorToasts()[0].message, /tab/)
+    assert.match(resolveUiMessage(h.errorToasts()[0].message), /from the message composer\.$/)
+    assert.doesNotMatch(resolveUiMessage(h.errorToasts()[0].message), /tab/)
+})
+
+test('cached upload retry toast keeps backend message, location and filename reactive to locale changes', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    i18n.global.locale.value = 'en'
+    const h = createHarness()
+    await h.controller.startUploads({ files: [new File(['hello'], 'user-file.txt')], origin: COMPOSER })
+    await flush()
+    h.lastUpload().options.onError(tusError(500, { upload: true, body: JSON.stringify({
+        error: 'Cannot read file', ui_message: { key: 'backend.file_content.read_failed', params: {} },
+    }) }))
+    await flush()
+    const [toast] = h.errorToasts()
+    assert.ok(toast)
+    const message = toast.message
+    assert.equal(message.params.message.key, 'backend.file_content.read_failed')
+    assert.equal(message.params.location.key, 'files.upload.location.composer')
+    const expected = () => i18n.global.t('files.upload.retryFrom', {
+        message: i18n.global.t('backend.file_content.read_failed'),
+        location: i18n.global.t('files.upload.location.composer'),
+    })
+    const english = resolveUiMessage(message)
+    assert.equal(english, expected())
+    assert.equal(resolveUiMessage(toast.title), i18n.global.t('files.upload.failedTitle', { filename: 'user-file.txt' }))
+    i18n.global.locale.value = 'pt-BR'
+    assert.equal(resolveUiMessage(message), expected())
+    assert.notEqual(resolveUiMessage(message), english)
+    assert.equal(resolveUiMessage(toast.title), i18n.global.t('files.upload.failedTitle', { filename: 'user-file.txt' }))
+    assert.equal(toast.message, message)
 })
 
 test('controller Retry of a paused composer transfer keeps the same client_id and upload', async () => {

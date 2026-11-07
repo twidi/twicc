@@ -93,10 +93,11 @@ const alternativeTitleModels = computed(() =>
 const suggestionErrorMessage = computed(() => {
     if (suggestionSendFailed.value) return t('session.rename.errors.serverUnavailable')
     const error = suggestionEntry.value?.error
+    if (error === 'no_prompt') return null
     if (error === 'no_provider_available') return t('session.rename.errors.noProvider')
     if (error === 'generation_failed') return t('session.rename.errors.generationFailed')
     if (error === 'session_unavailable') return t('session.rename.errors.historyUnavailable')
-    return null
+    return error ? resolveUiMessage(error) : null
 })
 
 /**
@@ -333,7 +334,7 @@ async function handleSave() {
         emit('saved')
         close()
     } catch (error) {
-        errorMessage.value = error.message || localUiMessage('session.rename.errors.saveFailed')
+        errorMessage.value = error.uiMessage || error.message || localUiMessage('session.rename.errors.saveFailed')
     } finally {
         isSaving.value = false
     }

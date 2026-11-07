@@ -249,6 +249,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             session.ephemeralPhase = frame.status
             session.ephemeralResult = {
                 text: frame.text || '', error: frame.error || null,
+                ...(frame.error_ui_message ? { error_ui_message: frame.error_ui_message } : {}),
                 ...(frame.error_key ? { error_key: frame.error_key } : {}),
                 cost_usd: frame.cost_usd ?? null, duration_ms: frame.duration_ms ?? null,
                 finished_at: frame.finished_at || new Date().toISOString(),
@@ -264,6 +265,7 @@ export function createEphemeralActions({ saveControl, deleteControl, deleteSessi
             if (!isLaunchedEphemeral(session) || session.ephemeralPhase !== 'running') return
             this.receiveEphemeralResult({
                 session_id: id, status: 'error', error: frame.error || null,
+                ...(frame.ui_message ? { error_ui_message: frame.ui_message } : {}),
                 ...(!frame.error ? { error_key: 'session.ephemeral.startFailed' } : {}),
             })
         },

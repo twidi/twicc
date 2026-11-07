@@ -98,23 +98,23 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             if (playback.started) mapOf("ok" to true) else outcome + details, outcome + details,
             playback.automatic, playback.readingId, playback.generation))
     }
-    private fun cancel(sendSkip: Boolean = false, failure: String? = null) {
+    private fun cancel(sendSkip: Boolean = false, failure: String? = null, failureDetails: TtsFrame = emptyMap()) {
         val old = playback
         if (old.readingId != null) {
             if (sendSkip) queue("skip", readingFields(old))
             effects += TtsEffect.Cancel(old.readingId, old.generation)
             resource?.let { effects += TtsEffect.Release(it) }; resource = null
-            finish(false, failure, aborted = failure == null)
+            finish(false, failure, aborted = failure == null, details = failureDetails)
         }
         playback = NativePlayback(generation = generation)
     }
     private fun errorOwner(value: NativePlayback): TtsFrame = if (value.readingId == null) emptyMap() else
         mapOf("automatic" to value.automatic, "operation_id" to value.operationId, "reading_id" to value.readingId, "generation" to value.generation)
-    private fun terminate(code: String, message: String) {
+    private fun terminate(code: String, message: String, details: TtsFrame = emptyMap()) {
         val failedOwner = errorOwner(playback)
-        cancel(failure = message); listening = null; pendingCount = 0; ready = false; active = false
+        cancel(failure = message, failureDetails = details); listening = null; pendingCount = 0; ready = false; active = false
         retained.clear(); deferred.clear(); sessionId = null; secret = null; connectionId = null; serverRevision = -1
-        stopSeq = null; stopEpoch = null; status = "error"; error = mapOf("code" to code, "message" to message) + failedOwner
+        stopSeq = null; stopEpoch = null; status = "error"; error = mapOf("code" to code, "message" to message) + details + failedOwner
         effects += TtsEffect.CloseConnection; effects += TtsEffect.StopService
     }
     private fun reserve(operationId: String?, identity: TtsFrame?, source: String?, text: String, configId: String?, automatic: Boolean) {
@@ -289,7 +289,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                     }
                     PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.")
                     is PlayerSignal.Ended -> {
-                        finish(signal.ok, signal.error)
+                        finish(signal.ok, signal.error, details = signal.uiMessage?.let { mapOf("ui_message" to it) } ?: emptyMap())
                         queue("finished", readingFields() + mapOf("outcome" to if (signal.ok) "complete" else "failed", "error" to signal.error))
                         resource?.let { effects += TtsEffect.Release(it) }; resource = null
                         playback = NativePlayback(generation = generation)
@@ -327,15 +327,16 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         if (obsoleteListeningError(f)) return
         val code = f["code"] as? String ?: "failed"
         val message = f["message"] as? String ?: "Speech failed"
-        if (code in setOf("unauthorized", "session_lost")) terminate(code, message)
+        val presentation = f["ui_message"]?.let { mapOf("ui_message" to it) } ?: emptyMap()
+        if (code in setOf("unauthorized", "session_lost")) terminate(code, message, presentation)
         else if (code in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable")) {
             listening?.let { queue("disable", mapOf("activation_id" to it.activationId)) }
-            listening = null; pendingCount = 0; if (playback.automatic) cancel(); error = mapOf("code" to code, "message" to message)
+            listening = null; pendingCount = 0; if (playback.automatic) cancel(); error = mapOf("code" to code, "message" to message) + presentation
         } else if (f["reading_id"] == null || matches(f)) {
             val failedOwner = errorOwner(playback)
-            val details = if (f["summary_changed"] == true) mapOf("summaryChanged" to true, "savedId" to f["saved_id"]) else emptyMap()
+            val details = (if (f["summary_changed"] == true) mapOf("summaryChanged" to true, "savedId" to f["saved_id"]) else emptyMap()) + presentation
             if (playback.readingId != null) { finish(false, message, details = details); playback = playback.copy(operationId = null, automatic = false); cancel() }
-            error = f.filterKeys { it in setOf("code", "message", "status", "saved_id", "summary_changed", "reading_id", "generation") } + failedOwner
+            error = f.filterKeys { it in setOf("code", "message", "status", "saved_id", "summary_changed", "reading_id", "generation", "ui_message") } + failedOwner
         }
     }
 }

@@ -10,6 +10,7 @@ from collections import deque
 from django.http import Http404, JsonResponse
 
 from twicc.core.models import Project, Session
+from twicc.core.ui_messages import ui_error, ui_message_text
 from twicc.roots import allowed_base_dirs
 
 NODE_THRESHOLD = 200  # Max cumulative nodes before stopping expansion
@@ -35,17 +36,17 @@ def validate_path(project_id, dir_path, session_id=None):
     try:
         project = Project.objects.get(id=project_id)
     except Project.DoesNotExist:
-        raise Http404("Project not found")
+        raise Http404(ui_message_text("Project not found", "backend.projects.not_found"))
 
     session = None
     if session_id:
         try:
             session = Session.objects.get(id=session_id, project_id=project_id)
         except Session.DoesNotExist:
-            raise Http404("Session not found")
+            raise Http404(ui_message_text("Session not found", "backend.file_tree.session_not_found"))
 
     if not dir_path:
-        return session, None, JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return session, None, JsonResponse(ui_error("Missing 'path' query parameter", 'backend.file_tree.path_required'), status=400)
 
     dir_path = os.path.normpath(dir_path)
 
@@ -69,11 +70,11 @@ def validate_path(project_id, dir_path, session_id=None):
 
     if not path_allowed:
         return session, dir_path, JsonResponse(
-            {"error": "Path is outside the allowed directories"}, status=403
+            ui_error('Path is outside the allowed directories', 'backend.file_tree.path_outside_allowed'), status=403
         )
 
     if not os.path.isdir(dir_path):
-        return session, dir_path, JsonResponse({"error": "Directory not found"}, status=404)
+        return session, dir_path, JsonResponse(ui_error('Directory not found', 'backend.file_tree.directory_missing'), status=404)
 
     return session, dir_path, None
 

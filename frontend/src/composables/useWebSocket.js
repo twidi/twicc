@@ -1,5 +1,6 @@
 import { i18n } from '../i18n/index.js'
 import { localUiMessage } from '../i18n/uiMessages.js'
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { useSummariesStore } from '../stores/summaries'
 import { refreshStatisticsSessions } from './statisticsRefresh.js'
 import { handleAgentEvent } from '../utils/agentLinkIndex'
@@ -903,6 +904,7 @@ function notifyProcessStateChange(msg, previousState, route) {
                 type: 'error',
                 title: localUiMessage('session.notifications.terminated', { provider: providerLabel }),
                 errorMessage: msg.error || undefined,
+                ...(msg.error_ui_message ? { errorMessageDescriptor: remoteUiMessage(msg, msg.error) } : {}),
                 ...(!msg.error ? { errorMessageDescriptor: localUiMessage('session.notifications.unknownError') } : {}),
             })
         } else if (msg.kill_reason === 'timeout_starting') {
@@ -1602,6 +1604,7 @@ export function useWebSocket() {
                     state_changed_at: msg.state_changed_at,
                     memory: msg.memory,
                     error: msg.error,
+                    error_ui_message: msg.error_ui_message,
                     pending_requests: msg.pending_requests,
                     active_crons: msg.active_crons,
                     session_title: msg.session_title,
@@ -1609,6 +1612,7 @@ export function useWebSocket() {
                     extra: msg.extra,
                     stopping: msg.stopping,
                     label: msg.label,
+                    label_ui_message: msg.label_ui_message,
                     background_work_in_progress: msg.background_work_in_progress,
                     spawn_ancestors: msg.spawn_ancestors,
                     ...(Object.hasOwn(msg, 'active_tools') ? { active_tools: msg.active_tools } : {}),
@@ -1636,6 +1640,7 @@ export function useWebSocket() {
                 const ps = store.processStates[msg.session_id]
                 if (ps) {
                     ps.label = msg.label || null
+                    ps.label_ui_message = msg.label_ui_message || null
                     store.recomputeVisualItems(msg.session_id)
                 }
                 break
@@ -1734,6 +1739,7 @@ export function useWebSocket() {
                     type: 'error',
                     title: localUiMessage('session.notifications.invalidTitle'),
                     errorMessage: msg.error || undefined,
+                    ...(msg.ui_message ? { errorMessageDescriptor: remoteUiMessage(msg, msg.error) } : {}),
                     ...(!msg.error ? { errorMessageDescriptor: localUiMessage('session.notifications.unknownError') } : {}),
                 })
                 // The whole send was aborted with the title — restore the
@@ -1741,6 +1747,7 @@ export function useWebSocket() {
                 if (msg.request_id) {
                     store.failInflightSend(msg.request_id, {
                         code: 'invalid_title',
+                        ui_message: msg.ui_message,
                         message: i18n.global.t('session.notifications.invalidTitleDetail', { error: msg.error || i18n.global.t('session.notifications.unknownError') }),
                         messageKey: msg.error ? 'session.notifications.invalidTitleDetail' : 'session.notifications.invalidTitleUnknown',
                         messageParams: msg.error ? { error: msg.error } : {},
@@ -1796,7 +1803,7 @@ export function useWebSocket() {
                 // provider-specific content to verify. Do not move under a provider
                 // handler.
                 if (__hmrState.usageDumpPathValidateResolve) {
-                    __hmrState.usageDumpPathValidateResolve({ valid: msg.valid, message: msg.message })
+                    __hmrState.usageDumpPathValidateResolve({ valid: msg.valid, message: remoteUiMessage(msg, msg.message) })
                     __hmrState.usageDumpPathValidateResolve = null
                 }
                 break
@@ -1810,13 +1817,13 @@ export function useWebSocket() {
                 const resolver = __hmrState.usageFileValidateResolvers.get(provider)
                 if (resolver) {
                     __hmrState.usageFileValidateResolvers.delete(provider)
-                    resolver({ valid: msg.valid, message: msg.message })
+                    resolver({ valid: msg.valid, message: remoteUiMessage(msg, msg.message) })
                 }
                 break
             }
             case 'tmux_config_path_validated':
                 if (__hmrState.tmuxConfigPathValidateResolve) {
-                    __hmrState.tmuxConfigPathValidateResolve({ valid: msg.valid, message: msg.message })
+                    __hmrState.tmuxConfigPathValidateResolve({ valid: msg.valid, message: remoteUiMessage(msg, msg.message) })
                     __hmrState.tmuxConfigPathValidateResolve = null
                 }
                 break
@@ -1984,7 +1991,8 @@ export function useWebSocket() {
                 store.streamBlockEnd(msg.session_id, msg.message_id, msg.block_index, msg.uuid)
                 break
             case 'startup_progress':
-                store.setStartupProgress(msg.provider, msg.phase, msg.current, msg.total, msg.completed, msg.detail)
+                store.setStartupProgress(msg.provider, msg.phase, msg.current, msg.total, msg.completed,
+                    remoteUiMessage(msg, msg.detail, 'detail_ui_message'))
                 if (msg.provider === 'codex' && msg.phase === 'initial_sync' && msg.completed) {
                     store.reconcileAsyncQuestionExistence().catch(error => console.warn('Failed to check question draft sessions:', error))
                 }
@@ -2016,7 +2024,7 @@ export function useWebSocket() {
                     const providerLabel = getProviderLabel(msg.provider) || msg.provider
                     toast.error(localUiMessage('session.notifications.providerDisabled', { provider: providerLabel }))
                 } else if (msg.code === 'invalid_synced_settings') {
-                    toast.error(msg.message || localUiMessage('session.notifications.settingsInvalid'))
+                    toast.error(remoteUiMessage(msg, msg.message || localUiMessage('session.notifications.settingsInvalid')))
                 } else {
                     console.warn('[ws] Server error message:', msg)
                 }

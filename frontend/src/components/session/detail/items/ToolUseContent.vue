@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../../../i18n/uiMessages.js'
 import { computed, reactive, ref, inject, provide, watch, watchEffect, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCodeCommentsStore } from '../../../../stores/codeComments'
@@ -504,14 +506,20 @@ const isTask = computed(() => !!toolHelpers.value?.isAgentTool(props.name))
 const toolState = computed(() => dataStore.getToolState(props.sessionId, props.toolId))
 
 // Tool error: non-null error string means the tool_result reported an error
-const toolErrorText = computed(() => toolState.value?.error || null)
+const toolErrorText = computed(() => {
+    let extra = toolState.value?.extra
+    if (typeof extra === 'string') {
+        try { extra = JSON.parse(extra) } catch { extra = null }
+    }
+    return resolveUiMessage(remoteUiMessage(extra, toolState.value?.error || null, 'error_ui_message'))
+})
 const isToolError = computed(() => !!toolErrorText.value)
 
 // Whether to still show the Result details when there's an error
 // (Bash errors only show "Exit code N" so the full output is useful; Unknown errors need details too)
 const showResultDetailsOnError = computed(() => {
     if (!isToolError.value) return false
-    return !!toolHelpers.value?.showsResultOnError(props.name) || toolErrorText.value === 'Unknown error'
+    return !!toolHelpers.value?.showsResultOnError(props.name) || toolState.value?.error === 'Unknown error'
 })
 
 // Whether this tool's result renders inline (in the card body, in place
@@ -541,7 +549,7 @@ const showResultDetails = computed(() => {
     // that opt in via showsResultOnUnknownError still surface it for the
     // special "Unknown error" text (Edit/Write); TodoWrite does not.
     if (inputRendering.value) {
-        if (toolErrorText.value === 'Unknown error') {
+        if (toolState.value?.error === 'Unknown error') {
             return !!helpers?.showsResultOnUnknownError(props.name)
         }
         return false

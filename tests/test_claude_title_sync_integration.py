@@ -582,9 +582,8 @@ def test_sdk_total_budget_and_request_limit_use_controlled_clock(setup, monkeypa
     run_with_writer(scenario)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize('composer_ready', [False, True])
-async def test_hybrid_composer_and_confirmation_budgets_never_repaste(monkeypatch, composer_ready):
+def test_hybrid_composer_and_confirmation_budgets_never_repaste(monkeypatch, composer_ready):
     from twicc.providers.claude_code.agent.hybrid import agent as hybrid
     from twicc.providers.claude_code.title_control import TitleControlError
     from twicc.providers.helpers import AgentSettings
@@ -607,7 +606,7 @@ async def test_hybrid_composer_and_confirmation_budgets_never_repaste(monkeypatc
             return getattr(original_asyncio, name)
     monkeypatch.setattr(hybrid, 'asyncio', AsyncioProxy())
     with pytest.raises(TimeoutError if composer_ready else TitleControlError):
-        await current.rename('D', token='decision')
+        asyncio.run(current.rename('D', token='decision'))
     assert current.AUTO_PASTE_RETRY_TIMEOUT == 300.0
     assert checked == ['/rename D']
     assert waits == ([10.0] if composer_ready else [])

@@ -8,6 +8,7 @@ import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { i18n } from '../../i18n/index.js'
 import { localUiMessage, localUiError, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { normalizeBrowserUrl } from '../../utils/browserUrl.js'
 
 const files = new Map()
@@ -25,7 +26,7 @@ function handler(file, name, bindings) {
     const node = ast.find(node => node.type === 'FunctionDeclaration' && node.id.name === name)
     assert.ok(node, `${file}: ${name}`)
     return runInNewContext(`(${descriptor.scriptSetup.content.slice(node.start, node.end)})`, {
-        localUiMessage, localUiError, resolveUiMessage, URLSearchParams, ...bindings,
+        localUiMessage, localUiError, resolveUiMessage, remoteUiMessage, URLSearchParams, ...bindings,
     })
 }
 function renderFragment(file, predicate) {

@@ -30,6 +30,7 @@ from twicc.tts.part_audio import Mp3HeadFilter, PcmFrameTrimmer
 from twicc.tts.part_source import PartSource, as_part_source, timed_next_part
 from twicc.tts.parts import FIRST_PART_CHARS, split_text
 from twicc.tts.script_audio import OutputCheck
+from twicc.core.ui_messages import ui_message_text
 
 if TYPE_CHECKING:
     from twicc.tts.streams import AudioStream
@@ -51,14 +52,14 @@ ERROR_LINE_CHARS = 300
 PATH_OUTPUT_MAX_BYTES = 64 * 1024
 READ_CHUNK = 64 * 1024
 
-COULD_NOT_START = "The script could not start"
+COULD_NOT_START = ui_message_text("The script could not start", 'backend.tts.scriptStart')
 SCRIPT_FAILED = "The script failed (exit status {status})"
 SCRIPT_KILLED = "The script was stopped by signal {signal}"
-STALLED = "The script stopped sending audio"
-TOO_LARGE = "The script audio is too large"
-NOT_A_PATH = "The script output is not one absolute path"
-PATH_REUSED = "The script returned the same path twice"
-FILE_UNREADABLE = "The script file cannot be read"
+STALLED = ui_message_text("The script stopped sending audio", 'backend.tts.scriptStalled')
+TOO_LARGE = ui_message_text("The script audio is too large", 'backend.tts.scriptAudioLarge')
+NOT_A_PATH = ui_message_text("The script output is not one absolute path", 'backend.tts.scriptOutputPath')
+PATH_REUSED = ui_message_text("The script returned the same path twice", 'backend.tts.scriptPathReused')
+FILE_UNREADABLE = ui_message_text("The script file cannot be read", 'backend.tts.scriptUnreadable')
 
 
 class ScriptSpeechRequest(NamedTuple):
@@ -397,9 +398,9 @@ class _ScriptRun:
         status = self._proc.returncode
         if status != 0:
             if status < 0:
-                fallback = SCRIPT_KILLED.format(signal=-status)
+                fallback = ui_message_text(SCRIPT_KILLED.format(signal=-status), 'backend.tts.scriptSignal', {"signal": -status})
             else:
-                fallback = SCRIPT_FAILED.format(status=status)
+                fallback = ui_message_text(SCRIPT_FAILED.format(status=status), 'backend.tts.scriptExit', {"status": status})
             message = _last_error_line(bytes(self._stderr_tail)) or fallback
             self._stream.fail(SpeechError(message, log_message=f"script exit status {status}"))
             return False

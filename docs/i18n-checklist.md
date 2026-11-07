@@ -1,6 +1,6 @@
-# Frontend internationalization checklist
+# Interface internationalization checklist
 
-This file records the current file-by-file frontend interface audit.
+This file records the file-by-file frontend and backend interface audit.
 Keep this file uncommitted until the complete pass and its reviews finish.
 Commit the completed checklist together with the validated translations.
 
@@ -12,7 +12,13 @@ A checked source file can contain no interface text. Its display paths still req
 
 ## Scope
 
-Include application Vue, JavaScript, TypeScript and CSS sources, plus translation catalogs.
+### Application sources
+
+Include frontend application Vue, JavaScript, TypeScript and CSS sources, plus translation catalogs.
+Include backend application Python sources that implement or support browser-facing behavior.
+Read shared dependencies even when they live under CLI or MCP directories.
+Narrow native-client transport dependencies belong here when they carry these browser messages.
+This does not claim a complete native Android interface audit.
 Include standalone entry points and HTML that displays application messages.
 Keep `frontend/vite.config.js`: it injects catalog messages into the startup recovery interface.
 Keep help/tip interface components and metadata sources. Their controls and titles are translated.
@@ -33,9 +39,15 @@ An excluded file is not missing, unchecked or awaiting review. Give it no checkb
 | Benchmark data | `frontend/src/data/modelBenchmarks.json` and equivalent numeric/model benchmark datasets | Values, model identifiers and reference URLs are not interface prose. |
 | Package metadata | `package.json`, `package-lock.json` and equivalent dependency manifests/lockfiles | Package metadata does not supply interface messages. |
 | Tooling and build configuration | TypeScript/ESLint configuration and Vite bundle configuration without interface messages | These files configure development or bundling. |
+| Backend-only outputs | Console logs, terminal output, CLI/MCP replies, prompts and provider transcripts | Keep English prose and original content. |
+| CLI/MCP-only sources | Command wrappers and protocol-only modules without a browser consumer | Exclude by role; shared browser dependencies remain in scope. |
+| Backend tests and migrations | `tests/`, test settings, database migration files and test fixtures | Verify these separately; they are not interface source inventory. |
+| JavaScript-free pages | Server-rendered unavailable/auth/error bodies with no frontend runtime | Handle in a separate content pass, like long help/tip bodies. |
 | Generated files and dependencies | Build output, caches and `node_modules/` | Audit application sources instead. |
 
 Classify files by their role, not only their extension or directory.
+Discovered command descriptions and the default labels "Custom command", "Skill" and "Workflow" deliberately stay verbatim.
+Audit their source files normally, but do not report these labels as missing translations or add command metadata fields.
 Do not exclude runtime display dictionaries as fixtures or benchmark data.
 Do not exclude application code because its current audit finds no interface text.
 Public executable code or configuration that supplies interface messages belongs in scope.
@@ -48,9 +60,9 @@ The last commit that modifies this file must represent a completed pass.
 At the start of a later pass, uncheck all entries in the working copy.
 Use that commit as the baseline; do not use a date or the current branch tip.
 
-1. Find the baseline with `git log -1 --format=%H -- docs/i18n-frontend-checklist.md`.
-2. Compare frontend files against that commit, including staged and unstaged changes.
-3. Enumerate untracked frontend files too; a Git diff does not list them.
+1. Find the baseline with `git log -1 --follow --format=%H -- docs/i18n-checklist.md`.
+2. Compare frontend and backend files, plus recorded native transport dependencies, against that commit, including staged and unstaged changes.
+3. Enumerate untracked source files too; a Git diff does not list them.
 4. Apply the scope and exclusion rules before comparing files with this inventory.
 5. Add every new in-scope file as unchecked. Remove deleted entries and update renamed paths.
 6. Audit changed files in full and review their affected display dependencies.
@@ -62,12 +74,32 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 
 ## Current pass
 
-- State: complete. 835/835 source files have completed audit and independent review.
-- Inventory: application sources and display dependencies within the scope above.
+- State: source audit and independent reviews complete. Available integration checks pass; runtime limitations are recorded below.
+- Frontend baseline: commit `6bbedd9ed`, with 835 reviewed source files.
+- Retain unchanged frontend approvals only when affected display dependencies remain valid.
+- Inventory: 837 frontend sources, 417 backend sources and 5 native transport dependencies. All source checks pass.
 - New in-scope files join this list before completion. Checked states reopen when reviewed content changes.
-- No commits or changes to main are authorized for this pass.
+- This pass forms the combined source-audit checkpoint. No main changes, development-server restart or development-database migration run.
 
-## Validation
+## Backend integration validation
+
+- Source inventory: 417 backend sources, 2 new frontend helpers and 5 native transport dependencies; implementation audits and independent reviews pass.
+- Catalogs: 673 new keys; 4,392 keys per locale. Command-description defaults deliberately stay English.
+- Final frontend suite: 4,705 tests; pass.
+- Focused catalog/remote-message/title suite: 19 tests; pass.
+- Final backend metadata and regression suite: 607 tests; pass.
+- Official Vue I18n lint: pass. All 6 production bundles: pass. Diff whitespace checks: pass.
+- Initial full backend run: 14,188 passed, 189 failed, 51 skipped. Of its failures, 131 require the absent pytest-asyncio plugin.
+- The 58 other failures pass after explicit metadata assertions and a completion-test writer barrier. Two async title-budget cases now use asyncio.run and pass.
+- The remaining 129 async cases cannot execute without pytest-asyncio. The complete backend suite is not claimed green.
+- Android metadata propagation receives independent source review. Kotlin tests cannot execute because Java is unavailable.
+- No new live browser regression runs against these backend changes. Migration 0170 and a user-controlled backend restart precede that check.
+- English fallbacks remain for unknown metadata and historical records without provenance. Provider/user content stays verbatim.
+- Product decision after this pass: command-description defaults "Custom command", "Skill" and "Workflow" stay English. Remove their three keys and command metadata path; edit unapplied migration 0170 to keep only peer error metadata. The earlier full-suite counts above precede this narrow removal; focused checks follow it.
+- Verification after this decision: 75 focused backend tests, 13 frontend tests, official Vue I18n lint and all 6 production builds pass. Peer error metadata remains unchanged.
+- Final pre-commit verification: 622 backend tests, 83 frontend tests, official Vue I18n lint and whitespace checks pass.
+
+## Frontend baseline validation
 
 - Frontend suite: 4682 tests; pass.
 - Catalog and locale checks: 11 tests; pass.
@@ -79,7 +111,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - Browser scope: Locale returns to en; dialogs, drafts, composer and search are cleared. Fixtures stay unchanged.
 - Browser scope: Known language polish: Portuguese date separators capitalize De; workspace terminology uses both workspaces and espaços de trabalho. These observations do not hide untranslated backend/help content.
 
-## Files
+## Frontend sources
 
 - [x] `frontend/index.html` — complete; review pass; batch 8. Promoted classification entry to production after full reading: inline asset-recovery panel and Retry button now use a catalog subset injected by Vite. Reads saved locale before modules; preserves recovery guards, URL budget and product title.
 - [x] `frontend/src/App.vue` — complete; review pass; batch 5. Parent-authorized narrow notification correction. Resolve local normal/custom message metadata and titleKey params during display. Existing provider auth/status overrides remain. Original full-file ownership stays with batch4.
@@ -87,7 +119,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/artifact-broker/host.js` — complete; review pass; batch 7. Broker RPC and fetch errors remain technical diagnostics for artifact code; no UI presentation.
 - [x] `frontend/src/artifact-broker/shim.js` — complete; review pass; batch 7. Injected fetch/data APIs preserve diagnostic and protocol strings; no interface chrome.
 - [x] `frontend/src/artifact-shell/ArtifactShellApp.vue` — complete; review pass; batch 7. Consent and notices already use global i18n; host list now follows locale through Intl.ListFormat.
-- [x] `frontend/src/artifact-shell/main.js` — complete; review pass; batch 7. Standalone shell installs the shared i18n singleton and document locale before mounting.
+- [x] `frontend/src/artifact-shell/main.js` — complete; review pass; batch 7. Standalone shell installs the shared i18n singleton and document locale before mounting. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/artifact-theme/flattenTheme.js` — complete; review pass; batch 7. PostCSS theme-token transformation only; no UI strings.
 - [x] `frontend/src/artifact-theme/kit.css` — complete; review pass; batch 7. Opt-in CSS contains no displayed text.
 - [x] `frontend/src/artifact-theme/theme.css` — complete; review pass; batch 7. Theme tokens and CSS imports only; no displayed text.
@@ -105,42 +137,42 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/app/ConnectionIndicator.vue` — complete; review pass; batch 3. Read status mapping, presence behavior, template and CSS. All status labels already use reactive translation keys.
 - [x] `frontend/src/components/app/CustomNotification.vue` — complete; review pass; batch 3. Read full rendering and CSS. Translated default close aria label. Added optional reactive title override while preserving original Notivue item lifecycle identity.
 - [x] `frontend/src/components/app/HybridAnnouncementDialog.vue` — complete; review pass; batch 3. Read lifecycle, blocking overlay gate, rich intro, controls and CSS. All interface labels already translated; shared explainer audited elsewhere.
-- [x] `frontend/src/components/app/NotificationSettings.vue` — complete; review pass; batch 3. Translated Android setup state messages, notification labels and request/network fallback. Sound options now computed. API error details remain external. Review correction: cached HTTP/network local fallbacks keep descriptors; external destination diagnostics stay text.
+- [x] `frontend/src/components/app/NotificationSettings.vue` — complete; review pass; batch 3. Translated Android setup state messages, notification labels and request/network fallback. Sound options now computed. API error details remain external. Review correction: cached HTTP/network local fallbacks keep descriptors; external destination diagnostics stay text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/app/ProviderActivationDialog.vue` — complete; review pass; batch 3. Read provider choices, default selection, save flow, dialog controls and CSS. Existing UI messages translated; provider labels are product names.
 - [x] `frontend/src/components/app/ProviderAuthToastContent.vue` — complete; review pass; batch 3. Translated disabled-provider and clipboard success toasts; controls already translated. Login command remains provider data.
 - [x] `frontend/src/components/app/ProviderSettingsSection.vue` — complete; review pass; batch 3. Translated permission labels and unavailable suffix. Shared provider choices/help descriptions resolve within computed rows.
 - [x] `frontend/src/components/app/ProviderStatusToastContent.vue` — complete; review pass; batch 3. Read toast sentence consumer, acknowledgment lifecycle, link and CSS. Shared toastSentence now translates at call time inside computed.
 - [x] `frontend/src/components/app/QuotaTooltipContent.vue` — complete; review pass; batch 3. Translated verdicts, pace/cost labels, duration messages, temporal connectors, quota remaining and cycle controls. Period/external link props remain caller-owned.
-- [x] `frontend/src/components/app/SearchOverlay.vue` — complete; review pass; batch 3. Translated workspace label, local search errors, and source code labels/initials. Search snippets, query, project names and API diagnostics remain external data. Read API/filter/navigation/template/CSS fully. Review correction: cached search/index/network local errors keep descriptors; server query diagnostics stay text.
+- [x] `frontend/src/components/app/SearchOverlay.vue` — complete; review pass; batch 3. Translated workspace label, local search errors, and source code labels/initials. Search snippets, query, project names and API diagnostics remain external data. Read API/filter/navigation/template/CSS fully. Review correction: cached search/index/network local errors keep descriptors; server query diagnostics stay text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/app/SessionSwitcher.vue` — complete; review pass; batch 3. Translated computed mode heading and untitled draft fallback. User titles, session IDs and project paths remain unchanged. Read state selection, markup and CSS.
-- [x] `frontend/src/components/app/SettingsPopover.vue` — complete; review pass; batch 3. Translated shortcut groups and descriptions, command activation provider list, title-model setup/disabled messages, worktree validation and reactive wake-up hours. OpenRouter description uses shared key. Read all settings, validation, events, full template and CSS.
-- [x] `frontend/src/components/app/StartupProgressCallout.vue` — complete; review pass; batch 3. Translated bound progress accessibility labels. Existing phase headings/hints translated. Backend compute detail strings remain external.
+- [x] `frontend/src/components/app/SettingsPopover.vue` — complete; review pass; batch 3. Translated shortcut groups and descriptions, command activation provider list, title-model setup/disabled messages, worktree validation and reactive wake-up hours. OpenRouter description uses shared key. Read all settings, validation, events, full template and CSS. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/app/StartupProgressCallout.vue` — complete; review pass; batch 3. Translated bound progress accessibility labels. Existing phase headings/hints translated. Backend compute detail strings remain external. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/app/StopProcessConfirmDialog.vue` — complete; review pass; batch 3. Read frozen count state, title/shell sentence helpers, confirmation flow, rich plural message and CSS. Shared backgroundWork helpers resolve inside computed.
 - [x] `frontend/src/components/app/TelemetryNoticeDialog.vue` — complete; review pass; batch 3. Read lifecycle priority, settings navigation, rich paragraphs, controls and CSS. All interface messages already translated.
 - [x] `frontend/src/components/app/TelemetryPayloadDialog.vue` — complete; review pass; batch 3. Read request payload flow, shared date formatting, JSON viewer, controls and CSS. UI translated; payload keys/values remain diagnostic data.
 - [x] `frontend/src/components/app/UsageGraphDialog.vue` — complete; review pass; batch 3. Translated reactive range and curve labels, load errors; localized chart dates and percentages. Read snapshot/panning/touch/graph/template/CSS fully. Review correction: localUiError survives catches as uiMessage; local load fallback resolves at render.
-- [x] `frontend/src/components/artifacts/ArtifactBookmarkButton.vue` — complete; review pass; batch 7. Translated computed bookmark/share tooltips and create-error fallback; preserved user names and routes.
-- [x] `frontend/src/components/artifacts/ArtifactBookmarkDialog.vue` — complete; review pass; batch 7. Translated validation, dialog titles, provenance and network states/kinds/targets; maintained consent gates.
+- [x] `frontend/src/components/artifacts/ArtifactBookmarkButton.vue` — complete; review pass; batch 7. Translated computed bookmark/share tooltips and create-error fallback; preserved user names and routes. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/artifacts/ArtifactBookmarkDialog.vue` — complete; review pass; batch 7. Translated validation, dialog titles, provenance and network states/kinds/targets; maintained consent gates. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/artifacts/ArtifactBookmarkList.vue` — complete; review pass; batch 7. Read full sidebar navigation, date grouping, menu and CSS; UI uses catalog and date helpers.
 - [x] `frontend/src/components/artifacts/ArtifactBookmarksSidebarControls.vue` — complete; review pass; batch 7. Read filter/options events and CSS; controls already use catalog.
 - [x] `frontend/src/components/artifacts/ArtifactBookmarkTree.vue` — complete; review pass; batch 7. Read tree grouping, selection and CSS; titles contain user names and paths, UI uses catalog.
 - [x] `frontend/src/components/artifacts/ArtifactBrokerPrompt.vue` — complete; review pass; batch 7. Translated consent titles, target descriptions and four whole warning variants; all consent and iframe semantics preserved.
 - [x] `frontend/src/components/artifacts/ArtifactsHelpButton.vue` — complete; review pass; batch 7. Help button text already translated; help key remains a stable content identifier.
-- [x] `frontend/src/components/browser/BrowserPane.vue` — complete; review pass; batch 4. Read in full. Localized companion status, iframe title, commands, toasts, capture and saved URL errors. Agent prompts/source descriptions and URLs stay unchanged.
+- [x] `frontend/src/components/browser/BrowserPane.vue` — complete; review pass; batch 4. Read in full. Localized companion status, iframe title, commands, toasts, capture and saved URL errors. Agent prompts/source descriptions and URLs stay unchanged. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/browser/BrowserUrlListEditor.vue` — complete; review pass; batch 4. Read full SFC; public getEntries() validation messages now translate at call time.
 - [x] `frontend/src/components/editor/CodeEditor.vue` — complete; review pass; batch 7. Full editor lifecycle/extensions/CSS read; document content preserved. Verified useCodeMirror installs locale phrase compartment and watches locale; owned comment widget labels now react.
 - [x] `frontend/src/components/editor/DiffEditor.vue` — complete; review pass; batch 7. Full diff/editor lifecycle/styles read. Shared CodeMirror locale compartment and owned collapsed-bar labels localize library controls; patch/code content preserved.
-- [x] `frontend/src/components/files/DirectoryPickerPopup.vue` — complete; review pass; batch 4. Read full SFC; directory loading fallback and hidden-directory tooltip now translate. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FileCreateDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FileDeleteDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FileMoveDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FilePane.vue` — complete; review pass; batch 4. Read in full. Localized preview iframe title/actions, command labels, first-party capture/load/save errors and binary size formatting. Agent prompts, source labels, filenames and file content stay unchanged. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FilePickerPopup.vue` — complete; review pass; batch 4. Read full SFC; existing direct UI translations preserved; root labels depend on shared projectRoots helper. Dependency owner confirmed localized call-time output; inspected relevant helpers and reactive consumers.
-- [x] `frontend/src/components/files/FileRenameDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
-- [x] `frontend/src/components/files/FilesPanel.vue` — complete; review pass; batch 4. Read in full. Route callouts use whole rich messages and reactive filter placeholders. Root labels resolve in computed.
+- [x] `frontend/src/components/files/DirectoryPickerPopup.vue` — complete; review pass; batch 4. Read full SFC; directory loading fallback and hidden-directory tooltip now translate. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FileCreateDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FileDeleteDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FileMoveDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FilePane.vue` — complete; review pass; batch 4. Read in full. Localized preview iframe title/actions, command labels, first-party capture/load/save errors and binary size formatting. Agent prompts, source labels, filenames and file content stay unchanged. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FilePickerPopup.vue` — complete; review pass; batch 4. Read full SFC; existing direct UI translations preserved; root labels depend on shared projectRoots helper. Dependency owner confirmed localized call-time output; inspected relevant helpers and reactive consumers. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FileRenameDialog.vue` — complete; review pass; batch 4. Read full SFC; titles, validation, network errors and HTTP fallback errors translate. Filename examples and wire kinds preserved. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/files/FilesPanel.vue` — complete; review pass; batch 4. Read in full. Route callouts use whole rich messages and reactive filter placeholders. Root labels resolve in computed. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/files/FileTree.vue` — complete; review pass; batch 4. Read full recursive SFC; filesystem names, user rootLabel and icon IDs preserved; Git badges and comment counts delegated.
 - [x] `frontend/src/components/files/FileTreeContextMenu.vue` — complete; review pass; batch 4. Read full SFC; labels already translated; file size and full date depend on shared formatting helpers. Dependency owner confirmed localized call-time output; inspected relevant helpers and reactive consumers.
-- [x] `frontend/src/components/files/FileTreePanel.vue` — complete; review pass; batch 4. Read in full. Localized default filter and mobile header states. User filenames and tree data remain unchanged.
+- [x] `frontend/src/components/files/FileTreePanel.vue` — complete; review pass; batch 4. Read in full. Localized default filter and mobile header states. User filenames and tree data remain unchanged. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/files/UploadStrip.vue` — complete; review pass; batch 4. Read full SFC; upload progress/cancel accessibility labels translate. entryActions is called within computed. Dependency owner confirmed localized call-time output; inspected relevant helpers and reactive consumers.
 - [x] `frontend/src/components/files/UploadSuccessToastContent.vue` — complete; review pass; batch 4. Read full SFC; clipboard success and failure toasts now translate.
 - [x] `frontend/src/components/files/UploadTabStatus.vue` — complete; review pass; batch 4. Read full SFC; upload accessibility label translated; percentage and compact count are numeric values.
@@ -224,7 +256,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/git/GitLog/utils/createRainbowTheme.ts` — complete; review pass; batch 4. Read full module; layout, public type exports, colors, and Git ref values contain no interface prose.
 - [x] `frontend/src/components/git/GitLog/utils/formatBranch.ts` — complete; review pass; batch 4. Read full module; layout, public type exports, colors, and Git ref values contain no interface prose.
 - [x] `frontend/src/components/git/GitLog/utils/units.ts` — complete; review pass; batch 4. Read full module; layout, public type exports, colors, and Git ref values contain no interface prose.
-- [x] `frontend/src/components/git/GitPanel.vue` — complete; review pass; batch 4. Read in full. Whole rich route callouts, header issue text, first-party fetch errors and locale-aware GitLog timestamps. Computed root labels remain reactive. Commit metadata, branches, images and diagnostics stay external/technical. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal.
+- [x] `frontend/src/components/git/GitPanel.vue` — complete; review pass; batch 4. Read in full. Whole rich route callouts, header issue text, first-party fetch errors and locale-aware GitLog timestamps. Computed root labels remain reactive. Commit metadata, branches, images and diagnostics stay external/technical. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/git/GitPanelHeader.vue` — complete; review pass; batch 4. Read in full. Localized synthetic index label, clipboard toasts and selected-locale date formatting. Commit content remains external.
 - [x] `frontend/src/components/help/HelpDialog.vue` — complete; review pass; batch 7. Controls already translated. Verified computed help-store manifest supplies live translated titles with unchanged string contract. Long Markdown bodies deferred.
 - [x] `frontend/src/components/help/HelpFeatureLink.vue` — complete; review pass; batch 7. Required caller label is displayed without mutation; parent owns caller audit.
@@ -235,9 +267,9 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/json/JsonHumanView.vue` — complete; review pass; batch 7. Recursive JSON presentation preserves provider keys/data/technical values; translated empty select option.
 - [x] `frontend/src/components/json/JsonNode.vue` — complete; review pass; batch 7. Translated collapsed item/key counts with whole plural messages; JSON values and punctuation remain technical.
 - [x] `frontend/src/components/json/JsonViewer.vue` — complete; review pass; batch 7. Viewer wrap controls already translated; data passed unchanged.
-- [x] `frontend/src/components/mcp/McpConnectionDialog.vue` — complete; review pass; batch 7. Translated computed titles, OAuth states, name hints and fallback identity; timestamps follow active locale.
-- [x] `frontend/src/components/mcp/McpManager.vue` — complete; review pass; batch 7. Translated dynamic group/state labels, disabled reasons and event-time toast titles; dates use shared formatting.
-- [x] `frontend/src/components/mcp/McpProtection.vue` — complete; review pass; batch 7. Protection controls already translated; backend incident.reason is external prose, preserved.
+- [x] `frontend/src/components/mcp/McpConnectionDialog.vue` — complete; review pass; batch 7. Translated computed titles, OAuth states, name hints and fallback identity; timestamps follow active locale. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/mcp/McpManager.vue` — complete; review pass; batch 7. Translated dynamic group/state labels, disabled reasons and event-time toast titles; dates use shared formatting. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/mcp/McpProtection.vue` — complete; review pass; batch 7. Protection controls already translated; backend incident.reason is external prose, preserved. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/mcp/McpSecurityToast.vue` — complete; review pass; batch 7. Security toast controls already translated.
 - [x] `frontend/src/components/mcp/McpSettings.vue` — complete; review pass; batch 7. Clipboard failure fallback translated; technical URL and server errors preserved.
 - [x] `frontend/src/components/mcp/McpToast.vue` — complete; review pass; batch 7. Toast body and buttons already use global rich messages; client identity remains external content.
@@ -254,13 +286,13 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/message/AgentSettingsSwitches.vue` — complete; review pass; batch 1. Translate row notices through provider helpers and add their text as notice icon accessible label. Preserve row values and icon identifiers.
 - [x] `frontend/src/components/message/AsyncQuestions.vue` — complete; review pass; batch 1. Translate save failure toast. Preserve provider question labels/options and saved answer records.
 - [x] `frontend/src/components/message/CollapsedBar.vue` — complete; review pass; batch 1. Translate default expand tooltip at render time. Preserve supplied context-specific labels and variant values.
-- [x] `frontend/src/components/message/CommandPickerPopup.vue` — complete; review pass; batch 1. Translate complete command scope/workflow/plugin tags; resolve built-in descriptions and hints inside computed so open picker follows locale switches. Preserve inserted command names and external descriptions.
-- [x] `frontend/src/components/message/GoalBlock.vue` — complete; review pass; batch 1. Translate goal badges, known provider states, bar title, date labels, toasts and expand control. Preserve goals, /goal commands and unknown provider states.
+- [x] `frontend/src/components/message/CommandPickerPopup.vue` — complete; review pass; batch 1. Translate complete command scope/workflow/plugin tags; resolve built-in descriptions and hints inside computed so open picker follows locale switches. Preserve inserted command names and all discovered descriptions, including the deliberate English defaults "Custom command", "Skill" and "Workflow". Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/message/GoalBlock.vue` — complete; review pass; batch 1. Translate goal badges, known provider states, bar title, date labels, toasts and expand control. Preserve goals, /goal commands and unknown provider states. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/message/HoverDetailsToggle.vue` — complete; review pass; batch 1. Toggle labels already translated; no script-generated UI prose.
 - [x] `frontend/src/components/message/HybridModeExplainer.vue` — complete; review pass; batch 1. All headings and body messages already use catalog keys and rich slots. Preserve technical environment flag and reference URL.
 - [x] `frontend/src/components/message/HybridTerminalBlock.vue` — complete; review pass; batch 1. Translate computed terminal attention and header badge labels reactively. Terminal content and protocol state keys remain unchanged.
 - [x] `frontend/src/components/message/MatrixHeadingLinks.vue` — complete; review pass; batch 1. Navigation, help links and hover controls already translated; help-key identifiers preserved.
-- [x] `frontend/src/components/message/MessageHistoryPickerPopup.vue` — complete; review pass; batch 1. Read complete popup including styles. Direct controls translated; messages and synthetic history entries are user prompt content. Preserve API status/error details.
+- [x] `frontend/src/components/message/MessageHistoryPickerPopup.vue` — complete; review pass; batch 1. Read complete popup including styles. Direct controls translated; messages and synthetic history entries are user prompt content. Preserve API status/error details. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/message/MessageInput.vue` — complete; review pass; batch 1. Read full composer and CSS. Translated hybrid controls, attachment plurals, collapsed summaries, errors, snippet notices, and reactive known recovery notices. Preserved prompts, inserted snippets, command payloads, and arbitrary notices. Verified additive labelKey contract from placeholder source owner; both consumers translate names reactively.
 - [x] `frontend/src/components/message/MessageSnippetsBar.vue` — complete; review pass; batch 1. Read full bar. All local interface controls translated; snippet/group text preserved as user content. Activation metadata tooltip is shared display dependency. Confirmed source-owner translated getters/call-time helpers; public display contract preserved.
 - [x] `frontend/src/components/message/MessageSnippetsDialog.vue` — complete; review pass; batch 1. Translate dialog titles, workspace project group, validation/warning text, input examples and placeholder insertion tooltip. Preserve snippet bodies, group names, scope values and placeholder IDs. Confirmed source-owner translated getters/call-time helpers; public display contract preserved. Verified additive labelKey contract from placeholder source owner; both consumers translate names reactively. Local validation/warning refs hold localUiMessage descriptors. Templates resolve them reactively; duplicate-warning submit behavior stays unchanged.
@@ -277,14 +309,14 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/orchestration/OrchestrationTimeBar.vue` — complete; review pass; batch 7. Time-bar geometry and caller-provided title only; no local UI prose.
 - [x] `frontend/src/components/orchestration/treeNode.css` — complete; review pass; batch 7. Shared tree styling has no generated UI prose.
 - [x] `frontend/src/components/orchestration/useVisibleComputed.js` — complete; review pass; batch 7. Visibility-aware computed wrapper contains no display text.
-- [x] `frontend/src/components/peer/PeerComposeDialog.vue` — complete; review pass; batch 7. Translated validation/failure fallbacks and project picker hint; user-authored message/reply content preserved.
+- [x] `frontend/src/components/peer/PeerComposeDialog.vue` — complete; review pass; batch 7. Translated validation/failure fallbacks and project picker hint; user-authored message/reply content preserved. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/peer/PeerHelpLink.vue` — complete; review pass; batch 7. Help link uses translated label and stable help content key.
 - [x] `frontend/src/components/peer/PeerInboxBadge.vue` — complete; review pass; batch 7. Badge renders only numeric count and CSS; no prose.
 - [x] `frontend/src/components/peer/PeerInboxButton.vue` — complete; review pass; batch 7. Inbox button tooltip already translated; icon/badge controls contain no indirect copy.
 - [x] `frontend/src/components/peer/PeerInboxDialog.vue` — complete; review pass; batch 7. Search error stored as locale-neutral key; missing peer identity translated. Shared view helpers resolve translated display text at call time.
 - [x] `frontend/src/components/peer/PeerInboxRow.vue` — complete; review pass; batch 7. Translated routing/direction/authorship labels and stable message status codes; message/user content stays unchanged.
-- [x] `frontend/src/components/peer/PeerMessageReviewDialog.vue` — complete; review pass; batch 7. Read all 2012 lines. Translated complete failure/delivery/attachment messages, dynamic routing/status/section labels, link titles and workspace labels; preserved human gate, rollback, Markdown and attachment consent semantics.
-- [x] `frontend/src/components/peer/PeersManagerDialog.vue` — complete; review pass; batch 7. Translated peer validation and known broken-reason/state codes; preserved untrusted name text interpolation.
+- [x] `frontend/src/components/peer/PeerMessageReviewDialog.vue` — complete; review pass; batch 7. Read all 2012 lines. Translated complete failure/delivery/attachment messages, dynamic routing/status/section labels, link titles and workspace labels; preserved human gate, rollback, Markdown and attachment consent semantics. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/peer/PeersManagerDialog.vue` — complete; review pass; batch 7. Translated peer validation and known broken-reason/state codes; preserved untrusted name text interpolation. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/peer/PeerToastContent.vue` — complete; review pass; batch 7. Read toast routing, rich text and styles; controls already translated; external message content preserved.
 - [x] `frontend/src/components/plan/PlanPane.vue` — complete; review pass; batch 7. Translated Claude plan label and missing-document message; document paths/content stay unchanged.
 - [x] `frontend/src/components/project/NewSessionProjectPicker.vue` — complete; review pass; batch 1. All selector sections use reactive t. Project names, folder paths, worktree IDs remain data.
@@ -295,7 +327,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/project/ProjectDetailNavList.vue` — complete; review pass; batch 1. Translated computed All Projects navigation labels. Workspace/project names and route identifiers preserved.
 - [x] `frontend/src/components/project/ProjectDetailPanel.vue` — complete; review pass; batch 1. Translated computed file root labels. Tab labels and deriveFileRoots metadata require source-owner localization. Routes, project names and filesystem paths preserved. Confirmed source-owner translated getters/call-time helpers; public display contract preserved.
 - [x] `frontend/src/components/project/ProjectDirectoryPath.vue` — complete; review pass; batch 1. Only project filesystem paths and decorative icon output; no interface literals.
-- [x] `frontend/src/components/project/ProjectEditDialog.vue` — complete; review pass; batch 1. Read entire dialog and CSS. Translated icon/scan/save/create error fallbacks and workspace scan plural. Existing rich trust, labels, validation and controls translated; user paths, layouts, workspace names and payloads preserved. Local validation, icon/network/scan failures and plural workspace feedback hold descriptors and resolve at display. Backend prose and child error values remain untouched.
+- [x] `frontend/src/components/project/ProjectEditDialog.vue` — complete; review pass; batch 1. Read entire dialog and CSS. Translated icon/scan/save/create error fallbacks and workspace scan plural. Existing rich trust, labels, validation and controls translated; user paths, layouts, workspace names and payloads preserved. Local validation, icon/network/scan failures and plural workspace feedback hold descriptors and resolve at display. Backend prose and child error values remain untouched. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/project/ProjectList.vue` — complete; review pass; batch 1. All sections, empty states, menus and help controls translated; project content unchanged.
 - [x] `frontend/src/components/project/ProjectMark.vue` — complete; review pass; batch 1. Decorative image and color mark; empty alt is intentional.
 - [x] `frontend/src/components/project/ProjectMissingDirectoryDialog.vue` — complete; review pass; batch 1. All dialog state, recheck outcomes and controls translated.
@@ -307,7 +339,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/project/ProjectTreeNode.vue` — complete; review pass; batch 1. Filesystem folder names, paths and project cards only; no interface literals.
 - [x] `frontend/src/components/project/ProjectTrustDialog.vue` — complete; review pass; batch 1. All trust description, propagation labels and decision buttons translated; boolean payload preserved.
 - [x] `frontend/src/components/project/WorktreeButton.vue` — complete; review pass; batch 1. Read complete control and CSS. Translated git detection toast outcomes; all button labels already translated.
-- [x] `frontend/src/components/project/WorktreeDialog.vue` — complete; review pass; batch 1. Read full dialog, controls and CSS. Translated path example prefix, HEAD option, availability tags, validation and error fallbacks. Branch names and path grammar preserved. Local branch/path/network/create/open/load failure refs hold descriptors. Display resolves them reactively; arbitrary data.error stays plain text.
+- [x] `frontend/src/components/project/WorktreeDialog.vue` — complete; review pass; batch 1. Read full dialog, controls and CSS. Translated path example prefix, HEAD option, availability tags, validation and error fallbacks. Branch names and path grammar preserved. Local branch/path/network/create/open/load failure refs hold descriptors. Display resolves them reactively; arbitrary data.error stays plain text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/project/WorktreePickerRows.vue` — complete; review pass; batch 1. Read full row rendering and CSS. Worktree counts already translated; project labels, path separators and selector values preserved.
 - [x] `frontend/src/components/project/WorktreeSelectOptions.vue` — complete; review pass; batch 1. Read full row rendering and CSS. Worktree counts already translated; project labels, path separators and selector values preserved.
 - [x] `frontend/src/components/project/WorktreeSelectorRows.vue` — complete; review pass; batch 1. Read full row rendering and CSS. Worktree counts already translated; project labels, path separators and selector values preserved.
@@ -321,7 +353,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/detail/items/claude_code/BashResultContent.vue` — complete; review pass; batch 2. Read all source. Renders provider terminal output in a code fence; no local UI text.
 - [x] `frontend/src/components/session/detail/items/claude_code/ContentList.vue` — complete; review pass; batch 2. Read all source. Structural content dispatcher; GroupToggle owns translated count and nativeMediaStripItems owns generated attachment labels. Preserved provider content.
 - [x] `frontend/src/components/session/detail/items/claude_code/EditContent.vue` — complete; review pass; batch 2. Read all source. Existing translated fragment-line warning; code and patch content remain unchanged.
-- [x] `frontend/src/components/session/detail/items/claude_code/Message.vue` — complete; review pass; batch 2. Read all source. Message and attachment data remain provider/user content; emptyAssistantMessageMarkdown helper owns placeholder translation and executes inside computed.
+- [x] `frontend/src/components/session/detail/items/claude_code/Message.vue` — complete; review pass; batch 2. Read all source. Message and attachment data remain provider/user content; emptyAssistantMessageMarkdown helper owns placeholder translation and executes inside computed. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/detail/items/claude_code/MonitorResultContent.vue` — complete; review pass; batch 2. Read all source. Translated waiting placeholder inside its existing code fence; preserved actual monitor output.
 - [x] `frontend/src/components/session/detail/items/claude_code/PendingRequestBody.vue` — complete; review pass; batch 2. Read all 1,527 lines. Translated permission mode labels, missing-tool display, trust-disabled reason, keep-mode choices and complete plural permission suggestion summaries. Preserved SDK destination/rule values, questions/options, approval payloads and denial instruction sent to provider.
 - [x] `frontend/src/components/session/detail/items/claude_code/ReadResultContent.vue` — complete; review pass; batch 2. Read all source. Existing translated line-range label; file content and syntax identifiers remain unchanged.
@@ -340,7 +372,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/detail/items/codex/ExecResultContent.vue` — complete; review pass; batch 2. Read all source. Renders aggregated process output in code fence; no interface prose.
 - [x] `frontend/src/components/session/detail/items/codex/ImageGeneration.vue` — complete; review pass; batch 2. Read all source. Translated generated-image fallback title/alt. Preserved revised image prompts, saved paths and provider failure details.
 - [x] `frontend/src/components/session/detail/items/codex/McpToolCallApprovalBody.vue` — complete; review pass; batch 2. Read all source. Translated missing-server fallback; existing approval chrome translated. Preserved MCP server/title/description/parameter display supplied externally.
-- [x] `frontend/src/components/session/detail/items/codex/Message.vue` — complete; review pass; batch 2. Read all source. Existing starting status token goes to translated WorkingAssistantMessage; emptyAssistantMessageMarkdown and interAgentTaskMarkdown execute in computed and own local scaffold. Message content remains verbatim.
+- [x] `frontend/src/components/session/detail/items/codex/Message.vue` — complete; review pass; batch 2. Read all source. Existing starting status token goes to translated WorkingAssistantMessage; emptyAssistantMessageMarkdown and interAgentTaskMarkdown execute in computed and own local scaffold. Message content remains verbatim. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/detail/items/codex/PendingRequestBody.vue` — complete; review pass; batch 2. Read all 691 lines. Translated stable file-change action codes at display time; existing approval controls translated. Preserved raw tool/permission identifiers, reasons, commands, file paths and wire decisions.
 - [x] `frontend/src/components/session/detail/items/codex/PlanImplementationBody.vue` — complete; review pass; batch 2. Read all source. Translated missing-plan and disconnected notices. Preserved NEW_SESSION_PREFIX instructions and provider plan used to seed the next session.
 - [x] `frontend/src/components/session/detail/items/codex/ReadResultContent.vue` — complete; review pass; batch 2. Read all source. Existing translated line-range label; code output and path remain unchanged.
@@ -352,7 +384,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/detail/items/codex/ViewImageResult.vue` — complete; review pass; batch 2. Read all source. Replaced static Image prop default with reactive translated displayName for preview/alt. Preserved caller-supplied filename and image data.
 - [x] `frontend/src/components/session/detail/items/CompactSummary.vue` — complete; review pass; batch 2. Read all source. Translated provider-specific missing-summary notice. Preserved provider summary Markdown.
 - [x] `frontend/src/components/session/detail/items/DaySeparator.vue` — complete; review pass; batch 2. Read all source. Label comes from shared day-label generation; dayKey tooltip preserves ISO date identifier.
-- [x] `frontend/src/components/session/detail/items/FailedSendBanner.vue` — complete; review pass; batch 2. Read all source. Translated composer-ready override and retry/edit recovery toasts. Preserved user retry payload and backend-supplied failure message. Targeted amendment: failedSend.messageKey translates reactively when the catalog knows it; external and unknown-key messages retain literal text.
+- [x] `frontend/src/components/session/detail/items/FailedSendBanner.vue` — complete; review pass; batch 2. Read all source. Translated composer-ready override and retry/edit recovery toasts. Preserved user retry payload and backend-supplied failure message. Targeted amendment: failedSend.messageKey translates reactively when the catalog knows it; external and unknown-key messages retain literal text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/detail/items/MessageSummaryControls.vue` — complete; review pass; batch 2. Read all source. Existing catalog controls; summary.errors comes from useMessageSummary; arbitrary generated errors preserved.
 - [x] `frontend/src/components/session/detail/items/MessageSummaryView.vue` — complete; review pass; batch 2. Read all source. Structural wrapper displays generated summary through TextContent.
 - [x] `frontend/src/components/session/detail/items/MessageTimestamp.vue` — complete; review pass; batch 2. Read all source. Dates use shared formatClockTime/formatFullDateTime; helper owns locale and tracks locale reactively.
@@ -368,17 +400,17 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/detail/items/summary/WebSearchSummary.vue` — complete; review pass; batch 2. Read all source. Displays raw query strings, one per line; no interface prose.
 - [x] `frontend/src/components/session/detail/items/TextContent.vue` — complete; review pass; batch 2. Read all source. Message and inline artifact content are provider/user content; no local interface prose.
 - [x] `frontend/src/components/session/detail/items/TodoContent.vue` — complete; review pass; batch 2. Read all source. Todo explanation, content and activeForm are provider-authored plan content; status identifiers drive styling only.
-- [x] `frontend/src/components/session/detail/items/ToolUseContent.vue` — complete; review pass; batch 2. Read all 1,336 lines. All tool chrome already uses catalog messages. Provider header/summary/input/result helpers execute in computed values and track call-time locale changes. Preserved provider tool errors, raw input/result payloads and technical Unknown error discriminator.
+- [x] `frontend/src/components/session/detail/items/ToolUseContent.vue` — complete; review pass; batch 2. Read all 1,336 lines. All tool chrome already uses catalog messages. Provider header/summary/input/result helpers execute in computed values and track call-time locale changes. Preserved provider tool errors, raw input/result payloads and technical Unknown error discriminator. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/detail/items/UnknownEntry.vue` — complete; review pass; batch 2. Read all source. Existing catalog labels; type and subType remain raw event discriminators. Attachment display helper owns generated attachment names.
-- [x] `frontend/src/components/session/detail/items/WorkingAssistantMessage.vue` — complete; review pass; batch 2. Read all source. Existing whole translated state phrases and Intl.ListFormat activities; provider getVerb and computeToolSummary run inside computed phrase groups. Preserved provider activity targets.
-- [x] `frontend/src/components/session/detail/SelectionSummaryBody.vue` — complete; review pass; batch 2. Read all source. Translated clipboard result messages. Preserved generated summary and provider error text.
+- [x] `frontend/src/components/session/detail/items/WorkingAssistantMessage.vue` — complete; review pass; batch 2. Read all source. Existing whole translated state phrases and Intl.ListFormat activities; provider getVerb and computeToolSummary run inside computed phrase groups. Preserved provider activity targets. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/session/detail/SelectionSummaryBody.vue` — complete; review pass; batch 2. Read all source. Translated clipboard result messages. Preserved generated summary and provider error text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/detail/SessionContent.vue` — complete; review pass; batch 2. Container only; session mode is a technical child prop.
 - [x] `frontend/src/components/session/detail/SessionEventNotice.vue` — complete; review pass; batch 2. Event presentation comes from shared describeEvent and TimelineEventLine; no local interface literals.
 - [x] `frontend/src/components/session/detail/SessionHeader.vue` — complete; review pass; batch 2. Read all 1,834 lines. Translated agent fallback name, context tooltip and clipboard toasts. Localized memory number formatting and action-width invalidation. Preserved model names, paths, identifiers and provider choices.
 - [x] `frontend/src/components/session/detail/SessionItem.vue` — complete; review pass; batch 2. Read all 1,104 lines including styles. Existing interface controls use catalog messages. Preserved provider payloads and technical entry-type fallback used by UnknownEntry.
-- [x] `frontend/src/components/session/detail/SessionItemsList.vue` — complete; review pass; batch 2. Read all 2,981 lines. Translated ephemeral state notices and attachment error fallback/title. Localized ephemeral USD cost and duration numbers. Preserved user/provider messages, protocol values, paths and prompts. Targeted amendment: known ephemeral admission error_key translates reactively; unknown keys retain external error text.
-- [x] `frontend/src/components/session/detail/SessionRenameDialog.vue` — complete; review pass; batch 2. Read all source. Translated stable title suggestion codes, validation and save fallback. Preserved suggested titles, prompt text and model labels.
-- [x] `frontend/src/components/session/detail/TextSelectionComment.vue` — complete; review pass; batch 2. Read all 938 lines. Translated optional-comment placeholders, screenshot errors and preview name, clipboard toast, summary accessibility label and title. Keyboard alternatives use Intl.ListFormat. Preserved subject/sourceLabel prompt scaffolding and quoted user content.
+- [x] `frontend/src/components/session/detail/SessionItemsList.vue` — complete; review pass; batch 2. Read all 2,981 lines. Translated ephemeral state notices and attachment error fallback/title. Localized ephemeral USD cost and duration numbers. Preserved user/provider messages, protocol values, paths and prompts. Targeted amendment: known ephemeral admission error_key translates reactively; unknown keys retain external error text. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/session/detail/SessionRenameDialog.vue` — complete; review pass; batch 2. Read all source. Translated stable title suggestion codes, validation and save fallback. Preserved suggested titles, prompt text and model labels. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/components/session/detail/TextSelectionComment.vue` — complete; review pass; batch 2. Read all 938 lines. Translated optional-comment placeholders, screenshot errors and preview name, clipboard toast, summary accessibility label and title. Keyboard alternatives use Intl.ListFormat. Preserved subject/sourceLabel prompt scaffolding and quoted user content. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/session/layout/DockGutter.vue` — complete; review pass; batch 2. Read all source. Whole messages translate chip, overflow, empty-area titles and accessible names. Intl.ListFormat renders hidden tab labels; caller labels remain content.
 - [x] `frontend/src/components/session/layout/dockMeta.js` — complete; review pass; batch 2. Read all metadata. Live translated getters preserve label string contracts; dock ids, icon URLs, placement order and geometry remain technical.
 - [x] `frontend/src/components/session/layout/DockRegion.vue` — complete; review pass; batch 2. Read all 326 lines. Translated tab-strip double-click titles; tab labels and paths remain caller content.
@@ -397,10 +429,10 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/SessionToastContent.vue` — complete; review pass; batch 2. Read script, template and styles. Translated missing-title fallback. Preserved session titles, provider errors and caller-owned detail text.
 - [x] `frontend/src/components/settings/HelpSettings.vue` — complete; review pass; batch 7. Verified reactive localized manifest titles; title sorting uses active locale. Controls translated; long Markdown bodies deferred.
 - [x] `frontend/src/components/settings/SummarySettings.vue` — complete; review pass; batch 7. OpenRouter description resolves shared description key reactively. Verified adaptOptions translates at call time within computed.
-- [x] `frontend/src/components/settings/TextToSpeechSettings.vue` — complete; review pass; batch 7. Read full speech configuration and playback lifecycle/styles; translated local model/voice hints, test/activation tooltips, kind labels and locale dates; shared OpenRouter description key resolves reactively.
+- [x] `frontend/src/components/settings/TextToSpeechSettings.vue` — complete; review pass; batch 7. Read full speech configuration and playback lifecycle/styles; translated local model/voice hints, test/activation tooltips, kind labels and locale dates; shared OpenRouter description key resolves reactively. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/settings/TipsSettings.vue` — complete; review pass; batch 7. Localized seen-state controls and locale-aware title sorting. Verified reactive translated manifest titles. Long tip bodies deferred.
 - [x] `frontend/src/components/share/AccessLogList.vue` — complete; review pass; batch 11. Read all source. Translated user-agent expansion title and localized view date/count. IP addresses and user-agent strings remain external technical data.
-- [x] `frontend/src/components/share/ShareDialog.vue` — complete; review pass; batch 11. Read all 377 lines. Translated computed password placeholders, dialog title, local errors and toast results. User labels, title overrides, passwords, host keys and API error prose remain content.
+- [x] `frontend/src/components/share/ShareDialog.vue` — complete; review pass; batch 11. Read all 377 lines. Translated computed password placeholders, dialog title, local errors and toast results. User labels, title overrides, passwords, host keys and API error prose remain content. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/share/ShareListPanel.vue` — complete; review pass; batch 11. Read all source. Translated status codes, empty label fallback, copy guidance and action toasts. Share labels/URLs remain content; shareCreatorBadge translates at call time.
 - [x] `frontend/src/components/share/ShareManagerDialog.vue` — complete; review pass; batch 11. Read all source. Translated computed group kinds and title fallbacks. Object titles remain content; link counts already use plural catalog messages.
 - [x] `frontend/src/components/share/ShareTargetDialog.vue` — complete; review pass; batch 11. Read all source. Translated target dialog label and bulk update success toast. Share timestamps are sort data; target title remains content.
@@ -457,7 +489,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/ui/StickyBand.vue` — complete; review pass; batch 7. Slot-only sticky visual wrapper.
 - [x] `frontend/src/components/ui/SummaryGenerationLinks.vue` — complete; review pass; batch 7. All generation controls and status labels already use translations.
 - [x] `frontend/src/components/ui/TabBar.vue` — complete; review pass; batch 7. Tab wrapper forwards caller labels. Shared Web Awesome localization initializes globally.
-- [x] `frontend/src/components/ui/TextToSpeechButton.vue` — complete; review pass; batch 7. Read-aloud status titles use keys resolved reactively. Store error messages remain store-owned.
+- [x] `frontend/src/components/ui/TextToSpeechButton.vue` — complete; review pass; batch 7. Read-aloud status titles use keys resolved reactively. Store error messages remain store-owned. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/virtual-scroller/VirtualScroller.vue` — complete; review pass; batch 7. Full virtualization geometry and slot lifecycle read. No interface text. Caller owns itemMemo locale invalidation.
 - [x] `frontend/src/components/virtual-scroller/VirtualScrollerItem.vue` — complete; review pass; batch 7. Slot wrapper and developer warning only; no interface text.
 - [x] `frontend/src/components/virtual-scroller/virtualScrollerKeys.js` — complete; review pass; batch 7. Provide/inject symbol keys only.
@@ -524,13 +556,13 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/composables/useTemporarySummaryGeneration.js` — complete; review pass; batch 5. Read complete availability flow. Translate local lookup and progress messages. Preserve server errors. Review repair: preserve resolved.errorMessage and local fallback descriptors until computed display.
 - [x] `frontend/src/composables/useTerminal.js` — complete; review pass; batch 5. Read all 2072 lines and xterm localizable string API. Translate app-written ANSI status messages and clipboard toasts. Localize xterm strings and update live input accessibility labels. Preserve all PTY output, commands, snippets, key sequences and theme values. Final review correction: copied/clipboard-denied notifications retain descriptors for locale changes.
 - [x] `frontend/src/composables/useTextSelectionComment.js` — complete; review pass; batch 5. Read complete selection controller. Selection text and comments are user content; DOM coordinates and selectors are technical.
-- [x] `frontend/src/composables/useTimelineFeed.js` — complete; review pass; batch 5. Read complete feed wrapper. Translate HTTP failure displayed by timeline feed. Preserve query and request fields. Review repair: HTTP errors use localUiError; the feed retains Error and its reactive message getter.
+- [x] `frontend/src/composables/useTimelineFeed.js` — complete; review pass; batch 5. Read complete feed wrapper. Translate HTTP failure displayed by timeline feed. Preserve query and request fields. Review repair: HTTP errors use localUiError; the feed retains Error and its reactive message getter. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/composables/useTipScheduler.js` — complete; review pass; batch 5. Read complete scheduler. Tip keys, timings and constraints are technical. Tip title presentation belongs to the tips store.
 - [x] `frontend/src/composables/useToast.js` — complete; review pass; batch 5. Read complete toast API. It forwards caller-supplied title, message, detail and component content. No fixed interface prose. Review correction: ordinary/custom/session notifications retain local message descriptors in metadata, while Notivue public title/message payloads remain strings. Session detail/error descriptors and titleKey params pass through.
 - [x] `frontend/src/composables/useToolResultFetch.js` — complete; review pass; batch 5. Read complete result pipeline. State identifiers are technical; payload errors come from fetchRows callers. Preserve arbitrary external errors.
 - [x] `frontend/src/composables/useTrustGate.js` — complete; review pass; batch 5. Read complete trust gate. Decisions, ids, backend results and diagnostics are technical; dialog owns interface copy.
 - [x] `frontend/src/composables/useVirtualScroll.js` — complete; review pass; batch 5. Read fully. Virtual geometry, event names, keyboard keys, behavior enum strings, lifecycle ownership and scroll cache contain no generated UI text. No change required.
-- [x] `frontend/src/composables/useWebSocket.js` — complete; review pass; batch 5. Read all 2084 lines. Translate local validation fallbacks, process/peer/update/extra-usage notifications and send-failure messages at event time. Format numeric credit amounts with locale-aware numbers. Preserve wire values, server prose, PTY/agent content and provider identifiers. Update notification instructions now render through Vue text/code nodes via getUpdateInstructions(), preserving callback/button behavior and escaping. Review correction: retained process/session/peer titles use descriptors. Finished-shell detail retains plural metadata. Extra usage uses reactive Vue text nodes and locale-aware numeric formatters. Infinite update title retains key/version params. Invalid-title failed sends preserve raw server error in messageParams or a whole unknown-error key.
+- [x] `frontend/src/composables/useWebSocket.js` — complete; review pass; batch 5. Read all 2084 lines. Translate local validation fallbacks, process/peer/update/extra-usage notifications and send-failure messages at event time. Format numeric credit amounts with locale-aware numbers. Preserve wire values, server prose, PTY/agent content and provider identifiers. Update notification instructions now render through Vue text/code nodes via getUpdateInstructions(), preserving callback/button behavior and escaping. Review correction: retained process/session/peer titles use descriptors. Finished-shell detail retains plural metadata. Extra usage uses reactive Vue text nodes and locale-aware numeric formatters. Infinite update title retains key/version params. Invalid-title failed sends preserve raw server error in messageParams or a whole unknown-error key. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/composables/wsProcessState.js` — complete; review pass; batch 5. Read the complete file. Technical session/layout/navigation/process state and diagnostics only; no interface prose.
 - [x] `frontend/src/composables/wsSessionItems.js` — complete; review pass; batch 5. Read the complete file. Technical session/layout/navigation/process state and diagnostics only; no interface prose.
 - [x] `frontend/src/constants.js` — complete; review pass; batch 6. Translate process state names with live getters. Preserve protocol constants, URLs and model names. Add descriptor key for consumers.
@@ -545,7 +577,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/i18n/index.js` — complete; review pass; batch 0. Read complete bootstrap and locale API. Preserve autonyms/settings/wire locale. English default/fallback, guarded storage and global reactive composer remain. Add a catalog-derived CSS loading label for pseudo-elements. CSS and both-locale fallback are tested.
 - [x] `frontend/src/i18n/locales/en.json` — complete; review pass; batch 0. Catalog parity, named parameters and ICU syntax validated; independent full-file semantic review records the exact approved hash.
 - [x] `frontend/src/i18n/locales/pt-BR.json` — complete; review pass; batch 0. Catalog parity, named parameters and ICU syntax validated; independent full-file semantic review records the exact approved hash.
-- [x] `frontend/src/i18n/uiMessages.js` — complete; review pass; batch 5. Read the complete helper. Parent-authorized additive localUiError returns Error with dynamic string message and local uiMessage metadata. Reviewer1 independently approves.
+- [x] `frontend/src/i18n/uiMessages.js` — complete; review pass; batch 5. Read the complete helper. Parent-authorized additive localUiError returns Error with dynamic string message and local uiMessage metadata. Reviewer1 independently approves. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/inline-artifacts/context.js` — complete; review pass; batch 11. Read all source. Injection symbols, identity serialization, reload query and navigation selectors are technical contracts; no interface prose.
 - [x] `frontend/src/inline-artifacts/displayMirror.js` — complete; review pass; batch 11. Read all source. Mirrors iframe display attributes into artifact CSS; no interface prose or DOM text writes.
 - [x] `frontend/src/inline-artifacts/fileRelevance.js` — complete; review pass; batch 11. Read all source. Selects artifact-relative file path relevance; folder names remain wire/path values.
@@ -563,7 +595,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/inline-artifacts/scrollForwarder.js` — complete; review pass; batch 11. Read all 170 lines. Iframe scroll/touch relay and CSS queries have no interface prose; protocol kinds, modes and coordinates remain technical.
 - [x] `frontend/src/inline-artifacts/shareOptions.js` — complete; review pass; batch 11. Read all source. Pure persisted option fallback; no interface prose.
 - [x] `frontend/src/main.js` — complete; review pass; batch 8. Read full entry module. Translate access-denied title, explanation, command tooltip, copy status and backend-failure screen through textContent. Preserve commands, startup behavior and console diagnostics.
-- [x] `frontend/src/providers/baseHelpers.js` — complete; review pass; batch 1. Read all 1,586 lines. Translate field labels, summary labels, model availability, trust help, startup/idle warnings and retirement dates. Preserve machine states and tool APIs.
+- [x] `frontend/src/providers/baseHelpers.js` — complete; review pass; batch 1. Read all 1,586 lines. Translate field labels, summary labels, model availability, trust help, startup/idle warnings and retirement dates. Preserve machine states and tool APIs. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/providers/claude_code/agentControlTools.js` — complete; review pass; batch 1. Translate control card headings and encrypted placeholder at call time. Preserve control tool names and expected-count logic.
 - [x] `frontend/src/providers/claude_code/constants.js` — complete; review pass; batch 1. Wire enums and capability constants only; preserve permission and effort identifiers.
 - [x] `frontend/src/providers/claude_code/helpers.js` — complete; review pass; batch 1. Read full provider helper. Translate built-in picker descriptions/hints, permission/effort/boolean choices, status descriptors, capability notices and model decorations. Build catalogs at call time. Preserve provider names, commands and wire values.
@@ -597,7 +629,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/share-session/brandRobotIcon.js` — complete; review pass; batch 11. Read all source. Registers the product SVG under technical icon-library identity; no UI prose.
 - [x] `frontend/src/share-session/inlineAdapter.js` — complete; review pass; batch 11. Read all source. Normalizes token-only manifests and publication titles. Validation exception is caught by runtime; probe failures remain technical codes rendered through localized state components.
 - [x] `frontend/src/share-session/inlineCompletion.js` — complete; review pass; batch 11. Read all source. Snapshot polling/access lifecycle has no interface prose; HTTP codes and pending status are technical.
-- [x] `frontend/src/share-session/main.js` — complete; review pass; batch 11. Read all source. Standalone share application installs the shared i18n plugin, sets document locale and loads Web Awesome Portuguese translation. Data titles remain public metadata.
+- [x] `frontend/src/share-session/main.js` — complete; review pass; batch 11. Read all source. Standalone share application installs the shared i18n plugin, sets document locale and loads Web Awesome Portuguese translation. Data titles remain public metadata. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/share-session/ShareDocApp.vue` — complete; review pass; batch 11. Read all source. Image alt fallback translates reactively without refetching source. Shared document text, diagrams, metadata titles and URLs remain provider content.
 - [x] `frontend/src/share-session/SharedSubagentView.vue` — complete; review pass; batch 11. Read all source. Missing agent-name wrapper uses shared catalog message at render time; real agent names and IDs stay content.
 - [x] `frontend/src/share-session/ShareFooter.vue` — complete; review pass; batch 11. Read all source. Whole footer message already uses global i18n-t with brand slot; product name and repository URL remain technical identity.
@@ -616,31 +648,31 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/share-session/theme.js` — complete; review pass; batch 11. Read all source. Theme initialization writes CSS classes, scheme attributes and numeric font units; all values remain technical.
 - [x] `frontend/src/share-session/viewerPrefs.js` — complete; review pass; batch 11. Read all source. Local preference serialization has no interface prose; storage key and preference fields remain technical.
 - [x] `frontend/src/stores/agentSettingsPresets.js` — complete; review pass; batch 5. Read complete preset store. Translate generated copy suffix when the user duplicates a preset. Preserve stored user names, ids and setting bundles.
-- [x] `frontend/src/stores/auth.js` — complete; review pass; batch 5. Read complete auth store. Preserve protocol matching for No password configured; translate recognized authentication messages and network failures on return. Preserve unknown backend errors. Review repair: login keeps error string and adds optional local errorMessage descriptor for LoginView.
+- [x] `frontend/src/stores/auth.js` — complete; review pass; batch 5. Read complete auth store. Preserve protocol matching for No password configured; translate recognized authentication messages and network failures on return. Preserve unknown backend errors. Review repair: login keeps error string and adds optional local errorMessage descriptor for LoginView. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/benchmarks.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/benchmarkTask.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/codeComments.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
 - [x] `frontend/src/stores/contentMetadata.js` — complete; review pass; batch 5. New helper fully reviewed. Maps 12 help and 54 tip stable IDs to batch-8 title keys. Returns locale-reactive title metadata from computed store getters; preserves unknown server titles and all other metadata. No body content translation.
-- [x] `frontend/src/stores/data.js` — complete; review pass; batch 5. Read all 7,382 original lines. Local action/fetch/send failures translate at use. Fetch panels retain reactive key metadata; failed bubbles persist optional messageKey for reactive consumers. Locale changes rebuild only synthetic ephemeral prompt display from original prompt data. Background status metadata passes unchanged. Names, session/provider output, prompts, process labels, errors and progress details from backend remain external; wire values and state mechanics stay unchanged. Review repair: locale watcher refreshes local ephemeral parsed content then recomputes all loaded/event/optimistic sessions through existing deferred lifecycle. Failed-send messageParams persist with messageKey.
+- [x] `frontend/src/stores/data.js` — complete; review pass; batch 5. Read all 7,382 original lines. Local action/fetch/send failures translate at use. Fetch panels retain reactive key metadata; failed bubbles persist optional messageKey for reactive consumers. Locale changes rebuild only synthetic ephemeral prompt display from original prompt data. Background status metadata passes unchanged. Names, session/provider output, prompts, process labels, errors and progress details from backend remain external; wire values and state mechanics stay unchanged. Review repair: locale watcher refreshes local ephemeral parsed content then recomputes all loaded/event/optimistic sessions through existing deferred lifecycle. Failed-send messageParams persist with messageKey. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/framePool.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/help.js` — complete; review pass; batch 5. Read complete help store. Expose reactive translated title metadata through manifest while preserving unknown titles and all constraints. Stable title mapping comes from the complete batch 8 frontmatter audit.
 - [x] `frontend/src/stores/layouts.js` — complete; review pass; batch 5. Read complete layout store. Translate synthetic single-pane display name in the reactive getter. Preserve exported compatibility constant and stored user layout names.
-- [x] `frontend/src/stores/mcp.js` — complete; review pass; batch 5. Read complete store. Translate local load/action failures. Preserve arbitrary server error details and wire actions. Review repair: writable public error/loadError string accessors resolve internal local descriptors. External messages stay verbatim.
+- [x] `frontend/src/stores/mcp.js` — complete; review pass; batch 5. Read complete store. Translate local load/action failures. Preserve arbitrary server error details and wire actions. Review repair: writable public error/loadError string accessors resolve internal local descriptors. External messages stay verbatim. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/messageSnippets.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
-- [x] `frontend/src/stores/peers.js` — complete; review pass; batch 5. Read complete store. Translate unknown-peer fallback at call time. Preserve peer names, URLs and message content.
+- [x] `frontend/src/stores/peers.js` — complete; review pass; batch 5. Read complete store. Translate unknown-peer fallback at call time. Preserve peer names, URLs and message content. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/providersStatus.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/sessionSelection.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/sessionTreeExpansion.js` — complete; review pass; batch 5. Read complete store. Only technical state, identifiers, user-owned names/content or diagnostics. No fixed interface prose.
 - [x] `frontend/src/stores/settings.js` — complete; review pass; batch 5. Read fully. Settings defaults, validators, storage migrations, provider dispatch, and theme/OS watchers contain wire values, prompt content, CSS names, and developer logs only. Existing locale persistence and synchronization stay unchanged.
-- [x] `frontend/src/stores/shares.js` — complete; review pass; batch 5. Read complete store. Translate response parsing fallbacks. Share metadata and server errors remain external.
-- [x] `frontend/src/stores/summaries.js` — complete; review pass; batch 5. Read all summary store source. Translate generated lookup/acquisition/transport failures at call time. Preserve summary body, prompts, descriptor state and backend/provider errors. Review repair: entries and lookup errors expose reactive strings from local descriptors; streaming and external errors retain original content.
+- [x] `frontend/src/stores/shares.js` — complete; review pass; batch 5. Read complete store. Translate response parsing fallbacks. Share metadata and server errors remain external. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/stores/summaries.js` — complete; review pass; batch 5. Read all summary store source. Translate generated lookup/acquisition/transport failures at call time. Preserve summary body, prompts, descriptor state and backend/provider errors. Review repair: entries and lookup errors expose reactive strings from local descriptors; streaming and external errors retain original content. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/terminalCommand.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
 - [x] `frontend/src/stores/terminalConfig.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
 - [x] `frontend/src/stores/terminalPool.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
 - [x] `frontend/src/stores/terminalTabs.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
-- [x] `frontend/src/stores/textToSpeech.js` — complete; review pass; batch 5. Read fully. Local initialization/configuration/summary/request/network failures translate when used. Native/player/backend error details remain external. Stream IDs, statuses, payloads, voice names, selected text, spoken content, summary identity and settings remain unchanged.
+- [x] `frontend/src/stores/textToSpeech.js` — complete; review pass; batch 5. Read fully. Local initialization/configuration/summary/request/network failures translate when used. Native/player/backend error details remain external. Stream IDs, statuses, payloads, voice names, selected text, spoken content, summary identity and settings remain unchanged. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/timelineFilters.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
-- [x] `frontend/src/stores/timelineSpeech.js` — complete; review pass; batch 5. Read fully. Scope labels and local playback/load failures translate at call time. Web scope watch and native locale watch refresh the global scope label. Spoken provider/user content, project/session names, native errors, source IDs and queue states remain unchanged. Refused detection uses additive stable reason metadata with legacy English compatibility. Final review correction: retained local speech-listener failure notices preserve descriptors. _showError keeps its public string argument plus optional descriptor metadata.
+- [x] `frontend/src/stores/timelineSpeech.js` — complete; review pass; batch 5. Read fully. Scope labels and local playback/load failures translate at call time. Web scope watch and native locale watch refresh the global scope label. Spoken provider/user content, project/session names, native errors, source IDs and queue states remain unchanged. Refused detection uses additive stable reason metadata with legacy English compatibility. Final review correction: retained local speech-listener failure notices preserve descriptors. _showError keeps its public string argument plus optional descriptor metadata. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/stores/tips.js` — complete; review pass; batch 5. Read complete tips store. Translate known stable title metadata reactively through manifest; preserve constraints, unknown backend titles and Markdown body content.
 - [x] `frontend/src/stores/tipsConstraints.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
 - [x] `frontend/src/stores/uploads.js` — complete; review pass; batch 5. Read the complete store. Only technical state, user-owned content/names, commands, filtering, persistence or diagnostics. Preserve prompt formatting and external content unchanged.
@@ -728,7 +760,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/draftStorageBlockedNotice.js` — complete; review pass; batch 9. Read in full. Bootstrap DOM alert uses selected-locale message and a cleaned-up locale watcher. Legacy exported English constant stays compatible.
 - [x] `frontend/src/utils/effortIcon.js` — complete; review pass; batch 9. Read in full. Technical effort identifiers and SVG asset paths only.
 - [x] `frontend/src/utils/emptyMessage.js` — complete; review pass; batch 9. Read in full. Whole empty-assistant Markdown notice translates at call time. Both provider message consumers invoke it inside computed.
-- [x] `frontend/src/utils/ephemeralSessions.js` — complete; review pass; batch 10. Read all serialization, promotion, rebinding, result/failure and storage actions. Preserve compatibility name=Attachment and add known name_key only for absent actual filenames. Preserve optional error_key through persisted results; admission failure emits known startFailed key only for absent server error. Batch1 ephemeralContent resolves known name_key; batch2 SessionItemsList resolves known error_key reactively. Parent store refresh regenerates synthetic prompt presentation on locale switch. Names, provider errors, wire requests, prompt data and attachment bytes remain unchanged.
+- [x] `frontend/src/utils/ephemeralSessions.js` — complete; review pass; batch 10. Read all serialization, promotion, rebinding, result/failure and storage actions. Preserve compatibility name=Attachment and add known name_key only for absent actual filenames. Preserve optional error_key through persisted results; admission failure emits known startFailed key only for absent server error. Batch1 ephemeralContent resolves known name_key; batch2 SessionItemsList resolves known error_key reactively. Parent store refresh regenerates synthetic prompt presentation on locale switch. Names, provider errors, wire requests, prompt data and attachment bytes remain unchanged. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/ephemeralStorage.js` — complete; review pass; batch 9. Read in full. IndexedDB persistence; stores raw control data without display prose.
 - [x] `frontend/src/utils/errorParsing.js` — complete; review pass; batch 6. Translate only application-owned Unknown error fallback. Preserve structured API payload and arbitrary provider/backend prose.
 - [x] `frontend/src/utils/fileIcons.js` — complete; review pass; batch 10. Read full filename/extension/folder maps and icon URL helpers. All strings identify filenames, source extensions, directories and Iconify assets; no displayed prose.
@@ -764,7 +796,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/markdownRenderCache.js` — complete; review pass; batch 10. Read complete cache-key builder. Input sources, references and theme identifiers are external content/technical data.
 - [x] `frontend/src/utils/markdownRenderCoordinator.js` — complete; review pass; batch 10. Read full coordinator, cancellation, request and state reporting. Errors pass to consumer; no literal interface fallback is generated.
 - [x] `frontend/src/utils/mermaid.js` — complete; review pass; batch 10. Read all lazy renderer configuration, source theme detection/injection and SVG return paths. Mermaid content stays external; error rendering is suppressed, exceptions pass to consumer.
-- [x] `frontend/src/utils/nativeTtsClient.js` — complete; review pass; batch 6. Translate local native speech unavailable/start fallbacks. Preserve native command/state/operation payloads and native error prose.
+- [x] `frontend/src/utils/nativeTtsClient.js` — complete; review pass; batch 6. Translate local native speech unavailable/start fallbacks. Preserve native command/state/operation payloads and native error prose. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/nearestScroll.js` — complete; review pass; batch 10. Read complete scroll geometry and event/timeout cleanup. Behavior strings, CSS measurements and event names are technical; no text output.
 - [x] `frontend/src/utils/notificationSounds.js` — complete; review pass; batch 6. Translate sound labels with live getters; getAvailableSoundOptions resolves selected locale at each call. Preserve oscillator configuration and browser notification caller content.
 - [x] `frontend/src/utils/orchestrationActivity.js` — complete; review pass; batch 6. Process membership and running-agent flags only. No generated prose.
@@ -820,7 +852,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/sessionAvailability.js` — complete; review pass; batch 10. Read full reason/refusal logic. Unavailable reason remains backend stable code; no helper directly renders reason text. Consumer translates reason states.
 - [x] `frontend/src/utils/sessionComposerLock.js` — complete; review pass; batch 6. Translate composer lock reasons at call time. Preserve presentation discriminants.
 - [x] `frontend/src/utils/sessionLists.js` — complete; review pass; batch 9. Read in full. Reactive scope membership/sorting indexes; no generated labels.
-- [x] `frontend/src/utils/sessionMute.js` — complete; review pass; batch 9. Read in full. Fallback notification update error translates at call time. Server data.error and mute preferences unchanged.
+- [x] `frontend/src/utils/sessionMute.js` — complete; review pass; batch 9. Read in full. Fallback notification update error translates at call time. Server data.error and mute preferences unchanged. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/sessionRoute.js` — complete; review pass; batch 10. Read complete contextual session route builder. Route names, params and workspace IDs remain unchanged; no interface display values.
 - [x] `frontend/src/utils/sessions.js` — complete; review pass; batch 9. Read in full. Lifecycle/unread predicates and stable process-state codes only.
 - [x] `frontend/src/utils/sessionSort.js` — complete; review pass; batch 10. Read full session ordering comparator. Uses pin/process flags and numeric timestamps, with user session data untouched; no text formatting.
@@ -858,7 +890,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/thinkingTitle.js` — complete; review pass; batch 6. Extract heading/bold title from provider thinking text. Preserve provider content verbatim.
 - [x] `frontend/src/utils/timeline/authorLabel.js` — complete; review pass; batch 6. Translate whole author labels with named via/session slots. Preserve actor codes and external agent/client names.
 - [x] `frontend/src/utils/timeline/backgroundBadge.js` — complete; review pass; batch 6. Translate scheduled wake-up and goal badge. Shared pluralizer translates known nouns; format localized list. Preserve raw JSON tooltip as technical payload.
-- [x] `frontend/src/utils/timeline/describeEvent.js` — complete; review pass; batch 6. Translate timeline event prose, reason metadata, tags, tooltips, titles and rich session/value messages at call time. Preserve event kinds, provider tool names, user titles, errors and unknown event identifiers.
+- [x] `frontend/src/utils/timeline/describeEvent.js` — complete; review pass; batch 6. Translate timeline event prose, reason metadata, tags, tooltips, titles and rich session/value messages at call time. Preserve event kinds, provider tool names, user titles, errors and unknown event identifiers. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/timeline/eventTime.js` — complete; review pass; batch 6. Timeline clock/full timestamp default to selected locale. Explicit test locale/timeZone still wins. Preserve cursors, microsecond ordering, technical marks and user text.
 - [x] `frontend/src/utils/timeline/feed.js` — complete; review pass; batch 6. Read full serialized fetch queue, pagination, live insertion and visibility recovery. No generated UI prose; console guard diagnostic stays technical.
 - [x] `frontend/src/utils/timeline/filters.js` — complete; review pass; batch 6. Translate view/family/author/group labels and hints through live getters; prevent frozen lookup label snapshots. Translate active pills and localized value list. Preserve query and filter wire values.
@@ -886,14 +918,14 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/ttsConfig.js` — complete; review pass; batch 6. Read full TTS configuration/engine rules. Translate output getters, model pricing, streaming support, config fallbacks/copy names, stats and adaptation facts at call time. Localize numbers/currency/lists. Preserve test speech payload, shell command/settings fields, model/voice/format identifiers.
 - [x] `frontend/src/utils/twiccLaunch.js` — complete; review pass; batch 9. Read in full. Stores raw shell launch prefix; no UI prose.
 - [x] `frontend/src/utils/unreadMemos.js` — complete; review pass; batch 10. Read all retained unread memo helpers. Boolean state and diagnostic stage identifiers only; session content remains untouched.
-- [x] `frontend/src/utils/updateInstructions.js` — complete; review pass; batch 9. Read in full. Fallback instructions translate at call time. Structured getter feeds the Vue update toast; retained escaped HTML API compatibility. Verified useWebSocket renders text/code nodes.
+- [x] `frontend/src/utils/updateInstructions.js` — complete; review pass; batch 9. Read in full. Fallback instructions translate at call time. Structured getter feeds the Vue update toast; retained escaped HTML API compatibility. Verified useWebSocket renders text/code nodes. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/updateReminder.js` — complete; review pass; batch 10. Read full storage migration, lock handling and toast ownership. UI display is injected show callback; version values and storage/Web Lock identifiers remain unchanged.
-- [x] `frontend/src/utils/uploads/controller.js` — complete; review pass; batch 6. Read all lifecycle, upload records, toasts, retry logic, timers and user actions. Translate generated complete toast/error messages at event time. Preserve state codes, URLs, filenames and server prose.
-- [x] `frontend/src/utils/uploads/display.js` — complete; review pass; batch 6. Translate upload status display at call time. Preserve action identifiers and server error field.
+- [x] `frontend/src/utils/uploads/controller.js` — complete; review pass; batch 6. Read all lifecycle, upload records, toasts, retry logic, timers and user actions. Translate generated complete toast/error messages at event time. Preserve state codes, URLs, filenames and server prose. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
+- [x] `frontend/src/utils/uploads/display.js` — complete; review pass; batch 6. Translate upload status display at call time. Preserve action identifiers and server error field. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/uploads/ids.js` — complete; review pass; batch 6. UUID generation and fingerprint hashes only; preserve technical strings.
 - [x] `frontend/src/utils/uploads/paths.js` — complete; review pass; batch 6. Path traversal, normalization and relative display paths only; preserve path values.
 - [x] `frontend/src/utils/uploads/rules.js` — complete; review pass; batch 6. Upload state machine, aggregate numeric progress and protocol state matching only.
-- [x] `frontend/src/utils/uploads/transport.js` — complete; review pass; batch 6. Translate generated upload transport errors at call time. Preserve HTTP states, tus headers, exported legacy English constant and arbitrary server error bodies.
+- [x] `frontend/src/utils/uploads/transport.js` — complete; review pass; batch 6. Translate generated upload transport errors at call time. Preserve HTTP states, tus headers, exported legacy English constant and arbitrary server error bodies. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/utils/uploads/tree.js` — complete; review pass; batch 6. Tree merge and asynchronous refresh mechanics only; preserve filenames and paths.
 - [x] `frontend/src/utils/usage.js` — complete; review pass; batch 6. Read all quota calculations and display formatters. Preserve numeric quota/wire data. Use selected locale for money, multiplier, durations, dates, day names and clock values.
 - [x] `frontend/src/utils/version.js` — complete; review pass; batch 10. Read complete numeric version comparison. Dotted package versions are technical data and remain unchanged.
@@ -917,86 +949,445 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/views/SessionView.vue` — complete; review pass; batch 3. Read all 2980 lines. Translated reactive tool-tab registry, layout scopes/default names, subagent fallback, command keys and nested choices, shadow-DOM titles and root label. Preserved provider/model values, user layout names and route/dock values. DOCK_LABELS getters resolve inside callback.
 - [x] `frontend/vite.config.js` — complete; review pass; batch 8. Read full build/dev config. Inject only recovery description and Retry catalog messages into prebundle guard for both commands. Preserve build entry, proxy paths and excluded README screenshots.
 
-## Open dependencies and external findings
+- [x] `frontend/src/i18n/remoteMessages.js` — Convert explicit backend descriptors without translating on receipt; retain fallback diagnostics and render-time message identity. Independently reviewed.
+- [x] `frontend/src/i18n/pageTitles.js` — JavaScript shell titles follow locale and preserve user titles. Independently reviewed against backend modes.
 
-- External finding in `frontend/src/commands/staticCommands.js`: Help page titles come from backend help metadata; long help content remains deferred.
-- External finding in `frontend/src/components/app/ChangelogDialog.vue`: Release entry.text and image alt text remain release content.
-- External finding in `frontend/src/components/app/NotificationSettings.vue`: External notification test API data.error and result.error render supplied diagnostics unchanged.
-- External finding in `frontend/src/components/app/SearchOverlay.vue`: Search API data.error renders backend validation details unchanged.
-- External finding in `frontend/src/components/app/SettingsPopover.vue`: Usage file, dump path and tmux config validation result.message contain backend-supplied diagnostics.
-- External finding in `frontend/src/components/app/StartupProgressCallout.vue`: backgroundComputeProgress.details contains backend-supplied status prose.
-- External finding in `frontend/src/components/artifacts/ArtifactBookmarkButton.vue`: API/store error messages may contain backend prose.
-- External finding in `frontend/src/components/artifacts/ArtifactBookmarkDialog.vue`: Server network/action errors remain external prose.
-- External finding in `frontend/src/components/browser/BrowserPane.vue`: Companion capture data.error and probeResult.reason remain verbatim; API data.error remains external
-- External finding in `frontend/src/components/files/DirectoryPickerPopup.vue`: Backend data.error and native fetch exception messages are displayed verbatim.
-- External finding in `frontend/src/components/files/FileCreateDialog.vue`: Backend data.error is displayed verbatim.
-- External finding in `frontend/src/components/files/FileDeleteDialog.vue`: Backend data.error is displayed verbatim.
-- External finding in `frontend/src/components/files/FileMoveDialog.vue`: Backend data.error is displayed verbatim.
-- External finding in `frontend/src/components/files/FilePane.vue`: File-content API data.error remains external
-- External finding in `frontend/src/components/files/FilePickerPopup.vue`: Backend data.error and native fetch exception messages are displayed verbatim; HTTP status fallback is technical.
-- External finding in `frontend/src/components/files/FileRenameDialog.vue`: Backend data.error is displayed verbatim.
-- External finding in `frontend/src/components/files/FilesPanel.vue`: file-tree API data.error and native network errors remain verbatim
-- External finding in `frontend/src/components/git/GitPanel.vue`: Git API data.error remains external
-- External finding in `frontend/src/components/git/GitPanel.vue`: Backend tree-root name "Uncommitted files" comes from src/twicc/git.py:806 and remains external to this frontend pass; browser validation confirms the source.
-- External finding in `frontend/src/components/mcp/McpConnectionDialog.vue`: Store/server MCP errors remain external prose.
-- External finding in `frontend/src/components/mcp/McpManager.vue`: Store/server errors remain external prose.
-- External finding in `frontend/src/components/mcp/McpProtection.vue`: protection.incident.reason is backend-supplied display prose.
-- External finding in `frontend/src/components/message/CommandPickerPopup.vue`: Backend command descriptions, argument hints, data.error and network exception messages remain external data.
-- External finding in `frontend/src/components/message/GoalBlock.vue`: Backend dismiss error.message remains external prose.
-- External finding in `frontend/src/components/message/MessageHistoryPickerPopup.vue`: API data.error and network exception messages are backend/runtime-supplied content.
-- External finding in `frontend/src/components/message/MessageInput.vue`: Runtime upload error.message remains external prose.
-- External finding in `frontend/src/components/peer/PeerComposeDialog.vue`: Structured/server error messages remain external prose.
-- External finding in `frontend/src/components/peer/PeerMessageReviewDialog.vue`: Server errorText errors/messages remain external prose.
-- External finding in `frontend/src/components/peer/PeersManagerDialog.vue`: Unknown broken reasons and server errors remain external.
-- External finding in `frontend/src/components/project/ProjectEditDialog.vue`: API data.error in create/update/icon/scan endpoints remains backend prose.
-- External finding in `frontend/src/components/project/WorktreeDialog.vue`: Worktree API data.error remains arbitrary backend prose.
-- External finding in `frontend/src/components/session/detail/items/ApiError.vue`: API/provider error.message is external content and remains verbatim.
-- External finding in `frontend/src/components/session/detail/items/codex/AutoReviewDenialBody.vue`: input.rationale contains provider/backend explanation.
-- External finding in `frontend/src/components/session/detail/items/codex/ImageGeneration.vue`: payload.failure contains provider diagnostics.
-- External finding in `frontend/src/components/session/detail/items/codex/McpToolCallApprovalBody.vue`: MCP message, description and parameter displayName originate from server.
-- External finding in `frontend/src/components/session/detail/items/codex/PendingRequestBody.vue`: toolInput.reason is provider-supplied explanation.
-- External finding in `frontend/src/components/session/detail/items/FailedSendBanner.vue`: failedSend.message originates in backend or store; producer translation contract reported to worker5.
-- External finding in `frontend/src/components/session/detail/items/shared/ElicitationFormBody.vue`: Server schema labels, descriptions, enum names and message remain external content.
-- External finding in `frontend/src/components/session/detail/items/shared/ElicitationUrlBody.vue`: MCP input.message originates from server.
-- External finding in `frontend/src/components/session/detail/items/ToolUseContent.vue`: toolState.error contains provider/backend prose and remains external content.
-- External finding in `frontend/src/components/session/detail/SelectionSummaryBody.vue`: entry.error and error.message contain backend/browser errors.
-- External finding in `frontend/src/components/session/detail/SessionItemsList.vue`: Ephemeral result error, migration reason and history loading error detail originate in backend/shared store.
-- External finding in `frontend/src/components/session/detail/SessionRenameDialog.vue`: renameSession error.message remains server-provided text.
-- External finding in `frontend/src/components/session/detail/TextSelectionComment.vue`: Screenshot and speech errors interpolate browser/backend detail.
-- External finding in `frontend/src/components/session/SessionToastContent.vue`: errorMessage and detail are external strings; their producer owns translation.
-- External finding in `frontend/src/components/settings/TextToSpeechSettings.vue`: DEFAULT_TEST_TEXT is actual speech request/user-editable content and remains English; server/model errors remain external.
-- External finding in `frontend/src/components/share/ShareDialog.vue`: errors[].message, reason and error fields originate from share API.
-- External finding in `frontend/src/components/sidebar/AndroidAppMenu.vue`: Android bridge failure.message renders native diagnostics unchanged.
-- External finding in `frontend/src/components/workflows/WorkflowRunDetail.vue`: Interrupted raw engine status is intentionally relayed verbatim.
-- External finding in `frontend/src/components/workflows/WorkflowsPane.vue`: Fetch error.message is external browser/network diagnostic prose.
-- External finding in `frontend/src/composables/useMessageSummary.js`: Descriptor/lookup errors and generated summaries originate from the backend; preserve external content.
-- External finding in `frontend/src/composables/useOriginSettingsForm.js`: Unknown backend origin error messages remain external; known codes map through originSettingsForm helper.
-- External finding in `frontend/src/composables/useTemporarySummaryGeneration.js`: Summary lookup may supply external resolved.error or failure.message.
-- External finding in `frontend/src/composables/useToolResultFetch.js`: resultError forwards payload.message or String(payload); owner of fetchRows controls localized frontend errors.
-- External finding in `frontend/src/composables/useWebSocket.js`: Usage/tmux file validation messages, invalid_title error details, process errors/labels, generic settings errors and server send errors contain backend/provider prose. Known event headings are translated; arbitrary backend details remain external.
-- External finding in `frontend/src/providers/baseHelpers.js`: Model registry disable_reason is backend-supplied prose and remains external content.
-- External finding in `frontend/src/providers/claude_code/helpers.js`: Unknown upstream status string and registry disable_reason remain external display data.
-- External finding in `frontend/src/providers/codex/helpers.js`: Unknown upstream status string and registry disable_reason remain external display data.
-- External finding in `frontend/src/share-session/main.js`: Server share/html.py emits English document titles and standalone JS-free unavailable/auth pages. These server pages are outside frontend ownership.
-- External finding in `frontend/src/stores/auth.js`: Unknown login error text and access_denied reason originate from the backend.
-- External finding in `frontend/src/stores/data.js`: Startup detail, process label/error, tool state error, arbitrary REST error fields, title suggestions, and user/provider message content originate outside this frontend.
-- External finding in `frontend/src/stores/help.js`: Unknown future backend help ids retain their server title fallback; Markdown bodies remain deferred.
-- External finding in `frontend/src/stores/mcp.js`: data.error may contain backend error prose.
-- External finding in `frontend/src/stores/shares.js`: REST response error details may contain backend prose.
-- External finding in `frontend/src/stores/summaries.js`: Backend summary lookup and stream errors remain arbitrary external prose.
-- External finding in `frontend/src/stores/textToSpeech.js`: Native backend error.message and streamed backend speech errors are displayed verbatim.
-- External finding in `frontend/src/stores/timelineSpeech.js`: Native speech backend error messages remain verbatim.
-- External finding in `frontend/src/stores/tips.js`: Unknown future backend tip ids retain server title fallback. Long Markdown bodies remain deferred.
-- External finding in `frontend/src/utils/androidAppClient.js`: Android response.error is external native application prose.
-- External finding in `frontend/src/utils/changelog.js`: Changelog release prose and image alt text remain external English content.
-- External finding in `frontend/src/utils/ephemeralSessions.js`: {"file":"frontend/src/components/session/detail/SessionItemsList.vue","symbol":"ephemeralNotice","issue":"Server-supplied frame.error remains verbatim provider/backend prose; only the local absent-error fallback uses a stable frontend translation key."}
-- External finding in `frontend/src/utils/errorParsing.js`: API error.message and process errorMessage are provider/backend prose without stable UI codes.
-- External finding in `frontend/src/utils/nativeTtsClient.js`: Native acceptance.error.message and terminal outcome errors remain native application prose.
-- External finding in `frontend/src/utils/sessionMute.js`: Session update API data.error remains verbatim
-- External finding in `frontend/src/utils/speechOutcome.js`: backend.error remains arbitrary server diagnostic content.
-- External finding in `frontend/src/utils/timeline/describeEvent.js`: process.ended data.error remains arbitrary provider/backend diagnostic content.
-- External finding in `frontend/src/utils/updateInstructions.js`: Bootstrap update_instructions.before/after prose remains external; command stays technical
-- External finding in `frontend/src/utils/uploads/controller.js`: record.error and JSON body.error are arbitrary server-provided reasons displayed unchanged.
-- External finding in `frontend/src/utils/uploads/display.js`: record.error is server-supplied upload prose.
-- External finding in `frontend/src/utils/uploads/transport.js`: JSON error body and record.error remain external server prose.
-- External finding in `frontend/src/views/LoginView.vue`: Unrecognized authStore.login result.error renders backend authentication diagnostic text unchanged.
+## Backend sources
+
+- [x] `src/twicc/__init__.py` — Package initialization and version exports only; no browser prose.
+- [x] `src/twicc/__main__.py` — CLI entry point only; preserve CLI output.
+- [x] `src/twicc/agent/__init__.py` — Read fully. Shared agent re-exports only; no browser prose.
+- [x] `src/twicc/agent/auto_deny.py` — Read fully. AUTO_DENY_MESSAGE is a provider-directed permission denial instruction; preserve it. Frontend timeout display uses numeric metadata.
+- [x] `src/twicc/agent/base_agent.py` — Read fully. Add optional error/status-label presentation metadata to agent snapshots and label broadcasts. Logs, state fields and provider content remain unchanged.
+- [x] `src/twicc/agent/base_manager.py` — Read fully. Unresolved message delivery gets explicit descriptor. Ephemeral result forwards provider error metadata. Logs, prompts, title values, lifecycle and kill-reason codes stay unchanged.
+- [x] `src/twicc/agent/completion.py` — Read fully. Pure state machine, programmer validation failures and diagnostic logging; no browser prose.
+- [x] `src/twicc/agent/completion_types.py` — Read fully. Immutable identity/state tuples; no browser prose.
+- [x] `src/twicc/agent/ephemeral.py` — Read fully. Read-only/collision errors and ephemeral admission-failed WS frame receive explicit metadata. English fields, codes and admission behavior stay unchanged.
+- [x] `src/twicc/agent/exceptions.py` — Read fully. SendDeliveryError adds optional/inherited ui_message; str(exc) preserves original UiMessageText subclass. Existing message/code and SessionUnavailableError identity stay unchanged.
+- [x] `src/twicc/agent/process_run_cleanup.py` — Read fully. Boot cleanup and diagnostic logs only; no browser prose.
+- [x] `src/twicc/agent/registry.py` — Read fully. Manager lookup and broadcast callback routing only. No browser prose.
+- [x] `src/twicc/agent/send_lanes.py` — Read fully. Send queue synchronization, technical IDs and diagnostic logs only. No browser prose.
+- [x] `src/twicc/agent/shell_notice.py` — Read fully. Shell ownership facts and provider-directed notification prompts. Every instruction, command and file value remains English/verbatim.
+- [x] `src/twicc/agent/states.py` — Read fully. AgentInfo adds optional end fields; serialization forwards provided error/label descriptors without changing legacy fields. Pending request inputs, provider activity and numeric background state remain verbatim.
+- [x] `src/twicc/agent/stop_origin.py` — Read fully. Stop reason/origin state only. No prose; preserve trust/actor semantics.
+- [x] `src/twicc/agent/system_prompt.py` — Read fully. Provider system/developer prompt and context reconciliation only. Preserve the complete English prompt and technical context format.
+- [x] `src/twicc/agent/timeline_hooks.py` — Read fully. Timeline machine state/codes stay unchanged. Process-ended data retains legacy truncated error and gains optional error_ui_message for known local agent errors. Provider/user diagnostics remain external.
+- [x] `src/twicc/agent/work_dir_autoapprove.py` — Read fully. Path containment decision only. No UI prose. Approval behavior stays unchanged.
+- [x] `src/twicc/agent/work_dirs.py` — Read fully. Path creation and diagnostics logged only; no browser prose.
+- [x] `src/twicc/agent_settings_presets.py` — Preset persistence and builtin data handling. Preset names and saved user values remain data; UI labels resolve in frontend.
+- [x] `src/twicc/android_push/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/android_push/delivery.py` — Push delivery lifecycle and device token failures feed operational logs; notification payload content is user/session data.
+- [x] `src/twicc/android_push/storage.py` — Device registration persistence returns technical identifiers and timestamps; no browser-facing owned prose.
+- [x] `src/twicc/android_push/validation.py` — Registration validation returns protocol error codes consumed by API; no prose rendered as interface feedback.
+- [x] `src/twicc/android_push/views.py` — Browser-facing method and sign-in errors add metadata; registration machine codes remain unchanged.
+- [x] `src/twicc/artifacts/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/artifacts/broker_html.py` — Mixed source: artifact JS shell exposes bookmarkId/title to parent entry title localization; no-JS error bodies deferred.
+- [x] `src/twicc/artifacts/data_store.py` — Artifact grant/storage records contain host keys and identifiers; no presentation prose.
+- [x] `src/twicc/artifacts/denial_tracking.py` — Denial records contain normalized hosts, counts, timestamps; normalization exceptions originate in proxy.
+- [x] `src/twicc/artifacts/proxy.py` — Host normalization raises tagged validation errors for browser bookmark settings; proxy transport diagnostics stay raw.
+- [x] `src/twicc/artifacts_watcher.py` — Artifact filesystem watcher broadcasts IDs, paths and object data. Logs remain English.
+- [x] `src/twicc/asgi.py` — WebSocket request guards, validation, terminal protection and send errors carry explicit metadata. send_json extracts descriptors, including nested service errors. Exceptions preserve attached metadata before str conversion. Provider/user payloads, codes and logs stay unchanged.
+- [x] `src/twicc/atomic_json.py` — Atomic writes and locking only. CorruptConfigError diagnostics stay internal; providers_status catches and logs them.
+- [x] `src/twicc/auth/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/auth/access.py` — Access policy decisions return booleans and source identifiers; no presentation prose.
+- [x] `src/twicc/auth/hashers.py` — Password hashing and verification have no browser presentation output.
+- [x] `src/twicc/auth/local_access.py` — Local access checks return booleans; proxy/network identities remain technical values.
+- [x] `src/twicc/auth/middleware.py` — Browser password-required responses carry metadata; RPC middleware protocol payloads remain unchanged.
+- [x] `src/twicc/auth/session_auth.py` — Session authentication resolves credentials and flags; no browser-owned prose.
+- [x] `src/twicc/auth/tokens.py` — Token creation and validation return tokens or validity; no interface labels.
+- [x] `src/twicc/auth/views.py` — Login/setup/password-change JSON errors preserve English/status and add semantic metadata with rate-limit seconds.
+- [x] `src/twicc/auth/websocket_origin.py` — Origin validation returns policy booleans; technical origin values remain unchanged.
+- [x] `src/twicc/browser_probe.py` — Browser response errors and owned availability reasons carry ui_message/reason_ui_message. X-Frame-Options/CSP and upstream diagnostics remain verbatim.
+- [x] `src/twicc/channel_layer.py` — Bounded channel-layer infrastructure and transport failure diagnostic. Frontend consumes failure as reconnect/log behavior, not display prose.
+- [x] `src/twicc/cli/_drop_request/validation.py` — Parent-approved shared dependency: only validate_hidden_constraints messages wrap metadata. CLI errors retain original fields and English values; all other preflight diagnostics remain unchanged.
+- [x] `src/twicc/composer_attachments_cleanup_task.py` — Attachment garbage collection and logging only.
+- [x] `src/twicc/content_maintenance_task.py` — Content hydration/eviction worker, numeric progress, session/item fields and diagnostic logs. No generated display prose.
+- [x] `src/twicc/context_injection.py` — Provider-directed session context and prompt construction. Preserve instruction text and user content.
+- [x] `src/twicc/core/__init__.py` — Package initializer; no emitted browser prose.
+- [x] `src/twicc/core/agent_runs.py` — Computes agent run state and serializes ids, timestamps, booleans, and enum codes. No emitted prose.
+- [x] `src/twicc/core/apps.py` — Django startup wiring and timezone restoration; no browser text.
+- [x] `src/twicc/core/content_storage/__init__.py` — Package initializer; no emitted browser prose.
+- [x] `src/twicc/core/content_storage/codec.py` — Exact UTF-8/zstd codec and integrity checks. Exceptions are internal corruption diagnostics; no browser display wording emitted.
+- [x] `src/twicc/core/content_storage/cold_cache.py` — Caches cold-policy/root mapping metadata and tracks invalidations. No browser prose.
+- [x] `src/twicc/core/content_storage/dictionaries.py` — Dictionary registry and corruption diagnostics. Internal/provider storage data only.
+- [x] `src/twicc/core/content_storage/extraction.py` — Read complete bounded compute preparation/publication code. Internal storage fences, integrity errors, and logs do not supply display prose.
+- [x] `src/twicc/core/content_storage/ingestion.py` — Exact content insertion/promotion and ownership proof. Internal transaction diagnostics only.
+- [x] `src/twicc/core/content_storage/lifecycle.py` — Lifecycle invalidation, activity ids and promotion requests. No display prose.
+- [x] `src/twicc/core/content_storage/maintenance_cache.py` — Caches content lifecycle metadata. Closed-cache diagnostics are internal only.
+- [x] `src/twicc/core/content_storage/maintenance_metrics.py` — Bounded maintenance counters and structured logs only; no browser text.
+- [x] `src/twicc/core/content_storage/policy.py` — Pure storage lifecycle/compression policy and constants. No emitted prose.
+- [x] `src/twicc/core/content_storage/readers.py` — Returns exact logical source/current content; diagnostics describe internal storage misuse/corruption.
+- [x] `src/twicc/core/content_storage/references.py` — Read complete exact-reference ownership/interning/accounting code. Integrity and transaction exceptions are internal diagnostics, not browser validation.
+- [x] `src/twicc/core/content_storage/session_policy.py` — Returns cold-policy booleans and ids. No prose.
+- [x] `src/twicc/core/content_storage/state.py` — Read complete native-root storage state/certificate code. PlaintextSearchUnavailable is for CLI --contains search; its command guidance remains English.
+- [x] `src/twicc/core/content_storage/transactions.py` — SQLite writer transaction guard with internal developer diagnostic. No browser text.
+- [x] `src/twicc/core/content_storage/types.py` — Immutable storage records. No prose.
+- [x] `src/twicc/core/content_storage/validation.py` — Internal storage metadata validation/certification. All errors are internal compute diagnostics.
+- [x] `src/twicc/core/content_storage/writes.py` — Internal bulk content assignment/ownership writes. No browser prose.
+- [x] `src/twicc/core/enums.py` — Stable item/provider/share enum codes. Browser labels come from frontend catalogs, not enum member names.
+- [x] `src/twicc/core/json_response.py` — Installs orjson response encoding; preserves existing English strings and response shapes.
+- [x] `src/twicc/core/models.py` — Read complete model source. Stored user/provider titles, prompts, tasks, goals, workflow envelopes, and summaries remain verbatim. Django choice labels do not reach browser APIs. Add nullable PeerMessage.error_ui_message for explicit owned-text provenance. Discovered command descriptions and their English defaults deliberately stay verbatim; no command metadata field.
+- [x] `src/twicc/core/serializers.py` — Session/share/project serializers carry original content. Peer serializer adds explicit include_ui_messages opt-in; default CLI/MCP shape remains unchanged.
+- [x] `src/twicc/core/services/__init__.py` — Package initializer; no emitted browser prose.
+- [x] `src/twicc/core/services/artifact_bookmark_mutation.py` — Create/update/delete payload handlers serve CLI/drop only. Shared atomic mutations return rows, broadcast user names, or delete ids. Browser endpoints validate directly in views.py.
+- [x] `src/twicc/core/services/async_questions.py` — Durable Codex question state, answers, and snapshots retain provider/user content. Local async question machine-code ValueErrors now use UiMessageError from root-agent integration; no duplicated code mapping.
+- [x] `src/twicc/core/services/attachments/__init__.py` — Package initializer; no emitted browser prose.
+- [x] `src/twicc/core/services/attachments/committer.py` — Attachment commit errors wrap owned prose. AttachmentError descriptors survive conversion to SendDeliveryError. Raw filesystem diagnostics remain detail params.
+- [x] `src/twicc/core/services/attachments/drop.py` — CLI drop normalization keeps legacy CLI diagnostics. Shared exception forwarding preserves explicit metadata and localizes the known ephemeral attachment-name suffix.
+- [x] `src/twicc/core/services/attachments/images.py` — Image inspection/resizing and media typing; no display prose. File/provider bytes stay unchanged.
+- [x] `src/twicc/core/services/attachments/inline.py` — CLI/RPC/MCP data-URI parser diagnostics stay English. Shared peer size errors carry a complete localized peer hint; arbitrary hints remain verbatim.
+- [x] `src/twicc/core/services/attachments/lifecycle.py` — Attachment hold, commit, release and cleanup callbacks; diagnostics are logs/internal only.
+- [x] `src/twicc/core/services/attachments/manifest.py` — Attachment file manifests are English agent prompt context with original file names and paths. Deferred prompt scope stays unchanged.
+- [x] `src/twicc/core/services/attachments/planner.py` — Browser/CLI attachment validation and planning uses explicit descriptors. Preserves exact English codes and name list diagnostics.
+- [x] `src/twicc/core/services/attachments/staging.py` — All browser-reachable attachment staging/claim/place validation errors wrap source prose. AttachmentError preserves descriptor through str(). Filesystem errors stay diagnostic params.
+- [x] `src/twicc/core/services/attachments/target.py` — Resolves provider transport targets and staged native/file planning. No owned display text emitted.
+- [x] `src/twicc/core/services/attachments/types.py` — Immutable attachment records and technical enum constants; no prose.
+- [x] `src/twicc/core/services/attachments/views.py` — Browser attachment content/release/status/touch endpoints add ui_error metadata to owned errors. English fields/status codes remain unchanged.
+- [x] `src/twicc/core/services/logical_turn_answers.py` — Publishes exact assistant message references and input bookkeeping. No owned display prose.
+- [x] `src/twicc/core/services/logical_turns.py` — Logical turn lifecycle and completion inputs. Internal validation diagnostics stay English; browser receives state and references.
+- [x] `src/twicc/core/services/message_sources.py` — Loads source message text verbatim, identifies provider messages, and returns references. No owned display prose.
+- [x] `src/twicc/core/services/origin_policy.py` — Pure public-origin relationship checks produce stable codes. Settings mutation owns display messages for those codes.
+- [x] `src/twicc/core/services/peer_messages.py` — Browser composer/review and CLI share title/reply/attachment/send/delivery validation. Wrap source-owned messages without changing NamedTuple fields. Persist failure provenance and opt in for broadcasts. Peer delivery envelope remains an English agent prompt; inbound protocol codes remain unchanged.
+- [x] `src/twicc/core/services/peer_mutation.py` — Owner browser and CLI peer mutations share validation. Wrap source messages and outbound fallback descriptors. Protocol handshake machine codes remain wire codes.
+- [x] `src/twicc/core/services/peer_tokens.py` — Mints tokens/ids/codes and resolves credentials. No browser prose; behavior unchanged.
+- [x] `src/twicc/core/services/pending_question.py` — Explicit CLI/drop pending-question service. Its CLI instructions and answer diagnostics remain English. Provider question content remains verbatim.
+- [x] `src/twicc/core/services/process_kill.py` — CLI/drop process controls; errors and process selection diagnostics remain English. Browser stop paths are elsewhere.
+- [x] `src/twicc/core/services/project_mutation.py` — CLI/drop create/update glue remains English. Shared clean_project_agent_defaults now wraps six structural validation messages for views.py consumers.
+- [x] `src/twicc/core/services/public_origin.py` — Pure origin parser returns canonical values and stable error codes. UI wording belongs to settings mutation and browser boundaries.
+- [x] `src/twicc/core/services/send_message.py` — CLI/drop send service owns CLI-specific diagnostic text. Browser sends call ASGI managers. Existing wrapped AttachmentError and unavailable-message metadata may pass through without new tuple fields.
+- [x] `src/twicc/core/services/session_creation.py` — Browser and CLI creation share this service. Wrap required fields, settings conflicts, provider/project lookup, spawned_by and annotation errors. Preserve exception metadata and title-validator metadata while keeping tuple shapes.
+- [x] `src/twicc/core/services/session_timeline.py` — Timeline writer stores structured data and original titles/messages. Its diagnostics go only to logs; failures never raise to browser actions.
+- [x] `src/twicc/core/services/session_titles.py` — Title writes preserve user/generated title text. Internal control code and title provenance remain unchanged.
+- [x] `src/twicc/core/services/session_update.py` — CLI/drop update payload diagnostics remain English. Browser-shared goal-dismissal and annotation validation now retain source-specific metadata. Provider/helper validation metadata passes through unchanged.
+- [x] `src/twicc/core/services/session_visibility.py` — Browser-shared hidden-session validation wraps top-level restriction and forwards shared validate_hidden_constraints metadata.
+- [x] `src/twicc/core/services/settings_mutation.py` — Browser/CLI settings validation retains original strings and adds descriptors through UiMessageText. Origin relationship and external MCP prerequisites have source keys. CLI notification-test diagnostics stay English.
+- [x] `src/twicc/core/services/share_agent_gate.py` — Agent-only share payload gate. Type/field restriction diagnostics serve CLI/MCP and remain English.
+- [x] `src/twicc/core/services/share_mutation.py` — Browser and CLI sharing share option/target/expiry/snapshot/export validation. Wrap owned messages. Agent-only authorization gate/drop glue remains English. User labels/titles and file/export content remain verbatim.
+- [x] `src/twicc/core/services/share_tokens.py` — Token and id minting, password fingerprints, and identity resolution. No browser prose; no auth behavior changes.
+- [x] `src/twicc/core/services/share_url.py` — Builds canonical absolute share URLs or None. No prose.
+- [x] `src/twicc/core/services/spawn_scope.py` — Resolves descendant ids for CLI/share scope. No browser prose.
+- [x] `src/twicc/core/services/timeline_backfill.py` — Writes structured creation events and log diagnostics. Titles/content remain original.
+- [x] `src/twicc/core/services/timeline_boot.py` — Records backend/process event codes and timestamps. Startup diagnostics remain logs.
+- [x] `src/twicc/core/services/timeline_feed.py` — Browser/CLI query validation retains FeedError metadata. serialize_event defaults to the original CLI projection and excludes only known process.ended error_ui_message; browser fetch_feed and fetch_click_boundary explicitly include it. Serialization never mutates stored event data.
+- [x] `src/twicc/core/services/timeline_filters.py` — Pure filter registry, codes, and query builders. Invalid internal arguments raise developer diagnostics; public request validation is in timeline_feed.py.
+- [x] `src/twicc/core/services/timeline_listing.py` — CLI/RPC/MCP event listing explicitly excludes presentation metadata with serialize_event(include_ui_messages=False). Original English process error and all existing event fields remain unchanged.
+- [x] `src/twicc/core/services/timeline_messages.py` — Copies original message snapshots and source refs into timeline data. No generated display prose.
+- [x] `src/twicc/core/services/timeline_signal.py` — Broadcasts timeline_changed plus latest id. Errors go to logs only.
+- [x] `src/twicc/core/services/title_automation.py` — Title generation scheduling and synchronization. Generated/user titles remain content; log diagnostics remain English.
+- [x] `src/twicc/core/services/title_suggestion.py` — LLM title prompt and generated title text stay English/verbatim under prompt/content scope. Browser boundary owns request errors.
+- [x] `src/twicc/core/services/trust.py` — Audited only. Pure trust-state results/codes and log diagnostics; no changes to trust or auth behavior.
+- [x] `src/twicc/core/services/workspace_mutation.py` — CLI/drop workspace mutation glue uses shared root workspace validators. Browser endpoints own response metadata, and root producer wrappers retain shared provenance.
+- [x] `src/twicc/core/services/worktree_creation.py` — Browser worktree creation and existing-worktree opening use explicit validation keys. Raw git stderr remains verbatim as external diagnostic.
+- [x] `src/twicc/core/session_availability.py` — Shared unavailable_message retains exact English and metadata; browser arefuse_unavailable adds explicit descriptor while keeping code/reason/id fields.
+- [x] `src/twicc/core/session_queries.py` — Shared owner/share and live tool aggregation correlates error metadata to the selected Max(error) row. Preserves richest existing extra and original error text. Source/result content remains verbatim.
+- [x] `src/twicc/core/spawn_ancestors.py` — Resolves cached ancestor ids only; no prose.
+- [x] `src/twicc/core/text_filter.py` — Pure fuzzy/literal text matching; no emitted prose.
+- [x] `src/twicc/core/timeline.py` — Timeline payload schema version 4 accepts optional process.ended error_ui_message. validate_data omits absent/null presentation metadata to preserve all existing process-event data shapes. Structured events and original content remain unchanged.
+- [x] `src/twicc/core/ui_messages.py` — Explicit semantic descriptors and tagged English strings/errors. Preserve metadata through worker serialization and copy operations; ordinary serialization keeps English text.
+- [x] `src/twicc/data_backups.py` — Backup archive paths, filenames, retention state and logs. No browser prose.
+- [x] `src/twicc/data_backups_watcher.py` — Backup folder watcher and diagnostics only.
+- [x] `src/twicc/db/__init__.py` — Database package marker; no browser presentation output.
+- [x] `src/twicc/db/backends/__init__.py` — Backend package marker; no browser presentation output.
+- [x] `src/twicc/db/backends/sqlite3/__init__.py` — SQLite backend package marker; no browser presentation output.
+- [x] `src/twicc/db/backends/sqlite3/base.py` — Django database integration configuration and exceptions serve database internals; not interface prose.
+- [x] `src/twicc/db/backends/sqlite3/bindings.py` — SQLite SQL bindings and backend adapters expose internal database behavior only.
+- [x] `src/twicc/db/backends/sqlite3/driver.py` — SQLite driver wrapper retains SQL/driver diagnostics for internal failures.
+- [x] `src/twicc/db/backends/sqlite3/effects.py` — SQL execution effect instrumentation supplies technical database metadata only.
+- [x] `src/twicc/db/backends/sqlite3/metadata.py` — SQLite table/index introspection metadata contains schema identifiers; not interface labels.
+- [x] `src/twicc/db/backends/sqlite3/schema.py` — Schema editor SQL and migration mechanics have no browser-owned prose.
+- [x] `src/twicc/db/migration_logging.py` — Migration progress/log messages target console and operational logs; remain English.
+- [x] `src/twicc/db/migration_process.py` — Migration worker control and subprocess diagnostics target server startup/console; remain English.
+- [x] `src/twicc/drop_requests_watcher.py` — CLI drop-file dispatch and result envelopes. These are CLI response prose, outside browser UI scope.
+- [x] `src/twicc/external_notifications.py` — Browser test result validation carries descriptors for invalid Apprise URL and rejected notification. Notification titles/bodies and external service diagnostics remain English/verbatim.
+- [x] `src/twicc/file_content.py` — Shared filesystem helper error strings retain English and in-memory ui_message attributes. Views attaches metadata at REST boundary; file contents, filenames and raw OS diagnostics stay verbatim.
+- [x] `src/twicc/file_tree.py` — Direct browser error responses carry explicit descriptors. Missing project/session Http404 exceptions retain tagged args[0] for upload scope JSON boundaries, without changing English or Http404 identity. Filesystem node names stay raw.
+- [x] `src/twicc/frontend_static.py` — SPA/static serving, cache headers and path routing only; no UI prose.
+- [x] `src/twicc/git.py` — GitError preserves explicit error metadata. Synthetic index/commit root labels gain name_ui_message; actual refs and filenames remain data. Empty-stderr worktree failure is tagged; Git stderr remains verbatim.
+- [x] `src/twicc/gzip_middleware.py` — HTTP compression middleware only; no UI prose.
+- [x] `src/twicc/heartbeat.py` — Heartbeat file and machine timing only; no UI prose.
+- [x] `src/twicc/help_manifest.py` — Long help Markdown manifest and content metadata. Long help content is explicitly deferred.
+- [x] `src/twicc/inline_artifacts/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/inline_artifacts/files.py` — Inline artifact file validation and materialization preserve file/user contents and technical validation codes.
+- [x] `src/twicc/inline_artifacts/publications.py` — Publication lifecycle stores technical records and artifact content; no interface prose.
+- [x] `src/twicc/inline_artifacts/share_exports.py` — Share export results use protocol codes already mapped by frontend; artifact content remains verbatim.
+- [x] `src/twicc/inline_artifacts/share_selection.py` — Selection validation supplies enums and source/selection identifiers; no displayed owned prose.
+- [x] `src/twicc/inline_artifacts/views.py` — Export/publication API returns structured codes and source content; frontend maps its errors semantically.
+- [x] `src/twicc/installation.py` — Legacy installation detection and CLI instructions unchanged. Client preparation adds before_ui_message/after_ui_message for frontend-rendered instructions; commands remain exact.
+- [x] `src/twicc/instance_lock.py` — Process locking and CLI startup diagnostics only.
+- [x] `src/twicc/layouts.py` — Layout persistence, generated identifiers and user layout names. No generated browser prose.
+- [x] `src/twicc/log_redaction.py` — Credential log redaction only; no UI prose.
+- [x] `src/twicc/log_retention.py` — Log cleanup and retention state only.
+- [x] `src/twicc/logging_context.py` — Logging context attributes only.
+- [x] `src/twicc/logical_turn_cleanup_task.py` — Idle process/turn cleanup and diagnostics only.
+- [x] `src/twicc/mcp/oauth/protection.py` — Security trip reasons retain annotated strings internally; browser snapshot adds incident.reason_ui_message only.
+- [x] `src/twicc/mcp/oauth/storage.py` — Owner decision errors retain tagged strings; OAuth/token protocol errors remain English and unchanged.
+- [x] `src/twicc/mcp/owner_views.py` — Owner-only browser API adds fixed/row validation metadata; MCP server wire responses remain unchanged.
+- [x] `src/twicc/message_snippets.py` — User/provider message extraction and snippets. Preserve all content verbatim.
+- [x] `src/twicc/openrouter_text.py` — External OpenRouter calls, response parsing and internal diagnostics. User-facing contexts are attached by callers.
+- [x] `src/twicc/orchestrator.py` — Backend startup/shutdown coordination and logs; provider activity uses technical state and numeric progress.
+- [x] `src/twicc/origin_gate.py` — Request-origin routing and checks only. No browser display prose; gate behavior unchanged.
+- [x] `src/twicc/paths.py` — Data-directory and technical path resolution only.
+- [x] `src/twicc/peer/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/peer/inbound_views.py` — Peer-to-peer wire endpoints are remote protocol consumers; preserve response shape and diagnostics.
+- [x] `src/twicc/peer/outbound.py` — Closed known peer error-code map and owned fallback retain UiMessageText; remote raw message prose remains verbatim.
+- [x] `src/twicc/peer/owner_views.py` — Owner API includes validation-row descriptors and durable peer-message metadata; serializer opts into browser metadata.
+- [x] `src/twicc/peer_purge_task.py` — Peer event retention and numeric state/logs only.
+- [x] `src/twicc/pending_agent_settings.py` — In-memory pending settings records and timestamp handling only.
+- [x] `src/twicc/pending_session_attributes.py` — Pending session attribute records only; user values unchanged.
+- [x] `src/twicc/pending_titles.py` — Pending user/provider title values only; preserve content.
+- [x] `src/twicc/presence.py` — Client presence state, activity timestamps and identifiers only.
+- [x] `src/twicc/pricing.py` — Provider pricing data load, conversion and arithmetic. Names/model identifiers remain data.
+- [x] `src/twicc/pricing_task.py` — Pricing poll scheduling and diagnostic logs only.
+- [x] `src/twicc/project_agent_defaults.py` — Closed settings bundle inheritance and project lookup only; keys and permission semantics remain unchanged.
+- [x] `src/twicc/project_color.py` — Project color hashing and palette values only.
+- [x] `src/twicc/project_icons.py` — Icon persistence and image processing; icon values and diagnostics remain technical.
+- [x] `src/twicc/project_layout_default.py` — Layout inheritance and normalized layout IDs only.
+- [x] `src/twicc/projects.py` — Shared project mutation errors retain English with descriptors for missing project, duplicate/long name and saved URL. Mutation tuples stay unchanged.
+- [x] `src/twicc/provider_homes.py` — Provider environment resolution and startup configuration failures; no browser message producer.
+- [x] `src/twicc/providers/__init__.py` — Empty package marker; no outputs or prose.
+- [x] `src/twicc/providers/background_compute_task.py` — Worker transport, run lifecycle, source selection, and count-only startup progress. Error payloads stay on internal worker queues and logs. No progress.details field originates here.
+- [x] `src/twicc/providers/claude_code/__init__.py` — Empty provider package marker; no display text.
+- [x] `src/twicc/providers/claude_code/agent/__init__.py` — Exports provider agent and manager classes; no display text.
+- [x] `src/twicc/providers/claude_code/agent/agent.py` — Tags TwiCC process guards, native-manifest mismatch validation, failure context, compacting and waiting labels. Preserves ValueError type, raw SDK results, prompts, tool content, permission identifiers and logs.
+- [x] `src/twicc/providers/claude_code/agent/elicitation.py` — Routes external MCP elicitation messages and schemas. Form titles, descriptions and options originate from MCP content; provider control errors remain diagnostics.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/__init__.py` — Package documentation only; no runtime display text.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/agent.py` — Adds source metadata to native-manifest mismatch and forwards it through first-paste/process failures. Tags startup paste failure and delivery refusals. Preserves ValueError type, raw English error, terminal content, hook protocols and title diagnostics.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/hooks_watcher.py` — Routes hook-file payloads and logs. Hook tool names, questions and approval inputs remain provider content.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/launch.py` — Builds CLI arguments, environment, hook scripts and prompt addenda. These are commands or model instructions; no browser display prose.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/responses.py` — Writes CLI hook responses. Already-answered and denied response text feeds the provider, not a browser label.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/signals.py` — Defines signal enums and raw terminal observations. Machine state values remain unchanged.
+- [x] `src/twicc/providers/claude_code/agent/hybrid/tmux.py` — Tags missing-tmux and create/load/paste failure context. Keeps subprocess diagnostics, shell commands, terminal recognition and behavior unchanged.
+- [x] `src/twicc/providers/claude_code/agent/manager.py` — Tags unresolved delivery, starting-agent, missing-message, duplicate-session, disabled-hybrid, and four browser-reachable title-drain guards. Preserves RuntimeError types, exact English text, lifecycle logs and renewal instructions.
+- [x] `src/twicc/providers/claude_code/agent/original_file_cache.py` — Caches original file contents and task identifiers. File content stays verbatim; no synthesized browser prose.
+- [x] `src/twicc/providers/claude_code/agent/permissions.py` — Serializes SDK/hook rule identifiers and mode suggestions. No synthesized permission option labels; frontend owns mode labels.
+- [x] `src/twicc/providers/claude_code/agent/sdk_logger.py` — Logs SDK wire messages and operational diagnostics only. Logging output remains unchanged.
+- [x] `src/twicc/providers/claude_code/agent/tool_label_filter.py` — Filters tool input fields using configuration. Does not synthesize display labels.
+- [x] `src/twicc/providers/claude_code/agent_runs.py` — Parses provider task notifications and control markers. Provider summaries, messages and technical tool identifiers remain unchanged.
+- [x] `src/twicc/providers/claude_code/auth.py` — Returns authentication state and logs credential/probe failures. Authentication behavior and raw diagnostics remain unchanged.
+- [x] `src/twicc/providers/claude_code/bin.py` — Tags the existing bundled-binary-missing exception with its path. Keeps exception type and English text.
+- [x] `src/twicc/providers/claude_code/commands.py` — Discovered command/skill/workflow descriptions stay verbatim. Product decision: English defaults "Custom command", "Skill" and "Workflow" require no translation keys or database fields. The source comment records this deliberate exception.
+- [x] `src/twicc/providers/claude_code/commands_task.py` — Preserves original discovery and synchronization of global/project descriptions. Descriptions and default labels remain plain strings by product decision.
+- [x] `src/twicc/providers/claude_code/compute.py` — Tags only the empty/nonstring tool-error fallback in live extraction and batch analysis. Provider errors, transcript rewrites, workflow content and raw JSONL stay unchanged.
+- [x] `src/twicc/providers/claude_code/constants.py` — Contains model capabilities, technical identifiers and descriptions for CLI agent-settings information. Browser model/mode labels belong to frontend catalogs; no availability reason prose exists here.
+- [x] `src/twicc/providers/claude_code/cron_restart.py` — Contains console/log output and model-directed cron restart or renewal instructions. These remain English and unchanged.
+- [x] `src/twicc/providers/claude_code/helpers.py` — Tags provider usage-file validation results. Keeps model metadata, subagent provider descriptions and model-directed instructions unchanged.
+- [x] `src/twicc/providers/claude_code/hermetic.py` — Contains model instructions and hermetic-provider guard/stream diagnostics. These are provider execution diagnostics; they remain unchanged.
+- [x] `src/twicc/providers/claude_code/history_facts.py` — Extracts structural tool and session facts. No synthesized display prose.
+- [x] `src/twicc/providers/claude_code/initial_sync.py` — Ingests provider session data. Console progress and operational logs remain unchanged; browser startup progress uses numeric events.
+- [x] `src/twicc/providers/claude_code/notifications.py` — Parses provider XML notifications and queue completion. Raw summaries, results and machine status values remain unchanged.
+- [x] `src/twicc/providers/claude_code/orchestrator.py` — Emits numeric startup progress and lifecycle logs. No translated browser labels originate here.
+- [x] `src/twicc/providers/claude_code/pending_question.py` — Normalizes provider question content and options. Cancellation and clarification text feeds the model; no browser labels are synthesized.
+- [x] `src/twicc/providers/claude_code/plans_watcher.py` — Publishes event identifiers and plan path/session metadata. File content and logs remain unchanged.
+- [x] `src/twicc/providers/claude_code/pricing.py` — Computes numeric price/model data from provider identifiers. No synthesized display prose.
+- [x] `src/twicc/providers/claude_code/sessions_watcher.py` — Ingests raw session/workflow data and publishes numeric metadata and event identifiers. Browser status captions belong to frontend catalogs.
+- [x] `src/twicc/providers/claude_code/subagent_meta.py` — Reads sidecar IDs and paths. No display prose.
+- [x] `src/twicc/providers/claude_code/title_control.py` — Tags nonprintable-character title validation. Private CLI title-control transport errors remain internal diagnostics.
+- [x] `src/twicc/providers/claude_code/title_publication.py` — Publishes titles through worker state machines. Failure reasons and exception text feed diagnostic logs; provider/user titles stay verbatim.
+- [x] `src/twicc/providers/claude_code/title_suggest.py` — Contains model prompts and generation diagnostic logs. Returned title text is provider content and remains verbatim.
+- [x] `src/twicc/providers/claude_code/title_sync.py` — Maintains title synchronization states and invariant exceptions. Machine states and diagnostic exceptions remain unchanged.
+- [x] `src/twicc/providers/claude_code/titles.py` — Runs SDK title queries and forwards canonicalization results. No independent UI prose; validation metadata comes from title_control.
+- [x] `src/twicc/providers/claude_code/trust.py` — Reads/writes trust state and operational logs. No browser prose; trust behavior remains unchanged.
+- [x] `src/twicc/providers/claude_code/usage.py` — Reads raw API quotas or replay files and logs failures. Quotas remain numeric; payload validation metadata comes from helpers.
+- [x] `src/twicc/providers/claude_code/usage_task.py` — Broadcasts numeric usage snapshots and logs failures. No synthesized browser prose.
+- [x] `src/twicc/providers/claude_code/workflow_meta.py` — Parses workflow JavaScript literals. Parse diagnostics are caught by discovery and do not become browser labels.
+- [x] `src/twicc/providers/claude_code/workflow_response.py` — Normalizes raw workflow envelope fields and costs. Provider results and machine values remain unchanged.
+- [x] `src/twicc/providers/claude_code/workflow_synthesis.py` — Synthesizes workflow machine states and preserves provider prompt/result content. Frontend maps states to labels; no source prose needs translation.
+- [x] `src/twicc/providers/claude_code/ws.py` — Adds shared ProviderDisabledError presentation metadata at its browser response boundary. Preserves raw provider questions, permission decisions and deny/clarify model feedback.
+- [x] `src/twicc/providers/codex/__init__.py` — Empty package initializer; no output.
+- [x] `src/twicc/providers/codex/agent/__init__.py` — Agent manager factory and exports; no browser prose.
+- [x] `src/twicc/providers/codex/agent/active_tools.py` — Tool identity and technical activity extraction from SDK items; upstream values remain verbatim.
+- [x] `src/twicc/providers/codex/agent/agent.py` — Live statuses, send refusals, attachment validation, turn and command failures, user termination explanations now carry descriptors. SDK diagnostics, prompts, approval tool inputs, injected JSONL and logs remain unchanged.
+- [x] `src/twicc/providers/codex/agent/approvals.py` — Approval payloads and question-response protocol; tool titles, explanations and questions come from Codex. Deny/retry instruction strings remain provider-bound prompts.
+- [x] `src/twicc/providers/codex/agent/goal_continuation.py` — Goal steer refusal explanations carry descriptors. Goal routing and raw JsonRpcError diagnostics remain unchanged.
+- [x] `src/twicc/providers/codex/agent/hardcoded_commands.py` — Pure slash-command parsing; names and command arguments remain technical identifiers.
+- [x] `src/twicc/providers/codex/agent/manager.py` — Browser-reachable command/send refusal explanations carry descriptors. Validation exception metadata survives SendDeliveryError conversion. Persistence, provider delivery and log prose remain unchanged.
+- [x] `src/twicc/providers/codex/agent/original_files_cache.py` — File snapshots, TTL cleanup and diagnostic logging; no UI prose.
+- [x] `src/twicc/providers/codex/agent/sdk_logger.py` — SDK trace and transport logging only; all diagnostics remain unchanged.
+- [x] `src/twicc/providers/codex/agent_runs.py` — Pure Codex protocol parsing and attribution rules; status values are identifiers, not UI labels.
+- [x] `src/twicc/providers/codex/async_questions.py` — Invalid/stale answer validation carries source descriptors. Question text, option text, formatted user answers, prompts, durable fact keys and status identifiers remain unchanged.
+- [x] `src/twicc/providers/codex/auth.py` — Authentication status caching and event broadcasts; technical state values and log diagnostics only. No auth behavior changed.
+- [x] `src/twicc/providers/codex/background_compute.py` — Migration progress detail carries count parameters and metadata. Migration failure diagnostics are logged; statuses/unavailable reasons remain identifiers.
+- [x] `src/twicc/providers/codex/bin.py` — Binary/configuration/env resolution. Runtime-not-ready sync error feeds auth/diagnostic callers; CLI text remains unchanged.
+- [x] `src/twicc/providers/codex/canonical.py` — Canonical provider JSONL readers/builders; source content and native field names remain unchanged.
+- [x] `src/twicc/providers/codex/catalog_cache.py` — Persistent raw skills/model cache and freshness tracking; no UI prose.
+- [x] `src/twicc/providers/codex/code_mode_script.py` — JavaScript static parsing and raw code-mode status parsing. Protocol markers and script error_text remain verbatim.
+- [x] `src/twicc/providers/codex/commands_task.py` — Skills catalog reconciliation and polling. Descriptions are external Codex/plugin content; failure details are logs.
+- [x] `src/twicc/providers/codex/compute.py` — Generated script/patch/tool/subagent/exit-code explanations carry tagged text for shared ToolResultLink metadata. Raw provider errors, shell output, scripts, model text and private JSONL rewrites remain unchanged.
+- [x] `src/twicc/providers/codex/constants.py` — Model registry, settings capability identifiers and CLI help descriptions. No disabled-model explanation constants exist. CLI help descriptions remain unchanged.
+- [x] `src/twicc/providers/codex/credentials.py` — OAuth and SDK probe result classification; internal diagnostic strings/logs and provider auth facts remain unchanged.
+- [x] `src/twicc/providers/codex/generated_images.py` — Filesystem image reference expansion and logs; image prompts/source paths remain upstream content.
+- [x] `src/twicc/providers/codex/helpers.py` — Usage payload validation results carry tagged text. System prompts, provider content readers, settings identifiers and pricing/capability logic remain unchanged.
+- [x] `src/twicc/providers/codex/hermetic.py` — Hermetic SDK diagnostic execution and operator diagnostic summaries; no browser-facing generated prose.
+- [x] `src/twicc/providers/codex/hermetic_catalog.py` — Hermetic skills/model catalog extraction. External model names/descriptions and diagnostic exceptions remain unchanged.
+- [x] `src/twicc/providers/codex/history_facts.py` — Fact extraction from raw Codex events; fact names/status values remain protocol identifiers.
+- [x] `src/twicc/providers/codex/initial_sync.py` — Filesystem enumeration and queue payload ingestion. All natural-language output is logger diagnostics; progress callback passes identifiers/counts only.
+- [x] `src/twicc/providers/codex/interactive_catalog.py` — Live skills catalog projection. Skill labels and descriptions remain provider/plugin content.
+- [x] `src/twicc/providers/codex/migration_gate.py` — Concurrency gates and wake scheduling; no UI prose.
+- [x] `src/twicc/providers/codex/orchestrator.py` — Provider lifecycle and startup progress phases/counts; phase identifiers remain unchanged. Failure prose goes to logs.
+- [x] `src/twicc/providers/codex/pending_question.py` — Normalization of provider approval/input questions. Source text and technical answer shapes remain unchanged.
+- [x] `src/twicc/providers/codex/permission_modes.py` — Pure permission mode policy mapping; no translated text or auth/trust changes.
+- [x] `src/twicc/providers/codex/plan_snapshots.py` — Plan state persistence and pending snapshot application. Plan steps/explanations are model content.
+- [x] `src/twicc/providers/codex/plugin_install.py` — Plugin/marketplace installation management; operator diagnostics only. No installation runs during this task.
+- [x] `src/twicc/providers/codex/pricing.py` — Model identity and token-price parsing; no browser prose.
+- [x] `src/twicc/providers/codex/provider_errors.py` — Existing durable raw Codex error marker unchanged. New RuntimeError subclass attaches explicit source presentation metadata and preserves nested known-error metadata.
+- [x] `src/twicc/providers/codex/question_snapshots.py` — Async question projection persistence, source IDs and status enums; question text remains provider content.
+- [x] `src/twicc/providers/codex/rollout_migration.py` — Rollout preflight/replacement/registration and migration report parsing. Diagnostics feed coordinator logs. unavailable_reason and migration statuses remain identifiers.
+- [x] `src/twicc/providers/codex/runtime.py` — Provisioning unsupported-platform and integrity failures carry descriptors at their sources. Existing exception subclasses, English strings, download behavior and logs remain unchanged.
+- [x] `src/twicc/providers/codex/sdk_wrappers.py` — SDK settings and turn/steer adapters. SDK wire parameters and raw errors remain unchanged.
+- [x] `src/twicc/providers/codex/sessions_watcher.py` — File-change reconciliation and manager lifecycle relays; no generated browser prose. All status words are identifiers or logs.
+- [x] `src/twicc/providers/codex/title_suggest.py` — Model-bound title generation prompts and diagnostic logging remain unchanged.
+- [x] `src/twicc/providers/codex/titles.py` — Codex title synchronization and rename; titles are user/model content and diagnostics are logs.
+- [x] `src/twicc/providers/codex/trust.py` — Trust read/write adapters and diagnostic logging; no trust behavior or UI prose changed.
+- [x] `src/twicc/providers/codex/usage.py` — Raw wham usage response normalization and persistence; counters, model/source identifiers and timestamps only.
+- [x] `src/twicc/providers/codex/usage_task.py` — Periodic usage polling, provider error classification and logs; quota payloads contain data, not UI prose.
+- [x] `src/twicc/providers/codex/ws.py` — Async-question dismissal emits explicit ui_message. Provider-disabled/delivery/runtime exceptions forward source metadata. Existing English/code/request/session fields remain unchanged.
+- [x] `src/twicc/providers/commands_sync.py` — Reconciles provider command data without rewriting descriptions. No presentation field is added to command synchronization; descriptions and default labels stay verbatim.
+- [x] `src/twicc/providers/compute_base.py` — Read all 5,139 source lines. Metadata grouping, history extraction, title/agent links, worker publication, and live synchronization preserve source content. Persist tagged generated error provenance in ToolResultLink.extra.error_ui_message before worker JSON/live DB serialization. Use correlated core aggregation. Screenshot substitution emits transcript Markdown placeholders and alt text; preserved as transcript content.
+- [x] `src/twicc/providers/compute_executor.py` — Dedicated worker lifecycle and synchronous call scheduling. Raised programming errors feed internal callers; no browser prose originates here.
+- [x] `src/twicc/providers/compute_ipc.py` — Private compute Pipe framing and receiver lifecycle. Transport errors feed internal completion recovery; no browser message payload.
+- [x] `src/twicc/providers/compute_lifecycle.py` — Normalizes historical agent-stop timestamps and publishes lifecycle data. No UI prose.
+- [x] `src/twicc/providers/compute_selection.py` — Source-age and native-tree selection returns identifiers/deadlines. No UI prose.
+- [x] `src/twicc/providers/compute_tree.py` — Native membership queries and ordering. NativeTreeError messages reach compute recovery/logs; no browser presentation boundary.
+- [x] `src/twicc/providers/compute_work.py` — Event-loop work gates and source-change callbacks only; no UI prose.
+- [x] `src/twicc/providers/contribution_revisions.py` — Contribution identity tuples and native-root resolution only; no UI prose.
+- [x] `src/twicc/providers/db_writer.py` — Read all 3,480 source lines. Writer queues, resource ownership, compute results, usage/price/command persistence, statistics, and initial sync. Broadcasts serialized session/project data and count-only progress. Exceptions remain internal diagnostics; command metadata persists through shared sync helper.
+- [x] `src/twicc/providers/enrichment_cache.py` — Thread-safe provider evidence cache and transaction reservations; no UI prose.
+- [x] `src/twicc/providers/goals.py` — Goal reducer stores native objectives/raw states and UI dismissal flags. No generated user-facing prose; preserve provider objectives.
+- [x] `src/twicc/providers/helpers.py` — Title and usage validation retain their tuples/English strings and carry non-serialized tagged messages. Model registry adds disable_reason_ui_message only when a browser caller opts in. Default bootstrap and CLI registry shapes stay unchanged.
+- [x] `src/twicc/providers/hermetic.py` — Hermetic exceptions log diagnostics; neutral directory validation concerns internal configuration. Traced consumers suppress these behind their own domain UI errors or expose them only in diagnostics. No UI prose added here.
+- [x] `src/twicc/providers/history_facts.py` — Source fact extraction/readers/TEMP staging and validation. Validation failures feed internal compute and logs; provider fact data stays verbatim.
+- [x] `src/twicc/providers/launcher_lookup.py` — Cooperative source lookup recovers link identity and broadcasts existing agent-link data; no generated UI prose.
+- [x] `src/twicc/providers/live_aggregates.py` — Statistics invalidation and message/cost contribution calculations; internal transaction guards only.
+- [x] `src/twicc/providers/live_sync.py` — Record reading bounds and typed live update aggregation. No generated UI prose; tool/provider values pass through.
+- [x] `src/twicc/providers/model_retirement_task.py` — Retirement updates settings and active agent fields. Only synced-settings data broadcasts; model notices are logs.
+- [x] `src/twicc/providers/pending_question.py` — CLI-only normalization, actions, reasons, ages, and raw provider question options. Preserve CLI labels and refusal fragments.
+- [x] `src/twicc/providers/plan_docs.py` — Filename classification, shell write detection, and stored path maintenance. Paths/provider document content remain verbatim; no UI prose.
+- [x] `src/twicc/providers/session_change_queue.py` — Per-path admission/drain state and internal migration errors. Migration diagnostics go to logs, not UI prose.
+- [x] `src/twicc/providers/sessions_watcher.py` — Read all 1,670 source lines. Broadcasts serialized source/session/project data, native agent names, tool errors/extras, and lifecycle state. Tool metadata remains carried by extra; no independent generated UI messages.
+- [x] `src/twicc/providers/state.py` — Provider intent/runtime lifecycle and synced-setting broadcasts. ProviderDisabledError retains its English text/provider and now carries explicit ui_message for browser exception handlers.
+- [x] `src/twicc/providers/statistics_prepare.py` — Reader-thread cost/activity preparation and invariant guards. Produces numeric/statistical data only.
+- [x] `src/twicc/providers/statistics_publication.py` — Statistics transactions and invalidation errors; emits identifiers/change events without prose.
+- [x] `src/twicc/providers/statistics_queue.py` — Durable invalidation enqueue/capture/acknowledgement. Internal invariant failures only; no UI prose.
+- [x] `src/twicc/providers/statistics_runtime.py` — Owned statistics reader execution, retries, publication, and shutdown. Failures are logs; no UI prose.
+- [x] `src/twicc/providers/statuspage_task.py` — Polls upstream status identifiers; persists/broadcasts structured provider state. Upstream component names/status codes stay unchanged; failures are logs.
+- [x] `src/twicc/providers/subagent_roots.py` — Flat ancestry resolution returns identifiers/None. No prose.
+- [x] `src/twicc/providers/task_snapshots.py` — Selects task snapshots by source/timestamp, preserving provider task content. No prose.
+- [x] `src/twicc/providers/text_calls.py` — Routes hermetic/OpenRouter streams and returns stable fallback reason codes. Generated model text and native errors remain provider content; callers own UI context.
+- [x] `src/twicc/providers/write_coordinator.py` — Event-loop resource scheduling, grants, and invariant exceptions. No UI payloads or prose.
+- [x] `src/twicc/providers/write_guard.py` — SQL write diagnostics and call-site logging only; no browser prose.
+- [x] `src/twicc/providers/writer_signals.py` — Event-loop queue notifications only; no UI payloads or prose.
+- [x] `src/twicc/providers_status.py` — Persists and broadcasts upstream status codes and incident timestamps. Frontend maps codes; upstream states remain data, diagnostic logs unchanged.
+- [x] `src/twicc/quota_wakeup_task.py` — Quota wake-up scheduling and technical process state/logs only.
+- [x] `src/twicc/request_origin.py` — Request-origin context and extraction only; no prose.
+- [x] `src/twicc/roots.py` — Provider root path discovery and diagnostics. Root path values stay verbatim.
+- [x] `src/twicc/rpc/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/rpc/generator.py` — Generated CLI/RPC schemas and parameter documentation target agent/CLI consumers; unchanged.
+- [x] `src/twicc/rpc/invoker.py` — RPC invocation validation and execution diagnostics target CLI/agent clients; preserve shape and English.
+- [x] `src/twicc/rpc/openapi.py` — OpenAPI operation schema and technical descriptions target API consumers; unchanged.
+- [x] `src/twicc/rpc/permissions.py` — RPC operation permission metadata and policy flags target CLI/MCP access; unchanged.
+- [x] `src/twicc/rpc/schema.py` — RPC request/response schema generation and diagnostics target machine/agent clients; unchanged.
+- [x] `src/twicc/rpc/views.py` — RPC wire responses are CLI/MCP protocol output; no localization metadata added.
+- [x] `src/twicc/search.py` — Search query construction, result snippets, technical validation and CLI raw search formatting. Browser errors use views context; snippets stay user/provider content.
+- [x] `src/twicc/search_indexing_task.py` — Index worker scheduling and diagnostic logs only.
+- [x] `src/twicc/secret_key.py` — Secret-key file resolution and startup diagnostics only.
+- [x] `src/twicc/seen_help.py` — Seen-help IDs and persistence only.
+- [x] `src/twicc/seen_tips.py` — Seen-tip IDs and persistence only.
+- [x] `src/twicc/server_env.py` — Server environment metadata and technical URLs only.
+- [x] `src/twicc/session_dirs_cleanup_task.py` — Session directory garbage collection and logging only.
+- [x] `src/twicc/settings.py` — Django environment and server configuration. Parent requests Claude compute version 117 to 118 and Codex 58 to 59, so existing computed tool links retain UI error provenance. No restart performed.
+- [x] `src/twicc/settings_migration.py` — Legacy settings migration and diagnostics only; stored user values unchanged.
+- [x] `src/twicc/share/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/share/artifact_views.py` — Artifact share content and no-JS unavailable HTML stay verbatim/deferred; JS shell title handled by frontend entry.
+- [x] `src/twicc/share/consumer.py` — Share websocket authentication and update frames use machine close codes and content payloads.
+- [x] `src/twicc/share/display.py` — Shared content display metadata contains user titles, paths, and technical kind values; keep content unchanged.
+- [x] `src/twicc/share/headers.py` — HTTP headers and share CSP setup are protocol configuration; no presentation prose.
+- [x] `src/twicc/share/html.py` — Mixed source: JS shell titles expose stable share mode/kind to parent frontend entries; no-JS unavailable and recent-empty bodies deferred.
+- [x] `src/twicc/share/inline_artifact_views.py` — Inline artifact share endpoints serve file content and no-JS error bodies; bodies deferred.
+- [x] `src/twicc/share/owner_views.py` — Owner share mutation responses add primary and per-row validation metadata; retain code/reason and RPC model shape.
+- [x] `src/twicc/share/password_views.py` — Server-rendered JavaScript-free password form and failure page are explicitly deferred.
+- [x] `src/twicc/share/resolver.py` — Share resolution returns records/state codes; no browser-owned prose generated.
+- [x] `src/twicc/share/router.py` — Routes share resource kinds and redirects; no presentation prose.
+- [x] `src/twicc/share/session_views.py` — Shared transcript JSON range error adds metadata; session/provider content and technical errors remain unchanged.
+- [x] `src/twicc/share/view_tracking.py` — View accounting exposes timestamps/counts and operational internals; no interface prose.
+- [x] `src/twicc/share/views_assets.py` — Static share asset delivery retains technical file failures; no interface labels.
+- [x] `src/twicc/speech_rules.py` — Speech rule persistence and builtin IDs/values. Rule data is user configuration and remains verbatim.
+- [x] `src/twicc/startup_progress.py` — Optional detail_ui_message survives broadcast and reconnect state. Numeric progress, technical phase/provider values and original detail remain unchanged.
+- [x] `src/twicc/summaries/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/summaries/service.py` — Domain validations, source error rows and stream snapshot reason enums carry semantic metadata; generated summary text stays verbatim.
+- [x] `src/twicc/summaries/sources.py` — Owned source validation failures use UiMessageError; source/provider text remains unchanged.
+- [x] `src/twicc/summaries/speech.py` — Summary stop fallback uses annotated owned string; generated/adapted speech content stays verbatim.
+- [x] `src/twicc/summaries/views.py` — REST errors extract tagged exception/string metadata, preserve English/status and per-field params.
+- [x] `src/twicc/sync_diagnostics.py` — Diagnostic counters, timing and logging only.
+- [x] `src/twicc/sync_helpers.py` — Session synchronization metadata, provider content normalization and diagnostic logs. No owned display prose.
+- [x] `src/twicc/synced_settings.py` — Synced user settings and technical normalization only.
+- [x] `src/twicc/telemetry/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/telemetry/install_method.py` — Installation detection returns technical install-method enum; no browser prose.
+- [x] `src/twicc/telemetry/snapshot.py` — Anonymous telemetry snapshot contains numeric facts and enum identifiers; no interface prose.
+- [x] `src/twicc/telemetry/state.py` — Telemetry installation identity and scheduling persistence contain no presentation strings.
+- [x] `src/twicc/telemetry/task.py` — Background telemetry transport and diagnostics target logs; no browser prose.
+- [x] `src/twicc/terminal.py` — Only config-path validation helper messages gain descriptors for browser validation. PTY output, shell commands, tmux errors and terminal lifecycle stay unchanged.
+- [x] `src/twicc/terminal_config.py` — Terminal config defaults and technical command selection only; shell values remain exact.
+- [x] `src/twicc/tips_manifest.py` — Long tip Markdown manifest and metadata. Long tip content is explicitly deferred.
+- [x] `src/twicc/title_auto_task.py` — Automatic title scheduling, state and diagnostics. Generated provider title content remains verbatim.
+- [x] `src/twicc/title_cadence.py` — Automatic title timing and cadence values only.
+- [x] `src/twicc/title_echo.py` — Title echo bookkeeping; user/provider title content remains unchanged.
+- [x] `src/twicc/title_openrouter.py` — External title generation prompt and response content. Prompts and generated titles remain English/verbatim.
+- [x] `src/twicc/title_ownership.py` — Provider/user title ownership and persistence only.
+- [x] `src/twicc/title_transcript.py` — User/provider transcript formatting for title prompts; preserve message content and prompt formatting.
+- [x] `src/twicc/tmux_cleanup_task.py` — Orphan tmux cleanup and diagnostic logs only.
+- [x] `src/twicc/trust.py` — Trust inheritance/path checks and trust data only. No behavior or authorization changes.
+- [x] `src/twicc/tts/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/tts/adapt.py` — Speech adaptation stop/error fallback carries metadata; prompts and generated speech prose remain English/content.
+- [x] `src/twicc/tts/audio_cache.py` — Audio cache lifecycle and hashed keys contain no browser-owned prose.
+- [x] `src/twicc/tts/config.py` — Configuration defaults, identifiers and validation facts are consumed through explicit frontend labels; user config names stay unchanged.
+- [x] `src/twicc/tts/model_catalog.py` — Model catalog provider metadata, model IDs, voices and raw upstream diagnostics remain verbatim.
+- [x] `src/twicc/tts/native_consumer.py` — Native websocket invalid-command/auth/session-loss frames add presentation metadata beside old message/code.
+- [x] `src/twicc/tts/native_protocol.py` — Native frame validation uses machine error codes and version fields; protocol behavior stays unchanged.
+- [x] `src/twicc/tts/native_sessions.py` — Native preparation/session failures retain error metadata across error frames and durable snapshots.
+- [x] `src/twicc/tts/native_timeline.py` — Native timeline preparation and summary failures forward tagged metadata; session content remains verbatim.
+- [x] `src/twicc/tts/native_views.py` — Native audio/auth REST errors add metadata; binary audio and protocol behavior stay unchanged.
+- [x] `src/twicc/tts/openrouter.py` — Owned timeout/reachability/status fallback messages carry metadata; external provider prose remains raw.
+- [x] `src/twicc/tts/part_audio.py` — PCM part conversion owns internal audio mechanics; surfaced format failures originate from tagged script_audio/streams.
+- [x] `src/twicc/tts/part_source.py` — Prepared source selection carries generated speech/source content and internal cancellation; no independent browser prose.
+- [x] `src/twicc/tts/parts.py` — Audio part iteration, timing, and status enums remain technical transport data.
+- [x] `src/twicc/tts/script.py` — Owned process-exit/signal/empty output fallbacks carry metadata; raw shell stderr remains verbatim.
+- [x] `src/twicc/tts/script_audio.py` — Owned audio validation errors carry semantic metadata; audio file bytes and paths stay unchanged.
+- [x] `src/twicc/tts/service.py` — SpeechError and validation exceptions retain metadata through service boundaries; settings/format params are named.
+- [x] `src/twicc/tts/simple_text.py` — Text normalization changes source text for speech; prompts/content are outside interface translation.
+- [x] `src/twicc/tts/streams.py` — Post-header stream failures retain ui_message in ending JSON; old error/status shape and English text remain.
+- [x] `src/twicc/tts/views.py` — Browser settings/speech REST errors forward service metadata and tag direct validation errors.
+- [x] `src/twicc/upload_cleanup_task.py` — Upload retention cleanup and logs only.
+- [x] `src/twicc/uploads/__init__.py` — Empty package marker; no presentation output.
+- [x] `src/twicc/uploads/broadcast.py` — Broadcast emits records from store.build_record, which supplies persisted error ui_message.
+- [x] `src/twicc/uploads/locks.py` — Upload synchronization and file locks contain no interface prose.
+- [x] `src/twicc/uploads/store.py` — Owned file-operation failures carry metadata; durable error_ui_message survives reload and clears with error state.
+- [x] `src/twicc/uploads/views.py` — Upload limits/validation/target failures use metadata; Http404 tagged args survive scope validation and durable finalization.
+- [x] `src/twicc/urls.py` — URL routes only; no UI prose.
+- [x] `src/twicc/usage.py` — Shared usage-file/path validators preserve original tuple shape and English message; browser boundary extracts descriptors. User paths and JSON/OS diagnostics remain raw params.
+- [x] `src/twicc/usage_task.py` — Quota polling, cache/state and logs; browser receives provider data and numeric values.
+- [x] `src/twicc/version.py` — Package version lookup only.
+- [x] `src/twicc/version_check_task.py` — Release version checks and technical update metadata. Display instruction prose is handled by installation client adapter.
+- [x] `src/twicc/views.py` — Read all 4,500 original lines. Added explicit semantic metadata for 183 REST validation/error branches. Shared services retain English errors and expose UiMessageText metadata only at this browser boundary. File/git result dictionaries preserve helper metadata. Per-URL notification results expose their descriptors. Browser bootstrap exposes update-instruction field metadata and provider model disable reasons. Commands expose plain descriptions, including deliberately untranslated English defaults. User/provider/file content, worktree reasons from git, logs, technical download/data-store protocol errors, and Http404 server-rendered HTML remain verbatim. Long help/tip manifests are deferred by contract.
+- [x] `src/twicc/websocket_transport.py` — WebSocket frame serialization/compression and limits only.
+- [x] `src/twicc/workspaces.py` — Shared workspace/URL/pattern validation and mutation messages gain explicit metadata while preserving result tuple shape. Technical fields and user values remain params.
+- [x] `src/twicc/worktree_backfill.py` — Worktree relationship backfill and diagnostic logs only.
+
+## Native transport dependencies
+
+- [x] `android/policy/src/main/kotlin/com/twidi/twicc/tts/TtsProtocol.kt` — PlayerSignal.Ended gains optional transport uiMessage with default null; existing callers preserve shape.
+- [x] `android/policy/src/main/kotlin/com/twidi/twicc/tts/TtsState.kt` — Forward backend ui_message across snapshot error, preparation start/ended, terminal/listener failure, and audio ending.
+- [x] `android/app/src/main/java/com/twidi/twicc/tts/TtsPlayer.kt` — Forward backend speech ending ui_message through PlayerSignal.Ended; audio behavior unchanged.
+- [x] `android/app/src/main/java/com/twidi/twicc/tts/TtsServiceOwner.kt` — Forward immediate manual rejection snapshot metadata through optional TtsActionError.uiMessage.
+- [x] `android/app/src/main/java/com/twidi/twicc/tts/NativeTtsBridge.kt` — Serialize optional rejection ui_message; omit field for legacy native-only errors.
+
+## Deferred content and preserved external data
+
+- Long help/tip Markdown bodies and their media remain a separate content pass.
+- JavaScript-free server pages remain a separate content pass.
+- Provider/user text, model answers, terminal/CLI/MCP output and file contents remain verbatim.
+- Raw OS, upstream SDK, browser and remote-server diagnostics remain verbatim where no TwiCC-owned message exists.
+- Known TwiCC-owned UI messages require semantic metadata; an English diagnostic is not a substitute for their translation.
+- Historical records without message provenance retain English fallback until supported recomputation or refresh rebuilds metadata.
+
+The frontend baseline notes above describe the original source pass. Backend entries
+record the contracts that now replace its reported server-prose dependencies.

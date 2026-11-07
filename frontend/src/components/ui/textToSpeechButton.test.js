@@ -104,7 +104,7 @@ test('a click plays when idle, stops otherwise, and toasts only real errors', ()
     assert.match(buttonSource, /store\.play\(props\.text\)/)
     assert.match(buttonSource, /store\.stop\(\)/)
     assert.match(buttonSource, /!result\.ok && !result\.aborted/)
-    assert.match(buttonSource, /toast\.error\(result\.error, \{ duration: 4000 \}\)/)
+    assert.match(buttonSource, /toast\.error\(result\.uiMessage \|\| result\.error, \{ duration: 4000 \}\)/)
 })
 
 test('an error after the sound started still toasts, unless aborted', () => {
@@ -112,7 +112,7 @@ test('an error after the sound started still toasts, unless aborted', () => {
     assert.match(buttonSource, /if \(!result\.ok\) return\s+[\s\S]*?result\.ended\.then\(end => \{/)
     assert.match(
         buttonSource,
-        /result\.ended\.then\(end => \{\s*if \(!end\.ok && !end\.aborted\) toast\.error\(end\.error, \{ duration: 4000 \}\)/,
+        /result\.ended\.then\(end => \{\s*if \(!end\.ok && !end\.aborted\) toast\.error\(end\.uiMessage \|\| end\.error, \{ duration: 4000 \}\)/,
     )
 })
 

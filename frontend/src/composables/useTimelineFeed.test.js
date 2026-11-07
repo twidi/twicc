@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { reactive } from 'vue'
 import { i18n } from '../i18n/index.js'
-import { localUiError } from '../i18n/uiMessages.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
+import { remoteUiError } from '../i18n/remoteMessages.js'
 
 import { buildTimelineUrl, createFeedState, createTimelineFeed } from '../utils/timeline/feed.js'
 
@@ -19,9 +20,9 @@ function loadComposable(apiFetch) {
     const source = readFileSync(new URL('./useTimelineFeed.js', import.meta.url), 'utf8')
     const body = source.replace(/^import .*$/gm, '').replace(/^export /gm, '')
     return new Function(
-        'apiFetch', 'buildTimelineUrl', 'createFeedState', 'createTimelineFeed', 'reactive', 'localUiError',
+        'apiFetch', 'buildTimelineUrl', 'createFeedState', 'createTimelineFeed', 'reactive', 'localUiMessage', 'remoteUiError',
         `${body}\nreturn { fetchTimelinePage, useTimelineFeed }`,
-    )(apiFetch, buildTimelineUrl, createFeedState, createTimelineFeed, reactive, localUiError)
+    )(apiFetch, buildTimelineUrl, createFeedState, createTimelineFeed, reactive, localUiMessage, remoteUiError)
 }
 
 const okBody = { events: [], has_more: false, truncated: false, latest_id: null, sessions: {} }
@@ -70,4 +71,73 @@ test('retained failed page message follows locale changes with its status intact
     assert.equal(error.message, i18n.global.t('session.timeline.requestFailed', { status: 503 }))
     i18n.global.locale.value = 'pt-BR'
     assert.equal(error.message, i18n.global.t('session.timeline.requestFailed', { status: 503 }))
+})
+
+test('a retained backend validation error follows locale changes without another request', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    i18n.global.locale.value = 'en'
+    let requests = 0
+    const params = { name: 'limit', value: 'invalid' }
+    const { useTimelineFeed } = loadComposable(async () => {
+        requests++
+        return { ok: false, status: 400, json: async () => ({
+            error: 'limit must be an integer, got invalid.', code: 'invalid_limit',
+            ui_message: { key: 'backend.timeline.integer', params },
+        }) }
+    })
+    const feed = useTimelineFeed()
+    feed.setScope([], {})
+    await feed.idle()
+    const error = feed.state.loadError.error
+    assert.equal(error.code, 'invalid_limit')
+    assert.equal(error.message, i18n.global.t('backend.timeline.integer', params))
+    i18n.global.locale.value = 'pt-BR'
+    assert.equal(error.message, i18n.global.t('backend.timeline.integer', params))
+    assert.equal(feed.state.loadError.error, error)
+    assert.equal(requests, 1)
+})
+
+test('non-JSON and empty failures retain the localized HTTP fallback', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    for (const json of [
+        async () => { throw new SyntaxError('HTML response') },
+        async () => ({}),
+        async () => ({ ui_message: { key: 'unknown.key', params: {} } }),
+        async () => ({ ui_message: { key: 'backend.timeline.integer', params: [] } }),
+        async () => null,
+    ]) {
+        i18n.global.locale.value = 'en'
+        const { fetchTimelinePage } = loadComposable(async () => ({ ok: false, status: 502, json }))
+        let failure
+        await assert.rejects(fetchTimelinePage({ projectIds: [], query: {} }), error => {
+            failure = error
+            return error.message === i18n.global.t('session.timeline.requestFailed', { status: 502 })
+        })
+        i18n.global.locale.value = 'pt-BR'
+        assert.equal(failure.message, i18n.global.t('session.timeline.requestFailed', { status: 502 }))
+    }
+})
+
+test('unknown and malformed metadata preserve backend diagnostics across locale changes', async context => {
+    const previousLocale = i18n.global.locale.value
+    context.after(() => { i18n.global.locale.value = previousLocale })
+    for (const payload of [
+        { error: 'Unrecognized backend prose', ui_message: { key: 'unknown.key', params: {} } },
+        { error: 'Malformed descriptor', ui_message: { key: 'backend.timeline.integer', params: [] } },
+        { message: 'Backend message detail', ui_message: { key: 'unknown.key', params: {} } },
+    ]) {
+        i18n.global.locale.value = 'en'
+        const { fetchTimelinePage } = loadComposable(async () => ({ ok: false, status: 502, json: async () => payload }))
+        const diagnostic = payload.error ?? payload.message
+        let failure
+        await assert.rejects(fetchTimelinePage({ projectIds: [], query: {} }), error => {
+            failure = error
+            return error.message === diagnostic
+        })
+        assert.equal(failure.uiMessage, undefined)
+        i18n.global.locale.value = 'pt-BR'
+        assert.equal(failure.message, diagnostic)
+    }
 })

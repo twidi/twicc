@@ -46,6 +46,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message
 from twicc.providers.helpers import get_provider_helpers_registry
 from twicc.synced_settings import read_synced_settings
 
@@ -73,6 +74,7 @@ class ProviderDisabledError(Exception):
 
     def __init__(self, provider: Provider) -> None:
         self.provider = provider
+        self.ui_message = ui_message("backend.providers.disabled", {"provider": provider.value})
         super().__init__(f"Provider {provider.value} is disabled")
 
 

@@ -183,7 +183,7 @@ async function dismiss() {
     try {
         await store.dismissSessionGoal(props.projectId, props.sessionId, createdAt)
     } catch (error) {
-        toast.error(error.message || t('session.goal.dismissError'))
+        toast.error(error.uiMessage || error.message || t('session.goal.dismissError'))
     }
 }
 

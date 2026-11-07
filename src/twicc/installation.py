@@ -58,3 +58,23 @@ def resolve_update_instructions(mode: str) -> UpdateInstructions:
     return UpdateInstructions(
         "unknown", "Stop TwiCC, update it with the package manager used to install it, then restart.", None, ""
     )
+
+
+def prepare_update_instructions_for_client(instructions: dict) -> dict:
+    """Add browser presentation metadata to the existing installation instructions."""
+    from twicc.core.ui_messages import ui_message
+
+    result = dict(instructions)
+    mode = instructions.get("mode")
+    if mode == "uvx":
+        before_key = "backend.updates.stop_then_run"
+    elif mode in ("uv_tool", "pip"):
+        before_key = "backend.updates.stop_run"
+    elif mode == "source":
+        before_key = "backend.updates.source_checkout"
+    else:
+        before_key = "backend.updates.unknown_installation"
+    result["before_ui_message"] = ui_message(before_key)
+    if mode in ("uv_tool", "pip"):
+        result["after_ui_message"] = ui_message("backend.updates.restart")
+    return result

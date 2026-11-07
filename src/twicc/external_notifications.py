@@ -25,6 +25,7 @@ import time
 from typing import NamedTuple
 
 from twicc import presence
+from twicc.core.ui_messages import ui_message_text
 from twicc.agent.states import AgentInfo, AgentState
 from twicc.android_push import delivery as android_push
 from twicc.core.services.public_origin import usable_public_origin
@@ -514,12 +515,12 @@ async def test_notification_urls(urls: list[str]) -> list[dict]:
     for url in urls:
         apobj = apprise.Apprise()
         if not apobj.add(url):
-            results.append({"url_masked": None, "ok": False, "error": "Invalid Apprise URL"})
+            results.append({"url_masked": None, "ok": False, "error": ui_message_text("Invalid Apprise URL", 'backend.notifications.invalid_url')})
             continue
         masked = next(iter(apobj)).url(privacy=True)
         try:
             ok = await apobj.async_notify(title=_TEST_TITLE, body=body)
-            error = None if ok else "The service rejected the notification"
+            error = None if ok else ui_message_text("The service rejected the notification", 'backend.notifications.rejected')
         except Exception as e:
             ok, error = False, str(e)
         results.append({"url_masked": masked, "ok": bool(ok), "error": error})

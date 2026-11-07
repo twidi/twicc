@@ -54,7 +54,13 @@ def test_patch_rejects_a_non_boolean_mute_value():
         content_type="application/json",
     ))
     assert response.status_code == 400
-    assert response.json() == {"error": "mute_on_user_turn must be a boolean"}
+    assert response.json() == {
+        "error": "mute_on_user_turn must be a boolean",
+        "ui_message": {
+            "key": "backend.request.boolean_required",
+            "params": {"field": "mute_on_user_turn"},
+        },
+    }
 
 
 @pytest.mark.django_db(transaction=True)

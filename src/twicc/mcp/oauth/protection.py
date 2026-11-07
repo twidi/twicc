@@ -17,6 +17,8 @@ from datetime import datetime, UTC
 
 from django.conf import settings
 
+from twicc.core.ui_messages import ui_message_text
+
 WINDOW_SECONDS = 300
 PAUSE_SECONDS = 600
 MAX_BUCKETS = 4096
@@ -78,9 +80,9 @@ class Protection:
         rejected = sum(kind == "rejected" for _, kind, _ in self.events)
         attempts = sum(kind in ADMISSION for _, kind, _ in self.events)
         if rejected >= MAX_REJECTIONS:
-            self._trip("Repeated OAuth admission limits", now)
+            self._trip(ui_message_text('Repeated OAuth admission limits', 'backend.mcp.admissionLimits'), now)
         elif attempts >= MAX_NEW_ATTEMPTS:
-            self._trip("Unusually high OAuth admission traffic", now)
+            self._trip(ui_message_text('Unusually high OAuth admission traffic', 'backend.mcp.admissionTraffic'), now)
 
     def reject(self, source, *, capacity=False):
         with self.lock:
@@ -88,7 +90,7 @@ class Protection:
             self._trim(now)
             self.events.append((now, "rejected", source))
             if capacity:
-                self._trip("OAuth admission capacity reached", now)
+                self._trip(ui_message_text('OAuth admission capacity reached', 'backend.mcp.admissionCapacity'), now)
             else:
                 self._detect(now)
 
@@ -138,7 +140,9 @@ class Protection:
             return {
                 "paused": now < self.pause_until,
                 "retryAfter": max(0, math.ceil(self.pause_until - now)),
-                "incident": self.incident,
+                "incident": ({**self.incident, **({"reason_ui_message": self.incident["reason"].ui_message}
+                             if getattr(self.incident["reason"], "ui_message", None) else {})}
+                             if self.incident else None),
                 "windowSeconds": WINDOW_SECONDS,
                 "registrations": sum(kind == "register" for _, kind, _ in self.events),
                 "authorizations": sum(kind == "authorize" for _, kind, _ in self.events),

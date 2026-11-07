@@ -1250,6 +1250,7 @@ def test_owner_rest_rejects_peer_address_changes_without_partial_rename(client, 
         "field": "base_url",
         "code": "immutable",
         "message": "A peer address cannot be changed. Create a new peering for the new address.",
+        "ui_message": {"key": "backend.peer.immutableAddress", "params": {}},
     }]
     peer.refresh_from_db()
     assert peer.name == "alice"

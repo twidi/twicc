@@ -14,6 +14,8 @@ from datetime import datetime
 from functools import cmp_to_key
 from typing import NamedTuple
 
+from twicc.core.ui_messages import UiMessageError
+
 
 class AsyncQuestion(NamedTuple):
     index: int
@@ -629,12 +631,12 @@ def validate_question_answers(snapshot: dict, response: dict | None) -> list[dic
     if response is None:
         return []
     if not isinstance(response, dict):
-        raise ValueError("async_questions_invalid")  # noqa: TRY004 - Public API requires ValueError.
+        raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")  # noqa: TRY004 - Public API requires ValueError.
     ids, answers = response.get("batch_ids"), response.get("answers")
     if not isinstance(ids, list) or not isinstance(answers, list):
-        raise ValueError("async_questions_invalid")  # noqa: TRY004 - Public API requires ValueError.
+        raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")  # noqa: TRY004 - Public API requires ValueError.
     if any(_identifier(item_id) is None for item_id in ids) or len(set(ids)) != len(ids):
-        raise ValueError("async_questions_invalid")
+        raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")
     batches = {batch["item_id"]: batch for batch in snapshot.get("batches", [])}
     for item_id in ids:
         if (
@@ -642,21 +644,21 @@ def validate_question_answers(snapshot: dict, response: dict | None) -> list[dic
             or item_id not in batches
             or batches[item_id].get("status") != "ready"
         ):
-            raise ValueError("async_questions_stale")
+            raise UiMessageError("async_questions_stale", "backend.codex.asyncQuestionsStale")
     valid, seen = [], set()
     for answer in answers:
         if not isinstance(answer, dict):
-            raise ValueError("async_questions_invalid")  # noqa: TRY004 - Public API requires ValueError.
+            raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")  # noqa: TRY004 - Public API requires ValueError.
         item_id, index, kind, value = (answer.get(field) for field in ("item_id", "index", "kind", "value"))
         if not isinstance(item_id, str) or item_id not in ids or type(index) is not int or not isinstance(value, str):
-            raise ValueError("async_questions_invalid")
+            raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")
         question = next((entry for entry in batches[item_id]["questions"] if entry["index"] == index), None)
         identity = (item_id, index)
         if question is None or identity in seen or kind not in ("option", "other"):
-            raise ValueError("async_questions_invalid")
+            raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")
         seen.add(identity)
         if kind == "option" and value not in question["options"]:
-            raise ValueError("async_questions_invalid")
+            raise UiMessageError("async_questions_invalid", "backend.codex.asyncQuestionsInvalid")
         if value.strip():
             valid.append({"item_id": item_id, "index": index, "kind": kind, "value": value})
     return valid

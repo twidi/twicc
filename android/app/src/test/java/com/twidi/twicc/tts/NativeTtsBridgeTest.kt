@@ -117,4 +117,16 @@ class NativeTtsBridgeTest {
         assertTrue(lease.matches("second-document"))
     }
 
+    @Test fun rejectedBackendErrorKeepsPresentationMetadata() {
+        val metadata = mapOf("key" to "backend.tts.failed", "params" to emptyMap<String, Any>())
+        val bridge = NativeTtsBridge({ true }, { owner }, { snapshot }, { "document" }) {
+            Acceptance(false, error = TtsActionError("unreachable", "Speech failed", uiMessage = metadata))
+        }
+        val result = bridge.request("tts.attach", JSONObject()).getJSONObject("error")
+        assertEquals("unreachable", result.getString("code"))
+        assertEquals("Speech failed", result.getString("message"))
+        assertEquals("backend.tts.failed", result.getJSONObject("ui_message").getString("key"))
+        assertEquals(0, result.getJSONObject("ui_message").getJSONObject("params").length())
+    }
+
 }

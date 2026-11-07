@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { ref, useId, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
@@ -83,7 +84,7 @@ async function loadTree(dirPath) {
             tree.value = await res.json()
         } else {
             const data = await res.json().catch(() => ({}))
-            treeError.value = data.error || localUiMessage('files.errors.loadTree')
+            treeError.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.loadTree'))
         }
     } catch {
         treeError.value = localUiMessage('files.errors.network')
@@ -144,7 +145,7 @@ async function handleMove() {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-        errorMessage.value = data.error || localUiMessage('files.errors.moveHttp', { status: response.status })
+        errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('files.errors.moveHttp', { status: response.status }))
         isMoving.value = false
         return
     }

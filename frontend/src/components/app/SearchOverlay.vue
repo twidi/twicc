@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 
@@ -323,7 +324,7 @@ async function performSearch(resetOffset = true) {
                 error.value = localUiMessage('search.global.errors.indexBuilding')
             } else if (res.status === 400) {
                 const data = await res.json()
-                error.value = data.error || localUiMessage('search.global.errors.invalidQuery')
+                error.value = remoteUiMessage(data, data.error || localUiMessage('search.global.errors.invalidQuery'))
             } else {
                 error.value = localUiMessage('search.global.errors.failed')
             }

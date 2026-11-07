@@ -11,12 +11,24 @@ from django.http import Http404, HttpResponseNotAllowed, JsonResponse
 from twicc.core.serializers import serialize_share
 from twicc.core.services import share_mutation
 from twicc.core.services.public_origin import usable_public_origin
+from twicc.core.ui_messages import ui_error
+
+
+def _ui_errors(errors):
+    result = []
+    for error in errors or []:
+        row = error._asdict()
+        metadata = getattr(error.message, "ui_message", None)
+        if metadata:
+            row["ui_message"] = metadata
+        result.append(row)
+    return result
 
 
 def _err_response(result):
     errors = result.errors or []
     status = 409 if any(error.code == "session_not_ready" for error in errors) else 400
-    return JsonResponse({"errors": [e._asdict() for e in errors]}, status=status)
+    return JsonResponse({"errors": _ui_errors(errors)}, status=status)
 
 
 async def _load(share_id):
@@ -47,15 +59,14 @@ async def shares_list(request):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
         # Sharing requires a dedicated share host (design §12): with shareBaseUrl
         # unset, /share/ 404s everywhere, so a fresh link would be dead. Refuse up
         # front — the UI already gates on this; this is the server-side backstop.
         from twicc.synced_settings import read_synced_settings
         if not usable_public_origin(read_synced_settings().get("shareBaseUrl")):
             return JsonResponse(
-                {"error": "share_host_unset",
-                 "reason": "Configure a share host in Settings → Sharing first."},
+                ui_error("share_host_unset", 'backend.sharing.hostRequired', reason="Configure a share host in Settings → Sharing first."),
                 status=400,
             )
         payload = {
@@ -85,7 +96,7 @@ async def share_detail(request, share_id):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
         fields = {}
         for k in ("label", "notify_on_view", "options", "password"):
             if k in data:

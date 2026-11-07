@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { changeAffectsHtmlPage } from '../../inline-artifacts/fileRelevance.js'
 import { ref, computed, watch, nextTick, onMounted, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
 import { apiFetch } from '../../utils/api'
@@ -365,7 +366,7 @@ async function fetchTree(dirPath) {
                 return
             }
 
-            error.value = data.error || `HTTP ${res.status}`
+            error.value = remoteUiMessage(data, data.error || `HTTP ${res.status}`)
             tree.value = null
             loadedDirectory.value = null
             return

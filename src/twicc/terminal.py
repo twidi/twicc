@@ -43,6 +43,7 @@ from urllib.parse import parse_qs
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.auth.access import scope_allowed
 from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
@@ -197,14 +198,14 @@ def validate_tmux_config_path(file_path: str) -> tuple[bool, str]:
     Returns a ``(valid, message)`` tuple.
     """
     if not file_path:
-        return False, "No file path provided"
+        return False, ui_message_text("No file path provided", 'backend.terminal.path_required')
 
     path = os.path.expanduser(file_path)
     if not os.path.isfile(path):
-        return False, "File not found"
+        return False, ui_message_text("File not found", 'backend.terminal.file_missing')
     if not os.access(path, os.R_OK):
-        return False, "File is not readable"
-    return True, "Valid tmux config"
+        return False, ui_message_text("File is not readable", 'backend.terminal.file_not_readable')
+    return True, ui_message_text("Valid tmux config", 'backend.terminal.valid_config')
 
 
 def resolve_tmux_config_path(file_path: str) -> str | None:

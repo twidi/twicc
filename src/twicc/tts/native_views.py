@@ -10,6 +10,7 @@ from twicc.auth.local_access import remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY, compute_fingerprint
 from twicc.tts.native_sessions import registry
 from twicc.tts.views import _method_not_allowed, tts_audio, tts_audio_ending
+from twicc.core.ui_messages import ui_error
 
 
 async def _binding(request):
@@ -27,7 +28,7 @@ async def native_capabilities(request):
     if request.method != 'GET':
         return _method_not_allowed('GET')
     if await _binding(request) is None:
-        return JsonResponse({'error': 'Authentication required'}, status=401)
+        return JsonResponse(ui_error('Authentication required', 'backend.common.authenticationRequired'), status=401)
     return JsonResponse({'protocol': 1, 'available': True})
 
 
@@ -48,7 +49,7 @@ async def _owner(request, session_id, audio_id):
 async def native_audio(request, session_id: str, audio_id: str):
     session = await _owner(request, session_id, audio_id)
     if session is None:
-        return JsonResponse({'error': 'The audio is no longer available'}, status=404)
+        return JsonResponse(ui_error('The audio is no longer available', 'backend.tts.audioGone'), status=404)
     if request.method == 'DELETE':
         await session.release_audio(audio_id)
         # Delegate the existing idempotent ending and response semantics.
@@ -58,5 +59,5 @@ async def native_audio(request, session_id: str, audio_id: str):
 
 async def native_audio_ending(request, session_id: str, audio_id: str):
     if await _owner(request, session_id, audio_id) is None:
-        return JsonResponse({'error': 'The audio is no longer available'}, status=404)
+        return JsonResponse(ui_error('The audio is no longer available', 'backend.tts.audioGone'), status=404)
     return await tts_audio_ending(request, audio_id)

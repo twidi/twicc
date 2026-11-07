@@ -10,6 +10,8 @@ from typing import NamedTuple
 
 import orjson
 
+from twicc.core.ui_messages import ui_message
+
 
 PROVIDER_ERROR_MARKER = "<twicc-provider-error>"
 
@@ -58,3 +60,11 @@ def parse_provider_error_marker(text: str) -> CodexProviderError | None:
         message=message,
         error_type=payload.get("error_type"),
     )
+
+
+class CodexUiRuntimeError(RuntimeError):
+    """Keep the runtime error contract and attach browser presentation metadata."""
+
+    def __init__(self, message: str, key: str, params: dict | None = None, *, cause: Exception | None = None):
+        super().__init__(message)
+        self.ui_message = getattr(cause, "ui_message", None) or ui_message(key, params)

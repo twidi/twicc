@@ -3,6 +3,7 @@
 The native session owns playback and resources. This listener owns only its
 activation, feed cursor, pending snapshots, and independent summary references.
 """
+
 import asyncio
 import logging
 from datetime import timedelta
@@ -20,6 +21,7 @@ from twicc.summaries import service as summaries
 from twicc.synced_settings import read_synced_settings
 from twicc.tts.config import SPEECH_FIELDS, openrouter_api_key, read_tts_config, script_config_validated
 from twicc.workspaces import read_workspaces
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 INVALIDATIONS = frozenset({
@@ -177,7 +179,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
+                await self._stop('scope_unavailable', ui_message_text('Timeline reading stopped. Choose another timeline.', 'backend.tts.scopeUnavailable'))
                 return
             self.boundaries = {member: active['boundary'] for member in members}
             active['label'] = label
@@ -280,7 +282,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
+                await self._stop('scope_unavailable', ui_message_text('Timeline reading stopped. Choose another timeline.', 'backend.tts.scopeUnavailable'))
                 return
             now = format_occurred_at(self.clock())
             self.boundaries = {member: self.boundaries.get(member, now) for member in members}
@@ -289,7 +291,7 @@ class TimelineListener:
             if self.active is not active:
                 return
             if body['truncated']:
-                await self._stop('catchup_incomplete', 'Some messages could not be loaded. Turn timeline reading on again.')
+                await self._stop('catchup_incomplete', ui_message_text('Some messages could not be loaded. Turn timeline reading on again.', 'backend.tts.catchupIncomplete'))
                 return
             self.cursor = max(self.cursor, body['latest_id'] or 0)
             self._consume(body)
@@ -313,7 +315,7 @@ class TimelineListener:
             return
         self.session.configuration_available = policy['entry'] is not None
         if policy['entry'] is None:
-            await self._stop('tts_unavailable', 'Text-to-speech is unavailable. Check the active configuration.')
+            await self._stop('tts_unavailable', ui_message_text('Text-to-speech is unavailable. Check the active configuration.', 'backend.tts.configurationUnavailable'))
             return
         summary_policy = (policy['summary'], policy.get('summary_model'))
         pending_ids = {e['id'] for e in self.pending}
@@ -336,7 +338,7 @@ class TimelineListener:
             try:
                 source, descriptor = await summaries.resolve_timeline_summary(event['id'])
             except ValueError as error:
-                descriptor = {'error': str(error)}
+                descriptor = {'error': str(error), **({'ui_message': error.ui_message} if getattr(error, 'ui_message', None) else {})}
             if self.active is not active:
                 return
             self.preparations[event['id']] = {
@@ -367,6 +369,8 @@ class TimelineListener:
                     running += 1
             except (ValueError, summaries.SummaryUnavailable) as error:
                 descriptor['error'] = str(error)
+                if getattr(error, 'ui_message', None):
+                    descriptor['ui_message'] = error.ui_message
 
     async def _observe_summary(self, handle_id):
         async for snapshot in summaries.summary_snapshots(handle_id):
@@ -430,7 +434,7 @@ class TimelineListener:
                 return
             entry = policy['entry']
             if entry is None:
-                await self._stop('tts_unavailable', 'Text-to-speech is unavailable. Check the active configuration.')
+                await self._stop('tts_unavailable', ui_message_text('Text-to-speech is unavailable. Check the active configuration.', 'backend.tts.configurationUnavailable'))
                 return
             await self._reconcile_policy(policy)
             if self.active is not active:
@@ -441,7 +445,7 @@ class TimelineListener:
             if self.active is not active or not self._caught_up or epoch != self._epoch:
                 return
             if not members:
-                await self._stop('scope_unavailable', 'Timeline reading stopped. Choose another timeline.')
+                await self._stop('scope_unavailable', ui_message_text('Timeline reading stopped. Choose another timeline.', 'backend.tts.scopeUnavailable'))
                 return
             visibility = table.get(event['session_id'], {})
             if (event['project_id'] not in members or visibility.get('hidden')
@@ -472,7 +476,8 @@ class TimelineListener:
                 self.pending.pop(0)
                 await self._release_preparation(event_id)
                 self.context = None
-                await self.session.fail('summary_unavailable', descriptor['error'], reading_id=reading_id, generation=generation)
+                await self.session.fail('summary_unavailable', descriptor['error'], reading_id=reading_id, generation=generation,
+                                        **({'ui_message': descriptor['ui_message']} if descriptor.get('ui_message') else {}))
                 await self._offer()
                 return
             if descriptor.get('eligible'):

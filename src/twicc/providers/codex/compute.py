@@ -195,6 +195,7 @@ import orjson
 
 from twicc.core.content_storage.readers import effective_current, load_current, iter_matching_items
 from twicc.core.enums import ItemKind, Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.models import (
     AgentInteraction,
     AgentInteractionKind,
@@ -722,7 +723,7 @@ def _exit_code_error_from_output(output: str) -> str | None:
     status = parse_exec_command_status(output)
     if not status.is_terminated or status.exit_code is None or status.exit_code == 0:
         return None
-    return f"Exit code {status.exit_code}"
+    return ui_message_text(f"Exit code {status.exit_code}", "backend.codex.exitCode", {"code": status.exit_code})
 
 
 def _freeform_exec_output_error(output: str) -> str | None:
@@ -760,7 +761,7 @@ def _freeform_exec_output_error(output: str) -> str | None:
         return None
     if code == 0:
         return None
-    return f"Exit code {code}"
+    return ui_message_text(f"Exit code {code}", "backend.codex.exitCode", {"code": code})
 
 
 def _structured_exec_output_error(output: str) -> str | None:
@@ -798,7 +799,7 @@ def _structured_exec_output_error(output: str) -> str | None:
     exit_code = metadata.get("exit_code")
     if not isinstance(exit_code, int) or exit_code == 0:
         return None
-    return f"Exit code {exit_code}"
+    return ui_message_text(f"Exit code {exit_code}", "backend.codex.exitCode", {"code": exit_code})
 
 
 def _code_mode_output_error(output: object) -> str | None:
@@ -814,7 +815,7 @@ def _code_mode_output_error(output: object) -> str | None:
     parsed = parse_code_mode_output(output)
     if parsed is None or parsed.status != "failed":
         return None
-    return parsed.error_text or "Script failed"
+    return parsed.error_text or ui_message_text("Script failed", "backend.codex.scriptFailed")
 
 
 # Declared targets of a v4a patch envelope (``*** Add File: <path>`` /
@@ -1792,9 +1793,9 @@ def _status_error_text(status) -> str | None:
             return errored
         return None
     if status == "shutdown":
-        return "Subagent shut down"
+        return ui_message_text("Subagent shut down", "backend.codex.subagentShutdown")
     if status == "not_found":
-        return "Subagent not found"
+        return ui_message_text("Subagent not found", "backend.codex.subagentNotFound")
     return None
 
 
@@ -1994,8 +1995,8 @@ def _patch_apply_error(payload: dict) -> str | None:
     if isinstance(stderr, str) and stderr.strip():
         return stderr.strip()
     if payload.get("status") == "declined":
-        return "Patch declined"
-    return "Patch failed"
+        return ui_message_text("Patch declined", "backend.codex.patchDeclined")
+    return ui_message_text("Patch failed", "backend.codex.patchFailed")
 
 
 def _mcp_tool_call_end_error(payload: dict) -> str | None:
@@ -2026,12 +2027,12 @@ def _mcp_tool_call_end_error(payload: dict) -> str | None:
         message = error.get("message")
         if isinstance(message, str) and message.strip():
             return message.strip()
-        return "Tool error"
+        return ui_message_text("Tool error", "backend.codex.toolError")
     result = payload.get("result")
     if not isinstance(result, dict):
         return None
     if result.get("isError") is True:
-        return "Tool error"
+        return ui_message_text("Tool error", "backend.codex.toolError")
     return None
 
 
@@ -3798,7 +3799,7 @@ class CodexSessionCompute(BaseSessionCompute):
             elif parsed.status != "running":
                 self._release_code_cell_for_call(session_id, call_id)
         if parsed.status == "failed":
-            return parsed.error_text or "Script failed"
+            return parsed.error_text or ui_message_text("Script failed", "backend.codex.scriptFailed")
         return None
 
     # ------------------------------------------------------------------
@@ -4884,7 +4885,7 @@ class CodexSessionCompute(BaseSessionCompute):
                     # announcement is written just after.
                     self._take_process_owner(session_id, parsed_json)
                     return None
-                error_text = f"Exit code {exit_code}" if exit_code else None
+                error_text = ui_message_text(f"Exit code {exit_code}", "backend.codex.exitCode", {"code": exit_code}) if exit_code else None
             else:
                 call_id = _event_msg_call_id(parsed_json)
                 item = canonical_result_item(parsed_json)
@@ -5745,7 +5746,7 @@ class CodexSessionCompute(BaseSessionCompute):
                     is_system_xml=False,
                     has_tool_result=True,
                     tool_result_id=item_id,
-                    tool_result_error=f"Exit code {exit_code}" if exit_code else None,
+                    tool_result_error=ui_message_text(f"Exit code {exit_code}", "backend.codex.exitCode", {"code": exit_code}) if exit_code else None,
                     tool_use_entries=_EMPTY_TOOL_USE_ENTRIES,
                     task_tool_uses=_EMPTY_TASK_TOOL_USES,
                     file_paths=_EMPTY_FILE_PATHS,

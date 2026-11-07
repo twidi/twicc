@@ -47,6 +47,7 @@ class ProcessEndedData(NamedTuple):
     hybrid: bool | None = None
     error: str | None = None
     upper_bound: str | None = None  # ISO time of the boot that detected a lost process
+    error_ui_message: dict | None = None  # Explicit provenance for TwiCC-owned error text.
 
 
 class MessageSentData(NamedTuple):
@@ -209,7 +210,11 @@ def validate_data(kind: str, data: dict | None) -> dict:
     if unknown:
         raise ValueError(f"{kind}: unknown payload keys {sorted(unknown)}")
     try:
-        return payload_type(**data)._asdict()
+        payload = payload_type(**data)._asdict()
+        # Preserve the stored shape of existing process events without presentation metadata.
+        if payload_type is ProcessEndedData and payload["error_ui_message"] is None:
+            payload.pop("error_ui_message")
+        return payload
     except TypeError as exc:
         raise ValueError(f"{kind}: {exc}") from exc
 

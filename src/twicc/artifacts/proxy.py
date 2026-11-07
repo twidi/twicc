@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 import orjson
 from django.http import HttpResponseNotAllowed, JsonResponse
+from twicc.core.ui_messages import UiMessageError
 
 # Cloud instance metadata endpoints (IMDS) — the sole unconditional hard-block:
 # reachable server-side, no legitimate widget use, and a GET returns the cloud
@@ -115,10 +116,10 @@ def normalize_host_key(url: str) -> str:
     parsed = httpx.URL(url)
     scheme = parsed.scheme.lower()
     if scheme not in _DEFAULT_PORTS:
-        raise ValueError(f"unsupported scheme: {scheme!r}")
+        raise UiMessageError(f"unsupported scheme: {scheme!r}", 'backend.artifacts.unsupportedScheme', {"scheme": scheme})
     host = parsed.host.lower()
     if not host:
-        raise ValueError("missing host")
+        raise UiMessageError("missing host", 'backend.artifacts.missingHost')
     if ":" in host:  # IPv6 literal → bracket it in the key
         host = f"[{host}]"
     port = parsed.port or _DEFAULT_PORTS[scheme]

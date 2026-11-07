@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 import { SUPPORTED_LOCALES } from '../../i18n'
 import McpSettings from '../mcp/McpSettings.vue'
@@ -2130,7 +2131,7 @@ function onChangelogClose() {
                                 variant="danger"
                                 size="small"
                                 class="usage-file-validation"
-                            >{{ tmuxConfigValidation.message }}</wa-callout>
+                            >{{ resolveUiMessage(tmuxConfigValidation.message) }}</wa-callout>
                         </div>
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.terminal.copyOnSelect.label') }}</label>
@@ -2273,7 +2274,7 @@ function onChangelogClose() {
                                         variant="danger"
                                         size="small"
                                         class="usage-file-validation"
-                                    >{{ usageFileValidation[provider].message }}</wa-callout>
+                                    >{{ resolveUiMessage(usageFileValidation[provider].message) }}</wa-callout>
                                 </template>
                             </div>
                             <div class="setting-group">
@@ -2312,7 +2313,7 @@ function onChangelogClose() {
                                         variant="danger"
                                         size="small"
                                         class="usage-file-validation"
-                                    >{{ usageDumpValidation[provider].message }}</wa-callout>
+                                    >{{ resolveUiMessage(usageDumpValidation[provider].message) }}</wa-callout>
                                 </template>
                             </div>
                             </div>

@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 /**
  * FilePickerPopup - A popup file tree for selecting files to reference with @.
  *
@@ -127,7 +128,7 @@ async function fetchTree(dirPath) {
         )
         if (!res.ok) {
             const data = await res.json()
-            error.value = data.error || `HTTP ${res.status}`
+            error.value = remoteUiMessage(data, data.error || `HTTP ${res.status}`)
             tree.value = null
             return
         }

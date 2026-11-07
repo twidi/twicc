@@ -1,4 +1,5 @@
-import { i18n } from '../i18n/index.js'
+import { remoteUiError } from '../i18n/remoteMessages.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 
 const muteUpdateStates = new WeakMap()
 
@@ -56,7 +57,7 @@ export async function applySessionMuteOnUserTurn(sessions, apiFetch, projectId, 
             )
             if (!response.ok) {
                 const data = await response.json()
-                throw new Error(data.error || i18n.global.t('session.notifications.errors.update'))
+                throw remoteUiError(data, data.error || localUiMessage('session.notifications.errors.update'))
             }
             const updatedSession = await response.json()
             state.confirmedHasValue = true

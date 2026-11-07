@@ -59,7 +59,12 @@ class NativeTtsBridge(
     }
     private fun acceptance(value: Acceptance) = JSONObject().put("accepted", value.accepted)
         .put("operationId", value.operationId ?: JSONObject.NULL).apply {
-            value.error?.let { put("error", JSONObject().put("code", it.code).put("message", it.message).put("action", it.action ?: JSONObject.NULL)) }
+            value.error?.let { error ->
+                put("error", JSONObject().put("code", error.code).put("message", error.message)
+                    .put("action", error.action ?: JSONObject.NULL).apply {
+                        error.uiMessage?.let { put("ui_message", JSONObject(it)) }
+                    })
+            }
         }
 }
 private fun JSONObject.string(key: String, limit: Int = 4096): String = (get(key) as? String)?.also {

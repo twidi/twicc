@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from twicc.core.ui_messages import ui_message_text
 from asgiref.sync import sync_to_async
 from django.db import IntegrityError
 
@@ -65,7 +66,7 @@ async def _resolve_source_repo_root(
     if source is None:
         if not source_directory:
             return None, _error("project", "project_not_found",
-                                f"Project {source_project_id!r} not found.")
+                                ui_message_text(f"Project {source_project_id!r} not found.", 'backend.worktrees.project_not_found', {"project_id": repr(source_project_id)}))
         source, _ = await run_under_db_write_lock(
             lambda: register_project(source_project_id, directory=source_directory)
         )
@@ -82,7 +83,7 @@ async def _resolve_source_repo_root(
         repo_root = git[0] if git else None
     if not repo_root:
         return None, _error("project", "not_git_repo",
-                            f"Project {source_project_id!r} is not a git repository.")
+                            ui_message_text(f"Project {source_project_id!r} is not a git repository.", 'backend.worktrees.not_git_repo', {"project_id": repr(source_project_id)}))
     return repo_root, None
 
 
@@ -109,7 +110,7 @@ async def _register_worktree_project(
     except IntegrityError:
         return ProjectMutationResult(False, new_project_id, None, [
             ProjectMutationError("worktree_path", "project_already_exists",
-                                 "A project already exists for this directory."),
+                                 ui_message_text("A project already exists for this directory.", 'backend.worktrees.project_exists')),
         ])
     return ProjectMutationResult(True, new_project_id, new_project, None)
 
@@ -173,16 +174,16 @@ async def create_worktree_from_source(
 
     # --- validate the requested worktree ------------------------------
     if not path or not os.path.isabs(path):
-        return _error("worktree_path", "invalid_path", "Path must be an absolute path.")
+        return _error("worktree_path", "invalid_path", ui_message_text("Path must be an absolute path.", 'backend.worktrees.absolute_path'))
     if not branch:
-        return _error("worktree_branch", "branch_required", "Branch is required.")
+        return _error("worktree_branch", "branch_required", ui_message_text("Branch is required.", 'backend.worktrees.branch_required'))
 
     resolved = await asyncio.to_thread(os.path.realpath, path)
     new_project_id = path_to_project_id(resolved)
     if await Project.objects.filter(id=new_project_id).aexists():
         return ProjectMutationResult(False, new_project_id, None, [
             ProjectMutationError("worktree_path", "project_already_exists",
-                                 "A project already exists for this directory."),
+                                 ui_message_text("A project already exists for this directory.", 'backend.worktrees.project_exists')),
         ])
 
     local_branches = await sync_to_async(get_branches)(repo_root)
@@ -190,7 +191,7 @@ async def create_worktree_from_source(
         start_from = None  # meaningless for an existing-branch checkout
     elif start_from and start_from not in local_branches:
         return _error("worktree_start_from", "start_from_not_found",
-                      "Start-from branch does not exist.")
+                      ui_message_text("Start-from branch does not exist.", 'backend.worktrees.start_from_missing'))
 
     # Whether the target path exists / is an empty directory is left to git:
     # ``git worktree add`` rejects a non-empty target with a clear message.
@@ -234,7 +235,7 @@ async def adopt_existing_worktree(
         return error
 
     if not path or not os.path.isabs(path):
-        return _error("worktree_path", "invalid_path", "Path must be an absolute path.")
+        return _error("worktree_path", "invalid_path", ui_message_text("Path must be an absolute path.", 'backend.worktrees.absolute_path'))
 
     resolved = await asyncio.to_thread(os.path.realpath, path)
 
@@ -255,10 +256,10 @@ async def adopt_existing_worktree(
             break
     if matched is None or resolved == main_root_real:
         return _error("worktree_path", "not_a_worktree",
-                      "Path is not a linked worktree of this repository.")
+                      ui_message_text("Path is not a linked worktree of this repository.", 'backend.worktrees.not_linked'))
     if matched.is_prunable or not await asyncio.to_thread(os.path.isdir, resolved):
         return _error("worktree_path", "not_a_worktree",
-                      "Worktree directory does not exist on disk.")
+                      ui_message_text("Worktree directory does not exist on disk.", 'backend.worktrees.directory_missing'))
 
     new_project_id = path_to_project_id(resolved)
     result = await _register_worktree_project(new_project_id, resolved, source_project_id)

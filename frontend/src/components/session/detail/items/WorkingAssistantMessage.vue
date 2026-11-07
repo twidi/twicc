@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../../../i18n/uiMessages.js'
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDataStore } from '../../../../stores/data'
@@ -13,6 +15,7 @@ const TOOL_STATUS_DELAY_MS = 500
 
 const props = defineProps({
     label: { type: String, default: null },
+    labelUiMessage: { type: Object, default: null },
     processState: { type: String, default: 'assistant_turn' },
     tools: { type: Array, default: () => [] },
     lastStartedToolId: { type: String, default: null },
@@ -79,7 +82,8 @@ const plainPhrase = computed(() => {
     // user, not thinking or running a tool.
     if (pendingPhrase.value) return pendingPhrase.value
     if (props.label === 'starting') return t('session.working.starting', { provider: providerLabel.value })
-    if (props.label) return t('session.working.providerLabel', { provider: providerLabel.value, label: props.label })
+    if (props.label) return t('session.working.providerLabel', { provider: providerLabel.value,
+        label: resolveUiMessage(remoteUiMessage({ ui_message: props.labelUiMessage }, props.label)) })
     if (settledTools.value.length === 0) return t('session.working.thinking', { provider: providerLabel.value })
     return null
 })

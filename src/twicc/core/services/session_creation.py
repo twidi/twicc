@@ -20,6 +20,7 @@ from datetime import datetime, UTC
 from typing import NamedTuple
 from uuid import uuid4
 
+from twicc.core.ui_messages import ui_message_text
 import orjson
 from asgiref.sync import sync_to_async
 
@@ -85,7 +86,7 @@ async def create_session_from_drop_payload(payload: dict) -> SessionCreationResu
         # Refused here: the lane is keyed by a string, and a creation must never skip it.
         attachment_lifecycle.delivery_release(attachment_drop.refs_to_release(payload))()
         return SessionCreationResult(False, None, None, None, [SessionCreationError(
-            "session_id", "invalid", "session_id must be a string",
+            "session_id", "invalid", ui_message_text("session_id must be a string", 'backend.sessions.id_string'),
         )])
     async with send_lane(session_id):
         return await create_session_from_payload(payload, release_refs_on_outcome=True)
@@ -119,7 +120,7 @@ async def _admit_and_create(
     try:
         ephemeral_runs.check_readonly(session_id, ephemeral_admission, creation=True)
     except SendDeliveryError as exc:
-        return SessionCreationResult(False, None, None, None, [SessionCreationError("session", exc.code, str(exc))])
+        return SessionCreationResult(False, None, None, None, [SessionCreationError("session", exc.code, attachment_drop.message_with_names(exc))])
     if ephemeral_admission is None and isinstance(session_id, str) and session_id:
         ephemeral_admission = ephemeral_runs.reserve(
             session_id, str(payload.get("provider") or ""), str(payload.get("project_id") or ""), ephemeral=ephemeral,
@@ -135,7 +136,7 @@ async def _admit_and_create(
                     finally:
                         ephemeral_runs.release(ephemeral_admission)
                 return SessionCreationResult(False, None, None, None, [SessionCreationError(
-                    "session", "ephemeral_existing_session", "An existing session cannot become ephemeral.",
+                    "session", "ephemeral_existing_session", ui_message_text("An existing session cannot become ephemeral.", 'backend.sessions.ephemeral_existing_session'),
                 )])
         result = await _create_session_from_payload(
             payload, allow_hybrid=allow_hybrid, ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
@@ -203,15 +204,15 @@ async def _create_session_from_payload(
     if ephemeral:
         conflict = None
         if payload.get("hybrid"):
-            conflict = ("ephemeral_hybrid_conflict", "Ephemeral sessions cannot use hybrid mode.")
+            conflict = ("ephemeral_hybrid_conflict", ui_message_text("Ephemeral sessions cannot use hybrid mode.", 'backend.sessions.ephemeral_hybrid_conflict'))
         elif payload.get("worktree_branch") or payload.get("worktree_path"):
-            conflict = ("ephemeral_worktree_unsupported", "Create the project worktree before starting an ephemeral session.")
+            conflict = ("ephemeral_worktree_unsupported", ui_message_text("Create the project worktree before starting an ephemeral session.", 'backend.sessions.ephemeral_worktree_unsupported'))
         elif payload.get("spawned_by_session_id") is not None:
-            conflict = ("ephemeral_spawn_unsupported", "Ephemeral sessions cannot be spawned sessions.")
+            conflict = ("ephemeral_spawn_unsupported", ui_message_text("Ephemeral sessions cannot be spawned sessions.", 'backend.sessions.ephemeral_spawn_unsupported'))
         elif provider_str == Provider.CODEX.value:
             from twicc.providers.codex.agent.hardcoded_commands import parse_hardcoded_command
             if parse_hardcoded_command(text) is not None:
-                conflict = ("ephemeral_command_unsupported", "An ephemeral Codex session requires a plain prompt.")
+                conflict = ("ephemeral_command_unsupported", ui_message_text("An ephemeral Codex session requires a plain prompt.", 'backend.sessions.ephemeral_command_unsupported'))
         if conflict is not None:
             return SessionCreationResult(False, None, None, None, [SessionCreationError("ephemeral", *conflict)])
     if hybrid:
@@ -224,7 +225,7 @@ async def _create_session_from_payload(
         if not django_settings.CLAUDE_HYBRID_ENABLED:
             return SessionCreationResult(
                 False, None, None, None,
-                [SessionCreationError("hybrid", "hybrid_disabled", "Hybrid mode is disabled on this server")],
+                [SessionCreationError("hybrid", "hybrid_disabled", ui_message_text("Hybrid mode is disabled on this server", 'backend.sessions.hybrid_disabled'))],
             )
     spawned_by_session_id = payload.get("spawned_by_session_id")  # str | None
     annotations = payload.get("annotations", {})
@@ -239,15 +240,15 @@ async def _create_session_from_payload(
     try:
         attachment_refs = attachment_planner.validate_attachment_frame(payload)
     except AttachmentError as e:
-        return SessionCreationResult(False, None, None, None, [SessionCreationError("attachments", e.code, str(e))])
+        return SessionCreationResult(False, None, None, None, [SessionCreationError("attachments", e.code, attachment_drop.message_with_names(e))])
     if not session_id:
-        errors.append(SessionCreationError("session_id", "missing", "session_id is required"))
+        errors.append(SessionCreationError("session_id", "missing", ui_message_text("session_id is required", 'backend.sessions.id_required')))
     if not project_id:
-        errors.append(SessionCreationError("project_id", "missing", "project_id is required"))
+        errors.append(SessionCreationError("project_id", "missing", ui_message_text("project_id is required", 'backend.sessions.project_required')))
     if not provider_str:
-        errors.append(SessionCreationError("provider", "missing", "provider is required"))
+        errors.append(SessionCreationError("provider", "missing", ui_message_text("provider is required", 'backend.sessions.provider_required')))
     if not text:
-        errors.append(SessionCreationError("text", "empty_text", "text is required for a new session"))
+        errors.append(SessionCreationError("text", "empty_text", ui_message_text("text is required for a new session", 'backend.sessions.new_text_required')))
     annotations_error = _validate_annotations(annotations)
     if annotations_error is not None:
         errors.append(annotations_error)
@@ -259,7 +260,7 @@ async def _create_session_from_payload(
         provider = Provider(provider_str)
     except ValueError:
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("provider", "unknown_provider", f"Unknown provider: {provider_str}")
+            SessionCreationError("provider", "unknown_provider", ui_message_text(f"Unknown provider: {provider_str}", 'backend.sessions.unknown_provider', {"provider": provider_str}))
         ])
 
     # --- runtime gate ----------------------------------------------
@@ -267,7 +268,7 @@ async def _create_session_from_payload(
         ensure_provider_running(provider)
     except ProviderDisabledError as e:
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("provider", "provider_disabled", str(e))
+            SessionCreationError("provider", "provider_disabled", attachment_drop.message_with_names(e))
         ])
 
     # --- project resolution / creation ---------------------------
@@ -344,14 +345,14 @@ async def _create_session_from_payload(
         except Project.DoesNotExist:
             return SessionCreationResult(False, None, None, None, [
                 SessionCreationError("project_id", "project_not_found",
-                                      f"Project {project_id!r} not found")
+                                      ui_message_text(f"Project {project_id!r} not found", 'backend.sessions.project_not_found', {"project_id": repr(project_id)}))
             ])
 
     cwd = project.directory
     if not cwd:
         return SessionCreationResult(False, None, None, None, [
             SessionCreationError("project_id", "project_no_directory",
-                                  f"Project {project_id!r} has no directory set")
+                                  ui_message_text(f"Project {project_id!r} has no directory set", 'backend.sessions.project_no_directory', {"project_id": repr(project_id)}))
         ])
 
     # --- spawned tree validation ---------------------------------
@@ -371,7 +372,7 @@ async def _create_session_from_payload(
             return SessionCreationResult(False, None, None, None, [
                 SessionCreationError(
                     "spawned_by_session_id", "invalid_spawned_by",
-                    f"spawned_by session {spawned_by_session_id!r} does not exist",
+                    ui_message_text(f"spawned_by session {spawned_by_session_id!r} does not exist", 'backend.sessions.invalid_spawned_by', {"session_id": repr(spawned_by_session_id)}),
                 )
             ])
 
@@ -530,7 +531,7 @@ async def _create_session_from_payload(
                 error_names=names,
             )
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("session", code, str(e))
+            SessionCreationError("session", code, attachment_drop.message_with_names(e))
         ])
 
     status_extra = {}
@@ -543,7 +544,7 @@ async def _create_session_from_payload(
                 receipt = await manager.wait_for_completion_input(completion_token)
             except RuntimeError as exc:
                 return SessionCreationResult(False, None, None, None, [
-                    SessionCreationError("session", getattr(exc, "code", "send_uncertain"), str(exc)),
+                    SessionCreationError("session", getattr(exc, "code", "send_uncertain"), attachment_drop.message_with_names(exc)),
                 ])
             if receipt is not None:
                 status_extra["wait_token"] = completion_token
@@ -563,7 +564,7 @@ def _validate_annotations(annotations: object) -> SessionCreationError | None:
         return SessionCreationError(
             "annotations",
             "invalid_annotations",
-            "annotations must be a JSON object.",
+            ui_message_text("annotations must be a JSON object.", 'backend.sessions.annotations_object'),
         )
     try:
         orjson.dumps(annotations)
@@ -571,7 +572,7 @@ def _validate_annotations(annotations: object) -> SessionCreationError | None:
         return SessionCreationError(
             "annotations",
             "invalid_annotations",
-            f"annotations must be JSON-serializable: {e}",
+            ui_message_text(f"annotations must be JSON-serializable: {e}", 'backend.sessions.annotations_serializable', {"detail": str(e)}),
         )
     return None
 

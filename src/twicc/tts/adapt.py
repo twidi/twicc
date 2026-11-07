@@ -43,13 +43,14 @@ from twicc.providers.hermetic import HermeticConfigError, HermeticGuardViolation
 from twicc.providers.state import is_provider_running  # noqa: F401 - compatibility patch points
 from twicc.tts.openrouter import SpeechError
 from twicc.tts.parts import PartSplitter, has_speech
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
 # The adapted text kept in the last test record.
 TEST_TEXT_KEEP_CHARS = 4_000
 
-ADAPT_STOPPED = "The text adaptation stopped before the end"
+ADAPT_STOPPED = ui_message_text("The text adaptation stopped before the end", 'backend.tts.adaptationStopped')
 
 # Tuned on real Haiku and Luna runs. "start writing at once" keeps Haiku from thinking first: its
 # adaptive thinking, which no option turns off, adds 3 to 5 s before the first text. The full

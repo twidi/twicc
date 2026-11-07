@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 /**
@@ -140,7 +142,7 @@ async function fetchCommands() {
         const res = await apiFetch(`/api/projects/${props.projectId}/commands/?provider=${encodeURIComponent(props.provider)}&activation_char=${encodeURIComponent(props.activationChar)}`)
         if (!res.ok) {
             const data = await res.json()
-            error.value = data.error || `HTTP ${res.status}`
+            error.value = remoteUiMessage(data, data.error || `HTTP ${res.status}`)
             allCommands.value = []
             return
         }
@@ -455,7 +457,7 @@ defineExpose({ open, close, isOpen })
                     <div class="picker-status">{{ $t('composer.commands.loading') }}</div>
                 </template>
                 <template v-else-if="error">
-                    <div class="picker-status picker-error">{{ error }}</div>
+                    <div class="picker-status picker-error">{{ resolveUiMessage(error) }}</div>
                 </template>
                 <template v-else-if="filteredCommands.length === 0">
                     <div class="picker-status">

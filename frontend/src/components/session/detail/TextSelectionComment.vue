@@ -149,12 +149,12 @@ async function read() {
         return
     }
     const result = await speechStore.play(props.selectedText, { origin: props.readOrigin })
-    if (!result.ok && !result.aborted) toast.error(result.error, { duration: 4000 })
+    if (!result.ok && !result.aborted) toast.error(result.uiMessage || result.error, { duration: 4000 })
     if (!result.ok) return
     // An error can still come after the sound started. The toast is app-wide: it shows
     // even when this widget is already closed.
     result.ended.then(end => {
-        if (!end.ok && !end.aborted) toast.error(end.error, { duration: 4000 })
+        if (!end.ok && !end.aborted) toast.error(end.uiMessage || end.error, { duration: 4000 })
     })
 }
 const commentText = ref('')

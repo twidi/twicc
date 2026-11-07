@@ -108,6 +108,7 @@ class BaseAgent(StopOriginMixin):
         # ``BaseAgentManager._state_based_timeout``.
         self.last_pending_resolved_at: float = 0.0
         self.error: str | None = None
+        self.error_ui_message: dict | None = None
         # Property from StopOriginMixin: the reason and the origin of the request that asked for the stop
         # are assigned together (design 2026-10-14, section 7).
         self.kill_reason = None
@@ -975,11 +976,13 @@ class BaseAgent(StopOriginMixin):
             state_changed_at=self.state_changed_at,
             last_activity=self.last_activity,
             error=self.error,
+            error_ui_message=getattr(self, "error_ui_message", None),
             memory_rss=memory_rss,
             kill_reason=self.kill_reason,
             pending_requests=self.pending_requests,
             stopping=self._stop_requested,
             label=self.current_status_label(),
+            label_ui_message=self.current_status_label_ui_message(),
             background_work_in_progress=self.background_work_snapshot(),
             extra={"ephemeral": True, "ephemeral_draft_id": self.ephemeral_draft_id} if getattr(self, "ephemeral", False) else {},
         )
@@ -998,6 +1001,10 @@ class BaseAgent(StopOriginMixin):
         broadcast the same value through :meth:`_broadcast_process_label` when
         it changes — one source, computed the same way on both paths.
         """
+        return None
+
+    def current_status_label_ui_message(self) -> dict | None:
+        """Return browser presentation metadata for the current status label."""
         return None
 
     # ------------------------------------------------------------------
@@ -1469,7 +1476,7 @@ class BaseAgent(StopOriginMixin):
             {"type": "broadcast", "data": data},
         )
 
-    async def _broadcast_process_label(self, label: str) -> None:
+    async def _broadcast_process_label(self, label: str, ui_message: dict | None = None) -> None:
         """Broadcast a transient label override for the process status display.
 
         Consumed by the frontend ``process_label`` handler: it overrides the
@@ -1483,6 +1490,7 @@ class BaseAgent(StopOriginMixin):
             "type": "process_label",
             "session_id": self.session_id,
             "label": label,
+            **({"label_ui_message": ui_message} if ui_message is not None else {}),
         })
 
     # ------------------------------------------------------------------

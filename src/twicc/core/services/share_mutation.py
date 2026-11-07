@@ -18,6 +18,7 @@ from copy import copy
 from datetime import datetime, UTC
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
@@ -64,7 +65,7 @@ def _validate_session_options(opts: dict) -> tuple[dict, list[ShareError]]:
     errors: list[ShareError] = []
     unknown = set(opts) - _SESSION_OPTION_KEYS
     if unknown:
-        errors.append(ShareError("options", "unknown_keys", f"unknown option keys: {sorted(unknown)}"))
+        errors.append(ShareError("options", "unknown_keys", ui_message_text(f"unknown option keys: {sorted(unknown)}", 'backend.shares.unknown_options', {"keys": str(sorted(unknown))})))
     out = {
         "mode": opts.get("mode", "live"),
         "max_display_mode": opts.get("max_display_mode", "normal"),
@@ -74,11 +75,11 @@ def _validate_session_options(opts: dict) -> tuple[dict, list[ShareError]]:
         "show_title": bool(opts.get("show_title", True)),
     }
     if type(out["include_inline_artifacts"]) is not bool:
-        errors.append(ShareError("include_inline_artifacts", "invalid", "include_inline_artifacts must be a boolean"))
+        errors.append(ShareError("include_inline_artifacts", "invalid", ui_message_text("include_inline_artifacts must be a boolean", 'backend.shares.inline_boolean')))
     if out["mode"] not in ("snapshot", "live"):
-        errors.append(ShareError("mode", "invalid", "mode must be 'snapshot' or 'live'"))
+        errors.append(ShareError("mode", "invalid", ui_message_text("mode must be 'snapshot' or 'live'", 'backend.shares.invalid_mode')))
     if out["max_display_mode"] not in _DISPLAY_MODES:
-        errors.append(ShareError("max_display_mode", "invalid", f"must be one of {_DISPLAY_MODES}"))
+        errors.append(ShareError("max_display_mode", "invalid", ui_message_text(f"must be one of {_DISPLAY_MODES}", 'backend.shares.display_mode', {"modes": str(_DISPLAY_MODES)})))
     if "frozen_at_line" in opts:
         fal = opts["frozen_at_line"]
         if fal is None:
@@ -88,7 +89,7 @@ def _validate_session_options(opts: dict) -> tuple[dict, list[ShareError]]:
             try:
                 out["frozen_at_line"] = int(fal)
             except (TypeError, ValueError):
-                errors.append(ShareError("frozen_at_line", "invalid", "frozen_at_line must be an integer"))
+                errors.append(ShareError("frozen_at_line", "invalid", ui_message_text("frozen_at_line must be an integer", 'backend.shares.frozen_integer')))
     # Optional owner-set public display title (else the real session title is used).
     title = (opts.get("display_title") or "").strip()
     if title:
@@ -100,7 +101,7 @@ def _validate_artifact_options(opts: dict) -> tuple[dict, list[ShareError]]:
     errors: list[ShareError] = []
     unknown = set(opts) - _ARTIFACT_OPTION_KEYS
     if unknown:
-        errors.append(ShareError("options", "unknown_keys", f"unknown option keys: {sorted(unknown)}"))
+        errors.append(ShareError("options", "unknown_keys", ui_message_text(f"unknown option keys: {sorted(unknown)}", 'backend.shares.unknown_options', {"keys": str(sorted(unknown))})))
     # show_title is the master switch (mirrors sessions): off ⇒ the viewer sees a
     # generic label instead of the artifact name/override.
     out: dict = {"show_title": bool(opts.get("show_title", True))}
@@ -165,11 +166,11 @@ def snapshot_artifact_share(share) -> str | None:
     bookmark = share.artifact_bookmark
     abs_file = confined_artifact_path(bookmark.session_id, bookmark.relative_path)
     if abs_file is None or not os.path.isfile(abs_file):
-        return "artifact file not found"
+        return ui_message_text("artifact file not found", 'backend.shares.artifact_missing')
     src_dir = os.path.dirname(abs_file)
     size = _dir_size(src_dir)
     if size > _MAX_SNAPSHOT_BYTES:
-        return f"artifact directory too large to share ({size // (1024 * 1024)} MB > 200 MB)"
+        return ui_message_text(f"artifact directory too large to share ({size // (1024 * 1024)} MB > 200 MB)", 'backend.shares.artifact_too_large', {"size": size // (1024 * 1024)})
     dest = str(get_share_snapshot_dir(share.id))
     tmp = dest + ".tmp"
     if os.path.exists(tmp):
@@ -245,7 +246,7 @@ async def _check_inline_readiness(share) -> None:
 
 def _not_ready_result(share_id):
     return ShareMutationResult(False, share_id, [ShareError(
-        "session", "session_not_ready", "Session metadata computation is pending; retry after computation completes.",
+        "session", "session_not_ready", ui_message_text("Session metadata computation is pending; retry after computation completes.", 'backend.shares.not_ready'),
     )])
 
 
@@ -262,13 +263,13 @@ async def _save_share(share, *, check_inline=False, recapture=False, expected_ge
             )
             if not committed:
                 return ShareMutationResult(False, share.id, [ShareError(
-                    "options", "export_interrupted", "Share changes invalidate the prepared inline exports.",
+                    "options", "export_interrupted", ui_message_text("Share changes invalidate the prepared inline exports.", 'backend.shares.export_interrupted'),
                 )])
         except SelectionNotReady:
             return _not_ready_result(share.id if not save_kwargs.get("force_insert") else None)
         except InlineExportFailure as error:
             return ShareMutationResult(False, share.id if not save_kwargs.get("force_insert") else None,
-                                       [ShareError("options", error.code, "Inline artifact export fails.")])
+                                       [ShareError("options", error.code, ui_message_text("Inline artifact export fails.", 'backend.shares.export_failed'))])
         return None
 
     async def commit():
@@ -321,7 +322,7 @@ async def create_share(
     options = dict(options or {})
     if kind == ShareKind.SESSION.value:
         if session is None:
-            return ShareMutationResult(False, None, [ShareError("session", "missing", "session required")])
+            return ShareMutationResult(False, None, [ShareError("session", "missing", ui_message_text("session required", 'backend.shares.session_required'))])
         if (refused := await _refuse_unavailable_session(session.id, None)) is not None:
             return refused
         opts, errors = _validate_session_options(options)
@@ -331,12 +332,12 @@ async def create_share(
             opts["frozen_at_line"] = session.last_line
     elif kind == ShareKind.ARTIFACT.value:
         if bookmark is None:
-            return ShareMutationResult(False, None, [ShareError("bookmark", "missing", "bookmark required")])
+            return ShareMutationResult(False, None, [ShareError("bookmark", "missing", ui_message_text("bookmark required", 'backend.shares.bookmark_required'))])
         opts, errors = _validate_artifact_options(options)
         if errors:
             return ShareMutationResult(False, None, errors)
     else:
-        return ShareMutationResult(False, None, [ShareError("kind", "invalid", f"unknown kind {kind!r}")])
+        return ShareMutationResult(False, None, [ShareError("kind", "invalid", ui_message_text(f"unknown kind {kind!r}", 'backend.shares.unknown_kind', {"kind": repr(kind)}))])
 
     # Mint id with a small collision-retry loop (id space is 2^32 per token_hex(4)).
     share_id = mint_share_id()
@@ -457,7 +458,7 @@ async def propagate_share(share) -> ShareMutationResult:
     if share.kind == ShareKind.SESSION.value:
         if share.options.get("mode") != "snapshot":
             return ShareMutationResult(False, share.id,
-                                       [ShareError("mode", "not_snapshot", "only snapshot shares re-freeze")])
+                                       [ShareError("mode", "not_snapshot", ui_message_text("only snapshot shares re-freeze", 'backend.shares.snapshot_required'))])
         # Before the reservation: a refused re-freeze must not discard the exports in flight.
         if (refused := await _refuse_unavailable_session(share.session_id, share.id)) is not None:
             return refused
@@ -592,7 +593,7 @@ async def _resolve_target_from_payload(payload: dict):
         if bookmark is None:
             return kind, None, None, [ShareError("bookmark_id", "not_found", f"bookmark {bid!r} not found")]
         return kind, None, bookmark, []
-    return kind, None, None, [ShareError("kind", "invalid", f"unknown kind {kind!r}")]
+    return kind, None, None, [ShareError("kind", "invalid", ui_message_text(f"unknown kind {kind!r}", 'backend.shares.unknown_kind', {"kind": repr(kind)}))]
 
 
 def _parse_expires(payload: dict) -> tuple[datetime | None, ShareError | None]:
@@ -607,8 +608,8 @@ def _parse_expires(payload: dict) -> tuple[datetime | None, ShareError | None]:
     except (ValueError, TypeError):
         return None, ShareError(
             "expires_at", "invalid",
-            f"invalid expires_at {raw!r}: use an ISO 8601 datetime, "
-            f"e.g. 2026-12-31T23:59:00+00:00",
+            ui_message_text(f"invalid expires_at {raw!r}: use an ISO 8601 datetime, "
+            f"e.g. 2026-12-31T23:59:00+00:00", 'backend.shares.invalid_expiry', {"value": repr(raw)}),
         )
 
 

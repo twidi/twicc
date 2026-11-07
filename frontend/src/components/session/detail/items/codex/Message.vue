@@ -168,6 +168,7 @@ const nativeContent = computed(() => {
     <WorkingAssistantMessage
         v-else-if="isWorkingAssistantMessage"
         :label="data.label || null"
+        :label-ui-message="data.labelUiMessage || null"
         :session-id="sessionId"
     />
     <Reasoning

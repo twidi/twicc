@@ -59,6 +59,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
 from django.db import connection
 from django.db.models import BooleanField, Q
 from django.db.models.expressions import RawSQL
@@ -92,7 +93,11 @@ _PROVIDERS = tuple(provider.value for provider in Provider)
 
 
 class FeedError(ValueError):
-    """A bad request parameter. The message goes into the ``{"error": ...}`` body of the 400."""
+    """A bad request parameter with browser presentation metadata."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.ui_message = getattr(message, "ui_message", None)
 
 
 class FeedRequest(NamedTuple):
@@ -117,7 +122,7 @@ def _integer(name: str, text: str) -> int:
     # Longer than any id (2**63 - 1 has 19 digits): also keeps ``int()`` away from Python's limit on huge
     # digit strings, which raises a plain ValueError and would turn a 400 into a 500.
     if len(text) > _MAX_INTEGER_TEXT or not _INTEGER.fullmatch(text):
-        raise FeedError(f"{name} must be an integer, got {text[:40]!r}.")
+        raise FeedError(ui_message_text(f"{name} must be an integer, got {text[:40]!r}.", 'backend.timeline.integer', {"name": name, "value": repr(text[:40])}))
     return int(text)
 
 
@@ -125,20 +130,20 @@ def parse_cursor(text: str) -> tuple[datetime, int]:
     """Parse ``<occurred_at>,<id>`` (the timestamp is the exact string the server returned)."""
     timestamp, separator, raw_id = text.rpartition(",")
     if not separator:
-        raise FeedError("before must be '<occurred_at>,<id>'.")
+        raise FeedError(ui_message_text("before must be '<occurred_at>,<id>'.", 'backend.timeline.cursor_format'))
     try:
         occurred_at = datetime.fromisoformat(timestamp)
     except ValueError:
-        raise FeedError(f"before has an unreadable timestamp: {timestamp!r}.") from None
+        raise FeedError(ui_message_text(f"before has an unreadable timestamp: {timestamp!r}.", 'backend.timeline.cursor_timestamp', {"timestamp": repr(timestamp)})) from None
     if occurred_at.tzinfo is None:
-        raise FeedError("before must carry a UTC offset or Z.")
+        raise FeedError(ui_message_text("before must carry a UTC offset or Z.", 'backend.timeline.cursor_timezone'))
     try:
         occurred_at = occurred_at.astimezone(UTC)
     except OverflowError:
-        raise FeedError(f"before has a timestamp out of range: {timestamp!r}.") from None
+        raise FeedError(ui_message_text(f"before has a timestamp out of range: {timestamp!r}.", 'backend.timeline.cursor_range', {"timestamp": repr(timestamp)})) from None
     event_id = _integer("before id", raw_id)
     if not 0 <= event_id <= MAX_EVENT_ID:
-        raise FeedError("before id is out of range.")
+        raise FeedError(ui_message_text("before id is out of range.", 'backend.timeline.cursor_id_range'))
     return occurred_at, event_id
 
 
@@ -151,7 +156,7 @@ def _keys(params: Mapping[str, str], name: str, allowed: tuple[str, ...]) -> tup
     """A comma list of keys of ``allowed``; every key of ``allowed`` is the same as none (``()``, design 4.5)."""
     keys = _items(params, name)
     if unknown := [key for key in keys if key not in allowed]:
-        raise FeedError(f"Unknown {name}: {', '.join(repr(key[:40]) for key in unknown[:5])}.")
+        raise FeedError(ui_message_text(f"Unknown {name}: {', '.join(repr(key[:40]) for key in unknown[:5])}.", 'backend.timeline.unknown_filter', {"name": name, "values": ", ".join(repr(key[:40]) for key in unknown[:5])}))
     if set(keys) >= set(allowed):
         return ()
     return keys
@@ -160,7 +165,7 @@ def _keys(params: Mapping[str, str], name: str, allowed: tuple[str, ...]) -> tup
 def _parse_filter(params: Mapping[str, str]) -> TimelineFilter:
     view = (params.get("view") or "").strip() or "all"
     if view not in VIEWS:
-        raise FeedError(f"Unknown view: {view[:40]!r}.")
+        raise FeedError(ui_message_text(f"Unknown view: {view[:40]!r}.", 'backend.timeline.unknown_view', {"view": repr(view[:40])}))
     return TimelineFilter(
         view=view,
         families=_keys(params, "families", tuple(FAMILIES)),
@@ -178,19 +183,19 @@ def parse_request(params: Mapping[str, str]) -> FeedRequest:
     if "limit" in params:
         limit = _integer("limit", params["limit"])
         if limit < 1:
-            raise FeedError("limit must be at least 1.")
+            raise FeedError(ui_message_text("limit must be at least 1.", 'backend.timeline.limit_minimum'))
         limit = min(limit, MAX_LIMIT)
     if "before" in params and "after_id" in params:
-        raise FeedError("before and after_id are mutually exclusive.")
+        raise FeedError(ui_message_text("before and after_id are mutually exclusive.", 'backend.timeline.cursor_conflict'))
     before = parse_cursor(params["before"]) if "before" in params else None
     after_id = None
     if "after_id" in params:
         after_id = _integer("after_id", params["after_id"])
         if not 0 <= after_id <= MAX_EVENT_ID:
-            raise FeedError("after_id must be between 0 and 2**63 - 1.")
+            raise FeedError(ui_message_text("after_id must be between 0 and 2**63 - 1.", 'backend.timeline.after_range'))
     include_muted = params.get("include_muted", "0")
     if include_muted not in ("0", "1"):
-        raise FeedError("include_muted must be 0 or 1.")
+        raise FeedError(ui_message_text("include_muted must be 0 or 1.", 'backend.timeline.include_muted'))
     return FeedRequest(project_ids, limit, before, after_id, flt, include_muted == "1")
 
 
@@ -422,8 +427,15 @@ def build_sessions_table(session_ids: set[str]) -> dict[str, dict]:
     return table
 
 
-def serialize_event(event: TimelineEvent) -> dict:
-    """The public shape of an event. ``recorded_at``, ``dedupe_key`` and ``caused_by`` are not sent."""
+def serialize_event(event: TimelineEvent, *, include_ui_messages: bool = False) -> dict:
+    """Serialize an event; browser readers explicitly include presentation metadata.
+
+    ``recorded_at``, ``dedupe_key`` and ``caused_by`` are not sent. The default
+    preserves the CLI/RPC/MCP projection and its original English error text.
+    """
+    data = event.data
+    if not include_ui_messages and event.kind == TimelineKind.PROCESS_ENDED and "error_ui_message" in data:
+        data = {name: value for name, value in data.items() if name != "error_ui_message"}
     return {
         "id": event.id,
         "kind": event.kind,
@@ -434,7 +446,7 @@ def serialize_event(event: TimelineEvent) -> dict:
         "actor_ref": event.actor_ref,
         "actor_name": event.actor_name,
         "reason": event.reason,
-        "data": event.data,
+        "data": data,
         "session_id": event.session_id,
         "project_id": event.project_id,
         "provider": event.provider,
@@ -463,7 +475,7 @@ def fetch_feed(request: FeedRequest) -> dict:
         events, has_more = _fetch_page(request)
         truncated = False
     return {
-        "events": [serialize_event(event) for event in events],
+        "events": [serialize_event(event, include_ui_messages=True) for event in events],
         "has_more": has_more,
         "truncated": truncated,
         "latest_id": latest_id,
@@ -487,5 +499,5 @@ def fetch_click_boundary(request: FeedRequest, boundary: str) -> dict:
         for event in rows.iterator(chunk_size=MAX_LIMIT):
             merged[event.id] = event
     events = sorted(merged.values(), key=lambda event: (event.occurred_at, event.id))
-    return {'events': [serialize_event(event) for event in events], 'latest_id': high_water,
+    return {'events': [serialize_event(event, include_ui_messages=True) for event in events], 'latest_id': high_water,
             'sessions': build_sessions_table(cited_session_ids(events)), 'truncated': False, 'has_more': False}

@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import date
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
+
 
 _FIELD_TO_FLAG = {
     "selected_model": "--model",
@@ -189,8 +191,8 @@ def validate_hidden_constraints(
     if not whitelist:
         errors.append(ValidationError(
             "--hidden", "hidden_unsupported_provider",
-            f"--hidden is not supported for provider {provider!r}. "
-            f"No non-interactive permission mode is configured for it.",
+            ui_message_text(f"--hidden is not supported for provider {provider!r}. "
+            f"No non-interactive permission mode is configured for it.", 'backend.hidden.unsupported_provider', {"provider": repr(provider)}),
         ))
         return errors
 
@@ -199,8 +201,8 @@ def validate_hidden_constraints(
         whitelist_str = ", ".join(sorted(whitelist))
         errors.append(ValidationError(
             "--permission-mode", "hidden_requires_non_interactive",
-            f"--hidden requires a non-interactive permission_mode. "
-            f"Provider {provider} accepts: {whitelist_str}. Got: {mode!r}.",
+            ui_message_text(f"--hidden requires a non-interactive permission_mode. "
+            f"Provider {provider} accepts: {whitelist_str}. Got: {mode!r}.", 'backend.hidden.permission_mode', {"provider": provider, "modes": whitelist_str, "mode": repr(mode)}),
         ))
 
     # --- question_widget incompatibility -------------------------
@@ -214,8 +216,8 @@ def validate_hidden_constraints(
         if qw is True:
             errors.append(ValidationError(
                 "--question-widget", "hidden_incompatible_with_question_widget",
-                "--hidden is incompatible with question_widget=True. "
-                "Pass --no-question-widget to override.",
+                ui_message_text("--hidden is incompatible with question_widget=True. "
+                "Pass --no-question-widget to override.", 'backend.hidden.question_widget'),
             ))
 
     return errors

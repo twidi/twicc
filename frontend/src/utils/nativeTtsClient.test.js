@@ -113,3 +113,44 @@ test('supported stale attachment never selects Web or silently retries with a re
     assert.equal((await client.manual({ kind: 'text' })).ok, false)
     assert.deepEqual(calls, ['getState', 'tts.attach'])
 })
+
+test('native wire metadata remains reactive in start, ending and snapshot errors', async () => {
+    const { i18n } = await import('../i18n/index.js')
+    const f = fixture()
+    i18n.global.locale.value = 'en'
+    try {
+        await f.client.attach()
+        const pending = f.client.manual({ kind: 'text', text: 'Hello' })
+        const ui_message = { key: 'backend.tts.failed', params: {} }
+        f.set(snapshot(2, {
+            results: [{ operationId: pending.operationId, start: { ok: false, error: 'Text-to-speech failed', ui_message },
+                ended: { ok: false, error: 'Text-to-speech failed', ui_message } }],
+            error: { code: 'failed', message: 'Text-to-speech failed', ui_message },
+        }))
+        await f.poll()
+        const started = await pending, mirrored = f.client.state()
+        assert.equal(started.error, 'Text-to-speech failed')
+        assert.equal(mirrored.error.code, 'failed')
+        assert.equal(mirrored.error.message, 'Text-to-speech failed')
+        assert.equal(mirrored.results[0].ended.error, 'Text-to-speech failed')
+        i18n.global.locale.value = 'pt-BR'
+        assert.equal(started.error, 'Falha na conversão de texto em fala')
+        assert.equal(mirrored.error.message, 'Falha na conversão de texto em fala')
+        assert.equal(mirrored.results[0].ended.error, 'Falha na conversão de texto em fala')
+        assert.equal(started.uiMessage.key, 'backend.tts.failed')
+        assert.deepEqual(started.ui_message, ui_message)
+    } finally { f.client.detach(); i18n.global.locale.value = 'en' }
+})
+
+test('unknown native wire keys retain raw English diagnostics', async () => {
+    const f = fixture(); await f.client.attach()
+    const pending = f.client.manual({ kind: 'text', text: 'Hello' })
+    f.set(snapshot(2, { results: [{ operationId: pending.operationId,
+        start: { ok: false, error: 'External diagnostic', ui_message: { key: 'unknown.remote.message', params: {} } },
+        ended: { ok: false } }], error: null }))
+    await f.poll()
+    const result = await pending
+    assert.equal(result.error, 'External diagnostic')
+    assert.equal(result.uiMessage, undefined)
+    f.client.detach()
+})

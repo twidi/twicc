@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm'
 import { computed, ref } from 'vue'
 import { createAppI18n } from '../../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 
 // Exercise the actual validation handlers without mounting the browser-only
 // custom elements. Their injected state is the same ref shape as Vue setup.
@@ -12,7 +13,7 @@ function handler(path, name, state) {
     const source = readFileSync(new URL(path, import.meta.url), 'utf8')
     const fn = source.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n}`))?.[0]
     assert.ok(fn, `${name} exists`)
-    return runInNewContext(`(${fn})`, { ...state, localUiMessage })
+    return runInNewContext(`(${fn})`, { ...state, localUiMessage, remoteUiMessage })
 }
 
 function visibleNotice(path, name, state, composer) {

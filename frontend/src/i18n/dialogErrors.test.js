@@ -9,6 +9,7 @@ import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createAppI18n } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
+import { remoteUiMessage, remoteUiErrors } from './remoteMessages.js'
 
 // Execute the production handlers and render their actual error callouts.
 // Replacing descriptors with stored translations must break the locale-switch assertions.
@@ -20,7 +21,7 @@ function dialog(file, functions, state = {}) {
     assert.equal(declarations.length, functions.length)
     const composer = createAppI18n('en').global
     const scope = {
-        t: composer.t, localUiMessage, ...state,
+        t: composer.t, localUiMessage, remoteUiMessage, remoteUiErrors, ...state,
         resolveUiMessage: message => resolveUiMessage(message, composer),
     }
     const handlers = runInNewContext(`${declarations.map(node => node.getText(ast)).join('\n')}; ({ ${functions.join(', ')} })`, scope)
@@ -120,7 +121,7 @@ for (const file of ['peer/PeerComposeDialog.vue', 'peer/PeersManagerDialog.vue',
         view.composer.locale.value = 'pt-BR'
         assert.equal(resolveUiMessage(message, view.composer), view.composer.t('peer.compose.errors.request'))
         assert.equal(view.errorText({ error: 'Backend prose' }), 'Backend prose')
-        assert.equal(view.errorText({ errors: [{ message: 'Backend message' }, { code: 'provider_code' }] }), 'Backend message — provider_code')
+        assert.equal(resolveUiMessage(view.errorText({ errors: [{ message: 'Backend message' }, { code: 'provider_code' }] }), view.composer), 'Backend message — provider_code')
     })
 }
 

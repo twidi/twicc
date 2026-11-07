@@ -35,6 +35,7 @@ from twicc.file_tree import validate_path
 from twicc.uploads import locks, store
 from twicc.uploads.broadcast import broadcast_upload_state
 from twicc.views import ensure_session_artifacts_root, validate_standalone_root
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ TUS_VERSION = "1.0.0"
 
 
 def _error(message: str, status: int) -> JsonResponse:
-    return JsonResponse({"error": message}, status=status)
+    metadata = getattr(message, "ui_message", None)
+    return JsonResponse({"error": message, **({"ui_message": metadata} if metadata else {})}, status=status)
 
 
 def upload_location(upload_id: str) -> str:
@@ -75,7 +77,7 @@ def upload_view(*, tus: bool = False):
             except Exception as exc:
                 if not locks.was_logged(exc):
                     logger.exception("Upload view %s failed", view.__name__)
-                response = _error("Internal server error", 500)
+                response = _error(ui_message_text("Internal server error", 'backend.uploads.internalError'), 500)
             response[UPLOAD_HEADER] = "1"
             if tus:
                 response["Tus-Resumable"] = TUS_VERSION
@@ -125,7 +127,7 @@ async def finalize_upload(upload_id: str) -> StepOutcome:
     except Exception:
         logger.warning("Upload %s: re-validation of the target raised", upload_id, exc_info=True)
         result = await asyncio.to_thread(
-            store.finalize_precommit_failure, upload_id, meta, 500, "Cannot validate the target directory"
+            store.finalize_precommit_failure, upload_id, meta, 500, ui_message_text("Cannot validate the target directory", 'backend.uploads.validateTarget')
         )
         return await _finish_step(result)
     if refusal is not None:
@@ -157,10 +159,14 @@ async def _finish_step(result: store.FinalizeResult) -> StepOutcome:
 
 def _error_message(response: JsonResponse) -> str:
     try:
-        message = orjson.loads(response.content).get("error")
+        payload = orjson.loads(response.content)
+        message = payload.get("error")
+        metadata = payload.get("ui_message")
+        if isinstance(message, str) and metadata:
+            return ui_message_text(message, metadata["key"], metadata.get("params"))
     except (orjson.JSONDecodeError, AttributeError):
         message = None
-    return message if isinstance(message, str) and message else "The target directory is not valid"
+    return message if isinstance(message, str) and message else ui_message_text("The target directory is not valid", 'backend.uploads.invalidTarget')
 
 
 async def _revalidate_target(meta: dict) -> str | None:
@@ -172,7 +178,7 @@ async def _revalidate_target(meta: dict) -> str | None:
     """
     target_dir = meta["target_dir"]
     if not os.path.isabs(target_dir):
-        return "'target_dir' must be an absolute path"
+        return ui_message_text("'target_dir' must be an absolute path", "backend.uploads.absoluteTarget")
     scope = meta["scope"]
     if scope["kind"] == lifecycle.SCOPE_KIND_COMPOSER:
         return await asyncio.to_thread(_check_composer_target, meta)
@@ -195,12 +201,12 @@ def _check_composer_target(meta: dict) -> str | None:
     """
     ref = lifecycle.composer_ref(meta)
     if ref is None:
-        return "Invalid attachment reference"
+        return ui_message_text("Invalid attachment reference", 'backend.uploads.invalidAttachment')
     target_dir = meta["target_dir"]
     if os.path.normpath(target_dir) != str(lifecycle.upload_target_dir(ref)):
-        return "The target directory is not the attachment's directory"
+        return ui_message_text("The target directory is not the attachment's directory", 'backend.uploads.attachmentTarget')
     if lifecycle.is_released(ref) or os.path.realpath(target_dir) != target_dir or not os.path.isdir(target_dir):
-        return "The attachment was removed"
+        return ui_message_text("The attachment was removed", "backend.uploads.attachmentRemoved")
     error = _check_target_writable(target_dir)
     return None if error is None else _error_message(error)
 
@@ -262,60 +268,60 @@ def _parse_creation_body(request, *, standalone: bool) -> CreationRequest | Json
     try:
         raw = request.body
     except RequestDataTooBig:
-        return _error("Request body too large", 400)
+        return _error(ui_message_text("Request body too large", 'backend.uploads.requestTooLarge'), 400)
     try:
         data = orjson.loads(raw)
     except orjson.JSONDecodeError:
-        return _error("Invalid JSON", 400)
+        return _error(ui_message_text("Invalid JSON", 'backend.common.invalidJson'), 400)
     if not isinstance(data, dict):
-        return _error("The body must be a JSON object", 400)
+        return _error(ui_message_text("The body must be a JSON object", 'backend.common.bodyObject'), 400)
 
     size = data.get("size")
     if not _is_int(size) or size < 0:
-        return _error("'size' must be a non-negative integer", 400)
+        return _error(ui_message_text("'size' must be a non-negative integer", 'backend.uploads.sizeInteger'), 400)
     filename = data.get("filename")
     if not isinstance(filename, str):
-        return _error("'filename' must be a string", 400)
+        return _error(ui_message_text("'filename' must be a string", 'backend.uploads.filenameString'), 400)
     raw_origin = data.get("origin")
     composer = isinstance(raw_origin, dict) and raw_origin.get("panel") == store.ORIGIN_PANEL_COMPOSER
     target_dir = data.get("target_dir")
     if composer:
         # The server computes the target of a composer upload (spec 2026-10-03 §6.1.1).
         if not standalone:
-            return _error("Composer uploads are created with POST /api/uploads/ only", 400)
+            return _error(ui_message_text("Composer uploads are created with POST /api/uploads/ only", 'backend.uploads.composerEndpoint'), 400)
         if target_dir is not None or data.get("root") is not None:
-            return _error("'target_dir' and 'root' must be absent for the composer origin", 400)
+            return _error(ui_message_text("'target_dir' and 'root' must be absent for the composer origin", 'backend.uploads.composerTarget'), 400)
         target_dir = ""
     elif not isinstance(target_dir, str):
-        return _error("'target_dir' must be a string", 400)
+        return _error(ui_message_text("'target_dir' must be a string", 'backend.uploads.targetString'), 400)
     client_id = data.get("client_id")
     if not _is_non_empty_str(client_id) or len(client_id) > store.CLIENT_ID_MAX_LENGTH:
-        return _error(f"'client_id' must be a non-empty string of at most {store.CLIENT_ID_MAX_LENGTH} characters", 400)
+        return _error(ui_message_text(f"'client_id' must be a non-empty string of at most {store.CLIENT_ID_MAX_LENGTH} characters", 'backend.uploads.clientIdLength', {"limit": store.CLIENT_ID_MAX_LENGTH}), 400)
     fingerprint = data.get("fingerprint")
     if not _is_non_empty_str(fingerprint) or len(fingerprint) > store.FINGERPRINT_MAX_LENGTH:
         return _error(
-            f"'fingerprint' must be a non-empty string of at most {store.FINGERPRINT_MAX_LENGTH} characters", 400
+            ui_message_text(f"'fingerprint' must be a non-empty string of at most {store.FINGERPRINT_MAX_LENGTH} characters", 'backend.uploads.fingerprintLength', {"limit": store.FINGERPRINT_MAX_LENGTH}), 400
         )
     root = None
     if standalone and not composer:
         root = data.get("root")
         if root is not None and not isinstance(root, str):
-            return _error("'root' must be a string or null", 400)
+            return _error(ui_message_text("'root' must be a string or null", 'backend.uploads.rootString'), 400)
     origin = raw_origin
     if not isinstance(origin, dict):
-        return _error("'origin' must be an object", 400)
+        return _error(ui_message_text("'origin' must be an object", 'backend.uploads.originObject'), 400)
     panel = origin.get("panel")
     key = origin.get("key")
     if panel not in store.ORIGIN_PANELS:
-        return _error("'origin.panel' must be 'files', 'artifacts' or 'composer'", 400)
+        return _error(ui_message_text("'origin.panel' must be 'files', 'artifacts' or 'composer'", 'backend.uploads.originPanel'), 400)
     if not isinstance(key, str) or len(key) > store.ORIGIN_KEY_MAX_LENGTH:
-        return _error(f"'origin.key' must be a string of at most {store.ORIGIN_KEY_MAX_LENGTH} characters", 400)
+        return _error(ui_message_text(f"'origin.key' must be a string of at most {store.ORIGIN_KEY_MAX_LENGTH} characters", 'backend.uploads.originKeyLength', {"limit": store.ORIGIN_KEY_MAX_LENGTH}), 400)
     attachment_ref = None
     if composer:
         try:
             attachment_ref = lifecycle.ref_from_origin_key(key)
         except staging.AttachmentError:
-            return _error("'origin.key' must be '<bucket>/<attachment id>' for the composer origin", 400)
+            return _error(ui_message_text("'origin.key' must be '<bucket>/<attachment id>' for the composer origin", 'backend.uploads.composerKey'), 400)
 
     return CreationRequest(
         filename=filename,
@@ -332,15 +338,15 @@ def _parse_creation_body(request, *, standalone: bool) -> CreationRequest | Json
 def _check_filename(filename: str) -> JsonResponse | None:
     """Check 2 (on the stripped name), without the ``PC_NAME_MAX`` part."""
     if not filename:
-        return _error("The file name is empty", 400)
+        return _error(ui_message_text("The file name is empty", 'backend.uploads.emptyFilename'), 400)
     if any(char in filename for char in ("/", "\\", "\0")):
-        return _error("The file name contains a forbidden character", 400)
+        return _error(ui_message_text("The file name contains a forbidden character", 'backend.uploads.forbiddenFilename'), 400)
     if filename in (".", ".."):
-        return _error("Invalid file name", 400)
+        return _error(ui_message_text("Invalid file name", 'backend.uploads.invalidFilename'), 400)
     if filename.startswith(store.TEMP_FILE_PREFIX):
-        return _error(f"File names starting with '{store.TEMP_FILE_PREFIX}' are reserved", 400)
+        return _error(ui_message_text(f"File names starting with '{store.TEMP_FILE_PREFIX}' are reserved", 'backend.uploads.reservedPrefix', {"prefix": store.TEMP_FILE_PREFIX}), 400)
     if len(filename.encode("utf-8")) > store.FILENAME_MAX_BYTES:
-        return _error(f"The file name is longer than {store.FILENAME_MAX_BYTES} bytes", 400)
+        return _error(ui_message_text(f"The file name is longer than {store.FILENAME_MAX_BYTES} bytes", 'backend.uploads.filenameBytes', {"limit": store.FILENAME_MAX_BYTES}), 400)
     return None
 
 
@@ -359,9 +365,9 @@ _NAME_SUFFIX_ROOM = staging.NAME_SUFFIX_ROOM
 def _check_target_writable(target_dir: str) -> JsonResponse | None:
     """Check 4: *target_dir* is writable and is not the staging dir or inside it (``403``)."""
     if not os.access(target_dir, os.W_OK):
-        return _error("The target directory is not writable", 403)
+        return _error(ui_message_text("The target directory is not writable", 'backend.uploads.targetNotWritable'), 403)
     if store.is_in_staging_dir(target_dir):
-        return _error("The target directory is not allowed", 403)
+        return _error(ui_message_text("The target directory is not allowed", 'backend.uploads.targetNotAllowed'), 403)
     return None
 
 
@@ -373,7 +379,7 @@ def _check_target_sync(target_dir: str, filename: str, size: int) -> JsonRespons
         name_max = None
     if name_max is not None and 0 < name_max < 255:
         if len(filename.encode("utf-8")) + _NAME_SUFFIX_ROOM > name_max:
-            return _error("The file name is too long for the target directory", 400)
+            return _error(ui_message_text("The file name is too long for the target directory", 'backend.uploads.filenameTooLong'), 400)
 
     if (error := _check_target_writable(target_dir)) is not None:
         return error
@@ -388,9 +394,9 @@ def _check_target_sync(target_dir: str, filename: str, size: int) -> JsonRespons
         if received is not None:
             expected_by_others += max(meta["size"] - received, 0)
     if shutil.disk_usage(staging).free - expected_by_others < size:
-        return _error("Not enough disk space", 507)
+        return _error(ui_message_text("Not enough disk space", 'backend.uploads.diskSpace'), 507)
     if store.st_dev(target_dir) != store.st_dev(staging) and shutil.disk_usage(target_dir).free < size:
-        return _error("Not enough disk space in the target directory", 507)
+        return _error(ui_message_text("Not enough disk space in the target directory", 'backend.uploads.targetDiskSpace'), 507)
     return None
 
 
@@ -411,14 +417,14 @@ async def _check_scope(
         if error is None:
             await asyncio.to_thread(ensure_session_artifacts_root, target_dir, root)
         if error is None and not await asyncio.to_thread(os.path.isdir, target_dir):
-            error = _error("Directory not found", 404)
+            error = _error(ui_message_text("Directory not found", 'backend.uploads.directoryNotFound'), 404)
         return scope, error
 
     scope = {"kind": "project", "project_id": project_id, "session_id": session_id}
     try:
         _session, _dir_path, error = await sync_to_async(validate_path)(project_id, target_dir, session_id)
     except Http404 as exc:
-        return scope, _error(str(exc) or "Not found", 404)
+        return scope, _error(exc.args[0] if exc.args else ui_message_text("Not found", "backend.uploads.notFound"), 404)
     return scope, error
 
 
@@ -440,7 +446,7 @@ async def _prepare_composer_target(body: CreationRequest) -> ComposerTarget | Js
     ref = body.attachment_ref
     # 2. Release tombstone: a released entry is never re-created.
     if await asyncio.to_thread(lifecycle.is_released, ref):
-        return _error("The attachment was removed", 410)
+        return _error(ui_message_text("The attachment was removed", 'backend.uploads.attachmentRemoved'), 410)
     # 3. File name: any name is accepted, normalized.
     filename = staging.normalize_filename(body.filename, await asyncio.to_thread(staging.name_max_bytes))
     # 4. Settle every other attempt for the entry.
@@ -448,14 +454,14 @@ async def _prepare_composer_target(body: CreationRequest) -> ComposerTarget | Js
         await lifecycle.settle_entry_uploads(ref)
     except lifecycle.SettleError:
         logger.warning("Composer upload creation: cannot settle the previous uploads of %s", ref, exc_info=True)
-        return _error("Cannot cancel the previous upload of this attachment", 500)
+        return _error(ui_message_text("Cannot cancel the previous upload of this attachment", 'backend.uploads.cancelPrevious'), 500)
     # 5. Reset the entry and create ``file/``.
     try:
         target_dir = await asyncio.to_thread(lifecycle.reset_entry, ref)
     except OSError as exc:
         logger.warning("Composer upload creation: cannot reset the entry %s", ref, exc_info=True)
         code = store.failure_code(exc)
-        return _error("Not enough disk space" if code == 507 else "Cannot prepare the attachment", code)
+        return _error(ui_message_text("Not enough disk space", "backend.uploads.diskSpace") if code == 507 else ui_message_text('Cannot prepare the attachment', 'backend.uploads.prepareAttachment'), code)
     return ComposerTarget(filename, str(target_dir), {"kind": lifecycle.SCOPE_KIND_COMPOSER})
 
 
@@ -486,7 +492,7 @@ async def _create(body: CreationRequest, *, project_id: str | None, session_id: 
             # 3. Absolute target, then the scope of the prefix.
             target_dir = os.path.normpath(body.target_dir)
             if not os.path.isabs(target_dir):
-                return _error("'target_dir' must be an absolute path", 400)
+                return _error(ui_message_text("'target_dir' must be an absolute path", 'backend.uploads.absoluteTarget'), 400)
             scope, error = await _check_scope(target_dir, project_id=project_id, session_id=session_id, root=body.root)
             if error is not None:
                 return error
@@ -511,7 +517,7 @@ async def _create(body: CreationRequest, *, project_id: str | None, session_id: 
         except Exception as exc:
             logger.warning("Upload creation failed for %s", target_dir, exc_info=True)
             code = store.failure_code(exc)
-            return _error("Not enough disk space" if code == 507 else "Cannot create the upload", code)
+            return _error(ui_message_text("Not enough disk space", "backend.uploads.diskSpace") if code == 507 else ui_message_text('Cannot create the upload', 'backend.uploads.createFailed'), code)
         await broadcast_upload_state(meta)
         if body.attachment_ref is not None:
             await asyncio.to_thread(lifecycle.touch_entry, body.attachment_ref)
@@ -710,10 +716,10 @@ def _declared_length(request) -> int | None:
 
 async def _patch(request, upload_id: str) -> HttpResponse:
     if request.content_type != PATCH_CONTENT_TYPE:
-        return _error(f"Content-Type must be {PATCH_CONTENT_TYPE}", 415)
+        return _error(ui_message_text(f"Content-Type must be {PATCH_CONTENT_TYPE}", 'backend.uploads.contentType', {"contentType": PATCH_CONTENT_TYPE}), 415)
     raw_offset = request.headers.get("Upload-Offset")
     if raw_offset is None or not _OFFSET_RE.fullmatch(raw_offset):
-        return _error("Upload-Offset must be a non-negative integer", 400)
+        return _error(ui_message_text("Upload-Offset must be a non-negative integer", 'backend.uploads.offsetInteger'), 400)
     client_offset = int(raw_offset)
     declared_length = _declared_length(request)
 
@@ -756,7 +762,7 @@ async def _patch(request, upload_id: str) -> HttpResponse:
         if result.outcome != store.APPEND_OK:
             code = _APPEND_FAILURE_CODES[result.outcome]
             if code == 400:
-                return _error(f"The body holds more than the {size - part} bytes left", 400)
+                return _error(ui_message_text(f"The body holds more than the {size - part} bytes left", 'backend.uploads.excessBytes', {"remaining": size - part}), 400)
             return _status(code)
         if result.part_size is None:  # pragma: no cover - the lock excludes every remover
             return _status(500)
@@ -795,14 +801,14 @@ async def uploads_root(request):
         return await _list_view(request)
     if request.method == "POST":
         return await _create_view(request)
-    return _error("Method not allowed", 405)
+    return _error(ui_message_text("Method not allowed", 'backend.common.methodNotAllowed'), 405)
 
 
 @upload_view()
 async def upload_create(request, project_id, session_id=None):
     """``POST api/projects/<id>/[sessions/<sid>/]uploads/``: create an upload (project or session scope)."""
     if request.method != "POST":
-        return _error("Method not allowed", 405)
+        return _error(ui_message_text("Method not allowed", 'backend.common.methodNotAllowed'), 405)
     return await _create_view(request, project_id=project_id, session_id=session_id)
 
 
@@ -810,11 +816,11 @@ async def upload_create(request, project_id, session_id=None):
 async def upload_detail(request, upload_id):
     """``api/uploads/<id>/``: tus ``HEAD`` (offset), ``PATCH`` (append), ``DELETE`` (cancel)."""
     if request.method not in TUS_METHODS:
-        response = _error("Method not allowed", 405)
+        response = _error(ui_message_text("Method not allowed", 'backend.common.methodNotAllowed'), 405)
         response["Allow"] = ", ".join(TUS_METHODS)
         return response
     if request.headers.get("Tus-Resumable") != TUS_VERSION:
-        response = _error(f"Tus-Resumable: {TUS_VERSION} is required", 412)
+        response = _error(ui_message_text(f"Tus-Resumable: {TUS_VERSION} is required", 'backend.uploads.tusVersion', {"version": TUS_VERSION}), 412)
         response["Tus-Version"] = TUS_VERSION
         return response
     # Invalid id, unknown or unparsable ``<id>.json`` → 404 before any lock or path work.

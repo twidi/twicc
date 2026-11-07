@@ -8,6 +8,7 @@ from anyio import BrokenResourceError, ClosedResourceError
 from claude_agent_sdk import CLIConnectionError, ProcessError
 
 from twicc.providers.helpers import BaseProviderHelpers, TitleValidationResult
+from twicc.core.ui_messages import ui_message_text
 
 if TYPE_CHECKING:
     from claude_agent_sdk import ClaudeSDKClient
@@ -72,6 +73,8 @@ def canonicalize_claude_title(title: str | None) -> TitleValidationResult:
     """Collapse whitespace and reject characters the CLI cannot retain."""
     if title is not None:
         if any(not character.isspace() and not character.isprintable() for character in title):
-            return TitleValidationResult(title=None, error="Title cannot contain non-printable characters")
+            return TitleValidationResult(title=None, error=ui_message_text(
+                "Title cannot contain non-printable characters", "backend.claude.title_non_printable",
+            ))
         title = " ".join(title.split())
     return BaseProviderHelpers().validate_title(title)

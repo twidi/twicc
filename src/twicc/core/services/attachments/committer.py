@@ -21,6 +21,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.core.services.attachments import staging
 from twicc.core.services.attachments.staging import AttachmentError
@@ -53,7 +54,7 @@ def _delivery_error(exc: Exception) -> SendDeliveryError:
     if isinstance(exc, AttachmentError):
         code = exc.code if exc.code == staging.ERROR_MISSING else staging.ERROR_COMMIT_FAILED
         return _error(code, str(exc))
-    return _error(staging.ERROR_COMMIT_FAILED, f"Cannot commit the attachments: {exc}")
+    return _error(staging.ERROR_COMMIT_FAILED, ui_message_text(f"Cannot commit the attachments: {exc}", 'backend.attachments.commit_failed', {"detail": str(exc)}))
 
 
 # ── Pre-copies ──
@@ -128,11 +129,11 @@ def _prepare_entry(planned: PlannedEntry, session_id: str | None) -> Path | None
     source = planned.source
     if source.promoted is None:
         if source.path is None:
-            raise AttachmentError(staging.ERROR_COMMIT_FAILED, "The entry has no staged file")
+            raise AttachmentError(staging.ERROR_COMMIT_FAILED, ui_message_text("The entry has no staged file", 'backend.attachments.no_staged_file'))
         precopy = _make_precopy(source.path, link=True)
         if precopy.stat().st_size != source.size:
             _remove_precopy(precopy)
-            raise AttachmentError(staging.ERROR_COMMIT_FAILED, "The staged file changed size")
+            raise AttachmentError(staging.ERROR_COMMIT_FAILED, ui_message_text("The staged file changed size", 'backend.attachments.staged_size_changed'))
         return precopy
     # Confined to its session's attachments directory: a tombstone is never trusted blindly.
     real = staging.content_location(source)
@@ -141,7 +142,7 @@ def _prepare_entry(planned: PlannedEntry, session_id: str | None) -> Path | None
     try:
         return _make_precopy(real, link=False)
     except FileNotFoundError:
-        raise AttachmentError(staging.ERROR_MISSING, "The promoted file no longer exists") from None
+        raise AttachmentError(staging.ERROR_MISSING, ui_message_text("The promoted file no longer exists", 'backend.attachments.promoted_missing')) from None
 
 
 def prepare_attachments(plan: AttachmentPlan, *, session_id: str | None) -> PreparedAttachments:
@@ -187,7 +188,7 @@ def _finish(prepared: PreparedAttachments, session_id: str, text: str) -> Attach
         planned = entry.entry
         if planned.mode == MODE_INLINE:
             if planned.native is None:
-                raise AttachmentError(staging.ERROR_COMMIT_FAILED, "An inline entry has no native part")
+                raise AttachmentError(staging.ERROR_COMMIT_FAILED, ui_message_text("An inline entry has no native part", 'backend.attachments.inline_part_missing'))
             native_parts.append(planned.native)
             artifact_name = None
         else:

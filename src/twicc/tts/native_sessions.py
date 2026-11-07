@@ -11,6 +11,7 @@ from twicc.summaries import service as summaries
 from twicc.tts.native_protocol import parse_native_command
 from twicc.tts.service import SpeechError, open_speech
 from twicc.tts.streams import get_stream, release_stream, retain_stream
+from twicc.core.ui_messages import ui_message, ui_message_text
 
 logger = logging.getLogger(__name__)
 DISCONNECT_TTL = 120.0
@@ -191,7 +192,8 @@ class NativeSession:
 
     async def fail(self, code: str, message: str, **extra) -> None:
         async with self._lock:
-            self.error = {'code': code, 'message': message, **extra}
+            metadata = getattr(message, 'ui_message', None)
+            self.error = {'code': code, 'message': message, **({'ui_message': metadata} if metadata else {}), **extra}
             self._emit({'type': 'error', **self.error})
             self.publish_state()
 
@@ -234,6 +236,11 @@ class NativeSession:
             else:
                 logger.exception('Native speech preparation failed')
                 details = {'code': 'speech_failed', 'message': 'Text-to-speech failed', 'status': 500}
+            metadata = getattr(error, 'ui_message', None) or getattr(error.args[0] if error.args else None, 'ui_message', None)
+            if metadata:
+                details['ui_message'] = metadata
+            elif not isinstance(error, (SpeechError, ValueError)):
+                details['ui_message'] = ui_message('backend.tts.failed')
             async with self._lock:
                 if self.playback is reading and not self.closed:
                     self._cancel_reading()
@@ -344,7 +351,7 @@ class NativeSession:
                 if get_stream(audio_id) is None:
                     old = self._cancel_reading()
                     expired = old
-                    self.error = {'code': 'audio_expired', 'message': 'The audio expired before playback',
+                    self.error = {'code': 'audio_expired', 'message': 'The audio expired before playback', 'ui_message': ui_message('backend.tts.audioExpired'),
                                   'reading_id': old['reading_id'], 'generation': old['generation']}
                     self._emit({'type': 'error', **self.error})
                 elif current and self._matches(current) and current.get('audio_id') == audio_id:

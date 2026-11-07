@@ -7,13 +7,14 @@ import { renderToString } from '@vue/server-renderer'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { createAppI18n } from '../../i18n/index.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { isSnippetGroup, getGroupItems, flattenGroupedEntries } from '../../utils/snippetGroups.js'
 import { extractPlaceholders } from '../../utils/snippetPlaceholders.js'
 
 const sourceOf = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
 async function fixture(file, options = {}) {
     const compiled = compileScript(parse(sourceOf(file)).descriptor, { id: 'locale-review-test' }).content
-    const dependencies = { ...Vue, useI18n, localUiMessage, resolveUiMessage, isSnippetGroup, getGroupItems, flattenGroupedEntries, extractPlaceholders,
+    const dependencies = { ...Vue, useI18n, localUiMessage, resolveUiMessage, remoteUiMessage, isSnippetGroup, getGroupItems, flattenGroupedEntries, extractPlaceholders,
         apiFetch: options.fetch ?? (async () => { throw Error('Unexpected request') }),
         useTerminalConfigStore: () => options.store ?? { combos: [], snippets: {} },
         useRoute: () => ({ query: {} }), useDataStore: () => ({}), useWorkspacesStore: () => ({}),
@@ -134,7 +135,7 @@ test('file and Git request fallbacks stay reactive and preserve server prose', a
     const i18n = createAppI18n()
     const error = Vue.ref(null), diffError = Vue.ref(null)
     let serverError
-    const dependencies = { localUiMessage, error, diffError,
+    const dependencies = { localUiMessage, remoteUiMessage, error, diffError,
         apiFetch: async () => ({ ok: false, status: 500, json: async () => ({ error: serverError }) }),
         isBinaryMediaFile: Vue.ref(false), switching: Vue.ref(false), loading: Vue.ref(false),
         saveError: Vue.ref(null), isWritable: Vue.ref(false), isBinary: Vue.ref(false), tooLarge: Vue.ref(false),

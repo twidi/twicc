@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
@@ -91,8 +92,8 @@ def _check_type_session(session) -> list[SessionVisibilityError]:
     if session.type != SessionType.SESSION:
         return [SessionVisibilityError(
             "type", "not_top_level",
-            "Only top-level sessions (type=SESSION) can be hidden; "
-            f"got type={session.type!r}.",
+            ui_message_text("Only top-level sessions (type=SESSION) can be hidden; "
+            f"got type={session.type!r}.", 'backend.sessions.hide_top_level', {"type": repr(session.type)}),
         )]
     return []
 

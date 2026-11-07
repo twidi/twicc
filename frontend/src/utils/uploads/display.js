@@ -1,4 +1,6 @@
 import { i18n } from '../../i18n/index.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 
 // frontend/src/utils/uploads/display.js
 // Display helpers of the in-tab indicator (spec §6.6, §6.7). Pure: the
@@ -36,7 +38,7 @@ export function entryActions(entry, ctx) {
         return { text: i18n.global.t('composer.uploads.state.paused'), error: null, buttons: ['retry', 'cancel'] }
     }
     if (!entry.local && record?.state === 'active' && record.offset === record.size) {
-        return { text: null, error: record.error || null, buttons: ['retryFinalization', 'cancel'] }
+        return { text: null, error: resolveUiMessage(remoteUiMessage(record, record.error || null)), buttons: ['retryFinalization', 'cancel'] }
     }
     if (isStalled(entry, ctx)) {
         return { text: i18n.global.t('composer.uploads.state.interrupted'), error: null, buttons: ['resume', 'cancel'] }

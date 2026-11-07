@@ -19,6 +19,7 @@ from django.conf import settings
 
 from twicc.core.content_storage.readers import effective_current, load_current
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.pricing import FamilyPrices
 from twicc.providers.helpers import (
     AgentSettingCategory,
@@ -842,8 +843,11 @@ class ClaudeCodeHelpers(BaseProviderHelpers):
 
         missing = USAGE_REQUIRED_KEYS - payload.keys()
         if missing:
-            return False, f"Missing required keys: {', '.join(sorted(missing))}"
-        return True, "Valid usage file"
+            return False, ui_message_text(
+                f"Missing required keys: {', '.join(sorted(missing))}",
+                "backend.claude.usage_missing_keys", {"keys": ", ".join(sorted(missing))},
+            )
+        return True, ui_message_text("Valid usage file", "backend.claude.usage_file_valid")
 
     async def generate_title(
         self, prompt: str, system_prompt: str, *, current_title: str | None = None,

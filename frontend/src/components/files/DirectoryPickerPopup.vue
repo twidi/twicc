@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 /**
  * DirectoryPickerPopup - A popup file tree for selecting directories.
  *
@@ -73,7 +74,7 @@ async function fetchTree(dirPath) {
     if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw Object.assign(new Error(data.error || ''), {
-            uiMessage: data.error || localUiMessage('files.errors.loadDirectory'),
+            uiMessage: remoteUiMessage(data, data.error || localUiMessage('files.errors.loadDirectory')),
         })
     }
     return await res.json()

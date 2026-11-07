@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { ref, computed } from 'vue'
 import { useMcpStore } from '../../stores/mcp'
 
@@ -20,7 +22,7 @@ async function act(action) {
     <div v-if="enabled || protection.incident" class="mcp-protection">
         <wa-callout v-if="protection.incident" :variant="protection.paused ? 'danger' : 'warning'" size="small">
             <strong>{{ $t('mcp.protection.title') }}</strong>
-            <p>{{ protection.incident.reason }}.</p>
+            <p>{{ resolveUiMessage(remoteUiMessage(protection.incident, protection.incident.reason, 'reason_ui_message')) }}.</p>
             <p v-if="!enabled">{{ $t('mcp.protection.disabled') }}</p>
             <p v-else-if="protection.paused">
                 {{ $t('mcp.protection.paused', { count: minutes }, minutes) }}

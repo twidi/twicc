@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from twicc.core.ui_messages import ui_message_text
+
 if TYPE_CHECKING:
     from django.http import JsonResponse
 
@@ -41,9 +43,10 @@ CLI_EXIT_CODE = 3
 
 def unavailable_message(session_id: str, reason: str) -> str:
     """The text every surface shows. It names the session and the reason."""
-    return (
+    return ui_message_text(
         f"Session {session_id!r} is unavailable ({reason}): TwiCC cannot read "
-        "its history or continue it."
+        "its history or continue it.",
+        "backend.sessions.unavailable", {"session_id": repr(session_id), "reason": reason},
     )
 
 
@@ -164,6 +167,7 @@ async def arefuse_unavailable(session: Session) -> JsonResponse | None:
     carrier = session.id if session.unavailable_reason is not None else session.parent_session_id
     return JsonResponse({
         "error": unavailable_message(session.id, reason),
+        "ui_message": unavailable_message(session.id, reason).ui_message,
         "code": SESSION_UNAVAILABLE,
         "unavailable_reason": reason,
         "unavailable_session_id": carrier,

@@ -31,15 +31,16 @@ import time
 from collections.abc import Awaitable, Callable
 
 from twicc.tts.openrouter import RATE_SCAN_BYTES, SpeechError, bytes_per_second, mp3_frame_bitrates
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
 UNCLAIMED_TTL = 30.0
 SAFETY_TTL = 3 * 3600.0
 
-STOPPED_MESSAGE = "Text-to-speech stopped"
-FAILED_MESSAGE = "Text-to-speech failed"
-PART_TYPE_CHANGED = "The audio format changed between two parts of the text"
+STOPPED_MESSAGE = ui_message_text("Text-to-speech stopped", 'backend.tts.stopped')
+FAILED_MESSAGE = ui_message_text("Text-to-speech failed", 'backend.tts.failed')
+PART_TYPE_CHANGED = ui_message_text("The audio format changed between two parts of the text", 'backend.tts.partFormatChanged')
 
 # Audio ahead of the playback position past which the pump waits before a next part.
 LOOKAHEAD_SECONDS = 60.0
@@ -81,6 +82,7 @@ class AudioStream:
         self.paced = False
         self.state = "opening"
         self.error: str | None = None
+        self.ui_message: dict | None = None
         self.log_message: str | None = None  # what the log line writes instead of ``error``
         self.upstream_status: int | None = None
         self.data = bytearray()
@@ -177,6 +179,7 @@ class AudioStream:
     def fail(self, error: SpeechError) -> None:
         self._expect("fail", *_LIVE_STATES)
         self.error = error.message
+        self.ui_message = error.ui_message
         self.log_message = error.log_message
         self.upstream_status = error.upstream_status
         self._settle_ready(error)
@@ -450,7 +453,8 @@ def ending_of(audio_id: str) -> dict:
     if stream is None:
         return {"state": "unknown", "error": None}
     state = "running" if stream.state in _LIVE_STATES else stream.state
-    return {"state": state, "error": stream.error}
+    metadata = stream.ui_message or getattr(stream.error, "ui_message", None)
+    return {"state": state, "error": stream.error, **({"ui_message": metadata} if metadata else {})}
 
 
 def _reset_for_tests() -> None:

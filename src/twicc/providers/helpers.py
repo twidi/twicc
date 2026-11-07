@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 import orjson
 
 from twicc.core.enums import ItemKind, Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.pricing import FamilyPrices, TokenUsage
 
 logger = logging.getLogger(__name__)
@@ -602,7 +603,10 @@ class BaseProviderHelpers:
         with a generic message — providers that support the read mode
         must override.
         """
-        return False, "This provider does not support reading usage from a file"
+        return False, ui_message_text(
+            "This provider does not support reading usage from a file",
+            "backend.providers.usage_file_unsupported",
+        )
 
     # ------------------------------------------------------------------
     # Quota warm-up
@@ -987,14 +991,21 @@ class BaseProviderHelpers:
         different cap).
         """
         if title is None:
-            return TitleValidationResult(title=None, error="Title cannot be empty")
+            return TitleValidationResult(title=None, error=ui_message_text(
+                "Title cannot be empty", "backend.providers.title_empty",
+            ))
         title = title.strip()
         if not title:
-            return TitleValidationResult(title=None, error="Title cannot be empty")
+            return TitleValidationResult(title=None, error=ui_message_text(
+                "Title cannot be empty", "backend.providers.title_empty",
+            ))
         if len(title) > self.MAX_TITLE_LENGTH:
             return TitleValidationResult(
                 title=None,
-                error=f"Title must be {self.MAX_TITLE_LENGTH} characters or less",
+                error=ui_message_text(
+                    f"Title must be {self.MAX_TITLE_LENGTH} characters or less",
+                    "backend.providers.title_too_long", {"limit": self.MAX_TITLE_LENGTH},
+                ),
             )
         return TitleValidationResult(title=title, error=None)
 
@@ -1357,7 +1368,7 @@ class BaseProviderHelpers:
         """
         return {}
 
-    def serialize_model_registry(self) -> list[dict]:
+    def serialize_model_registry(self, *, include_ui_messages: bool = False) -> list[dict]:
         """Serialize :attr:`MODEL_VERSIONS` for the bootstrap payload.
 
         Each entry is the ``_asdict()`` of the :class:`ModelVersion``
@@ -1376,6 +1387,9 @@ class BaseProviderHelpers:
         the natural order for a model-picker dropdown. The front may
         re-group (e.g. latest vs. older) but always preserves this
         within-group order.
+
+        Browser boundaries opt into presentation metadata. CLI bootstrap callers
+        retain the original plain-string shape.
         """
         entries: list[dict] = []
         for mv in self.MODEL_VERSIONS:
@@ -1386,6 +1400,8 @@ class BaseProviderHelpers:
             )
             entry["provider_extra"] = self.serialize_model_extra(mv)
             entry["selected_model"] = self.selected_model_value(mv)
+            if include_ui_messages and (message := getattr(mv.disable_reason, "ui_message", None)) is not None:
+                entry["disable_reason_ui_message"] = message
             entries.append(entry)
         entries.sort(key=lambda e: -e["weight"])
         return entries

@@ -1,3 +1,4 @@
+import { remoteUiMessage, remoteUiError } from '../i18n/remoteMessages.js'
 import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
@@ -31,9 +32,10 @@ function entryFor(source) {
 }
 async function checked(response) {
     if (response.ok) return response
-    let error
-    try { error = (await response.json()).error } catch { /* Use the HTTP status below. */ }
-    throw error ? new Error(error) : localUiError('session.summary.httpFailed', { status: response.status })
+    let payload
+    try { payload = await response.json() } catch { /* Use the HTTP status below. */ }
+    throw payload ? remoteUiError(payload, localUiMessage('session.summary.httpFailed', { status: response.status }))
+        : localUiError('session.summary.httpFailed', { status: response.status })
 }
 const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 const cancelled = () => localUiError('session.summary.cancelled')
@@ -104,6 +106,7 @@ export const useSummariesStore = defineStore('summaries', {
                 chunk.forEach((item, index) => {
                     const current = (this.lookupVersions[item.key] || 0) === item.version
                     const result = current ? results[index] : null
+                    if (result?.error && !result.errorMessage) result.errorMessage = remoteUiMessage(result, result.error)
                     if (current) {
                         this.descriptors[item.key] = result?.error ? null : result
                         this.lookupErrorMessages[item.key] = result?.errorMessage || result?.error || null
@@ -234,6 +237,7 @@ export const useSummariesStore = defineStore('summaries', {
                     if (snapshot.revision < entry.revision) return
                     // Every record is a complete snapshot, including fallback replacements and exact body hashes.
                     for (const field of ['revision', 'state', 'text', 'engine', 'fallback_reason', 'first_text_ms', 'total_ms', 'error', 'saved_id', 'result_hash']) entry[field] = snapshot[field] ?? (field === 'text' ? '' : null)
+                    entry.error = remoteUiMessage(snapshot, snapshot.error ?? null)
                     terminal = entry.state !== 'running'
                 }
                 while (!controller.stopped && !terminal) {

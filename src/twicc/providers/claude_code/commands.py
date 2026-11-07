@@ -46,6 +46,9 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 
 
+# Product decision: discovered descriptions and the "Custom command", "Skill",
+# and "Workflow" fallbacks stay verbatim. Do not add translation metadata or
+# database fields for these labels.
 def _extract_description(body: str, fallback: str = "Custom command") -> str:
     """Extract description from the first non-empty line, stripping markdown heading prefix."""
     for line in body.split("\n"):

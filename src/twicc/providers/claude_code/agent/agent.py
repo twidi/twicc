@@ -53,6 +53,7 @@ from twicc.agent.states import build_background_work
 from twicc.context_injection import apply_goal_instruction, apply_pending_context
 from twicc.core.enums import Provider
 from twicc.core.models import Session
+from twicc.core.ui_messages import ui_message, ui_message_text
 from twicc.core.services.attachments.manifest import build_manifest
 from twicc.core.services.attachments.types import AttachmentContent
 from twicc.pending_session_attributes import get_pending_session_attributes
@@ -112,7 +113,9 @@ def _native_blocks(content: AttachmentContent) -> list[dict]:
     """
     inline_entries = [entry for entry in content.manifest.entries if entry.mode == "inline"]
     if len(inline_entries) != len(content.native_parts):
-        raise ValueError("The native parts do not match the inline manifest entries")
+        raise ValueError(ui_message_text(
+            "The native parts do not match the inline manifest entries", "backend.claude.native_manifest_mismatch",
+        ))
     blocks: list[dict] = []
     for entry, part in zip(inline_entries, content.native_parts):
         if part.kind == "text":
@@ -1081,7 +1084,7 @@ class ClaudeCodeAgent(BaseAgent):
         """
         self._title_launch_entered = True
         if self._client is not None:
-            raise RuntimeError("Process already started")
+            raise RuntimeError(ui_message_text("Process already started", "backend.claude.process_already_started"))
 
         self._state_change_callback = on_state_change
         completion_token = completion_token or str(uuid.uuid4())
@@ -1427,7 +1430,10 @@ class ClaudeCodeAgent(BaseAgent):
             # Handle error and transition to DEAD state. Do not re-raise as the
             # spec requires process errors to be logged and reported, never propagated.
             # The error is communicated to the frontend via WebSocket broadcast.
-            await self._handle_error(f"Failed to start process: {e}", exc=e)
+            await self._handle_error(
+                f"Failed to start process: {e}", exc=e,
+                presentation=ui_message("backend.claude.start_failed", {"diagnostic": str(e)}),
+            )
 
     async def _resolve_untrusted_now(self) -> bool:
         """Re-resolve the project's trust state live (fresh DB read).
@@ -1456,7 +1462,7 @@ class ClaudeCodeAgent(BaseAgent):
             RuntimeError: If the process is not started
         """
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         if await self._resolve_untrusted_now():
             # Security floor: no escalation past the untrusted-allowed set,
@@ -1492,7 +1498,7 @@ class ClaudeCodeAgent(BaseAgent):
             RuntimeError: If the process is not started
         """
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         self._logger.info(
             "Stopping subagent %s in session %s",
@@ -1520,7 +1526,7 @@ class ClaudeCodeAgent(BaseAgent):
             RuntimeError: If the process is not started
         """
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         self._interrupting = True
         self._logger.info("Interrupting session %s", self.session_id)
@@ -1543,7 +1549,7 @@ class ClaudeCodeAgent(BaseAgent):
         if await self._completion_interrupt_candidate():
             return True
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         self._soft_interrupting = True
         self._logger.info("Soft-interrupting session %s", self.session_id)
@@ -1595,7 +1601,7 @@ class ClaudeCodeAgent(BaseAgent):
             RuntimeError: If the process is not started
         """
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         self._logger.debug(
             "Setting SDK model to '%s' for session %s",
@@ -2167,6 +2173,18 @@ class ClaudeCodeAgent(BaseAgent):
             return None
         return self._waiting_label_text()
 
+    def current_status_label_ui_message(self) -> dict | None:
+        if not self._waiting_label_active:
+            return None
+        count = len(self._live_background_tasks)
+        if count > 0:
+            return ui_message("backend.claude.waiting_subagents", {"count": count}, count=count)
+        if self._live_monitor_tasks:
+            return ui_message("backend.claude.monitoring")
+        if self._has_pending_wakeup():
+            return ui_message("backend.claude.waiting_wakeup", {"time": self._format_wakeup_time()})
+        return None
+
     async def _refresh_waiting_label(self) -> None:
         """Broadcast/refresh the "waiting" process label held in ASSISTANT_TURN.
 
@@ -2180,7 +2198,7 @@ class ClaudeCodeAgent(BaseAgent):
             await self._clear_waiting_label()
             return
         self._waiting_label_active = True
-        await self._broadcast_process_label(label)
+        await self._broadcast_process_label(label, self.current_status_label_ui_message())
 
     async def _clear_waiting_label(self) -> None:
         """Drop the waiting label if it is currently shown (no-op otherwise)."""
@@ -2324,10 +2342,13 @@ class ClaudeCodeAgent(BaseAgent):
             RuntimeError: If the process is not running or not ready for input
         """
         if self._client is None:
-            raise RuntimeError("Process not started")
+            raise RuntimeError(ui_message_text("Process not started", "backend.claude.process_not_started"))
 
         if self.state not in (AgentState.USER_TURN, AgentState.ASSISTANT_TURN):
-            raise RuntimeError(f"Cannot send message in state {self.state}")
+            raise RuntimeError(ui_message_text(
+                f"Cannot send message in state {self.state}",
+                "backend.claude.cannot_send_state", {"state": self.state},
+            ))
 
         completion_token = completion_token or str(uuid.uuid4())
         if completion_cursor is not None:
@@ -2372,7 +2393,10 @@ class ClaudeCodeAgent(BaseAgent):
             # spec requires process errors to be logged and reported, never propagated.
             # The error is communicated to the frontend via WebSocket broadcast.
             # The caller learns delivery failed from the False return (no ack).
-            await self._handle_error(f"Failed to send message: {e}", exc=e)
+            await self._handle_error(
+                f"Failed to send message: {e}", exc=e,
+                presentation=ui_message("backend.claude.send_failed", {"diagnostic": str(e)}),
+            )
             return False
 
     async def kill(self, reason: str = "manual") -> None:
@@ -2731,7 +2755,11 @@ class ClaudeCodeAgent(BaseAgent):
                                     msg.duration_ms,
                                 )
                             await self._handle_error(
-                                f"Claude reported error: {msg.result or 'Unknown error'}"
+                                f"Claude reported error: {msg.result or 'Unknown error'}",
+                                presentation=(
+                                    ui_message("backend.claude.reported_error", {"diagnostic": msg.result})
+                                    if msg.result else ui_message("backend.claude.reported_unknown_error")
+                                ),
                             )
                             return
 
@@ -2759,7 +2787,7 @@ class ClaudeCodeAgent(BaseAgent):
 
                 elif self._is_compacting_status(msg):
                     # CLI is compacting context — notify frontend to show "compacting" label
-                    await self._broadcast_process_label("compacting")
+                    await self._broadcast_process_label("compacting", ui_message("backend.claude.compacting"))
 
                 elif self.state != AgentState.ASSISTANT_TURN and self._is_turn_activity(msg):
                     # Enforce assistant state if real conversation traffic came
@@ -2781,9 +2809,18 @@ class ClaudeCodeAgent(BaseAgent):
                 )
                 return
             prefix = "SDK error" if isinstance(e, ClaudeSDKError) else "Unexpected error in message loop"
-            await self._handle_error(f"{prefix}: {e}", exc=e)
+            await self._handle_error(
+                f"{prefix}: {e}", exc=e,
+                presentation=ui_message(
+                    "backend.claude.sdk_error" if isinstance(e, ClaudeSDKError)
+                    else "backend.claude.message_loop_error",
+                    {"diagnostic": str(e)},
+                ),
+            )
 
-    async def _handle_error(self, error_message: str, exc: Exception | None = None) -> None:
+    async def _handle_error(
+        self, error_message: str, exc: Exception | None = None, *, presentation: dict | None = None,
+    ) -> None:
         """Handle an error by transitioning to DEAD state.
 
         Args:
@@ -2805,6 +2842,10 @@ class ClaudeCodeAgent(BaseAgent):
         self._cancel_all_pending_futures()
 
         self.error = error_message
+        source_presentation = getattr(exc, "ui_message", None)
+        if source_presentation is None and exc is not None and exc.args:
+            source_presentation = getattr(exc.args[0], "ui_message", None)
+        self.error_ui_message = source_presentation or presentation
         self.kill_reason = "error"
         self.last_activity = time.time()
         self._first_turn_done_event.set()  # Unblock any waiters (cron restart)

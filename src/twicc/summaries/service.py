@@ -3,6 +3,7 @@
 Only successful message results are durable. Temporary sources never query saved
 results. The registry owns no session data beyond its frozen source snapshot.
 """
+
 import asyncio
 import hashlib
 import logging
@@ -30,6 +31,7 @@ from twicc.summaries.sources import (
 )
 from twicc.speech_rules import SPEECH_IDENTIFIER_RULES, SPEECH_NEVER_SAID, speech_language_reminder, speech_language_rule
 from twicc.synced_settings import read_synced_settings
+from twicc.core.ui_messages import UiMessageError, ui_message, ui_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,11 @@ Return only the summary.
 </source-data>'''
 
 
+def summary_reason_message(reason):
+    keys = {'off': 'backend.summaries.reason.off', 'refused': 'backend.summaries.reason.refused', 'failed': 'backend.summaries.reason.failed', 'no_provider': 'backend.summaries.reason.no_provider', 'stalled': 'backend.summaries.reason.stalled', 'empty': 'backend.summaries.reason.empty', 'too_short': 'backend.summaries.reason.too_short', 'incomplete': 'backend.summaries.reason.incomplete', 'unavailable': 'backend.summaries.reason.unavailable'}
+    return ui_message(keys.get(reason, keys['failed']))
+
+
 def summary_target_words(text: str) -> int:
     """The length asked from the model: a third of the source, within fixed bounds. Chars / 6 covers texts without spaces."""
     words = max(len(text.split()), len(text) // 6)
@@ -76,16 +83,24 @@ _tasks: set[asyncio.Task] = set()
 class SummaryGone(ValueError):
     """The consumer handle expired or was released."""
 
+    def __init__(self, message):
+        super().__init__(message)
+        self.ui_message = getattr(message, 'ui_message', None)
+
 
 class SummaryUnavailable(ValueError):
     """The source is ineligible, or lookup-only acquisition has no result."""
+
+    def __init__(self, message):
+        super().__init__(message)
+        self.ui_message = getattr(message, 'ui_message', None)
 
 
 class SummaryChanged(SummaryUnavailable):
     """The saved result no longer matches the caller's frozen fingerprint."""
 
     def __init__(self, saved_id: int):
-        super().__init__('The saved summary changed. Refresh it before reading.')
+        super().__init__(ui_message_text('The saved summary changed. Refresh it before reading.', 'backend.summaries.changed'))
         self.saved_id = saved_id
 
 
@@ -146,13 +161,13 @@ def _prepare(source_request: dict, *, _temporary_source: SummarySource | None = 
 def resolve_sources(sources: list[dict]) -> list[dict]:
     """Read descriptors in input order; one invalid source does not fail its peers."""
     if not isinstance(sources, list) or len(sources) > 100:
-        raise ValueError("'sources' must be a list of at most 100 sources")
+        raise UiMessageError("'sources' must be a list of at most 100 sources", 'backend.summaries.sourcesLimit')
     results = []
     for source in sources:
         try:
             results.append(_prepare(source)[3])
         except ValueError as error:
-            results.append({'error': str(error)})
+            results.append({'error': str(error), **({'ui_message': error.ui_message} if getattr(error, 'ui_message', None) else {})})
     return results
 
 
@@ -226,7 +241,7 @@ class _SummaryRun:
         return {'revision': self.revision, 'state': self.state, 'text': self.text,
                 'engine': self.engine.name if self.engine else None, 'fallback_reason': self.fallback_reason,
                 'first_text_ms': self.first_text_ms, 'total_ms': self.total_ms,
-                'error': self.error, 'saved_id': self.saved_id,
+                'error': self.error, **({'ui_message': summary_reason_message(self.error)} if self.error else {}), 'saved_id': self.saved_id,
                 'result_hash': _result_hash(self.text) if self.saved_id is not None else None}
 
     def wake(self):
@@ -375,7 +390,7 @@ def _expire(handle_id):
 def _handle(handle_id: str) -> SummaryHandle:
     handle = _handles.get(handle_id)
     if handle is None:
-        raise SummaryGone('The summary is no longer available')
+        raise SummaryGone(ui_message_text('The summary is no longer available', 'backend.summaries.gone'))
     return handle
 
 
@@ -387,7 +402,9 @@ async def acquire_summary(
         source, _temporary_source=_temporary_source, _requested_model=_requested_model,
     )
     if not resolved.eligible:
-        raise SummaryUnavailable(resolved.unavailable_reason or 'unavailable')
+        error = SummaryUnavailable(resolved.unavailable_reason or 'unavailable')
+        error.ui_message = summary_reason_message(resolved.unavailable_reason or 'unavailable')
+        raise error
     key = _key(resolved, policy)
     run = _runs.get(key) if key is not None else None
     if run is not None and run.state == 'running':
@@ -406,7 +423,7 @@ async def acquire_summary(
         run.saved_id = None
         run.wake()
     elif not start:
-        raise SummaryUnavailable('No matching summary is available')
+        raise SummaryUnavailable(ui_message_text('No matching summary is available', 'backend.summaries.noMatch'))
     else:
         run = _SummaryRun(resolved, requested, policy)
     handle = SummaryHandle(run, descriptor)
@@ -506,19 +523,19 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
     releasing the page's handle cannot release this reader.
     """
     if not isinstance(reference, dict):
-        raise ValueError('The summary reference must be an object')  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
+        raise UiMessageError('The summary reference must be an object', 'backend.summaries.referenceObject')  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
     if 'saved_id' in reference:
         saved_id, result_hash = reference['saved_id'], reference.get('result_hash')
         if type(saved_id) is not int or saved_id < 1:
-            raise ValueError("'saved_id' must be a positive integer")
+            raise UiMessageError("'saved_id' must be a positive integer", 'backend.summaries.savedId')
         if not isinstance(result_hash, str) or re.fullmatch('[0-9a-f]{64}', result_hash) is None:
-            raise ValueError("'result_hash' must be the saved result fingerprint")
+            raise UiMessageError("'result_hash' must be the saved result fingerprint", 'backend.summaries.resultHash')
         if any(key in reference for key in ('source', 'source_key', 'source_hash', 'policy_key', 'handle_id')):
-            raise ValueError('A summary needs exactly one reference')
+            raise UiMessageError('A summary needs exactly one reference', 'backend.summaries.oneReference')
         try:
             saved = await sync_to_async(load_saved_summary)(saved_id)
         except MessageSummary.DoesNotExist:
-            raise SummaryGone('The saved summary is no longer available') from None
+            raise SummaryGone(ui_message_text('The saved summary is no longer available', 'backend.summaries.savedGone')) from None
         if saved['result_hash'] != result_hash:
             raise SummaryChanged(saved_id)
         # A complete run never generates or saves again. Its text is the frozen
@@ -534,10 +551,10 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         run.revision = saved['metadata'].get('revision', 1)
         return SummaryReader(SummaryHandle(run, saved, claimed=True))
     if not isinstance(reference.get('source'), dict):
-        raise ValueError("'source' must reconstruct the summary")  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
+        raise UiMessageError("'source' must reconstruct the summary", 'backend.summaries.reconstructSource')  # noqa: TRY004 - callers map ValueError to a 400; a TypeError would be a 500
     if 'requested_model' in reference:
         if set(reference) != {'source', 'requested_model'}:
-            raise ValueError('Invalid temporary summary reference')
+            raise UiMessageError('Invalid temporary summary reference', 'backend.summaries.temporaryReference')
         requested = validate_temporary_model_request(reference['source'], reference['requested_model'])
         temporary = await sync_to_async(validate_source, thread_sensitive=False)(reference['source'])
         handle = await acquire_summary(reference['source'], _temporary_source=temporary, _requested_model=requested)
@@ -545,24 +562,24 @@ async def retain_summary_for_speech(reference: dict) -> SummaryReader:
         return SummaryReader(handle)
     fields = ('source_key', 'source_hash', 'policy_key')
     if not all(field in reference for field in fields):
-        raise ValueError('A summary source needs its frozen source key, source hash, and policy key')
+        raise UiMessageError('A summary source needs its frozen source key, source hash, and policy key', 'backend.summaries.frozenSource')
     if 'result_hash' in reference:
-        raise ValueError("'result_hash' requires 'saved_id'")
+        raise UiMessageError("'result_hash' requires 'saved_id'", 'backend.summaries.resultRequiresSaved')
     temporary = await sync_to_async(validate_source, thread_sensitive=False)(reference['source'])
     if temporary is not None and (temporary.source_key != reference['source_key']
                                   or temporary.source_hash != reference['source_hash']):
-        raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
+        raise SummaryUnavailable(ui_message_text('The summary source changed. Refresh it before reading.', 'backend.summaries.sourceChanged'))
     handle_id = reference.get('handle_id')
     if handle_id is not None and (not isinstance(handle_id, str) or not handle_id.strip()):
-        raise ValueError("'handle_id' must be a non-empty handle")
+        raise UiMessageError("'handle_id' must be a non-empty handle", 'backend.summaries.handleId')
     handle = _handles.get(handle_id) if handle_id else None
     if handle is not None:
         if any(handle.descriptor[field] != reference[field] for field in fields):
-            raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
+            raise SummaryUnavailable(ui_message_text('The summary source changed. Refresh it before reading.', 'backend.summaries.sourceChanged'))
         return await acquire_summary_reader(handle.id)
     handle = await acquire_summary(reference['source'], _temporary_source=temporary)
     if any(handle.descriptor[field] != reference[field] for field in fields):
         await release_summary(handle.id)
-        raise SummaryUnavailable('The summary source changed. Refresh it before reading.')
+        raise SummaryUnavailable(ui_message_text('The summary source changed. Refresh it before reading.', 'backend.summaries.sourceChanged'))
     handle.claim()
     return SummaryReader(handle)

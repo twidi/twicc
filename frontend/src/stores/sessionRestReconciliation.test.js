@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createPinia, defineStore } from 'pinia'
 import { getSessionCutoffMs } from '../utils/sessions.js'
 import { jsonValuesEqual } from '../utils/jsonValuesEqual.js'
+import { remoteUiError } from '../i18n/remoteMessages.js'
 import { applyUnavailableRefusal, captureRefusalTarget, noteUnavailableReasonUpdate } from '../utils/sessionAvailability.js'
 
 const source = readFileSync(new URL('./data.js', import.meta.url), 'utf8')
@@ -20,7 +21,7 @@ const base = { id: 's', project_id: 'p', mtime: 10, title: 'Session', last_line:
 function fixture({ projectState = { sessionsFetched: true, hasMoreSessions: true }, fetchPage = null } = {}) {
     let result = copy(base), ok = true
     const response = async () => ({ ok, status: ok ? 200 : 500, json: async () => copy(result) })
-    const deps = { getSessionCutoffMs, markAgentIdle: () => {}, jsonValuesEqual, noteUnavailableReasonUpdate,
+    const deps = { getSessionCutoffMs, markAgentIdle: () => {}, jsonValuesEqual, noteUnavailableReasonUpdate, remoteUiError,
         apiFetch: response, fetch: response, sessionsLoadInFlight: new Map(),
         syncBaseline: { sessionMtime: (_, local) => local }, isWorkspaceProjectId: () => false,
         FIRST_SESSIONS_PAGE_SIZE: 30 }

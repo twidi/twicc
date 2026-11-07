@@ -30,6 +30,7 @@ from twicc.agent import AgentState, BaseAgent, BaseAgentManager, SendDeliveryErr
 from twicc.agent.work_dirs import resolve_and_create_work_dirs
 from twicc.context_injection import inject_context
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message
 from twicc.logging_context import provider_log_context
 from twicc.pending_session_attributes import get_pending_session_attributes
 from twicc.providers.helpers import AgentSettings, get_provider_helpers
@@ -37,6 +38,7 @@ from twicc.providers.helpers import AgentSettings, get_provider_helpers
 from ..bin import make_codex_config
 from ..migration_gate import gate_for, wake_migration_scheduler
 from ..permission_modes import resolve_codex_policy, resolve_codex_turn_overrides
+from ..provider_errors import CodexUiRuntimeError
 from ..sdk_wrappers import TwiccAsyncCodex, service_tier_from_fast_mode
 from .agent import CodexAgent, command_processes_may_run
 from .hardcoded_commands import HardcodedCommand, parse_hardcoded_command
@@ -246,7 +248,8 @@ class CodexAgentManager(BaseAgentManager):
         if parse_hardcoded_command(text) is not None:
             from twicc.core.services.attachments.planner import ERROR_WITH_COMMAND
 
-            raise SendDeliveryError("Attachments cannot be sent with a command", code=ERROR_WITH_COMMAND)
+            raise SendDeliveryError("Attachments cannot be sent with a command", code=ERROR_WITH_COMMAND,
+                                    ui_message=ui_message("backend.codex.attachmentsWithCommand"))
 
     def _send_gate(self, session_id: str) -> contextlib.AbstractAsyncContextManager:
         """Same order as ``send_to_session``: the migration gate, then the lock."""
@@ -359,7 +362,7 @@ class CodexAgentManager(BaseAgentManager):
                     session_id, item_id, request_id=request_id,
                 ))
             except ValueError as exc:
-                raise SendDeliveryError(str(exc), code=str(exc)) from exc
+                raise SendDeliveryError(str(exc), code=str(exc), ui_message=getattr(exc, "ui_message", None)) from exc
 
     async def _send_to_session_under_gate(
         self, session_id: str, project_id: str, cwd: str, text: str, settings: AgentSettings,
@@ -391,7 +394,8 @@ class CodexAgentManager(BaseAgentManager):
             if async_questions is not None and (
                 not isinstance(async_questions, dict) or async_questions.get("answers")
             ):
-                raise SendDeliveryError("Question answers cannot accompany a command", code="async_questions_command")
+                raise SendDeliveryError("Question answers cannot accompany a command", code="async_questions_command",
+                                        ui_message=ui_message("backend.codex.questionAnswersWithCommand"))
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
                 **_content_kwargs(content), **completion_kwargs,
@@ -405,7 +409,7 @@ class CodexAgentManager(BaseAgentManager):
                 try:
                     validate_question_answers(await sync_to_async(read_question_snapshot)(session_id), async_questions)
                 except ValueError as exc:
-                    raise SendDeliveryError(str(exc), code=str(exc)) from exc
+                    raise SendDeliveryError(str(exc), code=str(exc), ui_message=getattr(exc, "ui_message", None)) from exc
             return await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, text, settings, images=images, documents=documents,
                 **_content_kwargs(content), **completion_kwargs,
@@ -422,7 +426,7 @@ class CodexAgentManager(BaseAgentManager):
                 origin=send_origin, at=datetime.now(UTC).isoformat(),
             ))
         except ValueError as exc:
-            raise SendDeliveryError(str(exc), code=str(exc)) from exc
+            raise SendDeliveryError(str(exc), code=str(exc), ui_message=getattr(exc, "ui_message", None)) from exc
         submission = prepared.submission
         if content is not None:
             content = content._replace(user_text=prepared.text)
@@ -430,7 +434,8 @@ class CodexAgentManager(BaseAgentManager):
         if submission["status"] == "accepted":
             return True
         if previous is not None and submission["status"] in {"prepared", "uncertain"}:
-            raise SendDeliveryError("Delivery remains unresolved", code="send_uncertain")
+            raise SendDeliveryError("Delivery remains unresolved", code="send_uncertain",
+                                    ui_message=ui_message("backend.codex.deliveryUnresolved"))
         try:
             delivered = await self._deliver_to_session_under_gate(
                 session_id, project_id, cwd, prepared.text, settings,
@@ -459,7 +464,8 @@ class CodexAgentManager(BaseAgentManager):
                 logger.exception("Cannot persist Codex delivery outcome for %s", session_id)
                 status = "uncertain"
             if status == "uncertain" and not isinstance(exc, asyncio.CancelledError):
-                raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain") from exc
+                raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain",
+                                        ui_message=ui_message("backend.codex.deliveryUncertain")) from exc
             raise
 
     async def _reconcile_question_send_under_gate(
@@ -637,12 +643,13 @@ class CodexAgentManager(BaseAgentManager):
                     raise SendDeliveryError(
                         f"Cannot send message: agent is in state {agent.state}",
                         code="agent_starting",
+                        ui_message=ui_message("backend.codex.agentStateCannotSend", {"state": str(agent.state)}),
                     )
 
             # No live agent — text, at least one image, or composer attachment
             # content is required to spin one up.
             if not text and not images and content is None:
-                raise RuntimeError("Cannot start a new agent without a message")
+                raise CodexUiRuntimeError("Cannot start a new agent without a message", "backend.codex.messageRequired")
 
             if _completion_admission is not None:
                 _completion_admission["entered"] = True
@@ -702,8 +709,9 @@ class CodexAgentManager(BaseAgentManager):
                     and not agent._has_actual_turn_work() and not agent._manual_compaction)
             )
             if busy and not allowed_while_busy:
-                raise RuntimeError(
+                raise CodexUiRuntimeError(
                     f"Cannot run /{command.name} while the assistant is working",
+                    "backend.codex.commandWhileWorking", {"command": command.name},
                 )
             await agent.apply_agent_settings(settings)
             await agent.run_hardcoded_command(command)
@@ -886,7 +894,8 @@ class CodexAgentManager(BaseAgentManager):
         # check), same as ``send_to_session``.
         command = parse_hardcoded_command(text)
         if ephemeral and command is not None:
-            raise SendDeliveryError("Commands are unavailable for ephemeral runs", code="ephemeral_command_unsupported")
+            raise SendDeliveryError("Commands are unavailable for ephemeral runs", code="ephemeral_command_unsupported",
+                                    ui_message=ui_message("backend.codex.ephemeralCommandUnsupported"))
 
         if attachment_plan is None or not attachment_plan.entries:
             return await self._create_session_locked(

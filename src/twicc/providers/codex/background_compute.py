@@ -60,6 +60,7 @@ from django.db.models import Q
 from twicc import search
 from twicc.agent import AgentState
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.models import Session, SessionType, Share
 from twicc.projects import load_project_directories, load_project_git_roots
 from twicc.provider_homes import codex_sessions_dir
@@ -590,7 +591,10 @@ class CodexComputeCoordinator:
         line = f"Migrating Codex legacy sessions ({done} / {len(legacy)}"
         if set_aside:
             line += f", {len(set_aside)} set aside"
-        return line + ")"
+            return ui_message_text(line + ")", "backend.codex.migrationProgressSetAside", {
+                "done": done, "total": len(legacy), "setAside": len(set_aside),
+            })
+        return ui_message_text(line + ")", "backend.codex.migrationProgress", {"done": done, "total": len(legacy)})
 
     def _log_summary(self, *, force: bool = False, label: str = "Codex rollout migration progress") -> None:
         now = time.monotonic()

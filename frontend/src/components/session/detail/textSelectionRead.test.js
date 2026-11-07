@@ -29,8 +29,8 @@ test('the Read handler stops while busy, else plays the selection with its origi
     const body = handler.slice(0, handler.indexOf('\n}\n') + 3)
     assert.match(body, /if \(readBusy\.value\) \{\s*speechStore\.stop\(\)\s*return/)
     assert.match(body, /speechStore\.play\(props\.selectedText, \{ origin: props\.readOrigin \}\)/)
-    assert.match(body, /!result\.ok && !result\.aborted\) toast\.error\(result\.error/)
-    assert.match(body, /result\.ended\.then\(end => \{\s*if \(!end\.ok && !end\.aborted\) toast\.error\(end\.error/)
+    assert.match(body, /!result\.ok && !result\.aborted\) toast\.error\(result\.uiMessage \|\| result\.error/)
+    assert.match(body, /result\.ended\.then\(end => \{\s*if \(!end\.ok && !end\.aborted\) toast\.error\(end\.uiMessage \|\| end\.error/)
     assert.doesNotMatch(body, /close\(|clearSourceSelection/)
 })
 

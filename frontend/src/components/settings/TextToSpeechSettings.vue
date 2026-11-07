@@ -21,6 +21,7 @@ const { t, locale } = useI18n()
  * sends the text.
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useSettingsStore } from '../../stores/settings'
 import { useTextToSpeechStore } from '../../stores/textToSpeech'
 import { OPENROUTER_MODEL_DESCRIPTION_KEY } from '../../constants'
@@ -81,7 +82,7 @@ watch(() => store.testText, (stored) => {
 
 // Transient per-config state, keyed by config id. Where a test stands lives in the store
 // (`playback.configId`): it outlives this section, which unmounts on a section switch.
-const testErrors = ref({}) // { [id]: string }
+const testErrors = ref({}) // { [id]: string | UiMessage }
 const prompts = ref({}) // { [id]: testedFields } -- "Did you hear it correctly?" is shown
 const openIds = ref({}) // { [id]: true } -- the expanded cards
 
@@ -355,7 +356,7 @@ async function testConfig(config) {
     const latest = store.configs.find(entry => entry.id === id)
     if (!latest) return
     if (!result.ok) {
-        if (!result.aborted) showTestError(id, result.error)
+        if (!result.aborted) showTestError(id, result.uiMessage || result.error)
         return
     }
     // No question for a quick re-listen of validated fields, nor after an edit while loading.
@@ -369,7 +370,7 @@ async function testConfig(config) {
     if (end.ok || end.aborted) return
     if (!store.configs.some(entry => entry.id === id)) return
     delete prompts.value[id]
-    showTestError(id, end.error)
+    showTestError(id, end.uiMessage || end.error)
 }
 
 function showTestError(id, error) {
@@ -747,7 +748,7 @@ function answerNo(id) {
                         </div>
                     </div>
 
-                    <div v-if="testErrors[config.id]" class="tts-test-error">{{ testErrors[config.id] }}</div>
+                    <div v-if="testErrors[config.id]" class="tts-test-error">{{ resolveUiMessage(testErrors[config.id]) }}</div>
 
                     <wa-callout v-if="store.activeId === config.id && !isConfigValidated(config)" variant="warning" size="small">
                         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>

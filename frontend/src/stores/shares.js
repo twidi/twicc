@@ -1,6 +1,14 @@
-import { i18n } from '../i18n/index.js'
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
+import { localUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 import { apiFetch } from '../utils/api'
+
+async function shareError(response, fallbackKey) {
+    const payload = await response.json().catch(() => ({}))
+    const fallback = payload.reason || payload.error || localUiMessage(fallbackKey)
+    return { ...payload, errorMessage: remoteUiMessage(payload, fallback),
+        errors: payload.errors?.map(error => ({ ...error, errorMessage: remoteUiMessage(error, error.message) })) }
+}
 
 export const useSharesStore = defineStore('shares', {
     state: () => ({ shares: {} }),   // id -> serialized share
@@ -32,14 +40,14 @@ export const useSharesStore = defineStore('shares', {
             const res = await apiFetch('/api/shares/', {
                 method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
             })
-            if (!res.ok) throw await res.json().catch(() => ({ error: i18n.global.t('session.sharing.createFailed') }))
+            if (!res.ok) throw await shareError(res, 'session.sharing.createFailed')
             const share = await res.json(); this.upsertShare(share); return share
         },
         async patchShare(id, fields) {
             const res = await apiFetch(`/api/shares/${id}/`, {
                 method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fields),
             })
-            if (!res.ok) throw await res.json().catch(() => ({ error: i18n.global.t('session.sharing.updateFailed') }))
+            if (!res.ok) throw await shareError(res, 'session.sharing.updateFailed')
             const share = await res.json(); this.upsertShare(share); return share
         },
         async revokeShare(id, revoked = true) {

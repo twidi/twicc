@@ -19,6 +19,7 @@ import asyncio
 import logging
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
@@ -62,11 +63,11 @@ class SettingsDropResult(NamedTuple):
     status_extra: dict = {}  # generic passthrough → status file; never mutate in place
 
 
-_ORIGIN_STRUCTURAL_MESSAGE = "Enter a hostname or an HTTP(S) origin without a path, query, or fragment."
+_ORIGIN_STRUCTURAL_MESSAGE = ui_message_text("Enter a hostname or an HTTP(S) origin without a path, query, or fragment.", 'backend.settings.origin_structural')
 _ORIGIN_ERROR_MESSAGES = {
-    ORIGIN_CONFLICT_SHARE_EXTERNAL: "The Share host must use a different hostname from the External address.",
-    ORIGIN_CONFLICT_SHARE_PEER: "The Share host must use a different hostname from the Peer address.",
-    ORIGIN_CONFLICT_AMBIGUOUS: "The Peer and External addresses must be the same origin or use different authorities.",
+    ORIGIN_CONFLICT_SHARE_EXTERNAL: ui_message_text("The Share host must use a different hostname from the External address.", 'backend.settings.share_external_conflict'),
+    ORIGIN_CONFLICT_SHARE_PEER: ui_message_text("The Share host must use a different hostname from the Peer address.", 'backend.settings.share_peer_conflict'),
+    ORIGIN_CONFLICT_AMBIGUOUS: ui_message_text("The Peer and External addresses must be the same origin or use different authorities.", 'backend.settings.peer_external_conflict'),
 }
 
 
@@ -173,10 +174,10 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
             raw_mcp = merged_mcp.get("mcpBaseUrl", "")
             parsed_mcp = normalize_public_origin(raw_mcp)
             if ("externalMcpEnabled" in patch and type(patch["externalMcpEnabled"]) is not bool):
-                errors.append(SettingsDropError("externalMcpEnabled", "invalid_type", "Expected a boolean."))
+                errors.append(SettingsDropError("externalMcpEnabled", "invalid_type", ui_message_text("Expected a boolean.", 'backend.settings.boolean_required')))
             if merged_mcp.get("externalMcpEnabled") is True and not settings.TWICC_PASSWORD_HASH:
                 errors.append(SettingsDropError(
-                    "externalMcpEnabled", "password_required", "External MCP requires a TwiCC password."
+                    "externalMcpEnabled", "password_required", ui_message_text("External MCP requires a TwiCC password.", 'backend.settings.mcp_password_required')
                 ))
             if "mcpBaseUrl" in patch:
                 if (
@@ -184,15 +185,15 @@ def _merge_and_write(patch: dict, base_version: int | None) -> dict:
                     or (parsed_mcp.value and parsed_mcp.scheme != "https")
                     or parsed_mcp.hostname in ("localhost", "127.0.0.1", "::1")
                 ):
-                    errors.append(SettingsDropError("mcpBaseUrl", "invalid_origin", "Enter a dedicated HTTPS origin."))
+                    errors.append(SettingsDropError("mcpBaseUrl", "invalid_origin", ui_message_text("Enter a dedicated HTTPS origin.", 'backend.settings.mcp_https_origin')))
                 else:
                     normalized_patch["mcpBaseUrl"] = parsed_mcp.value
             if merged_mcp.get("externalMcpEnabled") and not parsed_mcp.value:
-                errors.append(SettingsDropError("mcpBaseUrl", "required", "A dedicated MCP origin is required."))
+                errors.append(SettingsDropError("mcpBaseUrl", "required", ui_message_text("A dedicated MCP origin is required.", 'backend.settings.mcp_origin_required')))
             for key in ("publicBaseUrl", "shareBaseUrl", "peerBaseUrl"):
                 other = normalize_public_origin(merged_mcp.get(key, ""))
                 if parsed_mcp.value and other.value and other.hostname == parsed_mcp.hostname:
-                    errors.append(SettingsDropError("mcpBaseUrl", "origin_conflict", "MCP must use a separate hostname."))
+                    errors.append(SettingsDropError("mcpBaseUrl", "origin_conflict", ui_message_text("MCP must use a separate hostname.", 'backend.settings.mcp_hostname_conflict')))
         if errors:
             clean, version = prepare_settings_for_client(existing_settings)
             return {

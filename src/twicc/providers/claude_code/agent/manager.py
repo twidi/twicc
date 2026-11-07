@@ -23,6 +23,7 @@ from twicc.agent import (
 from twicc.agent.exceptions import SessionUnavailableError
 from twicc.agent.completion_types import CompletionInput, CompletionSnapshot
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.providers.db_writer import run_under_db_write_lock
 from twicc.request_origin import capture_origin, system_marker
 
@@ -178,7 +179,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         receipt = await asyncio.shield(handoff)
         accepted = await asyncio.shield(receipt) if receipt is not None else None
         if not accepted:
-            raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
+            raise SendDeliveryError(ui_message_text(
+                "Message delivery remains unresolved; do not retry", "backend.claude.delivery_unresolved",
+            ), code="send_uncertain")
         return accepted
 
     def _ensure_title_publications(self):
@@ -233,9 +236,13 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 'last_line', 'storage_incarnation', 'history_epoch',
             ).get())
             if (current['storage_incarnation'], current['history_epoch']) != boundary[1:3]:
-                raise RuntimeError('Claude source changes during title drain')
+                raise RuntimeError(ui_message_text(
+                    'Claude source changes during title drain', 'backend.claude.title_source_changed',
+                ))
             if current['last_line'] < boundary.line_num:
-                raise RuntimeError('Claude title drain is incomplete')
+                raise RuntimeError(ui_message_text(
+                    'Claude title drain is incomplete', 'backend.claude.title_drain_incomplete',
+                ))
         return boundary
 
     async def _prepare_title_dispatch(self, decision, process):
@@ -371,7 +378,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         # Launch and adoption cannot overtake an inactive transcript write.
         async with worker.process_publication_reservation(agent.session_id):
             if self._resolve_title_process(agent.session_id) is not None:
-                raise RuntimeError('Prior Claude process final drain is incomplete')
+                raise RuntimeError(ui_message_text(
+                    'Prior Claude process final drain is incomplete', 'backend.claude.prior_process_drain_incomplete',
+                ))
             agent._title_process_token = str(uuid4())
             agent._title_ready = False
             agent._title_launch_entered = False
@@ -413,7 +422,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                         row = Session.objects.filter(pk=session_id).first()
                         if (row is None or (row.storage_incarnation, row.history_epoch) != boundary[1:3]
                                 or row.last_line < boundary.line_num):
-                            raise RuntimeError('Final Claude title drain is incomplete')
+                            raise RuntimeError(ui_message_text(
+                                'Final Claude title drain is incomplete', 'backend.claude.final_title_drain_incomplete',
+                            ))
                     coordinator.retire_process(session_id, process_token)
                     return True
                 if await self._title_lane(retire):
@@ -714,7 +725,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     else:
                         # Agent starting - cannot send yet
                         raise SendDeliveryError(
-                            f"Cannot send message: agent is in state {agent.state}",
+                            ui_message_text(
+                                f"Cannot send message: agent is in state {agent.state}",
+                                "backend.claude.agent_cannot_send_state", {"state": agent.state},
+                            ),
                             code="agent_starting",
                         )
 
@@ -723,7 +737,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 # image / document blocks (or of composer attachment content).
                 if not has_content:
                     raise RuntimeError(
-                        "Cannot start a new agent without a message"
+                        ui_message_text(
+                            "Cannot start a new agent without a message", "backend.claude.message_required",
+                        )
                     )
 
                 # Create and start new agent with resume
@@ -792,7 +808,10 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 agent = self._agents[session_id]
                 if agent.state != AgentState.DEAD:
                     raise RuntimeError(
-                        f"Session {session_id} already exists and is active"
+                        ui_message_text(
+                            f"Session {session_id} already exists and is active",
+                            "backend.claude.session_already_active", {"session_id": session_id},
+                        )
                     )
                 # Dead agent, clean it up
                 logger.debug(
@@ -1134,7 +1153,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
             from django.conf import settings as django_settings
 
             if not django_settings.CLAUDE_HYBRID_ENABLED:
-                raise RuntimeError("Hybrid mode is disabled on this server")
+                raise RuntimeError(ui_message_text(
+                    "Hybrid mode is disabled on this server", "backend.claude.hybrid_disabled",
+                ))
             from twicc.providers.claude_code.agent.hybrid.agent import HybridClaudeAgent
 
             return HybridClaudeAgent(

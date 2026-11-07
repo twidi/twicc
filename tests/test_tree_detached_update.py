@@ -141,6 +141,12 @@ def test_rest_patch_rejects_non_boolean_with_400():
     session = _make_session()
     response = _patch(session, {"tree_detached": "true"})
     assert response.status_code == 400
-    assert response.json() == {"error": "tree_detached must be a boolean"}
+    assert response.json() == {
+        "error": "tree_detached must be a boolean",
+        "ui_message": {
+            "key": "backend.request.boolean_required",
+            "params": {"field": "tree_detached"},
+        },
+    }
     session.refresh_from_db()
     assert session.tree_detached is False

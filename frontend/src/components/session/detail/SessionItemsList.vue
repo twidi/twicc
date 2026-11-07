@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t, n } = useI18n()
 import { INLINE_ARTIFACT_CONTEXT, INLINE_ARTIFACT_NAVIGATION, revealInlinePublication } from '../../../inline-artifacts/context.js'
@@ -219,7 +221,7 @@ const ephemeralNotice = computed(() => {
     const result = session.value?.ephemeralResult
     switch (session.value?.ephemeralPhase) {
         case 'done': return { variant: 'success', text: t('session.ephemeral.finished') }
-        case 'error': return { variant: 'danger', text: t('session.ephemeral.failed', { error: result?.error_key === 'session.ephemeral.startFailed' ? t(result.error_key) : (result?.error || '') }) }
+        case 'error': return { variant: 'danger', text: t('session.ephemeral.failed', { error: result?.error_key === 'session.ephemeral.startFailed' ? t(result.error_key) : resolveUiMessage(remoteUiMessage(result, result?.error || '')) }) }
         case 'stopped': return { variant: 'neutral', text: t('session.ephemeral.stopped') }
         case 'lost': return { variant: 'warning', text: t('session.ephemeral.lost') }
         default: return { variant: 'brand', text: t('session.ephemeral.running', { provider: providerLabel.value }) }

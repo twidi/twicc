@@ -17,9 +17,18 @@ pin); a 3xx simply reports "reachable".
 import httpx
 from django.http import JsonResponse
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.artifacts.proxy import ResolutionError, resolve_target
 
 PROBE_TIMEOUT_SECONDS = 10.0
+
+
+def _probe_response(payload: dict, **kwargs):
+    for field in ("error", "reason"):
+        descriptor = getattr(payload.get(field), "ui_message", None)
+        if descriptor is not None:
+            payload["ui_message" if field == "error" else "reason_ui_message"] = descriptor
+    return JsonResponse(payload, **kwargs)
 
 
 def _frame_verdict(headers: httpx.Headers) -> tuple[bool, str | None]:
@@ -59,24 +68,24 @@ async def _probe(client: httpx.AsyncClient, method: str, url: httpx.URL, pinned_
 async def browser_frame_check(request):
     """GET /api/browser-frame-check/ — see module docstring."""
     if request.method != "GET":
-        return JsonResponse({"error": "GET required"}, status=405)
+        return _probe_response({"error": ui_message_text("GET required", 'backend.browser_probe.get_required')}, status=405)
     raw_url = request.GET.get("url") or ""
     try:
         url = httpx.URL(raw_url)
     except Exception:
-        return JsonResponse({"error": "invalid url"}, status=400)
+        return _probe_response({"error": ui_message_text("invalid url", 'backend.browser_probe.invalid_url')}, status=400)
     if url.scheme not in ("http", "https") or not url.host:
-        return JsonResponse({"error": "invalid url"}, status=400)
+        return _probe_response({"error": ui_message_text("invalid url", 'backend.browser_probe.invalid_url')}, status=400)
     port = url.port or (443 if url.scheme == "https" else 80)
 
     try:
         target = await resolve_target(url.host, port)
     except ResolutionError:
-        return JsonResponse({"reachable": False, "reason": "hostname does not resolve"})
+        return _probe_response({"reachable": False, "reason": ui_message_text("hostname does not resolve", 'backend.browser_probe.unresolved_hostname')})
     except OSError:
-        return JsonResponse({"reachable": False, "reason": "DNS lookup failed"})
+        return _probe_response({"reachable": False, "reason": ui_message_text("DNS lookup failed", 'backend.browser_probe.dns_failed')})
     if target.kind == "metadata":
-        return JsonResponse({"error": "blocked target"}, status=403)
+        return _probe_response({"error": ui_message_text("blocked target", 'backend.browser_probe.blocked_target')}, status=403)
 
     last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS)) as client:
@@ -91,9 +100,9 @@ async def browser_frame_check(request):
             if response.status_code != 405:  # some servers reject HEAD → retry as GET
                 break
         if response is None:
-            return JsonResponse({"reachable": False, "reason": type(last_error).__name__})
+            return _probe_response({"reachable": False, "reason": type(last_error).__name__})
 
     embeddable, reason = _frame_verdict(response.headers)
-    return JsonResponse(
+    return _probe_response(
         {"reachable": True, "status": response.status_code, "embeddable": embeddable, "reason": reason}
     )

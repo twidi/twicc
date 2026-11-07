@@ -1,4 +1,5 @@
 import { i18n } from '../../i18n/index.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 
 // frontend/src/utils/uploads/transport.js
 // Transfer constants and the classification of server answers (spec §5.5,
@@ -110,7 +111,7 @@ export function classifyTusError(err, record) {
     if (status === 507) return { action: 'pause', reason: 'error', message: i18n.global.t('files.upload.diskFull') }
     const retryable = isRetryableInfo(info)
     if (retryable && info.hasResponse && record?.state === 'active' && record.error) {
-        return { action: 'pause', reason: 'error', message: record.error }
+        return { action: 'pause', reason: 'error', message: remoteUiMessage(record, record.error) }
     }
     if (status === 500 && fromUpload) {
         return { action: 'pause', reason: 'error', message: errorMessageOf(err) || i18n.global.t('files.upload.serverError') }
@@ -130,7 +131,7 @@ export function errorMessageOf(err) {
         const body = err?.originalResponse?.getBody?.()
         if (!body) return null
         const parsed = JSON.parse(body)
-        return typeof parsed?.error === 'string' ? parsed.error : null
+        return typeof parsed?.error === 'string' ? remoteUiMessage(parsed, parsed.error) : null
     } catch {
         return null
     }

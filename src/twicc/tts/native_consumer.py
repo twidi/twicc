@@ -14,6 +14,7 @@ from twicc.auth.local_access import scope_remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY, compute_fingerprint
 from twicc.tts.native_protocol import MAX_COMMAND_BYTES, parse_native_command
 from twicc.tts.native_sessions import SessionLost, registry
+from twicc.core.ui_messages import ui_message
 
 logger = logging.getLogger(__name__)
 INVALID_COMMAND_MESSAGE = 'Speech could not start. Reload the page and try again.'
@@ -50,21 +51,21 @@ class NativeTtsConsumer(AsyncJsonWebsocketConsumer):
         if self.native_session is not None:
             await self.native_session.close()
         await self.send_json({'protocol': 1, 'type': 'error', 'code': 'unauthorized',
-                              'message': 'Authentication expired. Open TwiCC and sign in again.'})
+                              'message': 'Authentication expired. Open TwiCC and sign in again.', 'ui_message': ui_message('backend.tts.authenticationExpired')})
         await self.close(code=4001)
 
     async def receive(self, text_data=None, bytes_data=None, **kwargs):
         if text_data is None or len(text_data.encode('utf-8')) > MAX_COMMAND_BYTES:
             logger.warning('Native speech command is binary or exceeds the size limit')
             await self.send_json({'protocol': 1, 'type': 'error', 'code': 'invalid_command',
-                                  'message': INVALID_COMMAND_MESSAGE})
+                                  'message': INVALID_COMMAND_MESSAGE, 'ui_message': ui_message('backend.tts.invalidCommand')})
             await self.close(code=1009 if text_data else 1003)
             return
         try:
             content = orjson.loads(text_data)
         except orjson.JSONDecodeError as error:
             logger.warning('Invalid native speech JSON: %s', error)
-            await self.send_json({'protocol': 1, 'type': 'error', 'code': 'invalid_command', 'message': INVALID_COMMAND_MESSAGE})
+            await self.send_json({'protocol': 1, 'type': 'error', 'code': 'invalid_command', 'message': INVALID_COMMAND_MESSAGE, 'ui_message': ui_message('backend.tts.invalidCommand')})
             return
         await self.receive_json(content)
 
@@ -116,11 +117,11 @@ class NativeTtsConsumer(AsyncJsonWebsocketConsumer):
                 await self.native_session.apply(command, connection_id=self.connection_id)
         except SessionLost:
             await self.send_json({'protocol': 1, 'type': 'error', 'code': 'session_lost',
-                                  'message': 'Speech stopped. Start playback or turn on timeline reading again.'})
+                                  'message': 'Speech stopped. Start playback or turn on timeline reading again.', 'ui_message': ui_message('backend.tts.sessionLost')})
             await self.close(code=4004)
         except ValueError as error:
             logger.warning('Invalid native speech command: %s', error)
-            await self.send_json({'protocol': 1, 'type': 'error', 'code': 'invalid_command', 'message': INVALID_COMMAND_MESSAGE})
+            await self.send_json({'protocol': 1, 'type': 'error', 'code': 'invalid_command', 'message': INVALID_COMMAND_MESSAGE, 'ui_message': ui_message('backend.tts.invalidCommand')})
 
     async def _send_frames(self):
         while True:

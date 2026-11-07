@@ -250,13 +250,16 @@ export function createUploadsController(deps) {
     }
 
     function failureToast(filename, message) {
-        toast.error(message, { title: i18n.global.t('files.upload.failedTitle', { filename }), duration: TOAST_DURATION_MS })
+        toast.error(message, { title: localUiMessage('files.upload.failedTitle', { filename }), duration: TOAST_DURATION_MS })
     }
 
     function pausedToast(entry, message) {
         failureToast(
             entry.filename,
-            i18n.global.t('files.upload.retryFrom', { message: message || i18n.global.t('files.upload.stopped'), location: panelLocation(entry) }),
+            localUiMessage('files.upload.retryFrom', {
+                message: message || localUiMessage('files.upload.stopped'),
+                location: localUiMessage(PANEL_LOCATIONS[entry.origin?.panel] || PANEL_LOCATIONS.files),
+            }),
         )
     }
 
@@ -279,7 +282,7 @@ export function createUploadsController(deps) {
                 copyPath: record.final_path || null,
             })
         } else if (record.state === 'failed') {
-            failureToast(record.filename, record.error || i18n.global.t('files.upload.serverStopped'))
+            failureToast(record.filename, remoteUiMessage(record, record.error || localUiMessage('files.upload.serverStopped')))
         } else if (record.state === 'cancelled' && !composer && !cancelledHere.has(record.id)) {
             toast.error(i18n.global.t('files.upload.cancelledElsewhere'), {
                 title: i18n.global.t('files.upload.cancelledTitle', { filename: record.filename }),
@@ -454,7 +457,7 @@ export function createUploadsController(deps) {
     async function readErrorMessage(res) {
         try {
             const body = await res.json()
-            return typeof body?.error === 'string' ? body.error : null
+            return typeof body?.error === 'string' ? remoteUiMessage(body, body.error) : null
         } catch {
             return null
         }
@@ -530,7 +533,7 @@ export function createUploadsController(deps) {
         }
         // Rule 7: a local entry waiting for the server.
         const action = rule7Action(entry, previous, record)
-        if (action === 'pause-error') pauseError(entry, record.error)
+        if (action === 'pause-error') pauseError(entry, remoteUiMessage(record, record.error))
         else if (action === 'requeue') setState(entry, 'queued')
         else afterChange()
     }
@@ -730,7 +733,7 @@ export function createUploadsController(deps) {
         if (!record) {
             pauseError(entry, i18n.global.t('files.upload.unexpectedAnswer'))
         } else if (record.state === 'active' && record.error) {
-            pauseError(entry, record.error)
+            pauseError(entry, remoteUiMessage(record, record.error))
         } else if (record.state === 'active') {
             setState(entry, 'sending')
         } else {
@@ -1111,3 +1114,5 @@ export function createUploadsController(deps) {
         },
     }
 }
+import { localUiMessage } from '../../i18n/uiMessages.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'

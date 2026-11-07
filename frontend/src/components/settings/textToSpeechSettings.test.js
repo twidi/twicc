@@ -30,7 +30,7 @@ test('a late error replaces the pending question and shows in the card', () => {
     // A config deleted meanwhile shows nothing either.
     assert.match(late, /if \(!store\.configs\.some\(entry => entry\.id === id\)\) return/)
     const dropQuestion = late.indexOf('delete prompts.value[id]')
-    const showError = late.indexOf('showTestError(id, end.error)')
+    const showError = late.indexOf('showTestError(id, end.uiMessage || end.error)')
     assert.ok(dropQuestion !== -1 && showError > dropQuestion, 'the question goes, then the error shows')
 })
 

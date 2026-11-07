@@ -8,6 +8,7 @@ import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createAppI18n } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
+import { remoteUiMessage } from './remoteMessages.js'
 import { parseProcessError } from '../utils/errorParsing.js'
 
 function calculations(file, names, context) {
@@ -53,10 +54,18 @@ test('failed-send messages retain external parameters and follow locale changes'
     const failedSend = Vue.ref({ messageKey: 'session.notifications.invalidTitleDetail', messageParams: { error: 'External title detail' }, message: 'Legacy fallback' })
     const { values } = calculations('session/detail/items/FailedSendBanner.vue', ['displayMessage'], {
         failedSend, composerReadyAgain: Vue.ref(false), t: composer.t, te: composer.te,
+        localUiMessage, remoteUiMessage, resolveUiMessage: value => resolveUiMessage(value, composer),
     })
     assert.match(values.displayMessage.value, /External title detail/)
     composer.locale.value = 'pt-BR'
     assert.equal(values.displayMessage.value, composer.t(failedSend.value.messageKey, failedSend.value.messageParams))
     failedSend.value = { messageKey: 'unknown.external.key', message: 'External prose' }
     assert.equal(values.displayMessage.value, 'External prose')
+    const params = { session_id: 'session_1' }
+    failedSend.value = JSON.parse(JSON.stringify({ message: 'Retained English fallback',
+        ui_message: { key: 'backend.websocket.session_missing', params } }))
+    assert.equal(values.displayMessage.value, composer.t('backend.websocket.session_missing', params))
+    composer.locale.value = 'en'
+    assert.equal(values.displayMessage.value, composer.t('backend.websocket.session_missing', params))
+    assert.equal(failedSend.value.message, 'Retained English fallback')
 })

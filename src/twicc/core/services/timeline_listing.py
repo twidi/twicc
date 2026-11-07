@@ -93,7 +93,7 @@ def fetch_timeline_page(
         events, known_projects=known_projects, known_sessions=known_sessions, full=full, process_rows=process_rows,
     )
     result = {
-        "items": [serialize_event(event) for event in events],
+        "items": [serialize_event(event, include_ui_messages=False) for event in events],
         "pagination": {"limit": limit, "has_more": has_more, "next_cursor": next_cursor},
         "sessions": sessions,
         "projects": projects,

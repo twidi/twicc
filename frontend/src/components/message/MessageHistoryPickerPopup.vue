@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 /**
  * MessageHistoryPickerPopup - A popup for selecting previous user messages triggered by !.
  *
@@ -108,7 +110,7 @@ async function fetchMessages() {
         const res = await apiFetch(`/api/projects/${props.projectId}/sessions/${props.sessionId}/user-messages/`)
         if (!res.ok) {
             const data = await res.json()
-            error.value = data.error || `HTTP ${res.status}`
+            error.value = remoteUiMessage(data, data.error || `HTTP ${res.status}`)
             allMessages.value = []
             return
         }
@@ -126,7 +128,7 @@ async function fetchMessages() {
         }
         allMessages.value = deduped
     } catch (err) {
-        error.value = err.message
+        error.value = err.uiMessage || err.message
         allMessages.value = []
     } finally {
         loading.value = false
@@ -420,7 +422,7 @@ defineExpose({ open, close, isOpen })
                     <div class="picker-status">{{ $t('composer.history.loading') }}</div>
                 </template>
                 <template v-else-if="error">
-                    <div class="picker-status picker-error">{{ error }}</div>
+                    <div class="picker-status picker-error">{{ resolveUiMessage(error) }}</div>
                 </template>
                 <template v-else-if="filteredMessages.length === 0">
                     <div class="picker-status">

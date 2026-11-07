@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, UTC
 from decimal import Decimal
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.enums import Provider
 from twicc.core.models import SessionItem, UsageSnapshot
 
@@ -376,12 +377,12 @@ def validate_usage_dump_path(file_path: str) -> tuple[bool, str]:
     path = Path(file_path)
 
     if not path.parent.is_dir():
-        return False, f"Directory does not exist: {path.parent}"
+        return False, ui_message_text(f"Directory does not exist: {path.parent}", 'backend.usage.directory_missing', {"path": str(path.parent)})
 
     if not os.access(path.parent, os.W_OK):
-        return False, f"Directory is not writable: {path.parent}"
+        return False, ui_message_text(f"Directory is not writable: {path.parent}", 'backend.usage.directory_not_writable', {"path": str(path.parent)})
 
-    return True, "Valid dump path"
+    return True, ui_message_text("Valid dump path", 'backend.usage.valid_dump_path')
 
 
 def validate_usage_file(provider: Provider, file_path: str) -> tuple[bool, str]:
@@ -401,19 +402,19 @@ def validate_usage_file(provider: Provider, file_path: str) -> tuple[bool, str]:
     path = Path(file_path)
 
     if not path.is_file():
-        return False, "File not found"
+        return False, ui_message_text("File not found", 'backend.usage.file_missing')
 
     try:
         content = path.read_bytes()
     except OSError as e:
-        return False, f"Cannot read file: {e}"
+        return False, ui_message_text(f"Cannot read file: {e}", 'backend.usage.read_failed', {"detail": str(e)})
 
     try:
         data = orjson.loads(content)
     except orjson.JSONDecodeError as e:
-        return False, f"Invalid JSON: {e}"
+        return False, ui_message_text(f"Invalid JSON: {e}", 'backend.usage.invalid_json', {"detail": str(e)})
 
     if not isinstance(data, dict):
-        return False, "JSON root must be an object"
+        return False, ui_message_text("JSON root must be an object", 'backend.usage.object_required')
 
     return get_provider_helpers(provider).validate_usage_file_payload(data)

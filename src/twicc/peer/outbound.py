@@ -11,17 +11,18 @@ import httpx
 import orjson
 
 from twicc.core.services.attachments.inline import transfer_timeout
+from twicc.core.ui_messages import ui_message_text
 
 OUTBOUND_TIMEOUT_SECONDS = 30.0
 
 _REMOTE_ERROR_MESSAGES = {
-    "already_related": "The remote instance already has a Peer relationship for this address.",
-    "ambiguous_peer": "The remote instance has more than one Peer for this address.",
-    "bad_state": "The remote instance cannot apply this request in its current state.",
-    "invalid_payload": "The remote instance rejected the request data.",
-    "reconnect_in_progress": "The remote instance already has a different reconnect request pending.",
-    "too_many_pending": "The remote instance has too many pending Peer requests.",
-    "unknown_token": "The remote instance rejected the Peer credentials.",
+    "already_related": ui_message_text('The remote instance already has a Peer relationship for this address.', 'backend.peer.remote.already_related'),
+    "ambiguous_peer": ui_message_text('The remote instance has more than one Peer for this address.', 'backend.peer.remote.ambiguous_peer'),
+    "bad_state": ui_message_text('The remote instance cannot apply this request in its current state.', 'backend.peer.remote.bad_state'),
+    "invalid_payload": ui_message_text('The remote instance rejected the request data.', 'backend.peer.remote.invalid_payload'),
+    "reconnect_in_progress": ui_message_text('The remote instance already has a different reconnect request pending.', 'backend.peer.remote.reconnect_in_progress'),
+    "too_many_pending": ui_message_text('The remote instance has too many pending Peer requests.', 'backend.peer.remote.too_many_pending'),
+    "unknown_token": ui_message_text('The remote instance rejected the Peer credentials.', 'backend.peer.remote.unknown_token'),
 }
 
 

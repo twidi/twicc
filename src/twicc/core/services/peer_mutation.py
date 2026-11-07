@@ -25,6 +25,7 @@ from datetime import datetime, UTC
 from typing import NamedTuple
 from urllib.parse import urlparse
 
+from twicc.core.ui_messages import ui_message_text
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 
@@ -189,12 +190,12 @@ async def create_peer_and_request(*, name: str, base_url: str) -> PeerMutationRe
     own_url = peer_base_url()
     if not own_url:
         return PeerMutationResult(False, None, [PeerError(
-            "base_url", "peer_host_unset", "Configure your peer address in Settings → Peers first.",
+            "base_url", "peer_host_unset", ui_message_text("Configure your peer address in Settings → Peers first.", 'backend.peers.host_unset'),
         )])
     base_url = normalize_base_url(base_url)
     if not valid_base_url(base_url):
         return PeerMutationResult(False, None, [PeerError(
-            "base_url", "invalid_url", "The peer address must be an absolute http(s) URL.",
+            "base_url", "invalid_url", ui_message_text("The peer address must be an absolute http(s) URL.", 'backend.peers.invalid_url'),
         )])
     token = mint_token()
     peer = Peer(
@@ -208,16 +209,16 @@ async def create_peer_and_request(*, name: str, base_url: str) -> PeerMutationRe
         matches = _peers_matching_origin(Peer, base_url)
         if len(matches) > 1:
             return None, PeerError(
-                "base_url", "ambiguous_peer", "More than one peer has this address.",
+                "base_url", "ambiguous_peer", ui_message_text("More than one peer has this address.", 'backend.peers.ambiguous'),
             )
         if matches:
             existing = matches[0]
             if existing.state in (PeerState.BROKEN, PeerState.REVOKED):
                 return None, PeerError(
-                    "base_url", "reconnect_required", "Reconnect the existing peer for this address.",
+                    "base_url", "reconnect_required", ui_message_text("Reconnect the existing peer for this address.", 'backend.peers.reconnect_required'),
                 )
             return None, PeerError(
-                "base_url", "duplicate", "A peer with this address already exists.",
+                "base_url", "duplicate", ui_message_text("A peer with this address already exists.", 'backend.peers.duplicate'),
             )
         peer.save(force_insert=True)
         return peer, None
@@ -241,7 +242,7 @@ async def create_peer_and_request(*, name: str, base_url: str) -> PeerMutationRe
     # would broadcast stale state or delete the peer's just-registered request.
     if status is None or status >= 400:
         error_message = detail or outbound.response_error_message(
-            body, "The remote instance rejected the Peer request.",
+            body, ui_message_text("The remote instance rejected the Peer request.", 'backend.peers.request_rejected'),
         )
 
         def _delete_if_untouched():
@@ -266,7 +267,7 @@ async def create_peer_and_request(*, name: str, base_url: str) -> PeerMutationRe
 
     fresh = await sync_to_async(lambda: Peer.objects.filter(pk=peer.pk).first())()
     if fresh is None:
-        return PeerMutationResult(False, None, [PeerError("peer", "not_found", "Peer no longer exists.")])
+        return PeerMutationResult(False, None, [PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'))])
     await broadcast_peer_updated(fresh)
     logger.info("[peer_create] id=%s base_url=%s", fresh.id, base_url)
     return PeerMutationResult(True, fresh.id, None)
@@ -286,10 +287,10 @@ async def accept_peer(peer, *, name: str) -> PeerMutationResult:
         and peer.reconnect_direction == PeerReconnectDirection.RECEIVED
     )
     if peer.state != PeerState.PENDING_RECEIVED and not reconnect_received:
-        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", "This peer is not pending acceptance.")])
+        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", ui_message_text("This peer is not pending acceptance.", 'backend.peers.not_pending'))])
     if peer.verified_at is None:
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", "not_verified", "The requester has not confirmed the verification code yet.",
+            "state", "not_verified", ui_message_text("The requester has not confirmed the verification code yet.", 'backend.peers.not_verified'),
         )])
 
     # Reuse an existing token — after a crossed handshake the other side already
@@ -301,7 +302,7 @@ async def accept_peer(peer, *, name: str) -> PeerMutationResult:
     own_url = peer_base_url()
     if not own_url:
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", "peer_host_unset", "Configure your peer address before accepting.",
+            "state", "peer_host_unset", ui_message_text("Configure your peer address before accepting.", 'backend.peers.host_accept'),
         )])
 
     token = peer.token_ours
@@ -326,7 +327,7 @@ async def accept_peer(peer, *, name: str) -> PeerMutationResult:
 
         token = await run_under_db_write_lock(lambda: sync_to_async(_persist_token)())
         if token is None:
-            return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", "Peer no longer exists.")])
+            return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'))])
 
     body = {}
     detail = ""
@@ -340,7 +341,7 @@ async def accept_peer(peer, *, name: str) -> PeerMutationResult:
         # Row stays pending_received (token kept for the retry), the user retries.
         return PeerMutationResult(False, peer.id, [PeerError(
             "base_url", "unreachable", detail or outbound.response_error_message(
-                body, "The remote instance rejected the acceptance.",
+                body, ui_message_text("The remote instance rejected the acceptance.", 'backend.peers.accept_rejected'),
             ),
         )])
 
@@ -377,7 +378,7 @@ async def accept_peer(peer, *, name: str) -> PeerMutationResult:
 
     fresh = await run_under_db_write_lock(lambda: sync_to_async(_apply)())
     if fresh is None:
-        return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", "Peer no longer exists.")])
+        return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'))])
     await broadcast_peer_updated(fresh)
     logger.info("[peer_accept] id=%s", fresh.id)
     return PeerMutationResult(True, fresh.id, None)
@@ -400,7 +401,7 @@ async def submit_verification_code(peer, code: str) -> PeerMutationResult:
         and peer.token_ours
     )
     if not allowed:
-        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", "This peer has no outbound request to verify.")])
+        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", ui_message_text("This peer has no outbound request to verify.", 'backend.peers.no_request'))])
 
     try:
         status, body = await outbound.post_handshake_verify(peer.base_url, bearer=peer.token_ours, code=code)
@@ -443,7 +444,7 @@ async def submit_verification_code(peer, code: str) -> PeerMutationResult:
 
         fresh, activated = await run_under_db_write_lock(lambda: sync_to_async(_apply)())
         if fresh is None:
-            return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", "Peer no longer exists.")])
+            return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'))])
         await broadcast_peer_updated(fresh)
         if activated:
             await broadcast_peer_accepted(fresh)
@@ -451,18 +452,18 @@ async def submit_verification_code(peer, code: str) -> PeerMutationResult:
 
     remote_error = (body or {}).get("error") if status == 403 else None
     if remote_error == "bad_code":
-        return PeerMutationResult(False, peer.id, [PeerError("code", "bad_code", "Wrong code — check with your peer.")])
+        return PeerMutationResult(False, peer.id, [PeerError("code", "bad_code", ui_message_text("Wrong code — check with your peer.", 'backend.peers.bad_code'))])
     if remote_error == "too_many_attempts":
         return PeerMutationResult(False, peer.id, [PeerError(
-            "code", "code_regenerated", "Too many attempts — the peer's code was regenerated, ask them for the new one.",
+            "code", "code_regenerated", ui_message_text("Too many attempts — the peer's code was regenerated, ask them for the new one.", 'backend.peers.code_regenerated'),
         )])
     if remote_error == "unknown_token":
         return PeerMutationResult(False, peer.id, [PeerError(
             "code", "relationship_gone",
-            "The peer no longer has this pending request — ask them to check their side, or remove and re-add the peer.",
+            ui_message_text("The peer no longer has this pending request — ask them to check their side, or remove and re-add the peer.", 'backend.peers.relationship_gone'),
         )])
     return PeerMutationResult(False, peer.id, [PeerError(
-        "code", "verify_failed", "Verification could not be completed — check the relationship with your peer.",
+        "code", "verify_failed", ui_message_text("Verification could not be completed — check the relationship with your peer.", 'backend.peers.verify_failed'),
     )])
 
 
@@ -475,7 +476,7 @@ async def refuse_peer(peer) -> PeerMutationResult:
         and peer.reconnect_direction == PeerReconnectDirection.RECEIVED
     )
     if peer.state != PeerState.PENDING_RECEIVED and not reconnect_received:
-        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", "This peer is not pending acceptance.")])
+        return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", ui_message_text("This peer is not pending acceptance.", 'backend.peers.not_pending'))])
     if reconnect_received:
         def _clear():
             fresh = Peer.objects.filter(pk=peer.pk).first()
@@ -487,7 +488,7 @@ async def refuse_peer(peer) -> PeerMutationResult:
 
         fresh = await run_under_db_write_lock(lambda: sync_to_async(_clear)())
         if fresh is None:
-            return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", "Reconnect changed.")])
+            return PeerMutationResult(False, peer.id, [PeerError("state", "bad_state", ui_message_text("Reconnect changed.", 'backend.peers.reconnect_changed'))])
         await broadcast_peer_updated(fresh)
         return PeerMutationResult(True, fresh.id, None)
     peer_id = peer.id
@@ -509,7 +510,7 @@ async def delete_peer(peer) -> PeerMutationResult:
 
     if peer.state not in (PeerState.PENDING_SENT, PeerState.PENDING_RECEIVED):
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", "bad_state", "Only an initial pending request can be removed.",
+            "state", "bad_state", ui_message_text("Only an initial pending request can be removed.", 'backend.peers.remove_pending_only'),
         )])
     peer_id = peer.id
     await run_under_db_write_lock(lambda: peer.adelete())
@@ -537,10 +538,10 @@ async def revoke_peer(peer) -> PeerMutationResult:
 
     fresh, error = await run_under_db_write_lock(lambda: sync_to_async(_apply)())
     if error == "not_found":
-        return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", "Peer no longer exists.")])
+        return PeerMutationResult(False, peer.id, [PeerError("peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'))])
     if error == "bad_state":
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", "bad_state", "Only an established peer can be revoked.",
+            "state", "bad_state", ui_message_text("Only an established peer can be revoked.", 'backend.peers.revoke_established_only'),
         )])
     await broadcast_peer_updated(fresh)
     logger.info("[peer_revoke] id=%s", fresh.id)
@@ -555,7 +556,7 @@ async def reconnect_peer(peer) -> PeerMutationResult:
     own_url = peer_base_url()
     if not own_url:
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", "peer_host_unset", "Configure your peer address before reconnecting.",
+            "state", "peer_host_unset", ui_message_text("Configure your peer address before reconnecting.", 'backend.peers.host_reconnect'),
         )])
 
     minted = mint_token()
@@ -581,10 +582,10 @@ async def reconnect_peer(peer) -> PeerMutationResult:
     fresh, error = await run_under_db_write_lock(lambda: sync_to_async(_prepare)())
     if error:
         messages = {
-            "not_found": "Peer no longer exists.",
-            "bad_state": "Only a broken or revoked peer can reconnect.",
-            "attempt_received": "This peer has an incoming reconnect request.",
-            "invalid_attempt": "Cancel this reconnect attempt before trying again.",
+            "not_found": ui_message_text("Peer no longer exists.", 'backend.peers.not_found'),
+            "bad_state": ui_message_text("Only a broken or revoked peer can reconnect.", 'backend.peers.reconnect_state'),
+            "attempt_received": ui_message_text("This peer has an incoming reconnect request.", 'backend.peers.reconnect_received'),
+            "invalid_attempt": ui_message_text("Cancel this reconnect attempt before trying again.", 'backend.peers.reconnect_invalid'),
         }
         return PeerMutationResult(False, peer.id, [PeerError("state", error, messages[error])])
 
@@ -603,7 +604,7 @@ async def reconnect_peer(peer) -> PeerMutationResult:
     if status is None or status >= 400:
         return PeerMutationResult(False, fresh.id, [PeerError(
             "base_url", "unreachable", detail or outbound.response_error_message(
-                body, "The remote instance rejected the reconnect request.",
+                body, ui_message_text("The remote instance rejected the reconnect request.", 'backend.peers.reconnect_rejected'),
             ),
         )])
     return PeerMutationResult(True, fresh.id, None)
@@ -625,7 +626,7 @@ async def cancel_reconnect(peer) -> PeerMutationResult:
     fresh, error = await sync_to_async(_snapshot)()
     if error:
         return PeerMutationResult(False, peer.id, [PeerError(
-            "state", error, "This peer has no sent reconnect attempt.",
+            "state", error, ui_message_text("This peer has no sent reconnect attempt.", 'backend.peers.reconnect_not_sent'),
         )])
 
     token = fresh.token_ours
@@ -636,7 +637,7 @@ async def cancel_reconnect(peer) -> PeerMutationResult:
         return PeerMutationResult(False, fresh.id, [PeerError(
             "base_url",
             "unreachable",
-            "The remote instance could not be reached. The reconnect request was not cancelled. Try again.",
+            ui_message_text("The remote instance could not be reached. The reconnect request was not cancelled. Try again.", 'backend.peers.cancel_unreachable'),
         )])
     remote_request_absent = status == 404 and body.get("error") == "unknown_request"
     remote_cancelled = 200 <= status < 300
@@ -644,7 +645,7 @@ async def cancel_reconnect(peer) -> PeerMutationResult:
         return PeerMutationResult(False, fresh.id, [PeerError(
             "base_url",
             "cancel_failed",
-            "The remote instance did not cancel the reconnect request. Try again.",
+            ui_message_text("The remote instance did not cancel the reconnect request. Try again.", 'backend.peers.cancel_failed'),
         )])
 
     def _clear_if_same():
@@ -664,7 +665,7 @@ async def cancel_reconnect(peer) -> PeerMutationResult:
     fresh, cleared = await run_under_db_write_lock(lambda: sync_to_async(_clear_if_same)())
     if fresh is None:
         return PeerMutationResult(False, peer.id, [PeerError(
-            "peer", "not_found", "Peer no longer exists.",
+            "peer", "not_found", ui_message_text("Peer no longer exists.", 'backend.peers.not_found'),
         )])
     if cleared:
         await broadcast_peer_updated(fresh)

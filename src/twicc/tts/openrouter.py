@@ -23,6 +23,7 @@ import orjson
 from twicc.tts.model_catalog import speech_model_facts
 from twicc.tts.part_audio import MP3_HEADER_SIZE, Mp3HeadFilter, PcmFrameTrimmer, id3_tag_size, mp3_frame
 from twicc.tts.part_source import PartSource, as_part_source, timed_next_part
+from twicc.core.ui_messages import ui_message, ui_message_text
 
 if TYPE_CHECKING:
     # streams.py imports SpeechError from here: the type only, at check time.
@@ -71,9 +72,10 @@ class SpeechError(Exception):
     shows its stderr line to the user, but logs its exit status only.
     """
 
-    def __init__(self, message: str, upstream_status: int | None = None, *, log_message: str | None = None):
+    def __init__(self, message: str, upstream_status: int | None = None, *, log_message: str | None = None, ui_message: dict | None = None):
         super().__init__(message)
         self.message = message
+        self.ui_message = ui_message or getattr(message, "ui_message", None)
         self.upstream_status = upstream_status
         self.log_message = message if log_message is None else log_message
 
@@ -149,9 +151,9 @@ def upstream_error_message(status: int, body: bytes) -> str:
         if isinstance(raw, str) and raw:
             message = raw
     if message is None:
-        return f"OpenRouter returned HTTP {status}"
+        return ui_message_text(f"OpenRouter returned HTTP {status}", 'backend.tts.openrouterStatus', {"status": status})
     if message == GENERIC_PROVIDER_ERROR:
-        return message + GENERIC_PROVIDER_HINT
+        return ui_message_text(message + GENERIC_PROVIDER_HINT, 'backend.tts.provider400Hint')
     return message
 
 
@@ -203,10 +205,10 @@ async def pump_speech(
         stream.fail_if_live(error)
         return
     except httpx.TimeoutException:
-        stream.fail_if_live(SpeechError("OpenRouter did not answer in time"))
+        stream.fail_if_live(SpeechError("OpenRouter did not answer in time", ui_message=ui_message('backend.tts.openrouterTimeout')))
         return
     except httpx.HTTPError:
-        stream.fail_if_live(SpeechError("Could not reach OpenRouter"))
+        stream.fail_if_live(SpeechError("Could not reach OpenRouter", ui_message=ui_message('backend.tts.openrouterUnreachable')))
         return
     finally:
         await source.aclose()

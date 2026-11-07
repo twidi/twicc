@@ -13,6 +13,8 @@ from __future__ import annotations
 from importlib.resources import files
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_message_text
+
 # Resolved path is process-wide constant (the SDK wheel layout doesn't change
 # once installed), so we cache after the first successful lookup. Misses
 # (binary absent) deliberately don't cache.
@@ -28,6 +30,9 @@ def resolve_bundled_binary() -> Path:
     bundled_dir = Path(str(files("claude_agent_sdk"))) / "_bundled"
     bin_path = bundled_dir / "claude"
     if not bin_path.is_file():
-        raise FileNotFoundError(f"Bundled Claude binary not found at {bin_path}")
+        raise FileNotFoundError(ui_message_text(
+            f"Bundled Claude binary not found at {bin_path}",
+            "backend.claude.binary_not_found", {"path": str(bin_path)},
+        ))
     _BIN_PATH = bin_path
     return _BIN_PATH

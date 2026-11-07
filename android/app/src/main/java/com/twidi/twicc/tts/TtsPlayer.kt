@@ -30,9 +30,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Mirrors speechOutcome.js. A decoder/network error cannot become success after generation completes. */
+@Suppress("UNCHECKED_CAST")
 internal fun speechEndResult(drained: Boolean, started: Boolean, refused: Boolean, backend: TtsFrame?): PlayerSignal.Ended {
     val state = backend?.get("state")
-    if (state == "failed") return PlayerSignal.Ended(false, backend["error"] as? String ?: "Speech generation failed")
+    if (state == "failed") return PlayerSignal.Ended(false, backend["error"] as? String ?: "Speech generation failed", backend["ui_message"] as? TtsFrame)
     if (drained) return if (state == "running") PlayerSignal.Ended(false, "The audio stopped before the end") else PlayerSignal.Ended(true)
     if (refused) return PlayerSignal.Ended(false, if (started) "Audio playback was interrupted." else "Audio playback could not start.")
     if (backend == null) return PlayerSignal.Ended(false, "Could not reach TwiCC")

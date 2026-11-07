@@ -15,6 +15,7 @@ from twicc.inline_artifacts.publications import (
     _code_ranges, _colon_block, _comment_block, _comment_inline, _line_offsets, parse_inline_artifact_blocks,
 )
 from twicc.providers.helpers import get_provider_helpers
+from twicc.core.ui_messages import UiMessageError
 
 
 def _content_colon_block(state, start_line, end_line, silent):
@@ -105,9 +106,9 @@ def validate_temporary_model_request(source: object, requested: object) -> str:
     if (not isinstance(source, dict) or set(source) != {'text', 'purpose'}
             or not isinstance(source['text'], str) or not source['text'].strip()
             or source['purpose'] not in ('selection', 'test')):
-        raise ValueError('Temporary source requires text and a supported purpose')
+        raise UiMessageError('Temporary source requires text and a supported purpose', 'backend.summaries.temporarySource')
     if not isinstance(requested, str) or normalize_summary_model(requested) != requested:
-        raise ValueError('Invalid summary model')
+        raise UiMessageError('Invalid summary model', 'backend.summaries.invalidModel')
     return requested
 
 
@@ -193,10 +194,10 @@ def _resolved(*, key, text, session_id=None, lines=(), provider=None, purpose=No
 def _chat(session, line):
     group = next(_groups(session, _read(session, SessionItem.objects.filter(session_id=session.id, line_num=line))), None)
     if group is None:
-        raise ValueError('Source is not a native assistant message')
+        raise UiMessageError('Source is not a native assistant message', 'backend.summaries.nativeMessage')
     text, lines = _assembled(session, group)
     if not any(item.kind == ItemKind.ASSISTANT_MESSAGE for item, _, _ in group):
-        raise ValueError('Source is not an assistant message')
+        raise UiMessageError('Source is not an assistant message', 'backend.summaries.assistantMessage')
     identity = _canonical(session, group[0])
     return _resolved(key=_message_key(session.provider, session.id, session.storage_incarnation,
                                     session.history_epoch, identity),
@@ -216,7 +217,7 @@ class TimelineSummarySnapshot(NamedTuple):
 
 def _snapshot_data(event):
     if event.kind != TimelineKind.ASSISTANT_MESSAGE_SENT or not isinstance(event.data.get('text'), str):
-        raise ValueError('Source is not an assistant message snapshot')
+        raise UiMessageError('Source is not an assistant message snapshot', 'backend.summaries.snapshotMessage')
     data = event.data
     text = data['text']
     refs = tuple(NativeMessageRef(**ref) for ref in data.get('source_refs', ()))
@@ -260,7 +261,7 @@ def read_timeline_snapshot(event_id: int) -> TimelineSummarySnapshot:
     try:
         event = TimelineEvent.objects.get(pk=event_id)
     except TimelineEvent.DoesNotExist:
-        raise ValueError('Source event does not exist') from None
+        raise UiMessageError('Source event does not exist', 'backend.summaries.eventMissing') from None
     return _snapshot_data(event)
 
 
@@ -275,19 +276,19 @@ def _positive_int(value):
 def validate_source(source: dict) -> SummarySource | None:
     """Validate supported shapes without storage reads; resolve immutable temporary text."""
     if not isinstance(source, dict):
-        raise ValueError('Source must be an object')  # noqa: TRY004 — one request-validation error contract
+        raise UiMessageError('Source must be an object', 'backend.summaries.objectSource')  # noqa: TRY004 — one request-validation error contract
     if set(source) == {'text', 'purpose'}:
         text, purpose = source['text'], source['purpose']
         if not isinstance(text, str) or not text.strip() or purpose not in ('selection', 'test'):
-            raise ValueError('Temporary source requires text and a supported purpose')
+            raise UiMessageError('Temporary source requires text and a supported purpose', 'backend.summaries.temporarySource')
         return _resolved(key=None, text=text, purpose=purpose)
     if set(source) == {'session_id', 'line_num'}:
         if not isinstance(source['session_id'], str) or not source['session_id'] or not _positive_int(source['line_num']):
-            raise ValueError('Chat source requires session_id and a positive line_num')
+            raise UiMessageError('Chat source requires session_id and a positive line_num', 'backend.summaries.chatSource')
         return None
     if set(source) == {'event_id'} and _positive_int(source['event_id']):
         return None
-    raise ValueError('Source must specify a chat message, timeline snapshot, or temporary text')
+    raise UiMessageError('Source must specify a chat message, timeline snapshot, or temporary text', 'backend.summaries.sourceShape')
 
 
 def resolve_source(source: dict) -> SummarySource:
@@ -299,10 +300,10 @@ def resolve_source(source: dict) -> SummarySource:
         try:
             session = Session.objects.get(pk=source['session_id'])
         except Session.DoesNotExist:
-            raise ValueError('Source session does not exist') from None
+            raise UiMessageError('Source session does not exist', 'backend.summaries.sessionMissing') from None
         return _chat(session, source['line_num'])
     try:
         event = TimelineEvent.objects.get(pk=source['event_id'])
     except TimelineEvent.DoesNotExist:
-        raise ValueError('Source event does not exist') from None
+        raise UiMessageError('Source event does not exist', 'backend.summaries.eventMissing') from None
     return _snapshot(event)

@@ -32,6 +32,7 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
     // Only pending notices live here. The consumed native snapshot removes them from this page.
     const notices = new Map()
     const readingKey = (readingId, generation) => `${readingId}:${generation}`
+    const messageKey = message => typeof message === 'object' ? JSON.stringify(message) : message
     function present() {
         if (disposed || consuming || pageDocument?.visibilityState === 'hidden') return
         const snapshot = latest, results = snapshot?.results ?? [], error = snapshot?.error
@@ -39,26 +40,26 @@ function createNativeCoordinator(store, { dataStore, workspacesStore, eventTarge
         const messages = new Map()
         for (const result of results) {
             if (result.automatic && result.readingId && result.ended?.ok === false && !result.ended.aborted)
-                messages.set(readingKey(result.readingId, result.generation), result.ended.error)
+                messages.set(readingKey(result.readingId, result.generation), result.ended.uiMessage || result.ended.error)
         }
         const terminal = error?.reading_id ? results.find(result => result.readingId === error.reading_id
             && result.generation === error.generation) : null
         const operationId = error?.operation_id ?? terminal?.operationId
         const handledByControl = operationId && client.handlesOperation?.(operationId)
-        if (error && !handledByControl && !terminal?.ended?.aborted && ![...messages.values()].includes(error.message))
-            messages.set(error.reading_id ? readingKey(error.reading_id, error.generation) : JSON.stringify(error), error.message)
+        if (error && !handledByControl && !terminal?.ended?.aborted && ![...messages.values()].some(message => messageKey(message) === messageKey(error.uiMessage || error.message)))
+            messages.set(error.reading_id ? readingKey(error.reading_id, error.generation) : JSON.stringify(error), error.uiMessage || error.message)
         const previous = [...notices.values()], byMessage = new Map()
         const unownedKey = error && !error.reading_id ? JSON.stringify(error) : null
         const displayed = [...messages].map(([key, message]) => {
             if (!notices.has(key)) {
                 // Session and reading outcomes can describe the same pending failure.
                 // Distinct readings still own distinct failures, even when their text matches.
-                const pending = previous.find(notice => notice.message === message && (key === unownedKey || notice.unowned))
+                const pending = previous.find(notice => messageKey(notice.message) === messageKey(message) && (key === unownedKey || notice.unowned))
                 notices.set(key, { message, unowned: key === unownedKey,
-                    displayed: byMessage.get(message) ?? pending?.displayed ?? Promise.resolve(showError(store, message)) })
+                    displayed: byMessage.get(messageKey(message)) ?? pending?.displayed ?? Promise.resolve(showError(store, message)) })
             }
             const notice = notices.get(key)
-            byMessage.set(message, notice.displayed)
+            byMessage.set(messageKey(message), notice.displayed)
             return notice.displayed
         })
         for (const key of notices.keys()) if (!messages.has(key)) notices.delete(key)

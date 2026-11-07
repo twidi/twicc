@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 // ProjectEditDialog.vue - Dialog for editing/creating projects
@@ -521,7 +522,7 @@ async function commitPendingIcon() {
     }
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        iconError.value = data.error || localUiMessage('project.edit.icon.errors.updateFailed')
+        iconError.value = remoteUiMessage(data, data.error || localUiMessage('project.edit.icon.errors.updateFailed'))
         return false
     }
     store.updateProject(await response.json())
@@ -554,7 +555,7 @@ async function scanIcons() {
     }
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        scanError.value = data.error || localUiMessage('project.edit.icon.errors.scanFailed')
+        scanError.value = remoteUiMessage(data, data.error || localUiMessage('project.edit.icon.errors.scanFailed'))
         scanBusy.value = false
         return
     }
@@ -630,7 +631,7 @@ async function submitCreate({ createDirectory = false } = {}) {
             errorMessage.value = ''
         } else {
             directoryNotFound.value = false
-            errorMessage.value = data.error || localUiMessage('project.edit.errors.createFailed')
+            errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('project.edit.errors.createFailed'))
         }
         isSaving.value = false
         return
@@ -768,7 +769,7 @@ async function handleSave() {
 
         if (!response.ok) {
             const data = await response.json()
-            errorMessage.value = data.error || localUiMessage('project.edit.errors.saveFailed')
+            errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('project.edit.errors.saveFailed'))
             isSaving.value = false
             return
         }

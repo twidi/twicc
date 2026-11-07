@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from asgiref.sync import sync_to_async
 
 from twicc.core.session_availability import aensure_session_id_available
+from twicc.core.ui_messages import ui_message
 from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -753,7 +754,8 @@ class BaseAgentManager:
             return None
         accepted = await asyncio.shield(receipt)
         if not accepted:
-            raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain")
+            raise SendDeliveryError("Message delivery remains unresolved; do not retry", code="send_uncertain",
+                                    ui_message=ui_message("backend.agent.deliveryUnresolved"))
         return accepted
 
     async def _completion_admission_cursor(self, session_id: str) -> int:
@@ -1161,6 +1163,8 @@ class BaseAgentManager:
             "duration_ms": duration_ms,
             "finished_at": datetime.now(UTC).isoformat(),
         }
+        if status == "error" and getattr(agent, "error_ui_message", None) is not None:
+            frame["error_ui_message"] = agent.error_ui_message
         try:
             layer = get_channel_layer()
             if layer is not None:

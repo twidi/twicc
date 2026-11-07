@@ -1,3 +1,4 @@
+import { remoteUiErrors } from '../i18n/remoteMessages.js'
 import { localUiError, localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 import { defineStore } from 'pinia'
 
@@ -62,7 +63,7 @@ export const useMcpStore = defineStore('mcp', {
                     body: JSON.stringify({ action, ...fields }),
                 })
                 const data = await response.json()
-                if (!response.ok) throw data.error ? new Error(data.error) : localUiError('settings.mcp.actionFailed')
+                if (!response.ok) { this.error = remoteUiErrors(data, localUiMessage('settings.mcp.actionFailed')); return false }
                 await pendingRefresh.get(this)
                 await this.refresh()
                 return true

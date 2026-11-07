@@ -30,7 +30,7 @@ sealed interface PlayerSignal {
     data object Resumed : PlayerSignal
     data object Settling : PlayerSignal
     data object AuthorizationLost : PlayerSignal
-    data class Ended(val ok: Boolean, val error: String? = null) : PlayerSignal
+    data class Ended(val ok: Boolean, val error: String? = null, val uiMessage: TtsFrame? = null) : PlayerSignal
 }
 sealed interface TtsCommand {
     data class AttachDocument(val owner: DocumentOwner) : TtsCommand

@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import BinaryIO
 
+from twicc.core.ui_messages import ui_message_text
 import orjson
 
 from twicc.core.services.attachments.inline import repair_name
@@ -97,6 +98,11 @@ class AttachmentError(Exception):
     def __init__(self, code: str, message: str | None = None):
         super().__init__(message or code)
         self.code = code
+        self.ui_message = getattr(message, "ui_message", None)
+
+    def __str__(self) -> str:
+        # Retain presentation metadata when a shared service forwards the message.
+        return self.args[0]
 
 
 # ── Identity ──
@@ -112,7 +118,7 @@ def _validate_key(value: object, what: str) -> str:
         or "\\" in value
         or "\x00" in value
     ):
-        raise AttachmentError(ERROR_INVALID_REF, f"Invalid attachment {what}")
+        raise AttachmentError(ERROR_INVALID_REF, ui_message_text(f"Invalid attachment {what}", 'backend.attachments.invalid_key', {"field": what}))
     return value
 
 
@@ -133,15 +139,15 @@ def validate_ref(raw: object) -> AttachmentRef:
     if isinstance(raw, AttachmentRef):
         raw = {"bucket": raw.bucket, "id": raw.id}
     if not isinstance(raw, dict):
-        raise AttachmentError(ERROR_INVALID_REF, "Attachment ref must be an object")
+        raise AttachmentError(ERROR_INVALID_REF, ui_message_text("Attachment ref must be an object", 'backend.attachments.ref_object'))
     bucket = _validate_key(raw.get("bucket"), "bucket")
     att_id = _validate_key(raw.get("id"), "id")
     try:
         canonical = str(uuid.UUID(att_id))
     except ValueError:
-        raise AttachmentError(ERROR_INVALID_REF, "Attachment id must be a UUID") from None
+        raise AttachmentError(ERROR_INVALID_REF, ui_message_text("Attachment id must be a UUID", 'backend.attachments.id_uuid')) from None
     if canonical != att_id:
-        raise AttachmentError(ERROR_INVALID_REF, "Attachment id must be a canonical UUID")
+        raise AttachmentError(ERROR_INVALID_REF, ui_message_text("Attachment id must be a canonical UUID", 'backend.attachments.id_canonical_uuid'))
     return AttachmentRef(bucket, att_id)
 
 
@@ -268,7 +274,7 @@ def mark_committed(ref: AttachmentRef, at: str) -> None:
     """
     entry = _real_entry_dir(ref)
     if entry is None:
-        raise AttachmentError(ERROR_MISSING, "Attachment not found")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.attachments.not_found'))
     write_marker(entry, COMMITTED_MARKER, {"at": at})
 
 
@@ -286,9 +292,9 @@ def _load_promoted(data: dict) -> PromotedEntry:
             size=int(data["size"]),
         )
     except (KeyError, TypeError, ValueError):
-        raise AttachmentError(ERROR_MISSING, "Invalid promotion record") from None
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Invalid promotion record", 'backend.attachments.invalid_promotion')) from None
     if not promoted.final_path.is_file():
-        raise AttachmentError(ERROR_MISSING, "The promoted file no longer exists")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("The promoted file no longer exists", 'backend.attachments.promoted_missing'))
     return promoted
 
 
@@ -311,7 +317,7 @@ def load_entry(ref: AttachmentRef) -> StagedEntry:
     ref = validate_ref(ref)
     entry = _real_entry_dir(ref)
     if entry is None:
-        raise AttachmentError(ERROR_MISSING, "Attachment not found")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.attachments.not_found'))
 
     promoted_data = _read_json(entry / PROMOTED_MARKER)
     if promoted_data is not None:
@@ -320,19 +326,19 @@ def load_entry(ref: AttachmentRef) -> StagedEntry:
 
     ready = _read_json(entry / READY_MARKER)
     if ready is None:
-        raise AttachmentError(ERROR_NOT_READY, "Upload not complete")
+        raise AttachmentError(ERROR_NOT_READY, ui_message_text("Upload not complete", 'backend.attachments.upload_incomplete'))
     filename, size = ready.get("filename"), ready.get("size")
     if not _is_plain_basename(filename) or not isinstance(size, int) or isinstance(size, bool):
-        raise AttachmentError(ERROR_NOT_READY, "Invalid ready marker")
+        raise AttachmentError(ERROR_NOT_READY, ui_message_text("Invalid ready marker", 'backend.attachments.invalid_ready'))
 
     file_dir = entry / FILE_DIR
     path = file_dir / filename
     try:
         real = Path(os.path.realpath(path))
         if real != path or not real.is_file() or real.stat().st_size != size:
-            raise AttachmentError(ERROR_NOT_READY, "The file does not match its ready marker")
+            raise AttachmentError(ERROR_NOT_READY, ui_message_text("The file does not match its ready marker", 'backend.attachments.ready_mismatch'))
     except OSError:
-        raise AttachmentError(ERROR_NOT_READY, "The file is not readable") from None
+        raise AttachmentError(ERROR_NOT_READY, ui_message_text("The file is not readable", 'backend.attachments.unreadable')) from None
     return StagedEntry(ref, filename, size, path, None)
 
 
@@ -357,15 +363,15 @@ def content_location(entry: StagedEntry) -> Path:
     """
     if entry.promoted is None:
         if entry.path is None:
-            raise AttachmentError(ERROR_MISSING, "Attachment not found")
+            raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.attachments.not_found'))
         return entry.path
     promoted = entry.promoted
     if not _is_plain_basename(promoted.session_id):
-        raise AttachmentError(ERROR_MISSING, "Invalid promotion record")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Invalid promotion record", 'backend.attachments.invalid_promotion'))
     allowed = Path(os.path.realpath(attachments_dir(promoted.session_id)))
     real = Path(os.path.realpath(promoted.final_path))
     if real.parent != allowed or not real.is_file():
-        raise AttachmentError(ERROR_MISSING, "The promoted file is outside its attachments directory")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("The promoted file is outside its attachments directory", 'backend.attachments.promoted_outside'))
     return real
 
 
@@ -518,7 +524,7 @@ def _stage(write: Callable[[BinaryIO], None], name: str, *, bucket: str, origin:
     try:
         repaired = repair_name(name)
     except UnicodeEncodeError:
-        raise AttachmentError(ERROR_STAGE_FAILED, f"Cannot stage {label!r}: the file name is not valid text") from None
+        raise AttachmentError(ERROR_STAGE_FAILED, ui_message_text(f"Cannot stage {label!r}: the file name is not valid text", 'backend.attachments.stage_invalid_name', {"name": repr(label)})) from None
     try:
         ref, entry = _create_oneshot_entry(bucket, origin)
         filename = normalize_filename(repaired, name_max_bytes())
@@ -536,7 +542,7 @@ def _stage(write: Callable[[BinaryIO], None], name: str, *, bucket: str, origin:
         return ref
     except OSError as exc:
         _remove_partial(entry)
-        raise AttachmentError(ERROR_STAGE_FAILED, f"Cannot stage {label!r}: {exc.strerror or exc}") from exc
+        raise AttachmentError(ERROR_STAGE_FAILED, ui_message_text(f"Cannot stage {label!r}: {exc.strerror or exc}", 'backend.attachments.stage_failed', {"name": repr(label), "detail": str(exc.strerror or exc)})) from exc
     except BaseException:
         _remove_partial(entry)
         raise
@@ -586,7 +592,7 @@ def attachments_dir(session_id: str) -> Path:
     Raises :class:`AttachmentError` (``attachment_commit_failed``) for an unsafe session id.
     """
     if not _is_plain_basename(session_id):
-        raise AttachmentError(ERROR_COMMIT_FAILED, "Invalid session id")
+        raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text("Invalid session id", 'backend.attachments.invalid_session_id'))
     return get_artifacts_dir() / session_id / ATTACHMENTS_SUBDIR
 
 
@@ -609,16 +615,16 @@ def _reserve_and_replace(source: Path, directory: Path, names: list[str]) -> Pat
         except FileExistsError:
             continue
         except OSError as exc:
-            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot claim {name!r}: {exc}") from exc
+            raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text(f"Cannot claim {name!r}: {exc}", 'backend.attachments.claim_failed', {"name": repr(name), "detail": str(exc)})) from exc
         os.close(fd)
         try:
             # Only our own empty reservation is replaced: never another writer's file.
             os.replace(source, candidate)
         except OSError as exc:
             _remove_if_empty(candidate)
-            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot place {name!r}: {exc}") from exc
+            raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text(f"Cannot place {name!r}: {exc}", 'backend.attachments.place_failed', {"name": repr(name), "detail": str(exc)})) from exc
         return candidate
-    raise AttachmentError(ERROR_COMMIT_FAILED, "No free file name in the attachments directory")
+    raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text("No free file name in the attachments directory", 'backend.attachments.no_free_name'))
 
 
 def _claim(source: Path, directory: Path, filename: str) -> Path:
@@ -637,9 +643,9 @@ def _claim(source: Path, directory: Path, filename: str) -> Path:
         except OSError as exc:
             if exc.errno in NO_HARD_LINK_ERRNOS:
                 return _reserve_and_replace(source, directory, names[index:])
-            raise AttachmentError(ERROR_COMMIT_FAILED, f"Cannot claim {name!r}: {exc}") from exc
+            raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text(f"Cannot claim {name!r}: {exc}", 'backend.attachments.claim_failed', {"name": repr(name), "detail": str(exc)})) from exc
         return candidate
-    raise AttachmentError(ERROR_COMMIT_FAILED, "No free file name in the attachments directory")
+    raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text("No free file name in the attachments directory", 'backend.attachments.no_free_name'))
 
 
 def _remove_source(path: Path, what: str) -> None:
@@ -698,10 +704,10 @@ def promote_entry(entry: PreparedEntry, session_id: str) -> PromotedEntry:
         real = content_location(source)
         return previous._replace(final_path=real)
     if entry.precopy is None:
-        raise AttachmentError(ERROR_COMMIT_FAILED, "The entry has no prepared source")
+        raise AttachmentError(ERROR_COMMIT_FAILED, ui_message_text("The entry has no prepared source", 'backend.attachments.no_prepared_source'))
     staged = _real_entry_dir(planned.ref)
     if staged is None:
-        raise AttachmentError(ERROR_MISSING, "Attachment not found")
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.attachments.not_found'))
 
     target = attachments_dir(session_id)
     target.mkdir(parents=True, exist_ok=True)

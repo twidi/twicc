@@ -7,6 +7,7 @@ import base64
 import os
 import shutil
 
+from twicc.core.ui_messages import ui_message_text
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 # Mapping of image file extensions to MIME types.
@@ -50,7 +51,7 @@ def get_file_meta(file_path):
     try:
         stat = os.stat(file_path)
     except OSError:
-        return {"error": "Path not found"}
+        return {"error": ui_message_text("Path not found", 'backend.file_content.path_missing')}
     path_type = "directory" if os.path.isdir(file_path) else "file"
     parent_dir = os.path.dirname(file_path)
     writable = os.access(parent_dir, os.W_OK) and os.access(file_path, os.W_OK)
@@ -78,11 +79,11 @@ def get_file_content(file_path):
     try:
         size = os.path.getsize(file_path)
     except OSError:
-        return {"error": "Cannot read file", "size": 0, "binary": False}
+        return {"error": ui_message_text("Cannot read file", 'backend.file_content.read_failed'), "size": 0, "binary": False}
 
     if size > MAX_FILE_SIZE:
         return {
-            "error": f"File too large ({size / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)",
+            "error": ui_message_text(f"File too large ({size / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)", 'backend.file_content.file_too_large', {"size": f"{size / 1024 / 1024:.1f}", "maximum": f"{MAX_FILE_SIZE / 1024 / 1024:.0f}"}),
             "size": size,
             "binary": False,
             "too_large": True,
@@ -98,7 +99,7 @@ def get_file_content(file_path):
             result["image_src"] = image_src
         return result
     except OSError:
-        return {"error": "Cannot read file", "size": size, "binary": False}
+        return {"error": ui_message_text("Cannot read file", 'backend.file_content.read_failed'), "size": size, "binary": False}
 
     writable = os.access(file_path, os.W_OK)
     return {"content": content, "size": size, "binary": False, "writable": writable}
@@ -117,19 +118,19 @@ def write_file_content(file_path, content):
     - Permission / OS errors: returns error
     """
     if not os.path.isfile(file_path):
-        return {"error": "File not found"}
+        return {"error": ui_message_text("File not found", 'backend.file_content.file_missing')}
 
     content_bytes = content.encode("utf-8")
     if len(content_bytes) > MAX_FILE_SIZE:
         return {
-            "error": f"Content too large ({len(content_bytes) / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)"
+            "error": ui_message_text(f"Content too large ({len(content_bytes) / 1024 / 1024:.1f} MB, max {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)", 'backend.file_content.content_too_large', {"size": f"{len(content_bytes) / 1024 / 1024:.1f}", "maximum": f"{MAX_FILE_SIZE / 1024 / 1024:.0f}"})
         }
 
     try:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
     except OSError as e:
-        return {"error": f"Cannot write file: {e}"}
+        return {"error": ui_message_text(f"Cannot write file: {e}", 'backend.file_content.write_file_failed', {"detail": str(e)})}
 
     return {"ok": True}
 
@@ -147,17 +148,17 @@ def create_path(parent_dir, name, kind):
         {"error": str} on failure
     """
     if "/" in name or "\\" in name or not name.strip():
-        return {"error": "Invalid name"}
+        return {"error": ui_message_text("Invalid name", 'backend.file_content.invalid_name')}
 
     if not os.path.isdir(parent_dir):
-        return {"error": "Parent directory not found"}
+        return {"error": ui_message_text("Parent directory not found", 'backend.file_content.parent_missing')}
 
     if not os.access(parent_dir, os.W_OK):
-        return {"error": "Permission denied"}
+        return {"error": ui_message_text("Permission denied", 'backend.file_content.permission_denied')}
 
     new_path = os.path.join(parent_dir, name)
     if os.path.exists(new_path):
-        return {"error": "A file or directory with this name already exists"}
+        return {"error": ui_message_text("A file or directory with this name already exists", 'backend.file_content.name_exists')}
 
     try:
         if kind == "directory":
@@ -166,7 +167,7 @@ def create_path(parent_dir, name, kind):
             with open(new_path, "w", encoding="utf-8") as f:
                 f.write("")
     except OSError as e:
-        return {"error": f"Cannot create: {e}"}
+        return {"error": ui_message_text(f"Cannot create: {e}", 'backend.file_content.create_failed', {"detail": str(e)})}
 
     return {"ok": True, "new_path": new_path}
 
@@ -179,37 +180,37 @@ def move_path(source_path, destination_dir):
         {"error": str} on failure
     """
     if not os.path.exists(source_path):
-        return {"error": "Source not found"}
+        return {"error": ui_message_text("Source not found", 'backend.file_content.source_missing')}
 
     if not os.path.isdir(destination_dir):
-        return {"error": "Destination directory not found"}
+        return {"error": ui_message_text("Destination directory not found", 'backend.file_content.destination_missing')}
 
     source_parent = os.path.dirname(source_path)
     if os.path.realpath(source_parent) == os.path.realpath(destination_dir):
-        return {"error": "Source is already in this directory"}
+        return {"error": ui_message_text("Source is already in this directory", 'backend.file_content.same_directory')}
 
     if not os.access(source_parent, os.W_OK):
-        return {"error": "Permission denied on source directory"}
+        return {"error": ui_message_text("Permission denied on source directory", 'backend.file_content.source_permission_denied')}
 
     if not os.access(destination_dir, os.W_OK):
-        return {"error": "Permission denied on destination directory"}
+        return {"error": ui_message_text("Permission denied on destination directory", 'backend.file_content.destination_permission_denied')}
 
     name = os.path.basename(source_path)
     new_path = os.path.join(destination_dir, name)
     if os.path.exists(new_path):
-        return {"error": f"'{name}' already exists in the destination directory"}
+        return {"error": ui_message_text(f"'{name}' already exists in the destination directory", 'backend.file_content.destination_exists', {"name": name})}
 
     # Prevent moving a directory into itself or a subdirectory of itself
     if os.path.isdir(source_path):
         real_src = os.path.realpath(source_path)
         real_dst = os.path.realpath(destination_dir)
         if real_dst == real_src or real_dst.startswith(real_src + os.sep):
-            return {"error": "Cannot move a directory into itself"}
+            return {"error": ui_message_text("Cannot move a directory into itself", 'backend.file_content.move_into_self')}
 
     try:
         shutil.move(source_path, new_path)
     except OSError as e:
-        return {"error": f"Cannot move: {e}"}
+        return {"error": ui_message_text(f"Cannot move: {e}", 'backend.file_content.move_failed', {"detail": str(e)})}
 
     return {"ok": True, "new_path": new_path}
 
@@ -222,23 +223,23 @@ def rename_path(old_path, new_name):
         {"error": str} on failure
     """
     if not os.path.exists(old_path):
-        return {"error": "Path not found"}
+        return {"error": ui_message_text("Path not found", 'backend.file_content.path_missing')}
 
     if "/" in new_name or "\\" in new_name or not new_name.strip():
-        return {"error": "Invalid name"}
+        return {"error": ui_message_text("Invalid name", 'backend.file_content.invalid_name')}
 
     parent_dir = os.path.dirname(old_path)
     if not os.access(parent_dir, os.W_OK):
-        return {"error": "Permission denied"}
+        return {"error": ui_message_text("Permission denied", 'backend.file_content.permission_denied')}
 
     new_path = os.path.join(parent_dir, new_name)
     if os.path.exists(new_path):
-        return {"error": "A file or directory with this name already exists"}
+        return {"error": ui_message_text("A file or directory with this name already exists", 'backend.file_content.name_exists')}
 
     try:
         os.rename(old_path, new_path)
     except OSError as e:
-        return {"error": f"Cannot rename: {e}"}
+        return {"error": ui_message_text(f"Cannot rename: {e}", 'backend.file_content.rename_failed', {"detail": str(e)})}
 
     return {"ok": True, "new_path": new_path}
 
@@ -251,11 +252,11 @@ def delete_path(file_path):
         {"error": str} on failure
     """
     if not os.path.exists(file_path):
-        return {"error": "Path not found"}
+        return {"error": ui_message_text("Path not found", 'backend.file_content.path_missing')}
 
     parent_dir = os.path.dirname(file_path)
     if not os.access(parent_dir, os.W_OK):
-        return {"error": "Permission denied"}
+        return {"error": ui_message_text("Permission denied", 'backend.file_content.permission_denied')}
 
     try:
         if os.path.isdir(file_path):
@@ -263,6 +264,6 @@ def delete_path(file_path):
         else:
             os.remove(file_path)
     except OSError as e:
-        return {"error": f"Cannot delete: {e}"}
+        return {"error": ui_message_text(f"Cannot delete: {e}", 'backend.file_content.delete_failed', {"detail": str(e)})}
 
     return {"ok": True}

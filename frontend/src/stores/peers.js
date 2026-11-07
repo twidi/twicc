@@ -1,5 +1,10 @@
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { i18n } from '../i18n/index.js'
 import { defineStore, acceptHMRUpdate } from 'pinia'
+
+function browserMessage(message) {
+    return { ...message, errorMessage: remoteUiMessage(message, message.error, 'error_ui_message') }
+}
 
 /**
  * Peers store — peer instances (cross-instance messaging) and their messages.
@@ -46,7 +51,7 @@ export const usePeersStore = defineStore('peers', {
             this.loaded = true
         },
         applyMessages(messages) {
-            this.messages = messages || []
+            this.messages = (messages || []).map(browserMessage)
         },
         upsertPeer(peer) {
             if (!peer?.id) return
@@ -61,6 +66,7 @@ export const usePeersStore = defineStore('peers', {
         },
         upsertMessage(message) {
             if (!message?.id) return
+            message = browserMessage(message)
             const index = this.messages.findIndex(m => m.id === message.id)
             if (index === -1) this.messages.unshift(message)
             else this.messages.splice(index, 1, message)

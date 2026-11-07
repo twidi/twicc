@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+from twicc.core.ui_messages import ui_message
+
 from .exceptions import SendDeliveryError
 from .send_lanes import bind_send_lane
 
@@ -46,8 +48,10 @@ def check_readonly(session_id: str, admission: Admission | None = None, *, creat
     if not known.ephemeral and not pending and not creation:
         return  # An ordinary send to a registered persistent agent remains valid.
     if known.ephemeral:
-        raise SendDeliveryError("Ephemeral sessions cannot receive another message.", code="ephemeral_readonly")
-    raise SendDeliveryError("A session already owns this creation id.", code="agent_starting")
+        raise SendDeliveryError("Ephemeral sessions cannot receive another message.", code="ephemeral_readonly",
+                                ui_message=ui_message("backend.agent.ephemeralReadOnly"))
+    raise SendDeliveryError("A session already owns this creation id.", code="agent_starting",
+                            ui_message=ui_message("backend.agent.creationIdOwned"))
 
 
 def reserve(session_id: str, provider: str, project_id: str, *, ephemeral: bool = True) -> Admission:
@@ -138,6 +142,7 @@ async def finish(admission: Admission | None, *, failed: bool = False) -> None:
                     "provider": admission.provider,
                     "project_id": admission.project_id,
                     "error": "The ephemeral run could not start.",
+                    "ui_message": ui_message("backend.agent.ephemeralStartFailed"),
                 },
             },
         )

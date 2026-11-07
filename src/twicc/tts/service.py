@@ -52,24 +52,25 @@ from twicc.tts.streams import (
     start_stream,
     stream_from_bytes,
 )
+from twicc.core.ui_messages import UiMessageError, ui_message, ui_message_text
 
 logger = logging.getLogger(__name__)
 
-SPEECH_FAILED = "Text-to-speech failed"
+SPEECH_FAILED = ui_message_text("Text-to-speech failed", 'backend.tts.failed')
 # The cache name of a directly read text (no engine ran): never an engine name.
 DIRECT_ENGINE = "direct"
 SUMMARY_ENGINE = "summary"
-NOTHING_TO_SAY = "There is nothing to read aloud in this text"
+NOTHING_TO_SAY = ui_message_text("There is nothing to read aloud in this text", 'backend.tts.nothingToRead')
 
 # The status of a speech that failed upstream (OpenRouter) or in its script: "Failed
 # Dependency". Not 502: Cloudflare (a tunnel in front of TwiCC) replaces an origin's 502
 # and 504 bodies with its own page, and the browser would lose the error message.
 SPEECH_ERROR_STATUS = 424
-NOT_SAVED = "This config is not saved yet: try again"
-NOT_VALIDATED = "This script config is not validated: test it again in the settings"
-NO_SUCH_SCRIPT = "This script config does not exist"
-NO_PCM_RATE = "This script config needs a sample rate for PCM"
-NO_COMMAND = "This script config has no command"
+NOT_SAVED = ui_message_text("This config is not saved yet: try again", 'backend.tts.configNotSaved')
+NOT_VALIDATED = ui_message_text("This script config is not validated: test it again in the settings", 'backend.tts.configNotValidated')
+NO_SUCH_SCRIPT = ui_message_text("This script config does not exist", 'backend.tts.scriptMissing')
+NO_PCM_RATE = ui_message_text("This script config needs a sample rate for PCM", 'backend.tts.pcmRateRequired')
+NO_COMMAND = ui_message_text("This script config has no command", 'backend.tts.commandMissing')
 
 
 class OpenedSpeech(NamedTuple):
@@ -82,17 +83,18 @@ class OpenedSpeech(NamedTuple):
 class SpeechError(Exception):
     """A safe preparation failure, with the existing HTTP status and fields."""
 
-    def __init__(self, message: str, status: int, **extra):
+    def __init__(self, message: str, status: int, *, ui_message: dict | None = None, **extra):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.ui_message = ui_message or getattr(message, "ui_message", None)
         self.extra = extra
 
 
 def _optional_string(data: dict, field: str) -> str:
     value = data.get(field, "")
     if not isinstance(value, str):
-        raise ValueError(f"'{field}' must be a string")  # noqa: TRY004 - the view maps ValueError to 400
+        raise ValueError(ui_message_text(f"'{field}' must be a string", 'backend.tts.fieldString', {"field": field}))  # noqa: TRY004 - the view maps ValueError to 400
     return value.strip()
 
 
@@ -102,7 +104,7 @@ def _speed(value: object) -> float | None:
         return None
     speed = positive_speed(value)
     if speed is None:
-        raise ValueError("'speed' must be a finite positive number")
+        raise UiMessageError("'speed' must be a finite positive number", 'backend.tts.speedNumber')
     return speed
 
 
@@ -110,7 +112,7 @@ def _speech_text(data: dict) -> str:
     """The ``text`` of *data*, kept as is. Raises ``ValueError`` without something to read aloud."""
     text = data.get("text")
     if not isinstance(text, str) or not text.strip():
-        raise ValueError("'text' must be a non-empty string")
+        raise UiMessageError("'text' must be a non-empty string", 'backend.tts.textRequired')
     if not has_speech(text):
         raise ValueError(NOTHING_TO_SAY)
     return text
@@ -122,7 +124,7 @@ def _origin(data: dict) -> str | None:
     if origin is None:
         return None
     if not isinstance(origin, str) or origin not in ORIGINS:
-        raise ValueError(f"'origin' must be one of: {', '.join(ORIGINS)}")
+        raise ValueError(ui_message_text(f"'origin' must be one of: {', '.join(ORIGINS)}", 'backend.tts.originChoices', {"choices": ", ".join(ORIGINS)}))
     return origin
 
 
@@ -133,14 +135,14 @@ def parse_speech_request(data: object) -> SpeechRequest:
     read aloud (a letter or a digit). The other strings are stripped.
     """
     if not isinstance(data, dict):
-        raise ValueError("The body must be a JSON object")  # noqa: TRY004 - the view maps ValueError to 400
+        raise UiMessageError("The body must be a JSON object", 'backend.common.bodyObject')  # noqa: TRY004 - the view maps ValueError to 400
     text = _speech_text(data)
     model = data.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise ValueError("'model' must be a non-empty string")
+        raise UiMessageError("'model' must be a non-empty string", 'backend.tts.modelRequired')
     response_format = data.get("response_format")
     if response_format not in TTS_RESPONSE_FORMATS:
-        raise ValueError(f"'response_format' must be one of: {', '.join(TTS_RESPONSE_FORMATS)}")
+        raise ValueError(ui_message_text(f"'response_format' must be one of: {', '.join(TTS_RESPONSE_FORMATS)}", 'backend.tts.formatChoices', {"choices": ", ".join(TTS_RESPONSE_FORMATS)}))
     return SpeechRequest(
         text=text,
         model=model.strip(),
@@ -162,20 +164,20 @@ def _summary_reference(data: object) -> dict | None:
     live, saved = 'summary_id' in data, 'saved_summary_id' in data
     if not live and not saved:
         if 'summary_result_hash' in data:
-            raise ValueError("'summary_result_hash' requires 'saved_summary_id'")
+            raise UiMessageError("'summary_result_hash' requires 'saved_summary_id'", 'backend.tts.summaryHashRequiresSaved')
         return None
     if (live and saved) or 'text' in data or 'config_id' in data:
-        raise ValueError('A summary needs exactly one reference, without text or a configuration test')
+        raise UiMessageError('A summary needs exactly one reference, without text or a configuration test', 'backend.tts.summaryReference')
     if live:
         handle = data['summary_id']
         if not isinstance(handle, str) or not handle.strip() or 'summary_result_hash' in data:
-            raise ValueError("'summary_id' must be a non-empty handle")
+            raise UiMessageError("'summary_id' must be a non-empty handle", 'backend.tts.summaryHandle')
         return {'id': handle}
     saved_id, result_hash = data['saved_summary_id'], data.get('summary_result_hash')
     if type(saved_id) is not int or saved_id < 1:
-        raise ValueError("'saved_summary_id' must be a positive integer")
+        raise UiMessageError("'saved_summary_id' must be a positive integer", 'backend.tts.summarySavedId')
     if not isinstance(result_hash, str) or re.fullmatch('[0-9a-f]{64}', result_hash) is None:
-        raise ValueError("'summary_result_hash' must be the saved result fingerprint")
+        raise UiMessageError("'summary_result_hash' must be the saved result fingerprint", 'backend.tts.summaryFingerprint')
     return {'saved_id': saved_id, 'result_hash': result_hash}
 
 
@@ -189,17 +191,17 @@ async def open_speech(data: dict, *, _policy: dict | None = None) -> OpenedSpeec
         try:
             summary = _summary_reference(data)
         except ValueError as error:
-            raise SpeechError(str(error), 400)
+            raise SpeechError(str(error), 400, ui_message=getattr(error, "ui_message", None) or getattr(error.args[0] if error.args else None, "ui_message", None))
         if summary is not None:
             if 'saved_id' in summary:
                 try:
                     # One row read captures the exact body and its fingerprint atomically.
                     saved = await sync_to_async(summaries.load_saved_summary)(summary['saved_id'])
                 except MessageSummary.DoesNotExist:
-                    raise SpeechError('The saved summary is no longer available', 404)
+                    raise SpeechError('The saved summary is no longer available', 404, ui_message=ui_message('backend.tts.summarySavedGone'))
                 if saved['result_hash'] != summary['result_hash']:
                     raise SpeechError('The saved summary changed. Refresh it before reading.', 409,
-                                      summary_changed=True, saved_id=summary['saved_id'])
+                                      summary_changed=True, saved_id=summary['saved_id'], ui_message=ui_message('backend.tts.summaryChanged'))
                 summary = saved
             data = {**data, 'text': summary.get('text', 'Summary')}
         if isinstance(data, dict) and data.get("kind") == "script":
@@ -208,11 +210,11 @@ async def open_speech(data: dict, *, _policy: dict | None = None) -> OpenedSpeec
             speech_request = parse_speech_request(data)
             origin = _origin(data)
         except ValueError as error:
-            raise SpeechError(str(error), 400)
+            raise SpeechError(str(error), 400, ui_message=getattr(error, "ui_message", None) or getattr(error.args[0] if error.args else None, "ui_message", None))
         api_key = openrouter_api_key()
         if api_key is None:
             raise SpeechError(
-                f"TWICC_OPENROUTER_API_KEY is not set. Add it to {get_env_path()} and restart TwiCC.", 503
+                ui_message_text(f"TWICC_OPENROUTER_API_KEY is not set. Add it to {get_env_path()} and restart TwiCC.", 'backend.tts.apiKeyRequired', {"path": str(get_env_path())}), 503
             )
         config_id = data.get("config_id")
         if not isinstance(config_id, str) or not config_id:
@@ -258,13 +260,13 @@ async def _open_script_speech(
         text = _speech_text(data)
         origin = _origin(data)
     except ValueError as error:
-        raise SpeechError(str(error), 400)
+        raise SpeechError(str(error), 400, ui_message=getattr(error, "ui_message", None) or getattr(error.args[0] if error.args else None, "ui_message", None))
     script_id = data.get("script_id")
     if not isinstance(script_id, str) or not script_id:
-        raise SpeechError("'script_id' must be a non-empty string", 400)
+        raise SpeechError("'script_id' must be a non-empty string", 400, ui_message=ui_message('backend.tts.scriptId'))
     config_id = data.get("config_id")
     if config_id is not None and config_id != script_id:
-        raise SpeechError("'config_id' must equal 'script_id'", 400)
+        raise SpeechError("'config_id' must equal 'script_id'", 400, ui_message=ui_message('backend.tts.configMatches'))
     # Only an internal native selection supplies this server-read snapshot.
     # HTTP JSON never supplies keyword arguments to open_speech.
     entry = _policy['entry'] if _policy is not None else await sync_to_async(stored_script_config)(script_id)
@@ -343,7 +345,7 @@ async def _open_speech(
     try:
         announcement = _optional_string(data, "announcement")
     except ValueError as error:
-        raise SpeechError(str(error), 400)
+        raise SpeechError(str(error), 400, ui_message=getattr(error, "ui_message", None) or getattr(error.args[0] if error.args else None, "ui_message", None))
     # A settings test never reads nor fills the cache.
     use_cache = data.get("cache") is True and config_id is None
     summary_source = None
@@ -355,7 +357,7 @@ async def _open_speech(
             try:
                 reader = await summaries.acquire_summary_reader(summary['id'])
             except summaries.SummaryGone:
-                raise SpeechError('The summary is no longer available', 410)
+                raise SpeechError('The summary is no longer available', 410, ui_message=ui_message('backend.tts.summaryGone'))
             summary_source = SummaryParts(reader, *limits(speech_request))
             parts = summary_source
         source, adapt_reason, direct = None, None, False
@@ -423,7 +425,7 @@ async def _open_speech(
         if summary_source is not None:
             await summary_source.reader.aclose()
         extra = {} if error.upstream_status is None else {"upstream_status": error.upstream_status}
-        raise SpeechError(error.message, SPEECH_ERROR_STATUS, **extra)
+        raise SpeechError(error.message, SPEECH_ERROR_STATUS, ui_message=error.ui_message, **extra)
     except asyncio.CancelledError:
         # A client disconnect: stop the upstream call.
         release_stream(stream.id, outcome="cancelled")

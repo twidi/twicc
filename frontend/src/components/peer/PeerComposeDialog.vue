@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiErrors } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
 /**
  * PeerComposeDialog — the owner writes a peer message directly.
@@ -104,11 +105,7 @@ watch(() => props.open, (open) => {
 })
 
 function errorText(payload) {
-    const errors = payload?.errors
-    if (Array.isArray(errors) && errors.length) {
-        return errors.map(e => e.message || e.code).join(' — ')
-    }
-    return payload?.error || localUiMessage('peer.compose.errors.request')
+    return remoteUiErrors(payload, localUiMessage('peer.compose.errors.request'))
 }
 
 async function handleSend() {

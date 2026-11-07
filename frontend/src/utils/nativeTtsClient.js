@@ -1,9 +1,24 @@
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../i18n/uiMessages.js'
 import { i18n } from '../i18n/index.js'
 
 import { getAndroidAppClient } from './androidAppClient.js'
 
 const ABORTED = Object.freeze({ ok: false, aborted: true })
 const copy = value => JSON.parse(JSON.stringify(value))
+
+// Keep the native error fields and codes, with a live presentation identity for page consumers.
+function browserFailure(value, field = 'error') {
+    if (!value) return value
+    const uiMessage = remoteUiMessage(value, null)
+    if (!uiMessage) return value
+    return { ...value, uiMessage, get [field]() { return resolveUiMessage(uiMessage) } }
+}
+function browserSnapshot(value) {
+    return { ...value, error: browserFailure(value.error, 'message'),
+        results: value.results?.map(result => ({ ...result,
+            start: browserFailure(result.start), ended: browserFailure(result.ended) })) }
+}
 
 /** A page mirror only. Native owns the socket, arbitration, summary readers, and audio. */
 export function createNativeTtsClient({ appClient, document, timers = globalThis, fetchImpl = (...args) => fetch(...args) }) {
@@ -14,6 +29,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         if (!value || value.version !== 1 || !Number.isSafeInteger(value.revision)) return
         if (snapshot && (value.instanceId !== snapshot.instanceId || value.revision < snapshot.revision
             || value.revision === snapshot.revision && !refresh)) return
+        value = browserSnapshot(value)
         snapshot = value
         for (const [id, entry] of pending) {
             const terminal = value.results?.find(result => result.operationId === id)
@@ -54,7 +70,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         try {
             const response = await appClient.request(`tts.${name}`, args)
             if (attached && mine === epoch) apply(response?.snapshot)
-            return response
+            return response?.error ? { ...response, error: browserFailure(response.error, 'message') } : response
         } catch (error) { return { accepted: false, error: { message: error.message || i18n.global.t('session.speech.errors.unavailable') } } }
     }
     function abortOperations(predicate = () => true) {
@@ -120,7 +136,8 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
                 if (!entry) return
                 if (acceptance?.accepted) { entry.accepted = true; return }
                 pending.delete(operationId)
-                entry.resolve({ ok: false, error: acceptance?.error?.message || i18n.global.t('session.speech.errors.startFailed') })
+                entry.resolve(browserFailure({ ok: false, error: acceptance?.error?.message || i18n.global.t('session.speech.errors.startFailed'),
+                    ...(acceptance?.error?.ui_message ? { ui_message: acceptance.error.ui_message } : {}) }))
                 entry.resolveEnded(ABORTED)
             })
             return Object.assign(result, { operationId })

@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 
 from twicc.agent import SendDeliveryError
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message
 from twicc.core.session_availability import aensure_session_id_available
 from twicc.providers.state import ProviderDisabledError, ensure_provider_running
 from twicc.usage_task import broadcast_usage_updated, get_usage_message_for_connection
@@ -83,14 +84,16 @@ class CodexWSHandler:
         item_id = content.get("item_id")
         request_id = content.get("request_id")
 
-        async def send_error(message: str, code: str) -> None:
+        async def send_error(message: str, code: str, presentation: dict | None = None) -> None:
             await self.consumer.send_json({
                 "type": "error", "code": code, "message": message,
                 "session_id": session_id, "request_id": request_id,
+                **({"ui_message": presentation} if presentation is not None else {}),
             })
 
         if any(not isinstance(value, str) or not value.strip() for value in (session_id, item_id, request_id)):
-            await send_error("Invalid async question dismissal", "async_questions_invalid")
+            await send_error("Invalid async question dismissal", "async_questions_invalid",
+                             ui_message("backend.codex.asyncQuestionDismissalInvalid"))
             return
         try:
             # Dismissing answers the question in the session: refused when its history is unavailable.
@@ -99,13 +102,13 @@ class CodexWSHandler:
             manager = get_agent_manager_registry().get(Provider.CODEX)
             snapshot = await manager.dismiss_async_question(session_id, item_id, request_id=request_id)
         except ProviderDisabledError as exc:
-            await send_error(str(exc), "provider_disabled")
+            await send_error(str(exc), "provider_disabled", getattr(exc, "ui_message", None))
             return
         except SendDeliveryError as exc:
-            await send_error(str(exc), exc.code)
+            await send_error(str(exc), exc.code, getattr(exc, "ui_message", None))
             return
         except RuntimeError as exc:
-            await send_error(str(exc), "session_busy")
+            await send_error(str(exc), "session_busy", getattr(exc, "ui_message", None))
             return
         await self.consumer.send_json({
             "type": "async_question_dismissed", "session_id": session_id,
@@ -144,6 +147,7 @@ class CodexWSHandler:
                 "code": "provider_disabled",
                 "provider": e.provider.value,
                 "message": str(e),
+                **({"ui_message": e.ui_message} if getattr(e, "ui_message", None) is not None else {}),
             })
             return
 

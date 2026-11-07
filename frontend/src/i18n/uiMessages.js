@@ -7,8 +7,15 @@ export function localUiMessage(key, params = {}, count) {
 }
 
 export function resolveUiMessage(message, composer = i18n.global) {
+    if (message?.type === 'local-ui-message-list') {
+        return message.messages.map(item => resolveUiMessage(item, composer)).join(' — ')
+    }
     if (message?.type !== 'local-ui-message') return message
-    return composer.t(message.key, message.params, message.count === undefined ? {} : message.count)
+    const params = Object.fromEntries(Object.entries(message.params || {}).map(([key, value]) => [
+        key, value?.type === 'local-ui-message' || value?.type === 'local-ui-message-list'
+            ? resolveUiMessage(value, composer) : value,
+    ]))
+    return composer.t(message.key, params, message.count === undefined ? {} : message.count)
 }
 
 // Keep the Error contract for callers and retain local message identity for caches.

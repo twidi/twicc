@@ -24,6 +24,7 @@ function compileProtection() {
     .replace(/from (['"])vue-i18n\1/g, `from '${import.meta.resolve('vue-i18n')}'`)
         .replace("from '../../stores/mcp'", `from '${new URL('../../stores/mcp.js', import.meta.url)}'`)
     .replace(/from (['"])\.\.\/\.\.\/i18n\/uiMessages(?:\.js)?\1/g, `from '${new URL('../../i18n/uiMessages.js', import.meta.url)}'`)
+    .replace(/from (['"])\.\.\/\.\.\/i18n\/remoteMessages(?:\.js)?\1/g, `from '${new URL('../../i18n/remoteMessages.js', import.meta.url)}'`)
 }
 const protectionModule = dataModule(compileProtection())
 const { descriptor } = parse(fs.readFileSync(componentUrl, 'utf8'), {

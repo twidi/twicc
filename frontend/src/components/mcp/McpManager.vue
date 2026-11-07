@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 /**
@@ -210,7 +211,7 @@ onBeforeUnmount(() => {
         <McpProtection />
 
         <wa-callout v-if="store.error || store.loadError" variant="danger" size="small">
-            {{ store.error || store.loadError }}
+            {{ resolveUiMessage(store.errorMessage || store.loadErrorMessage) }}
         </wa-callout>
 
         <template v-for="group in groups" :key="group.title">

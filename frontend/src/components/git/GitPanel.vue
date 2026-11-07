@@ -1,6 +1,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 const { t } = useI18n()
 
 import { ref, computed, watch, nextTick, provide, onMounted, onUnmounted, onActivated, onDeactivated, useId } from 'vue'
@@ -406,6 +407,11 @@ const currentFilesData = computed(() => {
 
 /** The raw tree from the API (before filtering). */
 const currentTree = computed(() => currentFilesData.value?.tree ?? null)
+const currentTreeLabel = computed(() => {
+    const tree = currentTree.value
+    if (!tree) return null
+    return resolveUiMessage(remoteUiMessage(tree, tree.name, 'name_ui_message'), { t })
+})
 
 // --- Display options ---
 const showUntracked = ref(true)
@@ -789,7 +795,7 @@ async function fetchDiff(file) {
         const data = await res.json()
 
         if (!res.ok || data.error) {
-            diffError.value = data.error || localUiMessage('git.errors.loadDiff')
+            diffError.value = remoteUiMessage(data, data.error || localUiMessage('git.errors.loadDiff'))
             diffTooLarge.value = !!data.too_large
             diffData.value = null
             return
@@ -870,7 +876,7 @@ async function fetchGitLog() {
                 return
             }
 
-            error.value = data.error || localUiMessage('git.errors.requestStatus', { status: res.status })
+            error.value = remoteUiMessage(data, data.error || localUiMessage('git.errors.requestStatus', { status: res.status }))
             return
         }
 
@@ -1637,6 +1643,7 @@ onMounted(() => {
                         :tree="displayTree"
                         :loading="commitFilesLoading"
                         :root-path="displayTree?.name"
+                        :root-label="currentTreeLabel"
                         :search-fn="doSearch"
                         :lazy-load-fn="null"
                         :project-id="projectId"

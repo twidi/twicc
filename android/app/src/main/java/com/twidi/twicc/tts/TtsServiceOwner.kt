@@ -5,7 +5,7 @@ import java.util.logging.Level
 import java.util.logging.Logger
 
 /** Action names are native UI actions, never credentials or Android Intent payloads. */
-data class TtsActionError(val code: String, val message: String, val action: String? = null)
+data class TtsActionError(val code: String, val message: String, val action: String? = null, val uiMessage: TtsFrame? = null)
 data class Acceptance(val accepted: Boolean, val operationId: String? = null, val error: TtsActionError? = null)
 class TtsActivationSource(val instanceId: String, val name: String, val origin: String,
     val exportCookies: (List<String>, (Result<List<TtsCookie>>) -> Unit) -> Unit)
@@ -157,10 +157,12 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         forget(cache.expire(instanceId))
         return cache.snapshot(instanceId)
     }
-    private fun rejected(code: String, message: String, action: String? = null) = Acceptance(false, error = TtsActionError(code, message, action))
+    private fun rejected(code: String, message: String, action: String? = null, uiMessage: TtsFrame? = null) =
+        Acceptance(false, error = TtsActionError(code, message, action, uiMessage))
     private fun needsWork(value: NativeTtsSnapshot) = value.playback.readingId != null || value.listening != null
 
     /** Public binder commands exclude transport, timer, and player callbacks. */
+    @Suppress("UNCHECKED_CAST")
     fun dispatch(command: TtsCommand): Acceptance {
         if (command is TtsCommand.SwitchInstance && command.instanceId != instanceId) {
             if (active) internal(TtsCommand.AuthorizationLost("The active instance changed."))
@@ -214,7 +216,8 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         }
         val value = snapshot()
         if (command is TtsCommand.Manual && value.playback.operationId != command.operationId)
-            return rejected("unreachable", value.error?.get("message") as? String ?: "Could not reach TwiCC")
+            return rejected("unreachable", value.error?.get("message") as? String ?: "Could not reach TwiCC",
+                uiMessage = value.error?.get("ui_message") as? TtsFrame)
         return Acceptance(true, when (command) {
             is TtsCommand.Manual -> command.operationId
             is TtsCommand.Listen -> value.listening?.activationId

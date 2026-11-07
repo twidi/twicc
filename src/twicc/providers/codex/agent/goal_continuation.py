@@ -18,6 +18,8 @@ from openai_codex.errors import JsonRpcError
 from openai_codex.generated.v2_all import ThreadGoalStatus, TurnSteerParams, TurnSteerResponse
 from openai_codex.models import Notification
 
+from ..provider_errors import CodexUiRuntimeError
+
 # Only explicit server rejections prove that retrying cannot duplicate input.
 _TURN_MISMATCH = re.compile(r"expected active turn id `[^`]+` but found `[^`]+`")
 GOAL_STEER_WAIT_SECONDS = 5.0
@@ -56,7 +58,7 @@ class GoalContinuation:
         rejected_turn = None
         while True:
             if self.closed:
-                raise RuntimeError("Cannot steer: goal continuation has ended")
+                raise CodexUiRuntimeError("Cannot steer: goal continuation has ended", "backend.codex.goalContinuationEnded")
             turn_id = self.state.current_turn()
             if turn_id is not None and turn_id != rejected_turn:
                 try:
@@ -89,9 +91,9 @@ class GoalContinuation:
                         raise
                     rejected_turn = turn_id
             elif self.state.cleared or (self.state.status is not None and self.state.status != ThreadGoalStatus.active):
-                raise RuntimeError("Cannot steer: goal continuation has ended")
+                raise CodexUiRuntimeError("Cannot steer: goal continuation has ended", "backend.codex.goalContinuationEnded")
             if asyncio.get_running_loop().time() >= deadline:
-                raise RuntimeError("Cannot steer: no active goal turn became available in time")
+                raise CodexUiRuntimeError("Cannot steer: no active goal turn became available in time", "backend.codex.goalTurnUnavailable")
             # Read the router's state, not the slower UI stream consumer's handle.
             # This bounded wait creates no orphan blocking worker on cancellation.
             await asyncio.sleep(0.02)

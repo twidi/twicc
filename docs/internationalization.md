@@ -19,7 +19,7 @@ same message keys. Dates, numbers, lists and plurals use the selected language.
 The HTML `lang` attribute follows it too, including Web Awesome controls that
 use the document language.
 
-`docs/i18n-frontend-checklist.md` records the status of the complete file-by-file
+`docs/i18n-checklist.md` records the status of the complete file-by-file
 pass and independent reviews. A clean lint result alone does not establish
 complete interface coverage. Backend-generated literal interface text remains
 an explicit external finding for a backend pass. Long help pages, tips and their
@@ -154,9 +154,9 @@ Run `node --test eslint.i18n.test.js` to check the configured detection scope.
 The existing `src/i18n/index.test.js` also checks catalog key/parameter parity,
 message compilation, fallback and reactive locale changes.
 
-## File-by-file frontend audit
+## File-by-file interface audit
 
-`docs/i18n-frontend-checklist.md` records frontend application sources and their audit states.
+`docs/i18n-checklist.md` records frontend and backend application sources and their audit states.
 Its current working copy stays uncommitted until the complete pass finishes.
 A completed checklist is committed with the validated translations. That commit
 becomes the reference for a later pass. At the start of that pass, uncheck all
@@ -167,9 +167,9 @@ completed audit, never partial progress.
 Find the baseline from Git, not from a date or the current branch tip:
 
 ```bash
-baseline_commit=$(git log -1 --format=%H -- docs/i18n-frontend-checklist.md)
-git diff --name-status --find-renames "$baseline_commit" -- frontend/
-git ls-files --others --exclude-standard -- frontend/
+baseline_commit=$(git log -1 --follow --format=%H -- docs/i18n-checklist.md)
+git diff --name-status --find-renames "$baseline_commit" -- frontend/ src/twicc/ android/
+git ls-files --others --exclude-standard -- frontend/ src/twicc/ android/
 ```
 
 The diff includes committed, staged and unstaged changes since the baseline.
@@ -177,7 +177,8 @@ The second listing identifies untracked files, which the diff cannot show.
 If no completed checklist commit exists, perform the initial full source audit.
 Do not substitute an unrelated commit as the baseline.
 
-Reconcile the current frontend files with the inventory using its scope rules.
+Reconcile the current application sources with the inventory using its scope rules.
+Inspect recorded native transport dependencies too; this is not a complete Android interface audit.
 Add every new in-scope file as unchecked, including new files outside existing source directories.
 Remove deleted entries and update renamed paths. Reassess files whose roles change.
 An absent file is not automatically an omission: deliberate exclusions stay excluded.
@@ -235,8 +236,8 @@ read the whole production file, not only its diff. Check an item only after its
 findings and relevant dependencies are resolved. If a later change invalidates
 a reviewed file or its display dependencies, reopen the affected checks. Add new
 files and account for renamed or removed files before declaring completion.
-Record backend-supplied literal display text as an external finding; do not
-silently mark it translated or alter backend behavior during a frontend pass.
+Follow backend-supplied interface prose to its producer and add semantic presentation metadata.
+Keep provider content and raw external diagnostics separate from TwiCC-owned interface messages.
 
 Before completion, verify catalog key/parameter parity, message compilation,
 official lint, relevant tests, production bundles and browser locale changes.
@@ -258,3 +259,38 @@ translation contracts are unchanged.
 New UI copy should use an English catalog key and a matching Portuguese
 translation. Code, comments and contributor documentation remain English;
 translated catalogs are the exception to the English source convention.
+
+## Backend interface messages
+
+Only messages intended for the browser interface require translation metadata.
+Console logs, terminal output, CLI/MCP responses, prompts and provider/user content remain English or verbatim.
+Long help/tip bodies and JavaScript-free pages remain separate content passes.
+Mixed HTML modules stay in scope for their JavaScript-enabled shells; their deferred bodies stay unchanged.
+
+Backend code does not select the browser locale or translate messages.
+`src/twicc/core/ui_messages.py` creates descriptors containing `key`, `params` and optional `count`.
+Keep the existing English text and machine codes. Add `ui_message` to browser-facing errors.
+For a named display field, add a companion such as `label_ui_message` or `error_ui_message`.
+Shared services can use `ui_message_text()` or `UiMessageError` to retain metadata internally.
+Ordinary CLI/MCP serialization keeps English strings; browser adapters explicitly expose metadata.
+These tagged strings and exceptions preserve metadata through worker serialization.
+
+Frontend `remoteUiMessage()` converts known wire metadata to private local descriptors.
+`remoteUiError()` retains a descriptor on `error.uiMessage`. Resolve messages during rendering
+with `resolveUiMessage()`, including cached errors, notifications and nested validation lists.
+Unknown keys or malformed metadata retain the original English fallback; never display a raw key.
+Keep descriptors through REST, WebSocket events, reconnect snapshots, caches and native transport.
+
+Persist provenance when generated messages survive a reload.
+Peer delivery errors and tool errors retain their descriptor beside the original prose.
+Do not infer provenance by comparing English strings. Clear old metadata when its message changes.
+CLI/MCP projections must omit presentation-only fields, including persisted timeline metadata.
+Existing records without provenance keep their fallback until supported refresh or recomputation rebuilds their metadata.
+
+Discovered command descriptions stay verbatim by product decision, including the
+English defaults "Custom command", "Skill" and "Workflow". Do not add translation
+metadata or database fields for these labels.
+
+Migration `0170_ui_message_provenance` adds peer error provenance only.
+It requires the normal user-controlled migration and backend restart before live use.
+The compute versions refresh historical generated tool-error metadata through normal background computation.

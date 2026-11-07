@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { computed } from 'vue'
 import { useDataStore } from '../../stores/data'
 
@@ -103,7 +104,7 @@ const searchIndexingPercent = computed(() => {
                         :key="detail"
                         class="phase-detail"
                     >
-                        {{ detail }}
+                        {{ resolveUiMessage(detail) }}
                     </p>
                 </div>
 

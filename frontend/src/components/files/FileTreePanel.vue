@@ -1,5 +1,6 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 const { t } = useI18n()
 
 /**
@@ -62,7 +63,7 @@ const props = defineProps({
         default: false,
     },
     error: {
-        type: String,
+        type: [String, Object],
         default: null,
     },
     rootPath: {
@@ -1441,7 +1442,7 @@ defineExpose({
                 <wa-spinner></wa-spinner>
             </div>
             <div v-else-if="!isSearching && error" class="panel-placeholder panel-error">
-                {{ error }}
+                {{ resolveUiMessage(error, { t }) }}
             </div>
             <div v-else-if="!isSearching && !rootPath && !hasExtraTree" class="panel-placeholder">
                 {{ mode === 'git' ? $t('files.search.noChanges') : $t('files.directories.none') }}

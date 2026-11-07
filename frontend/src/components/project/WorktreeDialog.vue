@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { useI18n } from 'vue-i18n'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 const { t } = useI18n()
@@ -214,7 +215,7 @@ async function fetchWorktrees() {
     if (parentProject.value?.id !== projectId) return
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        existingError.value = data.error || localUiMessage('project.worktrees.loadFailed')
+        existingError.value = remoteUiMessage(data, data.error || localUiMessage('project.worktrees.loadFailed'))
         loadingWorktrees.value = false
         return
     }
@@ -392,7 +393,7 @@ async function handleCreate() {
 
     if (!response.ok) {
         const data = await response.json()
-        errorMessage.value = data.error || localUiMessage('project.worktrees.createFailed')
+        errorMessage.value = remoteUiMessage(data, data.error || localUiMessage('project.worktrees.createFailed'))
         isCreating.value = false
         return
     }
@@ -433,7 +434,7 @@ async function handleOpenExisting() {
 
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        existingError.value = data.error || localUiMessage('project.worktrees.openFailed')
+        existingError.value = remoteUiMessage(data, data.error || localUiMessage('project.worktrees.openFailed'))
         isOpening.value = false
         return
     }

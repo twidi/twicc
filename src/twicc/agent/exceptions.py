@@ -16,9 +16,14 @@ class SendDeliveryError(RuntimeError):
     ``hybrid_composer_busy``, and the generic default ``send_failed``.
     """
 
-    def __init__(self, message: str, *, code: str = "send_failed") -> None:
+    def __init__(self, message: str, *, code: str = "send_failed", ui_message: dict | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.ui_message = ui_message if ui_message is not None else getattr(message, "ui_message", None)
+
+    def __str__(self) -> str:
+        # Retain UiMessageText metadata through shared send error boundaries.
+        return self.args[0]
 
 
 class SessionUnavailableError(SendDeliveryError):

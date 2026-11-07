@@ -25,6 +25,7 @@ from twicc.share.display import display_ceiling, filtered_items_qs, is_descendan
 from twicc.share.headers import apply_share_headers
 from twicc.share.html import share_page_response
 from twicc.share.resolver import SharePasswordRequired, password_required_response, resolve_or_404
+from twicc.core.ui_messages import ui_error
 
 
 def _json(data, *, safe=True):
@@ -152,7 +153,7 @@ async def _items(request, token, subagent_id=None):
         return not_ready
     ranges = parse_line_ranges(request.GET.getlist("range"))
     if ranges is None:
-        return _json({"error": "At least one 'range' query parameter is required"}, safe=True)
+        return _json(ui_error("At least one 'range' query parameter is required", 'backend.sharing.rangeRequired'), safe=True)
     qs = filtered_items_qs(session, extra=ranges, **_ceiling_kwargs(ctx, session)).order_by("line_num")
     items = await sync_to_async(list)(qs)
     await aload_current(items)

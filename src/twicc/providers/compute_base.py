@@ -69,7 +69,7 @@ from twicc.core.models import (
     Share,
     ToolResultLink,
 )
-from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
+from twicc.core.session_queries import aggregate_tool_state
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.inline_artifacts.publications import merge_publications
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
@@ -441,6 +441,28 @@ def parse_timestamp_to_datetime(timestamp: str) -> datetime | None:
         return datetime.fromisoformat(timestamp)
     except (ValueError, TypeError):
         return None
+
+
+def tool_error_extra(extra: str | None, error: str | None) -> str | None:
+    """Persist explicit error provenance with the existing structured tool metadata.
+
+    Provider text remains verbatim. Untagged errors and unknown extra formats
+    keep their original value; this does not infer keys from English text.
+    """
+    message = getattr(error, "ui_message", None)
+    if message is None:
+        return extra
+    if extra is None:
+        payload = {}
+    else:
+        try:
+            payload = orjson.loads(extra)
+        except (orjson.JSONDecodeError, TypeError):
+            return extra
+        if not isinstance(payload, dict):
+            return extra
+    payload["error_ui_message"] = message
+    return orjson.dumps(payload).decode()
 
 
 # =============================================================================
@@ -2321,6 +2343,7 @@ class BaseSessionCompute:
                 )
                 if error_override is not None:
                     error = error_override
+                extra = tool_error_extra(extra, error)
                 link, created = ToolResultLink.objects.get_or_create(
                     session_id=session_id,
                     tool_use_line_num=candidate.line_num,
@@ -2352,7 +2375,7 @@ class BaseSessionCompute:
                     session_id=session_id,
                     tool_use_id=tool_use_id,
                 )
-                aggregated = links.aggregate(**TOOL_STATE_ANNOTATIONS)
+                aggregated = aggregate_tool_state(links)
                 line_nums = tuple(
                     links.order_by('tool_result_line_num')
                     .values_list('tool_result_line_num', flat=True)
@@ -3390,6 +3413,7 @@ class BaseSessionCompute:
                 )
                 if error_override is not None:
                     error = error_override
+                extra = tool_error_extra(extra, error)
                 new_key = (tool_result_ref, item.line_num)
                 serialized_link = serialize_tool_result_link(ToolResultLink(
                     session_id=session_id,
@@ -3500,10 +3524,32 @@ class BaseSessionCompute:
                 # backend restart (the agent is gone so
                 # _user_terminated_tool_reason returns None). The live-path value
                 # is the authoritative one; a stale re-compute must not erase it.
-                if serialized['error'] is None and original['error'] is not None:
+                restored_error = serialized['error'] is None and original['error'] is not None
+                if restored_error:
                     serialized['error'] = original['error']
+                    if serialized['extra'] is not None and original['extra'] is not None:
+                        try:
+                            previous_extra = orjson.loads(original['extra'])
+                            current_extra = orjson.loads(serialized['extra'])
+                        except (orjson.JSONDecodeError, TypeError):
+                            pass
+                        else:
+                            if isinstance(previous_extra, dict) and isinstance(current_extra, dict):
+                                message = previous_extra.get('error_ui_message')
+                                if message is not None:
+                                    current_extra['error_ui_message'] = message
+                                    serialized['extra'] = orjson.dumps(current_extra).decode()
                 if serialized['extra'] is None and original['extra'] is not None:
                     serialized['extra'] = original['extra']
+                    if not restored_error:
+                        try:
+                            retained_extra = orjson.loads(serialized['extra'])
+                        except (orjson.JSONDecodeError, TypeError):
+                            pass
+                        else:
+                            if isinstance(retained_extra, dict) and 'error_ui_message' in retained_extra:
+                                del retained_extra['error_ui_message']
+                                serialized['extra'] = orjson.dumps(retained_extra).decode()
                 if serialized != original:
                     serialized['id'] = original_tool_result_links_ids[key]
                     trl_to_update.append(serialized)

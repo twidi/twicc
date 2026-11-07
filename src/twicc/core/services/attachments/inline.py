@@ -17,6 +17,8 @@ import re
 from typing import NamedTuple
 from urllib.parse import unquote
 
+from twicc.core.ui_messages import ui_message_text
+
 MIB = 1024 * 1024
 # Total decoded bytes of the inline files of one request (D5).
 INLINE_MAX_BYTES = 50 * MIB
@@ -33,8 +35,9 @@ INLINE_TOO_LARGE_HINT = (
     "or pass a path the server reads: remote:<absolute path> over --remote, an absolute server path "
     "over the RPC or the MCP."
 )
-PEER_TOO_LARGE_HINT = (
-    "For a larger file, put it on a file storage service and pass its URL in the message text."
+PEER_TOO_LARGE_HINT = ui_message_text(
+    "For a larger file, put it on a file storage service and pass its URL in the message text.",
+    "backend.attachments.peer_large_file_hint",
 )
 
 ERROR_INVALID_DATA_URI = "invalid_data_uri"
@@ -83,7 +86,13 @@ def format_mb(size: int) -> str:
 
 
 def too_large_message(total: int, limit: int, hint: str) -> str:
-    return f"The attached files total {format_mb(total)} of inline data; the limit is {format_mb(limit)}. {hint}"
+    message = f"The attached files total {format_mb(total)} of inline data; the limit is {format_mb(limit)}. {hint}"
+    # Only the peer hint is browser-facing; arbitrary caller hints remain verbatim.
+    if getattr(hint, "ui_message", None) is not None:
+        return ui_message_text(message, "backend.attachments.peer_too_large", {
+            "size": format_mb(total), "limit": format_mb(limit),
+        })
+    return message
 
 
 class InlineBudget:

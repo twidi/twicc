@@ -632,7 +632,8 @@ def peer_message_text(message) -> str:
     return (message.payload or {}).get("text", "") or ""
 
 
-def serialize_peer_message(message, *, include_payload=False, include_attachments=True, effective_project=None):
+def serialize_peer_message(message, *, include_payload=False, include_attachments=True, effective_project=None,
+                           include_ui_messages=False):
     """Peer-message serializer. Summary form by default: base64 entries must never
     transit the channel layer, and a summary row has its payload deferred. Only
     the REST detail endpoint passes ``include_payload=True``.
@@ -730,6 +731,8 @@ def serialize_peer_message(message, *, include_payload=False, include_attachment
         "resolved_at": message.resolved_at.isoformat() if message.resolved_at else None,
         "purged": message.purged_at is not None,
     }
+    if include_ui_messages:
+        data["error_ui_message"] = message.error_ui_message
     if include_payload:
         # Only a full row (``peer_message_full_queryset``) reaches the bytes branch.
         data["payload"] = (message.payload or {}) if include_attachments else {

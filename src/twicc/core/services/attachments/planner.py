@@ -15,6 +15,7 @@ import asyncio
 import mimetypes
 from pathlib import Path
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.services.attachments import images
 from twicc.core.services.attachments.images import HEAD_BYTES, base64_size, head_opens_as_raster, sniff_image_format
 from twicc.core.services.attachments.staging import ERROR_MISSING, AttachmentError, load_entry, validate_ref
@@ -148,7 +149,12 @@ def describe_attachment_error(exc: AttachmentError) -> tuple[str, str, tuple[str
     names = tuple(getattr(exc, "names", ()) or ())
     message = str(exc)
     if names:
-        message = f"{message}: {', '.join(names)}"
+        metadata = getattr(message, "ui_message", None)
+        text = f"{message}: {', '.join(names)}"
+        if metadata is not None and metadata["key"] == "backend.attachments.ephemeral_native_only":
+            message = ui_message_text(text, "backend.attachments.ephemeral_native_names", {"names": ', '.join(names)})
+        else:
+            message = text
     return exc.code, message, names
 
 
@@ -232,7 +238,7 @@ def plan_attachments(refs: tuple[AttachmentRef, ...], target: PlanTarget, *, tex
     if not refs:
         return AttachmentPlan(target, ())
     if _is_refused_command(target, text):
-        raise AttachmentPlanError(ERROR_WITH_COMMAND, "Attachments cannot be sent with a command")
+        raise AttachmentPlanError(ERROR_WITH_COMMAND, ui_message_text("Attachments cannot be sent with a command", 'backend.attachments.with_command'))
 
     policy = _policy(target)
     third_party = target.platform == PLATFORM_THIRD_PARTY
@@ -275,7 +281,7 @@ def plan_attachments(refs: tuple[AttachmentRef, ...], target: PlanTarget, *, tex
         names = tuple(e.name for e in planned if e.mode == MODE_FILE)
         if names:
             raise AttachmentPlanError(
-                ERROR_REQUIRES_ARTIFACTS, "Ephemeral sessions only accept native attachments", names=names
+                ERROR_REQUIRES_ARTIFACTS, ui_message_text("Ephemeral sessions only accept native attachments", 'backend.attachments.ephemeral_native_only'), names=names
             )
     return AttachmentPlan(target, tuple(planned))
 
@@ -291,7 +297,7 @@ async def plan_attachments_off_loop(
     try:
         return await asyncio.to_thread(plan_attachments, refs, target, text=text)
     except OSError as exc:
-        raise AttachmentError(ERROR_MISSING, "Attachment not found") from exc
+        raise AttachmentError(ERROR_MISSING, ui_message_text("Attachment not found", 'backend.attachments.not_found')) from exc
 
 
 # ── Frame shape (spec §6.6, §8) ──
@@ -312,20 +318,20 @@ def validate_attachment_frame(payload: dict) -> tuple[AttachmentRef, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "attachments must be a list")
+        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, ui_message_text("attachments must be a list", 'backend.attachments.list_required'))
     if not raw:
         return ()
     if any(payload.get(field) for field in _LEGACY_FIELDS):
-        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "attachments cannot be combined with images or documents")
+        raise AttachmentError(ERROR_INVALID_ATTACHMENTS, ui_message_text("attachments cannot be combined with images or documents", 'backend.attachments.legacy_conflict'))
     refs: list[AttachmentRef] = []
     for item in raw:
         if not isinstance(item, dict):
-            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "Each attachment must be an object")
+            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, ui_message_text("Each attachment must be an object", 'backend.attachments.object_required'))
         try:
             ref = validate_ref(item)
         except AttachmentError as exc:
             raise AttachmentError(ERROR_INVALID_ATTACHMENTS, str(exc)) from None
         if ref in refs:
-            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, "The same attachment is listed twice")
+            raise AttachmentError(ERROR_INVALID_ATTACHMENTS, ui_message_text("The same attachment is listed twice", 'backend.attachments.duplicate'))
         refs.append(ref)
     return tuple(refs)

@@ -1,4 +1,5 @@
 <script setup>
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t, locale } = useI18n()
 /**
@@ -110,7 +111,7 @@ async function act(action) {
             <div class="mcp-detail__client">{{ entry.client_name || $t('mcp.connection.externalClient') }}</div>
 
             <wa-callout v-if="store.error || store.loadError" variant="danger" size="small">
-                {{ store.error || store.loadError }}
+                {{ resolveUiMessage(store.errorMessage || store.loadErrorMessage) }}
             </wa-callout>
 
             <template v-if="review">

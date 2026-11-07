@@ -14,6 +14,7 @@ from django.db.models import Q
 from django.utils import timezone
 from mcp.server.auth.provider import TokenError
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.models import McpConnection, McpEventSubscription, McpOAuthCredential, McpOAuthRequest
 from twicc.providers.db_writer import run_under_db_write_lock
 
@@ -127,13 +128,13 @@ def decide(request_id, approve, code, name):
     with transaction.atomic():
         row = McpOAuthRequest.objects.filter(pk=request_id, state="pending", expires_at__gt=timezone.now()).first()
         if row is None:
-            return False, "Request is no longer pending."
+            return False, ui_message_text('Request is no longer pending.', 'backend.mcp.requestExpired')
         if approve and not hmac.compare_digest(row.verification_hash, digest(code.strip().upper())):
             row.attempts += 1
             if row.attempts >= 5:
                 row.state = "refused"
             row.save(update_fields=["attempts", "state"])
-            return False, "Verification code does not match."
+            return False, ui_message_text('Verification code does not match.', 'backend.mcp.verificationMismatch')
         if approve:
             row.connection = McpConnection.objects.create(
                 id=secrets.token_urlsafe(24),

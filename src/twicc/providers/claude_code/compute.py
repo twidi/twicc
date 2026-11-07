@@ -23,6 +23,7 @@ from twicc.core.content_storage.readers import load_current, effective_current, 
 from twicc.context_injection import ATTACHMENTS_KEY, GOAL_CLEAR_ARGS, INSTRUCTION_BLOCK_MARKER
 from twicc.core.services.attachments.types import UserTextSlot
 from twicc.core.enums import ItemKind, Provider
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.models import (
     AgentInteraction,
     AgentInteractionKind,
@@ -2176,14 +2177,14 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                 if stripped.startswith('<tool_use_error>') and stripped.endswith('</tool_use_error>'):
                     error_text = (
                         stripped[len('<tool_use_error>'):-len('</tool_use_error>')].strip()
-                        or 'Unknown error'
+                        or ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
                     )
                 elif stripped.startswith('Exit code '):
                     error_text = stripped.split('\n', 1)[0]
                 else:
-                    error_text = stripped or 'Unknown error'
+                    error_text = stripped or ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
             else:
-                error_text = 'Unknown error'
+                error_text = ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
 
         return ToolResultInfo(
             tool_use_id=tool_use_id,
@@ -3110,13 +3111,13 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
                             if isinstance(error_content, str):
                                 stripped = error_content.strip()
                                 if stripped.startswith('<tool_use_error>') and stripped.endswith('</tool_use_error>'):
-                                    first_tool_result_error = stripped[len('<tool_use_error>'):-len('</tool_use_error>')].strip() or 'Unknown error'
+                                    first_tool_result_error = stripped[len('<tool_use_error>'):-len('</tool_use_error>')].strip() or ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
                                 elif stripped.startswith('Exit code '):
                                     first_tool_result_error = stripped.split('\n', 1)[0]
                                 else:
-                                    first_tool_result_error = stripped or 'Unknown error'
+                                    first_tool_result_error = stripped or ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
                             else:
-                                first_tool_result_error = 'Unknown error'
+                                first_tool_result_error = ui_message_text('Unknown error', 'backend.claude.unknown_tool_error')
 
             # Resolve error sentinel
             tool_result_error = None if first_tool_result_error is ... else first_tool_result_error

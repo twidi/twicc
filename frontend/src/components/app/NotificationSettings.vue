@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 
@@ -153,11 +154,11 @@ async function testExternalTarget(index) {
         })
         const data = await response.json()
         if (!response.ok) {
-            error = data?.error || localUiMessage('settings.notifications.status.requestFailed', { status: response.status })
+            error = remoteUiMessage(data, data?.error || localUiMessage('settings.notifications.status.requestFailed', { status: response.status }))
         } else {
             const result = data.results?.[0]
             ok = !!result?.ok
-            error = result?.error || null
+            error = remoteUiMessage(result, result?.error || null)
         }
     } catch (e) {
         error = e?.uiMessage || e?.message || localUiMessage('settings.notifications.status.networkError')

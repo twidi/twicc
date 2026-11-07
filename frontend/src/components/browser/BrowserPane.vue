@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage, remoteUiError } from '../../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
@@ -874,7 +876,7 @@ async function putProjectBrowserUrls(projectId, entries) {
     })
     if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || t('browser.savedUrls.errors.saveStatus', { status: response.status }))
+        throw remoteUiError(data, data.error || t('browser.savedUrls.errors.saveStatus', { status: response.status }))
     }
     store.updateProject(await response.json())
 }
@@ -945,7 +947,7 @@ async function submitSave() {
         )
         if (saveDialogRef.value) saveDialogRef.value.open = false
     } catch (e) {
-        saveError.value = e.message || t('browser.savedUrls.errors.save')
+        saveError.value = e.uiMessage || e.message || t('browser.savedUrls.errors.save')
     }
 }
 
@@ -1039,7 +1041,7 @@ async function removeSavedUrl(opt) {
     try {
         await applyLevelEntries(level.key, removeBrowserUrlEntry(level.entries, opt.url))
     } catch (e) {
-        saveError.value = e.message || t('browser.savedUrls.errors.remove')
+        saveError.value = e.uiMessage || e.message || t('browser.savedUrls.errors.remove')
     }
 }
 
@@ -1051,7 +1053,7 @@ async function makeDefaultSavedUrl(opt) {
     try {
         await applyLevelEntries(level.key, setDefaultBrowserUrlEntry(level.entries, opt.url))
     } catch (e) {
-        saveError.value = e.message || t('browser.savedUrls.errors.setDefault')
+        saveError.value = e.uiMessage || e.message || t('browser.savedUrls.errors.setDefault')
     }
 }
 </script>
@@ -1331,17 +1333,17 @@ async function makeDefaultSavedUrl(opt) {
 
         <wa-callout v-if="saveError" variant="danger" size="small" class="browser-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            {{ saveError }}
+            {{ resolveUiMessage(saveError) }}
         </wa-callout>
 
         <wa-callout v-if="probeResult" variant="warning" size="small" class="browser-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <template v-if="probeResult.reachable === false">
-                {{ $t('browser.errors.serverUnreachable', { reason: probeResult.reason }) }}
+                {{ $t('browser.errors.serverUnreachable', { reason: resolveUiMessage(remoteUiMessage(probeResult, probeResult.reason, 'reason_ui_message')) }) }}
             </template>
             <template v-else>
                 <i18n-t keypath="browser.errors.embeddingRefused" scope="global">
-                    <template #reason>{{ probeResult.reason }}</template>
+                    <template #reason>{{ resolveUiMessage(remoteUiMessage(probeResult, probeResult.reason, 'reason_ui_message')) }}</template>
                     <template #guide><a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">{{ $t('browser.help.guide') }}</a></template>
                 </i18n-t>
                 <div class="agent-instructions-actions">
@@ -1483,7 +1485,7 @@ async function makeDefaultSavedUrl(opt) {
                     :checked="saveMakeDefault"
                     @change="saveMakeDefault = $event.target.checked"
                 >{{ $t('browser.savedUrls.makeDefault') }}</wa-checkbox>
-                <wa-callout v-if="saveError" variant="danger" size="small">{{ saveError }}</wa-callout>
+                <wa-callout v-if="saveError" variant="danger" size="small">{{ resolveUiMessage(saveError) }}</wa-callout>
             </form>
             <div slot="footer" class="save-dialog-footer">
                 <wa-button variant="neutral" appearance="outlined" size="small" @click="closeSaveDialog">{{ $t('common.actions.cancel') }}</wa-button>

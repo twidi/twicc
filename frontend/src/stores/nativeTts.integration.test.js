@@ -8,6 +8,7 @@ import { useTimelineFiltersStore } from './timelineFilters.js'
 import { setSpeechPlayerFactory } from '../utils/speechPlayer.js'
 import { setPcmStreamPlayerFactory } from '../utils/pcmStreamPlayer.js'
 import { createNativeTtsClient } from '../utils/nativeTtsClient.js'
+import * as uiMessages from '../i18n/uiMessages.js'
 beforeEach(() => { setActivePinia(createPinia()); _resetSpeechForTests(); setSpeechPlayerFactory(() => assert.fail('native cannot create HTMLAudio')); setPcmStreamPlayerFactory(() => assert.fail('native cannot create AudioContext')) })
 test('displayed native errors are consumed before reload, including after a successful new reading', async () => {
     const audioError = 'Audio playback was interrupted.'
@@ -283,7 +284,7 @@ test('real selection summary reserves native with no descriptor before page acqu
     const Body = compileComponent(new URL('../components/session/detail/SelectionSummaryBody.vue', import.meta.url), {
         '../../../stores/summaries': { useSummariesStore: () => summaries }, '../../../stores/settings': { useSettingsStore: () => settings },
         '../../../stores/textToSpeech': { useTextToSpeechStore: () => tts }, '../../../composables/useTemporarySummaryGeneration': temporaryGeneration,
-        '../../../composables/useToast': { toast }, '../../ui/MarkdownContent.vue': { setup: () => () => Vue.h('markdown') },
+        '../../../composables/useToast': { toast }, '../../../i18n/uiMessages.js': uiMessages, '../../ui/MarkdownContent.vue': { setup: () => () => Vue.h('markdown') },
         '../../ui/SummaryGenerationLinks.vue': { setup: () => () => Vue.h('links') }, '../../ui/TextToSpeechButton.vue': Button,
     })
     const { renderer, root } = makeRenderer(), text = 'Captured source selection. '.repeat(30)

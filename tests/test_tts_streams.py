@@ -495,7 +495,7 @@ def test_a_cancelled_pump_task_settles_ready():
         await _within(reader)
         assert pump.cancelled
         assert stream._task.cancelled()
-        assert ending_of(stream.id) == {"state": "failed", "error": "Text-to-speech stopped"}
+        assert ending_of(stream.id) == {"state": "failed", "error": "Text-to-speech stopped", "ui_message": {"key": "backend.tts.stopped", "params": {}}}
 
     asyncio.run(scenario())
 
@@ -513,7 +513,7 @@ def test_a_task_cancelled_before_its_first_step_ends_the_stream(streams_log):
         await _within(reader)
         assert stream._task.cancelled()
         assert not pump.cancelled  # the pump never started
-        assert ending_of(stream.id) == {"state": "failed", "error": "Text-to-speech stopped"}
+        assert ending_of(stream.id) == {"state": "failed", "error": "Text-to-speech stopped", "ui_message": {"key": "backend.tts.stopped", "params": {}}}
 
     asyncio.run(scenario())
     [line] = _speech_lines(streams_log)
@@ -935,7 +935,7 @@ def test_a_later_part_with_another_type_fails_the_stream():
         stream.begin_part()
         assert stream.add_part_headers("audio/pcm;rate=24000;channels=1", None) is False
         assert stream.state == "failed"
-        assert ending_of(stream.id) == {"state": "failed", "error": PART_TYPE_CHANGED}
+        assert ending_of(stream.id) == {"state": "failed", "error": PART_TYPE_CHANGED, "ui_message": {"key": "backend.tts.partFormatChanged", "params": {}}}
         assert stream.generation_ids == ["g1"]
 
     asyncio.run(scenario())

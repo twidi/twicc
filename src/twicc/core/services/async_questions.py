@@ -8,6 +8,7 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import NamedTuple
 
+from twicc.core.ui_messages import UiMessageError
 from django.db import transaction
 
 from twicc.core.enums import Provider
@@ -44,7 +45,7 @@ def _session(session_id: str, *, mutation: bool = False) -> Session | None:
         or session.parent_session_id
     ):
         if mutation:
-            raise ValueError("async_questions_invalid")
+            raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
         return None
     return session
 
@@ -172,19 +173,19 @@ def prepare_question_send(
     """Persist immutable admission before delivery; keep questions unresolved."""
     session = _session(session_id, mutation=True)
     if not isinstance(request_id, str) or not request_id.strip() or origin not in ("human", "agent", "internal"):
-        raise ValueError("async_questions_invalid")
+        raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
     current = _state(session_id)
     stored = current["facts"].get(f"send:{request_id}")
     if stored is not None:
         # Retry returns stored final text. Never format it a second time.
         data = deepcopy(stored["data"])
         if data.get("not_admitted"):
-            raise ValueError("async_questions_not_admitted")
+            raise UiMessageError("async_questions_not_admitted", "backend.questions.not_admitted")
         return PreparedQuestionSend(data["text"], data)
     snapshot = _snapshot(session, current)
     answers = validate_question_answers(snapshot, response)
     if response is not None and origin != "human":
-        raise ValueError("async_questions_invalid")
+        raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
     final_text = format_question_answers(snapshot["batches"], answers, text)
     boundary = build_question_boundary(
         current,
@@ -233,13 +234,13 @@ def accept_question_send(session_id: str, submission: dict) -> dict:
     session = _session(session_id, mutation=True)
     current = _state(session_id)
     if not isinstance(submission, dict) or not isinstance(submission.get("request_id"), str):
-        raise ValueError("async_questions_invalid")  # noqa: TRY004 - Public API requires ValueError.
+        raise UiMessageError("async_questions_invalid", "backend.questions.invalid")  # noqa: TRY004 - Public API requires ValueError.
     stored = current["facts"].get(f"send:{submission['request_id']}")
     status = submission.get("status", "accepted")
     if status == "prepared":
         status = "accepted"
     if stored is None or status not in ("accepted", "rejected", "uncertain"):
-        raise ValueError("async_questions_invalid")
+        raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
     if stored["data"].get("status") == "accepted" and status != "accepted":
         # Late failure evidence cannot undo delivered identity or its route.
         return _snapshot(session, current)
@@ -258,17 +259,17 @@ def dismiss_question_batch(session_id: str, item_id: str, *, request_id: str) ->
     session = _session(session_id, mutation=True)
     current = _state(session_id)
     if not isinstance(request_id, str) or not request_id.strip() or not isinstance(item_id, str) or not item_id.strip():
-        raise ValueError("async_questions_invalid")
+        raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
     prior = current["facts"].get(f"dismiss:{request_id}")
     if prior is not None:
         if prior["data"]["batch_ids"] != [item_id]:
-            raise ValueError("async_questions_invalid")
+            raise UiMessageError("async_questions_invalid", "backend.questions.invalid")
         return _snapshot(session, current)
     batch = current["batches"].get(item_id)
     if batch is not None and batch["status"] in {"sent", "dismissed"}:
         return _snapshot(session, current)
     if batch is None or batch["status"] != "ready":
-        raise ValueError("async_questions_stale")
+        raise UiMessageError("async_questions_stale", "backend.questions.stale")
     fact = QuestionFact(
         f"dismiss:{request_id}",
         "dismiss",

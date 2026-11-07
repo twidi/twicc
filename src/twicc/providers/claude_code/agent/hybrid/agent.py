@@ -35,6 +35,7 @@ from twicc.agent.completion_types import CompletionSnapshot, NativeMessageRef
 from twicc.agent.exceptions import SendDeliveryError
 from twicc.agent.states import AgentInfo, AgentState, PendingRequest
 from twicc.core.enums import Provider
+from twicc.core.ui_messages import ui_message, ui_message_text
 from twicc.core.services.attachments.manifest import build_manifest
 from twicc.core.services.attachments.planner import ERROR_WITH_COMMAND, is_hybrid_command
 from twicc.core.services.attachments.staging import ERROR_COMMIT_FAILED
@@ -378,6 +379,11 @@ class HybridClaudeAgent(BaseAgent):
             )
             if self.state != AgentState.DEAD:
                 self.error = f"First paste failed: {e}"
+                self.error_ui_message = (
+                    getattr(e, "ui_message", None)
+                    or (getattr(e.args[0], "ui_message", None) if e.args else None)
+                    or ui_message("backend.claude.first_paste_failed", {"diagnostic": str(e)})
+                )
                 self.kill_reason = "startup-failed"
                 await asyncio.to_thread(hybrid_tmux.kill_session, self.session_id)
                 await self._transition_to_dead()
@@ -507,6 +513,7 @@ class HybridClaudeAgent(BaseAgent):
                     "composer — resolve it in the Claude CLI terminal, then "
                     "send again.",
                     code="hybrid_composer_busy",
+                    ui_message=ui_message("backend.claude.hybrid_composer_busy"),
                 )
             self._completion_input_settled(completion_token, "accepted")
             self.last_activity = time.time()
@@ -649,6 +656,7 @@ class HybridClaudeAgent(BaseAgent):
         if is_hybrid_command(content.user_text):
             raise SendDeliveryError(
                 "Attachments cannot be sent with a command", code=ERROR_WITH_COMMAND,
+                ui_message=ui_message("backend.claude.attachments_with_command"),
             )
 
     async def _check_reference_dir(self, content: AttachmentContent) -> Path | None:
@@ -670,6 +678,7 @@ class HybridClaudeAgent(BaseAgent):
                 "references do not support. Send the files from a non-hybrid session, or "
                 "use a data directory without whitespace.",
                 code=ERROR_COMMIT_FAILED,
+                ui_message=ui_message("backend.claude.attachment_path_whitespace", {"path": str(hybrid_dir)}),
             )
         return hybrid_dir
 
@@ -688,7 +697,9 @@ class HybridClaudeAgent(BaseAgent):
         entries = content.manifest.entries
         inline_indexes = [index for index, entry in enumerate(entries) if entry.mode == "inline"]
         if len(inline_indexes) != len(content.native_parts):
-            raise ValueError("The native parts do not match the inline manifest entries")
+            raise ValueError(ui_message_text(
+                "The native parts do not match the inline manifest entries", "backend.claude.native_manifest_mismatch",
+            ))
         hybrid_dir = await self._check_reference_dir(content)
 
         def _write_all() -> tuple[str | None, ...]:

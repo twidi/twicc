@@ -38,6 +38,7 @@ import orjson
 
 from twicc.atomic_json import atomic_write_json
 from twicc.paths import get_uploads_dir
+from twicc.core.ui_messages import ui_message_text
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,10 @@ def update_metadata(upload_id: str, **changes: object) -> dict:
     if "state" in changes and changes["state"] != current["state"]:
         for field in _FINALIZE_ERROR_FIELDS:
             meta[field] = None
+    if "error" in changes:
+        meta["error_ui_message"] = getattr(changes["error"], "ui_message", None)
+    elif "state" in changes and changes["state"] != current["state"]:
+        meta.pop("error_ui_message", None)
     meta.update(changes)
     if meta.get("error") is None and (
         meta.get("finalize_error_code") is not None or meta.get("finalize_failed_at") is not None
@@ -622,7 +627,7 @@ def mark_staging_lost(upload_id: str) -> WriteOutcome:
     (``507`` for disk full, else ``500``) and writes nothing.
     """
     try:
-        meta = update_metadata(upload_id, state=STATE_FAILED, error="staging file lost")
+        meta = update_metadata(upload_id, state=STATE_FAILED, error=ui_message_text("staging file lost", 'backend.uploads.stagingLost'))
     except Exception as exc:
         logger.warning("Upload %s: cannot write the 'failed' state", upload_id, exc_info=True)
         return WriteOutcome(None, failure_code(exc))
@@ -669,8 +674,8 @@ def cancel_upload(upload_id: str) -> WriteOutcome:
     return _end_active_upload(upload_id, state=STATE_CANCELLED)
 
 
-ERROR_EXPIRED = "expired"
-ERROR_RECOVERY_FAILED = "recovery failed"
+ERROR_EXPIRED = ui_message_text("expired", 'backend.uploads.expired')
+ERROR_RECOVERY_FAILED = ui_message_text("recovery failed", 'backend.uploads.recoveryFailed')
 
 
 def expire_active_upload(upload_id: str) -> WriteOutcome:
@@ -731,7 +736,7 @@ _NO_HARD_LINK_ERRNOS = frozenset({errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, 
 _NEW_FILE_MODE = 0o666
 _NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY
 
-ERROR_STAGING_LOST = "staging file lost"
+ERROR_STAGING_LOST = ui_message_text("staging file lost", 'backend.uploads.stagingLost')
 
 
 def temp_file_path(upload_id: str, target_dir: str) -> str:
@@ -813,11 +818,11 @@ def _mapped_failure(exc: BaseException, target_dir: str) -> _PreCommitFailure:
     """Map an error of the copy, the link loop or the reserve loop (§5.6 step 4.4)."""
     if is_target_refusal(exc, target_dir):
         if not os.path.isdir(target_dir):
-            return _PreCommitFailure(422, "The target directory no longer exists")
-        return _PreCommitFailure(422, f"The target directory refuses the file: {_os_error_message(exc)}")
+            return _PreCommitFailure(422, ui_message_text("The target directory no longer exists", 'backend.uploads.targetGone'))
+        return _PreCommitFailure(422, ui_message_text(f"The target directory refuses the file: {_os_error_message(exc)}", 'backend.uploads.targetRefusedDetail', {"detail": _os_error_message(exc)}))
     if is_disk_full(exc):
-        return _PreCommitFailure(507, "Not enough disk space in the target directory")
-    return _PreCommitFailure(500, f"Unexpected error: {_os_error_message(exc)}")
+        return _PreCommitFailure(507, ui_message_text("Not enough disk space in the target directory", 'backend.uploads.targetDiskSpace'))
+    return _PreCommitFailure(500, ui_message_text(f"Unexpected error: {_os_error_message(exc)}", 'backend.uploads.unexpectedDetail', {"detail": _os_error_message(exc)}))
 
 
 class _Placement(NamedTuple):
@@ -842,7 +847,7 @@ def _copy_to_temp(part: str, tmp: str, target_dir: str, size: int) -> None:
     except OSError as exc:
         raise _mapped_failure(exc, target_dir) from exc
     if free < size:
-        raise _PreCommitFailure(507, "Not enough disk space in the target directory")
+        raise _PreCommitFailure(507, ui_message_text("Not enough disk space in the target directory", 'backend.uploads.targetDiskSpace'))
     # Never write through a leftover: it may be hard-linked to a final name.
     try:
         os.unlink(tmp)
@@ -854,7 +859,7 @@ def _copy_to_temp(part: str, tmp: str, target_dir: str, size: int) -> None:
         source = open(part, "rb")
     except OSError as exc:
         # The source, not the target: disk full or unexpected, never a refusal.
-        raise _PreCommitFailure(failure_code(exc), f"Cannot read the staging file: {_os_error_message(exc)}") from exc
+        raise _PreCommitFailure(failure_code(exc), ui_message_text(f"Cannot read the staging file: {_os_error_message(exc)}", 'backend.uploads.readStaging', {"detail": _os_error_message(exc)})) from exc
     with source:
         try:
             fd = os.open(tmp, _NEW_FILE_FLAGS, _NEW_FILE_MODE)
@@ -884,7 +889,7 @@ def _link_loop(source: str, target_dir: str, names: list[str]) -> str:
                 raise _NoHardLinks from exc
             raise _mapped_failure(exc, target_dir) from exc
         return candidate
-    raise _PreCommitFailure(422, "No free file name in the target directory")
+    raise _PreCommitFailure(422, ui_message_text("No free file name in the target directory", 'backend.uploads.noFreeFilename'))
 
 
 def _reserve_loop(target_dir: str, names: list[str]) -> str:
@@ -897,14 +902,14 @@ def _reserve_loop(target_dir: str, names: list[str]) -> str:
             continue
         except OSError as exc:
             if exc.errno == errno.EPERM:
-                raise _PreCommitFailure(422, "The target directory refuses the file") from exc
+                raise _PreCommitFailure(422, ui_message_text("The target directory refuses the file", 'backend.uploads.targetRefused')) from exc
             raise _mapped_failure(exc, target_dir) from exc
         try:
             os.close(fd)
         except OSError:
             logger.warning("Upload finalization: cannot close the reservation %s", candidate, exc_info=True)
         return candidate
-    raise _PreCommitFailure(422, "No free file name in the target directory")
+    raise _PreCommitFailure(422, ui_message_text("No free file name in the target directory", 'backend.uploads.noFreeFilename'))
 
 
 def _place(upload_id: str, meta: dict) -> _Placement:
@@ -926,7 +931,7 @@ def _place(upload_id: str, meta: dict) -> _Placement:
         finally:
             os.close(fd)
     except OSError as exc:
-        raise _PreCommitFailure(failure_code(exc), f"Cannot sync the staging file: {_os_error_message(exc)}") from exc
+        raise _PreCommitFailure(failure_code(exc), ui_message_text(f"Cannot sync the staging file: {_os_error_message(exc)}", 'backend.uploads.syncStaging', {"detail": _os_error_message(exc)})) from exc
 
     names = list(candidate_names(meta["filename"]))
     try:
@@ -945,7 +950,7 @@ def _place(upload_id: str, meta: dict) -> _Placement:
             final_path = _link_loop(source, target_dir, names)
         except _CrossDevice:
             if source_kind == FINAL_SOURCE_TMP:
-                raise _PreCommitFailure(500, "Unexpected error: cross-device link inside the target directory")
+                raise _PreCommitFailure(500, ui_message_text("Unexpected error: cross-device link inside the target directory", 'backend.uploads.crossDevice'))
             # Two mounts of one filesystem can share ``st_dev``: copy instead.
             _copy_to_temp(part, tmp, target_dir, size)
             source, source_kind = tmp, FINAL_SOURCE_TMP
@@ -1022,7 +1027,7 @@ def finalize_files(upload_id: str, current: dict) -> FinalizeResult:
         return finalize_precommit_failure(upload_id, current, failure.code, failure.message)
     except Exception as exc:
         logger.exception("Upload %s: unexpected finalization error", upload_id)
-        return finalize_precommit_failure(upload_id, current, 500, f"Unexpected error: {exc}")
+        return finalize_precommit_failure(upload_id, current, 500, ui_message_text(f"Unexpected error: {exc}", 'backend.uploads.unexpectedDetail', {"detail": str(exc)}))
 
     # 4.5 Commit point: the final name exists.
     changes = {"final_path": placement.final_path, "final_method": placement.method}
@@ -1038,7 +1043,7 @@ def finalize_files(upload_id: str, current: dict) -> FinalizeResult:
             return FinalizeResult(current, code, False)
         # The reservation name is known here: remove it, then the pre-commit rule.
         remove_best_effort(placement.final_path)
-        message = "Not enough disk space" if code == 507 else f"Unexpected error: {_os_error_message(exc)}"
+        message = ui_message_text("Not enough disk space", "backend.uploads.diskSpace") if code == 507 else ui_message_text(f"Unexpected error: {_os_error_message(exc)}", 'backend.uploads.unexpectedDetail', {"detail": _os_error_message(exc)})
         return finalize_precommit_failure(upload_id, current, code, message)
 
     # 4.6 ``replace`` only.
@@ -1190,7 +1195,7 @@ def _recover_committed(upload_id: str, meta: dict, part: str, tmp: str) -> Recov
                 meta,
                 cleanup,
                 state=STATE_FAILED,
-                error=f"The target directory refuses the file: {_os_error_message(exc)}",
+                error=ui_message_text(f"The target directory refuses the file: {_os_error_message(exc)}", 'backend.uploads.targetRefusedDetail', {"detail": _os_error_message(exc)}),
             )
             if verdict.kind == RECOVERY_DONE:
                 _remove_if_empty(final_path)
@@ -1292,6 +1297,7 @@ def build_record(meta: dict) -> dict:
         "fingerprint": meta["fingerprint"],
         "final_path": meta.get("final_path") if meta["state"] == STATE_COMPLETED else None,
         "error": meta.get("error"),
+        **({"ui_message": meta["error_ui_message"]} if meta.get("error_ui_message") else {}),
         "created_at": meta["created_at"],
         "updated_at": meta["updated_at"],
     }

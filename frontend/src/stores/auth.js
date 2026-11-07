@@ -1,3 +1,4 @@
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
 import { i18n } from '../i18n/index.js'
 import { localUiMessage } from '../i18n/uiMessages.js'
 // frontend/src/stores/auth.js
@@ -146,8 +147,8 @@ export const useAuthStore = defineStore('auth', {
                     }
                     return { success: false, error: i18n.global.t('auth.errors.noPassword'), errorMessage: localUiMessage('auth.errors.noPassword') }
                 } else {
-                    return { success: false, error: data.error === 'Invalid password' ? i18n.global.t('auth.errors.invalidPassword') : data.error || i18n.global.t('auth.errors.invalidPassword'),
-                        ...(!data.error || data.error === 'Invalid password' ? { errorMessage: localUiMessage('auth.errors.invalidPassword') } : {}) }
+                    return { success: false, error: data.error || i18n.global.t('auth.errors.invalidPassword'),
+                        errorMessage: remoteUiMessage(data, data.error || localUiMessage('auth.errors.invalidPassword')) }
                 }
             } catch (e) {
                 console.error('Login failed:', e)

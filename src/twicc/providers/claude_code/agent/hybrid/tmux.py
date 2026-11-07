@@ -19,6 +19,7 @@ import subprocess
 import time
 
 from twicc.paths import ENV_SECRET_KEYS
+from twicc.core.ui_messages import ui_message_text
 from twicc.provider_homes import provider_env_overlay
 from twicc.server_env import DJANGO_SETTINGS_ENV
 from twicc.terminal import HYBRID_TMUX_SOCKET_NAME, get_tmux_path
@@ -112,7 +113,9 @@ def hybrid_tmux_session_name(session_id: str) -> str:
 def _tmux_base() -> list[str]:
     tmux = get_tmux_path()
     if tmux is None:
-        raise RuntimeError("tmux is not installed — hybrid mode requires tmux")
+        raise RuntimeError(ui_message_text(
+            "tmux is not installed — hybrid mode requires tmux", "backend.claude.hybrid_tmux_required",
+        ))
     return [tmux, "-L", HYBRID_TMUX_SOCKET_NAME]
 
 
@@ -153,7 +156,10 @@ def create_session(session_id: str, cwd: str, argv: list[str]) -> None:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"tmux new-session failed: {result.stderr.decode(errors='replace')}")
+        raise RuntimeError(ui_message_text(
+            f"tmux new-session failed: {result.stderr.decode(errors='replace')}",
+            "backend.claude.tmux_create_failed", {"diagnostic": result.stderr.decode(errors="replace")},
+        ))
     # NOTE: set-option's -t is a target-PANE (options exist at every level
     # since tmux 3.x): a bare '=name' fails with "no such session" — and
     # _run ignores return codes here, so the failure would be silent
@@ -353,10 +359,16 @@ def paste_text(session_id: str, text: str, *, submit: bool = True) -> None:
     buf = "twicc-hybrid"
     r = _run(["load-buffer", "-b", buf, "-"], input_bytes=text.encode())
     if r.returncode != 0:
-        raise RuntimeError(f"tmux load-buffer failed: {r.stderr.decode(errors='replace')}")
+        raise RuntimeError(ui_message_text(
+            f"tmux load-buffer failed: {r.stderr.decode(errors='replace')}",
+            "backend.claude.tmux_load_failed", {"diagnostic": r.stderr.decode(errors="replace")},
+        ))
     r = _run(["paste-buffer", "-p", "-d", "-b", buf, "-t", target])
     if r.returncode != 0:
-        raise RuntimeError(f"tmux paste-buffer failed: {r.stderr.decode(errors='replace')}")
+        raise RuntimeError(ui_message_text(
+            f"tmux paste-buffer failed: {r.stderr.decode(errors='replace')}",
+            "backend.claude.tmux_paste_failed", {"diagnostic": r.stderr.decode(errors="replace")},
+        ))
     if submit:
         _run(["send-keys", "-t", target, "Enter"])
         _ensure_submitted(session_id, target, text)

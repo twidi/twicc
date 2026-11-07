@@ -441,6 +441,9 @@ def test_pending_request_takes_priority_over_unconfirmed_answer(integrated, monk
         await published.wait()
         if task.done():
             task.result()
+        # State publication does not wait for the logical-turn snapshot writer.
+        # Finish that write before the separate SQLite reader checks its result.
+        await drain(f.agent)
         wait = await asyncio.to_thread(waiting, f)
         assert (await asyncio.to_thread(wait.step))["outcome"] == "awaiting_user_input"
         clock[0] = ticket.deadline

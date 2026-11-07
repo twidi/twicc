@@ -42,8 +42,14 @@ from twicc.tts.service import (
 SPEECH_PATH = "/api/tts/speech/"
 MODELS_PATH = "/api/tts/models/"
 STREAMS_LOGGER_NAME = "twicc.tts.streams"
-GONE = {"error": "The audio is no longer available"}
-CUT = {"error": "The audio stopped before the end"}
+GONE = {
+    "error": "The audio is no longer available",
+    "ui_message": {"key": "backend.tts.audioGone", "params": {}},
+}
+CUT = {
+    "error": "The audio stopped before the end",
+    "ui_message": {"key": "backend.tts.audioCut", "params": {}},
+}
 
 VALID_PAYLOAD = {
     "text": "Hello there",
@@ -381,28 +387,36 @@ def test_parse_range(header, expected):
 
 
 @pytest.mark.parametrize(
-    ("body", "message"),
+    ("body", "message", "ui_message"),
     [
-        ({key: value for key, value in VALID_PAYLOAD.items() if key != "text"}, TEXT_ERROR),
-        ({**VALID_PAYLOAD, "model": "   "}, MODEL_ERROR),
-        ({**VALID_PAYLOAD, "response_format": "ogg"}, FORMAT_ERROR),
-        ({**VALID_PAYLOAD, "speed": 0}, SPEED_ERROR),
-        ([VALID_PAYLOAD], "The body must be a JSON object"),
+        ({key: value for key, value in VALID_PAYLOAD.items() if key != "text"}, TEXT_ERROR,
+         {"key": "backend.tts.textRequired", "params": {}}),
+        ({**VALID_PAYLOAD, "model": "   "}, MODEL_ERROR,
+         {"key": "backend.tts.modelRequired", "params": {}}),
+        ({**VALID_PAYLOAD, "response_format": "ogg"}, FORMAT_ERROR,
+         {"key": "backend.tts.formatChoices", "params": {"choices": "mp3, pcm"}}),
+        ({**VALID_PAYLOAD, "speed": 0}, SPEED_ERROR,
+         {"key": "backend.tts.speedNumber", "params": {}}),
+        ([VALID_PAYLOAD], "The body must be a JSON object",
+         {"key": "backend.common.bodyObject", "params": {}}),
     ],
 )
-def test_rejects_invalid_payloads(client, upstream, monkeypatch, body, message):
+def test_rejects_invalid_payloads(client, upstream, monkeypatch, body, message, ui_message):
     # An invalid payload is a 400 even without a key: validation runs first.
     monkeypatch.setattr(speech_service, "openrouter_api_key", lambda: None)
     response = _post_json(client, body)
     assert response.status_code == 400
-    assert response.json() == {"error": message}
+    assert response.json() == {"error": message, "ui_message": ui_message}
     assert upstream.pump.calls == []
 
 
 def test_a_text_with_nothing_to_say_is_400_without_upstream(client, upstream):
     response = _post_json(client, {**VALID_PAYLOAD, "text": "…"})
     assert response.status_code == 400
-    assert response.json() == {"error": "There is nothing to read aloud in this text"}
+    assert response.json() == {
+        "error": "There is nothing to read aloud in this text",
+        "ui_message": {"key": "backend.tts.nothingToRead", "params": {}},
+    }
     assert upstream.pump.calls == []
 
 
@@ -411,7 +425,10 @@ def test_rejects_invalid_json(client, upstream):
         _within(client.post(SPEECH_PATH, data=b"{not json", content_type="application/json"))
     )
     assert response.status_code == 400
-    assert response.json() == {"error": "Invalid JSON"}
+    assert response.json() == {
+        "error": "Invalid JSON",
+        "ui_message": {"key": "backend.common.invalidJson", "params": {}},
+    }
 
 
 def test_speech_rejects_other_methods(client, upstream):
@@ -443,7 +460,8 @@ def test_no_key_returns_503_without_upstream_call(client, upstream, monkeypatch,
     response = _post_json(client, VALID_PAYLOAD)
     assert response.status_code == 503
     assert response.json() == {
-        "error": f"TWICC_OPENROUTER_API_KEY is not set. Add it to {env_path} and restart TwiCC."
+        "error": f"TWICC_OPENROUTER_API_KEY is not set. Add it to {env_path} and restart TwiCC.",
+        "ui_message": {"key": "backend.tts.apiKeyRequired", "params": {"path": str(env_path)}},
     }
     assert upstream.pump.calls == []
     assert upstream.cost == []
@@ -453,7 +471,10 @@ def test_oversized_body_returns_413_json(client, upstream, settings):
     settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 10
     response = _post_json(client, VALID_PAYLOAD)
     assert response.status_code == 413
-    assert response.json() == {"error": "The text is too long to send"}
+    assert response.json() == {
+        "error": "The text is too long to send",
+        "ui_message": {"key": "backend.tts.textTooLong", "params": {}},
+    }
 
 
 def test_upstream_401_is_not_relayed_as_401(client, upstream):
@@ -480,7 +501,10 @@ def test_unexpected_exception_returns_own_json_500(client, upstream, settings, v
     response = _post_json(client, VALID_PAYLOAD)
     assert response.status_code == 500
     assert response["Content-Type"] == "application/json"
-    assert response.json() == {"error": "Text-to-speech failed"}
+    assert response.json() == {
+        "error": "Text-to-speech failed",
+        "ui_message": {"key": "backend.tts.failed", "params": {}},
+    }
     assert b"sk-or-leak" not in response.content
     # One traceback: the pump's task logs it, the open view does not log it again.
     tracebacks = [record for record in views_log.records if record.exc_info]
@@ -1495,29 +1519,40 @@ def test_an_unknown_script_is_404(client, script_upstream):
     # No such config, then an OpenRouter config of that id: neither is a script config.
     response = _post_json(client, SCRIPT_READ)
     assert response.status_code == 404
-    assert response.json() == {"error": NO_SUCH_SCRIPT}
+    assert response.json() == {
+        "error": NO_SUCH_SCRIPT,
+        "ui_message": {"key": "backend.tts.scriptMissing", "params": {}},
+    }
     write_tts_config({"configs": [{"id": SCRIPT_ID, "kind": "openrouter", "model": "m"}]})
     response = _post_json(client, SCRIPT_TEST)
     assert response.status_code == 404
-    assert response.json() == {"error": NO_SUCH_SCRIPT}
+    assert response.json() == {
+        "error": NO_SUCH_SCRIPT,
+        "ui_message": {"key": "backend.tts.scriptMissing", "params": {}},
+    }
     assert script_upstream.script_runs == []
 
 
 @pytest.mark.parametrize(
-    ("body", "message"),
+    ("body", "message", "ui_message"),
     [
-        ({key: value for key, value in SCRIPT_READ.items() if key != "text"}, TEXT_ERROR),
-        ({**SCRIPT_READ, "text": "…"}, NOTHING_TO_SAY),
-        ({key: value for key, value in SCRIPT_READ.items() if key != "script_id"}, SCRIPT_ID_ERROR),
-        ({**SCRIPT_READ, "script_id": ""}, SCRIPT_ID_ERROR),
-        ({**SCRIPT_READ, "script_id": 3}, SCRIPT_ID_ERROR),
+        ({key: value for key, value in SCRIPT_READ.items() if key != "text"}, TEXT_ERROR,
+         {"key": "backend.tts.textRequired", "params": {}}),
+        ({**SCRIPT_READ, "text": "…"}, NOTHING_TO_SAY,
+         {"key": "backend.tts.nothingToRead", "params": {}}),
+        ({key: value for key, value in SCRIPT_READ.items() if key != "script_id"}, SCRIPT_ID_ERROR,
+         {"key": "backend.tts.scriptId", "params": {}}),
+        ({**SCRIPT_READ, "script_id": ""}, SCRIPT_ID_ERROR,
+         {"key": "backend.tts.scriptId", "params": {}}),
+        ({**SCRIPT_READ, "script_id": 3}, SCRIPT_ID_ERROR,
+         {"key": "backend.tts.scriptId", "params": {}}),
     ],
 )
-def test_rejects_invalid_script_payloads(client, script_upstream, body, message):
+def test_rejects_invalid_script_payloads(client, script_upstream, body, message, ui_message):
     _store_script()
     response = _post_json(client, body)
     assert response.status_code == 400
-    assert response.json() == {"error": message}
+    assert response.json() == {"error": message, "ui_message": ui_message}
     assert script_upstream.script_runs == []
 
 
@@ -1525,7 +1560,10 @@ def test_a_test_with_unsaved_fields_is_409_and_runs_nothing(client, script_upstr
     _store_script()
     response = _post_json(client, {**SCRIPT_TEST, "command": "say --fast"})
     assert response.status_code == 409
-    assert response.json() == {"error": NOT_SAVED}
+    assert response.json() == {
+        "error": NOT_SAVED,
+        "ui_message": {"key": "backend.tts.configNotSaved", "params": {}},
+    }
     assert script_upstream.script_runs == []
     assert script_upstream.records == []
 
@@ -1548,7 +1586,10 @@ def test_a_message_read_of_an_unvalidated_script_is_409(client, script_upstream,
     _store_script(validated=snapshot)
     response = _post_json(client, SCRIPT_READ)
     assert response.status_code == 409
-    assert response.json() == {"error": NOT_VALIDATED}
+    assert response.json() == {
+        "error": NOT_VALIDATED,
+        "ui_message": {"key": "backend.tts.configNotValidated", "params": {}},
+    }
     assert script_upstream.script_runs == []
 
 
@@ -1557,7 +1598,10 @@ def test_a_config_id_other_than_the_script_id_is_400(client, script_upstream, co
     _store_script()
     response = _post_json(client, {**SCRIPT_READ, "config_id": config_id})
     assert response.status_code == 400
-    assert response.json() == {"error": CONFIG_ID_ERROR}
+    assert response.json() == {
+        "error": CONFIG_ID_ERROR,
+        "ui_message": {"key": "backend.tts.configMatches", "params": {}},
+    }
     assert script_upstream.script_runs == []
 
 
@@ -1644,7 +1688,10 @@ def test_a_pcm_script_without_a_rate_is_400(client, script_upstream, body):
     fields = _store_script(audio_format="pcm")
     response = _post_json(client, {**body, **fields})
     assert response.status_code == 400
-    assert response.json() == {"error": NO_PCM_RATE}
+    assert response.json() == {
+        "error": NO_PCM_RATE,
+        "ui_message": {"key": "backend.tts.pcmRateRequired", "params": {}},
+    }
     assert script_upstream.script_runs == []
 
 
@@ -1654,7 +1701,10 @@ def test_a_script_without_a_command_is_400(client, script_upstream, body, comman
     fields = _store_script(command=command)
     response = _post_json(client, {**body, **fields})
     assert response.status_code == 400
-    assert response.json() == {"error": NO_COMMAND}
+    assert response.json() == {
+        "error": NO_COMMAND,
+        "ui_message": {"key": "backend.tts.commandMissing", "params": {}},
+    }
     assert script_upstream.script_runs == []
 
 
@@ -2203,7 +2253,10 @@ def test_an_adaptation_failure_after_the_first_part_cuts_the_reading(client, ada
                 async for chunk in chunks:
                     received += chunk
         await _within(asyncio.wait([get_stream(audio_id)._task]))
-        assert await _ending(client, audio_id) == {"state": "failed", "error": adapt.ADAPT_STOPPED}
+        assert await _ending(client, audio_id) == {
+            "state": "failed", "error": adapt.ADAPT_STOPPED,
+            "ui_message": {"key": "backend.tts.adaptationStopped", "params": {}},
+        }
         return received
 
     received = asyncio.run(scenario())
@@ -2471,7 +2524,10 @@ def test_a_bad_origin_is_a_400(client, upstream, direct_reading, origin):
     for body in ({**VALID_PAYLOAD, "origin": origin}, {**SCRIPT_READ, "origin": origin}):
         response = asyncio.run(_open(client, body))
         assert response.status_code == 400
-        assert response.json() == {"error": "'origin' must be one of: rendered, file"}
+        assert response.json() == {
+            "error": "'origin' must be one of: rendered, file",
+            "ui_message": {"key": "backend.tts.originChoices", "params": {"choices": "rendered, file"}},
+        }
     assert upstream.pump.calls == []
 
 
@@ -2489,7 +2545,10 @@ def test_cleaned_to_nothing_is_refused(client, upstream, direct_reading):
     assert not has_speech(cleaned)
     response = asyncio.run(_open(client, {**VALID_PAYLOAD, "text": text}))
     assert response.status_code == 400
-    assert response.json() == {"error": NOTHING_TO_SAY}
+    assert response.json() == {
+        "error": NOTHING_TO_SAY,
+        "ui_message": {"key": "backend.tts.nothingToRead", "params": {}},
+    }
     assert upstream.pump.calls == []
     assert streams._streams == {}
 
@@ -2667,7 +2726,10 @@ def test_non_string_announcement_is_400_without_pump(client, adaptation, kind, a
     body = SCRIPT_READ if kind == "script" else VALID_PAYLOAD
     response = asyncio.run(_open(client, {**body, "announcement": announcement}))
     assert response.status_code == 400
-    assert response.json() == {"error": "'announcement' must be a string"}
+    assert response.json() == {
+        "error": "'announcement' must be a string",
+        "ui_message": {"key": "backend.tts.fieldString", "params": {"field": "announcement"}},
+    }
     assert adaptation.sources == []
     assert adaptation.calls == []
 

@@ -27,6 +27,7 @@ from twicc.auth.session_auth import (
     SESSION_FINGERPRINT_KEY,
     bind_session,
 )
+from twicc.core.ui_messages import ui_error
 
 logger = logging.getLogger(__name__)
 
@@ -156,10 +157,10 @@ async def login(request):
     On failure, returns 401.
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.common.methodNotAllowed'), status=405)
 
     if not settings.TWICC_PASSWORD_HASH:
-        return JsonResponse({"error": "No password configured"}, status=400)
+        return JsonResponse(ui_error("No password configured", 'backend.auth.noPassword'), status=400)
 
     ip = _get_client_ip(request)
 
@@ -168,14 +169,14 @@ async def login(request):
     if wait is not None:
         logger.warning("Login rate-limited for %s (%ds remaining)", ip, wait)
         return JsonResponse(
-            {"error": f"Too many attempts. Try again in {wait}s."},
+            ui_error(f"Too many attempts. Try again in {wait}s.", 'backend.auth.rateLimited', {"seconds": wait}),
             status=429,
         )
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
 
     password = data.get("password", "")
 
@@ -202,7 +203,7 @@ async def login(request):
         _record_failed_attempt(ip)
         remaining = _MAX_ATTEMPTS - len(_login_attempts[ip])
         logger.warning("Failed login attempt from %s (%d attempts left)", ip, max(0, remaining))
-        return JsonResponse({"error": "Invalid password"}, status=401)
+        return JsonResponse(ui_error("Invalid password", 'backend.auth.invalidPassword'), status=401)
 
 
 async def logout(request):
@@ -211,7 +212,7 @@ async def logout(request):
     Flushes the session entirely.
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.common.methodNotAllowed'), status=405)
 
     await request.session.aflush()
     return JsonResponse({"authenticated": False})

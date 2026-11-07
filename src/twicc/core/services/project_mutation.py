@@ -36,6 +36,7 @@ import asyncio
 import logging
 import os
 
+from twicc.core.ui_messages import ui_message_text
 from django.db import IntegrityError
 
 from twicc.core.models import Project
@@ -96,20 +97,20 @@ def clean_project_agent_defaults(default_provider, default_agent_settings):
     clean_provider = None
     if default_provider is not None:
         if not isinstance(default_provider, str) or default_provider not in valid_providers:
-            return None, None, f"Invalid default_provider: {default_provider!r}"
+            return None, None, ui_message_text(f"Invalid default_provider: {default_provider!r}", 'backend.projects.invalid_default_provider', {"provider": repr(default_provider)})
         clean_provider = default_provider or None
 
     clean_settings = None
     if default_agent_settings is not None:
         if not isinstance(default_agent_settings, dict):
-            return None, None, "default_agent_settings must be an object or null"
+            return None, None, ui_message_text("default_agent_settings must be an object or null", 'backend.projects.defaults_object')
         allowed_fields = set(AgentSettings._fields) - set(AGENT_SETTINGS_HIDDEN_FROM_FRONTEND)
         cleaned: dict = {}
         for prov, bundle in default_agent_settings.items():
             if prov not in valid_providers:
-                return None, None, f"Unknown provider in default_agent_settings: {prov!r}"
+                return None, None, ui_message_text(f"Unknown provider in default_agent_settings: {prov!r}", 'backend.projects.defaults_unknown_provider', {"provider": repr(prov)})
             if not isinstance(bundle, dict):
-                return None, None, f"default_agent_settings[{prov!r}] must be an object"
+                return None, None, ui_message_text(f"default_agent_settings[{prov!r}] must be an object", 'backend.projects.defaults_bundle_object', {"provider": repr(prov)})
             prov_bundle: dict = {}
             for field, value in bundle.items():
                 if field in AGENT_SETTINGS_HIDDEN_FROM_FRONTEND:
@@ -123,12 +124,12 @@ def clean_project_agent_defaults(default_provider, default_agent_settings):
                         helpers = get_provider_helpers(prov)
                         if value not in helpers.UNTRUSTED_PERMISSION_MODES:
                             return None, None, (
-                                f"Invalid permission_mode_if_untrusted for {prov!r}: {value!r}"
+                                ui_message_text(f"Invalid permission_mode_if_untrusted for {prov!r}: {value!r}", 'backend.projects.defaults_untrusted_mode', {"provider": repr(prov), "value": repr(value)})
                             )
                         prov_bundle[field] = value
                     continue
                 if field not in allowed_fields:
-                    return None, None, f"Unknown agent settings field: {field!r}"
+                    return None, None, ui_message_text(f"Unknown agent settings field: {field!r}", 'backend.projects.defaults_unknown_field', {"field": repr(field)})
                 if value is not None:
                     prov_bundle[field] = value
             if prov_bundle:

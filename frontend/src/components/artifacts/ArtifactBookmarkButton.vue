@@ -109,7 +109,7 @@ async function shareArtifact() {
                 sessionId: props.sessionId, relativePath: props.relativePath, name, scope: 'project',
             })
         } catch (err) {
-            toast.error(err?.message || t('artifacts.bookmarks.errors.create'))
+            toast.error(err?.uiMessage || err?.message || t('artifacts.bookmarks.errors.create'))
             return
         }
     }

@@ -184,8 +184,11 @@ def record_process_ended(agent, prev: ProcessSnapshot | None, *, message_refs: l
                          exclude_task_ids=ended_ids() if callable(ended_ids) else frozenset())
     error = getattr(agent, "error", None)
     caused_by = latest_event_id(agent.session_id, TimelineKind.ARCHIVED_STARTED) if reason == "archived" else None
+    error_data = {"error": str(error)[:_ERROR_TEXT_LIMIT]} if error else None
+    if error_data is not None and getattr(agent, "error_ui_message", None) is not None:
+        error_data["error_ui_message"] = agent.error_ui_message
     record_event_sync(
         TimelineKind.PROCESS_ENDED, session_id=agent.session_id, project_id=getattr(agent, "project_id", None),
         occurred_at=now, reason=reason, caused_by=caused_by, origin=ended_origin, provider=_provider_of(agent),
-        data={"error": str(error)[:_ERROR_TEXT_LIMIT]} if error else None,
+        data=error_data,
     )

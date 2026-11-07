@@ -23,6 +23,7 @@ from django.core.asgi import get_asgi_application
 from django.urls import path
 from django.utils import timezone
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.sync_diagnostics import log_slow
 from twicc.frontend_static import FrontendStaticFiles
 from twicc.agent import AgentInfo, AgentState, serialize_agent_info
@@ -91,6 +92,32 @@ logger = logging.getLogger(__name__)
 # WebSocket close code for authentication failure.
 # 4000-4999 range is reserved for application use by the WebSocket spec.
 WS_CLOSE_AUTH_FAILURE = 4001
+
+
+def _exception_message(exception: Exception, fallback: str | None = None) -> str:
+    """Keep a shared error's browser identity without changing its English text."""
+    message = str(exception) if fallback is None else fallback
+    descriptor = getattr(exception, "ui_message", None)
+    if descriptor is None and exception.args:
+        descriptor = getattr(exception.args[0], "ui_message", None)
+    if descriptor is None:
+        return message
+    return ui_message_text(
+        message, descriptor["key"], descriptor.get("params"), count=descriptor.get("count"),
+    )
+
+
+def _ws_ui_messages(content: dict) -> dict:
+    """Publish shared message metadata at this browser transport boundary."""
+    result = dict(content)
+    for field in ("message", "error", "detail"):
+        descriptor = getattr(content.get(field), "ui_message", None)
+        if descriptor is not None:
+            metadata_field = "detail_ui_message" if field == "detail" else "ui_message"
+            result.setdefault(metadata_field, descriptor)
+    if isinstance(content.get("errors"), list):
+        result["errors"] = [_ws_ui_messages(error) if isinstance(error, dict) else error for error in content["errors"]]
+    return result
 
 
 def _apply_ui_stop(root_id: str, agent_id: str, ended_at: datetime):
@@ -824,7 +851,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({
                 "type": "peer_messages_updated",
                 "messages": [
-                    serialize_peer_message(m, effective_project=projects.get(m.pk)) for m in peer_messages
+                    serialize_peer_message(m, effective_project=projects.get(m.pk), include_ui_messages=True) for m in peer_messages
                 ],
             })
 
@@ -1065,7 +1092,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
 
     async def send_json(self, content, close=False):
         try:
-            await super().send_json(content, close=close)
+            await super().send_json(_ws_ui_messages(content), close=close)
         except Exception as exc:
             logger.exception("Error sending JSON message: %s", exc)
 
@@ -1084,7 +1111,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             frame = {
                 "type": "error",
                 "code": "invalid_request",
-                "message": "send_message requires session_id and project_id",
+                "message": ui_message_text("send_message requires session_id and project_id", 'backend.websocket.send_fields_required'),
             }
             if request_id := content.get("request_id"):
                 frame["request_id"] = request_id
@@ -1095,7 +1122,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         try:
             attachment_planner.validate_attachment_frame(content)
         except AttachmentError as exc:
-            frame = {"type": "error", "code": exc.code, "message": str(exc), "session_id": session_id}
+            frame = {"type": "error", "code": exc.code, "message": _exception_message(exc), "session_id": session_id}
             if request_id := content.get("request_id"):
                 frame["request_id"] = request_id
             logger.warning("send_message for %s rejected: %s", session_id, exc)
@@ -1106,7 +1133,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if content.get("async_questions") is not None and not isinstance(content["async_questions"], dict):
             frame = {
                 "type": "error", "code": "async_questions_invalid",
-                "message": "async_questions must be an object", "session_id": session_id,
+                "message": ui_message_text("async_questions must be an object", 'backend.websocket.questions_object_required'), "session_id": session_id,
             }
             if request_id := content.get("request_id"):
                 frame["request_id"] = request_id
@@ -1135,7 +1162,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 )
         except SendDeliveryError as exc:
             await self.send_json({
-                "type": "error", "code": exc.code, "message": str(exc),
+                "type": "error", "code": exc.code, "message": _exception_message(exc),
                 "session_id": session_id, "request_id": content.get("request_id"),
             })
             return
@@ -1200,7 +1227,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(frame)
 
         if attachment_refs is None:
-            await send_error("Invalid attachments", code=attachment_planner.ERROR_INVALID_ATTACHMENTS)
+            await send_error(ui_message_text("Invalid attachments", 'backend.websocket.invalid_attachments'), code=attachment_planner.ERROR_INVALID_ATTACHMENTS)
             return
 
         # Validate required fields (text is allowed to be empty for settings-only updates)
@@ -1211,7 +1238,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 project_id,
             )
             await send_error(
-                "send_message requires session_id and project_id",
+                ui_message_text("send_message requires session_id and project_id", 'backend.websocket.send_fields_required'),
                 code="invalid_request",
             )
             return
@@ -1226,7 +1253,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 await ephemeral_runs.finish(ephemeral_admission, failed=True)
             finally:
                 ephemeral_runs.release(ephemeral_admission)
-            await send_error("An existing session cannot become ephemeral.", code="ephemeral_existing_session")
+            await send_error(ui_message_text("An existing session cannot become ephemeral.", 'backend.websocket.existing_ephemeral'), code="ephemeral_existing_session")
             return
         if exists:
             if ephemeral_admission is not None:
@@ -1234,7 +1261,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             try:
                 await aensure_session_id_available(session_id)
             except SessionUnavailableError as e:
-                await send_error(str(e), code=e.code)
+                await send_error(_exception_message(e), code=e.code)
                 return
             try:
                 provider = Provider(existing_provider)
@@ -1244,7 +1271,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     session_id, existing_provider,
                 )
                 await send_error(
-                    f"Session {session_id} has an unknown provider",
+                    ui_message_text(f"Session {session_id} has an unknown provider", 'backend.websocket.session_unknown_provider', {"session_id": session_id}),
                     code="unknown_provider",
                 )
                 return
@@ -1256,7 +1283,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     session_id,
                 )
                 await send_error(
-                    "send_message for a new session requires a 'provider' field",
+                    ui_message_text("send_message for a new session requires a 'provider' field", 'backend.websocket.provider_required'),
                     code="invalid_request",
                 )
                 return
@@ -1268,19 +1295,19 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     provider_value, session_id,
                 )
                 await send_error(
-                    f"Unknown provider: {provider_value!r}",
+                    ui_message_text(f"Unknown provider: {provider_value!r}", 'backend.websocket.unknown_provider', {"provider": repr(provider_value)}),
                     code="unknown_provider",
                 )
                 return
 
         if "async_questions" in content and (not exists or provider != Provider.CODEX):
-            await send_error("Question answers require an existing Codex session", code="async_questions_invalid")
+            await send_error(ui_message_text("Question answers require an existing Codex session", 'backend.websocket.questions_require_codex'), code="async_questions_invalid")
             return
 
         try:
             ensure_provider_running(provider)
         except ProviderDisabledError as e:
-            await send_error(str(e), code="provider_disabled", provider=e.provider.value)
+            await send_error(_exception_message(e), code="provider_disabled", provider=e.provider.value)
             return
 
         helpers = get_provider_helpers(provider)
@@ -1313,7 +1340,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "send_message: project %s not found or has no directory", project_id
             )
             await send_error(
-                f"Project {project_id} not found or has no directory configured",
+                ui_message_text(f"Project {project_id} not found or has no directory configured", 'backend.websocket.project_directory_missing', {"project_id": project_id}),
                 code="project_not_found",
             )
             return
@@ -1460,7 +1487,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
             names = getattr(e, "names", ())
             await send_error(
-                str(e), code=getattr(e, "code", None) or "send_failed",
+                _exception_message(e), code=getattr(e, "code", None) or "send_failed",
                 **({"names": list(names)} if names else {}),
             )
         except Exception as e:
@@ -1470,7 +1497,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             else:
                 logger.exception("Unexpected error in send_message")
             await send_error(
-                f"Failed to send message: {e}",
+                _exception_message(e, ui_message_text(f"Failed to send message: {e}", 'backend.websocket.send_failed', {"detail": str(e)})),
                 code="send_failed",
             )
 
@@ -1539,7 +1566,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if not settings.CLAUDE_HYBRID_ENABLED:
             await self.send_json({
                 "type": "error",
-                "message": "Hybrid mode is disabled on this server",
+                "message": ui_message_text("Hybrid mode is disabled on this server", 'backend.websocket.hybrid_disabled'),
             })
             return
 
@@ -1547,7 +1574,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if not session_id:
             await self.send_json({
                 "type": "error",
-                "message": "set_session_hybrid requires session_id",
+                "message": ui_message_text("set_session_hybrid requires session_id", 'backend.websocket.hybrid_session_required'),
             })
             return
 
@@ -1555,7 +1582,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         if session is None:
             await self.send_json({
                 "type": "error",
-                "message": f"Session {session_id} not found",
+                "message": ui_message_text(f"Session {session_id} not found", 'backend.websocket.session_missing', {"session_id": session_id}),
             })
             return
         if session.hybrid:
@@ -1567,7 +1594,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         ):
             await self.send_json({
                 "type": "error",
-                "message": "Hybrid mode is only available for visible top-level Claude Code sessions",
+                "message": ui_message_text("Hybrid mode is only available for visible top-level Claude Code sessions", 'backend.websocket.hybrid_visible_session'),
             })
             return
         # A top-level row: the rule reads no other row.
@@ -1645,7 +1672,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(
                 {
                     "type": "error",
-                    "message": "kill_process requires session_id",
+                    "message": ui_message_text("kill_process requires session_id", 'backend.websocket.kill_session_required'),
                 }
             )
             return
@@ -1660,7 +1687,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     "type": "error",
                     "code": "provider_disabled",
                     "provider": e.provider.value,
-                    "message": str(e),
+                    "message": _exception_message(e),
                 })
                 return
             except ValueError:
@@ -1722,7 +1749,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(
                 {
                     "type": "error",
-                    "message": "stop_subagent requires session_id and subagent_id",
+                    "message": ui_message_text("stop_subagent requires session_id and subagent_id", 'backend.websocket.stop_subagent_fields_required'),
                 }
             )
             return
@@ -1737,7 +1764,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     "type": "error",
                     "code": "provider_disabled",
                     "provider": e.provider.value,
-                    "message": str(e),
+                    "message": _exception_message(e),
                 })
                 return
             except ValueError:
@@ -1820,7 +1847,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(
                 {
                     "type": "error",
-                    "message": "interrupt_session requires session_id",
+                    "message": ui_message_text("interrupt_session requires session_id", 'backend.websocket.interrupt_session_required'),
                 }
             )
             return
@@ -1835,7 +1862,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     "type": "error",
                     "code": "provider_disabled",
                     "provider": e.provider.value,
-                    "message": str(e),
+                    "message": _exception_message(e),
                 })
                 return
             except ValueError:
@@ -2083,7 +2110,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         """
         file_path = content.get("file_path", "")
         if not isinstance(file_path, str) or not file_path.strip():
-            await self.send_json({"type": "usage_dump_path_validated", "valid": False, "message": "No file path provided"})
+            await self.send_json({"type": "usage_dump_path_validated", "valid": False, "message": ui_message_text("No file path provided", 'backend.websocket.path_required')})
             return
 
         from twicc.usage import validate_usage_dump_path
@@ -2107,7 +2134,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "type": "usage_file_validated",
                 "provider": None,
                 "valid": False,
-                "message": "Missing provider",
+                "message": ui_message_text("Missing provider", 'backend.websocket.missing_provider'),
             })
             return
         try:
@@ -2117,7 +2144,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "type": "usage_file_validated",
                 "provider": provider_value,
                 "valid": False,
-                "message": f"Unknown provider: {provider_value!r}",
+                "message": ui_message_text(f"Unknown provider: {provider_value!r}", 'backend.websocket.unknown_provider', {"provider": repr(provider_value)}),
             })
             return
 
@@ -2126,7 +2153,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                 "type": "usage_file_validated",
                 "provider": provider.value,
                 "valid": False,
-                "message": "No file path provided",
+                "message": ui_message_text("No file path provided", 'backend.websocket.path_required'),
             })
             return
 
@@ -2144,7 +2171,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         """Validate a tmux config file path and return the result to the client."""
         file_path = content.get("file_path", "")
         if not isinstance(file_path, str) or not file_path.strip():
-            await self.send_json({"type": "tmux_config_path_validated", "valid": False, "message": "No file path provided"})
+            await self.send_json({"type": "tmux_config_path_validated", "valid": False, "message": ui_message_text("No file path provided", 'backend.websocket.path_required')})
             return
 
         from twicc.terminal import validate_tmux_config_path
@@ -2563,7 +2590,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         """Handle list_terminals request: return active tmux terminal indices (with labels) for a terminal context."""
         terminal_context = data.get("terminal_context")
         if not terminal_context:
-            await self.send_json({"type": "error", "message": "Missing terminal_context"})
+            await self.send_json({"type": "error", "message": ui_message_text("Missing terminal_context", 'backend.websocket.terminal_context_required')})
             return
 
         from twicc.terminal import list_tmux_terminals
@@ -2583,12 +2610,12 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         terminal_context = data.get("terminal_context")
         terminal_index = data.get("terminal_index")
         if not terminal_context or terminal_index is None:
-            await self.send_json({"type": "error", "message": "Missing terminal_context or terminal_index"})
+            await self.send_json({"type": "error", "message": ui_message_text("Missing terminal_context or terminal_index", 'backend.websocket.terminal_fields_required')})
             return
 
         # Safety: never kill the main terminal via this handler
         if terminal_index == 0:
-            await self.send_json({"type": "error", "message": "Cannot kill main terminal"})
+            await self.send_json({"type": "error", "message": ui_message_text("Cannot kill main terminal", 'backend.websocket.main_terminal_protected')})
             return
 
         from twicc.terminal import kill_tmux_terminal
@@ -2619,7 +2646,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         terminal_index = data.get("terminal_index")
         label = data.get("label", "")
         if not terminal_context or terminal_index is None:
-            await self.send_json({"type": "error", "message": "Missing terminal_context or terminal_index"})
+            await self.send_json({"type": "error", "message": ui_message_text("Missing terminal_context or terminal_index", 'backend.websocket.terminal_fields_required')})
             return
 
         from twicc.terminal import TERMINAL_LABEL_MAX_LENGTH, set_tmux_terminal_label
@@ -2653,7 +2680,7 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
         terminal_index = data.get("terminal_index")
         enabled = bool(data.get("enabled"))
         if not terminal_context or terminal_index is None:
-            await self.send_json({"type": "error", "message": "Missing terminal_context or terminal_index"})
+            await self.send_json({"type": "error", "message": ui_message_text("Missing terminal_context or terminal_index", 'backend.websocket.terminal_fields_required')})
             return
 
         from twicc.terminal import set_tmux_terminal_autoattach

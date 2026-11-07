@@ -21,4 +21,11 @@ class TtsPlaybackOutcomeTest {
         assertEquals(PlayerSignal.Ended(false, "Audio playback was interrupted."), speechEndResult(false, true, true, null))
         assertEquals(PlayerSignal.Ended(false, "Generation failed"), speechEndResult(false, true, true, mapOf("state" to "failed", "error" to "Generation failed")))
     }
+    @Test fun backendFailureMetadataSurvivesAudioSettlement() {
+        val metadata = mapOf("key" to "backend.tts.failed", "params" to emptyMap<String, Any?>())
+        val result = speechEndResult(true, true, false, mapOf("state" to "failed", "error" to "Generation failed", "ui_message" to metadata))
+        assertEquals("Generation failed", result.error)
+        assertEquals(metadata, result.uiMessage)
+    }
+
 }

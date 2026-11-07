@@ -22,6 +22,7 @@ from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.db import IntegrityError, transaction
 
+from twicc.core.ui_messages import ui_message_text
 from twicc.core.models import Project, Session, SessionType
 from twicc.core.serializers import serialize_project
 from twicc.git import resolve_git_from_path, resolve_worktree_main_repo
@@ -828,7 +829,7 @@ def validate_project_name_format(
     if len(trimmed) > MAX_PROJECT_NAME_LENGTH:
         return [ProjectMutationError(
             field, "invalid_name",
-            f"Name must be ≤ {MAX_PROJECT_NAME_LENGTH} characters (got {len(trimmed)}).",
+            ui_message_text(f"Name must be ≤ {MAX_PROJECT_NAME_LENGTH} characters (got {len(trimmed)}).", 'backend.projects.name_length', {"maximum": MAX_PROJECT_NAME_LENGTH, "length": len(trimmed)}),
         )]
     return []
 
@@ -890,7 +891,7 @@ async def update_project_atomic(
             except Project.DoesNotExist:
                 return ProjectMutationResult(False, None, None, [
                     ProjectMutationError("PROJECT_ID", "project_not_found",
-                                          f"Project {project_id!r} not found."),
+                                          ui_message_text(f"Project {project_id!r} not found.", 'backend.projects.id_missing', {"project_id": repr(project_id)})),
                 ])
 
             update_fields: list[str] = []
@@ -957,8 +958,8 @@ async def update_project_atomic(
                         return ProjectMutationResult(False, project_id, None, [
                             ProjectMutationError(
                                 "--set-default-browser-url", "url_not_found",
-                                f"URL {set_default_browser_url!r} is not in the project's "
-                                "saved browser URLs."),
+                                ui_message_text(f"URL {set_default_browser_url!r} is not in the project's "
+                                "saved browser URLs.", 'backend.projects.saved_url_missing', {"url": repr(set_default_browser_url)})),
                         ])
                 if entries != (project.browser_urls or []):
                     project.browser_urls = entries
@@ -975,7 +976,7 @@ async def update_project_atomic(
             except IntegrityError:
                 return ProjectMutationResult(False, project_id, None, [
                     ProjectMutationError("--name", "duplicate_name",
-                                          "Another project already uses this name."),
+                                          ui_message_text("Another project already uses this name.", 'backend.projects.duplicate_name')),
                 ])
             return ProjectMutationResult(True, project_id, project, None)
 
@@ -1023,7 +1024,7 @@ async def update_project_agent_defaults_atomic(
             except Project.DoesNotExist:
                 return ProjectMutationResult(False, None, None, [
                     ProjectMutationError("PROJECT_ID", "project_not_found",
-                                          f"Project {project_id!r} not found."),
+                                          ui_message_text(f"Project {project_id!r} not found.", 'backend.projects.id_missing', {"project_id": repr(project_id)})),
                 ])
 
             current = project.default_agent_settings or {}

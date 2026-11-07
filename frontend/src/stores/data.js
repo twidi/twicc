@@ -1,5 +1,6 @@
 import { i18n } from '../i18n/index.js'
 import { localUiError } from '../i18n/uiMessages.js'
+import { remoteUiMessage, remoteUiError } from '../i18n/remoteMessages.js'
 import { createSessionEventHistoryActions } from '../utils/chatEvents/historyActions.js'
 import { buildTimelineUrl } from '../utils/timeline/feed.js'
 import { normalizeChatTimestamp, placeSessionEvents } from '../utils/chatEvents/placement.js'
@@ -209,6 +210,7 @@ async function readJsonWithProgress(res, onBytes) {
  * `TypeError` when the network is unreachable.
  */
 function fetchFailureDescriptor(error) {
+    if (error?.uiMessage) return error.uiMessage
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { key: 'session.data.errors.noData' }
     if (error instanceof TypeError) return { key: 'session.data.errors.network' }
     if (error?.uiMessageKey) return { key: error.uiMessageKey, params: error.uiMessageParams }
@@ -442,7 +444,7 @@ function aggregatePhase(byProvider) {
         current += entry.current ?? 0
         total += entry.total ?? 0
         if (!entry.completed) completed = false
-        if (entry.detail) details.push(entry.detail)
+        if (entry.detail) details.push(remoteUiMessage(entry, entry.detail, 'detail_ui_message'))
     }
     return { current, total, completed, details }
 }
@@ -1801,7 +1803,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.updateProject'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.updateProject'))
                 }
 
                 const updatedProject = await response.json()
@@ -2956,7 +2958,7 @@ export const useDataStore = defineStore('data', {
             })
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}))
-                throw err?.error ? new Error(err.error) : localUiError('session.data.errors.createBookmark')
+                throw err?.error ? remoteUiError(err) : localUiError('session.data.errors.createBookmark')
             }
             const b = await res.json()
             // Through the live entry point: the artifacts list plays the new row's entrance.
@@ -3713,6 +3715,7 @@ export const useDataStore = defineStore('data', {
                     type: 'assistant',
                     syntheticKind,
                     label: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label || null,
+                    labelUiMessage: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.label_ui_message || null,
                     tools: isLaunchedEphemeral(this.sessions[sessionId]) ? [] : processState?.tools || [],
                     lastStartedToolId: isLaunchedEphemeral(this.sessions[sessionId]) ? null : processState?.lastStartedToolId || null,
                     lastToolVisible: false,
@@ -3772,7 +3775,7 @@ export const useDataStore = defineStore('data', {
                 status.lastToolVisible = computeLastToolVisible(projection.items, processState?.lastStartedToolId,
                     mode, projection.expandedHeads, isCurrentBlockDetailed)
                 // The stabilizer skips parsed content. Include every mutable status field.
-                workingMessage.workingStatusKey = JSON.stringify([status.label, status.tools,
+                workingMessage.workingStatusKey = JSON.stringify([status.label, status.labelUiMessage, status.tools,
                     status.lastStartedToolId, status.lastToolVisible])
             }
             let visualItems = computeVisualItems(projection.items, mode, projection.expandedHeads, isAssistantTurn, detailedBlocks)
@@ -4219,6 +4222,7 @@ export const useDataStore = defineStore('data', {
                 message,
                 messageKey,
                 messageParams,
+                ui_message: info.ui_message || info.error_ui_message || null,
                 sentAt: entry.sentAt || failedAt,
                 asyncQuestions: entry.async_questions || entry.asyncQuestions,
                 rawText: entry.rawText,
@@ -4275,6 +4279,7 @@ export const useDataStore = defineStore('data', {
                 message: failedSend.message,
                 messageKey: failedSend.messageKey,
                 messageParams: failedSend.messageParams,
+                ui_message: failedSend.ui_message,
                 mediasDropped: failedSend.mediasDropped,
                 sentAt: failedSend.sentAt,
             }
@@ -5555,7 +5560,7 @@ export const useDataStore = defineStore('data', {
             // Signature of what the working row shows, before the update (see the end).
             const workingSignature = () => {
                 const current = this.processStates[sessionId]
-                return JSON.stringify([current?.label ?? null, current?.tools ?? [], current?.lastStartedToolId ?? null])
+                return JSON.stringify([current?.label ?? null, current?.label_ui_message ?? null, current?.tools ?? [], current?.lastStartedToolId ?? null])
             }
             const previousWorkingSignature = workingSignature()
             // Keep an in-flight "stopping" flag across non-dead transitions so
@@ -5594,6 +5599,7 @@ export const useDataStore = defineStore('data', {
                     state_changed_at: extra.state_changed_at || null,
                     memory: extra.memory || null,
                     error: extra.error || null,
+                    error_ui_message: extra.error_ui_message || null,
                     pending_requests: withAutoDenyDeadlines(
                         extra.pending_requests || [],
                         Date.now(),
@@ -5615,6 +5621,8 @@ export const useDataStore = defineStore('data', {
                     // Backend truth when it carries one, else the label already
                     // on screen (see `keptLabel`).
                     label: extra.label ?? keptLabel,
+                    label_ui_message: extra.label != null ? extra.label_ui_message || null
+                        : keptLabel ? this.processStates[sessionId]?.label_ui_message || null : null,
                     // Always recomputed by the backend for the snapshot, so its
                     // absence means "nothing runs in the background".
                     background_work_in_progress: extra.background_work_in_progress || null,
@@ -5731,6 +5739,7 @@ export const useDataStore = defineStore('data', {
                         state_changed_at: p.state_changed_at || null,
                         memory: p.memory || null,
                         error: p.error || null,
+                        error_ui_message: p.error_ui_message || null,
                         pending_requests: withAutoDenyDeadlines(
                             p.pending_requests || [],
                             snapshotAt,
@@ -5753,6 +5762,7 @@ export const useDataStore = defineStore('data', {
                         // arrives while a turn is held for background work
                         // learns why instead of showing a bare "thinking".
                         label: p.label || null,
+                        label_ui_message: p.label_ui_message || null,
                         // What still runs behind the agent (subagents,
                         // background shells, …), whatever `state` says.
                         // Recomputed for every snapshot; null when nothing.
@@ -6208,7 +6218,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.rename'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.rename'))
                 }
 
                 const updatedSession = await response.json()
@@ -6256,7 +6266,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.dismissGoal'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.dismissGoal'))
                 }
 
                 const updatedSession = await response.json()
@@ -6464,7 +6474,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -6542,7 +6552,7 @@ export const useDataStore = defineStore('data', {
             })
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}))
-                throw new Error(err.error || `HTTP ${res.status}`)
+                throw remoteUiError(err, err.error || `HTTP ${res.status}`)
             }
             return res.json()
         },
@@ -6575,7 +6585,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -6618,7 +6628,7 @@ export const useDataStore = defineStore('data', {
 
                 if (!response.ok) {
                     const data = await response.json()
-                    throw new Error(data.error || i18n.global.t('session.data.errors.updateSession'))
+                    throw remoteUiError(data, data.error || i18n.global.t('session.data.errors.updateSession'))
                 }
 
                 const updatedSession = await response.json()
@@ -6928,7 +6938,7 @@ export const useDataStore = defineStore('data', {
                 titleProvider: titleProvider || null,
                 requestedModel: requestedModel || null,
                 titleModel: titleModel || null,
-                error: error || null,
+                error: remoteUiMessage(data, error || null),
             }
         },
 

@@ -17,10 +17,22 @@ from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonRespo
 from twicc.core.serializers import serialize_peer, serialize_peer_message
 from twicc.core.services import peer_messages, peer_mutation
 from twicc.core.text_filter import match_all_terms_query
+from twicc.core.ui_messages import ui_error, ui_message, ui_message_text
+
+
+def _ui_errors(errors):
+    result = []
+    for error in errors or []:
+        row = error._asdict()
+        metadata = getattr(error.message, "ui_message", None)
+        if metadata:
+            row["ui_message"] = metadata
+        result.append(row)
+    return result
 
 
 def _err_response(errors) -> JsonResponse:
-    return JsonResponse({"errors": [e._asdict() for e in (errors or [])]}, status=400)
+    return JsonResponse({"errors": _ui_errors(errors)}, status=400)
 
 
 def _parse_body(request) -> dict | None:
@@ -64,6 +76,7 @@ def _full_detail_body(pk) -> bytes | None:
         ).get(message.pk)
         return orjson.dumps(serialize_peer_message(
             message, include_payload=True, include_attachments=True, effective_project=effective_project,
+            include_ui_messages=True,
         ))
     finally:
         close_old_connections()
@@ -94,7 +107,7 @@ async def peers_list(request):
     if request.method == "POST":
         data = _parse_body(request)
         if data is None:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
         result = await peer_mutation.create_peer_and_request(
             name=data.get("name") or "", base_url=data.get("base_url") or "",
         )
@@ -113,12 +126,12 @@ async def peer_detail(request, peer_id):
     if request.method == "PATCH":
         data = _parse_body(request)
         if data is None:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
         if "base_url" in data:
             return _err_response([peer_mutation.PeerError(
                 "base_url",
                 "immutable",
-                "A peer address cannot be changed. Create a new peering for the new address.",
+                ui_message_text('A peer address cannot be changed. Create a new peering for the new address.', 'backend.peer.immutableAddress'),
             )])
         if "name" in data:
             result = await peer_mutation.rename_peer(peer, data.get("name") or "")
@@ -145,7 +158,7 @@ async def peer_verify(request, peer_id):
     peer = await _load_peer(peer_id)
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     result = await peer_mutation.submit_verification_code(peer, data.get("code") or "")
     if not result.success:
         return _err_response(result.errors)
@@ -159,7 +172,7 @@ async def peer_accept(request, peer_id):
     peer = await _load_peer(peer_id)
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     result = await peer_mutation.accept_peer(peer, name=data.get("name") or "")
     if not result.success:
         return _err_response(result.errors)
@@ -221,14 +234,14 @@ async def peer_message_send(request):
         return HttpResponseNotAllowed(["POST"])
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     reply_to = data.get("reply_to") or None
     resolve_reply_to = data.get("resolve_reply_to") or None
     if resolve_reply_to is not None:
         if resolve_reply_to not in (PeerMessageStatus.DONE, PeerMessageStatus.REFUSED):
-            return JsonResponse({"error": "resolve_reply_to must be \"done\" or \"refused\""}, status=400)
+            return JsonResponse(ui_error('resolve_reply_to must be "done" or "refused"', 'backend.peer.resolutionStatus'), status=400)
         if not reply_to:
-            return JsonResponse({"error": "resolve_reply_to requires reply_to"}, status=400)
+            return JsonResponse(ui_error('resolve_reply_to requires reply_to', 'backend.peer.resolutionReply'), status=400)
     result = await peer_messages.send_peer_message_from_payload(
         {
             "peer": data.get("peer_id") or "",
@@ -256,12 +269,12 @@ async def peer_message_send(request):
         )()
         if parent is None:
             response["resolution"] = {"ok": False, "errors": [
-                {"field": "reply_to", "code": "not_inbound", "message": "The answered message is not an inbound message."},
+                {"field": "reply_to", "code": "not_inbound", "message": "The answered message is not an inbound message.", "ui_message": ui_message('backend.peer.replyNotInbound')},
             ]}
         else:
             resolve = peer_messages.mark_done if resolve_reply_to == PeerMessageStatus.DONE else peer_messages.refuse_peer_message
             ok, errors = await resolve(parent)
-            response["resolution"] = {"ok": ok, "errors": [e._asdict() for e in (errors or [])]}
+            response["resolution"] = {"ok": ok, "errors": _ui_errors(errors)}
     return JsonResponse(response)
 
 
@@ -362,7 +375,7 @@ async def peer_messages_list(request):
     messages, history_has_more, projects = await sync_to_async(_fetch)()
     return JsonResponse({
         "messages": [
-            serialize_peer_message(message, effective_project=projects.get(message.pk))
+            serialize_peer_message(message, effective_project=projects.get(message.pk), include_ui_messages=True)
             for message in messages
         ],
         "history_has_more": history_has_more,
@@ -399,10 +412,10 @@ async def peer_message_project(request, pk):
     message = await _load_message(pk)
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     project_id = data.get("project_id")
     if project_id is not None and not isinstance(project_id, str):
-        return JsonResponse({"error": "project_id must be a string or null"}, status=400)
+        return JsonResponse(ui_error('project_id must be a string or null', 'backend.peer.projectType'), status=400)
     success, errors = await peer_messages.attach_project(message, (project_id or "").strip() or None)
     if not success:
         return _err_response(errors)
@@ -430,6 +443,7 @@ async def peer_message_detail(request, pk):
     )()
     return JsonResponse(serialize_peer_message(
         message, include_payload=True, include_attachments=False, effective_project=effective_project,
+        include_ui_messages=True,
     ))
 
 
@@ -460,7 +474,7 @@ async def peer_message_deliver(request, pk):
     message = await _load_message(pk)
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     success, envelope, errors = await peer_messages.mark_delivered(
         message, session_id=data.get("session_id") or None, note=data.get("note") or "",
         redeliver=bool(data.get("redeliver")),
@@ -483,10 +497,10 @@ async def peer_message_link_session(request, pk):
     message = await _load_message(pk)
     data = _parse_body(request)
     if data is None:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.common.invalidJson'), status=400)
     session_id = data.get("session_id") or ""
     if not isinstance(session_id, str) or not session_id:
-        return JsonResponse({"error": "session_id is required"}, status=400)
+        return JsonResponse(ui_error('session_id is required', 'backend.peer.sessionRequired'), status=400)
     success, errors = await peer_messages.link_delivered_session(message, session_id)
     if not success:
         return _err_response(errors)

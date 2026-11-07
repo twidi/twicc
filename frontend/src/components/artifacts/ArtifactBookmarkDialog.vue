@@ -1,4 +1,5 @@
 <script setup>
+import { remoteUiMessage } from '../../i18n/remoteMessages.js'
 import { localUiMessage, resolveUiMessage } from '../../i18n/uiMessages'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -152,7 +153,7 @@ async function postHost(pathSuffix, method, body) {
     })
     if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        sectionError.value = err.error || localUiMessage('artifacts.network.errors.request', { status: res.status })
+        sectionError.value = remoteUiMessage(err, err.error || localUiMessage('artifacts.network.errors.request', { status: res.status }))
         throw new Error(resolveUiMessage(sectionError.value))
     }
 }

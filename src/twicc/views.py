@@ -42,6 +42,7 @@ from twicc.core.session_queries import (
 )
 from twicc.core.session_availability import all_unavailable_session_ids, arefuse_unavailable
 from twicc.core.text_filter import match_text_query
+from twicc.core.ui_messages import ui_error, ui_message
 from twicc.core.services.project_mutation import clean_project_agent_defaults
 from twicc.core.services import timeline_feed
 from twicc.paths import path_to_project_id
@@ -72,6 +73,26 @@ SESSIONS_PAGE_SIZE = 1000
 # are added on creation and removed via ``discard`` from the
 # ``add_done_callback`` so the set stays bounded.
 _DETACHED_TASKS: set[asyncio.Task] = set()
+
+
+def _with_ui_message(payload):
+    """Expose shared-service message identity at the browser API boundary."""
+    if not isinstance(payload, dict):
+        return payload
+    for field in ("error", "message"):
+        descriptor = getattr(payload.get(field), "ui_message", None)
+        metadata_field = "message_ui_message" if field == "message" and payload.get("error") else "ui_message"
+        if descriptor is not None and metadata_field not in payload:
+            payload = {**payload, metadata_field: descriptor}
+    return payload
+
+
+def _exception_ui_message(exception):
+    """Keep metadata from exception wrappers without matching their English text."""
+    descriptor = getattr(exception, "ui_message", None)
+    if descriptor is None and exception.args:
+        descriptor = getattr(exception.args[0], "ui_message", None)
+    return descriptor
 
 
 async def _get_sessions_page(
@@ -174,7 +195,7 @@ def _parse_sessions_limit(request) -> int | None:
 
 def _invalid_sessions_limit_response() -> JsonResponse:
     return JsonResponse(
-        {"error": f"Invalid 'limit' parameter: must be an integer between 1 and {SESSIONS_PAGE_SIZE}"},
+        ui_error(f"Invalid 'limit' parameter: must be an integer between 1 and {SESSIONS_PAGE_SIZE}", 'backend.sessions.invalid_limit', {"maximum": SESSIONS_PAGE_SIZE}),
         status=400,
     )
 
@@ -306,29 +327,29 @@ async def _create_project(request):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     # 1. Extract and validate directory
     directory = data.get("directory")
     if not directory or not isinstance(directory, str):
-        return JsonResponse({"error": "directory is required"}, status=400)
+        return JsonResponse(ui_error("directory is required", 'backend.projects.directory_required'), status=400)
 
     resolved = os.path.realpath(directory)
     if not os.path.isabs(resolved):
-        return JsonResponse({"error": "Directory must be an absolute path"}, status=400)
+        return JsonResponse(ui_error("Directory must be an absolute path", 'backend.projects.directory_absolute'), status=400)
     if not os.path.isdir(resolved):
         # If path exists but is not a directory (e.g. a file), reject outright
         if os.path.exists(resolved):
-            return JsonResponse({"error": "Path exists but is not a directory"}, status=400)
+            return JsonResponse(ui_error("Path exists but is not a directory", 'backend.projects.path_not_directory'), status=400)
         # Directory doesn't exist: create it if requested, otherwise ask the user
         if data.get("create_directory"):
             try:
                 await asyncio.to_thread(os.makedirs, resolved, exist_ok=True)
             except OSError as e:
-                return JsonResponse({"error": f"Failed to create directory: {e}"}, status=400)
+                return JsonResponse(ui_error(f"Failed to create directory: {e}", 'backend.projects.directory_create_failed', {"detail": str(e)}), status=400)
         else:
             return JsonResponse(
-                {"error": "Directory does not exist", "code": "directory_not_found"},
+                ui_error("Directory does not exist", 'backend.projects.directory_missing', code="directory_not_found"),
                 status=400,
             )
 
@@ -337,7 +358,7 @@ async def _create_project(request):
 
     # 3. Check project doesn't already exist
     if await Project.objects.filter(id=project_id).aexists():
-        return JsonResponse({"error": "A project already exists for this directory"}, status=409)
+        return JsonResponse(ui_error("A project already exists for this directory", 'backend.projects.directory_exists'), status=409)
 
     # 4. Validate optional name
     name = data.get("name")
@@ -346,9 +367,9 @@ async def _create_project(request):
         if not name:
             name = None
         elif len(name) > 25:
-            return JsonResponse({"error": "Name must be 25 characters or less"}, status=400)
+            return JsonResponse(ui_error("Name must be 25 characters or less", 'backend.projects.name_too_long'), status=400)
         elif await Project.objects.filter(name=name).aexists():
-            return JsonResponse({"error": "A project with this name already exists"}, status=400)
+            return JsonResponse(ui_error("A project with this name already exists", 'backend.projects.name_exists'), status=400)
 
     # 5. Validate optional color
     color = data.get("color")
@@ -374,11 +395,11 @@ async def _create_project(request):
             )
         )
     except IntegrityError:
-        return JsonResponse({"error": "A project already exists for this directory"}, status=409)
+        return JsonResponse(ui_error("A project already exists for this directory", 'backend.projects.directory_exists'), status=409)
     if not created:
         # Lost a race with another creator between the early exists-check
         # and now — same friendly 409 as the early-out.
-        return JsonResponse({"error": "A project already exists for this directory"}, status=409)
+        return JsonResponse(ui_error("A project already exists for this directory", 'backend.projects.directory_exists'), status=409)
 
     # 7. Fold in the workspaces the user explicitly picked in the project
     # dialog. ``register_project`` already ran the pattern-based auto-add
@@ -404,17 +425,17 @@ async def project_branches(request, project_id):
     from twicc.git import get_branches, get_worktree_branches
 
     if request.method != "GET":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     try:
         project = await Project.objects.aget(id=project_id)
     except Project.DoesNotExist:
-        return JsonResponse({"error": "Project not found"}, status=404)
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
     # Resolve the repo root live (git_root, or a fallback from the directory for
     # a never-synced / freshly git-init'd repo) — same fallback as the worktrees
     # GET/POST endpoints, so a stale ``git_root=None`` never wrongly 400s here.
     repo_root = await _resolve_repo_root(project)
     if not repo_root:
-        return JsonResponse({"error": "Project is not a git repository"}, status=400)
+        return JsonResponse(ui_error("Project is not a git repository", 'backend.projects.not_git_repository'), status=400)
 
     branches = await sync_to_async(get_branches)(repo_root)
     checked_out = await sync_to_async(get_worktree_branches)(repo_root)
@@ -441,10 +462,10 @@ async def project_resolve_git(request, project_id):
     from twicc.projects import reresolve_project_git_root
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     found, git_root = await reresolve_project_git_root(project_id)
     if not found:
-        return JsonResponse({"error": "Project not found"}, status=404)
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
     return JsonResponse({"git_root": git_root})
 
 
@@ -464,10 +485,10 @@ async def project_refresh_directory(request, project_id):
     from twicc.projects import refresh_project_directory_state
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     found, project = await refresh_project_directory_state(project_id)
     if not found:
-        return JsonResponse({"error": "Project not found"}, status=404)
+        return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
     return JsonResponse(serialize_project(project))
 
 
@@ -574,22 +595,22 @@ async def project_worktrees(request, project_id):
         try:
             project = await Project.objects.aget(id=project_id)
         except Project.DoesNotExist:
-            return JsonResponse({"error": "Project not found"}, status=404)
+            return JsonResponse(ui_error("Project not found", 'backend.projects.not_found'), status=404)
         repo_root = await _resolve_repo_root(project)
         if not repo_root:
-            return JsonResponse({"error": "Project is not a git repository"}, status=400)
+            return JsonResponse(ui_error("Project is not a git repository", 'backend.projects.not_git_repository'), status=400)
         worktrees = await sync_to_async(_serialize_worktrees)(repo_root)
         return JsonResponse({"worktrees": worktrees})
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
 
     from twicc.core.services.worktree_creation import create_worktree_from_source
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     result = await create_worktree_from_source(
         source_project_id=project_id,
@@ -599,7 +620,7 @@ async def project_worktrees(request, project_id):
     )
     if not result.success:
         err = result.errors[0]
-        return JsonResponse({"error": err.message},
+        return JsonResponse({"error": err.message, "ui_message": getattr(err.message, "ui_message", None)},
                             status=_WORKTREE_ERROR_STATUS.get(err.code, 400))
 
     return JsonResponse(serialize_project(result.project), status=201)
@@ -620,11 +641,11 @@ async def project_worktree_adopt(request, project_id):
     from twicc.core.services.worktree_creation import adopt_existing_worktree
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     result = await adopt_existing_worktree(
         source_project_id=project_id,
@@ -632,7 +653,7 @@ async def project_worktree_adopt(request, project_id):
     )
     if not result.success:
         err = result.errors[0]
-        return JsonResponse({"error": err.message},
+        return JsonResponse({"error": err.message, "ui_message": getattr(err.message, "ui_message", None)},
                             status=_WORKTREE_ERROR_STATUS.get(err.code, 400))
 
     return JsonResponse(serialize_project(result.project), status=201)
@@ -649,7 +670,7 @@ async def project_detail(request, project_id):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
         # Update allowed fields only
         if "name" in data:
@@ -660,16 +681,16 @@ async def project_detail(request, project_id):
                     # Empty after strip means no name
                     name = None
                 elif len(name) > 25:
-                    return JsonResponse({"error": "Name must be 25 characters or less"}, status=400)
+                    return JsonResponse(ui_error("Name must be 25 characters or less", 'backend.projects.name_too_long'), status=400)
                 elif await Project.objects.filter(name=name).exclude(id=project_id).aexists():
-                    return JsonResponse({"error": "A project with this name already exists"}, status=400)
+                    return JsonResponse(ui_error("A project with this name already exists", 'backend.projects.name_exists'), status=400)
             project.name = name
         if "color" in data:
             project.color = data["color"]
         if "archived" in data:
             archived = data["archived"]
             if not isinstance(archived, bool):
-                return JsonResponse({"error": "archived must be a boolean"}, status=400)
+                return JsonResponse(ui_error("archived must be a boolean", 'backend.request.boolean_required', {'field': 'archived'}), status=400)
             project.archived = archived
 
         update_fields = ["name", "color", "archived"]
@@ -677,20 +698,20 @@ async def project_detail(request, project_id):
             worktree_directory = data["worktree_directory"]
             if worktree_directory is not None:
                 if not isinstance(worktree_directory, str):
-                    return JsonResponse({"error": "worktree_directory must be a string or null"}, status=400)
+                    return JsonResponse(ui_error("worktree_directory must be a string or null", 'backend.request.string_or_null', {'field': 'worktree_directory'}), status=400)
                 worktree_directory = worktree_directory.strip() or None
             project.worktree_directory = worktree_directory
             update_fields.append("worktree_directory")
         if "default_provider" in data:
             clean_provider, _unused, err = clean_project_agent_defaults(data["default_provider"], None)
             if err is not None:
-                return JsonResponse({"error": err}, status=400)
+                return JsonResponse({"error": err, "ui_message": getattr(err, "ui_message", None)}, status=400)
             project.default_provider = clean_provider
             update_fields.append("default_provider")
         if "default_agent_settings" in data:
             _unused, clean_settings, err = clean_project_agent_defaults(None, data["default_agent_settings"])
             if err is not None:
-                return JsonResponse({"error": err}, status=400)
+                return JsonResponse({"error": err, "ui_message": getattr(err, "ui_message", None)}, status=400)
             project.default_agent_settings = clean_settings
             update_fields.append("default_agent_settings")
         if "default_layout_id" in data:
@@ -698,7 +719,7 @@ async def project_detail(request, project_id):
             # (resolution falls back to inherit → global → single pane), so no existence check here.
             layout_id = data["default_layout_id"]
             if layout_id is not None and not isinstance(layout_id, str):
-                return JsonResponse({"error": "default_layout_id must be a string or null"}, status=400)
+                return JsonResponse(ui_error("default_layout_id must be a string or null", 'backend.request.string_or_null', {'field': 'default_layout_id'}), status=400)
             project.default_layout_id = layout_id or None
             update_fields.append("default_layout_id")
         if "browser_urls" in data:
@@ -710,7 +731,7 @@ async def project_detail(request, project_id):
                 field="browser_urls",
             )
             if entry_errors:
-                return JsonResponse({"error": entry_errors[0].message}, status=400)
+                return JsonResponse({"error": entry_errors[0].message, "ui_message": getattr(entry_errors[0].message, "ui_message", None)}, status=400)
             project.browser_urls = entries
             update_fields.append("browser_urls")
         await run_under_db_write_lock(
@@ -734,12 +755,12 @@ async def project_detail(request, project_id):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
         if "archived" in data:
             archived = data["archived"]
             if not isinstance(archived, bool):
-                return JsonResponse({"error": "archived must be a boolean"}, status=400)
+                return JsonResponse(ui_error("archived must be a boolean", 'backend.request.boolean_required', {'field': 'archived'}), status=400)
             project.archived = archived
             await run_under_db_write_lock(
                 lambda: project.asave(update_fields=["archived"])
@@ -801,7 +822,7 @@ async def project_icon_manage(request, project_id):
       repo (each a normalized data-URI preview) for the user to pick from.
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     try:
         project = await Project.objects.aget(id=project_id)
     except Project.DoesNotExist:
@@ -809,7 +830,7 @@ async def project_icon_manage(request, project_id):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     from twicc import project_icons as pi
 
@@ -818,29 +839,29 @@ async def project_icon_manage(request, project_id):
     if action == "scan":
         anchor = project.icon_anchor or project.git_root
         if not anchor:
-            return JsonResponse({"error": "Project is not in a git repository"}, status=400)
+            return JsonResponse(ui_error("Project is not in a git repository", 'backend.projects.not_in_git_repository'), status=400)
         candidates = await sync_to_async(pi.scan_repo_icons)(anchor)
         return JsonResponse({"candidates": candidates})
 
     if action == "set":
         decoded = _decode_image_data_uri(data.get("image"))
         if decoded is None:
-            return JsonResponse({"error": "Invalid or missing image"}, status=400)
+            return JsonResponse(ui_error("Invalid or missing image", 'backend.projects.icon.invalid'), status=400)
         mime, raw = decoded
         if len(raw) > _ICON_UPLOAD_MAX_BYTES:
-            return JsonResponse({"error": "Image too large (max 5 MB)"}, status=400)
+            return JsonResponse(ui_error("Image too large (max 5 MB)", 'backend.projects.icon.too_large'), status=400)
         ext = ".svg" if mime == "image/svg+xml" else ".png"
         token = await run_under_db_write_lock(
             lambda: sync_to_async(pi.set_project_icon_override_sync)(project_id, raw, ext)
         )
         if token is None:
-            return JsonResponse({"error": "Unsupported or corrupt image"}, status=400)
+            return JsonResponse(ui_error("Unsupported or corrupt image", 'backend.projects.icon.unsupported'), status=400)
     elif action in ("none", "inherit"):
         await run_under_db_write_lock(
             lambda: sync_to_async(pi.set_project_icon_state_sync)(project_id, action)
         )
     else:
-        return JsonResponse({"error": "Unknown action"}, status=400)
+        return JsonResponse(ui_error("Unknown action", 'backend.request.unknown_action'), status=400)
 
     # Broadcast only the edited project; inheriting descendants re-resolve
     # reactively client-side from this update.
@@ -860,7 +881,7 @@ async def project_trust_resolve(request, project_id):
     ``state`` is true / false / null (null → the caller should prompt the user).
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     if not await Project.objects.filter(id=project_id).aexists():
         raise Http404("Project not found")
     from twicc.core.services.trust import resolve_project_trust
@@ -884,31 +905,31 @@ async def project_trust_decide(request, project_id):
     defaults to "the project is under git").
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     if not await Project.objects.filter(id=project_id).aexists():
         raise Http404("Project not found")
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     if "trusted" not in data:
-        return JsonResponse({"error": "'trusted' is required (true, false or null)"}, status=400)
+        return JsonResponse(ui_error("'trusted' is required (true, false or null)", 'backend.projects.trust.required'), status=400)
     trusted = data.get("trusted")
     if not (trusted is None or isinstance(trusted, bool)):
-        return JsonResponse({"error": "'trusted' must be true, false or null"}, status=400)
+        return JsonResponse(ui_error("'trusted' must be true, false or null", 'backend.projects.trust.invalid'), status=400)
     propagation = data.get("propagation")
     if propagation is not None and not isinstance(propagation, bool):
-        return JsonResponse({"error": "'propagation' must be a boolean"}, status=400)
+        return JsonResponse(ui_error("'propagation' must be a boolean", 'backend.request.boolean_required', {'field': 'propagation'}), status=400)
     from twicc.core.services.trust import decide_project_trust
 
     try:
         result = await decide_project_trust(project_id, trusted, propagation)
     except Exception:
         logger.exception("Trust decide failed for project %s", project_id)
-        return JsonResponse({"error": "decision_failed"}, status=500)
+        return JsonResponse(ui_error("decision_failed", 'backend.projects.trust.failed'), status=500)
     if not result.get("ok"):
-        return JsonResponse({"error": result.get("error", "decision_failed")}, status=400)
-    return JsonResponse(result)
+        return JsonResponse(ui_error(result.get("error", "decision_failed"), 'backend.projects.trust.failed'), status=400)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def commands(request, project_id):
@@ -927,18 +948,18 @@ async def commands(request, project_id):
 
     provider_str = request.GET.get("provider")
     if not provider_str:
-        return JsonResponse({"error": "provider is required."}, status=400)
+        return JsonResponse(ui_error("provider is required.", 'backend.request.provider_required'), status=400)
     try:
         provider = Provider(provider_str)
     except ValueError:
-        return JsonResponse({"error": f"Unknown provider {provider_str!r}."}, status=400)
+        return JsonResponse(ui_error(f"Unknown provider {provider_str!r}.", 'backend.request.unknown_provider', {"provider": repr(provider_str)}), status=400)
 
     activation_char = request.GET.get("activation_char")
     if not activation_char:
-        return JsonResponse({"error": "activation_char is required."}, status=400)
+        return JsonResponse(ui_error("activation_char is required.", 'backend.commands.activation_required'), status=400)
     if len(activation_char) != 1:
         return JsonResponse(
-            {"error": "activation_char must be a single character."},
+            ui_error("activation_char must be a single character.", 'backend.commands.activation_single_character'),
             status=400,
         )
 
@@ -1057,7 +1078,7 @@ async def project_sessions(request, project_id):
     before_mtime = request.GET.get("before_mtime")
     result = await _get_sessions_page(None, before_mtime, project_id_list=scope_ids, limit=limit)
     result["scope_project_ids"] = scope_ids
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def _resolve_session_or_404(session_id, project_id, parent_session_id):
@@ -1124,7 +1145,7 @@ async def async_question_session_existence(request):
         return HttpResponseNotAllowed(["POST"])
     session_ids = _question_recovery_ids(request, "session_ids")
     if session_ids is None:
-        return JsonResponse({"error": "Invalid session_ids"}, status=400)
+        return JsonResponse(ui_error("Invalid session_ids", 'backend.questions.invalid_session_ids'), status=400)
     from twicc.orchestrator import get_orchestrator_registry
     from twicc.providers.state import get_enabled_providers
 
@@ -1153,7 +1174,7 @@ async def reconcile_session_async_questions(request, project_id, session_id):
         raise Http404("Session not found")
     request_ids = _question_recovery_ids(request, "request_ids")
     if request_ids is None:
-        return JsonResponse({"error": "Invalid request_ids"}, status=400)
+        return JsonResponse(ui_error("Invalid request_ids", 'backend.questions.invalid_request_ids'), status=400)
     from twicc.providers.helpers import AgentSettings
 
     project = await Project.objects.aget(id=project_id)
@@ -1200,12 +1221,12 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
     if request.method == "PATCH":
         # Reject subagents (cannot be modified)
         if session.type == SessionType.SUBAGENT:
-            return JsonResponse({"error": "Subagents cannot be modified"}, status=400)
+            return JsonResponse(ui_error("Subagents cannot be modified", 'backend.sessions.subagents_immutable'), status=400)
 
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
         needs_broadcast = False
 
@@ -1215,13 +1236,13 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
                 ensure_provider_running(session.provider)
             except ProviderDisabledError as e:
                 return JsonResponse(
-                    {"error": "provider_disabled", "provider": e.provider.value, "message": str(e)},
+                    {"error": "provider_disabled", "provider": e.provider.value, "message": str(e), "ui_message": e.ui_message, "message_ui_message": e.ui_message},
                     status=409,
                 )
             provider_helpers = get_provider_helpers(session.provider)
             validation = provider_helpers.validate_title(data["title"])
             if validation.error:
-                return JsonResponse({"error": validation.error}, status=400)
+                return JsonResponse({"error": validation.error, "ui_message": getattr(validation.error, "ui_message", None)}, status=400)
             title = validation.title
 
             from twicc.core.services.session_titles import accept_explicit_title
@@ -1250,7 +1271,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
         if "archived" in data:
             archived = data["archived"]
             if not isinstance(archived, bool):
-                return JsonResponse({"error": "archived must be a boolean"}, status=400)
+                return JsonResponse(ui_error("archived must be a boolean", 'backend.request.boolean_required', {'field': 'archived'}), status=400)
             # Share the archive flow with ``twicc update-session archive``:
             # DB write + search reindex + agent/tmux teardown live in
             # ``apply_session_archived_change``. ``also_unpin=False`` here
@@ -1267,7 +1288,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             pinned = data["pinned"]
             if pinned is not None and pinned not in PinMode.values:
                 return JsonResponse(
-                    {"error": f"pinned must be null or one of {list(PinMode.values)}"},
+                    ui_error(f"pinned must be null or one of {list(PinMode.values)}", 'backend.sessions.invalid_pin', {"values": str(list(PinMode.values))}),
                     status=400,
                 )
             # Share the pin/unpin flow with ``twicc update-session
@@ -1282,7 +1303,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             mute_on_user_turn = data["mute_on_user_turn"]
             if not isinstance(mute_on_user_turn, bool):
                 return JsonResponse(
-                    {"error": "mute_on_user_turn must be a boolean"},
+                    ui_error("mute_on_user_turn must be a boolean", 'backend.request.boolean_required', {'field': 'mute_on_user_turn'}),
                     status=400,
                 )
             from twicc.core.services.session_update import (
@@ -1295,7 +1316,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
             tree_detached = data["tree_detached"]
             if not isinstance(tree_detached, bool):
                 return JsonResponse(
-                    {"error": "tree_detached must be a boolean"},
+                    ui_error("tree_detached must be a boolean", 'backend.request.boolean_required', {'field': 'tree_detached'}),
                     status=400,
                 )
             from twicc.core.services.session_update import (
@@ -1311,7 +1332,7 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
         if "layout" in data:
             layout = data["layout"]
             if not isinstance(layout, dict):
-                return JsonResponse({"error": "layout must be an object"}, status=400)
+                return JsonResponse(ui_error("layout must be an object", 'backend.sessions.layout_object'), status=400)
             from twicc.core.services.session_update import apply_session_layout_change
             await apply_session_layout_change(session, layout)
             needs_broadcast = True
@@ -1324,11 +1345,11 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
         if "browser_url" in data:
             browser_url = data["browser_url"]
             if browser_url is not None and not isinstance(browser_url, str):
-                return JsonResponse({"error": "browser_url must be a string or null"}, status=400)
+                return JsonResponse(ui_error("browser_url must be a string or null", 'backend.request.string_or_null', {'field': 'browser_url'}), status=400)
             browser_url = normalize_browser_url(browser_url)
             url_errors = validate_browser_url(browser_url, field="browser_url")
             if url_errors:
-                return JsonResponse({"error": url_errors[0].message}, status=400)
+                return JsonResponse({"error": url_errors[0].message, "ui_message": getattr(url_errors[0].message, "ui_message", None)}, status=400)
             from twicc.core.services.session_update import apply_session_browser_url_change
             await apply_session_browser_url_change(session, browser_url)
             needs_broadcast = True
@@ -1341,11 +1362,11 @@ async def session_detail(request, project_id, session_id, parent_session_id=None
         if "dismiss_goal" in data:
             created_at = data["dismiss_goal"]
             if not isinstance(created_at, str) or not created_at:
-                return JsonResponse({"error": "dismiss_goal must be the goal's created_at"}, status=400)
+                return JsonResponse(ui_error("dismiss_goal must be the goal's created_at", 'backend.sessions.goal_timestamp_required'), status=400)
             from twicc.core.services.session_update import apply_session_goal_dismissed_change
             error = await apply_session_goal_dismissed_change(session, created_at)
             if error:
-                return JsonResponse({"error": error}, status=409)
+                return JsonResponse({"error": error, "ui_message": getattr(error, "ui_message", None)}, status=409)
             needs_broadcast = True
 
         # Handle plan-doc existence refresh: re-probe each plan_paths entry's
@@ -1411,7 +1432,7 @@ async def bulk_archive_sessions(request):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     older_than_iso = data.get("older_than")
     scope_type = data.get("scope")
@@ -1422,20 +1443,20 @@ async def bulk_archive_sessions(request):
     dry_run = bool(data.get("dry_run", False))
 
     if not older_than_iso:
-        return JsonResponse({"error": "older_than is required"}, status=400)
+        return JsonResponse(ui_error("older_than is required", 'backend.sessions.archive.older_than_required'), status=400)
     if scope_type not in ("project", "workspace", "all"):
-        return JsonResponse({"error": "Invalid scope"}, status=400)
+        return JsonResponse(ui_error("Invalid scope", 'backend.request.invalid_scope'), status=400)
     if scope_type == "project" and not project_id:
-        return JsonResponse({"error": "project_id required for scope=project"}, status=400)
+        return JsonResponse(ui_error("project_id required for scope=project", 'backend.sessions.archive.project_required'), status=400)
     if scope_type == "workspace" and not workspace_id:
-        return JsonResponse({"error": "workspace_id required for scope=workspace"}, status=400)
+        return JsonResponse(ui_error("workspace_id required for scope=workspace", 'backend.sessions.archive.workspace_required'), status=400)
 
     try:
         older_than_epoch = datetime.fromisoformat(
             older_than_iso
         ).timestamp()
     except (ValueError, AttributeError, TypeError):
-        return JsonResponse({"error": "Invalid older_than format"}, status=400)
+        return JsonResponse(ui_error("Invalid older_than format", 'backend.sessions.archive.older_than_invalid'), status=400)
 
     active_ids = {
         info.session_id
@@ -1461,7 +1482,7 @@ async def bulk_archive_sessions(request):
             None,
         )
         if ws is None:
-            return JsonResponse({"error": "Workspace not found"}, status=404)
+            return JsonResponse(ui_error("Workspace not found", 'backend.workspaces.not_found'), status=404)
         qs = qs.filter(project_id__in=ws.get("projectIds", []))
     # scope_type == "all": no additional filter
 
@@ -1597,14 +1618,14 @@ async def session_items(request, project_id, session_id, parent_session_id=None)
             project_id,
         )
         return JsonResponse(
-            {"error": "At least one 'range' query parameter is required"},
+            ui_error("At least one 'range' query parameter is required", 'backend.sessions.items.range_required'),
             status=400,
         )
 
     q_filter = parse_line_ranges(ranges)
     if q_filter is None:
         return JsonResponse(
-            {"error": "No valid 'range' query parameter could be parsed"},
+            ui_error("No valid 'range' query parameter could be parsed", 'backend.sessions.items.range_invalid'),
             status=400,
         )
 
@@ -1731,7 +1752,7 @@ async def subagents_state(request, project_id, session_id):
         return refused
 
     result = await sync_to_async(build_subagents_state)(session, include_metrics=True)
-    return JsonResponse(result, safe=False)
+    return JsonResponse(_with_ui_message(result), safe=False)
 
 
 async def tool_states(request, project_id, session_id):
@@ -1931,11 +1952,11 @@ async def workflow_synthesis(request, project_id, session_id, run_id):
     if (refused := await arefuse_unavailable(session)) is not None:
         return refused
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     meta = data.get("meta")
     templates = data.get("templates")
     script_hash = data.get("script_hash")
@@ -1944,7 +1965,7 @@ async def workflow_synthesis(request, project_id, session_id, run_id):
     detection_unavailable = bool(data.get("detection_unavailable"))
     if not isinstance(meta, dict) or not isinstance(templates, list) or not isinstance(script_hash, str):
         return JsonResponse(
-            {"error": "meta (object), templates (array) and script_hash (string) are required"},
+            ui_error("meta (object), templates (array) and script_hash (string) are required", 'backend.workflows.synthesis.required'),
             status=400,
         )
 
@@ -1956,14 +1977,14 @@ async def workflow_synthesis(request, project_id, session_id, run_id):
     if status == "not_found":
         raise Http404("Workflow run not found")
     if status == "completed":
-        return JsonResponse({"error": "Run already completed"}, status=409)
+        return JsonResponse(ui_error("Run already completed", 'backend.workflows.already_completed'), status=409)
     if status == "stale_hash":
         return JsonResponse(
-            {"error": "Script changed since generation; regenerate", "script_hash": payload},
+            ui_error("Script changed since generation; regenerate", 'backend.workflows.script_changed', script_hash=payload),
             status=409,
         )
     if payload is None:  # defensive: synthesis stored but the build yielded nothing
-        return JsonResponse({"error": "Failed to build running view"}, status=500)
+        return JsonResponse(ui_error("Failed to build running view", 'backend.workflows.build_failed'), status=500)
 
     # Tell other open Workflows tabs on this session to refetch (the POSTing
     # front already has the payload below). Gated on hidden, like the watcher.
@@ -2045,7 +2066,7 @@ def validate_standalone_root(path, root):
     root = os.path.normpath(root)
     path = os.path.normpath(path)
     if path != root and not path.startswith(root + os.sep):
-        return JsonResponse({"error": "Path is outside the allowed root directory"}, status=403)
+        return JsonResponse(ui_error("Path is outside the allowed root directory", 'backend.files.outside_root'), status=403)
     return None
 
 
@@ -2088,15 +2109,15 @@ async def standalone_directory_tree(request):
 
     dir_path = request.GET.get("path", "").strip()
     if not dir_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     dir_path = os.path.normpath(dir_path)
 
     if not os.path.isabs(dir_path):
-        return JsonResponse({"error": "Path must be absolute"}, status=400)
+        return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
 
     if not os.path.isdir(dir_path):
-        return JsonResponse({"error": "Directory not found"}, status=404)
+        return JsonResponse(ui_error("Directory not found", 'backend.files.directory_not_found'), status=404)
 
     root = request.GET.get("root", "").strip()
     error = validate_standalone_root(dir_path, root)
@@ -2131,15 +2152,15 @@ async def standalone_file_search(request):
 
     dir_path = request.GET.get("path", "").strip()
     if not dir_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     dir_path = os.path.normpath(dir_path)
 
     if not os.path.isabs(dir_path):
-        return JsonResponse({"error": "Path must be absolute"}, status=400)
+        return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
 
     if not os.path.isdir(dir_path):
-        return JsonResponse({"error": "Directory not found"}, status=404)
+        return JsonResponse(ui_error("Directory not found", 'backend.files.directory_not_found'), status=404)
 
     root = request.GET.get("root", "").strip()
     error = validate_standalone_root(dir_path, root)
@@ -2179,20 +2200,20 @@ async def standalone_file_content(request):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
         content = data.get("content")
         if content is None:
-            return JsonResponse({"error": "Missing 'content' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'content' field", 'backend.request.field_required', {'field': 'content'}), status=400)
 
         file_path = (data.get("path") or "").strip()
         if not file_path:
-            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'path' field", 'backend.request.field_required', {'field': 'path'}), status=400)
 
         file_path = os.path.normpath(file_path)
 
         if not os.path.isabs(file_path):
-            return JsonResponse({"error": "Path must be absolute"}, status=400)
+            return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
 
         root = (data.get("root") or "").strip()
         error = validate_standalone_root(file_path, root)
@@ -2201,23 +2222,23 @@ async def standalone_file_content(request):
 
         parent_dir = os.path.dirname(file_path)
         if not os.path.isdir(parent_dir):
-            return JsonResponse({"error": "Parent directory not found"}, status=404)
+            return JsonResponse(ui_error("Parent directory not found", 'backend.files.parent_not_found'), status=404)
 
         result = await asyncio.to_thread(write_file_content, file_path, content)
         if result.get("error"):
-            return JsonResponse(result, status=400)
+            return JsonResponse(_with_ui_message(result), status=400)
 
-        return JsonResponse(result)
+        return JsonResponse(_with_ui_message(result))
 
     # GET: read file content (default)
     file_path = request.GET.get("path", "").strip()
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     file_path = os.path.normpath(file_path)
 
     if not os.path.isabs(file_path):
-        return JsonResponse({"error": "Path must be absolute"}, status=400)
+        return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
 
     root = request.GET.get("root", "").strip()
     error = validate_standalone_root(file_path, root)
@@ -2227,17 +2248,17 @@ async def standalone_file_content(request):
     if request.GET.get("meta_only"):
         result = await asyncio.to_thread(get_file_meta, file_path)
         if result.get("error"):
-            return JsonResponse(result, status=404)
-        return JsonResponse(result)
+            return JsonResponse(_with_ui_message(result), status=404)
+        return JsonResponse(_with_ui_message(result))
 
     if not os.path.isfile(file_path):
-        return JsonResponse({"error": "File not found"}, status=404)
+        return JsonResponse(ui_error("File not found", 'backend.files.not_found'), status=404)
 
     result = await asyncio.to_thread(get_file_content, file_path)
     if result.get("error"):
-        return JsonResponse(result, status=400)
+        return JsonResponse(_with_ui_message(result), status=400)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 # --- Raw file serving for HTML preview ----------------------------------
@@ -2572,40 +2593,40 @@ async def _standalone_file_modify(request, action):
     from twicc.file_content import create_path, delete_path, move_path, rename_path
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     root = (data.get("root") or "").strip()
 
     if action == "create":
         parent_dir = (data.get("parent_dir") or "").strip()
         if not parent_dir:
-            return JsonResponse({"error": "Missing 'parent_dir' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'parent_dir' field", 'backend.request.field_required', {'field': 'parent_dir'}), status=400)
         parent_dir = os.path.normpath(parent_dir)
         if not os.path.isabs(parent_dir):
-            return JsonResponse({"error": "Path must be absolute"}, status=400)
+            return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
         error = validate_standalone_root(parent_dir, root)
         if error:
             return error
         await asyncio.to_thread(ensure_session_artifacts_root, parent_dir, root)
         name = (data.get("name") or "").strip()
         if not name:
-            return JsonResponse({"error": "Missing 'name' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'name' field", 'backend.request.field_required', {'field': 'name'}), status=400)
         kind = data.get("kind", "file")
         if kind not in ("file", "directory"):
-            return JsonResponse({"error": "Invalid 'kind' field"}, status=400)
+            return JsonResponse(ui_error("Invalid 'kind' field", 'backend.files.invalid_kind'), status=400)
         result = await asyncio.to_thread(create_path, parent_dir, name, kind)
     else:
         file_path = (data.get("path") or "").strip()
         if not file_path:
-            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'path' field", 'backend.request.field_required', {'field': 'path'}), status=400)
         file_path = os.path.normpath(file_path)
         if not os.path.isabs(file_path):
-            return JsonResponse({"error": "Path must be absolute"}, status=400)
+            return JsonResponse(ui_error("Path must be absolute", 'backend.files.path_absolute'), status=400)
         error = validate_standalone_root(file_path, root)
         if error:
             return error
@@ -2613,15 +2634,15 @@ async def _standalone_file_modify(request, action):
         if action == "rename":
             new_name = (data.get("new_name") or "").strip()
             if not new_name:
-                return JsonResponse({"error": "Missing 'new_name' field"}, status=400)
+                return JsonResponse(ui_error("Missing 'new_name' field", 'backend.request.field_required', {'field': 'new_name'}), status=400)
             result = await asyncio.to_thread(rename_path, file_path, new_name)
         elif action == "move":
             destination_dir = (data.get("destination_dir") or "").strip()
             if not destination_dir:
-                return JsonResponse({"error": "Missing 'destination_dir' field"}, status=400)
+                return JsonResponse(ui_error("Missing 'destination_dir' field", 'backend.request.field_required', {'field': 'destination_dir'}), status=400)
             destination_dir = os.path.normpath(destination_dir)
             if not os.path.isabs(destination_dir):
-                return JsonResponse({"error": "Destination must be absolute"}, status=400)
+                return JsonResponse(ui_error("Destination must be absolute", 'backend.files.destination_absolute'), status=400)
             error = validate_standalone_root(destination_dir, root)
             if error:
                 return error
@@ -2630,8 +2651,8 @@ async def _standalone_file_modify(request, action):
             result = await asyncio.to_thread(delete_path, file_path)
 
     if result.get("error"):
-        return JsonResponse(result, status=400)
-    return JsonResponse(result)
+        return JsonResponse(_with_ui_message(result), status=400)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def standalone_file_rename(request):
@@ -2671,15 +2692,15 @@ async def file_content(request, project_id, session_id=None):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
         content = data.get("content")
         if content is None:
-            return JsonResponse({"error": "Missing 'content' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'content' field", 'backend.request.field_required', {'field': 'content'}), status=400)
 
         file_path = data.get("path")
         if not file_path:
-            return JsonResponse({"error": "Missing 'path' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'path' field", 'backend.request.field_required', {'field': 'path'}), status=400)
 
         # Validate that the file's directory is within allowed project/session paths
         dir_path = os.path.dirname(os.path.normpath(file_path))
@@ -2692,14 +2713,14 @@ async def file_content(request, project_id, session_id=None):
         normalized = os.path.normpath(file_path)
         result = await asyncio.to_thread(write_file_content, normalized, content)
         if result.get("error"):
-            return JsonResponse(result, status=400)
+            return JsonResponse(_with_ui_message(result), status=400)
 
-        return JsonResponse(result)
+        return JsonResponse(_with_ui_message(result))
 
     # GET: read file content (default)
     file_path = request.GET.get("path")
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     normalized = os.path.normpath(file_path)
 
@@ -2713,8 +2734,8 @@ async def file_content(request, project_id, session_id=None):
             return error
         result = await asyncio.to_thread(get_file_meta, normalized)
         if result.get("error"):
-            return JsonResponse(result, status=404)
-        return JsonResponse(result)
+            return JsonResponse(_with_ui_message(result), status=404)
+        return JsonResponse(_with_ui_message(result))
 
     # Validate that the file's directory is within allowed project/session paths
     dir_path = os.path.dirname(normalized)
@@ -2726,13 +2747,13 @@ async def file_content(request, project_id, session_id=None):
 
     # Now check the file itself exists
     if not os.path.isfile(normalized):
-        return JsonResponse({"error": "File not found"}, status=404)
+        return JsonResponse(ui_error("File not found", 'backend.files.not_found'), status=404)
 
     result = await asyncio.to_thread(get_file_content, normalized)
     if result.get("error"):
-        return JsonResponse(result, status=400)
+        return JsonResponse(_with_ui_message(result), status=400)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def _file_modify(request, project_id, session_id, action):
@@ -2745,16 +2766,16 @@ async def _file_modify(request, project_id, session_id, action):
     from twicc.file_tree import validate_path
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     file_path = (data.get("path") or "").strip()
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' field"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' field", 'backend.request.field_required', {'field': 'path'}), status=400)
 
     normalized = os.path.normpath(file_path)
     dir_path = os.path.dirname(normalized)
@@ -2765,12 +2786,12 @@ async def _file_modify(request, project_id, session_id, action):
     if action == "rename":
         new_name = (data.get("new_name") or "").strip()
         if not new_name:
-            return JsonResponse({"error": "Missing 'new_name' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'new_name' field", 'backend.request.field_required', {'field': 'new_name'}), status=400)
         result = await asyncio.to_thread(rename_path, normalized, new_name)
     elif action == "move":
         destination_dir = (data.get("destination_dir") or "").strip()
         if not destination_dir:
-            return JsonResponse({"error": "Missing 'destination_dir' field"}, status=400)
+            return JsonResponse(ui_error("Missing 'destination_dir' field", 'backend.request.field_required', {'field': 'destination_dir'}), status=400)
         dest_normalized = os.path.normpath(destination_dir)
         _session2, _dir_path2, error2 = await sync_to_async(validate_path)(project_id, dest_normalized, session_id=session_id)
         if error2:
@@ -2780,8 +2801,8 @@ async def _file_modify(request, project_id, session_id, action):
         result = await asyncio.to_thread(delete_path, normalized)
 
     if result.get("error"):
-        return JsonResponse(result, status=400)
-    return JsonResponse(result)
+        return JsonResponse(_with_ui_message(result), status=400)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def file_rename(request, project_id, session_id=None):
@@ -2805,24 +2826,24 @@ async def file_create(request, project_id, session_id=None):
     from twicc.file_tree import validate_path
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     parent_dir = (data.get("parent_dir") or "").strip()
     if not parent_dir:
-        return JsonResponse({"error": "Missing 'parent_dir' field"}, status=400)
+        return JsonResponse(ui_error("Missing 'parent_dir' field", 'backend.request.field_required', {'field': 'parent_dir'}), status=400)
 
     name = (data.get("name") or "").strip()
     if not name:
-        return JsonResponse({"error": "Missing 'name' field"}, status=400)
+        return JsonResponse(ui_error("Missing 'name' field", 'backend.request.field_required', {'field': 'name'}), status=400)
 
     kind = data.get("kind", "file")
     if kind not in ("file", "directory"):
-        return JsonResponse({"error": "Invalid 'kind' field"}, status=400)
+        return JsonResponse(ui_error("Invalid 'kind' field", 'backend.files.invalid_kind'), status=400)
 
     normalized = os.path.normpath(parent_dir)
     _session, _dir_path, error = await sync_to_async(validate_path)(project_id, normalized, session_id=session_id)
@@ -2831,8 +2852,8 @@ async def file_create(request, project_id, session_id=None):
 
     result = await asyncio.to_thread(create_path, normalized, name, kind)
     if result.get("error"):
-        return JsonResponse(result, status=400)
-    return JsonResponse(result)
+        return JsonResponse(_with_ui_message(result), status=400)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def git_log(request, project_id, session_id=None):
@@ -2874,7 +2895,7 @@ async def git_log(request, project_id, session_id=None):
     try:
         git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
     except Http404:
-        return JsonResponse({"error": "No git repository found"}, status=404)
+        return JsonResponse(ui_error("No git repository found", 'backend.git.repository_not_found'), status=404)
 
     # Always resolve branch dynamically from the git directory at request time,
     # so the branch selector reflects the actual state (handles worktrees too).
@@ -2883,11 +2904,11 @@ async def git_log(request, project_id, session_id=None):
     try:
         result = await asyncio.to_thread(get_git_log, git_directory, branch=branch_filter or None)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=500)
 
     if current_branch:
         result["current_branch"] = current_branch
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def _resolve_session_git_directory(project_id, session_id=None, *, requested_git_dir=None):
@@ -2970,7 +2991,7 @@ async def git_index_files(request, project_id, session_id=None):
     git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
     result = await asyncio.to_thread(get_index_files, git_directory)
 
-    return JsonResponse(result, safe=False)
+    return JsonResponse(_with_ui_message(result), safe=False)
 
 
 async def git_commit_detail(request, project_id, commit_hash, session_id=None):
@@ -2987,9 +3008,9 @@ async def git_commit_detail(request, project_id, commit_hash, session_id=None):
     try:
         result = await asyncio.to_thread(get_commit_detail, git_directory, commit_hash)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=500)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def git_commit_files(request, project_id, commit_hash, session_id=None):
@@ -3016,9 +3037,9 @@ async def git_commit_files(request, project_id, commit_hash, session_id=None):
     try:
         result = await asyncio.to_thread(get_commit_files, git_directory, commit_hash)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=500)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def git_index_file_diff(request, project_id, session_id=None):
@@ -3042,16 +3063,16 @@ async def git_index_file_diff(request, project_id, session_id=None):
 
     file_path = request.GET.get("path")
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     requested_git_dir = request.GET.get("git_dir")
     git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
     result = await asyncio.to_thread(get_index_file_diff, git_directory, file_path)
 
     if result.get("error"):
-        return JsonResponse(result, status=500)
+        return JsonResponse(_with_ui_message(result), status=500)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def git_commit_file_diff(request, project_id, commit_hash, session_id=None):
@@ -3075,16 +3096,16 @@ async def git_commit_file_diff(request, project_id, commit_hash, session_id=None
 
     file_path = request.GET.get("path")
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
 
     requested_git_dir = request.GET.get("git_dir")
     git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
     result = await asyncio.to_thread(get_commit_file_diff, git_directory, commit_hash, file_path)
 
     if result.get("error"):
-        return JsonResponse(result, status=500)
+        return JsonResponse(_with_ui_message(result), status=500)
 
-    return JsonResponse(result)
+    return JsonResponse(_with_ui_message(result))
 
 
 async def _git_file_action(request, project_id, session_id, action):
@@ -3092,16 +3113,16 @@ async def _git_file_action(request, project_id, session_id, action):
     from twicc.git import GitError, git_discard, git_stage, git_unstage
 
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
 
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     file_path = (data.get("path") or "").strip()
     if not file_path:
-        return JsonResponse({"error": "Missing 'path' field"}, status=400)
+        return JsonResponse(ui_error("Missing 'path' field", 'backend.request.field_required', {'field': 'path'}), status=400)
 
     requested_git_dir = data.get("git_dir")
     git_directory = await _resolve_session_git_directory(project_id, session_id, requested_git_dir=requested_git_dir)
@@ -3111,7 +3132,7 @@ async def _git_file_action(request, project_id, session_id, action):
     try:
         await asyncio.to_thread(fn, git_directory, file_path)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
 
     return JsonResponse({"ok": True})
 
@@ -3169,15 +3190,15 @@ async def _resolve_git_download(request, project_id, session_id):
 
     file_path = request.GET.get("path")
     if not file_path:
-        return None, None, None, JsonResponse({"error": "Missing 'path' query parameter"}, status=400)
+        return None, None, None, JsonResponse(ui_error("Missing 'path' query parameter", 'backend.request.query_required', {'parameter': 'path'}), status=400)
     if "\n" in file_path or "\0" in file_path:
         # ``cat-file --batch-check`` reads one spec per line, so a newline in the
         # path would smuggle a second lookup past the confinement check.
-        return None, None, None, JsonResponse({"error": "Invalid 'path' parameter"}, status=400)
+        return None, None, None, JsonResponse(ui_error("Invalid 'path' parameter", 'backend.git.invalid_path'), status=400)
 
     ref = request.GET.get("ref") or "index"
     if ref != "index" and not is_valid_commit_ref(ref):
-        return None, None, None, JsonResponse({"error": "Invalid 'ref' parameter"}, status=400)
+        return None, None, None, JsonResponse(ui_error("Invalid 'ref' parameter", 'backend.git.invalid_ref'), status=400)
 
     requested_git_dir = request.GET.get("git_dir")
     git_directory = await _resolve_session_git_directory(
@@ -3226,7 +3247,7 @@ async def git_file_download(request, project_id, session_id=None):
     try:
         source, located = await asyncio.to_thread(resolve)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
 
     filename = os.path.basename(file_path)
     if source == "disk":
@@ -3243,7 +3264,7 @@ async def git_file_download(request, project_id, session_id=None):
     try:
         stream = await asyncio.to_thread(stream_blob_at_ref, git_directory, located, file_path)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
     return _git_download_response(stream, filename, _guess_raw_content_type(file_path))
 
 
@@ -3269,7 +3290,7 @@ async def git_diff_download(request, project_id, session_id=None):
         else:
             stream = await asyncio.to_thread(stream_commit_patch, git_directory, ref, file_path)
     except GitError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        return JsonResponse({"error": str(e), "ui_message": _exception_ui_message(e)}, status=400)
 
     filename = f"{os.path.basename(file_path)}.patch"
     return _git_download_response(stream, filename, "text/x-patch")
@@ -3431,7 +3452,7 @@ async def daily_activity(request, project_id=None):
         try:
             provider_filter = {"provider": Provider(provider_str).value}
         except ValueError:
-            return JsonResponse({"error": f"Unknown provider: {provider_str!r}."}, status=400)
+            return JsonResponse(ui_error(f"Unknown provider: {provider_str!r}.", 'backend.request.unknown_provider_colon', {"provider": repr(provider_str)}), status=400)
     else:
         provider_filter = {}
 
@@ -3515,18 +3536,18 @@ async def timeline(request):
     try:
         feed_request = timeline_feed.parse_request(request.GET)
     except timeline_feed.FeedError as error:
-        return JsonResponse({"error": str(error)}, status=400)
+        return JsonResponse({"error": str(error), "ui_message": _exception_ui_message(error)}, status=400)
     return JsonResponse(await sync_to_async(timeline_feed.fetch_feed)(feed_request))
 
 
 async def search_sessions(request):
     """GET /api/search/ - Full-text search across session messages."""
     if not search.is_initialized():
-        return JsonResponse({"error": "Search index not ready"}, status=503)
+        return JsonResponse(ui_error("Search index not ready", 'backend.search.not_ready'), status=503)
 
     q = request.GET.get("q", "").strip()
     if not q:
-        return JsonResponse({"error": "Missing required parameter: q"}, status=400)
+        return JsonResponse(ui_error("Missing required parameter: q", 'backend.search.query_required'), status=400)
 
     project_id = request.GET.get("project_id")
     project_ids = request.GET.getlist("project_ids")
@@ -3534,7 +3555,7 @@ async def search_sessions(request):
 
     from_role = request.GET.get("from")
     if from_role is not None and from_role not in ("user", "assistant", "title"):
-        return JsonResponse({"error": "Invalid 'from' parameter: must be 'user', 'assistant', or 'title'"}, status=400)
+        return JsonResponse(ui_error("Invalid 'from' parameter: must be 'user', 'assistant', or 'title'", 'backend.search.invalid_from'), status=400)
 
     after = None
     before = None
@@ -3542,12 +3563,12 @@ async def search_sessions(request):
         if raw_after := request.GET.get("after"):
             after = datetime.fromisoformat(raw_after)
     except ValueError:
-        return JsonResponse({"error": f"Invalid 'after' parameter: {raw_after!r} is not a valid ISO datetime"}, status=400)
+        return JsonResponse(ui_error(f"Invalid 'after' parameter: {raw_after!r} is not a valid ISO datetime", 'backend.search.invalid_after', {"value": repr(raw_after)}), status=400)
     try:
         if raw_before := request.GET.get("before"):
             before = datetime.fromisoformat(raw_before)
     except ValueError:
-        return JsonResponse({"error": f"Invalid 'before' parameter: {raw_before!r} is not a valid ISO datetime"}, status=400)
+        return JsonResponse(ui_error(f"Invalid 'before' parameter: {raw_before!r} is not a valid ISO datetime", 'backend.search.invalid_before', {"value": repr(raw_before)}), status=400)
 
     include_archived = request.GET.get("include_archived", "").lower() in ("true", "1", "yes")
 
@@ -3558,7 +3579,7 @@ async def search_sessions(request):
     match_mode = request.GET.get("match_mode") or search.MATCH_MODE_AUTO
     if match_mode not in search.MATCH_MODES:
         return JsonResponse(
-            {"error": f"Invalid 'match_mode' parameter: must be one of {', '.join(search.MATCH_MODES)}"},
+            ui_error(f"Invalid 'match_mode' parameter: must be one of {', '.join(search.MATCH_MODES)}", 'backend.search.invalid_match_mode', {"values": ", ".join(search.MATCH_MODES)}),
             status=400,
         )
 
@@ -3589,7 +3610,7 @@ async def search_sessions(request):
             unavailable_session_ids=unavailable,
         )
     except Exception as exc:
-        return JsonResponse({"error": f"Search failed: {exc}"}, status=500)
+        return JsonResponse(ui_error(f"Search failed: {exc}", 'backend.search.failed', {"detail": str(exc)}), status=500)
 
     # Enrich results with session titles and project names from DB
     session_ids = [sr.session_id for sr in results.results]
@@ -3658,25 +3679,25 @@ async def usage_history(request):
 
     provider_str = request.GET.get("provider")
     if not provider_str:
-        return JsonResponse({"error": "provider is required."}, status=400)
+        return JsonResponse(ui_error("provider is required.", 'backend.request.provider_required'), status=400)
     try:
         provider = Provider(provider_str)
     except ValueError:
-        return JsonResponse({"error": f"Unknown provider: {provider_str!r}."}, status=400)
+        return JsonResponse(ui_error(f"Unknown provider: {provider_str!r}.", 'backend.request.unknown_provider_colon', {"provider": repr(provider_str)}), status=400)
 
     try:
         range_days = float(request.GET.get("range_days", "30"))
     except (ValueError, TypeError):
-        return JsonResponse({"error": "range_days must be a number."}, status=400)
+        return JsonResponse(ui_error("range_days must be a number.", 'backend.usage.range_number'), status=400)
     if range_days < 0.25 or range_days > 1825:
-        return JsonResponse({"error": "range_days must be between 0.25 and 1825."}, status=400)
+        return JsonResponse(ui_error("range_days must be between 0.25 and 1825.", 'backend.usage.range_bounds'), status=400)
 
     try:
         bucket_minutes = int(request.GET.get("bucket_minutes", "0"))
     except (ValueError, TypeError):
-        return JsonResponse({"error": "bucket_minutes must be an integer."}, status=400)
+        return JsonResponse(ui_error("bucket_minutes must be an integer.", 'backend.usage.bucket_integer'), status=400)
     if bucket_minutes not in ALLOWED_BUCKETS:
-        return JsonResponse({"error": f"bucket_minutes must be one of {sorted(ALLOWED_BUCKETS)}."}, status=400)
+        return JsonResponse(ui_error(f"bucket_minutes must be one of {sorted(ALLOWED_BUCKETS)}.", 'backend.usage.invalid_bucket', {"values": str(sorted(ALLOWED_BUCKETS))}), status=400)
 
     before_str = request.GET.get("before")
     if before_str:
@@ -3685,7 +3706,7 @@ async def usage_history(request):
             if end.tzinfo is None:
                 end = timezone.make_aware(end)
         except (ValueError, TypeError):
-            return JsonResponse({"error": "Invalid 'before' datetime format."}, status=400)
+            return JsonResponse(ui_error("Invalid 'before' datetime format.", 'backend.usage.before_invalid'), status=400)
     else:
         end = timezone.now()
 
@@ -3849,6 +3870,7 @@ async def bootstrap(request):
     frontend doesn't have to wait for the WebSocket connection.
     """
     from twicc.help_manifest import manifest_to_dict as help_manifest_to_dict
+    from twicc.installation import prepare_update_instructions_for_client
     from twicc.message_snippets import read_message_snippets_config
     from twicc.seen_help import read_seen_help
     from twicc.seen_tips import read_seen_tips
@@ -3879,7 +3901,10 @@ async def bootstrap(request):
     # work per provider — build the whole map in one worker thread hop.
     providers_data = await asyncio.to_thread(
         lambda: {
-            provider.value: helpers.get_bootstrap_data()
+            provider.value: {
+                **helpers.get_bootstrap_data(),
+                "model_registry": helpers.serialize_model_registry(include_ui_messages=True),
+            }
             for provider, helpers in get_provider_helpers_registry().items()
         }
     )
@@ -3904,7 +3929,7 @@ async def bootstrap(request):
         "dev_mode": settings.DEV_MODE,
         "uvx_mode": settings.UVX_MODE,
         "twicc_launch_prefix": settings.TWICC_LAUNCH_PREFIX,
-        "update_instructions": settings.UPDATE_INSTRUCTIONS,
+        "update_instructions": prepare_update_instructions_for_client(settings.UPDATE_INSTRUCTIONS),
         "claudeHybridEnabled": settings.CLAUDE_HYBRID_ENABLED,
         "workspaces": workspaces_data.get("workspaces", []),
         "terminal_config": terminal_config,
@@ -4086,22 +4111,22 @@ async def external_notifications_test(request):
     ``{"results": [{"url_masked": ..., "ok": bool, "error": str|null}, ...]}``.
     """
     if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+        return JsonResponse(ui_error("Method not allowed", 'backend.request.method_not_allowed'), status=405)
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     urls = data.get("urls")
     if (
         not isinstance(urls, list)
         or not urls
         or not all(isinstance(u, str) and u.strip() for u in urls)
     ):
-        return JsonResponse({"error": "'urls' must be a non-empty list of non-empty strings"}, status=400)
+        return JsonResponse(ui_error("'urls' must be a non-empty list of non-empty strings", 'backend.notifications.urls_required'), status=400)
     from twicc.external_notifications import test_notification_urls
 
     results = await test_notification_urls([u.strip() for u in urls])
-    return JsonResponse({"results": results})
+    return JsonResponse({"results": [_with_ui_message(result) for result in results]})
 
 
 async def artifact_bookmark_list(request):
@@ -4119,16 +4144,16 @@ async def _create_artifact_bookmark(request):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
 
     session_id = (data.get("session_id") or "").strip()
     relative_path = (data.get("relative_path") or "").strip()
     name = (data.get("name") or "").strip()
     scope = data.get("scope")
     if not session_id or not relative_path or not name:
-        return JsonResponse({"error": "session_id, relative_path and name are required"}, status=400)
+        return JsonResponse(ui_error("session_id, relative_path and name are required", 'backend.bookmarks.fields_required'), status=400)
     if scope not in PinMode.values:
-        return JsonResponse({"error": "Invalid scope"}, status=400)
+        return JsonResponse(ui_error("Invalid scope", 'backend.request.invalid_scope'), status=400)
 
     try:
         session = await Session.objects.aget(id=session_id)
@@ -4144,9 +4169,9 @@ async def _create_artifact_bookmark(request):
     )
     abs_path = confined_artifact_path(session_id, relative_path)
     if abs_path is None:
-        return JsonResponse({"error": "Path escapes the artifacts directory"}, status=400)
+        return JsonResponse(ui_error("Path escapes the artifacts directory", 'backend.bookmarks.outside_directory'), status=400)
     if not await sync_to_async(os.path.isfile)(abs_path):
-        return JsonResponse({"error": "Artifact file not found"}, status=404)
+        return JsonResponse(ui_error("Artifact file not found", 'backend.bookmarks.file_not_found'), status=404)
 
     bookmark, created = await create_or_update_artifact_bookmark(
         session=session, relative_path=relative_path, name=name, scope=scope,
@@ -4178,16 +4203,16 @@ async def artifact_bookmark_detail(request, bookmark_id):
         try:
             data = orjson.loads(request.body)
         except orjson.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
         new_name = None
         new_scope = None
         if "name" in data:
             new_name = (data.get("name") or "").strip()
             if not new_name:
-                return JsonResponse({"error": "name cannot be empty"}, status=400)
+                return JsonResponse(ui_error("name cannot be empty", 'backend.bookmarks.name_empty'), status=400)
         if "scope" in data:
             if data["scope"] not in PinMode.values:
-                return JsonResponse({"error": "Invalid scope"}, status=400)
+                return JsonResponse(ui_error("Invalid scope", 'backend.request.invalid_scope'), status=400)
             new_scope = data["scope"]
         await patch_artifact_bookmark(bookmark=bookmark, name=new_name, scope=new_scope)
 
@@ -4218,10 +4243,10 @@ async def artifact_bookmark_allowed_hosts(request, bookmark_id):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     url = (data.get("url") or "").strip()
     if not url:
-        return JsonResponse({"error": "url is required"}, status=400)
+        return JsonResponse(ui_error("url is required", 'backend.bookmarks.url_required'), status=400)
 
     from twicc.core.services.artifact_bookmark_mutation import (
         add_artifact_allowed_host,
@@ -4232,12 +4257,12 @@ async def artifact_bookmark_allowed_hosts(request, bookmark_id):
         if request.method == "POST":
             kind = data.get("kind")
             if kind not in ("public", "loopback", "lan"):
-                return JsonResponse({"error": "kind must be one of public/loopback/lan"}, status=400)
+                return JsonResponse(ui_error("kind must be one of public/loopback/lan", 'backend.bookmarks.invalid_host_kind'), status=400)
             await add_artifact_allowed_host(bookmark=bookmark, url=url, kind=kind)
         else:  # DELETE
             await remove_artifact_allowed_host(bookmark=bookmark, url=url)
     except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse({"error": str(exc), "ui_message": _exception_ui_message(exc)}, status=400)
 
     return JsonResponse(serialize_artifact_bookmark(bookmark))
 
@@ -4260,10 +4285,10 @@ async def artifact_bookmark_denied_hosts(request, bookmark_id):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     url = (data.get("url") or "").strip()
     if not url:
-        return JsonResponse({"error": "url is required"}, status=400)
+        return JsonResponse(ui_error("url is required", 'backend.bookmarks.url_required'), status=400)
 
     from twicc.core.services.artifact_bookmark_mutation import (
         add_artifact_denied_host,
@@ -4274,12 +4299,12 @@ async def artifact_bookmark_denied_hosts(request, bookmark_id):
         if request.method == "POST":
             kind = data.get("kind")
             if kind not in ("public", "loopback", "lan"):
-                return JsonResponse({"error": "kind must be one of public/loopback/lan"}, status=400)
+                return JsonResponse(ui_error("kind must be one of public/loopback/lan", 'backend.bookmarks.invalid_host_kind'), status=400)
             await add_artifact_denied_host(bookmark=bookmark, url=url, kind=kind)
         else:  # DELETE
             await remove_artifact_denied_host(bookmark=bookmark, url=url)
     except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse({"error": str(exc), "ui_message": _exception_ui_message(exc)}, status=400)
 
     return JsonResponse(serialize_artifact_bookmark(bookmark))
 
@@ -4310,20 +4335,20 @@ async def artifact_bookmark_network_denials(request, bookmark_id):
     try:
         data = orjson.loads(request.body)
     except orjson.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        return JsonResponse(ui_error("Invalid JSON", 'backend.request.invalid_json'), status=400)
     url = (data.get("url") or "").strip()
     if not url:
-        return JsonResponse({"error": "url is required"}, status=400)
+        return JsonResponse(ui_error("url is required", 'backend.bookmarks.url_required'), status=400)
     kind = data.get("kind")
     if kind not in ("public", "loopback", "lan"):
-        return JsonResponse({"error": "kind must be one of public/loopback/lan"}, status=400)
+        return JsonResponse(ui_error("kind must be one of public/loopback/lan", 'backend.bookmarks.invalid_host_kind'), status=400)
 
     from twicc.artifacts.denial_tracking import record_owner_denial
 
     try:
         await record_owner_denial(bookmark=bookmark, url=url, kind=kind)
     except ValueError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
+        return JsonResponse({"error": str(exc), "ui_message": _exception_ui_message(exc)}, status=400)
 
     return JsonResponse({"ok": True})
 

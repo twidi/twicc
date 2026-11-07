@@ -20,6 +20,7 @@ from twicc.auth.local_access import remote_access_blocked
 from twicc.auth.session_auth import SESSION_AUTH_KEY, SESSION_FINGERPRINT_KEY
 from twicc.request_origin import UI_ORIGIN, origin_scope
 from twicc.rpc.permissions import RPC_SCOPE_FULL, RPC_SCOPE_READ
+from twicc.core.ui_messages import ui_error
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class PasswordAuthMiddleware:
         if not self.password_required:
             if _is_data_path(request) and remote_access_blocked(request):
                 return JsonResponse(
-                    {"error": "remote_access_requires_password"},
+                    ui_error("remote_access_requires_password", 'backend.auth.remotePasswordRequired'),
                     status=403,
                 )
             return await self.get_response(request)
@@ -139,7 +140,7 @@ class PasswordAuthMiddleware:
                 query = urlencode({"redirect": request.get_full_path()})
                 return HttpResponseRedirect(f"/artifacts/auth?{query}")
             return JsonResponse(
-                {"error": "Authentication required"},
+                ui_error("Authentication required", 'backend.common.authenticationRequired'),
                 status=401,
             )
 

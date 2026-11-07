@@ -62,6 +62,29 @@ test('summary lookup and acquisition retain local descriptors and public string 
     external.release()
 })
 
+test('summary HTTP metadata remains reactive in lookup and acquisition errors', async context => {
+    setup(context)
+    const store = useSummariesStore()
+    const key = 'backend.summaries.gone'
+    store._fetch = async () => new Response(JSON.stringify({
+        error: 'The summary is no longer available', ui_message: { key },
+    }), { status: 410 })
+    const [result] = await store.resolve([{ session_id: 's', line_num: 2 }])
+    const lookup = computed(() => store.lookupErrors['message:s:2'])
+    const subscription = store.request({ text: 'Captured user text', purpose: 'selection' })
+    await assert.rejects(subscription.ready, error => error.uiMessage?.key === key)
+    const error = computed(() => subscription.entry.error)
+    assert.equal(result.errorMessage.key, key)
+    assert.equal(subscription.entry.errorMessage.key, key)
+    for (const locale of ['en', 'pt-BR']) {
+        i18n.global.locale.value = locale
+        assert.equal(result.error, i18n.global.t(key))
+        assert.equal(lookup.value, i18n.global.t(key))
+        assert.equal(error.value, i18n.global.t(key))
+    }
+    subscription.release()
+})
+
 test('temporary engine evidence retains local lookup descriptors', async context => {
     setup(context)
     const scope = effectScope()

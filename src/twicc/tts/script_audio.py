@@ -11,22 +11,23 @@ import struct
 
 from twicc.tts.openrouter import MAX_PCM_CHANNELS, MAX_PCM_RATE, SpeechError
 from twicc.tts.part_audio import MP3_HEADER_SIZE, id3_tag_size, mp3_frame
+from twicc.core.ui_messages import ui_message_text
 
 # A WAV whose ``data`` chunk does not start within these first bytes is refused.
 WAV_HEADER_MAX_BYTES = 64 * 1024
 # Raw PCM has no signature: its first bytes are only checked against the known containers.
 SNIFF_BYTES = 12
 
-NOT_MP3 = "The script output is not MP3"
-NOT_WAV = "The script output is not WAV"
-WAV_NOT_16BIT = "The script WAV is not 16-bit PCM"
-WAV_BAD_FORMAT = "The script WAV has an unsupported sample rate or channel count"
-NO_AUDIO = "The script gave no audio"
-LOOKS_LIKE_MP3 = "The script output looks like MP3: choose MP3"
-LOOKS_LIKE_WAV = "The script output looks like WAV: choose WAV"
-LOOKS_LIKE_OGG = "The script output looks like Ogg audio, which TwiCC does not play"
-LOOKS_LIKE_FLAC = "The script output looks like FLAC audio, which TwiCC does not play"
-LOOKS_LIKE_MP4 = "The script output looks like MP4 audio, which TwiCC does not play"
+NOT_MP3 = ui_message_text('The script output is not MP3', 'backend.tts.notMp3')
+NOT_WAV = ui_message_text('The script output is not WAV', 'backend.tts.notWav')
+WAV_NOT_16BIT = ui_message_text('The script WAV is not 16-bit PCM', 'backend.tts.wav16bit')
+WAV_BAD_FORMAT = ui_message_text('The script WAV has an unsupported sample rate or channel count', 'backend.tts.wavFormat')
+NO_AUDIO = ui_message_text('The script gave no audio', 'backend.tts.noAudio')
+LOOKS_LIKE_MP3 = ui_message_text('The script output looks like MP3: choose MP3', 'backend.tts.chooseMp3')
+LOOKS_LIKE_WAV = ui_message_text('The script output looks like WAV: choose WAV', 'backend.tts.chooseWav')
+LOOKS_LIKE_OGG = ui_message_text('The script output looks like Ogg audio, which TwiCC does not play', 'backend.tts.oggUnsupported')
+LOOKS_LIKE_FLAC = ui_message_text('The script output looks like FLAC audio, which TwiCC does not play', 'backend.tts.flacUnsupported')
+LOOKS_LIKE_MP4 = ui_message_text('The script output looks like MP4 audio, which TwiCC does not play', 'backend.tts.mp4Unsupported')
 
 _WAV_FORMAT_PCM = 1
 _WAV_FORMAT_EXTENSIBLE = 0xFFFE

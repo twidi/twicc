@@ -1,4 +1,6 @@
 <script setup>
+import { remoteUiMessage } from '../../../../i18n/remoteMessages.js'
+import { localUiMessage, resolveUiMessage } from '../../../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 const { t, te } = useI18n()
 // Failure banner shown under a failed-send bubble (messaging pattern: an
@@ -56,8 +58,10 @@ const composerReadyAgain = computed(() =>
 const displayMessage = computed(() =>
     composerReadyAgain.value
         ? t('session.failedSend.readyAgain')
-        : (failedSend.value?.messageKey && te(failedSend.value.messageKey)
-            ? t(failedSend.value.messageKey, failedSend.value.messageParams || {}) : (failedSend.value?.message || ''))
+        : resolveUiMessage(remoteUiMessage(failedSend.value,
+            failedSend.value?.messageKey && te(failedSend.value.messageKey)
+                ? localUiMessage(failedSend.value.messageKey, failedSend.value.messageParams || {})
+                : failedSend.value?.message || ''))
 )
 
 // A message made only of attachments whose attachments could not be preserved

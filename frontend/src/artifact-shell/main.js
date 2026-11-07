@@ -5,8 +5,9 @@
 // at /_twicc/artifact-shell/shell.js and injects the per-bookmark data the app
 // reads below.
 
-import { createApp } from 'vue'
+import { createApp, watchEffect } from 'vue'
 import { i18n, setLocale } from '../i18n'
+import { artifactPageTitle } from '../i18n/pageTitles.js'
 
 // Web Awesome: design tokens + ONLY the components the consent prompt uses.
 import '@awesome.me/webawesome/dist/styles/webawesome.css'
@@ -42,6 +43,7 @@ initArtifactShellColorScheme()
 
 const dataEl = document.getElementById('twicc-shell-data')
 const shellData = dataEl ? JSON.parse(dataEl.textContent) : {}
+watchEffect(() => { document.title = artifactPageTitle(shellData) })
 
 if (shellData.mode === 'share') {
     // Record this artifact share in the browser's recent list (share host homepage).

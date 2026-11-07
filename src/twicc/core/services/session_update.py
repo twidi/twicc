@@ -59,6 +59,7 @@ import logging
 from copy import deepcopy
 from typing import Any, NamedTuple
 
+from twicc.core.ui_messages import ui_message_text
 import orjson
 from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
@@ -845,9 +846,9 @@ async def apply_session_goal_dismissed_change(session, created_at: str) -> str |
         )
         last = goals[-1] if goals else None
         if not last or last.get("created_at") != created_at:
-            return "goal not found (it may have been superseded)", None
+            return ui_message_text("goal not found (it may have been superseded)", 'backend.sessions.goal_not_found'), None
         if last.get("state") != GOAL_STATE_COMPLETED and not last.get("cleared"):
-            return "an active goal cannot be dismissed", None
+            return ui_message_text("an active goal cannot be dismissed", 'backend.sessions.goal_active'), None
         if not last.get("dismissed"):
             last["dismissed"] = True
             Session.objects.filter(id=session.id).update(goals=goals)
@@ -1232,7 +1233,7 @@ def apply_annotation_operations(
         if not isinstance(operation, dict):
             errors.append(UpdateSessionError(
                 "operations", "invalid_annotation_operation",
-                f"Operation #{index + 1} must be an object.",
+                ui_message_text(f"Operation #{index + 1} must be an object.", 'backend.sessions.annotation_operation_object', {"index": index + 1}),
             ))
             continue
 
@@ -1264,7 +1265,7 @@ def apply_annotation_operations(
                 else:
                     errors.append(UpdateSessionError(
                         "operations", "invalid_annotation_path",
-                        f"Operation #{index + 1} has an invalid annotation path.",
+                        ui_message_text(f"Operation #{index + 1} has an invalid annotation path.", 'backend.sessions.annotation_path_invalid', {"index": index + 1}),
                     ))
             elif op == "unset":
                 path = operation.get("path")
@@ -1273,12 +1274,12 @@ def apply_annotation_operations(
                 else:
                     errors.append(UpdateSessionError(
                         "operations", "invalid_annotation_path",
-                        f"Operation #{index + 1} has an invalid annotation path.",
+                        ui_message_text(f"Operation #{index + 1} has an invalid annotation path.", 'backend.sessions.annotation_path_invalid', {"index": index + 1}),
                     ))
             else:
                 errors.append(UpdateSessionError(
                     "operations", "invalid_annotation_operation",
-                    f"Operation #{index + 1} has unknown op {op!r}.",
+                    ui_message_text(f"Operation #{index + 1} has unknown op {op!r}.", 'backend.sessions.annotation_op_unknown', {"index": index + 1, "op": repr(op)}),
                 ))
         except Exception as e:
             errors.append(_annotation_operation_exception(index, op, e))
@@ -1297,7 +1298,7 @@ def _validate_annotation_object(value: object, *, field: str) -> UpdateSessionEr
         return UpdateSessionError(
             field,
             "invalid_annotations",
-            "annotations must be a JSON object.",
+            ui_message_text("annotations must be a JSON object.", 'backend.sessions.annotations_object'),
         )
     try:
         orjson.dumps(value)
@@ -1305,7 +1306,7 @@ def _validate_annotation_object(value: object, *, field: str) -> UpdateSessionEr
         return UpdateSessionError(
             field,
             "invalid_annotations",
-            f"annotations must be JSON-serializable: {e}",
+            ui_message_text(f"annotations must be JSON-serializable: {e}", 'backend.sessions.annotations_serializable', {"detail": str(e)}),
         )
     return None
 
@@ -1318,7 +1319,7 @@ def _annotation_operation_exception(
     return UpdateSessionError(
         "operations",
         "annotation_operation_failed",
-        f"Operation #{index + 1} ({op!r}) failed while applying annotations: {exception}",
+        ui_message_text(f"Operation #{index + 1} ({op!r}) failed while applying annotations: {exception}", 'backend.sessions.annotation_operation_failed', {"index": index + 1, "op": repr(op), "detail": str(exception)}),
     )
 
 
@@ -1351,7 +1352,7 @@ def _set_annotation_path(
             return UpdateSessionError(
                 "operations",
                 "annotation_path_conflict",
-                f"Annotation path {'.'.join(path)!r} conflicts with existing scalar value.",
+                ui_message_text(f"Annotation path {'.'.join(path)!r} conflicts with existing scalar value.", 'backend.sessions.annotation_scalar_conflict', {"path": repr(".".join(path))}),
             )
         current = current[segment]
 
@@ -1360,7 +1361,7 @@ def _set_annotation_path(
         return UpdateSessionError(
             "operations",
             "annotation_path_conflict",
-            f"Annotation path {'.'.join(path)!r} would replace an existing object.",
+            ui_message_text(f"Annotation path {'.'.join(path)!r} would replace an existing object.", 'backend.sessions.annotation_object_conflict', {"path": repr(".".join(path))}),
         )
     current[leaf] = value
     return None

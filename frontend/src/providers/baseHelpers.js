@@ -1099,7 +1099,7 @@ export class BaseProviderHelpers {
             label: baseLabel,
             labelWithSuffix: disabled ? i18n.global.t('agentSettings.model.unavailable', { label: baseLabel }) : baseLabel,
             disabled,
-            description: disabled ? (entry.disable_reason || null) : null,
+            description: disabled ? resolveUiMessage(remoteUiMessage(entry, entry.disable_reason || null, 'disable_reason_ui_message')) : null,
         }
     }
 
@@ -1577,3 +1577,5 @@ export class BaseToolHelpers {
         return null
     }
 }
+import { remoteUiMessage } from '../i18n/remoteMessages.js'
+import { resolveUiMessage } from '../i18n/uiMessages.js'

@@ -116,7 +116,9 @@ def test_monitor_label_is_used_while_no_higher_priority_wait_exists() -> None:
 
     asyncio.run(agent._refresh_waiting_label())
 
-    agent._broadcast_process_label.assert_awaited_once_with("monitoring")
+    agent._broadcast_process_label.assert_awaited_once_with(
+        "monitoring", {"key": "backend.claude.monitoring", "params": {}},
+    )
     assert agent._waiting_label_active is True
 
 
@@ -127,4 +129,7 @@ def test_background_subagent_label_takes_priority_over_monitoring() -> None:
 
     asyncio.run(agent._refresh_waiting_label())
 
-    agent._broadcast_process_label.assert_awaited_once_with("waiting for 1 subagent")
+    agent._broadcast_process_label.assert_awaited_once_with(
+        "waiting for 1 subagent",
+        {"key": "backend.claude.waiting_subagents", "params": {"count": 1}, "count": 1},
+    )

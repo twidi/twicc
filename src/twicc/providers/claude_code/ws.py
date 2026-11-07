@@ -288,6 +288,7 @@ class ClaudeCodeWSHandler:
                 "code": "provider_disabled",
                 "provider": e.provider.value,
                 "message": str(e),
+                "ui_message": e.ui_message,
             })
             return
 
