@@ -8,7 +8,6 @@ import { useSettingsStore } from '../../../stores/settings'
 import { formatDate } from '../../../utils/date'
 import { PROCESS_STATE, DISPLAY_MODE } from '../../../constants'
 import {
-    archiveStopLabel,
     backgroundShellCount,
     processStateTooltip,
     userTurnBackgroundShellCount,
@@ -222,6 +221,12 @@ const formattedModel = computed(() => {
 
 // Process state for current session
 const processState = computed(() => store.getProcessState(props.sessionId))
+const archiveProcessTooltip = computed(() => {
+    const count = backgroundShellCount(processState.value)
+    return count > 0
+        ? t('session.actions.archiveStopsShells', { provider: providerLabel.value, count }, count)
+        : t('session.actions.archiveStopsProvider', { provider: providerLabel.value })
+})
 
 /** Whether the process has active cron jobs. */
 const hasActiveCrons = computed(() => processState.value?.active_crons?.length > 0)
@@ -503,6 +508,7 @@ defineExpose({
     headerRef,
     isCompactExpanded,
 })
+
 </script>
 
 <template>
@@ -685,7 +691,7 @@ defineExpose({
                 >
                     <wa-icon name="box-archive" :label="$t('common.actions.archive')"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-compact-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
+                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-compact-archive-button`">{{ archiveProcessTooltip }}</AppTooltip>
             </div>
 
             <!-- Panel toggle (compact height only): the tools icon says there is more, the chevron says
@@ -810,7 +816,7 @@ defineExpose({
                     <wa-icon auto-width name="box-archive" :label="$t('common.actions.archive')"></wa-icon>
                     <span class="action-label">{{ $t('common.actions.archive') }}</span>
                 </wa-button>
-                <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) : 'Archive session' }}</AppTooltip>
+                <AppTooltip v-if="!session.archived && !session.draft && !session.ephemeral" :for="`session-header-${sessionId}-archive-button`">{{ canStopProcess ? archiveProcessTooltip : $t('session.actions.archiveTooltip') }}</AppTooltip>
 
                 <!-- Unarchive button (archived sessions only) -->
                 <wa-button
@@ -1064,7 +1070,7 @@ defineExpose({
                         @click="handleArchive"
                     >
                         <wa-icon slot="start" auto-width name="box-archive"></wa-icon>
-                        Archive
+                        {{ $t('common.actions.archive') }}
                     </wa-button>
 
                     <wa-button
@@ -1088,7 +1094,7 @@ defineExpose({
                      outside the button group so they do not take part in its joined layout. -->
                 <AppTooltip v-if="canInterruptTurn" :for="`session-header-${sessionId}-interrupt-button`">{{ $t('session.process.interruptTooltip') }}</AppTooltip>
                 <AppTooltip v-if="canStopProcess" :for="`session-header-${sessionId}-stop-button`">{{ stoppingProcess ? $t('session.process.forceKill') : $t('session.process.stopProviderTooltip', { provider: providerLabel }) }}</AppTooltip>
-                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-process-archive-button`">{{ archiveStopLabel('Archive session', providerLabel, backgroundShellCount(processState)) }}</AppTooltip>
+                <AppTooltip v-if="canArchiveWithProcess" :for="`session-header-${sessionId}-process-archive-button`">{{ archiveProcessTooltip }}</AppTooltip>
                 <AppTooltip v-if="canStopAgent" :for="`session-header-${sessionId}-stop-agent-button`">{{ $t('session.process.stopAgentTooltip') }}</AppTooltip>
             </div>
 

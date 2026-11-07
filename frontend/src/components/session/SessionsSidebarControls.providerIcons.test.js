@@ -12,7 +12,7 @@ test('controls declare the prop and the checkbox item after the tree item', () =
     assert.match(controls, /showProviderIcons: \{ type: Boolean, default: false \}/)
     assert.match(
         controls,
-        /value="show-as-tree"[\s\S]*?<\/wa-dropdown-item>\s*<wa-dropdown-item\s+type="checkbox"\s+value="show-provider-icons"\s+:checked="showProviderIcons"\s*>\s*Show provider icons\s*<\/wa-dropdown-item>/,
+        /value="show-as-tree"[\s\S]*?<\/wa-dropdown-item>\s*<wa-dropdown-item\s+type="checkbox"\s+value="show-provider-icons"\s+:checked="showProviderIcons"\s*>\s*\{\{ \$t\('session\.list\.showProviderIcons'\) \}\}\s*<\/wa-dropdown-item>/,
     )
 })
 

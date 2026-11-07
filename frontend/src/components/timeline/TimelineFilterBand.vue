@@ -304,7 +304,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
     <div ref="rootRef" class="timeline-filter-band">
         <div ref="lineRef" :class="['timeline-filter-line', `timeline-filter-line--${layout}`]">
             <div ref="headingRef" class="timeline-filter-heading">
-                <span class="timeline-filter-title">Timeline</span>
+                <span class="timeline-filter-title">{{ $t('timeline.title') }}</span>
                 <button
                     type="button"
                     class="timeline-speech-toggle"
@@ -319,14 +319,14 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                 <SegmentedControl
                     ref="viewsRef"
                     class="timeline-filter-views"
-                    label="View"
+                    :label="$t('timeline.filters.view')"
                     :model-value="filters.view"
                     :options="viewOptions"
                     @update:model-value="setView"
                 />
                 <wa-button :id="buttonId" ref="buttonRef" class="timeline-filter-button" size="small" appearance="outlined">
                     <wa-icon slot="start" name="filter"></wa-icon>
-                    <span class="timeline-filter-button-label">Filters</span>
+                    <span class="timeline-filter-button-label">{{ $t('timeline.filters.label') }}</span>
                     <span v-if="count > 0" class="timeline-filter-count">{{ count }}</span>
                 </wa-button>
                 <!-- Right after its button: Tab from the button reaches the panel before the pills. -->
@@ -367,9 +367,9 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                             class="timeline-filter-option timeline-filter-include-muted"
                             :checked="filters.includeMuted"
                             @change="store.setIncludeMuted(props.pageId, $event.target.checked)"
-                        >Show muted sessions</wa-checkbox>
+                        >{{ $t('timeline.filters.showMuted') }}</wa-checkbox>
                         <div class="timeline-filter-panel-actions">
-                            <wa-button size="small" appearance="plain" @click="resetPanel">Reset</wa-button>
+                            <wa-button size="small" appearance="plain" @click="resetPanel">{{ $t('timeline.filters.reset') }}</wa-button>
                         </div>
                     </div>
                 </wa-popover>
@@ -390,7 +390,7 @@ const viewOptions = computed(() => VIEWS.map((view) => (layout.value === 'compac
                     <wa-icon name="xmark"></wa-icon>
                 </button>
             </span>
-            <wa-button class="timeline-filter-clear" size="small" appearance="plain" @click="clearAll">Clear all</wa-button>
+            <wa-button class="timeline-filter-clear" size="small" appearance="plain" @click="clearAll">{{ $t('timeline.filters.clearAll') }}</wa-button>
         </div>
     </div>
 </template>

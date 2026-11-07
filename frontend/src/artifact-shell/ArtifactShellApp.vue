@@ -102,14 +102,16 @@ onMounted(() => {
          navigation, popups and modals do not. Same-origin kept (localStorage
          works; design §13). -->
     <div v-if="updated" class="share-update-banner">
-        This artifact was updated — <a href="#" @click.prevent="reloadPage">Reload</a>
+        <i18n-t keypath="artifacts.shell.updated" scope="global">
+            <template #reload><a href="#" @click.prevent="reloadPage">{{ $t('artifacts.shell.reload') }}</a></template>
+        </i18n-t>
     </div>
     <iframe
         ref="iframeRef"
         :src="innerDocUrl"
         class="artifact-frame"
         sandbox="allow-scripts allow-same-origin allow-forms"
-        title="Artifact"
+        :title="$t('artifacts.shell.frameTitle')"
     ></iframe>
     <!-- Share mode gets the same "Shared with TwiCC" footer as the session/doc
          share viewers (one component); the in-app owner page (a plain tool view) does not. -->
@@ -117,10 +119,10 @@ onMounted(() => {
     <!-- Share mode never prompts (server enforces the owner allowlist, D6). -->
     <ArtifactBrokerPrompt v-if="mode !== 'share'" :prompt="brokerPrompt" @decision="onBrokerDecision" />
     <div v-if="blockedHosts.length" class="share-blocked-banner">
-        This artifact tried to reach <code>{{ blockedHosts.join(', ') }}</code> —
-        {{ blockedHosts.length > 1 ? 'these hosts are' : 'this host is' }} not authorized
-        by the share owner, so parts of the page may not work.
-        <a href="#" @click.prevent="blockedHosts = []">Dismiss</a>
+        <i18n-t keypath="artifacts.shell.blockedHosts" scope="global" :plural="blockedHosts.length">
+            <template #hosts><code>{{ blockedHosts.join(', ') }}</code></template>
+        </i18n-t>
+        <a href="#" @click.prevent="blockedHosts = []">{{ $t('artifacts.shell.dismiss') }}</a>
     </div>
 </template>
 

@@ -315,10 +315,9 @@ defineExpose({ getChangedFields, reset: initLocal })
 
 <template>
     <div class="form-group">
-        <label class="form-label">Default provider</label>
+        <label class="form-label">{{ $t('project.agentDefaults.providerLabel') }}</label>
         <p class="agset-intro">
-            Which agent a new session in this project starts with. Inherits from
-            parent projects, then your global default.
+            {{ $t('project.agentDefaults.providerHint') }}
         </p>
         <wa-select
             :value.prop="localProvider"
@@ -331,27 +330,26 @@ defineExpose({ getChangedFields, reset: initLocal })
                 slot="start"
                 :provider="localProvider"
             />
-            <wa-option value="" label="Inherit">Inherit</wa-option>
+            <wa-option value="" :label="$t('common.options.inherit')">{{ $t('common.options.inherit') }}</wa-option>
             <wa-option
                 v-for="p in providers"
                 :key="p.value"
                 :value="p.value"
-                :label="isEnabled(p.value) ? getProviderLabel(p.value) : getProviderLabel(p.value) + ' (disabled)'"
+                :label="isEnabled(p.value) ? getProviderLabel(p.value) : $t('project.agentDefaults.disabledProvider', { provider: getProviderLabel(p.value) })"
             >
                 <ProviderIcon :provider="p.value" class="provider-option-icon" />
-                {{ getProviderLabel(p.value) }}<template v-if="!isEnabled(p.value)"> (disabled)</template>
+                {{ isEnabled(p.value) ? getProviderLabel(p.value) : $t('project.agentDefaults.disabledProvider', { provider: getProviderLabel(p.value) }) }}
             </wa-option>
         </wa-select>
         <div v-if="localProvider === ''" class="form-hint">
-            Inherited: <strong>{{ inheritedProviderLabel }}</strong>
+            <i18n-t keypath="project.agentDefaults.inheritedProvider" scope="global"><template #provider><strong>{{ inheritedProviderLabel }}</strong></template></i18n-t>
         </div>
     </div>
 
     <div class="form-group">
-        <label class="form-label">Agent settings defaults</label>
+        <label class="form-label">{{ $t('project.agentDefaults.settingsLabel') }}</label>
         <p class="agset-intro">
-            Per-provider defaults for new sessions here. Empty fields inherit from
-            parent projects, then your global defaults.
+            {{ $t('project.agentDefaults.settingsHint') }}
         </p>
         <!-- .stop on the tab events so our per-provider tabs never bubble up to
              the dialog's main "Project / Agent settings" tab-group; the handler
@@ -368,7 +366,7 @@ defineExpose({ getChangedFields, reset: initLocal })
                 :panel="p.value"
             >
                 <ProviderIcon :provider="p.value" class="agset-tab-icon" />
-                {{ getProviderLabel(p.value) }}<span v-if="!isEnabled(p.value)" class="agset-disabled-badge">disabled</span>
+                {{ getProviderLabel(p.value) }}<span v-if="!isEnabled(p.value)" class="agset-disabled-badge">{{ $t('project.agentDefaults.disabled') }}</span>
             </wa-tab>
 
             <wa-tab-panel v-for="p in providers" :key="p.value" :name="p.value">
@@ -376,7 +374,7 @@ defineExpose({ getChangedFields, reset: initLocal })
                     v-if="loadSources(p.value).length"
                     value=""
                     @change="loadFrom(p.value, $event)"
-                    placeholder="Load from…"
+                    :placeholder="$t('project.agentDefaults.loadFrom')"
                     size="small"
                     class="agset-load-select"
                 >
@@ -402,8 +400,8 @@ defineExpose({ getChangedFields, reset: initLocal })
                             :value.prop="toSentinel(fieldValue(p.value, 'selected_model'))"
                             @change="setField(p.value, 'selected_model', $event.target.value)"
                         >
-                            <wa-option :value="DEFAULT_SENTINEL">Inherit</wa-option>
-                            <small class="agset-group-label">Force to:</small>
+                            <wa-option :value="DEFAULT_SENTINEL">{{ $t('common.options.inherit') }}</wa-option>
+                            <small class="agset-group-label">{{ $t('project.agentDefaults.forceTo') }}</small>
                             <template v-for="(group, gi) in modelGroups(p.value)" :key="gi">
                                 <wa-divider v-if="gi > 0 && group.entries.length"></wa-divider>
                                 <wa-option
@@ -445,8 +443,8 @@ defineExpose({ getChangedFields, reset: initLocal })
                                 :icon="permissionSelectIcon(p.value, field).icon"
                                 :color="permissionSelectIcon(p.value, field).color"
                             />
-                            <wa-option :value="DEFAULT_SENTINEL">Inherit</wa-option>
-                            <small class="agset-group-label">Force to:</small>
+                            <wa-option :value="DEFAULT_SENTINEL">{{ $t('common.options.inherit') }}</wa-option>
+                            <small class="agset-group-label">{{ $t('project.agentDefaults.forceTo') }}</small>
                             <wa-option
                                 v-for="opt in fieldChoices(p.value, field)"
                                 :key="String(opt.value)"
@@ -479,7 +477,7 @@ defineExpose({ getChangedFields, reset: initLocal })
                 </template>
 
                 <div v-if="!supportedFields(p.value).length" class="form-hint">
-                    This provider has no configurable agent settings.
+                    {{ $t('project.agentDefaults.noSettings') }}
                 </div>
             </wa-tab-panel>
         </TabBar>

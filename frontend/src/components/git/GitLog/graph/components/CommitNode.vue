@@ -147,7 +147,7 @@ function handleKeyDown(event: KeyboardEvent): void {
   >
     <component :is="() => node!(customNodeProps)" />
   </div>
-  <AppTooltip v-if="commitUrl" :for="customNodeId">View Commit</AppTooltip>
+  <AppTooltip v-if="commitUrl" :for="customNodeId">{{ $t('git.commit.view') }}</AppTooltip>
 
   <!-- Default node rendering -->
   <div
@@ -199,7 +199,7 @@ function handleKeyDown(event: KeyboardEvent): void {
       />
     </div>
   </div>
-  <AppTooltip v-if="commitUrl" :for="defaultNodeId">View Commit</AppTooltip>
+  <AppTooltip v-if="commitUrl" :for="defaultNodeId">{{ $t('git.commit.view') }}</AppTooltip>
 </template>
 
 <style scoped>

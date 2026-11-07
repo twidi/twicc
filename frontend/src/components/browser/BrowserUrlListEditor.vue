@@ -80,14 +80,14 @@ defineExpose({ getEntries, reset })
                 class="browser-url-default"
                 :name="radioName"
                 :checked="row.isDefault"
-                title="Home default"
+                :title="$t('browser.savedUrls.homeDefault')"
                 @change="setDefault(index)"
             />
             <wa-input
                 class="browser-url-url"
                 size="small"
                 autocomplete="off"
-                placeholder="e.g. http://localhost:3000"
+                :placeholder="$t('browser.savedUrls.urlPlaceholder')"
                 :value="row.url"
                 @input="row.url = $event.target.value"
             />
@@ -96,19 +96,19 @@ defineExpose({ getEntries, reset })
                 size="small"
                 autocomplete="off"
                 maxlength="100"
-                placeholder="Label (optional)"
+                :placeholder="$t('browser.savedUrls.label')"
                 :value="row.label"
                 @input="row.label = $event.target.value"
             />
             <span class="browser-url-actions">
-                <button type="button" class="browser-url-action browser-url-action--danger" title="Remove" @click="removeRow(index)">
+                <button type="button" class="browser-url-action browser-url-action--danger" :title="$t('browser.savedUrls.remove')" @click="removeRow(index)">
                     <wa-icon name="trash"></wa-icon>
                 </button>
             </span>
         </div>
         <wa-button size="small" appearance="outlined" class="browser-url-add" @click="addRow">
             <wa-icon slot="start" name="plus"></wa-icon>
-            Add URL
+            {{ $t('browser.savedUrls.add') }}
         </wa-button>
     </div>
 </template>

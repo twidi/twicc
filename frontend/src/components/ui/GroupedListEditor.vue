@@ -101,13 +101,13 @@ function addGroup() {
                                 :ref="element => { groupNameInput = element }"
                                 v-model="groupName"
                                 class="group-name-input"
-                                aria-label="Group name"
+                                :aria-label="$t('common.groups.name')"
                                 required
                             />
-                            <button type="submit" class="action-btn" title="Save group name" aria-label="Save group name" :disabled="!groupName.trim()">
+                            <button type="submit" class="action-btn" :title="$t('common.groups.saveName')" :aria-label="$t('common.groups.saveName')" :disabled="!groupName.trim()">
                                 <wa-icon name="check" />
                             </button>
-                            <button type="button" class="action-btn" title="Cancel" aria-label="Cancel group rename" @click="editingGroupId = null">
+                            <button type="button" class="action-btn" :title="$t('common.actions.cancel')" :aria-label="$t('common.groups.cancelRename')" @click="editingGroupId = null">
                                 <wa-icon name="xmark" />
                             </button>
                         </form>
@@ -132,14 +132,14 @@ function addGroup() {
                                     :aria-label="`Add ${itemName} to ${entry.label}`"
                                     @click.stop="emit('add', entry.id)"
                                 ><wa-icon name="plus" /></button>
-                                <button type="button" class="action-btn" title="Rename group" aria-label="Rename group" @click.stop="editGroup(entry)">
+                                <button type="button" class="action-btn" :title="$t('common.groups.rename')" :aria-label="$t('common.groups.rename')" @click.stop="editGroup(entry)">
                                     <wa-icon name="pen-to-square" />
                                 </button>
                                 <button
                                     type="button"
                                     class="action-btn action-btn-danger"
-                                    title="Delete group and keep its items outside groups"
-                                    aria-label="Delete group and keep its items outside groups"
+                                    :title="$t('common.groups.deleteKeepItems')"
+                                    :aria-label="$t('common.groups.deleteKeepItems')"
                                     @click.stop="emit('delete-group', entry.id)"
                                 ><wa-icon name="trash-can" /></button>
                             </div>
@@ -168,7 +168,7 @@ function addGroup() {
                                 <button type="button" class="action-btn action-btn-danger" :title="`Delete ${itemName}`" :aria-label="`Delete ${itemName}`" @click="emit('delete', itemIndex, entry.id)"><wa-icon name="trash-can" /></button>
                             </div>
                         </div>
-                        <span v-if="!entry.items.length" class="empty-group">Drop {{ itemName }} here</span>
+                        <span v-if="!entry.items.length" class="empty-group">{{ $t('common.groups.dropItem', { item: itemName }) }}</span>
                     </div>
                 </template>
                 <template v-else>
@@ -190,16 +190,16 @@ function addGroup() {
         </div>
         <div class="editor-actions" data-group-outside>
             <button type="button" class="add-item-btn" :aria-expanded="addingGroup" @click="openAddGroup">
-                <wa-icon name="folder-plus" /> Add group
+                <wa-icon name="folder-plus" /> {{ $t('common.groups.add') }}
             </button>
             <button type="button" class="add-item-btn" @click="emit('add', null)">
-                <wa-icon name="plus" /> Add {{ itemName }}
+                <wa-icon name="plus" /> {{ $t('common.groups.addItem', { item: itemName }) }}
             </button>
         </div>
         <form v-if="addingGroup" class="group-name-form new-group-form" @submit.prevent="addGroup" @keydown.esc.stop.prevent="addingGroup = false">
-            <input ref="newGroupInput" v-model="newGroupName" class="group-name-input" placeholder="Group name" aria-label="New group name" required />
-            <button type="submit" class="action-btn" title="Add group" aria-label="Add group" :disabled="!newGroupName.trim()"><wa-icon name="check" /></button>
-            <button type="button" class="action-btn" title="Cancel" aria-label="Cancel new group" @click="addingGroup = false"><wa-icon name="xmark" /></button>
+            <input ref="newGroupInput" v-model="newGroupName" class="group-name-input" :placeholder="$t('common.groups.name')" :aria-label="$t('common.groups.newName')" required />
+            <button type="submit" class="action-btn" :title="$t('common.groups.add')" :aria-label="$t('common.groups.add')" :disabled="!newGroupName.trim()"><wa-icon name="check" /></button>
+            <button type="button" class="action-btn" :title="$t('common.actions.cancel')" :aria-label="$t('common.groups.cancelNew')" @click="addingGroup = false"><wa-icon name="xmark" /></button>
         </form>
     </div>
 </template>

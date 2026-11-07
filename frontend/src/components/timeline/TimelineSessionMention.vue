@@ -67,9 +67,9 @@ const processTooltip = computed(() => (processState.value
         </span>
         <ProviderIcon v-else-if="mention.provider" :provider="mention.provider" class="timeline-session-icon" />
         <span v-if="sessionState && (sessionState.archived || sessionState.mute_on_user_turn || sessionState.pinned)" class="timeline-session-states">
-            <wa-icon v-if="sessionState.archived" name="box-archive" label="Archived" title="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
-            <wa-icon v-if="sessionState.mute_on_user_turn" name="bell-slash" label="Muted" title="Muted" class="session-state-icon timeline-session-state--muted"></wa-icon>
-            <wa-icon v-if="sessionState.pinned" name="thumbtack" label="Pinned" title="Pinned" class="session-state-icon timeline-session-state--pinned"></wa-icon>
+            <wa-icon v-if="sessionState.archived" name="box-archive" :label="$t('common.status.archived')" :title="$t('common.status.archived')" class="session-state-icon session-state-icon--archived"></wa-icon>
+            <wa-icon v-if="sessionState.mute_on_user_turn" name="bell-slash" :label="$t('session.notifications.mutedLabel')" :title="$t('session.notifications.mutedLabel')" class="session-state-icon timeline-session-state--muted"></wa-icon>
+            <wa-icon v-if="sessionState.pinned" name="thumbtack" :label="$t('timeline.session.pinned')" :title="$t('timeline.session.pinned')" class="session-state-icon timeline-session-state--pinned"></wa-icon>
         </span>
         <RouterLink v-if="location" :to="location" class="timeline-session-title" :title="tooltip"><ScrollableText v-if="cut" :text="mention.title" /><template v-else>{{ mention.title }}</template></RouterLink>
         <span v-else class="timeline-session-title timeline-session-title--plain" :title="tooltip"><ScrollableText v-if="cut" :text="mention.title" /><template v-else>{{ mention.title }}</template></span>
@@ -83,8 +83,8 @@ const processTooltip = computed(() => (processState.value
             :title="hasUnread ? `New content to read · ${processTooltip}` : processTooltip"
             class="timeline-session-process"
         />
-        <wa-icon v-else-if="showPending" name="hand" label="Waiting for your response" title="Waiting for your response" class="timeline-session-process timeline-session-pending"></wa-icon>
-        <wa-icon v-else-if="showUnreadOnly" name="eye" label="New content to read" title="New content to read" class="timeline-session-process timeline-session-unread"></wa-icon>
+        <wa-icon v-else-if="showPending" name="hand" :label="$t('session.status.awaitingResponse')" :title="$t('session.status.awaitingResponse')" class="timeline-session-process timeline-session-pending"></wa-icon>
+        <wa-icon v-else-if="showUnreadOnly" name="eye" :label="$t('timeline.session.unread')" :title="$t('timeline.session.unread')" class="timeline-session-process timeline-session-unread"></wa-icon>
     </span>
 </template>
 

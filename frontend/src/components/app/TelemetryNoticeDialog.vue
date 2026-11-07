@@ -95,25 +95,21 @@ function onAfterHide(event) {
     <wa-dialog
         ref="dialogRef"
         class="telemetry-notice-dialog"
-        label="Anonymous usage statistics"
+        :label="$t('telemetry.notice.title')"
         style="--width: min(32rem, calc(100vw - 2rem))"
         @wa-after-hide="onAfterHide"
     >
-        <p>TwiCC collects anonymous usage statistics — counters only, never content.</p>
-        <p>
-            This helps TwiCC's author understand how the project is used — thank you for leaving it
-            enabled. The telemetry code is
-            <a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">open source</a>,
-            so you can verify it does nothing more than advertised.
-        </p>
-        <p>
-            See exactly what is sent on the
-            <a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener noreferrer">transparency page</a>.
-        </p>
-        <p>You can disable it any time in Settings &rarr; General.</p>
+        <p>{{ $t('telemetry.notice.collection') }}</p>
+        <i18n-t tag="p" keypath="telemetry.notice.purpose" scope="global">
+            <template #source><a href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">{{ $t('telemetry.notice.openSource') }}</a></template>
+        </i18n-t>
+        <i18n-t tag="p" keypath="telemetry.notice.transparency" scope="global">
+            <template #page><a href="https://twicc-telemetry.twidi.com/" target="_blank" rel="noopener noreferrer">{{ $t('telemetry.notice.transparencyPage') }}</a></template>
+        </i18n-t>
+        <p>{{ $t('telemetry.notice.disableHint') }}</p>
 
-        <wa-button slot="footer" appearance="outlined" @click="onOpenSettings">Open settings</wa-button>
-        <wa-button slot="footer" variant="brand" @click="onGotIt">Got it</wa-button>
+        <wa-button slot="footer" appearance="outlined" @click="onOpenSettings">{{ $t('telemetry.notice.openSettings') }}</wa-button>
+        <wa-button slot="footer" variant="brand" @click="onGotIt">{{ $t('telemetry.notice.gotIt') }}</wa-button>
     </wa-dialog>
 </template>
 

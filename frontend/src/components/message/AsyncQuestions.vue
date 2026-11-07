@@ -59,7 +59,7 @@ function updateChoices(batch, choices) {
                 @click="emit('dismiss', batch.item_id)"
             >
                 <wa-icon slot="start" name="ban" variant="classic"></wa-icon>
-                Dismiss
+                {{ $t('session.questions.dismiss') }}
             </wa-button>
         </div>
     </div>

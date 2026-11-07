@@ -2117,10 +2117,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                 size="small"
                 @click="addAllCommentsToMessage"
             >
-                {{ commentsWithContentCount === 1
-                    ? 'Add comment to message'
-                    : `Add all comments (${commentsWithContentCount}) to message`
-                }}
+                {{ $t('composer.comments.addToMessage', { count: commentsWithContentCount }, commentsWithContentCount) }}
             </wa-button>
             <wa-button
                 variant="neutral"
@@ -2128,7 +2125,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                 size="small"
                 @click="clearAllSessionComments"
             >
-                {{ commentsWithContentCount === 1 ? 'Clear comment' : 'Clear comments' }}
+                {{ commentsWithContentCount === 1 ? $t('composer.comments.clearOne') : $t('composer.comments.clearAll') }}
             </wa-button>
         </div>
         <div
@@ -2138,8 +2135,8 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
             <wa-icon name="circle-question" class="async-question-header-icon"></wa-icon>
             <span v-if="readyAsyncQuestionCount > 0" class="async-question-header-description">
                 {{ readyAsyncQuestionCount === 1
-                    ? 'Along with your next message, you can answer the following question.'
-                    : 'Along with your next message, you can answer the following questions.' }}
+                    ? $t('composer.questions.nextMessageOne')
+                    : $t('composer.questions.nextMessageMany') }}
             </span>
         </div>
         <div v-if="asyncQuestionNotice" class="async-question-notice" role="status">{{ asyncQuestionNotice }}</div>
@@ -2344,7 +2341,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     <wa-icon name="ghost" :label="$t('session.status.ephemeral')" class="ephemeral-icon" :class="{ 'session-state-icon--ephemeral': session?.ephemeral }"></wa-icon>
                 </wa-button>
                 <AppTooltip v-if="isDraft" :for="ephemeralButtonId">
-                    {{ session?.ephemeral ? 'Ephemeral mode on — click to turn off' : 'Start as an ephemeral session' }}
+                    {{ session?.ephemeral ? $t('composer.ephemeral.enabledTooltip') : $t('composer.ephemeral.startTooltip') }}
                 </AppTooltip>
 
                 <!-- Hybrid CLI mode toggle (Claude Code, visible sessions only).
@@ -2390,7 +2387,7 @@ defineExpose({ startSelectionCommentSend, selectionCommentSendPending, selection
                     class="reset-button"
                 >
                     <wa-icon name="xmark" variant="classic"></wa-icon>
-                    <span>{{ hasDropdownsChanged ? 'Reset' : 'Clear' }}</span>
+                    <span>{{ hasDropdownsChanged ? $t('composer.actions.reset') : $t('composer.actions.clear') }}</span>
                 </wa-button>
                 <!-- Send / Update button: dynamically labeled based on state.
                      A pending request replaces it with the paused indicator. Session

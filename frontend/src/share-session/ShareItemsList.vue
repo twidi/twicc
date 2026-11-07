@@ -256,7 +256,7 @@ const {
 <template>
     <div class="session-items-list share-items-list panel-card" :aria-busy="reveal.hidden.value ? 'true' : null">
         <wa-callout v-if="preparationPending" variant="neutral" class="share-banner">
-            This shared session is being prepared. Refresh this page later.
+            {{ $t('sharing.session.preparing') }}
         </wa-callout>
         <VirtualScroller
             v-else

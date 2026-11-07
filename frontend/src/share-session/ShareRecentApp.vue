@@ -11,24 +11,23 @@ function when(iso) { try { return new Date(iso).toLocaleString() } catch { retur
 
 <template>
     <main class="share-recent">
-        <h1>Shared with you</h1>
+        <h1>{{ $t('sharing.recent.title') }}</h1>
         <!-- The list is a purely local, per-browser convenience — no server-side
              per-viewer history exists (design §12), so say so plainly. -->
         <p class="note">
-            Only links you've opened in this browser appear here. The list is stored on
-            this device and is never sent anywhere.
+            {{ $t('sharing.recent.localHistory') }}
         </p>
-        <p v-if="!entries.length" class="empty">No shared links opened on this browser yet.</p>
+        <p v-if="!entries.length" class="empty">{{ $t('sharing.recent.empty') }}</p>
         <ul v-else>
             <li v-for="e in entries" :key="e.token">
                 <button class="row" type="button" @click="open(e.token)">
                     <wa-icon class="kind-icon" :name="e.kind === 'artifact' ? 'shapes' : 'comment'"></wa-icon>
                     <span class="body">
                         <span class="title">{{ e.title || e.token }}</span>
-                        <span class="meta">{{ e.kind === 'artifact' ? 'Artifact' : 'Session' }} · opened {{ when(e.lastAccess) }}</span>
+                        <span class="meta">{{ e.kind === 'artifact' ? $t('sharing.recent.artifactOpened', { date: when(e.lastAccess) }) : $t('sharing.recent.sessionOpened', { date: when(e.lastAccess) }) }}</span>
                     </span>
                 </button>
-                <wa-button size="small" appearance="plain" title="Remove from this list" @click="remove(e.token)">
+                <wa-button size="small" appearance="plain" :title="$t('sharing.recent.remove')" @click="remove(e.token)">
                     <wa-icon name="xmark"></wa-icon>
                 </wa-button>
             </li>

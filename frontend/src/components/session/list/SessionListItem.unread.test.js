@@ -15,7 +15,7 @@ test('process-line ProcessIndicator always renders and carries the unread state'
     assert.match(block, /:unread="hasUnread"/)
     assert.doesNotMatch(block, /v-else|v-if/)
     const tooltip = tooltipLine('process-indicator')
-    assert.ok(tooltip.includes('New content to read · </template>{{ processTooltip }}'))
+    assert.ok(tooltip.includes("{{ hasUnread ? $t('session.list.unreadProcess', { status: processTooltip }) : processTooltip }}"))
     assert.ok(!/v-if="!hasUnread"/.test(tooltip))
 })
 
@@ -25,7 +25,7 @@ test('compact ProcessIndicator carries the unread state and shows for unread or 
     assert.match(block, /:unread="hasUnread"/)
     assert.match(block, /v-if="compactView && !cumulativeMode && processState && !session\.ephemeral && \(hasUnread \|\| !pendingRequest\)"/)
     assert.match(block, /var\(--wa-font-size-xs\)/)
-    assert.ok(tooltipLine('compact-process-indicator').includes('New content to read · </template>{{ processTooltip }}'))
+    assert.ok(tooltipLine('compact-process-indicator').includes("{{ hasUnread ? $t('session.list.unreadProcess', { status: processTooltip }) : processTooltip }}"))
 })
 
 test('the hand-drawn eye remains only for sessions without a process', () => {

@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
+import { createAppI18n } from '../../i18n/index.js'
+
+const { t } = createAppI18n().global
 
 const settingsSource = readFileSync(new URL('./TextToSpeechSettings.vue', import.meta.url), 'utf8')
 
@@ -78,10 +81,10 @@ test('a script card shows its own fields, without model, voice or OpenRouter lin
     assert.match(body, /:options="SCRIPT_FORMAT_OPTIONS"/)
     assert.match(body, /scriptStreamingNote\(config\)/)
     assert.match(body, /v-if="config\.audio_format === 'pcm'"/)
-    assert.match(body, />Sample rate \(Hz\)</)
-    assert.match(body, />Channels</)
-    assert.match(body, />Max characters per run</)
-    assert.match(body, /placeholder="Whole text in one run"/)
+    assert.match(body, /:for="`tts-\$\{config\.id\}-pcm-rate`">\{\{ \$t\('settings\.textToSpeech\.sampleRate'\) \}\}<\/label>/)
+    assert.match(body, /:for="`tts-\$\{config\.id\}-pcm-channels`">\{\{ \$t\('settings\.textToSpeech\.channels'\) \}\}<\/label>/)
+    assert.match(body, /:for="`tts-\$\{config\.id\}-max-chars`">\{\{ \$t\('settings\.textToSpeech\.maxCharacters'\) \}\}<\/label>/)
+    assert.match(body, /:placeholder="\$t\('settings\.textToSpeech\.wholeText'\)"/)
 })
 
 test('the script number inputs go through positiveIntegerInput with their bounds', () => {
@@ -93,13 +96,14 @@ test('the script number inputs go through positiveIntegerInput with their bounds
 
 test('the script help states the command contract', () => {
     const help = "The text goes to the command's standard input; the audio (or a file path) comes back on its standard output. The help at the top of this section tells the rest."
-    assert.ok(scriptBranchSource().replace(/\s+/g, ' ').includes(help), 'the help copy is verbatim')
+    assert.match(scriptBranchSource(), /<p class="setting-group-hint tts-script-help">\s*\{\{ \$t\('settings\.textToSpeech\.scriptHelp'\) \}\}\s*<\/p>/)
+    assert.equal(t('settings.textToSpeech.scriptHelp'), help)
 })
 
 test('a File path script card offers to delete the returned file', () => {
     const body = scriptBranchSource()
     const flat = body.replace(/\s+/g, ' ')
-    assert.match(flat, /<wa-checkbox v-if="config\.output === 'path'"[^>]*:checked="config\.delete_file"[^>]*@change="onDeleteFileChange\(config, \$event\)"[^>]*> Delete the file after reading <\/wa-checkbox>/)
+    assert.match(flat, /<wa-checkbox v-if="config\.output === 'path'"[^>]*:checked="config\.delete_file"[^>]*@change="onDeleteFileChange\(config, \$event\)"[^>]*> \{\{ \$t\('settings\.textToSpeech\.deleteFile'\) \}\} <\/wa-checkbox>/)
     // Scoped to its own element: a bubbling change of a nested element is ignored.
     assert.match(
         settingsSource,
@@ -108,17 +112,18 @@ test('a File path script card offers to delete the returned file', () => {
 })
 
 test('the intro names both kinds and the key callout speaks of what needs OpenRouter only', () => {
-    assert.ok(flatSource.includes('Read the chat messages aloud with OpenRouter, or with your own script. See the'))
-    // The OpenRouter adaptation too: its disabled option says why in a tooltip only, unseen on a touch screen.
+    assert.match(flatSource, /<i18n-t tag="p" class="setting-group-hint" keypath="settings\.textToSpeech\.intro" scope="global">/)
+    assert.equal(t('settings.textToSpeech.intro', { guide: 'GUIDE', models: 'MODELS' }), "Read the chat messages aloud with OpenRouter, or with your own script. See the GUIDE and the MODELS. Prices are OpenRouter's list prices: the real cost can differ.")
     assert.match(
         flatSource,
-        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> Add <code>TWICC_OPENROUTER_API_KEY<\/code> to <code>\{\{ store\.envPath \}\}<\/code>, then restart TwiCC\. Testing OpenRouter configs and the OpenRouter adaptation are disabled until then\. <\/wa-callout>/,
+        /<wa-callout v-else variant="warning" size="small"> <wa-icon slot="icon" name="triangle-exclamation"><\/wa-icon> <i18n-t keypath="settings\.textToSpeech\.keyMissing" scope="global">[\s\S]*?<template #apiKey><code>TWICC_OPENROUTER_API_KEY<\/code><\/template> <template #path><code>\{\{ store\.envPath \}\}<\/code><\/template> <\/i18n-t> <\/wa-callout>/,
     )
+    assert.equal(t('settings.textToSpeech.keyMissing', { apiKey: 'KEY', path: 'PATH' }), 'Add KEY to PATH, then restart TwiCC. Testing OpenRouter configs and the OpenRouter adaptation are disabled until then.')
 })
 
 test('two new-config buttons add an OpenRouter config and a script config', () => {
-    assert.match(settingsSource, /@click="addConfig\('openrouter'\)"[\s\S]*?New OpenRouter config/)
-    assert.match(settingsSource, /@click="addConfig\('script'\)"[\s\S]*?New script config/)
+    assert.match(settingsSource, /@click="addConfig\('openrouter'\)"[\s\S]*?\{\{ \$t\('settings\.textToSpeech\.newOpenRouter'\) \}\}/)
+    assert.match(settingsSource, /@click="addConfig\('script'\)"[\s\S]*?\{\{ \$t\('settings\.textToSpeech\.newScript'\) \}\}/)
     assert.match(settingsSource, /function addConfig\(kind\) \{\s*openIds\.value\[store\.addConfig\(kind\)\] = true/)
 })
 
@@ -150,8 +155,8 @@ test('an icon before the name tells an OpenRouter config from a script config', 
 })
 
 test('the new-config buttons carry the icon of their kind', () => {
-    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.openrouter\.name"><\/wa-icon> New OpenRouter config/)
-    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.script\.name"><\/wa-icon> New script config/)
+    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.openrouter\.name"><\/wa-icon> \{\{ \$t\('settings\.textToSpeech\.newOpenRouter'\) \}\}/)
+    assert.match(settingsSource, /<wa-icon slot="start" :name="KIND_ICONS\.script\.name"><\/wa-icon> \{\{ \$t\('settings\.textToSpeech\.newScript'\) \}\}/)
 })
 
 test('a segmented control keeps its content width and one row of segments', () => {
@@ -162,26 +167,26 @@ test('a segmented control keeps its content width and one row of segments', () =
 })
 
 test('the section opens its help page from the top, like the other sections', () => {
-    assert.match(settingsSource, /<div class="settings-section-heading">\s*<h3 class="settings-section-title">Text to Speech[\s\S]*?<\/h3>\s*<HelpFeatureLink help-key="text-to-speech" label="How does text to speech work\?" \/>/)
+    assert.match(settingsSource, /<div class="settings-section-heading">\s*<h3 class="settings-section-title">\{\{ \$t\('settings\.sections\.textToSpeech'\) \}\}[\s\S]*?<\/h3>\s*<HelpFeatureLink help-key="text-to-speech" :label="\$t\('settings\.textToSpeech\.help'\)" \/>/)
     const top = settingsSource.slice(settingsSource.indexOf('settings-section-heading'))
-    assert.ok(top.indexOf('HelpFeatureLink') < top.indexOf('Read the chat messages aloud'), 'the link comes first')
+    assert.ok(top.indexOf('HelpFeatureLink') < top.indexOf('keypath="settings.textToSpeech.intro"'), 'the link comes first')
     assert.ok(existsSync(new URL('../../../public/help/text-to-speech.md', import.meta.url)), 'the help page exists')
 })
 
 test('the text adaptation choice sits after the introduction, before the test text and the configs', () => {
     const template = settingsSource.slice(settingsSource.indexOf('<template>'))
-    const intro = template.indexOf('Read the chat messages aloud')
-    const adapt = template.indexOf('>Adapt the text for speech<')
+    const intro = template.indexOf('keypath="settings.textToSpeech.intro"')
+    const adapt = template.indexOf("{{ $t('settings.textToSpeech.adapt') }}")
     assert.ok(intro !== -1 && adapt > intro, 'the control follows the introduction')
     assert.ok(adapt < template.indexOf('for="tts-test-text"'), 'the control comes before the test text')
     assert.ok(adapt < template.indexOf('<div class="tts-configs">'), 'the control comes before the configs')
     // Its own container: the narrow-width rule of the segmented controls applies to it too.
-    assert.match(flatSource, /<div class="setting-group tts-adapt-group"> <span class="setting-group-label">Adapt the text for speech<\/span>/)
+    assert.match(flatSource, /<div class="setting-group tts-adapt-group"> <span class="setting-group-label">\{\{ \$t\('settings\.textToSpeech\.adapt'\) \}\}<\/span>/)
     assert.match(settingsSource, /\.tts-adapt-group \{\s*container-type: inline-size;\s*\}/)
     assert.match(settingsSource, /@container \(max-width: 26rem\) \{\s*\.tts-format-row > \.segmented-control \{/)
     assert.match(
         flatSource,
-        /<div class="tts-format-row"> <SegmentedControl label="Adapt the text for speech" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
+        /<div class="tts-format-row"> <SegmentedControl :label="\$t\('settings\.textToSpeech\.adapt'\)" :model-value="adaptChoice" :options="adaptChoices" @update:model-value="store\.setAdapt\(\$event\)" \/>/,
     )
 })
 
@@ -196,10 +201,10 @@ test('the adaptation control shows what really runs, from the enabled providers 
 test('the adaptation hint or the no-provider hint instead, then the OpenRouter note whenever the key is set', () => {
     assert.match(
         flatSource,
-        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled\.<\/span> <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read\.<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">OpenRouter uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; it sends the text to OpenRouter, paid on your OpenRouter account\.<\/span>/,
+        /<span v-if="adaptHints\.noProvider" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.noProvider'\) \}\}<\/span> <span v-else class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.adaptHint'\) \}\}<\/span> <span v-if="adaptHints\.openrouter" class="setting-group-hint">\{\{ \$t\('settings\.textToSpeech\.openRouterAdaptHint', \{ model: OPENROUTER_MODEL_DESCRIPTION \}\) \}\}<\/span>/,
     )
     // One OpenRouter note only, and never bound to OpenRouter being the effective choice.
-    assert.equal(settingsSource.match(/paid on your OpenRouter account/g)?.length, 1)
+    assert.equal(settingsSource.match(/\$t\('settings\.textToSpeech\.openRouterAdaptHint'/g)?.length, 1)
     // The model words come from the one constant, never written here.
     assert.match(settingsSource, /import \{ OPENROUTER_MODEL_DESCRIPTION \} from '\.\.\/\.\.\/constants'/)
     assert.doesNotMatch(settingsSource, /Qwen|Cerebras/)
@@ -223,7 +228,7 @@ test('the last test run shows the adaptation facts and the folded adapted text',
     const end = block.indexOf('<div class="tts-field">')
     const lastTest = block.slice(0, end).replace(/\s+/g, ' ')
     assert.match(lastTest, /<span v-if="lastTestTexts\[config\.id\]\.adaptation" class="setting-group-hint">\{\{ lastTestTexts\[config\.id\]\.adaptation \}\}<\/span>/)
-    assert.match(lastTest, /<details v-if="config\.last_test\.adapted_text" class="tts-adapted-text"> <summary>Adapted text<\/summary> <div class="tts-adapted-text-body">\{\{ config\.last_test\.adapted_text \}\}<\/div> <\/details>/)
+    assert.match(lastTest, /<details v-if="config\.last_test\.adapted_text" class="tts-adapted-text"> <summary>\{\{ \$t\('settings\.textToSpeech\.adaptedText'\) \}\}<\/summary> <div class="tts-adapted-text-body">\{\{ config\.last_test\.adapted_text \}\}<\/div> <\/details>/)
     assert.match(settingsSource, /\.tts-adapted-text-body \{[^}]*white-space: pre-wrap;/)
 })
 

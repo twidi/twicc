@@ -34,7 +34,7 @@ const statusIcon = computed(() => {
 <template>
     <span class="items-details-summary-description goal-update-summary">
         <span v-if="status" class="goal-update-part">
-            Status: {{ status }}<wa-icon
+            {{ $t('session.tools.goal.status', { status }) }}<wa-icon
                 v-if="statusIcon"
                 :name="statusIcon.name"
                 class="goal-update-status-icon"
@@ -43,7 +43,7 @@ const statusIcon = computed(() => {
         </span>
         <span v-if="status && changedKeys.length" class="goal-update-sep">+</span>
         <span v-if="changedKeys.length" class="goal-update-part">
-            {{ status ? 'Other changes:' : 'Changes:' }} {{ changedKeys.join(', ') }}
+            {{ status ? $t('session.tools.goal.otherChanges', { fields: changedKeys.join(', ') }) : $t('session.tools.goal.changes', { fields: changedKeys.join(', ') }) }}
         </span>
     </span>
 </template>

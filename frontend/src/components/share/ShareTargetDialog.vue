@@ -71,10 +71,9 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
         <wa-callout v-if="outdated.length" variant="warning" class="outdated-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <div class="outdated-banner__row">
-                <span>{{ outdated.length }} link{{ outdated.length > 1 ? 's' : '' }}
-                    {{ outdated.length > 1 ? 'are' : 'is' }} behind the current files.</span>
+                <span>{{ $t('sharing.links.outdatedCount', { count: outdated.length }, outdated.length) }}</span>
                 <wa-button size="small" variant="warning" :loading="pushingAll" @click="pushAll">
-                    Push update to all
+                    {{ $t('sharing.links.pushAll') }}
                 </wa-button>
             </div>
         </wa-callout>
@@ -86,9 +85,9 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
                      :edit="editing" @close="closeChild" />
         <div slot="footer" class="dialog-footer">
             <wa-button variant="brand" @click="openCreate">
-                <wa-icon slot="start" name="plus"></wa-icon>Create new share
+                <wa-icon slot="start" name="plus"></wa-icon>{{ $t('sharing.links.create') }}
             </wa-button>
-            <wa-button @click="emit('close')">Close</wa-button>
+            <wa-button @click="emit('close')">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

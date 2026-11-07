@@ -458,7 +458,7 @@ onBeforeUnmount(() => {
                      only its own. See useSessionAgentSettings.presetGroups. -->
                 <wa-dropdown @wa-select="handlePresetSelect" class="presets-dropdown">
                     <wa-button slot="trigger" size="small" appearance="outlined" :disabled="isStarting" class="presets-trigger">
-                        <span class="presets-trigger-label"><wa-icon name="sliders"></wa-icon> Reset / Presets</span>
+                        <span class="presets-trigger-label"><wa-icon name="sliders"></wa-icon> {{ $t('session.agentSettings.popover.presets') }}</span>
                         <wa-icon slot="end" name="caret-down"></wa-icon>
                     </wa-button>
                     <template v-for="(group, gi) in presetGroups" :key="group.provider">
@@ -511,7 +511,7 @@ onBeforeUnmount(() => {
                     <wa-divider></wa-divider>
                     <wa-dropdown-item value="__manage__">
                         <wa-icon slot="icon" name="pen-to-square"></wa-icon>
-                        Manage presets
+                        {{ $t('session.agentSettings.popover.managePresets') }}
                     </wa-dropdown-item>
                 </wa-dropdown>
             </div>
@@ -521,13 +521,13 @@ onBeforeUnmount(() => {
                 <div v-if="!isDraft && hasDropdownsChanged" class="settings-panel-links">
                     <a class="settings-action-link" @click.prevent="restoreSettings">
                         <wa-icon name="xmark"></wa-icon>
-                        Discard unsaved changes
+                        {{ $t('session.agentSettings.popover.discard') }}
                     </a>
                 </div>
                 <wa-callout v-if="!isDraft && hasDropdownsChanged" variant="brand" class="settings-info-callout">
                     <wa-icon name="circle-info" slot="icon"></wa-icon>
-                    <template v-if="sendingLocked">Your changes are saved and will apply once you answer the pending request.</template>
-                    <template v-else>Click "{{ buttonLabel }}" to apply your changes.</template>
+                    <template v-if="sendingLocked">{{ $t('session.agentSettings.popover.pending') }}</template>
+                    <template v-else>{{ $t('session.agentSettings.popover.applyHint', { button: buttonLabel }) }}</template>
                 </wa-callout>
                 <wa-callout v-if="startupSettingsWarning" variant="warning" class="startup-warning-callout">
                     <wa-icon name="triangle-exclamation" slot="icon"></wa-icon>
@@ -541,9 +541,7 @@ onBeforeUnmount(() => {
                      so settings must be driven from here. -->
                 <wa-callout v-if="session?.hybrid" variant="neutral" class="hybrid-settings-note">
                     <wa-icon name="terminal" slot="icon"></wa-icon>
-                    Hybrid CLI session: change settings here rather than inside the
-                    terminal — TwiCC does not read back TUI-side changes. Changes
-                    apply on the next message; some restart the CLI.
+                    {{ $t('session.agentSettings.popover.hybridHint') }}
                 </wa-callout>
             </div>
 
@@ -551,7 +549,7 @@ onBeforeUnmount(() => {
             <div class="settings-panel">
                 <!-- Heading above the matrix + a link to the score help page. -->
                 <div class="matrix-heading">
-                    <span class="setting-label">Model &amp; effort picker</span>
+                    <span class="setting-label">{{ $t('session.agentSettings.popover.picker') }}</span>
                     <MatrixHeadingLinks />
                 </div>
 
@@ -586,8 +584,8 @@ onBeforeUnmount(() => {
                             :icon="row.iconInfo.icon"
                             :color="row.iconInfo.color"
                         />
-                        <wa-option :value="DEFAULT_SENTINEL">Default: {{ row.defaultLabel }}</wa-option>
-                        <small class="select-group-label">Force to:</small>
+                        <wa-option :value="DEFAULT_SENTINEL">{{ $t('session.agentSettings.popover.defaultValue', { value: row.defaultLabel }) }}</wa-option>
+                        <small class="select-group-label">{{ $t('session.agentSettings.popover.forceTo') }}</small>
                         <wa-option
                             v-for="opt in row.choices"
                             :key="opt.value"
@@ -606,7 +604,7 @@ onBeforeUnmount(() => {
                         </wa-option>
                     </wa-select>
                     <span v-if="row.helpText" class="setting-help">{{ row.helpText }}</span>
-                    <a v-else-if="row.value !== DEFAULT_SENTINEL" class="reset-setting-link" @click.prevent="resetField(row.field)">Reset to default: {{ row.defaultLabel }}</a>
+                    <a v-else-if="row.value !== DEFAULT_SENTINEL" class="reset-setting-link" @click.prevent="resetField(row.field)">{{ $t('session.agentSettings.popover.resetValue', { value: row.defaultLabel }) }}</a>
                 </div>
             </div>
         </div>

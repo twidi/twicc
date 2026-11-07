@@ -132,15 +132,15 @@ function onNextTip() {
         <header class="tip-header">
             <wa-tag size="medium" class="tip-badge" variant="brand">
                 <wa-icon name="lightbulb" />
-                Tip
+                {{ $t('tips.toast.label') }}
             </wa-tag>
             <span class="tip-title">{{ tip?.title }}</span>
         </header>
 
         <wa-divider></wa-divider>
 
-        <div v-if="loading" class="tip-loading">Loading…</div>
-        <div v-else-if="errored" class="tip-error">Failed to load tip content.</div>
+        <div v-if="loading" class="tip-loading">{{ $t('tips.toast.loading') }}</div>
+        <div v-else-if="errored" class="tip-error">{{ $t('tips.toast.loadFailed') }}</div>
         <div v-else class="tip-body" v-html="bodyHtml" @click="handleHelpLinkClick" />
 
         <template v-if="hasMoreCandidates">
@@ -148,7 +148,7 @@ function onNextTip() {
 
             <footer class="tip-footer">
                 <wa-button size="small" @click="onNextTip">
-                    Next tip
+                    {{ $t('tips.toast.next') }}
                     <wa-icon slot="end" name="chevron-right" />
                 </wa-button>
             </footer>

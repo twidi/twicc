@@ -116,7 +116,7 @@ watch(() => props.selectedBookmarkId, (id) => {
             @click="activateNode($event, 'virtual:bookmarks', toggleRoot)"
         >
             <wa-icon :name="ARTIFACT_ICON" class="node-icon"></wa-icon>
-            <span class="node-name">Bookmarked artifacts</span>
+            <span class="node-name">{{ $t('artifacts.bookmarks.title') }}</span>
         </div>
 
         <div v-if="rootOpen" class="node-children" role="group">
@@ -157,7 +157,7 @@ watch(() => props.selectedBookmarkId, (id) => {
                     </div>
                 </div>
             </template>
-            <div v-else-if="searching" class="bookmark-empty">No bookmarked artifacts match.</div>
+            <div v-else-if="searching" class="bookmark-empty">{{ $t('artifacts.bookmarks.noMatches') }}</div>
         </div>
     </div>
 </template>

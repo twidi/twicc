@@ -301,7 +301,7 @@ usePendingRequestDraft({
     <div v-scroll-shadow class="elicitation-form-body">
         <div class="elicit-section">
             <div class="elicit-summary">
-                <span class="elicit-summary-label">MCP form</span>
+                <span class="elicit-summary-label">{{ $t('session.elicitation.form.title') }}</span>
                 <wa-badge variant="neutral">{{ serverName }}</wa-badge>
             </div>
             <div v-if="message" class="elicit-reason">
@@ -393,7 +393,7 @@ usePendingRequestDraft({
 
                 <template v-else-if="field.kind === 'unsupported'">
                     <p class="elicit-unsupported">
-                        Unsupported field type for "{{ field.name }}".
+                        {{ $t('session.elicitation.form.unsupportedField', { name: field.name }) }}
                     </p>
                     <p v-if="field.spec.description" class="elicit-help">{{ field.spec.description }}</p>
                 </template>
@@ -410,9 +410,9 @@ usePendingRequestDraft({
                 @click="cancel"
             >
                 <wa-icon slot="start" name="ban" variant="classic"></wa-icon>
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
-            <AppTooltip :for="cancelButtonId">Dismiss the form without answering.</AppTooltip>
+            <AppTooltip :for="cancelButtonId">{{ $t('session.elicitation.form.cancelHint') }}</AppTooltip>
 
             <wa-button
                 :id="declineButtonId"
@@ -423,9 +423,9 @@ usePendingRequestDraft({
                 @click="decline"
             >
                 <wa-icon slot="start" name="xmark" variant="classic"></wa-icon>
-                Decline
+                {{ $t('session.elicitation.decline') }}
             </wa-button>
-            <AppTooltip :for="declineButtonId">Refuse to provide this information.</AppTooltip>
+            <AppTooltip :for="declineButtonId">{{ $t('session.elicitation.form.declineHint') }}</AppTooltip>
 
             <wa-button
                 :id="submitButtonId"
@@ -437,9 +437,9 @@ usePendingRequestDraft({
                 @click="submit"
             >
                 <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                Submit
+                {{ $t('session.elicitation.form.submit') }}
             </wa-button>
-            <AppTooltip :for="submitButtonId">Send the form to the MCP server.</AppTooltip>
+            <AppTooltip :for="submitButtonId">{{ $t('session.elicitation.form.submitHint') }}</AppTooltip>
         </div>
     </div>
 </template>

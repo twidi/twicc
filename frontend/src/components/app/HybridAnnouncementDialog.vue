@@ -65,15 +65,13 @@ function onAfterHide(event) {
     <wa-dialog
         ref="dialogRef"
         class="hybrid-announcement-dialog"
-        label="An important change to Claude usage"
+        :label="$t('hybrid.announcement.title')"
         style="--width: min(40rem, calc(100vw - 2rem))"
         @wa-after-hide="onAfterHide"
     >
-        <p class="announcement-intro">
-            Anthropic has changed how programmatic Claude usage is billed, and it
-            affects what your TwiCC sessions cost. <strong>Hybrid mode</strong> is how
-            you keep them on your Pro/Max plan — here's what it is and why it matters:
-        </p>
+        <i18n-t tag="p" class="announcement-intro" keypath="hybrid.announcement.intro" scope="global">
+            <template #hybridMode><strong>{{ $t('hybrid.announcement.mode') }}</strong></template>
+        </i18n-t>
 
         <HybridModeExplainer :open="true" />
 
@@ -82,8 +80,8 @@ function onAfterHide(event) {
             class="announcement-switch"
             :checked="dontShowAgain"
             @change="dontShowAgain = $event.target.checked"
-        >Don't show this again</wa-switch>
-        <wa-button slot="footer" variant="brand" @click="onOk">OK</wa-button>
+        >{{ $t('hybrid.announcement.dontShowAgain') }}</wa-switch>
+        <wa-button slot="footer" variant="brand" @click="onOk">{{ $t('hybrid.announcement.ok') }}</wa-button>
     </wa-dialog>
 </template>
 

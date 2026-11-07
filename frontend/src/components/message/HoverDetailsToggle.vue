@@ -12,7 +12,7 @@ const taskStore = useBenchmarkTaskStore()
     <span class="hover-details-toggle">(<a
         href="#"
         @click.prevent="taskStore.hoverDetails = !taskStore.hoverDetails"
-    >{{ taskStore.hoverDetails ? 'Hide details' : 'Show details on hover' }}</a>)</span>
+    >{{ taskStore.hoverDetails ? $t('session.agentSettings.details.hide') : $t('session.agentSettings.details.showOnHover') }}</a>)</span>
 </template>
 
 <style scoped>

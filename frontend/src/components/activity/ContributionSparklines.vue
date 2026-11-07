@@ -506,7 +506,7 @@ function formatAverage(value, isCost) {
         <!-- Combined mode: single SVG with all three curves overlaid -->
         <template v-if="combined">
             <div class="sparkline-row">
-                <h3 class="sparkline-title">Activity {{ periodLabel }}</h3>
+                <h3 class="sparkline-title">{{ $t('activity.graph.activityForPeriod', { period: periodLabel }) }}</h3>
                 <div class="sparkline-graph-wrapper">
                     <svg
                         :width="svgWidth"
@@ -556,9 +556,9 @@ function formatAverage(value, isCost) {
                             <span>{{ formatMetricValue(c.key, hoveredData[c.key]) }}</span>
                         </div>
                         <div class="sparkline-tooltip-separator"></div>
-                        <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
-                        <div v-if="showCosts" class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
-                        <div v-if="showCosts" class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                        <div class="sparkline-tooltip-avg">{{ $t('activity.graph.averageTurnsPerSession', { value: formatAverage(hoveredAverages.avgTurnsPerSession, false) }) }}</div>
+                        <div v-if="showCosts" class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerSession', { value: formatAverage(hoveredAverages.avgCostPerSession, true) }) }}</div>
+                        <div v-if="showCosts" class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerTurn', { value: formatAverage(hoveredAverages.avgCostPerTurn, true) }) }}</div>
                         <div class="sparkline-tooltip-date">{{ hoveredData.dateLabel }}</div>
                     </div>
                 </div>
@@ -635,16 +635,16 @@ function formatAverage(value, isCost) {
                         <div class="sparkline-tooltip-value">{{ formatMetricValue(curve.key, hoveredData[curve.key]) }}</div>
                         <div class="sparkline-tooltip-separator"></div>
                         <template v-if="curve.key === 'sessions'">
-                            <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
-                            <div v-if="showCosts" class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
+                            <div class="sparkline-tooltip-avg">{{ $t('activity.graph.averageTurnsPerSession', { value: formatAverage(hoveredAverages.avgTurnsPerSession, false) }) }}</div>
+                            <div v-if="showCosts" class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerSession', { value: formatAverage(hoveredAverages.avgCostPerSession, true) }) }}</div>
                         </template>
                         <template v-else-if="curve.key === 'messages'">
-                            <div class="sparkline-tooltip-avg">Avg. turns/session: {{ formatAverage(hoveredAverages.avgTurnsPerSession, false) }}</div>
-                            <div v-if="showCosts" class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                            <div class="sparkline-tooltip-avg">{{ $t('activity.graph.averageTurnsPerSession', { value: formatAverage(hoveredAverages.avgTurnsPerSession, false) }) }}</div>
+                            <div v-if="showCosts" class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerTurn', { value: formatAverage(hoveredAverages.avgCostPerTurn, true) }) }}</div>
                         </template>
                         <template v-else-if="curve.key === 'cost'">
-                            <div class="sparkline-tooltip-avg">Avg. cost/session: {{ formatAverage(hoveredAverages.avgCostPerSession, true) }}</div>
-                            <div class="sparkline-tooltip-avg">Avg. cost/turn: {{ formatAverage(hoveredAverages.avgCostPerTurn, true) }}</div>
+                            <div class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerSession', { value: formatAverage(hoveredAverages.avgCostPerSession, true) }) }}</div>
+                            <div class="sparkline-tooltip-avg">{{ $t('activity.graph.averageCostPerTurn', { value: formatAverage(hoveredAverages.avgCostPerTurn, true) }) }}</div>
                         </template>
                         <div class="sparkline-tooltip-date">{{ hoveredData.dateLabel }}</div>
                     </div>
@@ -654,7 +654,7 @@ function formatAverage(value, isCost) {
 
     </div>
     <div v-else class="no-data">
-        No activity data
+        {{ $t('activity.noData') }}
     </div>
 </template>
 

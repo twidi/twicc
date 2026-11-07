@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +14,9 @@ const norm = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ').trim
 const footer = read('share-session/ShareFooter.vue')
 
 test('1. one link around the logo (32px: the full robot) and the whole sentence', () => {
-    assert.ok(footer.includes('<BrandLogo :size="32" /> <span>Shared with <u>TwiCC</u></span>'))
+    const link = footer.match(/<a class="share-footer-link"[^>]*>([\s\S]*?)<\/a>/)?.[1]
+    assert.match(link, /<BrandLogo :size="32" \/> <i18n-t tag="span" scope="global" keypath="sharing\.footer\.withBrand">[\s\S]*?<template #brand><u>TwiCC<\/u><\/template>\s*<\/i18n-t>/)
+    assert.equal(createAppI18n().global.t('sharing.footer.withBrand', { brand: 'TwiCC' }), 'Shared with TwiCC')
     assert.ok(footer.includes('<a class="share-footer-link" href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">'))
     assert.ok(footer.includes('<slot />'))
 })

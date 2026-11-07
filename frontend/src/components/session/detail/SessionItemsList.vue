@@ -2360,7 +2360,7 @@ defineExpose({
             <wa-spinner v-if="session.ephemeralPhase === 'running'" slot="icon"></wa-spinner>
             <span>{{ ephemeralNotice.text }}</span>
             <span v-if="settingsStore.areCostsShown && session.ephemeralResult?.cost_usd != null"> · ${{ Number(session.ephemeralResult.cost_usd).toFixed(4) }}</span>
-            <span v-if="session.ephemeralResult?.duration_ms != null"> · {{ (session.ephemeralResult.duration_ms / 1000).toFixed(1) }} s</span>
+            <span v-if="session.ephemeralResult?.duration_ms != null">{{ $t('session.history.durationSeconds', { duration: (session.ephemeralResult.duration_ms / 1000).toFixed(1) }) }}</span>
         </wa-callout>
 
         <!-- In-session search bar (Ctrl+F): it slides down from the top edge of this list, which
@@ -2377,7 +2377,7 @@ defineExpose({
         </Transition>
 
         <div v-if="eventHistory.state.value?.status === 'error' && !unavailableReason && !isComputePending" class="session-event-history-status" role="status">
-            <span>Failed to load session events</span>{{ ' ' }}<button type="button" @click="eventHistory.retry">Retry</button>
+            <span>{{ $t('session.history.eventsLoadFailed') }}</span>{{ ' ' }}<button type="button" @click="eventHistory.retry">{{ $t('common.actions.retry') }}</button>
         </div>
 
         <!-- The chat's stage: the states below and the scroll area, with the skeleton
@@ -2389,15 +2389,14 @@ defineExpose({
                 <wa-callout variant="danger">
                     <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                     <div class="compute-pending-copy">
-                        <span>This session's history is not available.</span>
+                        <span>{{ $t('session.history.unavailable') }}</span>
                         <span v-if="unavailableReason === 'rollout_missing'">
-                            Its Codex rollout file is no longer on disk.
+                            {{ $t('session.history.rolloutMissing') }}
                         </span>
                         <span v-else-if="unavailableReason.startsWith('codex_migration_failed')">
-                            Codex could not convert its rollout to the current session format
-                            ({{ unavailableReason }}).
+                            {{ $t('session.history.migrationFailed', { reason: unavailableReason }) }}
                         </span>
-                        <span v-else>Reason: {{ unavailableReason }}.</span>
+                        <span v-else>{{ $t('session.history.reason', { reason: unavailableReason }) }}</span>
                     </div>
                 </wa-callout>
             </div>
@@ -2407,13 +2406,12 @@ defineExpose({
                 <wa-callout variant="warning">
                     <wa-icon slot="icon" name="hourglass"></wa-icon>
                     <div class="compute-pending-copy">
-                        <span>Session is being prepared, please wait...</span>
+                        <span>{{ $t('session.history.preparing') }}</span>
                         <span v-if="computePendingHintPhase">
-                            Preparation is taking longer than expected. An agent outside this TwiCC instance may still be
-                            updating this session. Preparation will resume automatically when the session becomes stable.
+                            {{ $t('session.history.preparingSlow') }}
                         </span>
                         <span v-if="computePendingHintPhase === 'restart'">
-                            If this message remains after the agent finishes, restart this TwiCC instance.
+                            {{ $t('session.history.restartHint') }}
                         </span>
                     </div>
                 </wa-callout>
@@ -2426,7 +2424,7 @@ defineExpose({
                 :detail="store.getSessionItemsLoadingErrorReason(sessionId)"
                 @retry="handleRetry"
             >
-                Failed to load session content
+                {{ $t('session.history.contentLoadFailed') }}
             </FetchErrorPanel>
 
             <!-- Loading state: an empty spacer, the skeleton overlay covers it -->
@@ -2438,7 +2436,7 @@ defineExpose({
 
             <!-- Empty state (no items and not a special state above) -->
             <div v-else-if="!visualItems.length && !eventHistoryPending && eventHistory.state.value?.status !== 'error'" class="empty-state">
-                Nothing to show yet
+                {{ $t('session.history.empty') }}
             </div>
 
             <!--
@@ -2589,7 +2587,7 @@ defineExpose({
                 <wa-callout v-if="isLoadSlow" class="chat-slow-notice" variant="warning">
                     <wa-icon slot="icon" name="hourglass"></wa-icon>
                     <div class="chat-slow-notice-copy">
-                        <span>Network is slow or this session is big: loading can take a while.</span>
+                        <span>{{ $t('session.history.slowNetwork') }}</span>
                     </div>
                 </wa-callout>
             </Transition>
@@ -2632,8 +2630,8 @@ defineExpose({
                     <wa-callout variant="warning">
                         <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
                         <div class="stale-banner-content">
-                            <strong>Read-only session</strong>
-                            <span>This session's history is not available, so it cannot be continued from TwiCC.</span>
+                            <strong>{{ $t('session.history.readOnly') }}</strong>
+                            <span>{{ $t('session.history.cannotContinue') }}</span>
                         </div>
                     </wa-callout>
                 </div>
@@ -2643,8 +2641,8 @@ defineExpose({
                 <wa-callout variant="warning">
                     <wa-icon slot="icon" name="circle-xmark" class="session-state-icon session-state-icon--stale"></wa-icon>
                     <div class="stale-banner-content">
-                        <strong>Read-only session</strong>
-                        <span>The session files were cleaned up by {{ providerLabel }}. The conversation history has been preserved for reference.</span>
+                        <strong>{{ $t('session.history.readOnly') }}</strong>
+                        <span>{{ $t('session.history.cleanedUp', { provider: providerLabel }) }}</span>
                     </div>
                 </wa-callout>
             </div>
@@ -2653,10 +2651,9 @@ defineExpose({
                 <wa-callout variant="warning">
                     <wa-icon slot="icon" name="circle-pause"></wa-icon>
                     <div class="provider-disabled-content">
-                        <strong>{{ providerLabel }} is disabled</strong>
+                        <strong>{{ $t('session.history.providerDisabled', { provider: providerLabel }) }}</strong>
                         <span>
-                            Re-enable {{ providerLabel }} from
-                            <strong>Settings → Providers</strong> to resume this session.
+                            <i18n-t keypath="session.history.enableProvider" scope="global"><template #provider>{{ providerLabel }}</template><template #settings><strong>{{ $t('session.history.providersSettings') }}</strong></template></i18n-t>
                         </span>
                     </div>
                 </wa-callout>
@@ -2726,9 +2723,7 @@ defineExpose({
                 >
                     <wa-callout variant="warning" size="small">
                         <wa-icon slot="icon" name="triangle-exclamation" variant="classic"></wa-icon>
-                        This session runs in hybrid Claude CLI mode, which is currently
-                        disabled on this server. It can't be used until hybrid mode is
-                        re-enabled.
+                        {{ $t('session.history.hybridDisabled') }}
                     </wa-callout>
                 </div>
                 <!-- Message input (main sessions only). Always rendered so prepared text is
@@ -2761,7 +2756,7 @@ defineExpose({
         <div v-if="dragOverType" class="drop-overlay">
             <div class="drop-overlay-content">
                 <wa-icon :name="dragOverType === 'files' ? 'cloud-upload' : 'text-indent-left'" style="font-size: 3rem;"></wa-icon>
-                <span>{{ dragOverType === 'files' ? 'Drop files here' : 'Drop text into message' }}</span>
+                <span>{{ dragOverType === 'files' ? $t('session.drop.files') : $t('session.drop.text') }}</span>
             </div>
         </div>
 

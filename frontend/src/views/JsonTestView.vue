@@ -217,8 +217,8 @@ const testCases = reactive([
 
 <template>
     <div class="json-test-page">
-        <h1>JsonHumanView Test Page</h1>
-        <p class="subtitle">Rendering various JSON structures with the JsonHumanView component</p>
+        <h1>{{ $t('json.test.title') }}</h1>
+        <p class="subtitle">{{ $t('json.test.description') }}</p>
 
         <div
             v-for="(testCase, index) in testCases"
@@ -234,7 +234,7 @@ const testCases = reactive([
                     @click="toggleEdit(index)"
                 >
                     <wa-icon :name="editingStates[index] ? 'eye' : 'pen'" variant="classic" slot="start"></wa-icon>
-                    {{ editingStates[index] ? 'Read' : 'Edit' }}
+                    {{ editingStates[index] ? $t('json.test.read') : $t('common.actions.edit') }}
                 </wa-button>
             </h2>
             <div class="test-render">
@@ -246,7 +246,7 @@ const testCases = reactive([
                 />
             </div>
             <details class="test-raw">
-                <summary>Raw JSON{{ editingStates[index] ? ' (live)' : '' }}</summary>
+                <summary>{{ editingStates[index] ? $t('json.test.rawLive') : $t('json.test.raw') }}</summary>
                 <pre>{{ JSON.stringify(testCase.json, null, 2) }}</pre>
             </details>
         </div>

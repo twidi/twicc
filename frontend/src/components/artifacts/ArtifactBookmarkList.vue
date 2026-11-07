@@ -573,9 +573,9 @@ defineExpose({ handleKeyNavigation })
 <template>
     <div class="bookmark-list-container">
         <div v-if="displayItems.length === 0" class="empty-state">
-            <template v-if="searchQuery.trim()">No artifacts in this scope match your filter.</template>
+            <template v-if="searchQuery.trim()">{{ $t('artifacts.bookmarks.noFilterMatches') }}</template>
             <template v-else>
-                <div>No bookmarked artifacts in this scope yet — bookmark an artifact from a session's Artifacts tab.</div>
+                <div>{{ $t('artifacts.bookmarks.emptyScope') }}</div>
                 <ArtifactsHelpButton />
             </template>
         </div>
@@ -662,27 +662,27 @@ defineExpose({ handleKeyNavigation })
                  share host. Mounted on first use. -->
             <LazyRowMenu
                 :trigger-id="`bookmark-menu-trigger-${b.id}`"
-                label="Artifact actions"
+                :label="$t('artifacts.bookmarks.actions')"
                 menu-class="bookmark-menu"
                 trigger-class="bookmark-menu-trigger"
                 @select="(e) => handleMenuSelect(e, b)"
             >
                 <wa-dropdown-item value="edit">
                     <wa-icon slot="icon" name="pencil"></wa-icon>
-                    Edit…
+                    {{ $t('artifacts.bookmarks.edit') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item v-if="sharingEnabled" value="share">
                     <wa-icon slot="icon" name="share-nodes"></wa-icon>
-                    Share…
+                    {{ $t('artifacts.sharing.shareMenu') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item value="open-session">
                     <wa-icon slot="icon" name="house"></wa-icon>
-                    Open in session
+                    {{ $t('artifacts.bookmarks.openInSession') }}
                 </wa-dropdown-item>
                 <wa-divider></wa-divider>
                 <wa-dropdown-item value="remove" variant="danger">
                     <wa-icon slot="icon" name="trash"></wa-icon>
-                    Remove bookmark
+                    {{ $t('artifacts.bookmarks.remove') }}
                 </wa-dropdown-item>
             </LazyRowMenu>
             </div>

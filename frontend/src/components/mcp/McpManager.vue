@@ -187,20 +187,22 @@ onBeforeUnmount(() => {
 
 <template>
     <wa-dialog
-        :open="listOpen" label="MCP connections"
+        :open="listOpen" :label="$t('mcp.manager.title')"
         style="--width: min(760px, calc(100vw - 2rem))"
         @wa-hide.self="listOpen = false"
     >
         <div slot="label" class="mcp-dialog-title">
-            <span>MCP connections</span>
-            <HelpFeatureLink help-key="external-mcp" label="What is external MCP?" />
+            <span>{{ $t('mcp.manager.title') }}</span>
+            <HelpFeatureLink help-key="external-mcp" :label="$t('mcp.connection.help')" />
         </div>
 
         <wa-callout v-if="disabledReason" variant="warning" size="small" class="mcp-block">
             {{ disabledReason }}
         </wa-callout>
         <p v-else-if="store.config.mcpBaseUrl" class="mcp-own-address">
-            Your MCP address: <code>{{ store.config.mcpBaseUrl }}/mcp</code>
+            <i18n-t keypath="mcp.manager.address" scope="global">
+                <template #address><code>{{ `${store.config.mcpBaseUrl}/mcp` }}</code></template>
+            </i18n-t>
         </p>
 
         <McpProtection />
@@ -214,7 +216,7 @@ onBeforeUnmount(() => {
             <div v-for="entry in group.rows" :key="entry.id" class="mcp-connection">
                 <div class="mcp-connection__main">
                     <span class="mcp-connection__name">
-                        {{ entry.name || entry.client_name || 'External MCP client' }}
+                        {{ entry.name || entry.client_name || $t('mcp.manager.externalClient') }}
                     </span>
                     <wa-tag :variant="tagVariant(group, entry)" size="small">{{ tagLabel(group, entry) }}</wa-tag>
                     <span
@@ -230,41 +232,40 @@ onBeforeUnmount(() => {
                     </span>
                 </div>
                 <div class="mcp-connection__client">
-                    {{ group.kind === 'request' ? 'Awaiting your approval' : entry.client_name || 'External MCP client' }}
+                    {{ group.kind === 'request' ? $t('mcp.manager.awaitingApproval') : entry.client_name || $t('mcp.manager.externalClient') }}
                 </div>
                 <div class="mcp-connection__actions">
                     <wa-button
                         size="small" appearance="plain"
                         :variant="group.kind === 'request' ? 'brand' : 'neutral'"
                         @click="select(group.kind, entry.id)"
-                    >{{ group.kind === 'request' ? 'Review' : 'Details' }}</wa-button>
+                    >{{ group.kind === 'request' ? $t('mcp.manager.review') : $t('mcp.manager.details') }}</wa-button>
                     <wa-button
                         v-if="group.kind === 'connection' && !entry.revoked"
                         size="small" variant="danger" appearance="plain"
                         :disabled="busy[entry.id]"
                         @click="confirmingRevoke = entry.id"
-                    >Revoke</wa-button>
+                    >{{ $t('mcp.manager.revoke') }}</wa-button>
                 </div>
                 <wa-callout v-if="confirmingRevoke === entry.id" variant="warning" size="small">
                     <div class="mcp-confirm-body">
                         <span>
-                            Revokes this connection immediately and rejects its next request.
-                            It does not cancel an operation already running.
+                            {{ $t('mcp.manager.revokeWarning') }}
                         </span>
                         <span class="mcp-confirm__actions">
                             <wa-button size="small" variant="danger" :disabled="busy[entry.id]" @click="revoke(entry.id)">
-                                Revoke
+                                {{ $t('mcp.manager.revoke') }}
                             </wa-button>
-                            <wa-button size="small" appearance="outlined" @click="confirmingRevoke = null">Keep</wa-button>
+                            <wa-button size="small" appearance="outlined" @click="confirmingRevoke = null">{{ $t('mcp.manager.keep') }}</wa-button>
                         </span>
                     </div>
                 </wa-callout>
             </div>
         </template>
 
-        <p v-if="!groups.length" class="mcp-empty">No MCP connections yet.</p>
+        <p v-if="!groups.length" class="mcp-empty">{{ $t('mcp.manager.empty') }}</p>
 
-        <wa-button slot="footer" @click="listOpen = false">Close</wa-button>
+        <wa-button slot="footer" @click="listOpen = false">{{ $t('common.actions.close') }}</wa-button>
     </wa-dialog>
 
     <McpConnectionDialog

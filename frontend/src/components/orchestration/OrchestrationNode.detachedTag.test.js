@@ -7,13 +7,13 @@ const css = readFileSync(new URL('./treeNode.css', import.meta.url), 'utf8')
 const agentVue = readFileSync(new URL('./AgentTreeNode.vue', import.meta.url), 'utf8')
 
 test('the detached tag follows the current tag inside one tags wrapper', () => {
-    assert.match(vue, /<span v-if="isCurrent \|\| isDetached" class="orch-tags">\s*<span v-if="isCurrent" class="orch-current-tag">current<\/span>\s*<span\s+v-if="isDetached"\s+class="orch-detached-tag"/)
-    assert.match(vue, />detached<\/span>/)
+    assert.match(vue, /<span v-if="isCurrent \|\| isDetached" class="orch-tags">\s*<span v-if="isCurrent" class="orch-current-tag">\{\{ \$t\('session\.orchestration\.current'\) \}\}<\/span>\s*<span\s+v-if="isDetached"\s+class="orch-detached-tag"/)
+    assert.match(vue, /class="orch-detached-tag"[^>]*>\{\{ \$t\('session\.orchestration\.detached'\) \}\}<\/span>\s*<\/span>/)
 })
 
 test('the detached tag explains itself in its title and is not clickable', () => {
-    assert.ok(vue.includes('title="Shown as a separate root in the sidebar tree. The session is still part of this orchestration."'))
-    const tag = vue.slice(vue.indexOf('class="orch-detached-tag"'), vue.indexOf('>detached</span>'))
+    const tag = vue.match(/<span\s+v-if="isDetached"\s+class="orch-detached-tag"[^>]*>[\s\S]*?<\/span>/)[0]
+    assert.match(tag, /:title="\$t\('session\.orchestration\.detachedTooltip'\)"/)
     assert.doesNotMatch(tag, /@click|router-link/)
 })
 

@@ -1028,7 +1028,7 @@ usePendingRequestDraft({
                             :checked.prop="checkedSuggestions.has(sIndex)"
                             @click.stop
                             @change.stop="togglePermissionSuggestion(sIndex)"
-                        >Apply this permission</wa-switch>
+                        >{{ $t('session.approval.applyPermission') }}</wa-switch>
                     </div>
                 </wa-card>
             </div>
@@ -1047,7 +1047,7 @@ usePendingRequestDraft({
         <div v-if="setModeSuggestion && !showDenyReason" class="mode-selector-row">
             <label class="mode-selector-label">
                 <wa-icon name="key" variant="classic"></wa-icon>
-                Permission mode
+                {{ $t('session.approval.permissionMode') }}
             </label>
             <wa-select
                 size="small"
@@ -1063,7 +1063,7 @@ usePendingRequestDraft({
                     :value="opt.mode"
                     :disabled="opt.disabled"
                 >
-                    <span>Switch to {{ formatModeLabel(opt.mode) }}{{ opt.disabled ? ' (not available)' : '' }}</span>
+                    <span>{{ $t(opt.disabled ? 'session.approval.switchModeUnavailable' : 'session.approval.switchMode', { mode: formatModeLabel(opt.mode) }) }}</span>
                     <span v-if="opt.disabled" class="option-description">{{ DISABLED_MODE_REASON }}</span>
                 </wa-option>
             </wa-select>
@@ -1083,9 +1083,9 @@ usePendingRequestDraft({
                 >
                     <wa-spinner v-if="isResponding" slot="start"></wa-spinner>
                     <wa-icon v-else name="xmark" variant="classic" slot="start"></wa-icon>
-                    Deny
+                    {{ $t('session.approval.deny') }}
                 </wa-button>
-                <AppTooltip :for="denyButtonId">Refuse this action. Claude will receive your message.</AppTooltip>
+                <AppTooltip :for="denyButtonId">{{ $t('session.approval.denyTooltip') }}</AppTooltip>
                 <wa-button
                     v-if="hasEditableContent"
                     :id="approveWithChangesButtonId"
@@ -1096,9 +1096,9 @@ usePendingRequestDraft({
                     @click="handleStartEdit"
                 >
                     <wa-icon name="pen" variant="classic" slot="start"></wa-icon>
-                    Approve with changes
+                    {{ $t('session.approval.approveChanges') }}
                 </wa-button>
-                <AppTooltip v-if="hasEditableContent" :for="approveWithChangesButtonId">Approve using the edited tool input.</AppTooltip>
+                <AppTooltip v-if="hasEditableContent" :for="approveWithChangesButtonId">{{ $t('session.approval.approveChangesTooltip') }}</AppTooltip>
                 <wa-button
                     :id="approveButtonId"
                     ref="approveButtonRef"
@@ -1110,16 +1110,16 @@ usePendingRequestDraft({
                 >
                     <wa-spinner v-if="isResponding" slot="start"></wa-spinner>
                     <wa-icon v-else name="check" variant="classic" slot="start"></wa-icon>
-                    Approve
+                    {{ $t('session.approval.approve') }}
                 </wa-button>
-                <AppTooltip :for="approveButtonId">Approve as-is.</AppTooltip>
+                <AppTooltip :for="approveButtonId">{{ $t('session.approval.approveTooltip') }}</AppTooltip>
             </template>
             <!-- Deny state: textarea + Cancel / Deny -->
             <template v-else-if="showDenyReason">
                 <div class="deny-reason-row">
                     <wa-textarea
                         ref="denyReasonInputRef"
-                        placeholder="Reason for denial (optional)"
+                        :placeholder="$t('session.approval.denyPlaceholder')"
                         size="small"
                         rows="2"
                         resize="auto"
@@ -1134,7 +1134,7 @@ usePendingRequestDraft({
                         size="small"
                         @click="cancelDeny"
                     >
-                        Cancel
+                        {{ $t('common.actions.cancel') }}
                     </wa-button>
                     <wa-button
                         variant="danger"
@@ -1144,7 +1144,7 @@ usePendingRequestDraft({
                     >
                         <wa-spinner v-if="isResponding" slot="start"></wa-spinner>
                         <wa-icon v-else name="xmark" variant="classic" slot="start"></wa-icon>
-                        Deny
+                        {{ $t('session.approval.deny') }}
                     </wa-button>
                 </div>
             </template>
@@ -1156,7 +1156,7 @@ usePendingRequestDraft({
                     size="small"
                     @click="cancelEdit"
                 >
-                    Cancel
+                    {{ $t('common.actions.cancel') }}
                 </wa-button>
                 <wa-button
                     class="auto-focused"
@@ -1167,7 +1167,7 @@ usePendingRequestDraft({
                 >
                     <wa-spinner v-if="isResponding" slot="start"></wa-spinner>
                     <wa-icon v-else name="check" variant="classic" slot="start"></wa-icon>
-                    Approve with changes
+                    {{ $t('session.approval.approveChanges') }}
                 </wa-button>
             </template>
         </div>
@@ -1184,7 +1184,7 @@ usePendingRequestDraft({
                 <!-- Question header and text -->
                 <div v-if="question.header" class="question-header">{{ question.header }}</div>
                 <div class="question-text">{{ question.question }}</div>
-                <div class="question-select-hint">{{ question.multiSelect ? 'Select one or more' : 'Select one' }}</div>
+                <div class="question-select-hint">{{ question.multiSelect ? $t('session.questions.selectMultiple') : $t('session.questions.selectOne') }}</div>
 
                 <!-- Options as selectable cards -->
                 <div class="question-options">
@@ -1222,12 +1222,12 @@ usePendingRequestDraft({
                         class="other-toggle-link"
                         :class="{ disabled: isResponding }"
                         @click.prevent="!isResponding && toggleOther(qIndex, question.multiSelect)"
-                    >{{ otherActive[qIndex] ? 'Cancel other' : 'Other...' }}</a>
+                    >{{ otherActive[qIndex] ? $t('session.questions.cancelOther') : $t('session.questions.other') }}</a>
                 </div>
                 <div v-if="otherActive[qIndex]" class="other-input-row">
                     <wa-textarea
                         :ref="el => { if (el) otherInputRefs[qIndex] = el }"
-                        placeholder="Type your answer..."
+                        :placeholder="$t('session.questions.answerPlaceholder')"
                         size="small"
                         rows="1"
                         resize="auto"
@@ -1241,7 +1241,7 @@ usePendingRequestDraft({
 
         <!-- Submit (full) + dropdown: Submit partially / Cancel -->
         <div class="pending-request-actions">
-            <wa-button-group label="Submit answers">
+            <wa-button-group :label="$t('session.questions.submitAnswers')">
                 <wa-button
                     :id="submitQuestionsButtonId"
                     variant="brand"
@@ -1251,9 +1251,9 @@ usePendingRequestDraft({
                 >
                     <wa-spinner v-if="isResponding" slot="start"></wa-spinner>
                     <wa-icon v-else name="paper-plane" variant="classic" slot="start"></wa-icon>
-                    Submit
+                    {{ $t('session.questions.submit') }}
                 </wa-button>
-                <AppTooltip :for="submitQuestionsButtonId">Send your answers. Enabled once every question is answered.</AppTooltip>
+                <AppTooltip :for="submitQuestionsButtonId">{{ $t('session.questions.submitTooltip') }}</AppTooltip>
                 <wa-dropdown placement="top-end">
                     <wa-button
                         :id="submitQuestionsMenuId"
@@ -1262,27 +1262,27 @@ usePendingRequestDraft({
                         size="small"
                         :disabled="isResponding"
                     >
-                        <wa-icon name="chevron-up" label="More submit options" variant="classic"></wa-icon>
+                        <wa-icon name="chevron-up" :label="$t('session.questions.moreSubmitOptions')" variant="classic"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="submitQuestionsMenuId">More options.</AppTooltip>
+                    <AppTooltip :for="submitQuestionsMenuId">{{ $t('session.questions.moreOptions') }}</AppTooltip>
                     <wa-dropdown-item
                         :id="submitPartiallyItemId"
                         :disabled="isResponding || !canSubmitPartial"
                         @click="handleSubmitPartial"
                     >
                         <wa-icon slot="icon" name="paper-plane" variant="classic"></wa-icon>
-                        Submit partially
+                        {{ $t('session.questions.submitPartial') }}
                     </wa-dropdown-item>
-                    <AppTooltip placement="left" :for="submitPartiallyItemId">Send the answers you've given and let Claude ask about the rest.</AppTooltip>
+                    <AppTooltip placement="left" :for="submitPartiallyItemId">{{ $t('session.questions.submitPartialTooltip') }}</AppTooltip>
                     <wa-dropdown-item
                         :id="cancelQuestionsItemId"
                         :disabled="isResponding"
                         @click="handleCancelQuestions"
                     >
                         <wa-icon slot="icon" name="ban" variant="classic"></wa-icon>
-                        Cancel
+                        {{ $t('common.actions.cancel') }}
                     </wa-dropdown-item>
-                    <AppTooltip placement="left" :for="cancelQuestionsItemId">Decline to answer. Claude acknowledges and asks how to proceed.</AppTooltip>
+                    <AppTooltip placement="left" :for="cancelQuestionsItemId">{{ $t('session.questions.cancelTooltip') }}</AppTooltip>
                 </wa-dropdown>
             </wa-button-group>
         </div>

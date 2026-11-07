@@ -331,26 +331,26 @@ watch(() => state.events.length, async () => {
                     <template v-else-if="item.type === 'state'">
                         <div v-if="item.state === 'loading'" class="timeline-state" role="status">
                             <wa-spinner></wa-spinner>
-                            <span>Loading…</span>
+                            <span>{{ $t('timeline.loading') }}</span>
                         </div>
-                        <div v-else-if="item.state === 'empty'" class="timeline-state">No events yet</div>
+                        <div v-else-if="item.state === 'empty'" class="timeline-state">{{ $t('timeline.empty') }}</div>
                         <div v-else-if="item.state === 'no-match'" class="timeline-state">
                             <span class="timeline-no-match-message">{{ noMatchMessage }}</span>
-                            <wa-button appearance="outlined" size="small" @click="clearAllFilters">Clear all</wa-button>
+                            <wa-button appearance="outlined" size="small" @click="clearAllFilters">{{ $t('timeline.filters.clearAll') }}</wa-button>
                         </div>
                         <div v-else-if="item.state === 'not-found'" class="timeline-state">
-                            <span>Project not found</span>
-                            <RouterLink :to="{ name: 'projects-all' }">Back to All Projects</RouterLink>
+                            <span>{{ $t('timeline.projectNotFound') }}</span>
+                            <RouterLink :to="{ name: 'projects-all' }">{{ $t('timeline.backToAllProjects') }}</RouterLink>
                         </div>
                         <div v-else class="timeline-state">
                             <!-- wa-callout has a default slot and an icon slot only: the button goes in the default one. -->
                             <wa-callout variant="danger">
                                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                                 <div class="timeline-error-content">
-                                    <span>Failed to load the timeline</span>
+                                    <span>{{ $t('timeline.loadFailed') }}</span>
                                     <wa-button variant="danger" appearance="outlined" size="small" @click="feed.retry()">
                                         <wa-icon name="arrow-rotate-right" slot="start"></wa-icon>
-                                        Retry
+                                        {{ $t('common.actions.retry') }}
                                     </wa-button>
                                 </div>
                             </wa-callout>
@@ -375,10 +375,10 @@ watch(() => state.events.length, async () => {
                 <wa-callout variant="danger">
                     <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
                     <div class="timeline-error-content">
-                        <span>Failed to load more events</span>
+                        <span>{{ $t('timeline.loadMoreFailed') }}</span>
                         <wa-button variant="danger" appearance="outlined" size="small" @click="feed.retry()">
                             <wa-icon name="arrow-rotate-right" slot="start"></wa-icon>
-                            Retry
+                            {{ $t('common.actions.retry') }}
                         </wa-button>
                     </div>
                 </wa-callout>

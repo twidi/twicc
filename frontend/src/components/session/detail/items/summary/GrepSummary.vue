@@ -9,15 +9,22 @@ defineProps({
 
 <template>
     <span class="items-details-summary-description grep-summary">
-        <code v-if="pattern">{{ pattern }}</code>
-        <span v-if="fileType"><span class="grep-connector">in</span> <code>{{ fileType }}</code> <span class="grep-connector">files</span></span>
-        <span v-if="path"><span class="grep-connector">in</span>
-            <span v-if="pathIconSrc" class="items-details-summary-file">
-                <img :src="pathIconSrc" class="items-details-summary-file-icon" loading="lazy" width="16" height="16" />
-                <span>{{ path }}</span>
-            </span>
-            <span v-else>{{ path }}</span>
-        </span>
+        <i18n-t
+            v-if="fileType || path"
+            :keypath="fileType ? (path ? 'session.tools.grepSummary.typeAndPath' : 'session.tools.grepSummary.type') : 'session.tools.grepSummary.path'"
+            scope="global"
+        >
+            <template #pattern><code v-if="pattern">{{ pattern }}</code></template>
+            <template #type><code>{{ fileType }}</code></template>
+            <template #path>
+                <span v-if="pathIconSrc" class="items-details-summary-file">
+                    <img :src="pathIconSrc" class="items-details-summary-file-icon" loading="lazy" width="16" height="16" />
+                    <span>{{ path }}</span>
+                </span>
+                <span v-else>{{ path }}</span>
+            </template>
+        </i18n-t>
+        <code v-else-if="pattern">{{ pattern }}</code>
     </span>
 </template>
 

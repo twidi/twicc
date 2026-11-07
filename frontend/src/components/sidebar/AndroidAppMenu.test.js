@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
+import { createAppI18n } from '../../i18n/index.js'
 
 const state = { version: '0.4.0', engine: 'GeckoView 159', activeInstanceId: 'a', instances: [
     { id: 'a', name: 'Phone', address: 'https://phone.example' },
@@ -41,6 +42,7 @@ async function load(nativeState = state, forceFixed = false, backendVersion = '1
     const render = runInNewContext(`(function() { ${compiled.code} })()`, { Vue })
     async function html() {
         const app = Vue.createSSRApp({ render, data: () => ({ ...ctx, ...props }) })
+        app.use(createAppI18n())
         app.component('BrandLogo', { render: () => Vue.h('svg', { 'data-logo': 'twicc' }) })
         app.config.warnHandler = () => {}
         const context = {}

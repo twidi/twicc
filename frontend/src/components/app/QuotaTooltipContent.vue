@@ -142,7 +142,7 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
                     <wa-icon v-if="canCyclePeriod" class="quota-tip-switch" name="repeat"></wa-icon>
                 </button>
             </div>
-            <span v-if="hasReset" class="quota-tip-reset" :title="formatResetTimePrecise(quota.resetsAt)">Resets {{ compactMoment(quota.resetsAt) }}</span>
+            <span v-if="hasReset" class="quota-tip-reset" :title="formatResetTimePrecise(quota.resetsAt)">{{ $t('usage.quota.resets', { time: compactMoment(quota.resetsAt) }) }}</span>
         </div>
 
         <div class="quota-tip-verdict">
@@ -154,12 +154,12 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
         </div>
 
         <div class="quota-tip-bars">
-            <span class="quota-tip-bar-label">Usage</span>
+            <span class="quota-tip-bar-label">{{ $t('usage.quota.usage') }}</span>
             <div class="quota-tip-lane">
                 <div class="quota-tip-fill" :style="{ width: usageWidth }"><span class="quota-tip-figure" :class="{ 'quota-tip-figure-dark': isWarning }">{{ usageFigure }}</span></div>
             </div>
             <template v-if="quota.timePct != null">
-                <span class="quota-tip-bar-label">Time</span>
+                <span class="quota-tip-bar-label">{{ $t('usage.quota.time') }}</span>
                 <div class="quota-tip-lane">
                     <div class="quota-tip-time" :style="{ width: timeWidth }"><span class="quota-tip-figure quota-tip-figure-time">{{ timeFigure }}</span></div>
                     <template v-if="cost && cost.cutoffPct != null">
@@ -186,13 +186,13 @@ const timeWidth = computed(() => `${Math.max(0, Math.min(props.quota.timePct ?? 
             </div>
             <div v-if="cost.capped" class="quota-tip-note">
                 <wa-icon name="triangle-exclamation"></wa-icon>
-                <span>Capped: burn rate is above 100%. The 30-day estimate uses the capped value.</span>
+                <span>{{ $t('usage.quota.capped') }}</span>
             </div>
         </div>
 
         <div class="quota-tip-buttons">
             <wa-button v-if="externalLink" size="small" variant="brand" appearance="outlined" :href="externalLink.url" target="_blank" rel="noopener"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ externalLink.label }}</wa-button>
-            <wa-button size="small" variant="brand" appearance="outlined" @click="emit('open-graph')"><wa-icon slot="start" name="chart-line"></wa-icon>View graph</wa-button>
+            <wa-button size="small" variant="brand" appearance="outlined" @click="emit('open-graph')"><wa-icon slot="start" name="chart-line"></wa-icon>{{ $t('usage.quota.viewGraph') }}</wa-button>
         </div>
     </div>
 </template>

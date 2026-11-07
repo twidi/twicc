@@ -303,7 +303,7 @@ onBeforeUnmount(() => {
             class="browse-button"
             @click="openPopup"
         >
-            <wa-icon name="folder-open" label="Browse directories"></wa-icon>
+            <wa-icon name="folder-open" :label="$t('files.directories.browse')"></wa-icon>
         </wa-button>
 
         <wa-popup
@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
                         :disabled="!rootPath || rootPath === '/'"
                         @click="navigateUp"
                     >
-                        <wa-icon name="arrow-up" label="Go to parent directory"></wa-icon>
+                        <wa-icon name="arrow-up" :label="$t('files.directories.parent')"></wa-icon>
                     </wa-button>
                     <span class="picker-path" :title="rootPath">{{ rootPath || '...' }}</span>
                     <wa-button
@@ -339,7 +339,7 @@ onBeforeUnmount(() => {
                         :title="showHidden ? 'Hide hidden directories' : 'Show hidden directories'"
                         @click="toggleHidden"
                     >
-                        <wa-icon :name="showHidden ? 'eye' : 'eye-slash'" label="Toggle hidden directories"></wa-icon>
+                        <wa-icon :name="showHidden ? 'eye' : 'eye-slash'" :label="$t('files.directories.toggleHidden')"></wa-icon>
                     </wa-button>
                 </div>
 

@@ -1505,7 +1505,7 @@ defineExpose({ activeIndex })
                     <AppTooltip
                         v-if="tb.canScrollUp || tb.paneAlternate"
                         for="terminal-scroll-top-button"
-                    >Scroll to top</AppTooltip>
+                    >{{ $t('terminal.controls.scrollTop') }}</AppTooltip>
 
                     <wa-button
                         v-if="tb.canScrollDown || tb.paneAlternate"
@@ -1522,20 +1522,20 @@ defineExpose({ activeIndex })
                     <AppTooltip
                         v-if="tb.canScrollDown || tb.paneAlternate"
                         for="terminal-scroll-bottom-button"
-                    >Scroll to bottom</AppTooltip>
+                    >{{ $t('terminal.controls.scrollBottom') }}</AppTooltip>
 
                     <!-- Mobile-only: scroll/select mode toggle -->
                     <div v-if="settingsStore.isTouchDevice" class="touch-mode-group">
                         <span
                             class="touch-mode-label"
                             @click="handleTouchModeToggle"
-                        >Scroll</span>
+                        >{{ $t('terminal.controls.scroll') }}</span>
                         <wa-switch
                             size="small"
                             class="touch-mode-switch"
                             :checked="tb.touchMode === 'select'"
                             @change="handleTouchModeChange"
-                        >Select</wa-switch>
+                        >{{ $t('terminal.controls.select') }}</wa-switch>
                     </div>
 
                     <!-- Comment button (only when a message input is available) -->
@@ -1551,7 +1551,7 @@ defineExpose({ activeIndex })
                     >
                         <wa-icon name="comment" variant="regular"></wa-icon>
                     </wa-button>
-                    <AppTooltip v-if="tb.hasSelection && insertTextAtCursor" for="terminal-comment-button">Comment on selection</AppTooltip>
+                    <AppTooltip v-if="tb.hasSelection && insertTextAtCursor" for="terminal-comment-button">{{ $t('terminal.controls.comment') }}</AppTooltip>
 
                     <!-- Copy button (all devices) -->
                     <wa-button
@@ -1565,7 +1565,7 @@ defineExpose({ activeIndex })
                     >
                         <wa-icon name="copy" variant="regular"></wa-icon>
                     </wa-button>
-                    <AppTooltip v-if="tb.hasSelection" for="terminal-copy-button">Copy selection</AppTooltip>
+                    <AppTooltip v-if="tb.hasSelection" for="terminal-copy-button">{{ $t('terminal.controls.copy') }}</AppTooltip>
 
                     <!-- Paste button -->
                     <wa-button
@@ -1578,7 +1578,7 @@ defineExpose({ activeIndex })
                     >
                         <wa-icon name="paste" variant="regular"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="terminal-paste-button">Paste from clipboard</AppTooltip>
+                    <AppTooltip for="terminal-paste-button">{{ $t('terminal.controls.paste') }}</AppTooltip>
                 </template>
 
                 <wa-divider v-if="tb.isConnected && !isActiveForcedAttached" orientation="vertical"></wa-divider>
@@ -1595,7 +1595,7 @@ defineExpose({ activeIndex })
                     >
                         <wa-icon name="thumbtack" :label="activeOwnAutoAttach ? 'Disable auto-attach in children' : 'Auto-attach in children'"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="terminal-autoattach-button">{{ activeOwnAutoAttach ? 'Auto-attached in children — click to stop' : 'Auto-attach this terminal in children' }}</AppTooltip>
+                    <AppTooltip for="terminal-autoattach-button">{{ activeOwnAutoAttach ? $t('terminal.controls.autoAttached') : $t('terminal.controls.autoAttach') }}</AppTooltip>
                 </template>
 
                 <!-- Rename button — own tabs only (attached tabs are renamed at their own level) -->
@@ -1610,7 +1610,7 @@ defineExpose({ activeIndex })
                     >
                         <wa-icon name="pen-to-square" variant="regular"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="terminal-rename-button">Rename tab</AppTooltip>
+                    <AppTooltip for="terminal-rename-button">{{ $t('terminal.controls.rename') }}</AppTooltip>
                 </template>
 
                 <!-- Detach button — for a MANUALLY attached parent terminal (never kills its
@@ -1624,9 +1624,9 @@ defineExpose({ activeIndex })
                         class="disconnect-button reduced-height"
                         @click="handleDetach"
                     >
-                        <wa-icon name="link-slash" label="Detach terminal"></wa-icon>
+                        <wa-icon name="link-slash" :label="$t('terminal.controls.detach')"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="terminal-detach-button">Detach terminal</AppTooltip>
+                    <AppTooltip for="terminal-detach-button">{{ $t('terminal.controls.detach') }}</AppTooltip>
                 </template>
 
                 <!-- Disconnect / Kill button — own tabs only. Never for an attached
@@ -1641,9 +1641,9 @@ defineExpose({ activeIndex })
                         class="disconnect-button reduced-height"
                         @click="handleKillOrDisconnect"
                     >
-                        <wa-icon name="ban" :label="isActiveMain ? 'Disconnect' : 'Kill terminal'"></wa-icon>
+                        <wa-icon name="ban" :label="isActiveMain ? $t('terminal.controls.disconnect') : $t('terminal.controls.kill')"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="terminal-disconnect-button">{{ isActiveMain ? 'Disconnect' : 'Kill terminal' }}</AppTooltip>
+                    <AppTooltip for="terminal-disconnect-button">{{ isActiveMain ? $t('terminal.controls.disconnect') : $t('terminal.controls.kill') }}</AppTooltip>
                 </template>
             </div>
         </div>

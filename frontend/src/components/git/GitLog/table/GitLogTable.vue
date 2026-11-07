@@ -79,25 +79,25 @@ const tableData = computed<Commit[]>(() => {
       <div
         class="header"
       >
-        Commit message
+        {{ $t('git.log.columns.message') }}
       </div>
 
       <div
         class="header"
       >
-        Author
+        {{ $t('git.log.columns.author') }}
       </div>
 
       <div
         class="header"
       >
-        Timestamp
+        {{ $t('git.log.columns.timestamp') }}
       </div>
 
       <div
         class="header"
       >
-        Hash
+        {{ $t('git.log.columns.hash') }}
       </div>
     </div>
 

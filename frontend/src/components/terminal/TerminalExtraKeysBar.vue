@@ -279,12 +279,12 @@ function keyClasses(keyDef) {
                         </template>
                     </GroupedSnippetEntries>
                 </template>
-                <span v-else class="empty-tab-text">No custom combos</span>
+                <span v-else class="empty-tab-text">{{ $t('terminal.snippets.noCombos') }}</span>
                 <button
                     class="extra-key manage-key"
                     @pointerdown.prevent="emit('manage-combos')"
                 >
-                    ⚙ Manage
+                    {{ $t('terminal.snippets.manage') }}
                 </button>
             </template>
 
@@ -349,24 +349,24 @@ function keyClasses(keyDef) {
                                         <wa-icon name="chevron-up"></wa-icon>
                                     </button>
                                     <template v-if="!snippet._disabled">
-                                        <wa-dropdown-item disabled class="dropdown-label">Send to tab</wa-dropdown-item>
+                                        <wa-dropdown-item disabled class="dropdown-label">{{ $t('terminal.snippets.sendToTab') }}</wa-dropdown-item>
                                         <wa-dropdown-item
                                             v-for="term in terminals"
                                             :key="term.index"
                                             :value="String(term.index)"
                                         >
-                                            {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                                            {{ term.index === activeTerminalIndex ? $t('terminal.tabs.currentLabel', { label: term.label }) : term.label }}
                                         </wa-dropdown-item>
                                         <wa-divider></wa-divider>
                                         <wa-dropdown-item value="new">
                                             <wa-icon slot="icon" name="plus"></wa-icon>
-                                            New tab
+                                            {{ $t('terminal.snippets.newTab') }}
                                         </wa-dropdown-item>
                                         <wa-divider></wa-divider>
                                     </template>
                                     <wa-dropdown-item value="edit">
                                         <wa-icon slot="icon" name="pen-to-square"></wa-icon>
-                                        Edit before sending
+                                        {{ $t('terminal.snippets.editBeforeSend') }}
                                     </wa-dropdown-item>
                                 </wa-dropdown>
                             </div>
@@ -376,12 +376,12 @@ function keyClasses(keyDef) {
                         </template>
                     </GroupedSnippetEntries>
                 </template>
-                <span v-else class="empty-tab-text">No snippets</span>
+                <span v-else class="empty-tab-text">{{ $t('terminal.snippets.empty') }}</span>
                 <button
                     class="extra-key manage-key"
                     @pointerdown.prevent="emit('manage-snippets')"
                 >
-                    ⚙ Manage
+                    {{ $t('terminal.snippets.manage') }}
                 </button>
             </template>
         </div>

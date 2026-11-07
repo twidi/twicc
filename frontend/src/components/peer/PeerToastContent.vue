@@ -76,11 +76,12 @@ function later() {
         <template v-if="mode === 'request' && peer">
             <span class="peer-toast-line">
                 <wa-icon name="user-plus" class="peer-toast-icon"></wa-icon>
-                <strong>{{ peer.name || peer.remote_display_name || 'An instance' }}</strong>
-                &nbsp;wants to pair with your instance
+                <i18n-t scope="global" keypath="peer.toast.pairRequest" tag="span">
+                    <template #peer><strong>{{ peer.name || peer.remote_display_name || $t('peer.toast.unnamedInstance') }}</strong></template>
+                </i18n-t>
             </span>
             <span class="peer-toast-url">{{ peer.base_url }}</span>
-            <span class="peer-toast-hint">Review the request to see its verification code.</span>
+            <span class="peer-toast-hint">{{ $t('peer.toast.reviewHint') }}</span>
         </template>
         <template v-else-if="mode === 'message' && message">
             <span v-if="message.title" class="peer-toast-title">{{ message.title }}</span>
@@ -91,29 +92,31 @@ function later() {
         <!-- Where the message counts: session “…” in ●project, or the project
              alone. Same reading as the inbox row, in one line. -->
         <span v-if="routing" class="peer-toast-route">
-            <template v-if="routing.sessionId">
-                <span class="peer-toast-route__label">session</span>
-                <span class="peer-toast-route__title" :title="routing.sessionTitle">“{{ routingTitle }}”</span>
-            </template>
-            <template v-if="routing.projectId">
-                <span class="peer-toast-route__label">in</span>
-                <ProjectBadge :project-id="routing.projectId" class="peer-toast-route__project" />
-            </template>
+            <i18n-t v-if="routing.sessionId && routing.projectId" scope="global" keypath="peer.toast.sessionInProject">
+                <template #session><span class="peer-toast-route__title" :title="routing.sessionTitle">“{{ routingTitle }}”</span></template>
+                <template #project><ProjectBadge :project-id="routing.projectId" class="peer-toast-route__project" /></template>
+            </i18n-t>
+            <i18n-t v-else-if="routing.sessionId" scope="global" keypath="peer.toast.session">
+                <template #session><span class="peer-toast-route__title" :title="routing.sessionTitle">“{{ routingTitle }}”</span></template>
+            </i18n-t>
+            <i18n-t v-else-if="routing.projectId" scope="global" keypath="peer.routing.inProject">
+                <template #project><ProjectBadge :project-id="routing.projectId" class="peer-toast-route__project" /></template>
+            </i18n-t>
         </span>
         <div v-if="mode !== 'status'" class="peer-toast-actions">
             <template v-if="mode === 'request'">
                 <wa-button
                     size="small" variant="brand" appearance="outlined"
                     @click="review"
-                >Review</wa-button>
-                <wa-button size="small" variant="neutral" appearance="outlined" @click="later">Later</wa-button>
+                >{{ $t('peer.toast.review') }}</wa-button>
+                <wa-button size="small" variant="neutral" appearance="outlined" @click="later">{{ $t('peer.toast.later') }}</wa-button>
             </template>
             <template v-else>
                 <wa-button
                     size="small" variant="brand" appearance="outlined"
                     @click="read"
-                >Open in inbox</wa-button>
-                <wa-button size="small" variant="neutral" appearance="outlined" @click="later">Keep unread</wa-button>
+                >{{ $t('peer.toast.openInbox') }}</wa-button>
+                <wa-button size="small" variant="neutral" appearance="outlined" @click="later">{{ $t('peer.toast.keepUnread') }}</wa-button>
             </template>
         </div>
     </div>

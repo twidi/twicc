@@ -68,10 +68,10 @@ function onResetCancel() {
                 :checked="tipsStore.enabled"
                 @change="onToggle($event.target.checked)"
             />
-            <span>Display tips automatically</span>
+            <span>{{ $t('settings.tips.autoDisplay') }}</span>
         </label>
         <p v-if="!tipsStore.enabled" class="tips-hint">
-            Tips will only appear when you click them from the list below.
+            {{ $t('settings.tips.manualHint') }}
         </p>
 
         <div class="tips-reset">
@@ -80,22 +80,22 @@ function onResetCancel() {
                 :disabled="seenCount === 0"
                 @click="onResetClick"
             >
-                Reset all seen tips
+                {{ $t('settings.tips.resetAll') }}
             </wa-button>
             <wa-dialog v-if="confirmingReset" open @wa-after-hide="onResetCancel">
-                <span slot="label">Reset seen tips</span>
+                <span slot="label">{{ $t('settings.tips.resetSeen') }}</span>
                 <p>
-                    This will mark all tips as unseen. They may appear again on the next tick.
+                    {{ $t('settings.tips.resetHint') }}
                 </p>
-                <wa-button slot="footer" @click="onResetCancel">Cancel</wa-button>
-                <wa-button slot="footer" variant="brand" @click="onResetConfirm">Reset</wa-button>
+                <wa-button slot="footer" @click="onResetCancel">{{ $t('common.actions.cancel') }}</wa-button>
+                <wa-button slot="footer" variant="brand" @click="onResetConfirm">{{ $t('settings.tips.reset') }}</wa-button>
             </wa-dialog>
         </div>
 
-        <h4 class="tips-list-title">All tips</h4>
+        <h4 class="tips-list-title">{{ $t('settings.tips.all') }}</h4>
 
         <p v-if="availableTips.length === 0" class="tips-empty">
-            No tips available yet.
+            {{ $t('settings.tips.empty') }}
         </p>
 
         <ul v-else class="tips-list">

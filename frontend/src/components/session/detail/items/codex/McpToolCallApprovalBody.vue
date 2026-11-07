@@ -93,7 +93,7 @@ usePendingRequestSubmitShortcut((e) => {
     <div v-scroll-shadow class="mcp-approval-body">
         <div class="codex-pending-section">
             <div class="codex-pending-summary">
-                <span class="codex-summary-label">MCP tool call</span>
+                <span class="codex-summary-label">{{ $t('session.approval.mcpToolCall') }}</span>
                 <wa-badge variant="neutral">
                     {{ serverName }}<template v-if="toolTitle"> · {{ toolTitle }}</template>
                 </wa-badge>
@@ -110,7 +110,7 @@ usePendingRequestSubmitShortcut((e) => {
                 </li>
             </ul>
             <details v-else-if="rawParams" class="mcp-raw-params">
-                <summary class="codex-summary-label">Arguments</summary>
+                <summary class="codex-summary-label">{{ $t('session.tools.arguments') }}</summary>
                 <pre class="codex-summary-code">{{ JSON.stringify(rawParams, null, 2) }}</pre>
             </details>
         </div>
@@ -125,11 +125,11 @@ usePendingRequestSubmitShortcut((e) => {
                 @click="deny"
             >
                 <wa-icon slot="start" name="xmark" variant="classic"></wa-icon>
-                Deny
+                {{ $t('session.approval.deny') }}
             </wa-button>
-            <AppTooltip :for="denyButtonId">Refuse this tool call. Codex may try another approach.</AppTooltip>
+            <AppTooltip :for="denyButtonId">{{ $t('session.approval.mcpDenyHint') }}</AppTooltip>
 
-            <wa-button-group label="Approve">
+            <wa-button-group :label="$t('session.approval.approve')">
                 <wa-button
                     :id="approveButtonId"
                     ref="approveButtonRef"
@@ -140,9 +140,9 @@ usePendingRequestSubmitShortcut((e) => {
                     @click="approve()"
                 >
                     <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                    Approve
+                    {{ $t('session.approval.approve') }}
                 </wa-button>
-                <AppTooltip :for="approveButtonId">Approve this tool call.</AppTooltip>
+                <AppTooltip :for="approveButtonId">{{ $t('session.approval.mcpApproveHint') }}</AppTooltip>
 
                 <wa-dropdown v-if="hasApproveMenu" placement="top-end">
                     <wa-button
@@ -152,25 +152,25 @@ usePendingRequestSubmitShortcut((e) => {
                         size="small"
                         :disabled="isResponding"
                     >
-                        <wa-icon name="chevron-up" label="More approve options" variant="classic"></wa-icon>
+                        <wa-icon name="chevron-up" :label="$t('session.approval.moreOptions')" variant="classic"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="approveMenuId">More approve options.</AppTooltip>
+                    <AppTooltip :for="approveMenuId">{{ $t('session.approval.moreOptionsHint') }}</AppTooltip>
 
                     <wa-dropdown-item :id="approveOnceId" :disabled="isResponding" @click="approve()">
                         <wa-icon slot="icon" name="check" variant="classic"></wa-icon>
-                        Once
+                        {{ $t('session.approval.once') }}
                     </wa-dropdown-item>
-                    <AppTooltip placement="left" :for="approveOnceId">Approve only this call.</AppTooltip>
+                    <AppTooltip placement="left" :for="approveOnceId">{{ $t('session.approval.mcpOnceHint') }}</AppTooltip>
                     <wa-dropdown-item v-if="canPersistSession" :id="approveSessionId" :disabled="isResponding" @click="approve('session')">
                         <wa-icon slot="icon" name="rotate" variant="classic"></wa-icon>
-                        For this session
+                        {{ $t('session.approval.forSession') }}
                     </wa-dropdown-item>
-                    <AppTooltip v-if="canPersistSession" placement="left" :for="approveSessionId">Approve and remember for the rest of the session.</AppTooltip>
+                    <AppTooltip v-if="canPersistSession" placement="left" :for="approveSessionId">{{ $t('session.approval.mcpSessionHint') }}</AppTooltip>
                     <wa-dropdown-item v-if="canPersistAlways" :id="approveAlwaysId" :disabled="isResponding" @click="approve('always')">
                         <wa-icon slot="icon" name="infinity" variant="classic"></wa-icon>
-                        Always
+                        {{ $t('session.approval.always') }}
                     </wa-dropdown-item>
-                    <AppTooltip v-if="canPersistAlways" placement="left" :for="approveAlwaysId">Approve and never ask again for this tool.</AppTooltip>
+                    <AppTooltip v-if="canPersistAlways" placement="left" :for="approveAlwaysId">{{ $t('session.approval.mcpAlwaysHint') }}</AppTooltip>
                 </wa-dropdown>
             </wa-button-group>
         </div>

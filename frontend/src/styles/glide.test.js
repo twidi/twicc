@@ -336,13 +336,13 @@ test('SegmentedControl: button radios, ink, not-ready fill, change guard, value 
 
 test('the two segmented controls use SegmentedControl', () => {
     const task = read('../components/message/AgentSettingsBenchmarkTask.vue')
-    assert.match(templateOf(task), /<SegmentedControl\s+class="task-control task-favor"\s+label="Favor"\s+:model-value="store\.favor"\s+:options="FAVOR_OPTIONS"\s+@update:model-value="store\.setFavor"\s*\/>/)
+    assert.match(templateOf(task), /<SegmentedControl\s+class="task-control task-favor"\s+:label="\$t\('session\.agentSettings\.benchmark\.favor'\)"\s+:model-value="store\.favor"\s+:options="FAVOR_OPTIONS"\s+@update:model-value="store\.setFavor"\s*\/>/)
     assert.match(scriptOf(task), /import SegmentedControl from '\.\.\/ui\/SegmentedControl\.vue'/)
     assert.ok(!task.includes('wa-radio'), 'no wa-radio-group left')
     assert.ok(!task.includes('onFavorChange'))
 
     const orch = read('../components/orchestration/OrchestrationPanel.vue')
-    assert.match(templateOf(orch), /<SegmentedControl\s+v-if="canSwitchView"\s+class="orch-view-switch"\s+label="Tree to show"\s+:model-value="view"\s+:options="VIEW_OPTIONS"\s+@update:model-value="selectedView = \$event"\s*>/)
+    assert.match(templateOf(orch), /<SegmentedControl\s+v-if="canSwitchView"\s+class="orch-view-switch"\s+:label="\$t\('session\.orchestration\.treeLabel'\)"\s+:model-value="view"\s+:options="VIEW_OPTIONS"\s+@update:model-value="selectedView = \$event"\s*>/)
     assert.match(scriptOf(orch), /import SegmentedControl from '\.\.\/ui\/SegmentedControl\.vue'/)
     assert.ok(!orch.includes('wa-button-group'), 'no wa-button-group left')
 })

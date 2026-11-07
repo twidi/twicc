@@ -114,7 +114,7 @@ function tooltipFormatter(item, unit) {
 
 <template>
     <div class="contribution-graph">
-        <h3 class="contribution-graph-title">{{ isCostMode ? 'Cost per day' : isSessionsMode ? 'Sessions created per day' : 'Message turns per day' }}</h3>
+        <h3 class="contribution-graph-title">{{ isCostMode ? $t('activity.graph.costPerDay') : isSessionsMode ? $t('activity.graph.sessionsPerDay') : $t('activity.graph.messageTurnsPerDay') }}</h3>
         <CalendarHeatmap
             v-if="heatmapValues.length > 0 && rangeColor.length === 6"
             :key="`${rangeColor.join(',')}-${mode}`"
@@ -129,7 +129,7 @@ function tooltipFormatter(item, unit) {
             :dark-mode="isDark"
         />
         <div v-else-if="dailyActivity.length === 0" class="no-data">
-            No activity data
+            {{ $t('activity.noData') }}
         </div>
     </div>
 </template>

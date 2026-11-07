@@ -1,11 +1,12 @@
 // Entry for the dedicated artifact page's trusted shell (design §5/§9). It
-// mounts a deliberately MINIMAL Vue app — only Vue + the shared broker
+// mounts a deliberately MINIMAL Vue app — only Vue, Vue I18n, the shared broker
 // composable/prompt + the few Web Awesome components the prompt renders — so the
 // bundle stays small and pulls in none of the main SPA. The backend serves this
 // at /_twicc/artifact-shell/shell.js and injects the per-bookmark data the app
 // reads below.
 
 import { createApp } from 'vue'
+import { i18n, setLocale } from '../i18n'
 
 // Web Awesome: design tokens + ONLY the components the consent prompt uses.
 import '@awesome.me/webawesome/dist/styles/webawesome.css'
@@ -46,7 +47,7 @@ if (shellData.mode === 'share') {
     // Record this artifact share in the browser's recent list (share host homepage).
     recordShareView({ tokenPath: shellData.tokenPath, kind: 'artifact', title: shellData.title || '' })
 }
-createApp(ArtifactShellApp, {
+const app = createApp(ArtifactShellApp, {
     innerDocUrl: shellData.innerDocUrl,
     bookmarkId: shellData.bookmarkId ?? null,
     allowedHosts: shellData.allowedHosts ?? {},
@@ -56,4 +57,7 @@ createApp(ArtifactShellApp, {
     proxyUrl: shellData.mode === 'share' ? `${shellData.tokenPath}/api/proxy/` : undefined,
     snapshotAt: shellData.snapshotAt ?? null,
     tokenPath: shellData.tokenPath ?? null,
-}).mount('#app')
+})
+app.use(i18n)
+setLocale(i18n.global.locale.value)
+app.mount('#app')

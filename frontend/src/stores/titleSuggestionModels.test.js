@@ -45,8 +45,9 @@ test('the OpenRouter radio says where the text goes and who pays, unless the key
     )
     assert.match(
         radio,
-        /<span v-else class="radio-note" >— much faster: a title in under a second instead of several; uses \{\{ OPENROUTER_MODEL_DESCRIPTION \}\}; sends the user messages to OpenRouter, paid on your OpenRouter account<\/span>/,
+        /<span v-else class="radio-note" >\{\{ \$t\('settings\.titles\.model\.openRouterHint', \{ model: OPENROUTER_MODEL_DESCRIPTION \}\) \}\}<\/span>/,
     )
+    assert.equal(en['settings.titles.model.openRouterHint'], '— much faster: a title in under a second instead of several; uses {model}; sends the user messages to OpenRouter, paid on your OpenRouter account')
 })
 
 test('the Titles hints hold for every model', () => {
@@ -55,7 +56,9 @@ test('the Titles hints hold for every model', () => {
     assert.match(en['settings.titles.model.fallbackHint'], /TwiCC generates the title with another model/)
     assert.doesNotMatch(en['settings.titles.model.fallbackHint'], /generates the title with the other provider/)
     // The radio note says where the text goes: the hint does not say it twice.
-    assert.equal(source.match(/paid on your OpenRouter account/g)?.length, 1)
+    assert.equal(source.match(/\$t\('settings\.titles\.model\.openRouterHint'/g)?.length, 1)
+    assert.equal(en['settings.titles.model.openRouterHint'].match(/paid on your OpenRouter account/g)?.length, 1)
+    assert.doesNotMatch(en['settings.titles.model.fallbackHint'], /paid on your OpenRouter account/)
     // The model words come from the one constant, never written in the component.
     assert.doesNotMatch(source, /Qwen|Cerebras/)
 })

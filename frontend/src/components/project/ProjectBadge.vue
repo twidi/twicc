@@ -140,8 +140,8 @@ const untrusted = computed(() => store.untrustedProjectIds.has(props.projectId))
         <wa-icon
             v-if="untrusted"
             name="lock"
-            label="Untrusted project"
-            title="This project is not trusted"
+            :label="$t('project.trust.untrustedLabel')"
+            :title="$t('project.trust.untrustedTooltip')"
             class="project-badge-trust"
         ></wa-icon>
     </span>

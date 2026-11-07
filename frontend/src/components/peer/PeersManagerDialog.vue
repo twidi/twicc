@@ -288,39 +288,44 @@ function onHide(event) {
 
 <template>
     <wa-dialog
-        ref="dialogRef" :open="open" label="Peers"
+        ref="dialogRef" :open="open" :label="$t('peer.manager.title')"
         style="--width: min(760px, calc(100vw - 2rem))"
         @wa-hide="onHide"
     >
         <div slot="label" class="peer-dialog-title">
-            <span>Peers</span>
+            <span>{{ $t('peer.manager.title') }}</span>
             <PeerHelpLink />
         </div>
 
         <!-- Own address recap -->
         <wa-callout v-if="!peerBaseUrl" variant="warning" size="small" class="pm-block">
-            Peer messaging is disabled — set your address in Settings › Peers first.
+            {{ $t('peer.manager.disabledHint') }}
         </wa-callout>
         <p v-else class="pm-own-address">
-            Your address: <code>{{ peerBaseUrl }}</code>
-            <template v-if="peerDisplayName"> · shown as <strong>{{ peerDisplayName }}</strong></template>
+            <i18n-t v-if="peerDisplayName" scope="global" keypath="peer.manager.ownAddressNamed">
+                <template #address><code>{{ peerBaseUrl }}</code></template>
+                <template #name><strong>{{ peerDisplayName }}</strong></template>
+            </i18n-t>
+            <i18n-t v-else scope="global" keypath="peer.manager.ownAddress">
+                <template #address><code>{{ peerBaseUrl }}</code></template>
+            </i18n-t>
         </p>
 
         <wa-callout v-if="unknownResult" variant="warning" size="small" class="pm-block">
             <div class="pm-confirm-body">
-                <span>The request result is unknown. Reload peers to read the current server state.</span>
-                <wa-button size="small" :loading="reloadBusy" @click="reloadPeerList">Reload peers</wa-button>
+                <span>{{ $t('peer.manager.unknownResult') }}</span>
+                <wa-button size="small" :loading="reloadBusy" @click="reloadPeerList">{{ $t('peer.manager.reload') }}</wa-button>
             </div>
         </wa-callout>
 
         <!-- Pending incoming requests -->
         <template v-if="incomingRequests.length">
-            <h4 class="pm-section-title">Incoming requests</h4>
+            <h4 class="pm-section-title">{{ $t('peer.manager.incomingRequests') }}</h4>
             <div v-for="peer in incomingRequests" :key="peer.id" class="pm-request">
                 <div class="pm-request__claim">
                     <span class="pm-request__name">{{ peer.remote_display_name || 'unnamed instance' }}</span>
                     <span class="pm-request__url">{{ peer.base_url }}</span>
-                    <wa-tag v-if="peer.reconnect_direction" size="small">Reconnect</wa-tag>
+                    <wa-tag v-if="peer.reconnect_direction" size="small">{{ $t('peer.manager.reconnect') }}</wa-tag>
                     <span v-if="requestDate(peer)" class="pm-request__time">
                         <wa-relative-time
                             v-if="useRelativeTime"
@@ -332,22 +337,21 @@ function onHide(event) {
                 </div>
                 <div class="pm-request__code-block">
                     <span class="pm-request__code">{{ peer.verification_code }}</span>
-                    <wa-tag v-if="peer.verified_at" variant="success" size="small">Verified ✓</wa-tag>
+                    <wa-tag v-if="peer.verified_at" variant="success" size="small">{{ $t('peer.manager.verified') }}</wa-tag>
                 </div>
                 <p class="pm-hint">
-                    Share this code with the requester over a channel you trust — accepting
-                    unlocks once they confirm it.
+                    {{ $t('peer.manager.shareCodeHint') }}
                 </p>
                 <!-- Crossed handshake: this row also carries OUR outbound request.
                      Verification is symmetric — the peer shows a code too, and it
                      must be enterable HERE or the crossed flow deadlocks. -->
                 <template v-if="peer.crossed">
-                    <wa-tag v-if="peer.code_confirmed_at" variant="success" size="small">Code confirmed ✓</wa-tag>
+                    <wa-tag v-if="peer.code_confirmed_at" variant="success" size="small">{{ $t('peer.manager.codeConfirmed') }}</wa-tag>
                     <template v-else>
                         <div class="pm-request__actions">
                             <wa-input
                                 class="pm-code-input"
-                                size="small" placeholder="6-digit code" maxlength="6" inputmode="numeric"
+                                size="small" :placeholder="$t('peer.manager.codePlaceholder')" maxlength="6" inputmode="numeric"
                                 :value="verifyCodes[peer.id] || ''"
                                 @input="verifyCodes = { ...verifyCodes, [peer.id]: $event.target.value }"
                                 @keydown.enter="submitCode(peer)"
@@ -356,14 +360,14 @@ function onHide(event) {
                                 size="small" variant="brand"
                                 :disabled="busy[peer.id]"
                                 @click="submitCode(peer)"
-                            >Verify</wa-button>
+                            >{{ $t('peer.manager.verify') }}</wa-button>
                         </div>
-                        <p class="pm-hint">You both sent a request — also enter the code your peer reads to you.</p>
+                        <p class="pm-hint">{{ $t('peer.manager.crossedHint') }}</p>
                     </template>
                 </template>
                 <div class="pm-request__actions">
                     <wa-input
-                        size="small" placeholder="Local name for this peer"
+                        size="small" :placeholder="$t('peer.manager.localName')"
                         :value="acceptNameValue(peer)"
                         @input="acceptNames = { ...acceptNames, [peer.id]: $event.target.value }"
                     ></wa-input>
@@ -371,12 +375,12 @@ function onHide(event) {
                         size="small" variant="brand"
                         :disabled="!peer.verified_at || busy[peer.id]"
                         @click="acceptPeer(peer)"
-                    >Accept</wa-button>
+                    >{{ $t('peer.manager.accept') }}</wa-button>
                     <wa-button
                         size="small" variant="danger" appearance="outlined"
                         :disabled="busy[peer.id]"
                         @click="refusePeer(peer)"
-                    >Refuse</wa-button>
+                    >{{ $t('peer.manager.refuse') }}</wa-button>
                 </div>
                 <wa-callout v-if="rowErrors[peer.id]" variant="danger" size="small">{{ rowErrors[peer.id] }}</wa-callout>
             </div>
@@ -384,15 +388,15 @@ function onHide(event) {
 
         <!-- Pending sent requests -->
         <template v-if="sentRequests.length">
-            <h4 class="pm-section-title">Sent requests</h4>
+            <h4 class="pm-section-title">{{ $t('peer.manager.sentRequests') }}</h4>
             <p v-if="reconnectSent.length" class="pm-hint">
-                If both instances show a sent reconnect, cancel one side and retry the other.
+                {{ $t('peer.manager.crossedReconnectHint') }}
             </p>
             <div v-for="peer in sentRequests" :key="peer.id" class="pm-request">
                 <div class="pm-request__claim">
                     <span class="pm-request__name">{{ peer.name }}</span>
                     <span class="pm-request__url">{{ peer.base_url }}</span>
-                    <wa-tag v-if="peer.reconnect_direction" size="small">Reconnect</wa-tag>
+                    <wa-tag v-if="peer.reconnect_direction" size="small">{{ $t('peer.manager.reconnect') }}</wa-tag>
                     <span v-if="requestDate(peer)" class="pm-request__time">
                         <wa-relative-time
                             v-if="useRelativeTime"
@@ -406,17 +410,16 @@ function onHide(event) {
                     v-if="peer.remote_accepted_at && !peer.code_confirmed_at"
                     variant="warning" size="small"
                 >
-                    Accepted remotely, but your code verification hasn't completed —
-                    contact your peer before trusting this relationship.
+                    {{ $t('peer.manager.remoteAcceptedWarning') }}
                 </wa-callout>
                 <template v-if="peer.code_confirmed_at">
-                    <wa-tag variant="success" size="small">Code confirmed ✓</wa-tag>
+                    <wa-tag variant="success" size="small">{{ $t('peer.manager.codeConfirmed') }}</wa-tag>
                 </template>
                 <template v-else>
                     <div class="pm-request__actions">
                         <wa-input
                             class="pm-code-input"
-                            size="small" placeholder="6-digit code" maxlength="6" inputmode="numeric"
+                            size="small" :placeholder="$t('peer.manager.codePlaceholder')" maxlength="6" inputmode="numeric"
                             :value="verifyCodes[peer.id] || ''"
                             @input="verifyCodes = { ...verifyCodes, [peer.id]: $event.target.value }"
                             @keydown.enter="submitCode(peer)"
@@ -425,9 +428,9 @@ function onHide(event) {
                             size="small" variant="brand"
                             :disabled="busy[peer.id]"
                             @click="submitCode(peer)"
-                        >Verify</wa-button>
+                        >{{ $t('peer.manager.verify') }}</wa-button>
                     </div>
-                    <p class="pm-hint">Enter the code your peer reads to you.</p>
+                    <p class="pm-hint">{{ $t('peer.manager.enterCodeHint') }}</p>
                 </template>
                 <div class="pm-request__actions">
                     <wa-button
@@ -435,19 +438,19 @@ function onHide(event) {
                         size="small" appearance="outlined"
                         :disabled="busy[peer.id]"
                         @click="reconnectPeer(peer)"
-                    >Retry</wa-button>
+                    >{{ $t('common.actions.retry') }}</wa-button>
                     <wa-button
                         size="small" variant="danger" appearance="outlined"
                         :disabled="busy[peer.id]"
                         @click="peer.reconnect_direction ? cancelReconnect(peer) : confirmingRemoval = peer.id"
-                    >Cancel</wa-button>
+                    >{{ $t('common.actions.cancel') }}</wa-button>
                 </div>
                 <wa-callout v-if="confirmingRemoval === peer.id" variant="warning" size="small">
                     <div class="pm-confirm-body">
-                        <span>Remove this pending request?</span>
+                        <span>{{ $t('peer.manager.removeRequest') }}</span>
                         <span class="pm-confirm__actions">
-                            <wa-button size="small" variant="danger" @click="removePeer(peer)">Remove</wa-button>
-                            <wa-button size="small" appearance="outlined" @click="confirmingRemoval = null">Keep</wa-button>
+                            <wa-button size="small" variant="danger" @click="removePeer(peer)">{{ $t('peer.manager.remove') }}</wa-button>
+                            <wa-button size="small" appearance="outlined" @click="confirmingRemoval = null">{{ $t('peer.manager.keep') }}</wa-button>
                         </span>
                     </div>
                 </wa-callout>
@@ -456,8 +459,8 @@ function onHide(event) {
         </template>
 
         <!-- Established peers -->
-        <h4 class="pm-section-title">Peers</h4>
-        <p v-if="!establishedPeers.length" class="pm-empty">No peers yet.</p>
+        <h4 class="pm-section-title">{{ $t('peer.manager.title') }}</h4>
+        <p v-if="!establishedPeers.length" class="pm-empty">{{ $t('peer.manager.noPeers') }}</p>
         <div v-for="peer in establishedPeers" :key="peer.id" class="pm-peer">
             <div class="pm-peer__main">
                 <template v-if="renaming === peer.id">
@@ -466,7 +469,7 @@ function onHide(event) {
                         @input="renameValue = $event.target.value"
                         @keydown.enter="applyRename(peer)"
                     ></wa-input>
-                    <wa-button size="small" @click="applyRename(peer)">OK</wa-button>
+                    <wa-button size="small" @click="applyRename(peer)">{{ $t('peer.manager.confirmRename') }}</wa-button>
                 </template>
                 <template v-else>
                     <span class="pm-peer__name">{{ peer.name || peer.remote_display_name || 'unnamed' }}</span>
@@ -496,30 +499,29 @@ function onHide(event) {
                     @click="composeTo(peer)"
                 >
                     <wa-icon name="paper-plane" slot="start"></wa-icon>
-                    Send message
+                    {{ $t('peer.manager.sendMessage') }}
                 </wa-button>
-                <wa-button size="small" appearance="plain" @click="startRename(peer)">Rename</wa-button>
+                <wa-button size="small" appearance="plain" @click="startRename(peer)">{{ $t('common.actions.rename') }}</wa-button>
                 <wa-button
                     v-if="peer.state !== 'active'"
                     size="small" variant="brand" appearance="plain"
                     :disabled="busy[peer.id] || !peerBaseUrl"
                     @click="reconnectPeer(peer)"
-                >Reconnect</wa-button>
+                >{{ $t('peer.manager.reconnect') }}</wa-button>
                 <wa-button
                     v-if="peer.state !== 'revoked'"
                     size="small" variant="danger" appearance="plain"
                     @click="confirmingRemoval = peer.id"
-                >Revoke</wa-button>
+                >{{ $t('peer.manager.revoke') }}</wa-button>
             </div>
             <wa-callout v-if="confirmingRemoval === peer.id" variant="warning" size="small">
                 <div class="pm-confirm-body">
                     <span>
-                        Revokes the relationship silently and preserves its message history.
-                        The peer is rejected on its next credential request.
+                        {{ $t('peer.manager.revokeHint') }}
                     </span>
                     <span class="pm-confirm__actions">
-                        <wa-button size="small" variant="danger" :disabled="busy[peer.id]" @click="removePeer(peer)">Revoke</wa-button>
-                        <wa-button size="small" appearance="outlined" @click="confirmingRemoval = null">Keep</wa-button>
+                        <wa-button size="small" variant="danger" :disabled="busy[peer.id]" @click="removePeer(peer)">{{ $t('peer.manager.revoke') }}</wa-button>
+                        <wa-button size="small" appearance="outlined" @click="confirmingRemoval = null">{{ $t('peer.manager.keep') }}</wa-button>
                     </span>
                 </div>
             </wa-callout>
@@ -527,19 +529,21 @@ function onHide(event) {
         </div>
 
         <!-- Add peer -->
-        <h4 class="pm-section-title">Add a peer</h4>
+        <h4 class="pm-section-title">{{ $t('peer.manager.addPeer') }}</h4>
         <form id="pm-add-form" class="pm-add-form" @submit.prevent="addPeer">
             <wa-input
-                size="small" placeholder="Name (e.g. David)"
+                size="small" :placeholder="$t('peer.manager.namePlaceholder')"
                 :value="addName" @input="addName = $event.target.value"
             ></wa-input>
+            <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This URL demonstrates the address format and stays literal. -->
             <wa-input
                 size="small" placeholder="https://their-instance.example.com"
                 :value="addUrl" @input="addUrl = $event.target.value"
             ></wa-input>
+            <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
             <wa-button size="small" variant="brand" type="submit" :disabled="addBusy || !peerBaseUrl">
                 <wa-icon name="plus" slot="start"></wa-icon>
-                Send request
+                {{ $t('peer.manager.sendRequest') }}
             </wa-button>
         </form>
         <wa-callout v-if="addError" variant="danger" size="small">{{ addError }}</wa-callout>
@@ -547,9 +551,9 @@ function onHide(event) {
         <div slot="footer" class="pm-footer">
             <wa-button appearance="outlined" @click="openInbox">
                 <wa-icon name="envelope" slot="start"></wa-icon>
-                Inbox
+                {{ $t('peer.manager.inbox') }}
             </wa-button>
-            <wa-button @click="emit('close')">Close</wa-button>
+            <wa-button @click="emit('close')">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

@@ -245,7 +245,7 @@ useFooterBlockMotion({
         <!-- Open: header with window controls -->
         <div v-else-if="!isClosed" class="hybrid-terminal-header">
             <wa-icon name="terminal" class="hybrid-terminal-icon"></wa-icon>
-            <span class="hybrid-terminal-title">Claude CLI terminal</span>
+            <span class="hybrid-terminal-title">{{ $t('terminal.hybrid.title') }}</span>
             <span
                 v-if="headerBadgeLabel"
                 class="hybrid-pending-badge"
@@ -264,7 +264,7 @@ useFooterBlockMotion({
             >
                 <wa-icon name="arrows-rotate" variant="classic"></wa-icon>
             </wa-button>
-            <AppTooltip v-if="everHadProcess" :for="refreshBtnId">Refresh the terminal</AppTooltip>
+            <AppTooltip v-if="everHadProcess" :for="refreshBtnId">{{ $t('terminal.hybrid.refresh') }}</AppTooltip>
             <wa-button
                 variant="neutral"
                 appearance="plain"
@@ -275,7 +275,7 @@ useFooterBlockMotion({
             >
                 <wa-icon name="window-minimize" variant="classic"></wa-icon>
             </wa-button>
-            <AppTooltip :for="closeBtnId">Hide the terminal (the CLI keeps running)</AppTooltip>
+            <AppTooltip :for="closeBtnId">{{ $t('terminal.hybrid.hide') }}</AppTooltip>
             <wa-button
                 variant="neutral"
                 appearance="plain"
@@ -286,7 +286,7 @@ useFooterBlockMotion({
             >
                 <wa-icon :name="isMaximized ? 'compress' : 'expand'" variant="classic"></wa-icon>
             </wa-button>
-            <AppTooltip :for="maximizeToggleId">{{ isMaximized ? 'Restore' : 'Maximize' }}</AppTooltip>
+            <AppTooltip :for="maximizeToggleId">{{ isMaximized ? $t('terminal.hybrid.restore') : $t('terminal.hybrid.maximize') }}</AppTooltip>
         </div>
 
         <!-- Terminal area: placeholder until the CLI runs (and again after a
@@ -295,7 +295,7 @@ useFooterBlockMotion({
         <div class="hybrid-terminal-body">
             <div v-if="!everHadProcess" class="hybrid-terminal-placeholder">
                 <wa-icon name="terminal"></wa-icon>
-                <span>The Claude CLI starts here when you send a message.</span>
+                <span>{{ $t('terminal.hybrid.placeholder') }}</span>
             </div>
             <TerminalInstance
                 v-else

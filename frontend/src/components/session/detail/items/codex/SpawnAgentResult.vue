@@ -29,7 +29,9 @@ defineProps({
 <template>
     <div class="spawn-agent-result">
         <div v-if="nickname" class="spawn-agent-meta">
-            Subagent: <strong>{{ nickname }}</strong>
+            <i18n-t keypath="session.tools.subagent" scope="global">
+                <template #name><strong>{{ nickname }}</strong></template>
+            </i18n-t>
         </div>
         <MarkdownContent v-if="message" :source="message" :show-toolbar="false" />
         <div v-else-if="statusLabel" class="spawn-agent-status-only">

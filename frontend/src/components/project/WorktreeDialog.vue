@@ -449,37 +449,39 @@ defineExpose({
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" label="Worktree" class="worktree-dialog" @wa-show="handleDialogShow" @wa-after-show="handleDialogAfterShow">
+    <wa-dialog ref="dialogRef" :label="$t('project.worktrees.title')" class="worktree-dialog" @wa-show="handleDialogShow" @wa-after-show="handleDialogAfterShow">
         <!-- Header: title with the parent project's badge pinned to the right,
              then the action description as a larger subtitle underneath. The
              badge gives the project context at a glance (same treatment as
              ProjectEditDialog's header). -->
         <div slot="label" class="dialog-title">
             <div class="dialog-title-main">
-                <span class="dialog-title-text">Worktree</span>
+                <span class="dialog-title-text">{{ $t('project.worktrees.title') }}</span>
                 <ProjectBadge
                     v-if="parentProject"
                     :project-id="parentProject.id"
                     class="dialog-title-badge"
                 />
             </div>
-            <span class="dialog-title-subtitle">Create a new worktree, or open an existing one</span>
+            <span class="dialog-title-subtitle">{{ $t('project.worktrees.description') }}</span>
         </div>
 
         <TabBar :active="activeTab" @wa-tab-show="onTabShow" class="worktree-tabs">
-            <wa-tab panel="new">New worktree</wa-tab>
-            <wa-tab panel="existing">Existing worktree</wa-tab>
+            <wa-tab panel="new">{{ $t('project.worktrees.newTab') }}</wa-tab>
+            <wa-tab panel="existing">{{ $t('project.worktrees.existingTab') }}</wa-tab>
 
             <wa-tab-panel name="new">
                 <form :id="formId" class="dialog-content" @submit.prevent="handleCreate">
                     <div class="form-group">
-                        <label class="form-label">New or existing branch</label>
+                        <label class="form-label">{{ $t('project.worktrees.branchLabel') }}</label>
+                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is a literal branch name example. -->
                         <wa-input
                             ref="branchInputRef"
                             :value.prop="localBranch"
                             @input="onBranchInput"
                             placeholder="feature/my-branch"
                         ></wa-input>
+                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                         <div v-if="branchSuggestions.length > 0" class="branch-suggestions">
                             <button
                                 v-for="suggestion in branchSuggestions"
@@ -492,16 +494,16 @@ defineExpose({
                             >
                                 <wa-icon name="code-branch" auto-width></wa-icon>
                                 <span class="branch-suggestion-name">{{ suggestion.name }}</span>
-                                <span v-if="suggestion.checked_out" class="branch-suggestion-hint">in use</span>
+                                <span v-if="suggestion.checked_out" class="branch-suggestion-hint">{{ $t('project.worktrees.branchInUse') }}</span>
                             </button>
                         </div>
                         <div class="form-hint">
-                            An existing branch is checked out into the worktree; an unknown name creates a new branch.
+                            {{ $t('project.worktrees.branchHint') }}
                         </div>
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Path</label>
+                        <label class="form-label">{{ $t('project.worktrees.pathLabel') }}</label>
                         <div class="directory-input-row">
                             <wa-input
                                 :value.prop="localPath"
@@ -516,15 +518,12 @@ defineExpose({
                             />
                         </div>
                         <div class="form-hint">
-                            Absolute path where the worktree will be created
+                            {{ $t('project.worktrees.pathHint') }}
                         </div>
                         <div v-if="showNoDefaultHint" class="form-hint path-no-default-hint">
                             <wa-icon name="circle-info" auto-width></wa-icon>
                             <span>
-                                No default worktree directory set — set one per project
-                                (Edit project → Worktree directory) or globally
-                                (Settings → Default worktree directory) to pre-fill this path
-                                and append the branch name automatically.
+                                {{ $t('project.worktrees.noDefaultHint') }}
                             </span>
                         </div>
                         <wa-button
@@ -536,18 +535,18 @@ defineExpose({
                             @click="appendBranchToPath"
                         >
                             <wa-icon slot="start" name="plus"></wa-icon>
-                            Append branch name ("{{ branchDirName }}")
+                            {{ $t('project.worktrees.appendBranch', { branch: branchDirName }) }}
                         </wa-button>
                     </div>
 
                     <div v-if="branchIsNew && branches.length > 0" class="form-group">
-                        <label class="form-label">Start from</label>
+                        <label class="form-label">{{ $t('project.worktrees.startFrom') }}</label>
                         <FilterableSelect
                             v-model="localStartFrom"
                             :options="startFromOptions"
                             size="small"
                         />
-                        <div class="form-hint">The new branch starts from this ref</div>
+                        <div class="form-hint">{{ $t('project.worktrees.startFromHint') }}</div>
                     </div>
 
                     <wa-callout v-if="errorMessage" variant="danger" size="small" class="error-callout">
@@ -560,22 +559,22 @@ defineExpose({
                 <div class="existing-panel">
                     <div v-if="loadingWorktrees" class="existing-status">
                         <wa-spinner></wa-spinner>
-                        <span>Loading worktrees…</span>
+                        <span>{{ $t('project.worktrees.loading') }}</span>
                     </div>
 
                     <template v-else>
                         <div v-if="worktrees.length" class="form-group">
-                            <div class="form-hint">Open a session in a worktree of this repo that already exists on disk.</div>
+                            <div class="form-hint">{{ $t('project.worktrees.existingHint') }}</div>
                             <FilterableSelect
                                 :model-value="selectedPath"
                                 :options="worktreeOptions"
-                                placeholder="Select a worktree…"
+                                :placeholder="$t('project.worktrees.selectPlaceholder')"
                                 @update:model-value="onSelectWorktree"
                             />
                             <div v-if="selectedWorktree" class="form-hint worktree-path-hint">{{ selectedWorktree.path }}</div>
                         </div>
                         <div v-else-if="!existingError" class="existing-empty">
-                            No other worktrees yet. Use the “New worktree” tab to create one.
+                            {{ $t('project.worktrees.noExisting') }}
                         </div>
                     </template>
 
@@ -588,7 +587,7 @@ defineExpose({
 
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isCreating || isOpening">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button
                 v-if="activeTab === 'new'"
@@ -598,7 +597,7 @@ defineExpose({
                 :loading="isCreating"
                 :disabled="isCreating"
             >
-                Create worktree
+                {{ $t('project.worktrees.create') }}
             </wa-button>
             <wa-button
                 v-else
@@ -607,7 +606,7 @@ defineExpose({
                 :disabled="!selectedWorktree || isOpening"
                 @click="handleOpenExisting"
             >
-                Open session
+                {{ $t('project.worktrees.openSession') }}
             </wa-button>
         </div>
     </wa-dialog>

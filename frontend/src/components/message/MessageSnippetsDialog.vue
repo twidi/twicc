@@ -459,10 +459,10 @@ defineExpose({ open, close })
 
                 <!-- Group header -->
                 <div class="group-header">
-                    <span v-if="group.scope === 'global'" class="group-header-global">All projects</span>
+                    <span v-if="group.scope === 'global'" class="group-header-global">{{ $t('composer.snippets.allProjects') }}</span>
                     <span v-else-if="group.scope.startsWith('workspace:')" class="group-header-workspace">
                         <wa-icon name="layer-group" auto-width :style="workspaceColorFromScope(group.scope) ? { color: workspaceColorFromScope(group.scope) } : null"></wa-icon>
-                        Workspace {{ workspaceNameFromScope(group.scope) }}
+                        {{ $t('composer.snippets.workspaceName', { name: workspaceNameFromScope(group.scope) }) }}
                     </span>
                     <ProjectBadge v-else :project-id="projectIdFromScope(group.scope)" use-directory-for-unnamed />
                 </div>
@@ -490,7 +490,7 @@ defineExpose({ open, close })
 
             <!-- Show message when there are no scopes at all -->
             <div v-if="snippetScopes.length === 0" class="empty-message">
-                No snippets yet. Add one to get started.
+                {{ $t('composer.snippets.empty') }}
             </div>
         </div>
 
@@ -498,7 +498,7 @@ defineExpose({ open, close })
         <form v-else :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Label field (optional) -->
             <div class="form-group">
-                <label class="form-label">{{ groupMode ? 'Group name' : 'Label' }} <span v-if="!groupMode" class="form-optional">(optional)</span></label>
+                <label class="form-label">{{ groupMode ? $t('composer.snippets.groupName') : $t('composer.snippets.label') }} <span v-if="!groupMode" class="form-optional">{{ $t('common.fields.optional') }}</span></label>
                 <wa-input
                     ref="labelInputRef"
                     :value="formData.label"
@@ -510,12 +510,12 @@ defineExpose({ open, close })
 
             <!-- Message text -->
             <div v-if="!groupMode" class="form-group">
-                <label class="form-label">Message</label>
+                <label class="form-label">{{ $t('composer.snippets.message') }}</label>
                 <wa-textarea
                     ref="textareaRef"
                     :value="formData.text"
                     @input="formData.text = $event.target.value"
-                    placeholder="The message text to insert..."
+                    :placeholder="$t('composer.snippets.messagePlaceholder')"
                     rows="4"
                     resize="auto"
                     size="small"
@@ -523,7 +523,7 @@ defineExpose({ open, close })
                 />
 
                 <!-- Placeholder picker -->
-                <p class="placeholder-hint">Insert placeholders to be resolved at insert time:</p>
+                <p class="placeholder-hint">{{ $t('composer.snippets.placeholdersHint') }}</p>
                 <div class="placeholder-picker-row">
                     <button
                         v-for="p in PLACEHOLDERS"
@@ -538,7 +538,7 @@ defineExpose({ open, close })
 
             <!-- Scope select -->
             <div class="form-group">
-                <label class="form-label">Scope</label>
+                <label class="form-label">{{ $t('composer.snippets.scope') }}</label>
                 <wa-select
                     :value="formData.scope"
                     @change="formData.scope = $event.target.value"
@@ -557,12 +557,12 @@ defineExpose({ open, close })
                         :icon-url="selectedScopeProjectIconUrl"
                         :color="selectedScopeProjectColor"
                     />
-                    <wa-option value="global">All projects</wa-option>
+                    <wa-option value="global">{{ $t('composer.snippets.allProjects') }}</wa-option>
 
                     <!-- Workspaces -->
                     <template v-if="selectableWorkspaces.length">
                         <wa-divider></wa-divider>
-                        <wa-option disabled class="section-header-option">Workspaces</wa-option>
+                        <wa-option disabled class="section-header-option">{{ $t('common.entities.workspaces') }}</wa-option>
                         <wa-option
                             v-for="ws in selectableWorkspaces"
                             :key="ws.id"
@@ -577,7 +577,7 @@ defineExpose({ open, close })
                     <!-- Divider before projects when not in a workspace -->
                     <template v-if="!activeWsLabel">
                         <wa-divider></wa-divider>
-                        <wa-option v-if="selectableWorkspaces.length" disabled class="section-header-option">Projects</wa-option>
+                        <wa-option v-if="selectableWorkspaces.length" disabled class="section-header-option">{{ $t('common.entities.projects') }}</wa-option>
                     </template>
 
                     <!-- Workspace-prioritized projects (only when workspace is active) -->
@@ -620,7 +620,7 @@ defineExpose({ open, close })
                     <!-- Remaining projects -->
                     <template v-if="activeWsLabel && (namedSplit.others.length || othersUnnamedFlatTree.length)">
                         <wa-divider></wa-divider>
-                        <wa-option disabled class="section-header-option">Other projects</wa-option>
+                        <wa-option disabled class="section-header-option">{{ $t('composer.snippets.otherProjects') }}</wa-option>
                     </template>
                     <wa-option
                         v-for="p in namedSplit.others"
@@ -657,9 +657,9 @@ defineExpose({ open, close })
             </div>
 
             <div v-if="!groupMode" class="form-group">
-                <label class="form-label">Group</label>
+                <label class="form-label">{{ $t('composer.snippets.group') }}</label>
                 <wa-select :value="formData.groupId || ''" @change="formData.groupId = $event.target.value || null" size="small">
-                    <wa-option value="">None</wa-option>
+                    <wa-option value="">{{ $t('composer.snippets.noGroup') }}</wa-option>
                     <wa-option v-for="group in selectableGroups" :key="group.id" :value="group.id">{{ group.label }}</wa-option>
                 </wa-select>
             </div>
@@ -679,23 +679,23 @@ defineExpose({ open, close })
         <div slot="footer" class="dialog-footer">
             <template v-if="view === 'list'">
                 <wa-button variant="neutral" appearance="outlined" @click="close">
-                    Close
+                    {{ $t('common.actions.close') }}
                 </wa-button>
                 <wa-button variant="neutral" appearance="outlined" @click="openGroupForm">
                     <wa-icon slot="start" name="folder-plus"></wa-icon>
-                    Add group
+                    {{ $t('composer.snippets.addGroup') }}
                 </wa-button>
                 <wa-button variant="brand" @click="openAddForm()">
                     <wa-icon slot="start" name="plus"></wa-icon>
-                    Add snippet
+                    {{ $t('composer.snippets.addSnippet') }}
                 </wa-button>
             </template>
             <template v-else>
                 <wa-button variant="neutral" appearance="outlined" @click="cancelForm">
-                    Cancel
+                    {{ $t('common.actions.cancel') }}
                 </wa-button>
                 <wa-button ref="saveButtonRef" type="submit" variant="brand">
-                    Save
+                    {{ $t('common.actions.save') }}
                 </wa-button>
             </template>
         </div>

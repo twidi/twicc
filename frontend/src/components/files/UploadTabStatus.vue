@@ -19,7 +19,7 @@ defineProps({
         class="upload-tab-status"
         :class="{ stalled: status.allStalled }"
     >
-        <wa-icon name="upload" class="upload-tab-icon" label="Uploads"></wa-icon>
+        <wa-icon name="upload" class="upload-tab-icon" :label="$t('files.upload.title')"></wa-icon>
         <span v-if="status.count > 1" class="upload-tab-count">{{ status.count }} ·</span>
         <span class="upload-tab-percent">{{ status.percent }}%</span>
     </span>

@@ -108,12 +108,10 @@ function handleHide(event) {
         without-header
         @wa-hide="handleHide"
     >
-        <h2 class="dialog-title">Choose your providers</h2>
-        <p>
-            TwiCC supports multiple AI coding providers. Pick the ones you want
-            to enable and choose a default for new sessions. You can change
-            these anytime from <strong>Settings &rarr; Providers</strong>.
-        </p>
+        <h2 class="dialog-title">{{ $t('providers.activation.title') }}</h2>
+        <i18n-t tag="p" keypath="providers.activation.intro" scope="global">
+            <template #settings><strong>{{ $t('providers.activation.settingsPath') }}</strong></template>
+        </i18n-t>
         <div class="provider-choices">
             <wa-switch
                 v-for="p in getRegisteredProviders()"
@@ -127,10 +125,10 @@ function handleHide(event) {
             </wa-switch>
         </div>
         <div class="default-provider-group">
-            <label class="default-provider-label">Default provider for new sessions</label>
+            <label class="default-provider-label">{{ $t('settings.providers.defaultProvider.label') }}</label>
             <wa-select
                 :value.prop="defaultChoice"
-                placeholder="Select a default provider…"
+                :placeholder="$t('providers.activation.defaultPlaceholder')"
                 :disabled="enabledProviderOptions.length === 0"
                 @change="(e) => defaultChoice = e.target.value"
             >
@@ -150,7 +148,7 @@ function handleHide(event) {
                 </wa-option>
             </wa-select>
             <p class="default-provider-hint">
-                You can always pick a different provider when creating a new session.
+                {{ $t('providers.activation.defaultHint') }}
             </p>
         </div>
         <wa-button
@@ -159,7 +157,7 @@ function handleHide(event) {
             :disabled="!canSave"
             @click="save"
         >
-            Save
+            {{ $t('common.actions.save') }}
         </wa-button>
     </wa-dialog>
 </template>

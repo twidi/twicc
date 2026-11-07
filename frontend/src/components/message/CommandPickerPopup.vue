@@ -436,7 +436,7 @@ defineExpose({ open, close, isOpen })
                 <wa-input
                     ref="searchInputRef"
                     :value="searchQuery"
-                    placeholder="Filter commands..."
+                    :placeholder="$t('composer.commands.filter')"
                     size="small"
                     with-clear
                     class="picker-search-input"
@@ -456,14 +456,14 @@ defineExpose({ open, close, isOpen })
             >
                 <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                 <template v-if="loading">
-                    <div class="picker-status">Loading...</div>
+                    <div class="picker-status">{{ $t('composer.commands.loading') }}</div>
                 </template>
                 <template v-else-if="error">
                     <div class="picker-status picker-error">{{ error }}</div>
                 </template>
                 <template v-else-if="filteredCommands.length === 0">
                     <div class="picker-status">
-                        {{ searchQuery ? 'No matching commands' : 'No commands available' }}
+                        {{ searchQuery ? $t('composer.commands.noMatch') : $t('composer.commands.empty') }}
                     </div>
                 </template>
                 <template v-else>

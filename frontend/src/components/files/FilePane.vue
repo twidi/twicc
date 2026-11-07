@@ -1469,7 +1469,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="magnifying-glass"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="searchButtonId">Search in editor</AppTooltip>
+                <AppTooltip :for="searchButtonId">{{ $t('files.editor.search') }}</AppTooltip>
                 <!-- "View in Files tab" button: shown only in diff mode (Git tab context) -->
                 <wa-button
                     v-if="viewFileInFilesTab && diffMode"
@@ -1482,7 +1482,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="folder-open"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
+                <AppTooltip :for="viewInFilesButtonId">{{ $t('files.editor.viewInFiles') }}</AppTooltip>
                 <!-- Edit controls: hidden in read-only diff mode (commit diffs),
                      and while a preview is active (editing the source is a
                      separate mode from previewing the rendered result). -->
@@ -1492,8 +1492,8 @@ function goToNextDiff() {
                         :checked="isEditing"
                         size="small"
                         @change="onEditToggle"
-                    >Edit</wa-switch>
-                    <AppTooltip :for="editSwitchId">Toggle edit mode (Alt+E)</AppTooltip>
+                    >{{ $t('common.actions.edit') }}</wa-switch>
+                    <AppTooltip :for="editSwitchId">{{ $t('files.editor.toggleEdit') }}</AppTooltip>
                     <template v-if="isEditing">
                         <wa-button
                             size="small"
@@ -1503,7 +1503,7 @@ function goToNextDiff() {
                             @click="save"
                         >
                             <wa-spinner v-if="saving" slot="start"></wa-spinner>
-                            Save
+                            {{ $t('common.actions.save') }}
                         </wa-button>
                         <wa-button
                             size="small"
@@ -1512,7 +1512,7 @@ function goToNextDiff() {
                             :disabled="saving"
                             class="reduced-height"
                             @click="revert"
-                        >Revert</wa-button>
+                        >{{ $t('files.editor.revert') }}</wa-button>
                     </template>
                     <wa-button
                         v-else
@@ -1520,7 +1520,7 @@ function goToNextDiff() {
                         variant="neutral"
                         appearance="outlined"
                         class="header-spacer reduced-height"
-                    >Spacer</wa-button>
+                    >{{ $t('files.editor.spacer') }}</wa-button>
                 </template>
             </div>
             <div v-if="diffMode && !isPreviewing" class="header-center">
@@ -1535,7 +1535,7 @@ function goToNextDiff() {
                     >
                         <wa-icon name="arrow-up"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="prevChangeButtonId">Previous change</AppTooltip>
+                    <AppTooltip :for="prevChangeButtonId">{{ $t('files.editor.previousChange') }}</AppTooltip>
                     <wa-button
                         size="small"
                         variant="neutral"
@@ -1546,7 +1546,7 @@ function goToNextDiff() {
                     >
                         <wa-icon name="arrow-down"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="nextChangeButtonId">Next change</AppTooltip>
+                    <AppTooltip :for="nextChangeButtonId">{{ $t('files.editor.nextChange') }}</AppTooltip>
                 </div>
             </div>
             <div class="header-right">
@@ -1556,14 +1556,14 @@ function goToNextDiff() {
                     :checked="wordWrap"
                     size="small"
                     @change="onWordWrapToggle"
-                >Wrap</wa-switch>
+                >{{ $t('files.editor.wrap') }}</wa-switch>
                 <wa-switch
                     v-if="diffMode && !showMarkdownPreview && canSideBySide"
                     :checked="sideBySide"
                     size="small"
                     class="diff-layout-toggle"
                     @change="onSideBySideToggle"
-                >Side by side</wa-switch>
+                >{{ $t('files.editor.sideBySide') }}</wa-switch>
                 <!-- Markdown preview toggle: shown for .md files, including while
                      editing — but disabled until unsaved changes are saved, since
                      entering the preview leaves edit mode. -->
@@ -1579,7 +1579,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="eye"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="markdownPreviewButtonId">Toggle markdown preview</AppTooltip>
+                <AppTooltip :for="markdownPreviewButtonId">{{ $t('files.preview.toggleMarkdown') }}</AppTooltip>
                 <!-- SVG preview toggle: shown for .svg files, including while
                      editing — disabled until unsaved changes are saved. -->
                 <wa-button
@@ -1594,7 +1594,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="eye"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="svgPreviewButtonId">Toggle SVG preview</AppTooltip>
+                <AppTooltip :for="svgPreviewButtonId">{{ $t('files.preview.toggleSvg') }}</AppTooltip>
                 <!-- HTML preview toggle: shown for .html files, including while
                      editing (disabled until saved). Excluded in diff mode (Git
                      tab): a preview of the working-tree file would not reflect the
@@ -1611,7 +1611,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="eye"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="htmlPreviewButtonId">Toggle HTML preview</AppTooltip>
+                <AppTooltip :for="htmlPreviewButtonId">{{ $t('files.preview.toggleHtml') }}</AppTooltip>
                 <!-- Reload the rendered HTML (reflects the file as saved on disk).
                      Only present while the preview is on, which implies not editing. -->
                 <wa-button
@@ -1625,7 +1625,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="arrows-rotate"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="htmlPreviewReloadButtonId">Reload preview</AppTooltip>
+                <AppTooltip :for="htmlPreviewReloadButtonId">{{ $t('files.preview.reload') }}</AppTooltip>
                 <!-- Mermaid preview toggle: shown for .mmd files, including while
                      editing (disabled until saved). Excluded in diff mode (Git tab). -->
                 <wa-button
@@ -1640,7 +1640,7 @@ function goToNextDiff() {
                 >
                     <wa-icon name="eye"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="mermaidPreviewButtonId">Toggle Mermaid preview</AppTooltip>
+                <AppTooltip :for="mermaidPreviewButtonId">{{ $t('files.preview.toggleMermaid') }}</AppTooltip>
             </div>
         </div>
 
@@ -1745,7 +1745,7 @@ function goToNextDiff() {
                     :key="filePath"
                     :src="rawFileUrl"
                     class="pdf-preview"
-                    title="PDF preview"
+                    :title="$t('files.preview.pdf')"
                 ></iframe>
 
                 <!-- Audio preview — native <audio> player streaming from file-raw. -->
@@ -1795,7 +1795,7 @@ function goToNextDiff() {
                     v-if="showMarkdownPreview && isMarkdownFile && showScrollTop"
                     :for="scrollTopButtonId"
                     placement="left"
-                >Scroll to top</AppTooltip>
+                >{{ $t('files.preview.scrollTop') }}</AppTooltip>
             </div>
 
             <!-- CodeMirror diff editor (diff mode) -->
@@ -1844,15 +1844,15 @@ function goToNextDiff() {
                     </wa-callout>
                     <wa-button v-if="tooLarge && canDownload" size="small" @click="handleDownload">
                         <wa-icon slot="start" name="download"></wa-icon>
-                        Download
+                        {{ $t('files.actions.download') }}
                     </wa-button>
                 </template>
                 <template v-else-if="isBinary">
                     <wa-icon name="file-zipper" style="font-size: 1.5rem; opacity: 0.5;"></wa-icon>
-                    <span>Binary file ({{ formatSize(fileSize) }}) cannot be displayed</span>
+                    <span>{{ $t('files.preview.binaryFile', { size: formatSize(fileSize) }) }}</span>
                     <wa-button v-if="canDownload" size="small" @click="handleDownload">
                         <wa-icon slot="start" name="download"></wa-icon>
-                        Download
+                        {{ $t('files.actions.download') }}
                     </wa-button>
                 </template>
             </div>

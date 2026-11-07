@@ -11,9 +11,9 @@ const store = useDataStore()
             v-if="store.getSession(props.sessionId)?.ephemeralPhase === 'running'"
             size="small"
             @click="store.stopEphemeralSession(props.sessionId)"
-        ><wa-icon slot="start" name="stop"></wa-icon>Stop</wa-button>
+        ><wa-icon slot="start" name="stop"></wa-icon>{{ $t('session.process.stop') }}</wa-button>
         <wa-button size="small" variant="danger" appearance="outlined" @click="store.discardEphemeralSession(props.sessionId)">
-            <wa-icon slot="start" name="trash"></wa-icon>Discard
+            <wa-icon slot="start" name="trash"></wa-icon>{{ $t('session.actions.discard') }}
         </wa-button>
     </div>
 </template>

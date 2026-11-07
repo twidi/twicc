@@ -5,7 +5,7 @@ function review() { window.dispatchEvent(new CustomEvent('twicc:open-mcp-manager
 
 <template>
     <div>
-        <p>New OAuth requests are temporarily paused. Review the alert in MCP connections.</p>
-        <wa-button size="small" variant="brand" @click="review">Review</wa-button>
+        <p>{{ $t('mcp.securityToast.paused') }}</p>
+        <wa-button size="small" variant="brand" @click="review">{{ $t('mcp.manager.review') }}</wa-button>
     </div>
 </template>

@@ -82,7 +82,7 @@ function onAfterHide() {
 <template>
     <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details compact-summary-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <span slot="summary" class="items-details-summary">
-            <strong class="items-details-summary-name">Session compacted</strong>
+            <strong class="items-details-summary-name">{{ $t('session.items.compacted') }}</strong>
         </span>
         <div v-if="isOpen || isClosing()" class="compact-summary-body">
             <MarkdownContent v-if="hasContent" :source="content" speakable />

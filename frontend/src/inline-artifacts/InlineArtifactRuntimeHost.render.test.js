@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
+import { createAppI18n } from '../i18n/index.js'
 import { installInlineRuntimeHost } from './runtimeHost.js'
 import { frameClipPath } from '../utils/panelInsets.js'
 
@@ -89,6 +90,7 @@ function fixture(t, fullscreen = true, ready = false, hidden = false, openedInTa
         endDividerDrag: () => events.push('drag-end'), frameEl: () => iframe, frameOverlayEl: () => overlay,
         frames: Vue.reactive({ 'frame-a': { visible: !hidden, rect: entry.geometryRect, clipRect: entry.geometryClipRect } }) }
     const app = renderer.createApp({ render: () => Vue.h(Host, { runtime, pool }) })
+    app.use(createAppI18n())
     if (openedInTab) app.provide('viewFileInFilesTab', path => openedInTab.push(path))
     for (const tag of ['wa-button', 'wa-icon']) {
         app.component(tag, { inheritAttrs: false, render() { return Vue.h(tag, this.$attrs, this.$slots.default?.()) } })

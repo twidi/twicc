@@ -1220,7 +1220,7 @@ function onHide(event) {
 
 <template>
     <wa-dialog
-        ref="dialogRef" :open="open" label="Peer message"
+        ref="dialogRef" :open="open" :label="$t('peer.review.title')"
         style="--width: min(720px, calc(100vw - 2rem))"
         @wa-hide="onHide"
     >
@@ -1264,30 +1264,30 @@ function onHide(event) {
                     <template v-if="markdownState === 'loading' || markdownState === 'rendering'">
                         <span class="pr-content-state__status" role="status" aria-live="polite">
                             <wa-spinner></wa-spinner>
-                            {{ markdownState === 'rendering' ? 'Rendering message…' : 'Loading message…' }}
+                            {{ markdownState === 'rendering' ? $t('peer.review.rendering') : $t('peer.review.loading') }}
                         </span>
                     </template>
                     <template v-else-if="markdownState === 'confirm'">
-                        <span>This message is large ({{ textSizeLabel }}). Render it?</span>
+                        <span>{{ $t('peer.review.largeMessage', { size: textSizeLabel }) }}</span>
                         <span class="pr-content-state__actions">
                             <wa-button size="small" variant="brand" @click="renderCurrentMessage">
-                                Render message
+                                {{ $t('peer.review.render') }}
                             </wa-button>
                             <wa-button size="small" appearance="outlined" @click="declineMarkdown">
-                                Do not render
+                                {{ $t('peer.review.doNotRender') }}
                             </wa-button>
                         </span>
                     </template>
                     <template v-else-if="markdownState === 'declined'">
-                        <span>Message not rendered.</span>
+                        <span>{{ $t('peer.review.notRendered') }}</span>
                         <wa-button size="small" variant="brand" @click="renderCurrentMessage">
-                            Render message
+                            {{ $t('peer.review.render') }}
                         </wa-button>
                     </template>
                     <template v-else>
-                        <span>Could not render the message.</span>
+                        <span>{{ $t('peer.review.renderFailed') }}</span>
                         <wa-button size="small" variant="brand" @click="renderCurrentMessage">
-                            Try again
+                            {{ $t('peer.review.tryAgain') }}
                         </wa-button>
                     </template>
                 </div>
@@ -1303,36 +1303,36 @@ function onHide(event) {
                     <template v-if="attachmentsState === 'loading' || attachmentsState === 'unknown'">
                         <span class="pr-content-state__status" role="status" aria-live="polite">
                             <wa-spinner></wa-spinner>
-                            Loading attachments…
+                            {{ $t('peer.review.loadingAttachments') }}
                         </span>
                     </template>
                     <template v-else-if="attachmentsState === 'confirm'">
                         <span>{{ attachmentPrompt }}</span>
                         <span class="pr-content-state__actions">
                             <wa-button size="small" variant="brand" @click="loadMessageAttachments()">
-                                Load attachments
+                                {{ $t('peer.review.loadAttachments') }}
                             </wa-button>
                             <wa-button size="small" appearance="outlined" @click="declineAttachments">
-                                Do not load
+                                {{ $t('peer.review.doNotLoad') }}
                             </wa-button>
                         </span>
                     </template>
                     <template v-else-if="attachmentsState === 'declined'">
-                        <span>Attachments not loaded.</span>
+                        <span>{{ $t('peer.review.attachmentsNotLoaded') }}</span>
                         <wa-button size="small" variant="brand" @click="loadMessageAttachments()">
-                            Load attachments
+                            {{ $t('peer.review.loadAttachments') }}
                         </wa-button>
                     </template>
                     <template v-else-if="attachmentsState === 'error'">
-                        <span>Could not load attachments.</span>
+                        <span>{{ $t('peer.review.attachmentsFailed') }}</span>
                         <wa-button size="small" variant="brand" @click="loadMessageAttachments()">
-                            Try again
+                            {{ $t('peer.review.tryAgain') }}
                         </wa-button>
                     </template>
                 </div>
             </template>
             <p v-else-if="detail.purged && attachmentCount && !attachmentsLost" class="pr-purged">
-                {{ detail.attachments_meta.length }} attachment(s) — bytes purged.
+                {{ $t('peer.review.purgedAttachments', { count: detail.attachments_meta.length }, detail.attachments_meta.length) }}
             </p>
 
             <!-- Which message this one answers, then where it went / came
@@ -1367,20 +1367,21 @@ function onHide(event) {
                 >“{{ localRoute.display }}”</button>
                 <span v-else class="pr-route__title" :title="localRoute.title">“{{ localRoute.display }}”</span>
                 <template v-if="localRoute.projectId">
-                    <span class="pr-route__label">in</span>
-                    <ProjectBadge :project-id="localRoute.projectId" class="pr-route__project" />
+                    <i18n-t scope="global" keypath="peer.routing.inProject" tag="span" class="pr-route__label" style="display: contents">
+                        <template #project><ProjectBadge :project-id="localRoute.projectId" class="pr-route__project" /></template>
+                    </i18n-t>
                 </template>
                 <span v-if="localRoute.hint" class="pr-route__label">{{ localRoute.hint }}</span>
             </p>
             <p v-if="projectRoute" class="pr-route">
-                <span class="pr-route__label">In project</span>
-                <ProjectBadge :project-id="projectRoute.projectId" class="pr-route__project" />
-                <span class="pr-route__label">from the conversation</span>
+                <i18n-t scope="global" keypath="peer.review.projectFromConversation" tag="span" class="pr-route__label" style="display: contents">
+                    <template #project><ProjectBadge :project-id="projectRoute.projectId" class="pr-route__project" /></template>
+                </i18n-t>
             </p>
             <!-- Attach by hand: the same picker as the delivery ones. A
                  change saves at once — there is nothing else to confirm. -->
             <div v-if="canAttachProject" class="pr-route">
-                <span class="pr-route__label">{{ attachedProjectId ? 'In project' : 'Attach to a project' }}</span>
+                <span class="pr-route__label">{{ attachedProjectId ? $t('peer.review.inProjectLabel') : $t('peer.review.attachProject') }}</span>
                 <wa-select
                     size="small" class="pr-attach-project"
                     :value="attachedProjectId" :disabled="busy || attachingProject"
@@ -1393,13 +1394,12 @@ function onHide(event) {
                         :icon-url="attachedIconUrl"
                         :color="attachedDotColor"
                     />
-                    <wa-option value="">None</wa-option>
+                    <wa-option value="">{{ $t('peer.review.noProject') }}</wa-option>
                     <ProjectSelectOptions :projects="selectableProjects" include-worktrees />
                 </wa-select>
             </div>
             <wa-callout v-if="attachmentsLost" variant="warning" size="small">
-                Its {{ detail.attachments_meta.length }} attachment(s) were purged — a new delivery
-                carries the text only.
+                {{ $t('peer.review.lostAttachments', { count: detail.attachments_meta.length }, detail.attachments_meta.length) }}
             </wa-callout>
 
             <!-- Actions -->
@@ -1414,10 +1414,7 @@ function onHide(event) {
                     <!-- The current status concerns every action; what a
                          delivery does is explained with the delivery pickers. -->
                     <p v-if="isRedeliverable || isResolved" class="pr-explainer">
-                        <template v-if="isRedeliverable">This message was already delivered; delivering it
-                        again is allowed.</template><template v-else>This message was
-                        already {{ detail.status }}; it can still be delivered — the sender keeps the
-                        first answer it was told.</template>
+                        <template v-if="isRedeliverable">{{ $t('peer.review.alreadyDelivered') }}</template><template v-else>{{ $t('peer.review.alreadyResolved', { status: detail.status === 'done' ? $t('peer.review.doneStatus') : detail.status === 'refused' ? $t('peer.review.refusedStatus') : detail.status }) }}</template>
                     </p>
                 </template>
 
@@ -1427,12 +1424,12 @@ function onHide(event) {
                      asks for confirmation. Done and Refuse answer a pending
                      message only: the sender never learns a later answer. -->
                 <div class="pr-actions">
-                    <label class="pr-actions__label" for="pr-action-select">What's next?</label>
+                    <label class="pr-actions__label" for="pr-action-select">{{ $t('peer.review.nextAction') }}</label>
                     <div class="pr-actions__row">
                         <wa-select
                             id="pr-action-select" ref="actionSelectRef" :key="actionSelectKey"
                             size="small" class="pr-actions__select glass-listbox-direct"
-                            placeholder="Pick an action…"
+                            :placeholder="$t('peer.review.pickAction')"
                             :value="selectedAction" :disabled="busy"
                             @change="onActionChange"
                         >
@@ -1441,14 +1438,14 @@ function onHide(event) {
                                 value="existing" :disabled="!contentAllowsDelivery"
                             >
                                 <wa-icon slot="start" name="comments"></wa-icon>
-                                Deliver to an existing session
+                                {{ $t('peer.review.existingSession') }}
                             </wa-option>
                             <wa-option
                                 v-if="deliveryActionVisibility.delivery"
                                 value="new" :disabled="!contentAllowsDelivery"
                             >
                                 <wa-icon slot="start" name="plus"></wa-icon>
-                                Deliver to a new session
+                                {{ $t('peer.review.newSession') }}
                             </wa-option>
                             <wa-divider v-if="actionDividers.afterDelivery"></wa-divider>
                             <!-- Not gated on attachment loading: that gate
@@ -1456,13 +1453,13 @@ function onHide(event) {
                                  reaches none. -->
                             <wa-option v-if="deliveryActionVisibility.done" value="done">
                                 <wa-icon slot="start" name="check"></wa-icon>
-                                Mark as done without reply
+                                {{ $t('peer.review.markDone') }}
                             </wa-option>
                             <!-- Opens the direct composer, threaded on this
                                  message; resolves nothing by itself. -->
                             <wa-option v-if="canReply" value="reply">
                                 <wa-icon slot="start" name="reply"></wa-icon>
-                                Reply manually
+                                {{ $t('peer.review.replyManually') }}
                             </wa-option>
                             <wa-divider v-if="actionDividers.beforeRefusal"></wa-divider>
                             <wa-option
@@ -1470,7 +1467,7 @@ function onHide(event) {
                                 value="refuse" class="pr-actions__refuse"
                             >
                                 <wa-icon slot="start" name="ban"></wa-icon>
-                                Refuse this message
+                                {{ $t('peer.review.refuseMessage') }}
                             </wa-option>
                         </wa-select>
                         <span
@@ -1478,7 +1475,7 @@ function onHide(event) {
                             class="pr-actions__status" role="status" aria-live="polite"
                         >
                             <wa-spinner></wa-spinner>
-                            Marking…
+                            {{ $t('peer.review.marking') }}
                         </span>
                     </div>
                 </div>
@@ -1492,25 +1489,21 @@ function onHide(event) {
                          while picking an existing session. -->
                     <template v-if="mode === 'existing'">
                         <wa-callout v-if="showReplyTargetWarning" variant="warning" size="small">
-                            This message is part of a thread, but its session is not available for selection.
-                            Choose another session, or deliver to a new one.
+                            {{ $t('peer.review.threadUnavailable') }}
                         </wa-callout>
                         <p v-else-if="showDirectParentHint" class="pr-explainer">
-                            In reply to a message you wrote directly — no session to propose.
-                            Choose any session, or deliver to a new one.
+                            {{ $t('peer.review.directReplyHint') }}
                         </p>
                     </template>
                     <p class="pr-explainer">
-                        Delivering does not send anything: the message is placed in the chosen
-                        session's input (an existing one, or a new draft) — you review it, adjust it
-                        if needed, and send it yourself.
+                        {{ $t('peer.review.deliveryHint') }}
                     </p>
                     <div class="pr-note">
-                        <label class="pr-note__label" for="pr-note-input">Add a message for your agent (optional)</label>
+                        <label class="pr-note__label" for="pr-note-input">{{ $t('peer.review.agentNote') }}</label>
                         <wa-textarea
                             id="pr-note-input"
                             size="small" rows="2"
-                            placeholder="Delivered next to the peer's message, attributed to you"
+                            :placeholder="$t('peer.review.agentNotePlaceholder')"
                             :value="note"
                             @input="note = $event.target.value"
                         ></wa-textarea>
@@ -1522,19 +1515,21 @@ function onHide(event) {
                     class="pr-preparing" role="status" aria-live="polite"
                 >
                     <wa-spinner></wa-spinner>
-                    <span>Preparing session selection…</span>
+                    <span>{{ $t('peer.review.preparingSelection') }}</span>
                 </div>
 
                 <wa-callout v-if="confirmingRefuse" ref="refusePanelRef" variant="warning" size="small">
                     <div class="pr-confirm-body">
-                        <span>Refuse this message? The sender will see it as refused.</span>
+                        <span>{{ $t('peer.review.refuseConfirmation') }}</span>
                         <!-- A refusal carries no words. Rather than a reason
                              field nobody can answer, point at the reply that
                              already does it — and resolves the message in the
                              same gesture (its "Refuse it" choice). -->
                         <span v-if="canReply" class="pr-confirm__hint">
-                            To explain why, pick <strong>Reply manually</strong> in the action
-                            list above and choose <strong>Refuse it</strong> there.
+                            <i18n-t scope="global" keypath="peer.review.refuseWithExplanation">
+                                <template #reply><strong>{{ $t('peer.review.replyManually') }}</strong></template>
+                                <template #refuse><strong>{{ $t('peer.compose.refuse') }}</strong></template>
+                            </i18n-t>
                         </span>
                         <span class="pr-confirm__actions">
                             <wa-button
@@ -1543,12 +1538,12 @@ function onHide(event) {
                                 @click="refuse"
                             >
                                 <wa-spinner v-if="activeResolutionAction === 'refuse'" slot="start"></wa-spinner>
-                                {{ activeResolutionAction === 'refuse' ? 'Refusing…' : 'Refuse' }}
+                                {{ activeResolutionAction === 'refuse' ? $t('peer.review.refusing') : $t('peer.review.refuse') }}
                             </wa-button>
                             <wa-button
                                 size="small" appearance="outlined" :disabled="busy"
                                 @click="confirmingRefuse = false"
-                            >Keep</wa-button>
+                            >{{ $t('peer.review.keep') }}</wa-button>
                         </span>
                     </div>
                 </wa-callout>
@@ -1559,7 +1554,7 @@ function onHide(event) {
                     <div ref="newPanelRef" class="pr-new-session">
                         <wa-select
                             v-model="pickedProjectId"
-                            size="small" placeholder="Pick a project…"
+                            size="small" :placeholder="$t('peer.review.pickProject')"
                         >
                             <!-- The closed select shows the option's label as
                                  plain text: the picked project's mark rides
@@ -1588,7 +1583,7 @@ function onHide(event) {
                         >
                             <wa-spinner v-if="activeResolutionAction === 'new'" slot="start"></wa-spinner>
                             <wa-icon v-else name="pen-to-square" slot="start"></wa-icon>
-                            {{ activeResolutionAction === 'new' ? 'Delivering…' : 'Create draft session' }}
+                            {{ activeResolutionAction === 'new' ? $t('peer.review.delivering') : $t('peer.review.createSession') }}
                         </wa-button>
                     </div>
                     <wa-callout
@@ -1616,11 +1611,11 @@ function onHide(event) {
                             >
                                 <wa-spinner v-if="activeResolutionAction === 'existing'" slot="start"></wa-spinner>
                                 <wa-icon v-else name="pen-to-square" slot="start"></wa-icon>
-                                {{ activeResolutionAction === 'existing' ? 'Delivering…' : 'Create draft message' }}
+                                {{ activeResolutionAction === 'existing' ? $t('peer.review.delivering') : $t('peer.review.createMessage') }}
                             </wa-button>
                             <!-- Why the button is greyed: a click in the list only
                                  selects, and nothing is selected yet. -->
-                            <span v-if="!selectedSession" class="pr-existing-action__hint">(Pick a session first)</span>
+                            <span v-if="!selectedSession" class="pr-existing-action__hint">{{ $t('peer.review.pickSessionFirst') }}</span>
                         </div>
                         <wa-callout
                             v-if="existingSessionDeliveryState.error"
@@ -1650,7 +1645,7 @@ function onHide(event) {
                                 v-else-if="isWorkspaceProjectId(scopeId)" slot="start" name="layer-group"
                                 :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"
                             ></wa-icon>
-                            <wa-option :value="ALL_PROJECTS_ID">All projects</wa-option>
+                            <wa-option :value="ALL_PROJECTS_ID">{{ $t('peer.inbox.allProjects') }}</wa-option>
                             <wa-option v-if="activeWorkspace" :value="`workspace:${activeWorkspace.id}`" :label="activeWorkspace.name">
                                 <span class="pr-scope-workspace">
                                     <wa-icon name="layer-group" auto-width :style="activeWorkspace.color ? { color: activeWorkspace.color } : null"></wa-icon>
@@ -1670,7 +1665,7 @@ function onHide(event) {
                         <!-- `with-clear`: the same one-click reset as the
                              sidebar's filter, whose matching this reuses. -->
                         <wa-input
-                            size="small" placeholder="Filter sessions…" class="pr-picker-search"
+                            size="small" :placeholder="$t('peer.review.filterSessions')" class="pr-picker-search"
                             with-clear
                             :value="sessionFilter"
                             @input="sessionFilter = $event.target.value"
@@ -1698,21 +1693,21 @@ function onHide(event) {
                             class="pr-picker-more" role="status" aria-live="polite"
                         >
                             <wa-spinner></wa-spinner>
-                            Loading sessions…
+                            {{ $t('peer.review.loadingSessions') }}
                         </div>
                         <div v-else-if="scopeLoadError" class="pr-picker-more">
-                            Could not load sessions.
+                            {{ $t('peer.review.sessionsFailed') }}
                             <wa-button size="small" appearance="plain" @click="loadScopeSessions({ nextPage: true })">
-                                Try again
+                                {{ $t('peer.review.tryAgain') }}
                             </wa-button>
                         </div>
                         <template v-else>
-                            <p v-if="!sessionRows.length" class="pr-empty">No matching session.</p>
+                            <p v-if="!sessionRows.length" class="pr-empty">{{ $t('peer.review.noMatchingSession') }}</p>
                             <!-- Also reachable when the rows do not fill the
                                  list, where no scroll can reach the end. -->
                             <div v-if="scopeHasMoreSessions" class="pr-picker-more">
                                 <wa-button size="small" appearance="plain" @click="loadScopeSessions({ nextPage: true })">
-                                    Load more sessions
+                                    {{ $t('peer.review.loadMoreSessions') }}
                                 </wa-button>
                             </div>
                         </template>
@@ -1729,11 +1724,11 @@ function onHide(event) {
 
         <div v-else-if="!loadError" class="pr-dialog-loading" role="status" aria-live="polite">
             <wa-spinner></wa-spinner>
-            Loading message…
+            {{ $t('peer.review.loading') }}
         </div>
 
         <div slot="footer" class="pr-footer">
-            <wa-button :disabled="busy" @click="emit('close')">Close</wa-button>
+            <wa-button :disabled="busy" @click="emit('close')">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>
@@ -1855,7 +1850,7 @@ function onHide(event) {
     cursor: pointer;
 }
 .pr-route__title--link:hover { text-decoration: underline; }
-.pr-route__project { --project-badge-name-max-width: 20ch; }
+.pr-route__project { --project-badge-name-max-width: 20ch; color: var(--wa-color-text-normal); }
 .pr-attach-project { flex: 0 1 18rem; min-width: 12rem; }
 
 .pr-purged { color: var(--wa-color-text-quiet); font-size: 0.85rem; }

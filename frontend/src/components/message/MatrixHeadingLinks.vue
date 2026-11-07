@@ -21,14 +21,14 @@ function toggleMode() {
 
 <template>
     <button type="button" class="picker-mode-link" @click="toggleMode">
-        {{ taskStore.pickerMode === 'matrix' ? 'Show simple picker' : 'Show score matrix' }}
+        {{ taskStore.pickerMode === 'matrix' ? $t('session.agentSettings.picker.simple') : $t('session.agentSettings.picker.matrix') }}
     </button>
     <template v-if="taskStore.pickerMode === 'matrix'">
         <span v-if="settingsStore.isTouchDevice" class="matrix-heading-links-touch">
-            <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
+            <HelpTextLink help-key="model-effort-score" :label="$t('session.agentSettings.picker.numbersHelp')" />
         </span>
         <span v-else class="matrix-heading-links">
-            <HelpTextLink help-key="model-effort-score" label="What are those numbers?" />
+            <HelpTextLink help-key="model-effort-score" :label="$t('session.agentSettings.picker.numbersHelp')" />
             <HoverDetailsToggle />
         </span>
     </template>

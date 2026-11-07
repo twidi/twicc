@@ -58,9 +58,11 @@ onMounted(() => {
         <div class="share-doc-scroll">
             <div class="share-doc-body">
                 <wa-callout v-if="updated" variant="brand" class="share-banner">
-                    This artifact was updated — <a href="#" @click.prevent="location.reload()">Reload</a>
+                    <i18n-t scope="global" keypath="sharing.document.updated">
+                        <template #reload><a href="#" @click.prevent="location.reload()">{{ $t('sharing.actions.reload') }}</a></template>
+                    </i18n-t>
                 </wa-callout>
-                <wa-callout v-if="error" variant="danger">This document is not available.</wa-callout>
+                <wa-callout v-if="error" variant="danger">{{ $t('sharing.document.unavailable') }}</wa-callout>
                 <MarkdownContent v-else :source="source" :show-toolbar="false"
                                  :class="{ 'doc-image': docKind === 'image' }" />
             </div>

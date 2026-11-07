@@ -162,7 +162,7 @@ function onPromptAfterHide() {
             @wa-after-hide="onPromptAfterHide"
         >
             <span slot="summary" class="items-details-summary">
-                <strong class="items-details-summary-name">Image prompt</strong>
+                <strong class="items-details-summary-name">{{ $t('session.tools.image.prompt') }}</strong>
             </span>
             <div v-if="isPromptOpen || isClosing()" class="image-generation-prompt-body">
                 <MarkdownContent :source="promptMarkdown" :show-toolbar="false" />
@@ -173,7 +173,7 @@ function onPromptAfterHide() {
             <span class="image-generation-path-text">{{ savedPath }}</span>
         </div>
         <div v-if="transparentBackground !== null" class="image-generation-metadata">
-            Transparent background: {{ transparentBackground ? 'yes' : 'no' }}
+            {{ transparentBackground ? $t('session.tools.image.transparent') : $t('session.tools.image.opaque') }}
         </div>
         <wa-callout v-if="failureText" variant="danger">
             <wa-icon slot="icon" name="circle-exclamation"></wa-icon>

@@ -80,7 +80,7 @@ function onAfterHide() {
 <template>
     <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details unknown-entry" icon-placement="start" @wa-show="onShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <span slot="summary" class="items-details-summary">
-            <strong class="items-details-summary-name">Unhandled event</strong>
+            <strong class="items-details-summary-name">{{ $t('session.items.unhandledEvent') }}</strong>
             <span class="items-details-summary-separator"> — </span>
             <span class="items-details-summary-description">{{ type }}<template v-if="subType"> ({{ subType }})</template></span>
         </span>
@@ -95,7 +95,7 @@ function onAfterHide() {
                 />
             </div>
             <div v-else class="unknown-no-data">
-                No data available
+                {{ $t('session.items.noData') }}
             </div>
         </template>
     </wa-details>

@@ -39,12 +39,12 @@ function onWheel(event) {
 
 <template>
     <div class="chat-nav-toolbar" @wheel="onWheel">
-        <wa-button-group orientation="vertical" label="Navigate the conversation">
+        <wa-button-group orientation="vertical" :label="$t('session.chatNavigation.label')">
             <wa-button
                 size="small"
                 variant="neutral"
                 appearance="filled"
-                title="Go to the first message"
+                :title="$t('session.chatNavigation.first')"
                 :disabled="!canGoTop"
                 @click="emit('top')"
             >
@@ -54,7 +54,7 @@ function onWheel(event) {
                 size="small"
                 variant="neutral"
                 appearance="filled"
-                title="Previous message block"
+                :title="$t('session.chatNavigation.previous')"
                 :disabled="!canGoPrev"
                 @click="emit('prev')"
             >
@@ -64,7 +64,7 @@ function onWheel(event) {
                 size="small"
                 variant="neutral"
                 appearance="filled"
-                title="Next message block"
+                :title="$t('session.chatNavigation.next')"
                 :disabled="!canGoNext"
                 @click="emit('next')"
             >
@@ -74,7 +74,7 @@ function onWheel(event) {
                 size="small"
                 variant="neutral"
                 appearance="filled"
-                title="Go to the last message"
+                :title="$t('session.chatNavigation.last')"
                 :disabled="!canGoBottom"
                 @click="emit('bottom')"
             >

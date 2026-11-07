@@ -101,7 +101,7 @@ async function act(action) {
     >
         <div slot="label" class="mcp-dialog-title">
             <span>{{ title }}</span>
-            <HelpFeatureLink help-key="external-mcp" label="What is external MCP?" />
+            <HelpFeatureLink help-key="external-mcp" :label="$t('mcp.connection.help')" />
         </div>
 
         <form :id="formId" class="mcp-detail" @submit.prevent="act(review ? 'approve' : 'rename')">
@@ -113,55 +113,56 @@ async function act(action) {
 
             <template v-if="review">
                 <wa-callout variant="warning" size="small">
-                    <strong>Full access.</strong>
-                    This connection can read and change your TwiCC data, send messages,
-                    and manage sessions and shares.
+                    <i18n-t keypath="mcp.connection.accessWarning" scope="global">
+                        <template #access><strong>{{ $t('mcp.connection.fullAccess') }}</strong></template>
+                    </i18n-t>
                 </wa-callout>
                 <wa-input
                     ref="firstInput" class="mcp-detail__code"
-                    label="Verification code from the connecting browser"
+                    :label="$t('mcp.connection.verificationCode')"
                     :value="code" @input="code = $event.target.value"
                     required maxlength="8"
                     autocomplete="off" autocapitalize="characters" spellcheck="false"
                 ></wa-input>
-                <wa-input
-                    label="Connection name (optional)" placeholder="ChatGPT" :hint="nameHint"
+                <!-- ChatGPT is the unchanged product name used as a connection-name example. -->
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -->
+                <wa-input :label="$t('mcp.connection.name')" placeholder="ChatGPT" :hint="nameHint"
                     :value="name" @input="name = $event.target.value" :maxlength="NAME_MAX_CHARS"
                 ></wa-input>
             </template>
             <wa-input
                 v-else ref="firstInput"
-                label="Connection name (optional)" placeholder="External MCP" :hint="nameHint"
+                :label="$t('mcp.connection.name')" :placeholder="$t('mcp.connection.externalPlaceholder')" :hint="nameHint"
                 :value="name" @input="name = $event.target.value" :maxlength="NAME_MAX_CHARS"
                 :disabled="entry.revoked"
             ></wa-input>
 
             <dl class="mcp-detail__facts">
                 <template v-if="!review">
-                    <dt>Status</dt><dd>{{ status }}</dd>
-                    <dt>Created</dt><dd>{{ moment(entry.created_at) }}</dd>
-                    <dt>Last used</dt><dd>{{ entry.last_used_at ? moment(entry.last_used_at) : 'Not yet used' }}</dd>
+                    <dt>{{ $t('mcp.connection.status') }}</dt><dd>{{ status }}</dd>
+                    <dt>{{ $t('mcp.connection.created') }}</dt><dd>{{ moment(entry.created_at) }}</dd>
+                    <dt>{{ $t('mcp.connection.lastUsed') }}</dt><dd>{{ entry.last_used_at ? moment(entry.last_used_at) : $t('mcp.connection.notUsed') }}</dd>
                 </template>
-                <dt>Client ID</dt><dd class="mcp-detail__identifier">{{ entry.client_id }}</dd>
+                <dt>{{ $t('mcp.connection.clientId') }}</dt><dd class="mcp-detail__identifier">{{ entry.client_id }}</dd>
                 <template v-if="review">
-                    <dt>Redirect URL</dt><dd class="mcp-detail__identifier">{{ entry.redirect_uri }}</dd>
-                    <dt>Requested</dt><dd>{{ moment(entry.created_at) }}</dd>
-                    <dt>Expires</dt><dd>{{ moment(entry.expires_at) }}</dd>
+                    <dt>{{ $t('mcp.connection.redirectUrl') }}</dt><dd class="mcp-detail__identifier">{{ entry.redirect_uri }}</dd>
+                    <dt>{{ $t('mcp.connection.requested') }}</dt><dd>{{ moment(entry.created_at) }}</dd>
+                    <dt>{{ $t('mcp.connection.expires') }}</dt><dd>{{ moment(entry.expires_at) }}</dd>
                 </template>
             </dl>
         </form>
 
         <div slot="footer" class="mcp-detail__actions">
-            <wa-button variant="neutral" appearance="outlined" @click="visible = false">Close</wa-button>
+            <wa-button variant="neutral" appearance="outlined" @click="visible = false">{{ $t('common.actions.close') }}</wa-button>
             <wa-button v-if="review" variant="danger" appearance="outlined" :disabled="busy" @click="act('refuse')">
-                Refuse
+                {{ $t('mcp.connection.refuse') }}
             </wa-button>
             <wa-button
                 v-else-if="!entry.revoked"
                 variant="danger" appearance="outlined" :disabled="busy" @click="act('revoke')"
-            >Revoke</wa-button>
+            >{{ $t('mcp.connection.revoke') }}</wa-button>
             <wa-button v-if="review || !entry.revoked" ref="submitButton" type="submit" variant="brand" :disabled="busy">
-                {{ review ? 'Authorize' : 'Apply' }}
+                {{ review ? $t('mcp.connection.authorize') : $t('common.actions.apply') }}
             </wa-button>
         </div>
     </wa-dialog>

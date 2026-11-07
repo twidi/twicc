@@ -54,13 +54,13 @@ function onSelect(event) {
             appearance="plain"
             size="small"
             class="placement-trigger"
-            title="Place this tab"
-            aria-label="Place this tab"
+            :title="$t('session.layout.placeTab')"
+            :aria-label="$t('session.layout.placeTab')"
         >
             <wa-icon name="chevron-down"></wa-icon>
         </wa-button>
 
-        <wa-dropdown-item disabled class="placement-header">Tab placement</wa-dropdown-item>
+        <wa-dropdown-item disabled class="placement-header">{{ $t('session.layout.tabPlacement') }}</wa-dropdown-item>
         <wa-divider></wa-divider>
         <wa-dropdown-item
             v-for="opt in options"

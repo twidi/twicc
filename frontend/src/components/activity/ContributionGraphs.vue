@@ -209,7 +209,7 @@ useStartupPolling(refreshDailyActivity)
                 slot="start"
                 :provider="selectedProvider"
             />
-            <wa-option value="all" label="All providers">All providers</wa-option>
+            <wa-option value="all" :label="$t('activity.providers.all')">{{ $t('activity.providers.all') }}</wa-option>
             <wa-option
                 v-for="option in providerOptions"
                 :key="option.value"
@@ -233,13 +233,13 @@ useStartupPolling(refreshDailyActivity)
                 class="view-toggle-label"
                 :class="{ active: !isSparkline }"
                 @click="onHeatmapLabelClick"
-            >Heatmap</span>
+            >{{ $t('activity.graph.heatmap') }}</span>
             <wa-switch
                 ref="viewSwitchRef"
                 size="small"
                 :checked="isSparkline"
                 @change="onViewModeChange"
-            ><span class="view-toggle-label" :class="{ active: isSparkline }">Graph</span></wa-switch>
+            ><span class="view-toggle-label" :class="{ active: isSparkline }">{{ $t('activity.graph.graph') }}</span></wa-switch>
         </div>
 
         <!-- Separate / Combined switch (only visible in graph mode) -->
@@ -248,13 +248,13 @@ useStartupPolling(refreshDailyActivity)
                 class="view-toggle-label"
                 :class="{ active: !isCombined }"
                 @click="onSeparateLabelClick"
-            >Separate</span>
+            >{{ $t('activity.graph.separate') }}</span>
             <wa-switch
                 ref="combinedSwitchRef"
                 size="small"
                 :checked="isCombined"
                 @change="onCombinedModeChange"
-            ><span class="view-toggle-label" :class="{ active: isCombined }">Combined</span></wa-switch>
+            ><span class="view-toggle-label" :class="{ active: isCombined }">{{ $t('activity.graph.combined') }}</span></wa-switch>
         </div>
 
         <!-- Granularity slider (only visible in graph mode) -->

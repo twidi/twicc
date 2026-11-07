@@ -213,7 +213,7 @@ watch(() => props.items, (items) => {
                     >
                         <wa-icon name="rotate-right"></wa-icon>
                     </button>
-                    <AppTooltip :for="entry.retryId">Retry</AppTooltip>
+                    <AppTooltip :for="entry.retryId">{{ $t('common.actions.retry') }}</AppTooltip>
                 </template>
                 <button
                     :id="entry.removeId"
@@ -225,7 +225,7 @@ watch(() => props.items, (items) => {
                 >
                     <wa-icon name="xmark"></wa-icon>
                 </button>
-                <AppTooltip :for="entry.removeId">Remove</AppTooltip>
+                <AppTooltip :for="entry.removeId">{{ $t('media.attachments.remove') }}</AppTooltip>
             </template>
         </li>
     </ol>

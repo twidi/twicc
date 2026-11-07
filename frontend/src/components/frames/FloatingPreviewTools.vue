@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
                     class="preview-action-btn preview-tools-btn floating-over-text"
                     :class="{ 'preview-action-btn--active': previewActionsExpanded }"
                     size="small" variant="neutral" appearance="filled"
-                    :aria-label="previewActionsExpanded ? 'Hide tools' : 'Tools'"
+                    :aria-label="previewActionsExpanded ? $t('preview.tools.hide') : $t('preview.tools.title')"
                     :aria-expanded="previewActionsExpanded"
                     @click="onToolsClick"
                     @pointerdown="onToolsPointerDown"
@@ -249,7 +249,7 @@ onBeforeUnmount(() => {
                 <span v-if="!previewActionsExpanded && modeActive" class="preview-tools-dot"></span>
             </span>
             <AppTooltip :for="previewToolsButtonId" :placement="previewTooltipPlacement">
-                {{ previewActionsExpanded ? 'Hide tools' : 'Tools' }}
+                {{ previewActionsExpanded ? $t('preview.tools.hide') : $t('preview.tools.title') }}
             </AppTooltip>
         </template>
         <div v-if="!previewActionsCollapsible || previewActionsExpanded" class="preview-actions-list"

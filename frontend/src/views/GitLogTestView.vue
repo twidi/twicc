@@ -114,12 +114,12 @@ const displayedCommitLabel = computed(() => {
     <div class="gitlog-test-view" :class="{ dark: isDark }">
         <!-- Toolbar -->
         <header class="toolbar">
-            <span class="toolbar-title">GitLog Test</span>
+            <span class="toolbar-title">{{ $t('git.test.title') }}</span>
             <input
                 v-model="filterText"
                 type="text"
                 class="control-input"
-                placeholder="Filter commits..."
+                :placeholder="$t('git.test.filterPlaceholder')"
             />
             <select v-model="selectedPalette" class="control-select control-select--palette">
                 <option
@@ -132,7 +132,7 @@ const displayedCommitLabel = computed(() => {
             </select>
             <div class="sizing-group">
                 <label class="toggle">
-                    <span>Font {{ fontSize }}px</span>
+                    <span>{{ $t('git.test.fontSize', { size: fontSize }) }}</span>
                     <input
                         v-model.number="fontSize"
                         type="range"
@@ -141,7 +141,7 @@ const displayedCommitLabel = computed(() => {
                     />
                 </label>
                 <label class="toggle">
-                    <span>Node</span>
+                    <span>{{ $t('git.test.node') }}</span>
                     <input
                         v-model.number="nodeSize"
                         type="number"
@@ -151,7 +151,7 @@ const displayedCommitLabel = computed(() => {
                     />
                 </label>
                 <label class="toggle">
-                    <span>Row H</span>
+                    <span>{{ $t('git.test.rowHeight') }}</span>
                     <input
                         v-model.number="rowHeight"
                         type="number"
@@ -161,7 +161,7 @@ const displayedCommitLabel = computed(() => {
                     />
                 </label>
                 <label class="toggle">
-                    <span>Col W</span>
+                    <span>{{ $t('git.test.columnWidth') }}</span>
                     <input
                         v-model.number="graphColumnWidth"
                         type="number"
@@ -182,11 +182,11 @@ const displayedCommitLabel = computed(() => {
             </div>
             <label class="toggle">
                 <input type="checkbox" v-model="isDark" />
-                <span>Dark</span>
+                <span>{{ $t('settings.general.colorScheme.dark') }}</span>
             </label>
             <label class="toggle">
                 <input type="checkbox" v-model="isFlipped" />
-                <span>Flipped</span>
+                <span>{{ $t('git.test.flipped') }}</span>
             </label>
         </header>
 
@@ -236,15 +236,15 @@ const displayedCommitLabel = computed(() => {
             </div>
             <div class="commit-detail-body">
                 <div class="commit-detail-row">
-                    <span class="commit-detail-key">Message</span>
+                    <span class="commit-detail-key">{{ $t('git.test.message') }}</span>
                     <span class="commit-detail-value">{{ displayedCommit.message }}</span>
                 </div>
                 <div class="commit-detail-row">
-                    <span class="commit-detail-key">Branch</span>
+                    <span class="commit-detail-key">{{ $t('git.test.branch') }}</span>
                     <span class="commit-detail-value">{{ displayedCommit.branch }}</span>
                 </div>
                 <div v-if="displayedCommit.author" class="commit-detail-row">
-                    <span class="commit-detail-key">Author</span>
+                    <span class="commit-detail-key">{{ $t('git.test.author') }}</span>
                     <span class="commit-detail-value">
                         {{ displayedCommit.author.name }}
                         <span v-if="displayedCommit.author.email" class="commit-detail-email">
@@ -253,11 +253,11 @@ const displayedCommitLabel = computed(() => {
                     </span>
                 </div>
                 <div class="commit-detail-row">
-                    <span class="commit-detail-key">Date</span>
+                    <span class="commit-detail-key">{{ $t('git.test.date') }}</span>
                     <span class="commit-detail-value">{{ displayedCommit.committerDate }}</span>
                 </div>
                 <div v-if="displayedCommit.parents?.length" class="commit-detail-row">
-                    <span class="commit-detail-key">Parents</span>
+                    <span class="commit-detail-key">{{ $t('git.test.parents') }}</span>
                     <span class="commit-detail-value">
                         <code v-for="p in displayedCommit.parents" :key="p" class="commit-detail-parent">{{ p }}</code>
                     </span>

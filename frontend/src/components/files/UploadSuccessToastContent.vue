@@ -41,7 +41,7 @@ async function copyPath() {
         <div class="upload-toast-actions">
             <wa-button size="small" variant="brand" appearance="outlined" @click="copyPath">
                 <wa-icon slot="start" name="copy"></wa-icon>
-                Copy path
+                {{ $t('files.actions.copyPath') }}
             </wa-button>
         </div>
     </div>

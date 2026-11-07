@@ -5,6 +5,7 @@
 // also compiled with @vue/compiler-sfc: a source pin cannot catch a selector Vue rewrites.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -235,13 +236,16 @@ test('6. TaskPane: template shape, progress header, computed (§6)', () => {
     assert.ok(elseAt >= 0 && headerAt > elseAt && scrollAt > headerAt, 'header v-if sits inside the template, before the scroll')
     assert.ok(flat.includes('<div v-if="progress.total > 0" class="task-progress">'), 'the header div')
     const label = flat.match(/<span class="task-progress-label">([^<]*)<\/span>/)
-    assert.equal(label[1], '{{ progress.done }} of {{ progress.total }} done')
+    assert.equal(label[1], "{{ $t('session.tasks.progress', { done: progress.done, total: progress.total }) }}")
+    const { t } = createAppI18n().global
+    assert.equal(t('session.tasks.progress', { done: 3, total: 5 }), '3 of 5 done')
     const track = attrsOf(openingTags(template, 'div').find((t) => t.includes('task-progress-track')))
     assert.equal(track.role, 'progressbar')
     assert.equal(track[':aria-valuemin'], '0')
     assert.equal(track[':aria-valuemax'], 'progress.total')
     assert.equal(track[':aria-valuenow'], 'progress.done')
-    assert.equal(track['aria-label'], 'Tasks done')
+    assert.equal(track[':aria-label'], "$t('session.tasks.doneLabel')")
+    assert.equal(t('session.tasks.doneLabel'), 'Tasks done')
     const fill = attrsOf(openingTags(template, 'div').find((t) => t.includes('task-progress-fill')))
     assert.equal(fill[':style'], "{ width: progress.percent + '%' }")
     const todoTag = attrsOf(openingTags(template, 'TodoContent')[0])

@@ -41,7 +41,7 @@ const iconId = `project-missing-dir-${useId()}`
         class="missing-directory-icon"
     ></wa-icon>
     <AppTooltip v-if="missing" :for="iconId" hoist>
-        Directory not found on disk. TwiCC recorded this at its last check; a restored folder is not detected live.
+        {{ $t('project.missingDirectory.tooltip') }}
     </AppTooltip>
 </template>
 

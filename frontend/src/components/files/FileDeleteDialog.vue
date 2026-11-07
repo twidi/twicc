@@ -75,12 +75,13 @@ defineExpose({ open, close })
     >
         <div class="dialog-content">
             <p class="confirm-message">
-                Are you sure you want to delete
-                <strong>{{ targetName }}</strong>?
+                <i18n-t keypath="files.delete.confirm" scope="global">
+                    <template #name><strong>{{ targetName }}</strong></template>
+                </i18n-t>
             </p>
             <p v-if="nodeType === 'directory'" class="warning-message">
                 <wa-icon name="triangle-exclamation"></wa-icon>
-                This will permanently delete the directory and all its contents.
+                {{ $t('files.delete.directoryWarning') }}
             </p>
             <wa-callout v-if="errorMessage" variant="danger" size="small">
                 {{ errorMessage }}
@@ -88,11 +89,11 @@ defineExpose({ open, close })
         </div>
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isDeleting">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button variant="danger" :disabled="isDeleting" @click="handleDelete">
                 <wa-spinner v-if="isDeleting" slot="start"></wa-spinner>
-                Delete
+                {{ $t('common.actions.delete') }}
             </wa-button>
         </div>
     </wa-dialog>

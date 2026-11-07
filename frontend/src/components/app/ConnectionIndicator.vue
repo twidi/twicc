@@ -12,10 +12,10 @@ const props = defineProps({
 })
 
 const statusConfig = {
-    OPEN: { label: 'Connected', color: 'var(--wa-color-success)' },
-    CONNECTING: { label: 'Connecting...', color: 'var(--wa-color-warning)' },
-    CLOSING: { label: 'Disconnecting...', color: 'var(--wa-color-warning)' },
-    CLOSED: { label: 'Disconnected', color: 'var(--wa-color-danger)' }
+    OPEN: { label: 'app.connection.connected', color: 'var(--wa-color-success)' },
+    CONNECTING: { label: 'app.connection.connecting', color: 'var(--wa-color-warning)' },
+    CLOSING: { label: 'app.connection.disconnecting', color: 'var(--wa-color-warning)' },
+    CLOSED: { label: 'app.connection.disconnected', color: 'var(--wa-color-danger)' }
 }
 
 const config = computed(() => {
@@ -25,7 +25,7 @@ const config = computed(() => {
     // to suppress auto "mark as read" on an unattended device) is working. Other
     // states keep their own color.
     if (props.status === 'OPEN' && !localPresence.value) {
-        return { label: `${base.label} (Away)`, color: 'var(--wa-color-blue-60)' }
+        return { label: 'app.connection.away', color: 'var(--wa-color-blue-60)' }
     }
     return base
 })
@@ -35,7 +35,7 @@ const config = computed(() => {
     <div id="connection-indicator" class="connection-indicator">
         <span class="indicator-dot" :style="{ backgroundColor: config.color }"></span>
     </div>
-    <AppTooltip for="connection-indicator">WebSocket: {{ config.label }}</AppTooltip>
+    <AppTooltip for="connection-indicator">{{ $t(config.label) }}</AppTooltip>
 </template>
 
 <style scoped>

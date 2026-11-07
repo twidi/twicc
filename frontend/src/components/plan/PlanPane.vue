@@ -256,7 +256,7 @@ defineExpose({ reload: () => filePaneRef.value?.reload() })
             />
             <div v-else class="plan-state">
                 <wa-icon name="file-circle-question"></wa-icon>
-                <span>No plan document selected</span>
+                <span>{{ $t('session.plan.noDocument') }}</span>
             </div>
         </div>
     </div>

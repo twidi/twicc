@@ -24,7 +24,7 @@ const agentLabel = (id) => {
             <header class="subagent-head">
                 <nav class="crumbs">
                     <span v-for="(id, i) in stack" :key="id" class="crumb">
-                        Agent "{{ agentLabel(id) }}"<span v-if="i < stack.length - 1"> ›</span>
+                        {{ $t('sharing.session.agentLabel', { agent: agentLabel(id) }) }}<span v-if="i < stack.length - 1"> ›</span>
                     </span>
                 </nav>
                 <wa-button size="small" appearance="plain" @click="emit('close')">

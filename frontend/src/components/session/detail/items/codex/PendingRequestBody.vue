@@ -275,25 +275,25 @@ onBeforeUnmount(() => {
                          original chip-first layout (renderAsCommand is false). -->
                     <div v-if="renderAsCommand" class="codex-pending-summary">
                         <span class="codex-summary-label">
-                            {{ providerLabel }} wants to run a command
+                            {{ $t('session.approval.runCommand', { provider: providerLabel }) }}
                         </span>
                     </div>
                     <!-- action chips first, at-a-glance summary -->
                     <div v-if="commandActions.length" class="codex-action-chips">
                         <wa-badge v-if="groupedActions.read.length" variant="neutral">
-                            Read
+                            {{ $t('session.tools.read') }}
                             <span v-if="groupedActions.read.length > 1" class="codex-chip-count">{{ groupedActions.read.length }}</span>
                         </wa-badge>
                         <wa-badge v-if="groupedActions.listFiles.length" variant="neutral">
-                            List files
+                            {{ $t('session.tools.listFiles') }}
                             <span v-if="groupedActions.listFiles.length > 1" class="codex-chip-count">{{ groupedActions.listFiles.length }}</span>
                         </wa-badge>
                         <wa-badge v-if="groupedActions.search.length" variant="neutral">
-                            Grep
+                            {{ $t('session.tools.grep') }}
                             <span v-if="groupedActions.search.length > 1" class="codex-chip-count">{{ groupedActions.search.length }}</span>
                         </wa-badge>
                         <wa-badge v-if="groupedActions.unknown.length" variant="neutral">
-                            Shell
+                            {{ $t('session.tools.shell') }}
                             <span v-if="groupedActions.unknown.length > 1" class="codex-chip-count">{{ groupedActions.unknown.length }}</span>
                         </wa-badge>
                     </div>
@@ -304,7 +304,7 @@ onBeforeUnmount(() => {
                     </div>
                     <!-- detail sections: Read -->
                     <div v-if="groupedActions.read.length" class="codex-pending-section-block">
-                        <span class="codex-summary-label">Read</span>
+                        <span class="codex-summary-label">{{ $t('session.tools.read') }}</span>
                         <ul class="codex-action-detail-list">
                             <li v-for="(action, idx) in groupedActions.read" :key="idx">
                                 <img
@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
                     </div>
                     <!-- detail sections: List files -->
                     <div v-if="groupedActions.listFiles.length" class="codex-pending-section-block">
-                        <span class="codex-summary-label">List files</span>
+                        <span class="codex-summary-label">{{ $t('session.tools.listFiles') }}</span>
                         <ul class="codex-action-detail-list">
                             <li v-for="(action, idx) in groupedActions.listFiles" :key="idx">
                                 <img
@@ -334,37 +334,40 @@ onBeforeUnmount(() => {
                     </div>
                     <!-- detail sections: Grep -->
                     <div v-if="groupedActions.search.length" class="codex-pending-section-block">
-                        <span class="codex-summary-label">Grep</span>
+                        <span class="codex-summary-label">{{ $t('session.tools.grep') }}</span>
                         <ul class="codex-action-detail-list">
                             <li v-for="(action, idx) in groupedActions.search" :key="idx">
-                                <code class="codex-search-query">{{ action.query || '(no query)' }}</code>
-                                <span v-if="action.path">in</span>
-                                <img
-                                    v-if="action.path && fileIconFor(action.path)"
-                                    :src="fileIconFor(action.path)"
-                                    alt=""
-                                    class="codex-file-icon"
-                                >
-                                <code v-if="action.path" class="codex-file-path">{{ action.path }}</code>
+                                <i18n-t v-if="action.path" keypath="session.approval.searchInPath" scope="global">
+                                    <template #query><code class="codex-search-query">{{ action.query || $t('session.approval.noQuery') }}</code></template>
+                                    <template #path>
+                                        <img
+                                            v-if="fileIconFor(action.path)"
+                                            :src="fileIconFor(action.path)"
+                                            alt=""
+                                            class="codex-file-icon"
+                                        >
+                                        <code class="codex-file-path">{{ action.path }}</code>
+                                    </template>
+                                </i18n-t>
+                                <code v-else class="codex-search-query">{{ action.query || $t('session.approval.noQuery') }}</code>
                             </li>
                         </ul>
                     </div>
                     <!-- command and cwd last -->
                     <div class="codex-pending-summary">
-                        <span class="codex-summary-label">Command</span>
+                        <span class="codex-summary-label">{{ $t('session.tools.command') }}</span>
                         <code class="codex-summary-code">{{ command }}</code>
                     </div>
                     <div v-if="cwd" class="codex-pending-summary">
-                        <span class="codex-summary-label">cwd</span>
+                        <span class="codex-summary-label">{{ $t('session.tools.workingDirectory') }}</span>
                         <code class="codex-summary-code">{{ cwd }}</code>
                     </div>
                     <div v-if="networkApprovalContext" class="codex-pending-network">
                         <wa-icon name="globe" variant="classic"></wa-icon>
-                        <span>
-                            Wants network access to
-                            <code>{{ networkApprovalContext.host }}</code>
-                            via {{ networkApprovalContext.protocol || 'unknown' }}
-                        </span>
+                        <i18n-t tag="span" keypath="session.approval.networkAccess" scope="global">
+                            <template #host><code>{{ networkApprovalContext.host }}</code></template>
+                            <template #protocol>{{ networkApprovalContext.protocol || $t('session.approval.unknownProtocol') }}</template>
+                        </i18n-t>
                     </div>
                 </div>
             </template>
@@ -379,7 +382,7 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="codex-pending-summary">
                         <span class="codex-summary-label">
-                            {{ providerLabel }} wants to modify {{ fileChanges.length }} file{{ fileChanges.length === 1 ? '' : 's' }}
+                            {{ $t('session.approval.modifyFiles', { provider: providerLabel, count: fileChanges.length }, fileChanges.length) }}
                         </span>
                     </div>
                     <ul v-if="fileChanges.length" class="codex-file-list">
@@ -409,7 +412,7 @@ onBeforeUnmount(() => {
                         <span>{{ reason }}</span>
                     </div>
                     <div class="codex-pending-summary">
-                        <span class="codex-summary-label">Requests additional permissions</span>
+                        <span class="codex-summary-label">{{ $t('session.approval.additionalPermissions') }}</span>
                     </div>
                     <ul class="codex-permission-list">
                         <li v-for="(value, key) in requestedPermissions" :key="key" class="codex-permission-row">
@@ -422,7 +425,7 @@ onBeforeUnmount(() => {
 
             <!-- Unknown tool_name safety net -->
             <template v-else>
-                <div class="codex-pending-section"><em>Unknown tool_name: {{ toolName }}</em></div>
+                <div class="codex-pending-section"><em>{{ $t('session.approval.unknownTool', { tool: toolName }) }}</em></div>
             </template>
 
             <!-- Shared action row. -->
@@ -436,9 +439,9 @@ onBeforeUnmount(() => {
                     @click="handleDeny"
                 >
                     <wa-icon slot="start" name="xmark" variant="classic"></wa-icon>
-                    Deny
+                    {{ $t('session.approval.deny') }}
                 </wa-button>
-                <AppTooltip :for="denyButtonId">Refuse this action. Codex may try another approach.</AppTooltip>
+                <AppTooltip :for="denyButtonId">{{ $t('session.approval.denyHint') }}</AppTooltip>
                 <wa-button
                     v-if="supportsCancelTurn"
                     :id="cancelTurnButtonId"
@@ -449,10 +452,10 @@ onBeforeUnmount(() => {
                     @click="handleCancelTurn"
                 >
                     <wa-icon slot="start" name="stop" variant="classic"></wa-icon>
-                    Cancel turn
+                    {{ $t('session.approval.cancelTurn') }}
                 </wa-button>
-                <AppTooltip v-if="supportsCancelTurn" :for="cancelTurnButtonId">End this turn. Codex returns control to you. Different from Stop (which kills the agent).</AppTooltip>
-                <wa-button-group label="Approve">
+                <AppTooltip v-if="supportsCancelTurn" :for="cancelTurnButtonId">{{ $t('session.approval.cancelTurnHint') }}</AppTooltip>
+                <wa-button-group :label="$t('session.approval.approve')">
                     <wa-button
                         :id="approveButtonId"
                         ref="approveButtonRef"
@@ -463,9 +466,9 @@ onBeforeUnmount(() => {
                         @click="emitApprove('once')"
                     >
                         <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                        Approve
+                        {{ $t('session.approval.approve') }}
                     </wa-button>
-                    <AppTooltip :for="approveButtonId">Approve this action.</AppTooltip>
+                    <AppTooltip :for="approveButtonId">{{ $t('session.approval.approveHint') }}</AppTooltip>
                     <wa-dropdown placement="top-end">
                         <wa-button
                             :id="approveMenuId"
@@ -474,54 +477,54 @@ onBeforeUnmount(() => {
                             size="small"
                             :disabled="isResponding"
                         >
-                            <wa-icon name="chevron-up" label="More approve options" variant="classic"></wa-icon>
+                            <wa-icon name="chevron-up" :label="$t('session.approval.moreOptions')" variant="classic"></wa-icon>
                         </wa-button>
-                        <AppTooltip :for="approveMenuId">More approve options.</AppTooltip>
+                        <AppTooltip :for="approveMenuId">{{ $t('session.approval.moreOptionsHint') }}</AppTooltip>
 
                         <!-- command / file menu -->
                         <template v-if="toolName === 'commandExecution' || toolName === 'fileChange'">
                             <wa-dropdown-item :id="approveOnceId" @click="emitApprove('once')">
                                 <wa-icon slot="icon" name="check" variant="classic"></wa-icon>
-                                Once
+                                {{ $t('session.approval.once') }}
                             </wa-dropdown-item>
-                            <AppTooltip placement="left" :for="approveOnceId">Approve only this action.</AppTooltip>
+                            <AppTooltip placement="left" :for="approveOnceId">{{ $t('session.approval.onceHint') }}</AppTooltip>
                             <wa-dropdown-item :id="approveForSessionId" @click="emitApprove('forSession')">
                                 <wa-icon slot="icon" name="rotate" variant="classic"></wa-icon>
-                                For this session
+                                {{ $t('session.approval.forSession') }}
                             </wa-dropdown-item>
-                            <AppTooltip placement="left" :for="approveForSessionId">Approve and remember this decision for the rest of the session.</AppTooltip>
+                            <AppTooltip placement="left" :for="approveForSessionId">{{ $t('session.approval.sessionHint') }}</AppTooltip>
                             <wa-dropdown-item
                                 v-if="toolName === 'commandExecution' && proposedExecpolicyAmendment"
                                 :id="approveAddAllowRuleId"
                                 @click="emitApprove('addAllowRule')"
                             >
                                 <wa-icon slot="icon" name="plus" variant="classic"></wa-icon>
-                                Add allow rule
+                                {{ $t('session.approval.addAllowRule') }}
                             </wa-dropdown-item>
-                            <AppTooltip v-if="toolName === 'commandExecution' && proposedExecpolicyAmendment" placement="left" :for="approveAddAllowRuleId">Approve and add this command to the persistent allow list.</AppTooltip>
+                            <AppTooltip v-if="toolName === 'commandExecution' && proposedExecpolicyAmendment" placement="left" :for="approveAddAllowRuleId">{{ $t('session.approval.addAllowRuleHint') }}</AppTooltip>
                             <wa-dropdown-item
                                 v-if="toolName === 'commandExecution' && proposedNetworkPolicyAmendments"
                                 :id="approveAllowNetworkId"
                                 @click="emitApprove('allowNetwork')"
                             >
                                 <wa-icon slot="icon" name="globe" variant="classic"></wa-icon>
-                                Allow network access
+                                {{ $t('session.approval.allowNetwork') }}
                             </wa-dropdown-item>
-                            <AppTooltip v-if="toolName === 'commandExecution' && proposedNetworkPolicyAmendments" placement="left" :for="approveAllowNetworkId">Approve and persist the network policy amendment.</AppTooltip>
+                            <AppTooltip v-if="toolName === 'commandExecution' && proposedNetworkPolicyAmendments" placement="left" :for="approveAllowNetworkId">{{ $t('session.approval.allowNetworkHint') }}</AppTooltip>
                         </template>
 
                         <!-- permissions menu -->
                         <template v-else-if="toolName === 'permissions'">
                             <wa-dropdown-item :id="approvePermsTurnId" @click="emitApprove('turn')">
                                 <wa-icon slot="icon" name="clock" variant="classic"></wa-icon>
-                                For this turn
+                                {{ $t('session.approval.forTurn') }}
                             </wa-dropdown-item>
-                            <AppTooltip placement="left" :for="approvePermsTurnId">Grant the requested permissions for the current turn only.</AppTooltip>
+                            <AppTooltip placement="left" :for="approvePermsTurnId">{{ $t('session.approval.permissionsTurnHint') }}</AppTooltip>
                             <wa-dropdown-item :id="approvePermsSessionId" @click="emitApprove('session')">
                                 <wa-icon slot="icon" name="rotate" variant="classic"></wa-icon>
-                                For this session
+                                {{ $t('session.approval.forSession') }}
                             </wa-dropdown-item>
-                            <AppTooltip placement="left" :for="approvePermsSessionId">Grant the requested permissions for the full session.</AppTooltip>
+                            <AppTooltip placement="left" :for="approvePermsSessionId">{{ $t('session.approval.permissionsSessionHint') }}</AppTooltip>
                         </template>
                     </wa-dropdown>
                 </wa-button-group>

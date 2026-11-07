@@ -346,17 +346,17 @@ defineExpose({
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Rename Session"
+        :label="$t('session.rename.title')"
         class="session-rename-dialog"
         @wa-after-show="focusTitleInput"
     >
         <form v-if="session" :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Contextual hint when opened during message send -->
             <p v-if="showContextHint" class="context-hint">
-                While {{ providerLabel }} is working, you may want to give this session a more descriptive name.
+                {{ $t('session.rename.contextHint', { provider: providerLabel }) }}
             </p>
             <p v-if="automaticTitleHint" class="context-hint">
-                This title is automatic. Save to validate it and stop automatic updates.
+                {{ $t('session.rename.automaticHint') }}
             </p>
 
             <!-- Title suggestion (only if enabled in settings) -->
@@ -365,11 +365,11 @@ defineExpose({
                 class="suggestion-section"
             >
                 <div class="suggestion-header">
-                    <span class="suggestion-label">Suggestion:</span>
+                    <span class="suggestion-label">{{ $t('session.rename.suggestionLabel') }}</span>
                     <span v-if="displayedTitleModelLabel" class="suggestion-model">
                         {{ displayedTitleModelLabel }}
                     </span>
-                    <span v-if="isFallbackSuggestion" class="suggestion-fallback">(fallback)</span>
+                    <span v-if="isFallbackSuggestion" class="suggestion-fallback">{{ $t('session.rename.fallback') }}</span>
                     <wa-button
                         v-if="suggestion"
                         variant="neutral"
@@ -378,7 +378,7 @@ defineExpose({
                         class="regenerate-button reduced-height"
                         @click="regenerateSuggestion"
                     >
-                        <wa-icon name="rotate" label="Regenerate"></wa-icon>
+                        <wa-icon name="rotate" :label="$t('session.rename.regenerate')"></wa-icon>
                     </wa-button>
                     <!-- One-off choice of another title model: a quiet text link
                          pushed to the right of the header line, wrapping under it
@@ -392,12 +392,12 @@ defineExpose({
                             :class="{ 'is-disabled': isLoadingSuggestion }"
                             :aria-disabled="isLoadingSuggestion ? 'true' : null"
                             @click.prevent="trySuggestionWith(model)"
-                        >Try with {{ TITLE_SUGGESTION_MODEL_LABELS[model] }}</a>
+                        >{{ $t('session.rename.tryModel', { model: TITLE_SUGGESTION_MODEL_LABELS[model] }) }}</a>
                     </span>
                 </div>
                 <div v-if="isLoadingSuggestion" class="suggestion-loading">
                     <wa-spinner size="small"></wa-spinner>
-                    <span>Generating{{ displayedTitleModelLabel ? ` with ${displayedTitleModelLabel}` : '' }}...</span>
+                    <span>{{ displayedTitleModelLabel ? $t('session.rename.generatingModel', { model: displayedTitleModelLabel }) : $t('session.rename.generating') }}</span>
                 </div>
                 <div v-else-if="suggestionErrorMessage" class="suggestion-error">
                     <span>{{ suggestionErrorMessage }}</span>
@@ -409,27 +409,27 @@ defineExpose({
                         @click="regenerateSuggestion"
                     >
                         <wa-icon slot="start" name="rotate"></wa-icon>
-                        Try again
+                        {{ $t('session.rename.retry') }}
                     </wa-button>
                 </div>
                 <template v-else>
                     <a href="#" class="suggestion-link" @click.prevent="applySuggestion">
                         {{ suggestion }}
                     </a>
-                    <div class="form-hint">Click the suggestion above to use it</div>
+                    <div class="form-hint">{{ $t('session.rename.useSuggestionHint') }}</div>
                 </template>
             </div>
 
             <div class="form-group">
-                <label class="form-label">Title</label>
+                <label class="form-label">{{ $t('session.rename.titleLabel') }}</label>
                 <wa-input
                     ref="titleInputRef"
                     :value.prop="localTitle"
                     @input="onTitleInput"
-                    placeholder="Session title"
+                    :placeholder="$t('session.rename.placeholder')"
                     maxlength="200"
                 ></wa-input>
-                <div class="form-hint">Max 200 characters</div>
+                <div class="form-hint">{{ $t('session.rename.maxLength') }}</div>
             </div>
 
             <!-- Error message -->
@@ -441,11 +441,11 @@ defineExpose({
         <!-- Footer buttons -->
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isSaving">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button type="submit" :form="formId" variant="brand" :disabled="isSaving">
                 <wa-spinner v-if="isSaving" slot="start"></wa-spinner>
-                Save
+                {{ $t('common.actions.save') }}
             </wa-button>
         </div>
     </wa-dialog>

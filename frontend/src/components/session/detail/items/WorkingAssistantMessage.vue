@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDataStore } from '../../../../stores/data'
 import { getProviderLabel, getToolHelpers } from '../../../../providers'
 import ProcessIndicator from '../../../ui/ProcessIndicator.vue'
@@ -20,6 +21,7 @@ const props = defineProps({
 })
 
 const dataStore = useDataStore()
+const { t, locale } = useI18n({ useScope: 'global' })
 
 // Tools old enough to show (see TOOL_STATUS_DELAY_MS). A timer re-runs the filter when the youngest
 // hidden tool comes of age — without it a long tool would only show on the next event.
@@ -58,25 +60,27 @@ const pendingRequests = computed(() =>
 
 const isAwaiting = computed(() => pendingRequests.value.length > 0)
 
-// Verb shown while waiting, keyed off the first request (the bottom pending
+// Message shown while waiting, keyed off the first request (the bottom pending
 // panel surfaces pendingRequests[0] too). Unknown / mixed types fall back to the
 // generic phrasing.
-const PENDING_VERBS = {
-    tool_approval: 'waiting for your approval',
-    ask_user_question: 'waiting for your answer',
-    hybrid_terminal: 'waiting for you in the terminal',
+const PENDING_MESSAGE_KEYS = {
+    tool_approval: 'session.working.waitingApproval',
+    ask_user_question: 'session.working.waitingAnswer',
+    hybrid_terminal: 'session.working.waitingTerminal',
 }
-const pendingVerb = computed(() => {
+const pendingPhrase = computed(() => {
     if (!isAwaiting.value) return null
-    return PENDING_VERBS[pendingRequests.value[0]?.request_type] || 'waiting for your input'
+    const key = PENDING_MESSAGE_KEYS[pendingRequests.value[0]?.request_type] || 'session.working.waitingInput'
+    return t(key, { provider: providerLabel.value })
 })
 
 const plainPhrase = computed(() => {
     // A pending request wins over everything else: the agent is blocked on the
     // user, not thinking or running a tool.
-    if (pendingVerb.value) return pendingVerb.value
-    if (props.label) return props.label
-    if (settledTools.value.length === 0) return 'thinking'
+    if (pendingPhrase.value) return pendingPhrase.value
+    if (props.label === 'starting') return t('session.working.starting', { provider: providerLabel.value })
+    if (props.label) return t('session.working.providerLabel', { provider: providerLabel.value, label: props.label })
+    if (settledTools.value.length === 0) return t('session.working.thinking', { provider: providerLabel.value })
     return null
 })
 
@@ -86,6 +90,14 @@ const phraseGroups = computed(() => {
     const session = dataStore.getSession(props.sessionId)
     const helpers = getToolHelpers(session?.provider)
     return buildPhraseGroups(settledTools.value, sessionBaseDir.value, props.lastStartedToolId, props.lastToolVisible, helpers)
+})
+
+// Intl.ListFormat supplies the locale's separators without splitting the sentence into English fragments.
+const activityParts = computed(() => {
+    const groups = phraseGroups.value || []
+    return new Intl.ListFormat(locale.value, { style: 'long', type: 'conjunction' })
+        .formatToParts(groups.map((_, index) => String(index)))
+        .map(part => part.type === 'element' ? { group: groups[Number(part.value)] } : { literal: part.value })
 })
 
 function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, toolHelpers) {
@@ -130,8 +142,22 @@ function buildPhraseGroups(tools, baseDir, lastStartedToolId, lastToolVisible, t
             class="working-assistant-message__awaiting"
         ></wa-icon>
         <ProcessIndicator v-else :state="processState" size="small" :animate-states="['starting', 'assistant_turn']" />
-        <span v-if="plainPhrase !== null" class="working-assistant-message__phrase">{{ providerLabel }} is {{ plainPhrase }}<span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
-        <span v-else class="working-assistant-message__phrase">{{ providerLabel }} is <template v-for="(group, gi) in phraseGroups" :key="gi"><template v-if="gi > 0 && gi === phraseGroups.length - 1"> and </template><template v-else-if="gi > 0">, </template><template v-if="phraseGroups.length > 1"><strong>{{ group.verb }}</strong></template><template v-else>{{ group.verb }}</template><template v-if="group.targets"> (<template v-for="(t, ti) in group.targets" :key="`${gi}-${ti}`"><template v-if="ti > 0">, </template><code>{{ t }}</code></template>)</template></template><span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
+        <span v-if="plainPhrase !== null" class="working-assistant-message__phrase">{{ plainPhrase }}<span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
+        <span v-else class="working-assistant-message__phrase">
+            <i18n-t keypath="session.working.activities" scope="global">
+                <template #provider>{{ providerLabel }}</template>
+                <template #activities>
+                    <template v-for="(part, index) in activityParts" :key="index">
+                        <template v-if="part.group">
+                            <strong v-if="phraseGroups.length > 1">{{ part.group.verb }}</strong>
+                            <template v-else>{{ part.group.verb }}</template>
+                            <template v-if="part.group.targets"> (<template v-for="(target, targetIndex) in part.group.targets" :key="`${index}-${targetIndex}`"><template v-if="targetIndex > 0">, </template><code>{{ target }}</code></template>)</template>
+                        </template>
+                        <template v-else>{{ part.literal }}</template>
+                    </template>
+                </template>
+            </i18n-t><span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </span>
     </AgentStatusLine>
 </template>
 

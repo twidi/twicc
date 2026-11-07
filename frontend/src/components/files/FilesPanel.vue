@@ -1157,7 +1157,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                         value="show-hidden"
                         :checked="showHidden"
                     >
-                        Show hidden files
+                        {{ $t('files.options.showHidden') }}
                     </wa-dropdown-item>
                     <wa-dropdown-item
                         v-if="isGit"
@@ -1165,13 +1165,13 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                         value="show-ignored"
                         :checked="showIgnored"
                     >
-                        Show git ignored files
+                        {{ $t('files.options.showIgnored') }}
                     </wa-dropdown-item>
                     <!-- Root selector — hidden for a single fixed root (e.g. Artifacts) -->
                     <template v-if="showRootSelector">
                         <wa-divider></wa-divider>
                         <wa-dropdown-item disabled class="dropdown-header">
-                            Root:
+                            {{ $t('files.roots.label') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item
                             v-for="root in availableRoots"
@@ -1187,7 +1187,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                             </div>
                             <div v-else>{{ root.label }}</div>
                             <div class="root-path">{{ root.path }}</div>
-                            <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
+                            <div v-if="missingRoots.has(root.key)" class="root-missing">{{ $t('files.roots.missing') }}</div>
                         </wa-dropdown-item>
                     </template>
                     <wa-divider></wa-divider>
@@ -1227,7 +1227,7 @@ defineExpose({ revealFile, setRootByPath, onArtifactFilesChanged, reloadAll })
                     :frame-suppressed="treeOverlayOpen"
                 />
                 <div v-show="!hasContentSelection" class="panel-placeholder">
-                    {{ artifactBookmarkSessionId || artifactBookmarks.length ? 'Select an artifact' : 'Select a file' }}
+                    {{ artifactBookmarkSessionId || artifactBookmarks.length ? $t('files.selection.artifact') : $t('files.selection.file') }}
                 </div>
             </div>
         </div>

@@ -53,19 +53,19 @@ function onSelect(event) {
             class="layout-menu-trigger reduced-height"
             appearance="plain"
             size="small"
-            title="Layout"
-            aria-label="Layout menu"
+            :title="$t('session.layout.label')"
+            :aria-label="$t('session.layout.menuLabel')"
         >
             <wa-icon name="ellipsis-v"></wa-icon>
         </wa-button>
 
         <template v-if="props.hasDocks">
-            <wa-dropdown-item :value="SAVE_VALUE">Save layout</wa-dropdown-item>
+            <wa-dropdown-item :value="SAVE_VALUE">{{ $t('session.layout.save.title') }}</wa-dropdown-item>
             <wa-divider></wa-divider>
         </template>
 
-        <wa-dropdown-item disabled class="layout-menu-header">Select layout</wa-dropdown-item>
-        <wa-dropdown-item :value="SINGLE_PANE_ID">Single pane</wa-dropdown-item>
+        <wa-dropdown-item disabled class="layout-menu-header">{{ $t('session.layout.select') }}</wa-dropdown-item>
+        <wa-dropdown-item :value="SINGLE_PANE_ID">{{ $t('session.layout.singlePane') }}</wa-dropdown-item>
 
         <!-- Scope defaults (worktree → project → global): a shortcut to each scope's default layout. -->
         <template v-if="scopeDefaults.length">
@@ -85,7 +85,7 @@ function onSelect(event) {
             <wa-divider></wa-divider>
             <wa-dropdown-item :value="MANAGE_VALUE">
                 <wa-icon slot="icon" name="sliders"></wa-icon>
-                Manage layouts…
+                {{ $t('settings.layouts.manage') }}
             </wa-dropdown-item>
         </template>
     </wa-dropdown>

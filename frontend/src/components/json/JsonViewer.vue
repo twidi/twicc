@@ -33,7 +33,7 @@ function forwardToggle(path) {
         >
             <wa-icon :name="wrap ? 'align-justify' : 'align-left'"></wa-icon>
         </wa-button>
-        <AppTooltip :for="wrapToggleId">{{ wrap ? 'Disable wrap' : 'Enable wrap' }}</AppTooltip>
+        <AppTooltip :for="wrapToggleId">{{ wrap ? $t('json.viewer.disableWrap') : $t('json.viewer.enableWrap') }}</AppTooltip>
         <JsonNode
             :data="data"
             :path="path"

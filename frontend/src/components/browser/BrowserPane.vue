@@ -1060,15 +1060,15 @@ async function makeDefaultSavedUrl(opt) {
                 <wa-button :id="`browser-back-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" :disabled="!canGoBack" @click="goBack">
                     <wa-icon name="arrow-left"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="`browser-back-${instanceId}`">Back</AppTooltip>
+                <AppTooltip :for="`browser-back-${instanceId}`">{{ $t('browser.navigation.back') }}</AppTooltip>
                 <wa-button :id="`browser-forward-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" :disabled="!canGoForward" @click="goForward">
                     <wa-icon name="arrow-right"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="`browser-forward-${instanceId}`">Forward</AppTooltip>
+                <AppTooltip :for="`browser-forward-${instanceId}`">{{ $t('browser.navigation.forward') }}</AppTooltip>
                 <wa-button :id="`browser-refresh-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" :disabled="!currentUrl" @click="refresh">
                     <wa-icon name="rotate-right"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="`browser-refresh-${instanceId}`">Refresh</AppTooltip>
+                <AppTooltip :for="`browser-refresh-${instanceId}`">{{ $t('browser.navigation.refresh') }}</AppTooltip>
                 <!-- Home: a plain button for a single saved URL, or a dropdown
                      (like Save) when several levels — worktree, main repo,
                      workspace — each define one. WA custom events are stopped
@@ -1086,7 +1086,7 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-button :id="`browser-home-${instanceId}`" slot="trigger" appearance="plain" size="small" class="browser-btn reduced-height">
                         <wa-icon name="house"></wa-icon>
                     </wa-button>
-                    <wa-dropdown-item disabled class="save-menu-header">Open a saved URL…</wa-dropdown-item>
+                    <wa-dropdown-item disabled class="save-menu-header">{{ $t('browser.savedUrls.open') }}</wa-dropdown-item>
                     <wa-dropdown-item v-for="opt in homeOptions" :key="opt.key" :value="opt.url">
                         <div class="home-menu-item">
                             <ProjectBadge v-if="opt.levelKey === 'project'" :project-id="props.projectId" />
@@ -1104,13 +1104,13 @@ async function makeDefaultSavedUrl(opt) {
                                     v-if="opt.isLevelDefault"
                                     name="star"
                                     class="home-menu-default-star"
-                                    title="Home default for this level"
+                                    :title="$t('browser.savedUrls.levelDefault')"
                                 ></wa-icon>
                                 <button
                                     v-else
                                     type="button"
                                     class="home-menu-action"
-                                    title="Make it the Home default"
+                                    :title="$t('browser.savedUrls.makeDefault')"
                                     @click.stop="makeDefaultSavedUrl(opt)"
                                 >
                                     <wa-icon name="star"></wa-icon>
@@ -1118,7 +1118,7 @@ async function makeDefaultSavedUrl(opt) {
                                 <button
                                     type="button"
                                     class="home-menu-action home-menu-action--danger"
-                                    title="Remove this saved URL"
+                                    :title="$t('browser.savedUrls.removeSaved')"
                                     @click.stop="removeSavedUrl(opt)"
                                 >
                                     <wa-icon name="trash"></wa-icon>
@@ -1131,9 +1131,9 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-button :id="`browser-home-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" :disabled="!primaryHomeUrl" @click="goHome">
                         <wa-icon name="house"></wa-icon>
                     </wa-button>
-                    <AppTooltip :for="`browser-home-${instanceId}`">{{ primaryHomeUrl ? `Home — ${primaryHomeUrl}` : 'Home (no saved URL for this project)' }}</AppTooltip>
+                    <AppTooltip :for="`browser-home-${instanceId}`">{{ primaryHomeUrl ? $t('browser.navigation.homeUrl', { url: primaryHomeUrl }) : $t('browser.navigation.noHomeUrl') }}</AppTooltip>
                 </template>
-                <AppTooltip v-if="homeOptions.length > 1" :for="`browser-home-${instanceId}`">Home — choose a saved URL</AppTooltip>
+                <AppTooltip v-if="homeOptions.length > 1" :for="`browser-home-${instanceId}`">{{ $t('browser.navigation.chooseHomeUrl') }}</AppTooltip>
             </div>
 
             <wa-input
@@ -1141,7 +1141,7 @@ async function makeDefaultSavedUrl(opt) {
                 class="browser-address reduced-height"
                 size="small"
                 autocomplete="off"
-                placeholder="Enter a URL — e.g. localhost:5173"
+                :placeholder="$t('browser.address.placeholder')"
                 :value="inputUrl"
                 @input="inputUrl = $event.target.value"
                 @focus="addressFocused = true"
@@ -1171,18 +1171,18 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-icon name="bookmark"></wa-icon>
                 </wa-button>
                 <AppTooltip :for="`browser-save-${instanceId}`">
-                    {{ isCurrentUrlSaved ? 'URL saved — edit…' : 'Save this URL…' }}
+                    {{ isCurrentUrlSaved ? $t('browser.savedUrls.editSaved') : $t('browser.savedUrls.saveMenu') }}
                 </AppTooltip>
 
                 <wa-button :id="`browser-external-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" :disabled="!currentUrl" @click="openExternal">
                     <wa-icon name="arrow-up-right-from-square"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="`browser-external-${instanceId}`">Open in a new browser tab</AppTooltip>
+                <AppTooltip :for="`browser-external-${instanceId}`">{{ $t('browser.navigation.openExternal') }}</AppTooltip>
 
                 <wa-button :id="`browser-clear-${instanceId}`" appearance="plain" size="small" class="browser-btn reduced-height" @click="clearBrowser">
                     <wa-icon name="power-off"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="`browser-clear-${instanceId}`">Clear the browser (unload the page to free resources)</AppTooltip>
+                <AppTooltip :for="`browser-clear-${instanceId}`">{{ $t('browser.navigation.clear') }}</AppTooltip>
 
                 <wa-button
                     :id="fullscreenButtonId"
@@ -1194,7 +1194,7 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-icon :name="isFullscreen ? 'compress' : 'expand'"></wa-icon>
                 </wa-button>
                 <AppTooltip :for="fullscreenButtonId">
-                    {{ isFullscreen ? 'Exit full screen' : 'Full screen' }}
+                    {{ isFullscreen ? $t('browser.display.exitFullscreen') : $t('browser.display.fullscreen') }}
                 </AppTooltip>
 
                 <!-- Companion status button (plain, always). The plug's colour
@@ -1233,7 +1233,7 @@ async function makeDefaultSavedUrl(opt) {
                     <wa-icon name="mobile-screen-button"></wa-icon>
                 </wa-button>
                 <AppTooltip :for="`browser-responsive-${instanceId}`">
-                    {{ responsiveActive ? 'Exit responsive mode' : 'Responsive mode — preview at a device size' }}
+                    {{ responsiveActive ? $t('preview.viewport.exitResponsive') : $t('browser.display.responsive') }}
                 </AppTooltip>
 
                 <!-- Select-area toggle (needs the companion, so only shown once
@@ -1252,7 +1252,7 @@ async function makeDefaultSavedUrl(opt) {
                 <AppTooltip
                     v-if="companionStatus === 'present'"
                     :for="`browser-select-toggle-${instanceId}`"
-                >{{ selectAreaActive ? 'Stop selecting an element' : 'Select an element' }}</AppTooltip>
+                >{{ selectAreaActive ? $t('browser.selection.stop') : $t('browser.selection.start') }}</AppTooltip>
 
                 <!-- Page-errors indicator: shown only when the companion has
                      reported errors. The count sits next to a warning glyph;
@@ -1271,7 +1271,7 @@ async function makeDefaultSavedUrl(opt) {
                 <AppTooltip
                     v-if="companionStatus === 'present' && pageErrors.length"
                     :for="`browser-errors-${instanceId}`"
-                >{{ pageErrorTotal }} error{{ pageErrorTotal > 1 ? 's' : '' }} on this page — click to add them to your message</AppTooltip>
+                >{{ $t('browser.errors.pageCount', { count: pageErrorTotal }, pageErrorTotal) }}</AppTooltip>
             </div>
         </div>
 
@@ -1334,20 +1334,20 @@ async function makeDefaultSavedUrl(opt) {
         <wa-callout v-if="probeResult" variant="warning" size="small" class="browser-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
             <template v-if="probeResult.reachable === false">
-                The server did not respond ({{ probeResult.reason }}) — is it running?
+                {{ $t('browser.errors.serverUnreachable', { reason: probeResult.reason }) }}
             </template>
             <template v-else>
-                This site refuses to be embedded ({{ probeResult.reason }}) — the frame
-                below will likely stay blank. Use "Open in a new browser tab" instead, or
-                see the <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>
-                to allow framing in dev, or let your agent set it up:
+                <i18n-t keypath="browser.errors.embeddingRefused" scope="global">
+                    <template #reason>{{ probeResult.reason }}</template>
+                    <template #guide><a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">{{ $t('browser.help.guide') }}</a></template>
+                </i18n-t>
                 <div class="agent-instructions-actions">
                     <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
                         <wa-icon slot="start" name="robot"></wa-icon>
-                        Add instructions to message
+                        {{ $t('browser.help.addInstructions') }}
                     </wa-button>
                     <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
-                        {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
+                        {{ agentInstructionsCopied ? $t('browser.help.copied') : $t('browser.help.copyInstructions') }}
                     </wa-button>
                 </div>
             </template>
@@ -1355,34 +1355,32 @@ async function makeDefaultSavedUrl(opt) {
 
         <wa-callout v-if="mixedContentBlocked" variant="warning" size="small" class="browser-banner">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            TwiCC is served over https, so the browser blocks embedding this http://
-            URL (mixed content). Open it in a new tab instead, or serve it over https —
-            see the <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>.
+            <i18n-t keypath="browser.errors.mixedContent" scope="global">
+                <template #guide><a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">{{ $t('browser.help.guide') }}</a></template>
+            </i18n-t>
         </wa-callout>
 
         <wa-callout v-if="showCompanionHint" variant="neutral" size="small" class="browser-banner">
             <wa-icon slot="icon" name="plug"></wa-icon>
             <div class="companion-hint">
                 <span>
-                    This page doesn't include the TwiCC companion script. Add it
-                    to your dev page to unlock real navigation history, element
-                    selection (click a part of the page to describe it to the
-                    agent), and page-error capture (see the
-                    <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>):
+                    <i18n-t keypath="browser.help.companionHint" scope="global">
+                        <template #guide><a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">{{ $t('browser.help.guide') }}</a></template>
+                    </i18n-t>
                 </span>
                 <code class="companion-snippet">{{ companionSnippet }}</code>
                 <div class="companion-hint-actions">
                     <wa-button size="small" appearance="outlined" @click="copySnippet">
-                        {{ snippetCopied ? 'Copied!' : 'Copy snippet' }}
+                        {{ snippetCopied ? $t('browser.help.copied') : $t('browser.help.copySnippet') }}
                     </wa-button>
                     <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
                         <wa-icon slot="start" name="robot"></wa-icon>
-                        Add instructions to message
+                        {{ $t('browser.help.addInstructions') }}
                     </wa-button>
                     <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
-                        {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
+                        {{ agentInstructionsCopied ? $t('browser.help.copied') : $t('browser.help.copyInstructions') }}
                     </wa-button>
-                    <wa-button size="small" appearance="plain" @click="snippetDismissed = true">Dismiss</wa-button>
+                    <wa-button size="small" appearance="plain" @click="snippetDismissed = true">{{ $t('browser.help.dismiss') }}</wa-button>
                 </div>
             </div>
         </wa-callout>
@@ -1412,25 +1410,22 @@ async function makeDefaultSavedUrl(opt) {
             <template #empty>
                 <div v-if="!currentUrl" class="browser-empty">
                     <wa-icon name="globe" class="browser-empty-icon"></wa-icon>
-                    <p>Enter a URL above to preview your project — e.g. your dev server.</p>
+                    <p>{{ $t('browser.empty.enterUrl') }}</p>
                     <p class="browser-empty-hint">
-                        Once a page is loaded, the toolbar lets you save its URL
-                        for this project or one of its workspaces.
+                        {{ $t('browser.empty.saveHint') }}
                     </p>
                     <wa-callout variant="neutral" size="small" class="browser-empty-callout">
                         <wa-icon slot="icon" name="circle-info"></wa-icon>
-                        Getting your dev server to display here often needs a few
-                        dev-only settings (allow framing, cookies, the companion
-                        script). It's worth reading the
-                        <a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">Browser tab guide</a>
-                        first, or let your agent set it up:
+                        <i18n-t keypath="browser.empty.setupHint" scope="global">
+                            <template #guide><a href="#" class="browser-empty-help-link" @click.prevent="openBrowserHelp">{{ $t('browser.help.guide') }}</a></template>
+                        </i18n-t>
                         <div class="agent-instructions-actions">
                             <wa-button v-if="insertTextAtCursor" size="small" appearance="outlined" @click="addAgentInstructionsToMessage">
                                 <wa-icon slot="start" name="robot"></wa-icon>
-                                Add instructions to message
+                                {{ $t('browser.help.addInstructions') }}
                             </wa-button>
                             <wa-button size="small" appearance="outlined" @click="copyAgentInstructions">
-                                {{ agentInstructionsCopied ? 'Copied!' : 'Copy instructions for an agent' }}
+                                {{ agentInstructionsCopied ? $t('browser.help.copied') : $t('browser.help.copyInstructions') }}
                             </wa-button>
                         </div>
                     </wa-callout>
@@ -1444,7 +1439,7 @@ async function makeDefaultSavedUrl(opt) {
              custom event names). -->
         <wa-dialog
             ref="saveDialogRef"
-            label="Save this URL"
+            :label="$t('browser.savedUrls.saveTitle')"
             class="browser-save-dialog"
             @wa-show="onSaveDialogShow"
             @wa-after-show="onSaveDialogAfterShow"
@@ -1453,16 +1448,16 @@ async function makeDefaultSavedUrl(opt) {
                 <div class="save-dialog-url">{{ currentUrl }}</div>
                 <wa-input
                     ref="saveLabelInputRef"
-                    label="Label (optional)"
+                    :label="$t('browser.savedUrls.label')"
                     size="small"
                     autocomplete="off"
                     maxlength="100"
-                    placeholder="e.g. Storybook, Front dev…"
+                    :placeholder="$t('browser.savedUrls.labelPlaceholder')"
                     :value="saveLabel"
                     @input="saveLabel = $event.target.value"
                 ></wa-input>
                 <div class="save-dialog-levels">
-                    <span class="save-dialog-levels-title">Save for…</span>
+                    <span class="save-dialog-levels-title">{{ $t('browser.savedUrls.saveFor') }}</span>
                     <label v-for="level in saveLevels" :key="level.key" class="save-dialog-level">
                         <input
                             type="radio"
@@ -1477,19 +1472,19 @@ async function makeDefaultSavedUrl(opt) {
                             <wa-icon name="layer-group" :style="level.ws.color ? { color: level.ws.color } : null"></wa-icon>
                             {{ level.ws.name }}
                         </span>
-                        <span v-if="level.entries.some((e) => e.url === currentUrl)" class="save-menu-saved">saved</span>
+                        <span v-if="level.entries.some((e) => e.url === currentUrl)" class="save-menu-saved">{{ $t('browser.savedUrls.saved') }}</span>
                     </label>
                 </div>
                 <wa-checkbox
                     size="small"
                     :checked="saveMakeDefault"
                     @change="saveMakeDefault = $event.target.checked"
-                >Make it the Home default</wa-checkbox>
+                >{{ $t('browser.savedUrls.makeDefault') }}</wa-checkbox>
                 <wa-callout v-if="saveError" variant="danger" size="small">{{ saveError }}</wa-callout>
             </form>
             <div slot="footer" class="save-dialog-footer">
-                <wa-button variant="neutral" appearance="outlined" size="small" @click="closeSaveDialog">Cancel</wa-button>
-                <wa-button ref="saveButtonRef" variant="brand" size="small" type="submit">Save</wa-button>
+                <wa-button variant="neutral" appearance="outlined" size="small" @click="closeSaveDialog">{{ $t('common.actions.cancel') }}</wa-button>
+                <wa-button ref="saveButtonRef" variant="brand" size="small" type="submit">{{ $t('common.actions.save') }}</wa-button>
             </div>
         </wa-dialog>
     </div>

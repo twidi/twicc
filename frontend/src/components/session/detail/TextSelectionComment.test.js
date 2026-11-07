@@ -4,6 +4,7 @@ import fs from 'node:fs'
 
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { unref } from 'vue'
+import { createAppI18n } from '../../../i18n/index.js'
 
 const COMPONENT_URL = new URL('./TextSelectionComment.vue', import.meta.url)
 
@@ -469,7 +470,10 @@ test('rendered form offers a close control and two actions with a composer and d
             if (Array.isArray(vnode.children)) vnode.children.forEach(child => buttons(child, out))
             return out
         }
-        const actions = buttons(render({}, [], {}, setup))
+        // The template runs directly, so use a real project composer for its global translation binding.
+        const composer = createAppI18n().global
+        const context = { $t: composer.t }
+        const actions = buttons(render(context, [], {}, setup))
         assert.equal(actions[0].props['aria-label'], 'Close')
         assert.equal(actions[0].props.disabled, false)
         actions[0].props.onClick()
@@ -479,7 +483,7 @@ test('rendered form offers a close control and two actions with a composer and d
         assert.equal(actions[2].props.disabled, false)
         assert.equal(actions[3].props.disabled, true)
         bridge.available = false
-        const withoutComposer = buttons(render({}, [], {}, setup))
+        const withoutComposer = buttons(render(context, [], {}, setup))
         assert.equal(withoutComposer[0].props['aria-label'], 'Close')
         assert.deepEqual(withoutComposer.slice(2).map(button => button.children.trim()), ['Add to message'])
     } finally { f.cleanup() }

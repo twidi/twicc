@@ -321,7 +321,7 @@ defineExpose({ open, close })
         <!-- ═══ LIST VIEW ═══ -->
         <div v-if="view === 'list'" class="dialog-content">
             <div v-if="terminalConfigStore.combos.length === 0" class="empty-message">
-                No custom combos yet. Add one to get started.
+                {{ $t('terminal.combos.empty') }}
             </div>
 
             <GroupedListEditor
@@ -349,7 +349,7 @@ defineExpose({ open, close })
         <form v-else :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <!-- Label field -->
             <div class="form-group">
-                <label class="form-label">{{ groupMode ? 'Group name' : 'Label' }}</label>
+                <label class="form-label">{{ groupMode ? $t('terminal.combos.groupName') : $t('terminal.combos.label') }}</label>
                 <wa-input
                     ref="labelInputRef"
                     :value="formData.label"
@@ -357,12 +357,12 @@ defineExpose({ open, close })
                     :placeholder="groupMode ? 'e.g. tmux' : 'e.g. &quot;tmux:new&quot;'"
                     size="small"
                 />
-                <div v-if="!groupMode" class="form-hint">Optional — replaces notation on button</div>
+                <div v-if="!groupMode" class="form-hint">{{ $t('terminal.combos.labelHint') }}</div>
             </div>
 
             <!-- Steps -->
             <div v-if="!groupMode" class="form-group">
-                <label v-if="formData.steps.length > 1" class="form-label">Steps</label>
+                <label v-if="formData.steps.length > 1" class="form-label">{{ $t('terminal.combos.steps') }}</label>
 
                 <div
                     v-for="(step, stepIndex) in formData.steps"
@@ -377,12 +377,12 @@ defineExpose({ open, close })
                     <div class="step-card">
                         <!-- Step header (only when 2+ steps) -->
                         <div v-if="formData.steps.length > 1" class="step-header">
-                            <span class="step-title">Step {{ stepIndex + 1 }}</span>
+                            <span class="step-title">{{ $t('terminal.combos.stepNumber', { number: stepIndex + 1 }) }}</span>
                             <button
                                 type="button"
                                 class="step-remove-btn"
                                 @click="removeStep(stepIndex)"
-                                title="Remove step"
+                                :title="$t('terminal.combos.removeStep')"
                             ><wa-icon name="xmark" /></button>
                         </div>
 
@@ -433,13 +433,13 @@ defineExpose({ open, close })
                 </div>
 
                 <!-- Add step button -->
-                <button ref="addStepBtnRef" type="button" class="add-step-btn" @click="addStep">+ Add step</button>
+                <button ref="addStepBtnRef" type="button" class="add-step-btn" @click="addStep">{{ $t('terminal.combos.addStep') }}</button>
             </div>
 
             <div v-if="!groupMode" class="form-group">
-                <label class="form-label">Group</label>
+                <label class="form-label">{{ $t('terminal.combos.group') }}</label>
                 <wa-select :value="formData.groupId || ''" @change="formData.groupId = $event.target.value || null" size="small">
-                    <wa-option value="">None</wa-option>
+                    <wa-option value="">{{ $t('terminal.combos.noGroup') }}</wa-option>
                     <wa-option v-for="group in selectableGroups" :key="group.id" :value="group.id">{{ group.label }}</wa-option>
                 </wa-select>
             </div>
@@ -459,23 +459,23 @@ defineExpose({ open, close })
         <div slot="footer" class="dialog-footer">
             <template v-if="view === 'list'">
                 <wa-button variant="neutral" appearance="outlined" @click="close">
-                    Close
+                    {{ $t('common.actions.close') }}
                 </wa-button>
                 <wa-button variant="neutral" appearance="outlined" @click="openGroupForm">
                     <wa-icon slot="start" name="folder-plus"></wa-icon>
-                    Add group
+                    {{ $t('terminal.combos.addGroup') }}
                 </wa-button>
                 <wa-button variant="brand" @click="openAddForm()">
                     <wa-icon slot="start" name="plus"></wa-icon>
-                    Add combo
+                    {{ $t('terminal.combos.addCombo') }}
                 </wa-button>
             </template>
             <template v-else>
                 <wa-button variant="neutral" appearance="outlined" @click="cancelForm">
-                    Cancel
+                    {{ $t('common.actions.cancel') }}
                 </wa-button>
                 <wa-button ref="saveButtonRef" type="submit" variant="brand">
-                    Save
+                    {{ $t('common.actions.save') }}
                 </wa-button>
             </template>
         </div>

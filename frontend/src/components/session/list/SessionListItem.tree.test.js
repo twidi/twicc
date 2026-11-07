@@ -50,7 +50,7 @@ test('rows without children reserve no space: no spacer, flex layout only on par
 test('the old collapsed summary is gone and the parent hint stays', () => {
     assert.ok(!source.includes('treeSummary'))
     assert.ok(!source.includes('tree-summary'))
-    assert.match(source, /↰ from \{\{ treeRow\.hint \}\}/)
+    assert.match(source, /<div v-if="treeRow\?\.hint" class="tree-hint">\{\{ \$t\('session\.list\.fromParent', \{ parent: treeRow\.hint \}\) \}\}<\/div>/)
 })
 
 test('a collapsed parent shows the cumulative indicator instead of its own indicators', () => {
@@ -106,7 +106,7 @@ test('canDetachFromTree prop defaults to false', () => {
 
 test('the menu offers detach/reattach right before archive, for regular spawned sessions only', () => {
     assert.match(source, /const showTreeDetachEntry = computed\(\(\) =>\s*props\.canDetachFromTree && !!props\.session\.spawned_by\s*&& !props\.session\.draft && !props\.session\.ephemeral && !props\.session\.parent_session_id\)/)
-    assert.match(source, /<wa-dropdown-item v-if="showTreeDetachEntry" :value="session\.tree_detached \? 'attach-tree' : 'detach-tree'">\s*<wa-icon slot="icon" name="sitemap"><\/wa-icon>\s*\{\{ session\.tree_detached \? 'Reattach to parent' : 'Detach from parent' \}\}\s*<\/wa-dropdown-item>\s*<wa-dropdown-item v-if="!session\.draft && !session\.ephemeral && !session\.archived" value="archive">/)
+    assert.match(source, /<wa-dropdown-item v-if="showTreeDetachEntry" :value="session\.tree_detached \? 'attach-tree' : 'detach-tree'">\s*<wa-icon slot="icon" name="sitemap"><\/wa-icon>\s*\{\{ session\.tree_detached \? \$t\('session\.list\.reattach'\) : \$t\('session\.list\.detach'\) \}\}\s*<\/wa-dropdown-item>\s*<wa-dropdown-item v-if="!session\.draft && !session\.ephemeral && !session\.archived" value="archive">/)
 })
 
 test('handleMenuSelect branches call the store action after the ephemeral guard', () => {

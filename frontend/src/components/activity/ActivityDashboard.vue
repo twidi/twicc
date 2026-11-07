@@ -224,7 +224,7 @@ const periods = computed(() => {
 
 <template>
     <div v-if="periods.length > 0" class="activity-dashboard">
-        <h3 class="dashboard-title">{{ isSessionsMode ? 'Sessions overview' : 'Message turns overview' }}</h3>
+        <h3 class="dashboard-title">{{ isSessionsMode ? $t('activity.overview.sessions') : $t('activity.overview.messageTurns') }}</h3>
         <div class="wa-cluster dashboard-grid">
             <wa-card v-for="period in periods" :key="period.label">
                 <div class="wa-flank wa-align-items-start">
@@ -255,11 +255,11 @@ const periods = computed(() => {
                                     {{ period.mainTrend.value }}%
                                 </wa-tag>
                                 <template v-if="!period.isTotal">
-                                    <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" pill>N/A</wa-tag>
-                                    <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                    <wa-tag v-if="!period.mainTrend" :id="`na-main-${mode}-${period.key}`" variant="neutral" pill>{{ $t('activity.overview.notAvailable') }}</wa-tag>
+                                    <AppTooltip v-if="!period.mainTrend" :for="`na-main-${mode}-${period.key}`">{{ $t('activity.overview.noDataFor', { period: period.previousLabel }) }}</AppTooltip>
                                 </template>
                             </div>
-                            <span class="wa-caption-s kpi-label">{{ isSessionsMode ? 'sessions created' : 'message turns' }}</span>
+                            <span class="wa-caption-s kpi-label">{{ isSessionsMode ? $t('activity.overview.sessionsCreated') : $t('activity.overview.messageTurnsLabel') }}</span>
                         </div>
 
                         <!-- Sub metric 1: total cost (messages mode) or avg turns/session (sessions mode) -->
@@ -293,11 +293,11 @@ const periods = computed(() => {
                                         {{ period.sub1Trend.value }}%
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
-                                        <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" pill size="small">N/A</wa-tag>
-                                        <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                        <wa-tag v-if="!period.sub1Trend" :id="`na-sub1-${mode}-${period.key}`" variant="neutral" pill size="small">{{ $t('activity.overview.notAvailable') }}</wa-tag>
+                                        <AppTooltip v-if="!period.sub1Trend" :for="`na-sub1-${mode}-${period.key}`">{{ $t('activity.overview.noDataFor', { period: period.previousLabel }) }}</AppTooltip>
                                     </template>
                                 </div>
-                                <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. turns per session' : 'total cost' }}</span>
+                                <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? $t('activity.overview.averageTurnsPerSession') : $t('activity.overview.totalCost') }}</span>
                             </div>
                         </template>
 
@@ -324,11 +324,11 @@ const periods = computed(() => {
                                         {{ period.sub2Trend.value }}%
                                     </wa-tag>
                                     <template v-if="!period.isTotal">
-                                        <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" pill size="small">N/A</wa-tag>
-                                        <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">No data for {{ period.previousLabel }}</AppTooltip>
+                                        <wa-tag v-if="!period.sub2Trend" :id="`na-sub2-${mode}-${period.key}`" variant="neutral" pill size="small">{{ $t('activity.overview.notAvailable') }}</wa-tag>
+                                        <AppTooltip v-if="!period.sub2Trend" :for="`na-sub2-${mode}-${period.key}`">{{ $t('activity.overview.noDataFor', { period: period.previousLabel }) }}</AppTooltip>
                                     </template>
                                 </div>
-                                <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? 'avg. cost per session' : 'avg. cost per turn' }}</span>
+                                <span class="wa-caption-xs kpi-label">{{ isSessionsMode ? $t('activity.overview.averageCostPerSession') : $t('activity.overview.averageCostPerTurn') }}</span>
                             </div>
                         </template>
                     </div>

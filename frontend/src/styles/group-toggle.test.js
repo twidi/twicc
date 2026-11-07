@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createAppI18n } from '../i18n/index.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,7 +23,11 @@ test('1. a real button with the expanded state, a rule on each side of the pill,
 })
 
 test('2. the pill reads "N tool(s)" with no icon before it, keeps the code-comments indicator; the chevron shows the state', () => {
-    assert.ok(template.includes("{{ itemCount }} tool{{ itemCount !== 1 ? 's' : '' }}"))
+    assert.ok(template.includes("<span class=\"toggle-label-text\">{{ $t('session.tools.count', { count: itemCount }, itemCount) }}</span>"))
+    const { t } = createAppI18n().global
+    for (const [count, label] of [[0, '0 tools'], [1, '1 tool'], [2, '2 tools']]) {
+        assert.equal(t('session.tools.count', { count }, count), label)
+    }
     assert.ok(!template.includes('ellipsis'))
     assert.ok(template.includes('<CodeCommentsIndicator :count="commentsCount" :show-tooltip="false" class="toggle-comments-indicator" />'))
     assert.ok(template.includes('<wa-icon name="chevron-down" class="group-toggle-chevron"></wa-icon>'))

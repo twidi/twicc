@@ -863,6 +863,7 @@ defineExpose({
                         <div v-if="isCreateMode" class="form-group">
                             <label class="form-label">{{ $t('project.edit.directory.label') }}</label>
                             <div class="directory-input-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is a literal filesystem path example. -->
                                 <wa-input
                                     ref="directoryInputRef"
                                     :value.prop="localDirectory"
@@ -870,6 +871,7 @@ defineExpose({
                                     placeholder="/path/to/your/project"
                                     class="directory-input"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <DirectoryPickerPopup v-model="localDirectory" />
                             </div>
                             <div class="form-hint">{{ $t('project.edit.directory.hint') }}</div>
@@ -971,12 +973,14 @@ defineExpose({
                         <div v-if="showWorktreeDirectory" class="form-group">
                             <label class="form-label">{{ $t('project.edit.worktreeDirectory.label') }} <HelpIconButton help-key="worktrees" :label="$t('help.worktrees')" /></label>
                             <div class="directory-input-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is a literal filesystem path example. -->
                                 <wa-input
                                     :value.prop="localWorktreeDirectory"
                                     @input="onWorktreeDirectoryInput"
                                     placeholder="/absolute/path/to/worktrees"
                                     class="directory-input"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <DirectoryPickerPopup v-model="localWorktreeDirectory" :fallback-path="project.git_root || ''" />
                             </div>
                             <div class="form-hint">

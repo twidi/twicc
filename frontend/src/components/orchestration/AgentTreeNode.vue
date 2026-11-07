@@ -140,8 +140,8 @@ const expanded = ref(true)
                     <wa-icon
                         v-if="isRunning"
                         name="robot"
-                        title="Working"
-                        label="Working"
+                        :title="$t('session.orchestration.working')"
+                        :label="$t('session.orchestration.working')"
                         class="orch-status-icon robot-working"
                         style="color: var(--wa-color-blue-60)"
                     ></wa-icon>
@@ -159,7 +159,7 @@ const expanded = ref(true)
                 </button>
             </div>
 
-            <div v-if="modelLabel" class="ocard-settings" title="Last used model">
+            <div v-if="modelLabel" class="ocard-settings" :title="$t('session.orchestration.lastModel')">
                 <span class="ocard-model">
                     <ProviderIcon :provider="provider" />
                     {{ modelLabel }}
@@ -196,8 +196,10 @@ const expanded = ref(true)
                 </span>
                 <span v-if="showCosts" class="orch-cost">
                     <CostDisplay :cost="ownCost" />
-                    <span v-if="hasChildren" class="orch-cost-sub" title="Cumulative cost including spawned agents">
+                    <span v-if="hasChildren" class="orch-cost-sub" :title="$t('session.orchestration.agentsCostTooltip')">
+                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- Sigma denotes a mathematical sum in every locale. -->
                         Σ <CostDisplay :cost="cumulativeCost" />
+                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                     </span>
                 </span>
             </div>

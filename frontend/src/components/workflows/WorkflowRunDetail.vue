@@ -329,9 +329,9 @@ function agentsLabel(n) {
              budget cap). Counts come straight from raw_json.phaseCompletion. -->
         <wa-callout v-if="incompleteRun" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            This workflow is marked completed, but only
-            <strong>{{ phaseCompletion.completed }} of its {{ phaseCompletion.total }} phases</strong>
-            completed — it may have stopped early.
+            <i18n-t scope="global" keypath="workflows.detail.incomplete" :plural="phaseCompletion.completed">
+                <template #phases><strong>{{ $t('workflows.detail.completedPhases', { completed: phaseCompletion.completed, total: phaseCompletion.total }, phaseCompletion.total) }}</strong></template>
+            </i18n-t>
         </wa-callout>
 
         <!-- Interrupted run (a terminal status that isn't a success, e.g. killed).
@@ -340,20 +340,23 @@ function agentsLabel(n) {
              the runId + journal, so a resume continues the same run). -->
         <wa-callout v-else-if="interruptedRun" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="circle-stop"></wa-icon>
-            This workflow was <strong>interrupted</strong> before completing — it did not run to the end.
-            You can ask the agent to try resuming it if needed.
+            <i18n-t scope="global" keypath="workflows.detail.interrupted">
+                <template #status><strong>{{ $t('workflows.detail.interruptedStatus') }}</strong></template>
+            </i18n-t>
         </wa-callout>
 
         <!-- Phase detection unavailable: the script couldn't be executed to build
              templates, so agents can't be tagged to a phase (all Unassigned). -->
         <wa-callout v-if="detectionUnavailable" variant="warning" size="small" class="wf-incomplete">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            Agent <strong>phases couldn't be detected</strong> for this workflow — its agents are grouped under Unassigned.
+            <i18n-t scope="global" keypath="workflows.detail.detectionUnavailable">
+                <template #status><strong>{{ $t('workflows.detail.phasesNotDetected') }}</strong></template>
+            </i18n-t>
         </wa-callout>
 
         <!-- Section 2 — full description (untruncated, unlike the title) -->
         <div v-if="summary" class="wf-section">
-            <div class="wf-description-label">Description</div>
+            <div class="wf-description-label">{{ $t('workflows.detail.description') }}</div>
             <p class="wf-description">{{ summary }}</p>
         </div>
 
@@ -368,7 +371,7 @@ function agentsLabel(n) {
             >
                 <span slot="summary" class="items-details-summary">
                     <span class="items-details-summary-left">
-                        <strong class="items-details-summary-name">Arguments</strong>
+                        <strong class="items-details-summary-name">{{ $t('workflows.detail.arguments') }}</strong>
                     </span>
                 </span>
                 <div v-if="argsOpen || isClosing('args')" class="wf-row-body wf-args-body">
@@ -380,7 +383,7 @@ function agentsLabel(n) {
 
         <!-- Section 4 — phases (+ the unassigned bucket, last, when non-empty) -->
         <div v-if="displayRows.length" class="wf-section">
-            <div class="wf-section-label">Phases</div>
+            <div class="wf-section-label">{{ $t('workflows.detail.phases') }}</div>
             <wa-details
                 v-for="ph in displayRows"
                 :key="ph.key"
@@ -441,7 +444,7 @@ function agentsLabel(n) {
                                 >
                                     <wa-icon v-if="ag.active" slot="start" name="robot" class="robot-working"></wa-icon>
                                     <wa-icon v-else-if="ag.statusKind === 'interrupted'" slot="start" name="circle-stop" class="wf-agent-interrupted"></wa-icon>
-                                    View Agent
+                                    {{ $t('workflows.detail.viewAgent') }}
                                 </wa-button>
                             </span>
                             <div v-if="open.has('agent:' + ag.agentId) || isClosing('agent:' + ag.agentId)" class="wf-agent-body">
@@ -468,7 +471,7 @@ function agentsLabel(n) {
                                 >
                                     <span slot="summary" class="items-details-summary">
                                         <span class="items-details-summary-left">
-                                            <strong class="items-details-summary-name">Prompt</strong>
+                                            <strong class="items-details-summary-name">{{ $t('workflows.detail.prompt') }}</strong>
                                         </span>
                                     </span>
                                     <div v-if="open.has('prompt:' + ag.agentId) || isClosing('prompt:' + ag.agentId)" class="wf-row-body wf-args-body">
@@ -486,7 +489,7 @@ function agentsLabel(n) {
                                 >
                                     <span slot="summary" class="items-details-summary">
                                         <span class="items-details-summary-left">
-                                            <strong class="items-details-summary-name">Result</strong>
+                                            <strong class="items-details-summary-name">{{ $t('workflows.detail.result') }}</strong>
                                         </span>
                                     </span>
                                     <div v-if="open.has('result:' + ag.agentId) || isClosing('result:' + ag.agentId)" class="wf-row-body wf-args-body">
@@ -512,7 +515,7 @@ function agentsLabel(n) {
             >
                 <span slot="summary" class="items-details-summary">
                     <span class="items-details-summary-left">
-                        <strong class="items-details-summary-name">Result</strong>
+                        <strong class="items-details-summary-name">{{ $t('workflows.detail.result') }}</strong>
                     </span>
                 </span>
                 <div v-if="resultOpen || isClosing('run-result')" class="wf-row-body wf-result-body">

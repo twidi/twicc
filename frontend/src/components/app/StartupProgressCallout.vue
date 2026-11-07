@@ -69,7 +69,7 @@ const searchIndexingPercent = computed(() => {
                 <!-- Phase 1: Syncing sessions from disk -->
                 <div class="progress-phase">
                     <div class="phase-header">
-                        <span class="phase-label">Syncing sessions data from disk</span>
+                        <span class="phase-label">{{ $t('app.startup.syncing') }}</span>
                         <span v-if="syncProgress" class="phase-counter">
                             {{ syncProgress.current }}/{{ syncProgress.total }}
                         </span>
@@ -79,14 +79,14 @@ const searchIndexingPercent = computed(() => {
                         :label="`Syncing sessions: ${syncPercent}%`"
                     ></wa-progress-bar>
                     <p v-if="isSyncActive" class="phase-hint">
-                        Sessions will become available once indexing begins in the next step.
+                        {{ $t('app.startup.syncHint') }}
                     </p>
                 </div>
 
                 <!-- Phase 2: Making sessions usable -->
                 <div class="progress-phase">
                     <div class="phase-header">
-                        <span class="phase-label">Indexing sessions data</span>
+                        <span class="phase-label">{{ $t('app.startup.indexingSessions') }}</span>
                         <span v-if="computeProgress" class="phase-counter">
                             {{ computeProgress.current }}/{{ computeProgress.total }}
                         </span>
@@ -96,7 +96,7 @@ const searchIndexingPercent = computed(() => {
                         :label="`Indexing sessions: ${computePercent}%`"
                     ></wa-progress-bar>
                     <p v-if="isComputeActive" class="phase-hint">
-                        Most recent sessions are indexed first and already available to browse.
+                        {{ $t('app.startup.indexingHint') }}
                     </p>
                     <p
                         v-for="detail in (computeProgress?.details || [])"
@@ -110,7 +110,7 @@ const searchIndexingPercent = computed(() => {
                 <!-- Phase 3: Building search index -->
                 <div class="progress-phase">
                     <div class="phase-header">
-                        <span class="phase-label">Building search index</span>
+                        <span class="phase-label">{{ $t('app.startup.buildingSearchIndex') }}</span>
                         <span v-if="searchIndexingProgress" class="phase-counter">
                             {{ searchIndexingProgress.current }}/{{ searchIndexingProgress.total }}
                         </span>
@@ -120,7 +120,7 @@ const searchIndexingPercent = computed(() => {
                         :label="`Building search index: ${searchIndexingPercent}%`"
                     ></wa-progress-bar>
                     <p v-if="isSearchIndexingActive" class="phase-hint">
-                        Search is available now — results will become more complete as indexing progresses.
+                        {{ $t('app.startup.searchHint') }}
                     </p>
                 </div>
             </div>

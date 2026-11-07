@@ -238,7 +238,7 @@ defineExpose({ open, close })
         <!-- Loading -->
         <div v-if="loading" class="changelog-loading">
             <wa-spinner style="font-size: 2rem;"></wa-spinner>
-            <p>Loading changelog…</p>
+            <p>{{ $t('changelog.loading') }}</p>
         </div>
 
         <!-- Error -->
@@ -248,9 +248,7 @@ defineExpose({ open, close })
         <div v-else-if="isSponsorScreen" class="changelog-sponsor">
             <wa-icon name="heart" class="changelog-sponsor-heart"></wa-icon>
             <p class="changelog-sponsor-text">
-                TwiCC is free and built by a solo developer. If it makes your work
-                with Claude Code and Codex smoother, please consider supporting its
-                development.
+                {{ $t('changelog.sponsor.description') }}
             </p>
             <wa-button
                 class="changelog-sponsor-button"
@@ -259,14 +257,14 @@ defineExpose({ open, close })
                 rel="noopener"
             >
                 <wa-icon slot="start" name="heart"></wa-icon>
-                Sponsor on GitHub
+                {{ $t('changelog.sponsor.action') }}
             </wa-button>
-            <p class="changelog-sponsor-footnote">Every bit helps — thank you!</p>
+            <p class="changelog-sponsor-footnote">{{ $t('changelog.sponsor.thanks') }}</p>
         </div>
 
         <!-- Empty -->
         <div v-else-if="!currentEntry" class="changelog-empty">
-            <p>No changelog entries found.</p>
+            <p>{{ $t('changelog.empty') }}</p>
         </div>
 
         <!-- Entry content -->
@@ -319,10 +317,10 @@ defineExpose({ open, close })
                     @click="prev"
                 >
                     <wa-icon name="chevron-left" slot="start"></wa-icon>
-                    Prev
+                    {{ $t('changelog.previous') }}
                 </wa-button>
                 <span class="changelog-counter">
-                    {{ totalScreens > 0 ? currentEntryIdx + 1 : 0 }} / {{ totalScreens }}
+                    {{ $t('changelog.counter', { current: totalScreens > 0 ? currentEntryIdx + 1 : 0, total: totalScreens }) }}
                 </span>
                 <wa-button
                     size="small"
@@ -330,7 +328,7 @@ defineExpose({ open, close })
                     :disabled="currentEntryIdx >= totalScreens - 1"
                     @click="next"
                 >
-                    Next
+                    {{ $t('changelog.next') }}
                     <wa-icon name="chevron-right" slot="end"></wa-icon>
                 </wa-button>
             </div>

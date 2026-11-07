@@ -42,23 +42,23 @@ const childrenText = computed(() =>
     class="tooltip"
   >
     <div>
-      <p class="label">Hash:</p>
+      <p class="label">{{ $t('git.commit.tooltip.hash') }}</p>
       <p class="text">{{ commit.hash }}</p>
     </div>
 
     <div>
-      <p class="label">Parents:</p>
+      <p class="label">{{ $t('git.commit.tooltip.parents') }}</p>
       <p class="text">{{ parentsText }}</p>
     </div>
 
     <div>
-      <p class="label">Children:</p>
+      <p class="label">{{ $t('git.commit.tooltip.children') }}</p>
       <p class="text">{{ childrenText }}</p>
     </div>
 
     <div>
-      <p class="label">Branch Tip:</p>
-      <p class="text">{{ commit.isBranchTip ? 'Yes' : 'No' }}</p>
+      <p class="label">{{ $t('git.commit.tooltip.branchTip') }}</p>
+      <p class="text">{{ commit.isBranchTip ? $t('git.commit.tooltip.yes') : $t('git.commit.tooltip.no') }}</p>
     </div>
   </div>
 </template>

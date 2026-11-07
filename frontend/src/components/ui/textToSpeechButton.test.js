@@ -30,7 +30,8 @@ test('MarkdownContent declares speakable off by default and renders the button o
     assert.match(markdownSource, /<TextToSpeechButton[^>]*v-if="speakable/)
     assert.match(markdownSource, /<TextToSpeechButton[^>]*:text="source"/)
     // The button follows the Copy button.
-    const copy = markdownSource.indexOf('title="Copy raw markdown"')
+    const copy = markdownSource.indexOf(':title="$t(\'markdown.tools.copyRaw\')"')
+    assert.match(markdownSource, /<wa-button\b[^>]*:title="\$t\('markdown\.tools\.copyRaw'\)"[^>]*@click="copySource"[^>]*>\s*<wa-icon name="copy"/s)
     const speech = markdownSource.indexOf('<TextToSpeechButton')
     assert.ok(copy !== -1 && speech > copy, 'the speech button follows the Copy button')
 })

@@ -42,7 +42,7 @@ onBeforeUnmount(host.dispose)
     />
     <Teleport to="body">
         <div v-for="entry in failedEntries" :key="entry.artifactKey" class="inline-artifact-error" role="status" :style="errorStyle(entry)">
-            <span>Inline artifact unavailable</span>
+            <span>{{ $t('artifacts.inline.unavailable') }}</span>
             <FloatingPreviewTools
                 fullscreen-first
                 :actions="errorActions(entry)"

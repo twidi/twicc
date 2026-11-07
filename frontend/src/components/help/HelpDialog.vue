@@ -101,8 +101,8 @@ function onAfterHide(event) {
         class="help-dialog"
         @wa-after-hide="onAfterHide"
     >
-        <div v-if="loading" class="help-loading">Loading…</div>
-        <div v-else-if="errored" class="help-error">Failed to load help content.</div>
+        <div v-if="loading" class="help-loading">{{ $t('help.dialog.loading') }}</div>
+        <div v-else-if="errored" class="help-error">{{ $t('help.dialog.loadError') }}</div>
         <div v-else class="help-body" v-html="bodyHtml" @click="handleHelpLinkClick" />
 
         <div slot="footer" class="help-footer">
@@ -112,9 +112,9 @@ function onAfterHide(event) {
                 @change="dontShowAgain = $event.target.checked"
                 size="small"
             >
-                Don't show this again
+                {{ $t('help.dialog.dontShowAgain') }}
             </wa-switch>
-            <wa-button variant="brand" @click="closeDialog">Close</wa-button>
+            <wa-button variant="brand" @click="closeDialog">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

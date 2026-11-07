@@ -44,7 +44,7 @@ function handleClick() {
     <button type="button" class="group-toggle" :aria-expanded="expanded" @click="handleClick">
         <span class="group-toggle-line"></span>
         <span class="group-toggle-pill">
-            <span class="toggle-label-text">{{ itemCount }} tool{{ itemCount !== 1 ? 's' : '' }}</span>
+            <span class="toggle-label-text">{{ $t('session.tools.count', { count: itemCount }, itemCount) }}</span>
             <CodeCommentsIndicator :count="commentsCount" :show-tooltip="false" class="toggle-comments-indicator" />
             <wa-icon name="chevron-down" class="group-toggle-chevron"></wa-icon>
         </span>

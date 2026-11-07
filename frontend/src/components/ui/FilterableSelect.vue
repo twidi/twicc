@@ -118,7 +118,7 @@ function onFilterKeydown(event) {
             <wa-input
                 ref="filterRef"
                 size="small"
-                placeholder="Filter..."
+                :placeholder="$t('common.select.filterPlaceholder')"
                 autocomplete="off"
                 :label="label ? `Filter ${label.toLowerCase()}` : 'Filter'"
                 class="fs-filter-input"

@@ -368,32 +368,32 @@ defineExpose({ open, close })
     >
         <form :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <div class="form-group">
-                <label class="form-label">Name</label>
+                <label class="form-label">{{ $t('common.fields.name') }}</label>
                 <wa-input
                     ref="nameInputRef"
                     :value.prop="localName"
                     @input="localName = $event.target.value; nameUserEdited = true"
-                    placeholder="Bookmark name"
+                    :placeholder="$t('artifacts.bookmarks.namePlaceholder')"
                     maxlength="255"
                 ></wa-input>
             </div>
             <div class="form-group">
-                <label class="form-label">Scope</label>
+                <label class="form-label">{{ $t('artifacts.bookmarks.scope') }}</label>
                 <wa-select
                     :value.prop="localScope"
                     @change="localScope = $event.target.value"
                     size="small"
                 >
-                    <wa-option value="project">Bookmark in project</wa-option>
-                    <wa-option value="workspace">Bookmark in workspace</wa-option>
-                    <wa-option value="all">Bookmark everywhere</wa-option>
+                    <wa-option value="project">{{ $t('artifacts.bookmarks.scopeProject') }}</wa-option>
+                    <wa-option value="workspace">{{ $t('artifacts.bookmarks.scopeWorkspace') }}</wa-option>
+                    <wa-option value="all">{{ $t('artifacts.bookmarks.scopeAll') }}</wa-option>
                 </wa-select>
-                <div class="form-hint">Where this bookmark shows in the Artifacts sidebar.</div>
+                <div class="form-hint">{{ $t('artifacts.bookmarks.scopeHint') }}</div>
             </div>
             <div v-if="isEditMode && isHtmlArtifact" class="form-group network-section">
-                <label class="form-label">Network access</label>
-                <p v-if="denials === null" class="muted">Loading…</p>
-                <p v-else-if="!hostRows.length" class="muted">No network activity on this artifact.</p>
+                <label class="form-label">{{ $t('artifacts.network.title') }}</label>
+                <p v-if="denials === null" class="muted">{{ $t('artifacts.network.loading') }}</p>
+                <p v-else-if="!hostRows.length" class="muted">{{ $t('artifacts.network.empty') }}</p>
                 <template v-else>
                     <div v-for="row in hostRows" :key="row.host" class="host-row">
                         <div class="host-row-main">
@@ -409,7 +409,7 @@ defineExpose({ open, close })
                             <code class="host-key">{{ row.host }}</code>
                             <wa-tag v-if="row.kind !== 'public'" size="small" variant="warning">{{ row.kind }}</wa-tag>
                             <button v-if="row.total" class="denial-count" type="button" @click="toggleHost(row.host)">
-                                {{ row.total }} refused
+                                {{ $t('artifacts.network.refusedCount', { count: row.total }, row.total) }}
                             </button>
                             <span class="host-actions">
                                 <wa-button
@@ -417,26 +417,26 @@ defineExpose({ open, close })
                                     size="small"
                                     appearance="outlined"
                                     @click="allowHosts([row.host])"
-                                >Allow</wa-button>
+                                >{{ $t('artifacts.network.allow') }}</wa-button>
                                 <wa-button
                                     v-if="row.state === 'pending'"
                                     size="small"
                                     appearance="outlined"
                                     @click="denyHost(row.host)"
-                                >Deny</wa-button>
+                                >{{ $t('artifacts.network.deny') }}</wa-button>
                                 <wa-button
                                     v-if="row.state === 'denied'"
                                     size="small"
                                     appearance="plain"
                                     @click="undenyHost(row.host)"
-                                >Un-deny</wa-button>
+                                >{{ $t('artifacts.network.undoDeny') }}</wa-button>
                                 <wa-button
                                     v-if="row.state === 'allowed'"
                                     size="small"
                                     appearance="plain"
                                     variant="danger"
                                     @click="removeAllowed(row.host)"
-                                >Remove</wa-button>
+                                >{{ $t('artifacts.bookmarks.removeAction') }}</wa-button>
                             </span>
                         </div>
                         <!-- Level 2: provenances (share links / owner preview). -->
@@ -459,32 +459,34 @@ defineExpose({ open, close })
                         variant="brand"
                         @click="allowHosts(selectedHosts)"
                     >
-                        Allow selected ({{ selectedHosts.length }})
+                        {{ $t('artifacts.network.allowSelected', { count: selectedHosts.length }) }}
                     </wa-button>
                     <wa-callout v-if="confirmAllow.armed" variant="warning">
                         <ul class="confirm-hosts">
                             <li v-for="e in confirmNonPublic" :key="e.host">
-                                <code>{{ e.host }}</code> ({{ e.kind }}) resolves to {{ NON_PUBLIC_TARGET[e.kind] }}
+                                <i18n-t keypath="artifacts.network.resolvesTo" scope="global">
+                                    <template #host><code>{{ e.host }}</code></template>
+                                    <template #kind>{{ e.kind }}</template>
+                                    <template #target>{{ NON_PUBLIC_TARGET[e.kind] }}</template>
+                                </i18n-t>
                             </li>
                         </ul>
                         <p class="confirm-text">
-                            TwiCC's server makes these requests from there, not the viewer's browser — and anonymous
-                            viewers of every share of this artifact will be able to reach these hosts.
+                            {{ $t('artifacts.network.sharedHostWarning') }}
                         </p>
                         <div class="confirm-actions">
                             <wa-button size="small" variant="warning" @click="confirmAllowNow">
-                                Allow anyway
+                                {{ $t('artifacts.network.allowAnyway') }}
                             </wa-button>
                             <wa-button size="small" appearance="plain" @click="confirmAllow.armed = false">
-                                Cancel
+                                {{ $t('common.actions.cancel') }}
                             </wa-button>
                         </div>
                     </wa-callout>
                     <wa-callout v-if="sectionError" variant="danger" size="small">{{ sectionError }}</wa-callout>
                 </template>
                 <div class="form-hint">
-                    Hosts this artifact may reach — for you in preview and for the viewers of every share. Refused
-                    requests are listed with who triggered them.
+                    {{ $t('artifacts.network.hostsHint') }}
                 </div>
             </div>
             <wa-callout v-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
@@ -498,7 +500,7 @@ defineExpose({ open, close })
                 :disabled="isSaving"
                 @click="handleRemove"
             >
-                Remove
+                {{ $t('artifacts.bookmarks.removeAction') }}
             </wa-button>
             <wa-button
                 v-if="isEditMode && !hideShareEntry"
@@ -509,11 +511,11 @@ defineExpose({ open, close })
                 @click="openShareDialog"
             >
                 <wa-icon name="share-nodes" slot="start"></wa-icon>
-                Share…
+                {{ $t('artifacts.sharing.shareMenu') }}
             </wa-button>
-            <wa-button variant="neutral" appearance="outlined" :disabled="isSaving" @click="close">Cancel</wa-button>
+            <wa-button variant="neutral" appearance="outlined" :disabled="isSaving" @click="close">{{ $t('common.actions.cancel') }}</wa-button>
             <wa-button ref="saveButtonRef" type="submit" variant="brand" :disabled="isSaving">
-                {{ isEditMode ? 'Save' : 'Bookmark' }}
+                {{ isEditMode ? $t('common.actions.save') : $t('artifacts.bookmarks.bookmark') }}
             </wa-button>
         </div>
         <ShareDialog v-if="isEditMode && !hideShareEntry" :open="showShareDialog" kind="artifact"

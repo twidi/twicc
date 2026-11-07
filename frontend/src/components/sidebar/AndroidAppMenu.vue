@@ -147,9 +147,10 @@ async function confirmForceRefresh() {
             <div class="android-app-menu-host" :class="{ 'android-app-menu-host--fixed': !railTarget }">
                 <wa-dropdown ref="dropdown" class="android-app-menu" placement="right-start"
                     @wa-show.self="refreshState" @wa-select.self="selectAction">
-                    <button ref="trigger" slot="trigger" type="button" class="rail-button" aria-label="Android app menu">
+                    <button ref="trigger" slot="trigger" type="button" class="rail-button" :aria-label="$t('navigation.android.menu')">
                         <BrandLogo :size="26" />
                     </button>
+                    <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- TwiCC and Android are product names with version identifiers. -->
                     <wa-dropdown-item disabled>{{ backendVersion ? `TwiCC ${backendVersion}` : 'TwiCC' }} · Android {{ state.version }}</wa-dropdown-item>
                     <wa-divider />
                     <wa-dropdown-item v-for="instance in state.instances" :key="instance.id"
@@ -159,24 +160,24 @@ async function confirmForceRefresh() {
                             <span>{{ instance.name }}</span>
                             <span class="instance-address">{{ instance.address }}</span>
                         </span>
-                        <span v-if="instance.id === state.activeInstanceId" slot="details">Active</span>
+                        <span v-if="instance.id === state.activeInstanceId" slot="details">{{ $t('navigation.android.active') }}</span>
                     </wa-dropdown-item>
                     <wa-dropdown-item value="manageInstances">
-                        <wa-icon slot="icon" name="server" />Manage instances
+                        <wa-icon slot="icon" name="server" />{{ $t('navigation.android.manage') }}
                     </wa-dropdown-item>
                     <wa-divider />
-                    <wa-dropdown-item value="reload"><wa-icon slot="icon" name="rotate-right" />Reload page</wa-dropdown-item>
-                    <wa-dropdown-item value="forceRefresh"><wa-icon slot="icon" name="arrows-rotate" />Force refresh (keep login)</wa-dropdown-item>
-                    <wa-dropdown-item v-if="!railTarget" value="serverHome"><wa-icon slot="icon" name="house" />Server home</wa-dropdown-item>
-                    <wa-dropdown-item value="openInBrowser"><wa-icon slot="icon" name="arrow-up-right-from-square" />Open in browser</wa-dropdown-item>
+                    <wa-dropdown-item value="reload"><wa-icon slot="icon" name="rotate-right" />{{ $t('navigation.android.reload') }}</wa-dropdown-item>
+                    <wa-dropdown-item value="forceRefresh"><wa-icon slot="icon" name="arrows-rotate" />{{ $t('navigation.android.forceRefresh') }}</wa-dropdown-item>
+                    <wa-dropdown-item v-if="!railTarget" value="serverHome"><wa-icon slot="icon" name="house" />{{ $t('navigation.android.serverHome') }}</wa-dropdown-item>
+                    <wa-dropdown-item value="openInBrowser"><wa-icon slot="icon" name="arrow-up-right-from-square" />{{ $t('navigation.android.browser') }}</wa-dropdown-item>
                     <wa-callout v-if="error" variant="danger" role="alert">{{ error }}</wa-callout>
                 </wa-dropdown>
             </div>
         </Teleport>
-        <wa-dialog ref="confirmDialog" label="Force refresh?" class="android-refresh-dialog">
-            Reload this page and bypass its resource cache. Your login and preferences stay saved. Unsaved text may be lost.
-            <wa-button slot="footer" appearance="plain" @click="confirmDialog.open = false">Cancel</wa-button>
-            <wa-button slot="footer" variant="brand" @click="confirmForceRefresh">Refresh</wa-button>
+        <wa-dialog ref="confirmDialog" :label="$t('navigation.android.refreshQuestion')" class="android-refresh-dialog">
+            {{ $t('navigation.android.refreshHint') }}
+            <wa-button slot="footer" appearance="plain" @click="confirmDialog.open = false">{{ $t('common.actions.cancel') }}</wa-button>
+            <wa-button slot="footer" variant="brand" @click="confirmForceRefresh">{{ $t('navigation.android.refresh') }}</wa-button>
         </wa-dialog>
     </template>
 </template>

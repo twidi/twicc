@@ -131,19 +131,19 @@ function onResumeInputChange(event) {
                                 size="small"
                                 appearance="plain"
                                 @click="uploads.retry(line.entry.key)"
-                            >Retry</wa-button>
+                            >{{ $t('common.actions.retry') }}</wa-button>
                             <wa-button
                                 v-if="line.actions.buttons.includes('retryFinalization')"
                                 size="small"
                                 appearance="plain"
                                 @click="uploads.retryFinalization(line.entry.key)"
-                            >Retry</wa-button>
+                            >{{ $t('common.actions.retry') }}</wa-button>
                             <wa-button
                                 v-if="line.actions.buttons.includes('resume')"
                                 size="small"
                                 appearance="plain"
                                 @click="pickForResume(line.entry.key)"
-                            >Resume</wa-button>
+                            >{{ $t('files.upload.resume') }}</wa-button>
                             <wa-button
                                 v-if="line.actions.buttons.includes('cancel')"
                                 size="small"
@@ -151,7 +151,7 @@ function onResumeInputChange(event) {
                                 class="upload-cancel"
                                 :aria-label="`Cancel the upload of ${line.entry.filename}`"
                                 @click="uploads.cancel(line.entry.key)"
-                            ><wa-icon name="xmark" label="Cancel"></wa-icon></wa-button>
+                            ><wa-icon name="xmark" :label="$t('common.actions.cancel')"></wa-icon></wa-button>
                         </div>
                     </div>
                 </div>

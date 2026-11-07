@@ -29,7 +29,7 @@ const markdownSource = computed(() => {
 
 <template>
     <MarkdownContent v-if="markdownSource" :source="markdownSource" :show-toolbar="false" />
-    <div v-else class="monitor-output__no-events">(no events)</div>
+    <div v-else class="monitor-output__no-events">{{ $t('session.tools.monitor.noEvents') }}</div>
 </template>
 
 <style scoped>

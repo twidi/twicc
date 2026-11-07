@@ -139,7 +139,7 @@ onBeforeUnmount(() => clearTimeout(longPressTimer))
         <button
             v-if="showHistoryButton"
             class="snippet-btn history-btn"
-            title="Browse previous messages"
+            :title="$t('composer.history.browse')"
             @click="emit('open-history')"
         >
             <wa-icon name="arrow-up"></wa-icon>
@@ -156,13 +156,13 @@ onBeforeUnmount(() => clearTimeout(longPressTimer))
                     <wa-icon :name="activationMeta(char).icon" :style="activationMeta(char).iconStyle"></wa-icon>
                 </button>
                 <AppTooltip v-if="!canOpenCommand" :for="commandBtnDisabledId(char)">
-                    Clear the message first to use a command
+                    {{ $t('composer.commands.clearFirst') }}
                 </AppTooltip>
             </template>
         </template>
         <button
             class="snippet-btn at-btn"
-            title="Insert a file path"
+            :title="$t('composer.files.insertPath')"
             @click="emit('open-at')"
         >
             <wa-icon name="at"></wa-icon>
@@ -221,11 +221,11 @@ onBeforeUnmount(() => clearTimeout(longPressTimer))
                 </template>
             </GroupedSnippetEntries>
         </template>
-        <span v-else class="empty-text">No snippets</span>
+        <span v-else class="empty-text">{{ $t('composer.snippets.emptyBar') }}</span>
         <button
             class="snippet-btn manage-btn"
             @click="emit('manage-snippets')"
-        >⚙ Manage</button>
+        >{{ $t('composer.snippets.manage') }}</button>
     </div>
 </template>
 

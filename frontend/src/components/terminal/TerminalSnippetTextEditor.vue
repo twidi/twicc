@@ -70,13 +70,13 @@ defineExpose({ focus })
     <div class="snippet-text-editor">
         <!-- Snippet text -->
         <div class="form-group">
-            <label class="form-label">Snippet</label>
+            <label class="form-label">{{ $t('terminal.snippets.text.label') }}</label>
             <wa-textarea
                 ref="textareaRef"
                 :value="text"
                 @input="emit('update:text', $event.target.value)"
                 rows="3"
-                placeholder='e.g. "git status --short"'
+                :placeholder="$t('terminal.snippets.text.placeholder')"
                 size="small"
                 class="snippet-textarea"
             />
@@ -92,7 +92,7 @@ defineExpose({ focus })
             </div>
 
             <!-- Placeholder picker -->
-            <p class="placeholder-hint">Insert placeholders to be resolved at send time:</p>
+            <p class="placeholder-hint">{{ $t('terminal.snippets.placeholders.hint') }}</p>
             <div class="placeholder-picker-row">
                 <button
                     v-for="p in PLACEHOLDERS"
@@ -112,7 +112,7 @@ defineExpose({ focus })
                 @change="emit('update:appendEnter', $event.target.checked)"
                 size="small"
             >
-                Append final Enter
+                {{ $t('terminal.snippets.appendEnter') }}
             </wa-checkbox>
 
             <wa-checkbox
@@ -120,7 +120,7 @@ defineExpose({ focus })
                 @change="emit('update:openInNewTab', $event.target.checked)"
                 size="small"
             >
-                Open in new tab
+                {{ $t('terminal.snippets.openInNewTab') }}
             </wa-checkbox>
 
             <slot></slot>

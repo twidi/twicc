@@ -182,10 +182,10 @@ watch(() => taskStore.pickerMode, (mode) => {
 
     <div v-else-if="block" class="simple-picker">
         <template v-if="blocks.length > 1">
-            <span class="simple-label">Provider</span>
+            <span class="simple-label">{{ $t('session.agentSettings.picker.provider') }}</span>
             <SegmentedControl
                 class="simple-provider"
-                label="Provider"
+                :label="$t('session.agentSettings.picker.provider')"
                 :model-value="block.provider"
                 :options="providerOptions"
                 @update:model-value="onProviderChange"
@@ -197,11 +197,11 @@ watch(() => taskStore.pickerMode, (mode) => {
             <div class="simple-gap"></div>
         </template>
 
-        <span class="simple-label">Model</span>
+        <span class="simple-label">{{ $t('common.labels.model') }}</span>
         <wa-select
             v-if="olderShown"
             size="small"
-            aria-label="Model"
+            :aria-label="$t('common.labels.model')"
             :value.prop="row?.model ?? ''"
             @change="onModelSelect"
         >
@@ -214,7 +214,7 @@ watch(() => taskStore.pickerMode, (mode) => {
             class="simple-slider"
             size="small"
             with-markers
-            aria-label="Model, from the weakest to the strongest"
+            :aria-label="$t('session.agentSettings.picker.modelOrder')"
             :min.prop="0"
             :max.prop="Math.max(0, modelRows.length - 1)"
             :step.prop="1"
@@ -242,16 +242,16 @@ watch(() => taskStore.pickerMode, (mode) => {
                 type="button"
                 class="picker-link"
                 @click="toggleOlder"
-            >{{ olderShown ? 'Hide older models' : 'Show older models' }}</button>
+            >{{ olderShown ? $t('session.agentSettings.matrix.hideOlder') : $t('session.agentSettings.matrix.showOlder') }}</button>
         </div>
         <div class="simple-gap"></div>
 
-        <span class="simple-label">Effort</span>
+        <span class="simple-label">{{ $t('session.agentSettings.picker.effort') }}</span>
         <wa-slider
             class="simple-slider"
             size="small"
             with-markers
-            aria-label="Effort"
+            :aria-label="$t('session.agentSettings.picker.effort')"
             :min.prop="0"
             :max.prop="Math.max(0, effortItems.length - 1)"
             :step.prop="1"

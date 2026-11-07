@@ -38,19 +38,19 @@ function onDifficultyInput(event) {
 <template>
     <div class="benchmark-task">
         <div class="task-rows">
-            <label class="task-label" :for="`${uid}-type`">Task type</label>
+            <label class="task-label" :for="`${uid}-type`">{{ $t('session.agentSettings.benchmark.taskType') }}</label>
             <wa-select
                 :id="`${uid}-type`"
                 class="task-control"
                 size="small"
-                aria-label="Task type"
+                :aria-label="$t('session.agentSettings.benchmark.taskType')"
                 :value.prop="store.taskType"
                 @change="onTaskTypeChange"
             >
                 <wa-option v-for="t in taskTypes" :key="t.id" :value="t.id">{{ t.label }}</wa-option>
             </wa-select>
 
-            <span class="task-label">Task difficulty</span>
+            <span class="task-label">{{ $t('session.agentSettings.benchmark.difficulty') }}</span>
             <wa-slider
                 class="task-control"
                 size="small"
@@ -58,16 +58,16 @@ function onDifficultyInput(event) {
                 :max.prop="100"
                 :step.prop="1"
                 :value.prop="store.difficulty"
-                aria-label="Task difficulty"
+                :aria-label="$t('session.agentSettings.benchmark.difficulty')"
                 @input="onDifficultyInput"
             ></wa-slider>
 
-            <span class="task-label">Favor</span>
-            <!-- label="Favor" is the control's accessible name; the visible label is
-                 the span above (the component hides its own). -->
+            <span class="task-label">{{ $t('session.agentSettings.benchmark.favor') }}</span>
+            <!-- The control's label gives its accessible name. The span above
+                 gives the visible label; the component hides its own label. -->
             <SegmentedControl
                 class="task-control task-favor"
-                label="Favor"
+                :label="$t('session.agentSettings.benchmark.favor')"
                 :model-value="store.favor"
                 :options="FAVOR_OPTIONS"
                 @update:model-value="store.setFavor"
@@ -81,13 +81,13 @@ function onDifficultyInput(event) {
                 size="small"
                 :checked="store.autoSelectBest"
                 @change="store.autoSelectBest = $event.target.checked"
-            >Auto-select best</wa-switch>
+            >{{ $t('session.agentSettings.benchmark.autoSelect') }}</wa-switch>
             <wa-switch
                 v-if="store.autoSelectBest && providerCount > 1"
                 size="small"
                 :checked="store.defaultProviderOnly"
                 @change="store.defaultProviderOnly = $event.target.checked"
-            >Default provider only</wa-switch>
+            >{{ $t('session.agentSettings.benchmark.defaultProviderOnly') }}</wa-switch>
         </div>
 
         <!-- Closes the task block. -->

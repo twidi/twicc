@@ -176,14 +176,13 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Manage layouts"
+        :label="$t('session.layout.manage.title')"
         class="layout-manager-dialog"
         @wa-hide="onDialogHide"
     >
         <div class="dialog-content">
             <p v-if="!namedLayouts.length" class="empty-message">
-                No saved layouts yet. Dock some panels in a session, then use the layout menu’s
-                “Save layout” to create one.
+                {{ $t('session.layout.manage.empty') }}
             </p>
 
             <div v-else class="layout-list">
@@ -196,16 +195,16 @@ defineExpose({ open, close })
                                 class="rename-input"
                                 :value.prop="editingName"
                                 size="small"
-                                placeholder="Layout name"
+                                :placeholder="$t('session.layout.namePlaceholder')"
                                 @input="editingName = $event.target.value"
                                 @keydown.enter.prevent="commitRename"
                                 @keydown.escape.prevent="cancelRename"
                             ></wa-input>
                             <div class="layout-actions">
-                                <button class="action-btn action-btn-confirm-ok" @click="commitRename" title="Save name">
+                                <button class="action-btn action-btn-confirm-ok" @click="commitRename" :title="$t('session.layout.manage.saveName')">
                                     <wa-icon name="check" />
                                 </button>
-                                <button class="action-btn" @click="cancelRename" title="Cancel rename">
+                                <button class="action-btn" @click="cancelRename" :title="$t('session.layout.manage.cancelRename')">
                                     <wa-icon name="xmark" />
                                 </button>
                             </div>
@@ -217,28 +216,28 @@ defineExpose({ open, close })
                             <div class="layout-actions">
                                 <!-- Delete confirmation (inline, mirrors WorkspaceManageDialog) -->
                                 <template v-if="deletingId === l.id">
-                                    <span class="delete-confirm-label">Delete?</span>
+                                    <span class="delete-confirm-label">{{ $t('session.layout.manage.deleteConfirm') }}</span>
                                     <button
                                         class="action-btn action-btn-confirm-danger"
                                         :disabled="isDeleting"
                                         @click="confirmDelete"
-                                        title="Confirm delete"
+                                        :title="$t('session.layout.manage.confirmDelete')"
                                     ><wa-icon name="check" /></button>
                                     <button
                                         class="action-btn"
                                         :disabled="isDeleting"
                                         @click="cancelDelete"
-                                        title="Cancel delete"
+                                        :title="$t('session.layout.manage.cancelDelete')"
                                     ><wa-icon name="xmark" /></button>
                                 </template>
                                 <template v-else>
-                                    <button class="action-btn" @click="startRename(l)" title="Rename">
+                                    <button class="action-btn" @click="startRename(l)" :title="$t('common.actions.rename')">
                                         <wa-icon name="pen-to-square" />
                                     </button>
                                     <button
                                         class="action-btn action-btn-danger"
                                         @click="startDelete(l)"
-                                        title="Delete"
+                                        :title="$t('common.actions.delete')"
                                     ><wa-icon name="trash-can" /></button>
                                 </template>
                             </div>
@@ -256,13 +255,11 @@ defineExpose({ open, close })
                          "Delete?" confirmation stays above; here we just collect the target. -->
                     <div v-if="deletingId === l.id && hasReferences" class="reassign-panel">
                         <span class="reassign-text">
-                            Used by
-                            <template v-if="deleteRefs.global">the global default</template>
-                            <template v-if="deleteRefs.global && deleteRefs.projects.length"> and </template>
-                            <template v-if="deleteRefs.projects.length">
-                                {{ deleteRefs.projects.length }}
-                                project{{ deleteRefs.projects.length > 1 ? 's' : '' }}</template>.
-                            Reassign to:
+                            {{ deleteRefs.global
+                                ? (deleteRefs.projects.length
+                                    ? $t('session.layout.manage.reassignGlobalProjects', { count: deleteRefs.projects.length }, deleteRefs.projects.length)
+                                    : $t('session.layout.manage.reassignGlobal'))
+                                : $t('session.layout.manage.reassignProjects', { count: deleteRefs.projects.length }, deleteRefs.projects.length) }}
                         </span>
                         <wa-select
                             class="reassign-select"
@@ -284,7 +281,7 @@ defineExpose({ open, close })
         </div>
 
         <div slot="footer" class="dialog-footer">
-            <wa-button variant="neutral" appearance="outlined" @click="close">Close</wa-button>
+            <wa-button variant="neutral" appearance="outlined" @click="close">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

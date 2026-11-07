@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../../i18n/index.js'
 import fs from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { createSSRApp } from 'vue'
@@ -23,7 +24,7 @@ const compiled = compileScript(descriptor, {
 const component = (await import(dataModule(compiled))).default
 
 async function render(entry, review) {
-    return renderToString(createSSRApp(component, { entry, review }).use(createPinia()))
+    return renderToString(createSSRApp(component, { entry, review }).use(createPinia()).use(createAppI18n()))
 }
 
 /** The name field, isolated from the verification-code field next to it. */

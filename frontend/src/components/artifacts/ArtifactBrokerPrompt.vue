@@ -119,15 +119,18 @@ const calloutText = computed(() => {
         @wa-after-hide.self="onDialogAfterHide"
     >
         <div v-if="prompt && isDataWrite" class="broker-prompt">
-            <p>This page wants to store data in:</p>
+            <p>{{ $t('artifacts.broker.storeLocation') }}</p>
             <p class="broker-prompt-host"><strong>{{ prompt.path }}</strong></p>
-            <p class="broker-prompt-target">Files are written on the machine TwiCC runs on, next to the page.</p>
+            <p class="broker-prompt-target">{{ $t('artifacts.broker.storeLocationHint') }}</p>
         </div>
         <div v-else-if="prompt" class="broker-prompt">
-            <p>This artifact wants to connect to:</p>
+            <p>{{ $t('artifacts.broker.connectHost') }}</p>
             <p class="broker-prompt-host"><strong>{{ prompt.host }}</strong></p>
             <p class="broker-prompt-target">
-                → resolves to <code>{{ prompt.ip }}</code> ({{ KIND_LABEL[prompt.kind] || prompt.kind }})
+                <i18n-t keypath="artifacts.broker.resolvesTo" scope="global">
+                    <template #ip><code>{{ prompt.ip }}</code></template>
+                    <template #kind>{{ KIND_LABEL[prompt.kind] || prompt.kind }}</template>
+                </i18n-t>
             </p>
             <wa-callout v-if="prompt.kind !== 'public'" :variant="calloutVariant">
                 <wa-icon slot="icon" :name="calloutIcon"></wa-icon>
@@ -138,26 +141,26 @@ const calloutText = computed(() => {
         <!-- Data writes are remembered for the tab only: there is nothing to
              persist a "Forever" onto (design 2026-08-05 §6). -->
         <div v-if="isDataWrite" slot="footer" class="broker-prompt-footer">
-            <p class="broker-prompt-question">Do you want to allow this page to store data?</p>
+            <p class="broker-prompt-question">{{ $t('artifacts.broker.allowStoreQuestion') }}</p>
             <div class="broker-prompt-actions">
-                <wa-button @click="emit('decision', 'deny')">No, deny</wa-button>
-                <wa-button variant="brand" @click="emit('decision', 'session')">Yes, allow for this tab</wa-button>
+                <wa-button @click="emit('decision', 'deny')">{{ $t('artifacts.broker.deny') }}</wa-button>
+                <wa-button variant="brand" @click="emit('decision', 'session')">{{ $t('artifacts.broker.allowTab') }}</wa-button>
             </div>
-            <p class="broker-prompt-hint">This stays allowed until you reload or close the tab.</p>
+            <p class="broker-prompt-hint">{{ $t('artifacts.broker.allowTabHint') }}</p>
         </div>
         <div v-else slot="footer" class="broker-prompt-footer">
-            <p class="broker-prompt-question">Do you want to allow this connection?</p>
+            <p class="broker-prompt-question">{{ $t('artifacts.broker.allowConnectionQuestion') }}</p>
             <div class="broker-prompt-actions">
-                <wa-button @click="emit('decision', 'deny')">No, deny</wa-button>
-                <wa-button v-if="prompt?.canRemember" @click="emit('decision', 'forever')">Yes, forever</wa-button>
-                <wa-button variant="brand" @click="emit('decision', 'session')">Yes, this session</wa-button>
+                <wa-button @click="emit('decision', 'deny')">{{ $t('artifacts.broker.deny') }}</wa-button>
+                <wa-button v-if="prompt?.canRemember" @click="emit('decision', 'forever')">{{ $t('artifacts.broker.allowForever') }}</wa-button>
+                <wa-button variant="brand" @click="emit('decision', 'session')">{{ $t('artifacts.broker.allowSession') }}</wa-button>
             </div>
-            <p class="broker-prompt-hint">“This session” keeps this host allowed until you reload or close the tab.</p>
+            <p class="broker-prompt-hint">{{ $t('artifacts.broker.allowSessionHint') }}</p>
             <p v-if="prompt?.canRemember" class="broker-prompt-hint">
-                “Yes, forever” keeps this host allowed on all your devices (saved on the server).
+                {{ $t('artifacts.broker.allowForeverHint') }}
             </p>
             <p v-else class="broker-prompt-hint">
-                Bookmark this artifact to also get a “Yes, forever” option.
+                {{ $t('artifacts.broker.bookmarkHint') }}
             </p>
         </div>
     </wa-dialog>

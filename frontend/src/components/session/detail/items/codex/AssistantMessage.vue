@@ -86,7 +86,7 @@ function onAfterHide() {
             @wa-after-hide.self="onAfterHide"
         >
             <span slot="summary" class="items-details-summary">
-                <strong class="items-details-summary-name">Proposed plan</strong>
+                <strong class="items-details-summary-name">{{ $t('session.tools.proposedPlan') }}</strong>
             </span>
             <div v-if="isOpen || isClosing()" class="proposed-plan-body">
                 <MarkdownContent :source="segments.plan" :summary-context="summary" :inline-context="segmentInlineTextContext(inlineContext, segments.planOffset)" />

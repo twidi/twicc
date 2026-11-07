@@ -1,4 +1,5 @@
 import * as Vue from 'vue'
+import { createAppI18n } from '../../i18n/index.js'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { renderToString } from '@vue/server-renderer'
 import test from 'node:test'
@@ -394,6 +395,7 @@ async function renderArtifactMarkdown(h, navigateToInlinePublication = null) {
         showTocDetails: false, source: h.props.source, highlightTerms: [], handleLinkClick() {},
         navigateToInlinePublication,
     }) })
+    app.use(createAppI18n())
     app.component('InlineArtifactBlock', { props: ['status'], render() { return Vue.h('div', { 'data-artifact-state': this.status }) } })
     app.directive('highlight', {})
     return renderToString(app)

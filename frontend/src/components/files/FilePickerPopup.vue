@@ -381,7 +381,7 @@ defineExpose({ open, close, isOpen })
                         value="show-hidden"
                         :checked="showHidden"
                     >
-                        Show hidden files
+                        {{ $t('files.options.showHidden') }}
                     </wa-dropdown-item>
                     <wa-dropdown-item
                         v-if="isGit"
@@ -389,12 +389,12 @@ defineExpose({ open, close, isOpen })
                         value="show-ignored"
                         :checked="showIgnored"
                     >
-                        Show git ignored files
+                        {{ $t('files.options.showIgnored') }}
                     </wa-dropdown-item>
                     <template v-if="availableRoots.length >= 1">
                         <wa-divider></wa-divider>
                         <wa-dropdown-item disabled class="dropdown-header">
-                            Root:
+                            {{ $t('files.roots.label') }}
                         </wa-dropdown-item>
                         <wa-dropdown-item
                             v-for="root in availableRoots"

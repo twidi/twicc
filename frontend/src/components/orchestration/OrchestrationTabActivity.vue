@@ -40,7 +40,7 @@ const visible = computed(() => visibleOrchestrationIndicators(props.activity, pr
         <ProcessActivityIndicator v-if="visible.sessions" :summary="visible.sessions" size="small" />
         <template v-if="visible.subagents">
             <ProcessIndicator :id="subagentsId" state="assistant_turn" size="small" />
-            <AppTooltip :for="subagentsId">Subagents working</AppTooltip>
+            <AppTooltip :for="subagentsId">{{ $t('session.orchestration.subagentsWorking') }}</AppTooltip>
         </template>
     </span>
 </template>

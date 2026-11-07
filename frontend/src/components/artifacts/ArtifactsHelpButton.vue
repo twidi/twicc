@@ -16,6 +16,6 @@ function open() {
 <template>
     <wa-button appearance="outlined" variant="brand" size="small" @click="open">
         <wa-icon slot="start" name="circle-question"></wa-icon>
-        What are artifacts?
+        {{ $t('artifacts.help.whatAreArtifacts') }}
     </wa-button>
 </template>

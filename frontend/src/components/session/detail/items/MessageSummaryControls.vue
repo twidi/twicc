@@ -14,9 +14,9 @@ function toggle(event) {
 </script>
 
 <template>
-    <div class="message-summary-controls" role="group" aria-label="Message summary" :aria-busy="summary.running">
+    <div class="message-summary-controls" role="group" :aria-label="$t('session.summary.messageLabel')" :aria-busy="summary.running">
         <div class="message-summary-actions">
-            <wa-switch size="small" :checked="showing" @change="toggle">Show summary</wa-switch>
+            <wa-switch size="small" :checked="showing" @change="toggle">{{ $t('session.summary.show') }}</wa-switch>
             <template v-if="showing">
                 <SummaryGenerationLinks
                     :running="summary.running"

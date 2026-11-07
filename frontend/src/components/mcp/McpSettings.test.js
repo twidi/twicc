@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../../i18n/index.js'
 import fs from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { createSSRApp } from 'vue'
@@ -41,7 +42,7 @@ async function render(config, protection = {}) {
     const pinia = createPinia()
     useMcpStore(pinia).config = { mcpBaseUrl: 'https://mcp.example.com', ...config }
     useMcpStore(pinia).protection = protection
-    return renderToString(createSSRApp(component).use(pinia))
+    return renderToString(createSSRApp(component).use(pinia).use(createAppI18n()))
 }
 
 test('without a password the switch is disabled and a danger callout follows it', async () => {
@@ -74,7 +75,7 @@ test('automatic protection explains the pause and keeps manual suspension availa
     assert.match(html, /Suspected OAuth abuse/)
     assert.match(html, /10 more minutes/)
     assert.match(html, /Existing connections, token renewals/)
-    assert.match(html, /10 registration attempts/)
+    assert.match(html, /registration attempts: 10; authorization attempts: 3; refusals: 20; network sources: 4/)
     assert.match(html, /Suspend all external access/)
     assert.match(html, /Preserves authorizations/)
     assert.doesNotMatch(html, /Dismiss alert/)

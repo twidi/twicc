@@ -658,12 +658,12 @@ defineExpose({ isExpanded: expanded })
                 size="small"
                 variant="neutral"
                 appearance="plain"
-                aria-label="Close"
+                :aria-label="$t('common.actions.close')"
                 :disabled="submitting"
                 @click="close"
             >
                 <wa-icon name="xmark"></wa-icon>
-                <span class="tsc-control-label">Close</span>
+                <span class="tsc-control-label">{{ $t('common.actions.close') }}</span>
             </wa-button>
 
             <wa-button
@@ -671,11 +671,11 @@ defineExpose({ isExpanded: expanded })
                 size="small"
                 variant="neutral"
                 appearance="plain"
-                aria-label="Move dialog"
-                title="Move dialog"
+                :aria-label="$t('session.selectionComment.moveDialog')"
+                :title="$t('session.selectionComment.moveDialog')"
             >
                 <wa-icon name="grip-vertical" family="classic" variant="solid"></wa-icon>
-                <span class="tsc-control-label">Move dialog</span>
+                <span class="tsc-control-label">{{ $t('session.selectionComment.moveDialog') }}</span>
             </wa-button>
 
             <SelectionSummaryBody v-if="summarySource !== null" :text="summarySource" @content-change="clampToViewport" />
@@ -699,7 +699,7 @@ defineExpose({ isExpanded: expanded })
                             :checked="includeScreenshot"
                             :disabled="!ready || screenshotLoading || submitting"
                             @change="onIncludeToggle"
-                        >Include screenshot</wa-switch>
+                        >{{ $t('session.selectionComment.includeScreenshot') }}</wa-switch>
                         <wa-spinner v-if="screenshotLoading"></wa-spinner>
                     </div>
                     <div
@@ -707,13 +707,13 @@ defineExpose({ isExpanded: expanded })
                         class="tsc-shot-thumb"
                         @click="openShotPreview"
                     >
-                        <img :src="screenshotDataUrl" alt="Screenshot" />
+                        <img :src="screenshotDataUrl" :alt="$t('session.selectionComment.screenshot')" />
                     </div>
                 </div>
 
                 <div v-if="showHelpHint && !persistent" class="tsc-help">
-                    <strong>Note:</strong> Clicking outside this dialog will discard the selection and any comment entered.
-                    <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">Dismiss</a>
+                    <i18n-t keypath="session.selectionComment.discardHint" scope="global"><template #note><strong>{{ $t('session.selectionComment.note') }}</strong></template></i18n-t>
+                    <a class="tsc-help-dismiss" href="#" @click.prevent="dismissHelpHint">{{ $t('session.selectionComment.dismiss') }}</a>
                 </div>
 
                 <div class="tsc-actions">
@@ -724,7 +724,7 @@ defineExpose({ isExpanded: expanded })
                         :disabled="!ready || !canAdd || screenshotLoading || submitting"
                         @click="addToMessage()"
                     >
-                        Add to message
+                        {{ $t('session.selectionComment.addToMessage') }}
                     </wa-button>
                     <wa-button
                         v-if="canSendToAgent"
@@ -733,7 +733,7 @@ defineExpose({ isExpanded: expanded })
                         :disabled="!ready || screenshotLoading || submitting || selectionSendPending"
                         @click="sendToAgent"
                     >
-                        Send to Agent
+                        {{ $t('session.selectionComment.sendToAgent') }}
                     </wa-button>
                 </div>
             </template>

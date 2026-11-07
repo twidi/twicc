@@ -107,21 +107,21 @@ function openSearch() {
                 >
                     <wa-icon name="magnifying-glass"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="searchButtonId">Search in editor</AppTooltip>
+                <AppTooltip :for="searchButtonId">{{ $t('session.tools.diff.search') }}</AppTooltip>
             </div>
             <div class="tool-diff-header-right">
                 <wa-switch
                     :checked="wordWrap"
                     size="small"
                     @change="onWordWrapToggle"
-                >Wrap</wa-switch>
+                >{{ $t('session.tools.diff.wrap') }}</wa-switch>
                 <wa-switch
                     v-if="mode === 'diff' && canSideBySide"
                     :checked="sideBySide"
                     size="small"
                     class="side-by-side-toggle"
                     @change="onSideBySideToggle"
-                >Side by side</wa-switch>
+                >{{ $t('settings.sessions.diffs.sideBySide') }}</wa-switch>
             </div>
         </div>
         <div ref="editorAreaRef" class="tool-diff-body">

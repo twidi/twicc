@@ -196,8 +196,8 @@ const expanded = ref(true)
                     <wa-icon
                         v-if="isHidden"
                         name="eye-slash"
-                        label="Hidden session"
-                        title="Hidden session"
+                        :label="$t('session.orchestration.hiddenSession')"
+                        :title="$t('session.orchestration.hiddenSession')"
                         class="orch-hidden-icon"
                     ></wa-icon>
                     <wa-icon
@@ -210,12 +210,12 @@ const expanded = ref(true)
                         :class="status.pulse === 'work' ? 'robot-working' : (status.pulse ? `orch-status-icon--pulse-${status.pulse}` : null)"
                     ></wa-icon>
                     <span v-if="isCurrent || isDetached" class="orch-tags">
-                        <span v-if="isCurrent" class="orch-current-tag">current</span>
+                        <span v-if="isCurrent" class="orch-current-tag">{{ $t('session.orchestration.current') }}</span>
                         <span
                             v-if="isDetached"
                             class="orch-detached-tag"
-                            title="Shown as a separate root in the sidebar tree. The session is still part of this orchestration."
-                        >detached</span>
+                            :title="$t('session.orchestration.detachedTooltip')"
+                        >{{ $t('session.orchestration.detached') }}</span>
                     </span>
                 </span>
                 <button
@@ -270,8 +270,10 @@ const expanded = ref(true)
                 </span>
                 <span v-if="showCosts" class="orch-cost">
                     <CostDisplay :cost="ownCost" />
-                    <span v-if="hasChildren" class="orch-cost-sub" title="Cumulative cost including spawned children">
+                    <span v-if="hasChildren" class="orch-cost-sub" :title="$t('session.orchestration.childrenCostTooltip')">
+                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- Sigma denotes a mathematical sum in every locale. -->
                         Σ <CostDisplay :cost="cumulativeCost" />
+                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                     </span>
                 </span>
             </div>

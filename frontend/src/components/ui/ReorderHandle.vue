@@ -53,7 +53,7 @@ onBeforeUnmount(() => cancel())
             :class="{ active }"
             :disabled="disabled ?? count < 2"
             :aria-label="`Reorder item ${index + 1} of ${count}. Drag or use Up, Down, Home, and End keys.`"
-            title="Drag to reorder"
+            :title="$t('common.reorder.drag')"
             @pointerdown="pointerdown"
             @keydown="keydown"
             @click.prevent

@@ -26,7 +26,7 @@ const missing = computed(() => !!store.getProject(props.projectId)?.stale)
 </script>
 
 <template>
-    <div v-if="missing" class="missing-directory-note">Directory not found on disk</div>
+    <div v-if="missing" class="missing-directory-note">{{ $t('project.edit.directory.missing') }}</div>
 </template>
 
 <style scoped>

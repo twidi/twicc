@@ -159,7 +159,7 @@ defineExpose({ open, close })
             >
                 <wa-icon name="chevron-left"></wa-icon>
             </button>
-            <AppTooltip v-if="hasNavigation" :for="prevButtonId">Previous (Left arrow)</AppTooltip>
+            <AppTooltip v-if="hasNavigation" :for="prevButtonId">{{ $t('media.preview.previous') }}</AppTooltip>
 
             <!-- Image preview -->
             <!--
@@ -194,7 +194,7 @@ defineExpose({ open, close })
             >
                 <wa-icon name="chevron-right"></wa-icon>
             </button>
-            <AppTooltip v-if="hasNavigation" :for="nextButtonId">Next (Right arrow)</AppTooltip>
+            <AppTooltip v-if="hasNavigation" :for="nextButtonId">{{ $t('media.preview.next') }}</AppTooltip>
         </div>
 
         <!-- Open-link button in footer (when the current item carries a link) -->
@@ -207,7 +207,7 @@ defineExpose({ open, close })
             @click="openLink"
         >
             <wa-icon name="arrow-up-right-from-square" slot="start"></wa-icon>
-            Open link
+            {{ $t('media.preview.openLink') }}
         </wa-button>
     </wa-dialog>
 </template>

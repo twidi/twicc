@@ -44,7 +44,7 @@ function openInbox() {
             <wa-icon name="envelope"></wa-icon>
             <PeerInboxBadge :count="count" />
         </wa-button>
-        <AppTooltip :for="buttonId">Peer inbox</AppTooltip>
+        <AppTooltip :for="buttonId">{{ $t('peer.inbox.title') }}</AppTooltip>
     </template>
 </template>
 

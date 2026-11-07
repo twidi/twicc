@@ -70,7 +70,7 @@ defineExpose({ close })
                         :item-id="`${instanceId}-${index}-${itemIndex}`"
                         :close="close"
                     />
-                    <span v-if="!entry.items.length" class="empty-group">No items in this group</span>
+                    <span v-if="!entry.items.length" class="empty-group">{{ $t('common.groups.empty') }}</span>
                 </div>
             </wa-popover>
         </template>

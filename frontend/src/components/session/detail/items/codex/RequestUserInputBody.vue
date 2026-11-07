@@ -178,9 +178,9 @@ usePendingRequestDraft({
                 @click="dismiss"
             >
                 <wa-icon slot="start" name="ban" variant="classic"></wa-icon>
-                Dismiss
+                {{ $t('session.questions.dismiss') }}
             </wa-button>
-            <AppTooltip :for="dismissButtonId">Dismiss without answering — Codex treats it as cancelled.</AppTooltip>
+            <AppTooltip :for="dismissButtonId">{{ $t('session.questions.dismissHint') }}</AppTooltip>
 
             <wa-button
                 :id="submitButtonId"
@@ -190,9 +190,9 @@ usePendingRequestDraft({
                 @click="submit"
             >
                 <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                Submit
+                {{ $t('session.questions.submit') }}
             </wa-button>
-            <AppTooltip :for="submitButtonId">Send your answers.</AppTooltip>
+            <AppTooltip :for="submitButtonId">{{ $t('session.questions.submitHint') }}</AppTooltip>
         </div>
     </div>
 </template>

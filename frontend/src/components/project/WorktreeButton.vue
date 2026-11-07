@@ -101,10 +101,10 @@ async function onRefresh(e) {
             appearance="plain"
             size="small"
             class="worktree-button-trigger"
-            title="New session in a worktree"
+            :title="$t('project.worktrees.newSession')"
             @click="onCreate"
         >
-            <wa-icon name="code-branch" label="Worktree"></wa-icon>
+            <wa-icon name="code-branch" :label="$t('project.worktrees.title')"></wa-icon>
             <wa-icon name="plus"></wa-icon>
         </wa-button>
         <wa-button
@@ -113,10 +113,10 @@ async function onRefresh(e) {
             size="small"
             class="worktree-button-trigger worktree-button-trigger--nogit"
             :class="{ 'is-flashing': noGitFlash }"
-            title="Not a git repository — re-check (e.g. after git init)"
+            :title="$t('project.worktrees.notGitRecheck')"
             @click="onRefresh"
         >
-            <wa-icon name="code-branch" label="Not a git repository" class="nogit-icon"></wa-icon>
+            <wa-icon name="code-branch" :label="$t('project.worktrees.notGit')" class="nogit-icon"></wa-icon>
             <wa-icon
                 :name="noGitFlash ? 'xmark' : 'arrows-rotate'"
                 class="refresh-icon"

@@ -181,13 +181,13 @@ function handleDialogHide(event) {
 <template>
     <wa-dialog
         :open="open"
-        label="Archive sessions"
+        :label="$t('session.bulkArchive.title')"
         @wa-hide="handleDialogHide"
         style="--width: min(520px, calc(100vw - 2rem));"
     >
         <form :id="FORM_ID" @submit.prevent="handleConfirm">
             <div class="bulk-archive-row">
-                <span>Archive sessions older than</span>
+                <span>{{ $t('session.bulkArchive.olderThan') }}</span>
                 <wa-select v-model="currentPreset" size="small" class="duration-select">
                     <wa-option
                         v-for="p in DURATION_PRESETS"
@@ -199,7 +199,7 @@ function handleDialogHide(event) {
 
             <div class="bulk-archive-scope">
                 <div class="bulk-archive-scope-main">
-                    <span class="bulk-archive-scope-label">Scope:</span>
+                    <span class="bulk-archive-scope-label">{{ $t('session.bulkArchive.scope') }}</span>
                     <ProjectBadge v-if="scope.type === 'project'" :project-id="scope.id" />
                     <template v-else-if="scope.type === 'workspace' && workspace">
                         <wa-icon
@@ -209,10 +209,10 @@ function handleDialogHide(event) {
                         ></wa-icon>
                         <span>{{ workspace.name }}</span>
                     </template>
-                    <span v-else>All projects</span>
+                    <span v-else>{{ $t('session.bulkArchive.allProjects') }}</span>
                 </div>
                 <div v-if="scope.type === 'workspace' && workspace" class="workspace-projects">
-                    <span class="bulk-archive-scope-label">Workspace projects:</span>
+                    <span class="bulk-archive-scope-label">{{ $t('session.bulkArchive.workspaceProjects') }}</span>
                     <ProjectBadge
                         v-for="pid in workspaceProjectIds"
                         :key="pid"
@@ -220,7 +220,7 @@ function handleDialogHide(event) {
                     />
                 </div>
                 <div v-if="currentTitleQuery" class="bulk-archive-filter">
-                    <span class="bulk-archive-scope-label">Matching:</span>
+                    <span class="bulk-archive-scope-label">{{ $t('session.bulkArchive.matching') }}</span>
                     <wa-tag pill with-remove @wa-remove="currentTitleQuery = ''">
                         {{ currentTitleQuery }}
                     </wa-tag>
@@ -231,7 +231,7 @@ function handleDialogHide(event) {
                         :checked="currentIncludeArchivedProjects"
                         @change="currentIncludeArchivedProjects = $event.target.checked"
                     >
-                        Include sessions from archived projects
+                        {{ $t('session.bulkArchive.includeArchived') }}
                     </wa-switch>
                 </div>
             </div>
@@ -239,25 +239,25 @@ function handleDialogHide(event) {
             <div class="bulk-archive-count">
                 <template v-if="count === null && !error">
                     <wa-spinner></wa-spinner>
-                    <span>Counting…</span>
+                    <span>{{ $t('session.bulkArchive.counting') }}</span>
                 </template>
                 <template v-else-if="count === 0">
-                    No sessions to archive in this scope older than {{ currentLabel }}.
+                    {{ $t('session.bulkArchive.empty', { duration: currentLabel }) }}
                 </template>
                 <template v-else-if="count !== null">
-                    This will archive <strong>{{ count }}</strong> session{{ count > 1 ? 's' : '' }}.
+                    <i18n-t keypath="session.bulkArchive.confirmCount" scope="global" :plural="count"><template #count><strong>{{ count }}</strong></template></i18n-t>
                 </template>
             </div>
 
             <div class="bulk-archive-hint">
-                Sessions that are pinned or have an active process are excluded.
+                {{ $t('session.bulkArchive.exclusions') }}
             </div>
 
             <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
         </form>
 
         <wa-button slot="footer" appearance="plain" :disabled="submitting" @click="handleCancel">
-            Cancel
+            {{ $t('common.actions.cancel') }}
         </wa-button>
         <wa-button
             slot="footer"
@@ -267,8 +267,8 @@ function handleDialogHide(event) {
             :disabled="count === null || count === 0 || submitting"
             :loading="submitting"
         >
-            <template v-if="count && count > 0">Archive {{ count }}</template>
-            <template v-else>Archive</template>
+            <template v-if="count && count > 0">{{ $t('session.bulkArchive.archiveCount', { count }) }}</template>
+            <template v-else>{{ $t('common.actions.archive') }}</template>
         </wa-button>
     </wa-dialog>
 </template>

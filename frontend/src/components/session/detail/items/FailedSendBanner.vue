@@ -225,10 +225,10 @@ function discard() {
         <div class="failed-send-content">
             <div class="failed-send-message">{{ displayMessage }}</div>
             <div v-if="nothingLeftToSend" class="failed-send-note">
-                Its attachments were too large to preserve, and it carried no text — nothing is left to retry.
+                {{ $t('session.failedSend.attachmentsOnlyLost') }}
             </div>
             <div v-else-if="failedSend.mediasDropped" class="failed-send-note">
-                Its attachments were too large to preserve — only the text can be retried or edited.
+                {{ $t('session.failedSend.attachmentsLost') }}
             </div>
             <div class="failed-send-actions">
                 <wa-button
@@ -239,7 +239,7 @@ function discard() {
                     @click="guarded(retry)"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
-                    Retry
+                    {{ $t('common.actions.retry') }}
                 </wa-button>
                 <wa-button
                     v-if="insertTextAtCursor"
@@ -250,10 +250,10 @@ function discard() {
                     @click="guarded(edit)"
                 >
                     <wa-icon slot="start" name="pen"></wa-icon>
-                    Edit
+                    {{ $t('common.actions.edit') }}
                 </wa-button>
                 <wa-button size="small" variant="neutral" appearance="plain" :disabled="actionInProgress || uncertain" @click="discard">
-                    Delete
+                    {{ $t('common.actions.delete') }}
                 </wa-button>
             </div>
         </div>

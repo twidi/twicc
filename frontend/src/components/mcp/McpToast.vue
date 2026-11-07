@@ -27,12 +27,13 @@ function review() {
     <div class="mcp-toast-content">
         <span class="mcp-toast-line">
             <wa-icon name="plug" class="mcp-toast-icon"></wa-icon>
-            <strong>{{ clientName || 'An external MCP client' }}</strong>
-            &nbsp;requests access to TwiCC
+            <i18n-t keypath="mcp.toast.request" scope="global" tag="span" class="mcp-toast-sentence">
+                <template #client><strong>{{ clientName || $t('mcp.toast.externalClient') }}</strong></template>
+            </i18n-t>
         </span>
-        <span class="mcp-toast-hint">Review the request to enter its verification code.</span>
+        <span class="mcp-toast-hint">{{ $t('mcp.toast.hint') }}</span>
         <div class="mcp-toast-actions">
-            <wa-button size="small" variant="brand" appearance="outlined" @click="review">Review</wa-button>
+            <wa-button size="small" variant="brand" appearance="outlined" @click="review">{{ $t('mcp.manager.review') }}</wa-button>
         </div>
     </div>
 </template>
@@ -51,7 +52,13 @@ function review() {
     font-size: var(--wa-font-size-m);
     min-width: 0;
 }
-.mcp-toast-line strong {
+.mcp-toast-sentence {
+    min-width: 0;
+}
+.mcp-toast-sentence strong {
+    display: inline-block;
+    max-width: 100%;
+    vertical-align: bottom;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

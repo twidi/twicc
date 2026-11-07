@@ -114,7 +114,7 @@ const flatTree = computed(() => {
         <!-- Divider + "Other projects" header between priority and remaining projects -->
         <template v-if="prioritySplit.prioritized.length && (namedProjects.length || flatTree.length)">
             <wa-divider></wa-divider>
-            <wa-option v-if="priorityLabel" disabled class="section-header-option">Other projects</wa-option>
+            <wa-option v-if="priorityLabel" disabled class="section-header-option">{{ $t('project.list.otherSection') }}</wa-option>
         </template>
     </template>
 

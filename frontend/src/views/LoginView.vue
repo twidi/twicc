@@ -95,6 +95,7 @@ async function handleSubmit() {
         <wa-card class="login-card">
             <div class="login-header">
                 <BrandLogo :size="64" animated />
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- TwiCC is the product name. -->
                 <h1 class="login-title">TwiCC</h1>
                 <p class="login-subtitle">{{ $t('auth.login.passwordRequired') }}</p>
             </div>

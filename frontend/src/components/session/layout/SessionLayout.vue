@@ -758,7 +758,7 @@ onBeforeUnmount(() => {
                 class="layout-splitter"
                 :class="[`axis-${s.axis}`, `kind-${s.kind}`, { dragging: draggingId === s.id }]"
                 :style="splitterStyle(s)"
-                title="Drag to resize · double-click to maximize"
+                :title="$t('session.layout.resizeTooltip')"
                 @pointerdown="onSplitterDown($event, s)"
             >
                 <!-- Touch affordance (coarse pointers only): see .panel-grip in styles/surfaces.css. -->

@@ -81,14 +81,14 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Rename terminal tab"
+        :label="$t('terminal.rename.title')"
         class="terminal-rename-dialog"
         @wa-show="syncFormState"
         @wa-after-show="focusInput"
     >
         <form :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <div class="form-group">
-                <label class="form-label">Label</label>
+                <label class="form-label">{{ $t('terminal.rename.label') }}</label>
                 <wa-input
                     ref="inputRef"
                     :value.prop="localLabel"
@@ -97,17 +97,17 @@ defineExpose({ open, close })
                     :maxlength="LABEL_MAX_LENGTH"
                 ></wa-input>
                 <div class="form-hint">
-                    Max {{ LABEL_MAX_LENGTH }} characters. Leave empty to reset to default.
+                    {{ $t('terminal.rename.hint', { count: LABEL_MAX_LENGTH }) }}
                 </div>
             </div>
         </form>
 
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button ref="saveButtonRef" type="submit" variant="brand">
-                Save
+                {{ $t('common.actions.save') }}
             </wa-button>
         </div>
     </wa-dialog>

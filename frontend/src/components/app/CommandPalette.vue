@@ -521,7 +521,7 @@ defineExpose({ open, close })
                     type="button"
                     class="breadcrumb breadcrumb-back"
                     @click="goBack"
-                    aria-label="Back to previous level"
+                    :aria-label="$t('commands.back')"
                 >
                     <wa-icon name="chevron-left" class="breadcrumb-back-icon" />
                     <wa-icon
@@ -584,8 +584,8 @@ defineExpose({ open, close })
                                             <wa-icon
                                                 v-if="t.project?.untrusted"
                                                 name="lock"
-                                                label="Untrusted project"
-                                                title="This project is not trusted"
+                                                :label="$t('commands.untrustedProject')"
+                                                :title="$t('commands.untrustedProjectTooltip')"
                                                 class="palette-trust-icon"
                                             ></wa-icon>
                                         </span>
@@ -738,8 +738,8 @@ defineExpose({ open, close })
                                         <wa-icon
                                             v-if="item.project?.untrusted"
                                             name="lock"
-                                            label="Untrusted project"
-                                            title="This project is not trusted"
+                                            :label="$t('commands.untrustedProject')"
+                                            :title="$t('commands.untrustedProjectTooltip')"
                                             class="palette-trust-icon"
                                         ></wa-icon>
                                     </span>
@@ -748,8 +748,8 @@ defineExpose({ open, close })
                                         <wa-icon
                                             v-if="item.project?.untrusted"
                                             name="lock"
-                                            label="Untrusted project"
-                                            title="This project is not trusted"
+                                            :label="$t('commands.untrustedProject')"
+                                            :title="$t('commands.untrustedProjectTooltip')"
                                             class="palette-trust-icon"
                                         ></wa-icon>
                                     </span>
@@ -787,13 +787,13 @@ defineExpose({ open, close })
                             @pointerenter="activeKey = section.moreKey"
                         >
                             <wa-icon name="ellipsis" class="command-icon" />
-                            <span class="command-label">{{ section.moreCount }} more</span>
+                            <span class="command-label">{{ $t('commands.more', { count: section.moreCount }) }}</span>
                             <span class="command-chevron"><wa-icon name="chevron-right" /></span>
                         </div>
                     </template>
                 </template>
                 <!-- Empty state -->
-                <div v-if="visibleItems.length === 0" class="palette-empty">No matching commands</div>
+                <div v-if="visibleItems.length === 0" class="palette-empty">{{ $t('commands.noMatches') }}</div>
             </div>
         </div>
     </wa-dialog>

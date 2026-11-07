@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
+import * as VueI18n from 'vue-i18n'
+import { createAppI18n } from '../../src/i18n/index.js'
 import { useVirtualScroll } from '../../src/composables/useVirtualScroll.js'
 import { createRowVisibilityObserver } from '../../src/utils/rowVisibilityObserver.js'
 import * as rangeUpdates from '../../src/utils/virtualScrollRangeUpdates.js'
@@ -9,7 +11,7 @@ import * as keys from '../../src/components/virtual-scroller/virtualScrollerKeys
 export function compileComponent(url, dependencies = {}) {
     const { descriptor } = parse(readFileSync(url, 'utf8'), { templateParseOptions: { isCustomElement: tag => tag.startsWith('wa-') } })
     let code = compileScript(descriptor, { id: 'loading-test', inlineTemplate: true, templateOptions: { compilerOptions: { isCustomElement: tag => tag.startsWith('wa-') } } }).content
-    const modules = { vue: Vue, ...dependencies }
+    const modules = { vue: Vue, 'vue-i18n': VueI18n, ...dependencies }
     code = code.replace(/import\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"];?/g, (_, names, path) => {
         if (!modules[path]) throw new Error(`Missing dependency ${path}`)
         if (names.startsWith('{')) return `const ${names.replace(/\bas\b/g, ':')} = modules[${JSON.stringify(path)}];`
@@ -42,6 +44,9 @@ export function makeRenderer(height = 140, decorate = () => {}) {
         patchProp(el, key, previous, value) { el.props[key] = value },
         parentNode: el => el.parent, nextSibling: el => el.parent?.children[el.parent.children.indexOf(el) + 1],
     })
+    // Match the production app: each isolated fixture owns an English composer.
+    const createApp = renderer.createApp
+    renderer.createApp = (...args) => createApp(...args).use(createAppI18n())
     return { renderer, root: node('root') }
 }
 export const row = { setup(_, { slots }) { return () => Vue.h('div', slots.default?.()) } }

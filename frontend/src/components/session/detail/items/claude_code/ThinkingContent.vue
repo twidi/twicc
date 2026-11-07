@@ -84,7 +84,7 @@ function onAfterHide(event) {
     <wa-details ref="detailsRef" :open="isOpen" :style="instantOpen ? { '--show-duration': '0ms', '--hide-duration': '0ms' } : null" class="item-details thinking-content" icon-placement="start" @wa-show="onShow" @wa-hide="onHide" @wa-after-hide="onAfterHide">
         <div slot="summary" class="items-details-summary">
             <div class="items-details-summary-left">
-                <strong class="items-details-summary-name">Thinking</strong>
+                <strong class="items-details-summary-name">{{ $t('session.tools.thinking') }}</strong>
                 <template v-if="title">
                     <span class="items-details-summary-separator"> — </span>
                     <span class="items-details-summary-description">{{ title }}</span>
@@ -96,7 +96,7 @@ function onAfterHide(event) {
         </div>
         <div v-if="isOpen || isClosing()" class="thinking-body">
             <MarkdownContent v-if="streaming || hasContent" :source="thinking" />
-            <p v-else class="thinking-placeholder">No thinking content was provided</p>
+            <p v-else class="thinking-placeholder">{{ $t('session.tools.emptyThinking') }}</p>
         </div>
     </wa-details>
 </template>

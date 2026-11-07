@@ -3,6 +3,7 @@
 // stylesheets and components are read as text and checked for what the design relies on.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, relative } from 'node:path'
@@ -386,7 +387,10 @@ test('7. no plain icon button carries a bare-text label', () => {
     const offenders = listVueFiles(srcDir).flatMap((file) =>
         plainIconPlusBareText(templateOf(readFileSync(file, 'utf8'))).map((o) => `${relative(srcDir, file)}: ${o}`))
     assert.deepEqual(offenders, [])
-    assert.match(read('../components/json/JsonHumanView.vue'), /<span>\{\{ diffSplitMode\[pair\.baseName\] \? 'Diff mode' : 'Old\/new mode' \}\}<\/span>/)
+    assert.match(read('../components/json/JsonHumanView.vue'), /<span>\{\{ diffSplitMode\[pair\.baseName\] \? \$t\('json\.human\.diffMode'\) : \$t\('json\.human\.oldNewMode'\) \}\}<\/span>/)
+    const { t } = createAppI18n().global
+    assert.equal(t('json.human.diffMode'), 'Diff mode')
+    assert.equal(t('json.human.oldNewMode'), 'Old/new mode')
 })
 
 /** §6 invariants over a set of { rule, ancestors } entries. `measured`: the rule's translate is a

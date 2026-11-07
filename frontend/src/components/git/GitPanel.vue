@@ -1562,7 +1562,7 @@ onMounted(() => {
         <!-- Loading state -->
         <div v-if="loading" class="panel-state">
             <wa-spinner></wa-spinner>
-            <span>Loading git history...</span>
+            <span>{{ $t('git.panel.loading') }}</span>
         </div>
 
         <!-- Error state -->
@@ -1578,7 +1578,7 @@ onMounted(() => {
                         @click="fetchGitLog"
                     >
                         <wa-icon slot="start" name="arrow-rotate-right"></wa-icon>
-                        Retry
+                        {{ $t('common.actions.retry') }}
                     </wa-button>
                 </div>
             </wa-callout>
@@ -1596,7 +1596,7 @@ onMounted(() => {
 
         <!-- Empty state (no commits) -->
         <div v-else-if="started && entries.length === 0" class="panel-state">
-            <span class="panel-placeholder">No commits found</span>
+            <span class="panel-placeholder">{{ $t('git.panel.empty') }}</span>
         </div>
 
         <!-- Main content: header + split panel + git log overlay -->
@@ -1665,11 +1665,11 @@ onMounted(() => {
                                 value="show-untracked"
                                 :checked="showUntracked"
                             >
-                                Show untracked files
+                                {{ $t('git.panel.showUntracked') }}
                             </wa-dropdown-item>
                             <wa-divider></wa-divider>
                             <wa-dropdown-item disabled class="dropdown-header">
-                                Git directory:
+                                {{ $t('git.panel.directory') }}
                             </wa-dropdown-item>
                             <wa-dropdown-item
                                 v-for="root in availableGitRoots"
@@ -1682,7 +1682,7 @@ onMounted(() => {
                             >
                                 <div>{{ root.label }}</div>
                                 <div class="root-path">{{ root.path }}</div>
-                                <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
+                                <div v-if="missingRoots.has(root.key)" class="root-missing">{{ $t('git.panel.directoryMissing') }}</div>
                             </wa-dropdown-item>
                             <wa-divider></wa-divider>
                         </template>
@@ -1709,7 +1709,7 @@ onMounted(() => {
                                 </wa-callout>
                                 <wa-button v-if="diffTooLarge" size="small" @click="handleDownload('file', { path: selectedFile })">
                                     <wa-icon slot="start" name="download"></wa-icon>
-                                    Download file
+                                    {{ $t('git.panel.downloadFile') }}
                                 </wa-button>
                             </div>
 
@@ -1733,10 +1733,10 @@ onMounted(() => {
 
                             <!-- Non-image binary file -->
                             <div v-else-if="diffData?.binary" class="panel-placeholder">
-                                <span>Binary file cannot be diffed</span>
+                                <span>{{ $t('git.panel.binaryDiffUnavailable') }}</span>
                                 <wa-button size="small" @click="handleDownload('file', { path: selectedFile })">
                                     <wa-icon slot="start" name="download"></wa-icon>
-                                    Download file
+                                    {{ $t('git.panel.downloadFile') }}
                                 </wa-button>
                             </div>
 
@@ -1760,7 +1760,7 @@ onMounted(() => {
 
                             <!-- No file selected / no changes -->
                             <div v-else-if="!selectedFile" class="panel-placeholder">
-                                {{ !displayTree ? 'No changes' : 'Select a file' }}
+                                {{ !displayTree ? $t('git.panel.noChanges') : $t('git.panel.selectFile') }}
                             </div>
 
                             <!-- Loading overlay (shown on top of existing content) -->
@@ -1819,7 +1819,7 @@ onMounted(() => {
                                 <wa-icon name="folder"></wa-icon>
                             </wa-button>
                             <wa-dropdown-item disabled class="dropdown-header">
-                                <small>Git directory:</small>
+                                <small>{{ $t('git.panel.directory') }}</small>
                             </wa-dropdown-item>
                             <wa-dropdown-item
                                 v-for="root in availableGitRoots"
@@ -1830,10 +1830,10 @@ onMounted(() => {
                                 <wa-icon slot="icon" name="check" :style="{ visibility: root.key === selectedRootKey ? 'visible' : 'hidden' }"></wa-icon>
                                 {{ root.label }}
                                 <div class="root-path">{{ root.path }}</div>
-                                <div v-if="missingRoots.has(root.key)" class="root-missing">Directory no longer exists</div>
+                                <div v-if="missingRoots.has(root.key)" class="root-missing">{{ $t('git.panel.directoryMissing') }}</div>
                             </wa-dropdown-item>
                         </wa-dropdown>
-                        <AppTooltip :for="gitDirButtonId">Switch git directory</AppTooltip>
+                        <AppTooltip :for="gitDirButtonId">{{ $t('git.panel.switchDirectory') }}</AppTooltip>
 
                         <wa-select
                             v-if="branches.length"
@@ -1843,7 +1843,7 @@ onMounted(() => {
                             @change="onBranchChange"
                         >
                             <wa-icon slot="start" name="code-branch"></wa-icon>
-                            <wa-option value="">All branches</wa-option>
+                            <wa-option value="">{{ $t('git.panel.allBranches') }}</wa-option>
                             <wa-divider></wa-divider>
                             <wa-option
                                 v-if="currentBranch"
@@ -1862,7 +1862,7 @@ onMounted(() => {
                             v-model="filterText"
                             class="filter-input"
                             size="small"
-                            placeholder="Filter commits..."
+                            :placeholder="$t('git.panel.filterCommits')"
                             clearable
                         >
                             <wa-icon slot="start" name="magnifying-glass"></wa-icon>
@@ -1879,7 +1879,7 @@ onMounted(() => {
                         >
                             <wa-icon name="arrow-rotate-right"></wa-icon>
                         </wa-button>
-                        <AppTooltip :for="refreshButtonId">Refresh git log</AppTooltip>
+                        <AppTooltip :for="refreshButtonId">{{ $t('git.panel.refresh') }}</AppTooltip>
                     </div>
 
                     <GitLog

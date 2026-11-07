@@ -1453,6 +1453,7 @@ function onChangelogClose() {
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.general.externalAddress.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is an example URL. -->
                                 <wa-input
                                     ref="publicBaseUrlInputRef"
                                     :value="publicBaseUrlInput"
@@ -1461,6 +1462,7 @@ function onChangelogClose() {
                                     placeholder="https://twicc.example.com"
                                     size="small"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <wa-button
                                     size="small"
                                     variant="neutral"
@@ -1547,6 +1549,7 @@ function onChangelogClose() {
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.general.worktreeDirectory.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon><HelpIconButton help-key="worktrees" :label="$t('help.worktrees')" /></label>
                             <div class="setting-input-apply-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder preserves the worktree template syntax. -->
                                 <wa-input
                                     :value="worktreeDirInput"
                                     @input="onWorktreeDirInputChange"
@@ -1554,6 +1557,7 @@ function onChangelogClose() {
                                     placeholder="{git_root}/.worktrees"
                                     size="small"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <wa-button
                                     size="small"
                                     variant="neutral"
@@ -1566,10 +1570,15 @@ function onChangelogClose() {
                             </div>
                             <i18n-t keypath="settings.general.worktreeDirectory.hint" scope="global" tag="span" class="setting-group-hint">
                                 <template #relative><code>../</code></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is a literal worktree template placeholder. -->
                                 <template #gitRoot><code>{git_root}</code></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is a literal worktree template placeholder. -->
                                 <template #projectName><code>{project_name}</code></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is a literal worktree template placeholder. -->
                                 <template #projectBasedir><code>{project_basedir}</code></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This example preserves the worktree template syntax. -->
                                 <template #exampleRelative><code>{git_root}/.worktrees</code></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This example preserves a path and worktree template syntax. -->
                                 <template #exampleAbsolute><code>/home/me/worktrees/{project_name}</code></template>
                             </i18n-t>
                             <wa-callout
@@ -1684,6 +1693,7 @@ function onChangelogClose() {
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.sharing.host.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is an example share hostname. -->
                                 <wa-input
                                     ref="shareBaseUrlInputRef"
                                     :value="shareBaseUrlInput"
@@ -1692,6 +1702,7 @@ function onChangelogClose() {
                                     placeholder="share.example.com"
                                     size="small"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <wa-button
                                     size="small"
                                     variant="neutral"
@@ -1789,6 +1800,7 @@ function onChangelogClose() {
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.peers.address.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
                             <div class="setting-input-apply-row">
+                                <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is an example URL. -->
                                 <wa-input
                                     ref="peerBaseUrlInputRef"
                                     :value="peerBaseUrlInput"
@@ -1797,6 +1809,7 @@ function onChangelogClose() {
                                     placeholder="https://twicc.example.com"
                                     size="small"
                                 ></wa-input>
+                                <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                 <wa-button
                                     size="small"
                                     variant="neutral"
@@ -2004,7 +2017,7 @@ function onChangelogClose() {
                                     <span
                                         v-else
                                         class="radio-note"
-                                    >— much faster: a title in under a second instead of several; uses {{ OPENROUTER_MODEL_DESCRIPTION }}; sends the user messages to OpenRouter, paid on your OpenRouter account</span>
+                                    >{{ $t('settings.titles.model.openRouterHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</span>
                                 </wa-radio>
                             </wa-radio-group>
                             <span v-if="titleGenerationEnabled" class="setting-group-hint">
@@ -2030,6 +2043,7 @@ function onChangelogClose() {
                                 ></wa-textarea>
                                 <div class="title-prompt-hint">
                                     <i18n-t keypath="settings.titles.systemPrompt.hint" tag="span" scope="global">
+                                        <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is the literal system prompt placeholder. -->
                                         <template #placeholder><code>{text}</code></template>
                                         <template #apply>{{ $t('common.actions.apply') }}</template>
                                     </i18n-t>
@@ -2109,6 +2123,7 @@ function onChangelogClose() {
                                 </wa-button>
                             </div>
                             <i18n-t keypath="settings.terminal.config.hint" scope="global" tag="span" class="setting-group-hint">
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is the literal tmux option. -->
                                 <template #mouseOff><code>mouse off</code></template>
                             </i18n-t>
                             <wa-callout
@@ -2127,6 +2142,7 @@ function onChangelogClose() {
                             >{{ $t('common.status.enabled') }}</wa-switch>
                             <span class="setting-group-hint">
                                 <i18n-t keypath="settings.terminal.copyOnSelect.hint" scope="global" tag="span">
+                                    <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- Keyboard shortcuts preserve their key notation. -->
                                     <template #shortcut><kbd>{{ isMac ? '⌘V' : 'Ctrl+V' }}</kbd></template>
                                 </i18n-t>
                                 <span v-if="isLinux"> {{ $t('settings.terminal.copyOnSelect.primaryClipboardHint') }}</span>
@@ -2140,7 +2156,9 @@ function onChangelogClose() {
                                 size="small"
                             >{{ $t('settings.terminal.optionKey.useAsMeta') }}</wa-switch>
                             <i18n-t keypath="settings.terminal.optionKey.hint" scope="global" tag="span" class="setting-group-hint">
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is the literal shell keyboard shortcut. -->
                                 <template #back><kbd>⌥B</kbd></template>
+                                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is the literal shell keyboard shortcut. -->
                                 <template #forward><kbd>⌥F</kbd></template>
                                 <template #lastArgument><kbd>⌥.</kbd></template>
                                 <template #pipe><code>|</code></template>
@@ -2229,6 +2247,7 @@ function onChangelogClose() {
                                 >{{ $t('settings.usage.readFile.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                                 <template v-if="getReadEnabled(provider)">
                                     <div class="usage-file-input-row">
+                                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is an example filesystem path. -->
                                         <wa-input
                                             :value="usageFilePathInput[provider] ?? ''"
                                             @input="onUsageFilePathInputChange(provider, $event)"
@@ -2237,6 +2256,7 @@ function onChangelogClose() {
                                             size="small"
                                             :disabled="!!usageFileValidating[provider]"
                                         ></wa-input>
+                                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                         <wa-button
                                             size="small"
                                             variant="neutral"
@@ -2266,6 +2286,7 @@ function onChangelogClose() {
                                 >{{ $t('settings.usage.dumpFile.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></wa-switch>
                                 <template v-if="getDumpEnabled(provider)">
                                     <div class="usage-file-input-row">
+                                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- This placeholder is an example filesystem path. -->
                                         <wa-input
                                             :value="usageDumpPathInput[provider] ?? ''"
                                             @input="onUsageDumpPathInputChange(provider, $event)"
@@ -2274,6 +2295,7 @@ function onChangelogClose() {
                                             size="small"
                                             :disabled="!!usageDumpValidating[provider]"
                                         ></wa-input>
+                                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                                         <wa-button
                                             size="small"
                                             variant="neutral"

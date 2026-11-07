@@ -108,12 +108,12 @@ function openInFilesTab() {
                 >
                     <wa-icon name="folder-open"></wa-icon>
                 </wa-button>
-                <AppTooltip :for="viewInFilesButtonId">View in Files tab</AppTooltip>
+                <AppTooltip :for="viewInFilesButtonId">{{ $t('session.tools.patch.viewInFiles') }}</AppTooltip>
             </template>
         </div>
         <div v-if="diffMode === 'pending-delete'" class="apply-patch-pending">
             <wa-icon name="trash"></wa-icon>
-            File deletion — content not yet loaded.
+            {{ $t('session.tools.patch.pendingDeletion') }}
         </div>
         <div v-else class="apply-patch-file-body">
             <ToolDiffViewer

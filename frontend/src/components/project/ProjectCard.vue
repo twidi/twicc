@@ -140,7 +140,7 @@ function handleMenuSelect(event) {
                         <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(lastActivity)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                         <span v-else>{{ formatDate(lastActivity) }}</span>
                     </span>
-                    <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(lastActivity)}` : 'Last activity' }}</AppTooltip>
+                    <AppTooltip :for="`project-mtime-${project.id}`">{{ useRelativeTime ? $t('project.activityAt', { date: formatDate(lastActivity) }) : $t('session.stats.activity.tooltip') }}</AppTooltip>
                 </div>
                 <div :id="`project-sparkline-${project.id}`" class="project-graph">
                     <ActivitySparkline :id-suffix="project.id" :data="store.weeklyActivity[project.id] || []" />

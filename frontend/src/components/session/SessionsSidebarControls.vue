@@ -98,14 +98,14 @@ defineExpose({ focus })
                 value="show-as-tree"
                 :checked="showAsTree"
             >
-                Show orchestrated sessions as tree
+                {{ $t('session.list.showAsTree') }}
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
                 value="show-provider-icons"
                 :checked="showProviderIcons"
             >
-                Show provider icons
+                {{ $t('session.list.showProviderIcons') }}
             </wa-dropdown-item>
             <!-- Multi-select needs Shift/Ctrl modifier clicks, which
                  have no touch equivalent yet — hide it on touch devices. -->

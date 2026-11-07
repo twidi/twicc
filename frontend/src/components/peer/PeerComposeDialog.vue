@@ -220,7 +220,7 @@ function onAfterShow(event) {
 <template>
     <wa-dialog
         ref="dialogRef" :open="open"
-        label="Send a message to a peer"
+        :label="$t('peer.compose.title')"
         style="--width: min(560px, calc(100vw - 2rem))"
         @wa-show="onShow"
         @wa-after-show="onAfterShow"
@@ -228,25 +228,27 @@ function onAfterShow(event) {
     >
         <form :id="formId" class="pc-form" @submit.prevent="handleSend">
             <p v-if="isReply" class="pc-reply">
-                <span class="pc-reply__label">In reply to their</span>
-                <span v-if="replyToTitle" class="pc-reply__title">“{{ replyToTitle }}”</span>
+                <i18n-t v-if="replyToTitle" scope="global" keypath="peer.compose.replyToTitle" tag="span" class="pc-reply__label" style="display: contents">
+                    <template #title><span class="pc-reply__title" style="color: var(--wa-color-text-normal)">“{{ replyToTitle }}”</span></template>
+                </i18n-t>
+                <span v-else class="pc-reply__label">{{ $t('peer.compose.replyToMessage') }}</span>
             </p>
             <!-- The answered message's fate rides with the reply. Radios: three
                  exclusive choices, all visible — the default is the one that
                  changes nothing. -->
             <wa-radio-group
                 v-if="canResolveAnswered"
-                size="small" label="The message you are answering"
+                size="small" :label="$t('peer.compose.answeredMessage')"
                 :value="resolution" :disabled="busy"
                 @change="resolution = $event.target.value"
             >
-                <wa-radio value="open">Keep it open — it still awaits your decision</wa-radio>
-                <wa-radio value="done">Mark it done — you dealt with it yourself, no agent needed</wa-radio>
-                <wa-radio value="refused">Refuse it</wa-radio>
+                <wa-radio value="open">{{ $t('peer.compose.keepOpen') }}</wa-radio>
+                <wa-radio value="done">{{ $t('peer.compose.markDone') }}</wa-radio>
+                <wa-radio value="refused">{{ $t('peer.compose.refuse') }}</wa-radio>
             </wa-radio-group>
 
             <wa-select
-                v-model="selectedPeerId" size="small" label="Peer"
+                v-model="selectedPeerId" size="small" :label="$t('peer.compose.peer')"
                 :disabled="isReply || busy"
             >
                 <wa-option
@@ -254,12 +256,12 @@ function onAfterShow(event) {
                     :value="peer.id" :label="peersStore.peerLabel(peer.id)"
                 >{{ peersStore.peerLabel(peer.id) }}</wa-option>
             </wa-select>
-            <p v-if="!activePeers.length" class="pc-hint">No active peer to write to.</p>
+            <p v-if="!activePeers.length" class="pc-hint">{{ $t('peer.compose.noActivePeer') }}</p>
 
             <!-- A reply inherits its thread's project: no select for it. -->
             <wa-select
                 v-if="!isReply"
-                v-model="selectedProjectId" size="small" label="Project"
+                v-model="selectedProjectId" size="small" :label="$t('common.entities.project')"
                 hint="Optional — where this message counts in the inbox"
                 :disabled="busy"
             >
@@ -270,46 +272,44 @@ function onAfterShow(event) {
                     :icon-url="projectIconUrl"
                     :color="projectDotColor"
                 />
-                <wa-option value="">None</wa-option>
+                <wa-option value="">{{ $t('peer.compose.noProject') }}</wa-option>
                 <ProjectSelectOptions :projects="selectableProjects" include-worktrees />
             </wa-select>
 
             <wa-input
                 ref="titleInputRef"
-                size="small" label="Title" :maxlength="PEER_MESSAGE_TITLE_MAX_CHARS"
-                placeholder="One line, like an email subject"
+                size="small" :label="$t('peer.compose.subject')" :maxlength="PEER_MESSAGE_TITLE_MAX_CHARS"
+                :placeholder="$t('peer.compose.subjectPlaceholder')"
                 :value="title" :disabled="busy"
                 @input="title = $event.target.value"
             ></wa-input>
 
             <wa-textarea
                 ref="textInputRef"
-                size="small" label="Message" rows="6"
-                placeholder="Sent exactly as written — the receiving side sees it comes directly from you"
+                size="small" :label="$t('peer.compose.message')" rows="6"
+                :placeholder="$t('peer.compose.messagePlaceholder')"
                 :value="text" :disabled="busy"
                 @input="text = $event.target.value"
             ></wa-textarea>
 
             <p class="pc-hint">
-                Text only, sent in your name — no attachments, and nothing is kept if
-                you close. For attachments, or to have the message composed for you,
-                ask an agent to send it.
+                {{ $t('peer.compose.manualHint') }}
             </p>
 
             <wa-callout v-if="error" variant="danger" size="small">{{ error }}</wa-callout>
             <wa-callout v-if="confirmingDiscard" variant="warning" size="small">
                 <div class="pc-confirm-body">
-                    <span>Discard this message? Nothing is saved.</span>
+                    <span>{{ $t('peer.compose.discardConfirmation') }}</span>
                     <span class="pc-confirm__actions">
-                        <wa-button size="small" variant="danger" @click="discard">Discard</wa-button>
-                        <wa-button size="small" appearance="outlined" @click="confirmingDiscard = false">Keep writing</wa-button>
+                        <wa-button size="small" variant="danger" @click="discard">{{ $t('peer.compose.discard') }}</wa-button>
+                        <wa-button size="small" appearance="outlined" @click="confirmingDiscard = false">{{ $t('peer.compose.keepWriting') }}</wa-button>
                     </span>
                 </div>
             </wa-callout>
         </form>
 
         <div slot="footer" class="pc-footer">
-            <wa-button :disabled="busy" @click="attemptClose">Cancel</wa-button>
+            <wa-button :disabled="busy" @click="attemptClose">{{ $t('common.actions.cancel') }}</wa-button>
             <wa-button
                 ref="sendButtonRef"
                 variant="brand" type="submit"
@@ -317,7 +317,7 @@ function onAfterShow(event) {
                 :loading="busy"
             >
                 <wa-icon name="paper-plane" slot="start"></wa-icon>
-                Send
+                {{ $t('peer.compose.send') }}
             </wa-button>
         </div>
     </wa-dialog>

@@ -79,7 +79,9 @@ function copyLoginCommand() {
 <template>
     <div class="provider-auth-toast-content">
         <p class="provider-auth-toast-message">
-            Run <code class="copyable" title="Click to copy" @click="copyLoginCommand">{{ loginCommand }}</code> to enable sending messages.
+            <i18n-t keypath="providers.auth.runCommand" scope="global">
+                <template #command><code class="copyable" :title="$t('providers.auth.copyCommand')" @click="copyLoginCommand">{{ loginCommand }}</code></template>
+            </i18n-t>
         </p>
         <div class="provider-auth-toast-actions">
             <wa-button
@@ -90,14 +92,14 @@ function copyLoginCommand() {
                 @click="disableProvider"
             >
                 <wa-icon slot="start" name="power-off"></wa-icon>
-                Disable provider
+                {{ $t('providers.auth.disable') }}
             </wa-button>
             <wa-button size="small" variant="brand" appearance="outlined" @click="launchInTerminal">
                 <wa-icon slot="start" name="terminal"></wa-icon>
-                Launch in terminal
+                {{ $t('providers.auth.launchInTerminal') }}
             </wa-button>
             <wa-button size="small" variant="brand" appearance="outlined" :disabled="checking" @click="checkAgain">
-                Check again
+                {{ $t('providers.auth.checkAgain') }}
             </wa-button>
         </div>
     </div>

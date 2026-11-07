@@ -190,24 +190,24 @@ function openInSession() {
         <!-- No bookmark selected -->
         <div v-if="bookmarkId == null" class="abv-empty panel-card">
             <wa-icon :name="ARTIFACT_ICON" class="abv-empty__icon"></wa-icon>
-            <div>Select an artifact</div>
+            <div>{{ $t('artifacts.browser.select') }}</div>
             <ArtifactsHelpButton />
         </div>
 
         <!-- Loading (deep-link, not yet in the store) -->
         <div v-else-if="loading && !bookmark" class="abv-empty panel-card">
             <wa-spinner></wa-spinner>
-            <span>Loading…</span>
+            <span>{{ $t('artifacts.browser.loading') }}</span>
         </div>
 
         <!-- Unknown bookmark id -->
         <div v-else-if="notFound" class="abv-empty panel-card">
             <wa-callout variant="warning" size="small">
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                This bookmark no longer exists.
+                {{ $t('artifacts.browser.bookmarkMissing') }}
                 <div class="abv-callout-actions">
                     <wa-button size="small" variant="neutral" appearance="outlined" @click="backToList">
-                        Back to bookmarks
+                        {{ $t('artifacts.browser.backToBookmarks') }}
                     </wa-button>
                 </div>
             </wa-callout>
@@ -227,12 +227,12 @@ function openInSession() {
                         :class="['abv-title-btn', 'reduced-height', { 'abv-title-btn--attention': pendingCount > 0 }]"
                         @click="openEdit"
                     >
-                        <wa-icon name="pencil" label="Edit artifact bookmark"></wa-icon>
+                        <wa-icon name="pencil" :label="$t('artifacts.browser.editBookmark')"></wa-icon>
                     </wa-button>
                     <AppTooltip for="abv-edit-button">
                         {{ pendingCount > 0
-                            ? `${pendingCount} network host${pendingCount > 1 ? 's' : ''} awaiting your decision`
-                            : 'Edit artifact bookmark' }}
+                            ? $t('artifacts.browser.pendingHosts', { count: pendingCount }, pendingCount)
+                            : $t('artifacts.browser.editBookmark') }}
                     </AppTooltip>
                     <wa-button
                         v-if="isHtml"
@@ -243,9 +243,9 @@ function openInSession() {
                         class="abv-title-btn reduced-height"
                         @click="reloadPreview"
                     >
-                        <wa-icon name="arrows-rotate" label="Reload"></wa-icon>
+                        <wa-icon name="arrows-rotate" :label="$t('sharing.actions.reload')"></wa-icon>
                     </wa-button>
-                    <AppTooltip v-if="isHtml" for="abv-refresh-button">Reload</AppTooltip>
+                    <AppTooltip v-if="isHtml" for="abv-refresh-button">{{ $t('sharing.actions.reload') }}</AppTooltip>
                 </div>
                 <div class="abv-header__actions">
                     <wa-button
@@ -259,16 +259,16 @@ function openInSession() {
                         :disabled="!sharingEnabled"
                         @click="openShare"
                     >
-                        <wa-icon name="share-nodes" label="Share"></wa-icon>
+                        <wa-icon name="share-nodes" :label="$t('common.actions.share')"></wa-icon>
                     </wa-button>
                     <AppTooltip for="abv-share-button">
                         {{ !sharingEnabled
-                            ? 'Configure a share host in Settings → Sharing to create links'
+                            ? $t('session.sharing.missingHostTooltip')
                             : outdatedShareCount > 0
-                                ? `Share artifact — ${outdatedShareCount} update${outdatedShareCount > 1 ? 's' : ''} to push`
+                                ? $t('artifacts.browser.shareUpdates', { count: outdatedShareCount }, outdatedShareCount)
                                 : activeShareCount > 0
-                                    ? `Share artifact (${activeShareCount} active link${activeShareCount > 1 ? 's' : ''})`
-                                    : 'Share artifact' }}
+                                    ? $t('artifacts.browser.shareLinks', { count: activeShareCount }, activeShareCount)
+                                    : $t('artifacts.browser.share') }}
                     </AppTooltip>
                     <wa-button
                         id="abv-open-session-button"
@@ -278,9 +278,9 @@ function openInSession() {
                         class="reduced-height"
                         @click="openInSession"
                     >
-                        <wa-icon name="house" label="Open in session"></wa-icon>
+                        <wa-icon name="house" :label="$t('artifacts.browser.openInSession')"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="abv-open-session-button">Open in session</AppTooltip>
+                    <AppTooltip for="abv-open-session-button">{{ $t('artifacts.browser.openInSession') }}</AppTooltip>
                     <wa-button
                         id="abv-remove-button"
                         size="small"
@@ -289,9 +289,9 @@ function openInSession() {
                         class="reduced-height"
                         @click="removeArtifactBookmark"
                     >
-                        <wa-icon name="trash" label="Remove"></wa-icon>
+                        <wa-icon name="trash" :label="$t('artifacts.browser.remove')"></wa-icon>
                     </wa-button>
-                    <AppTooltip for="abv-remove-button">Remove bookmark</AppTooltip>
+                    <AppTooltip for="abv-remove-button">{{ $t('artifacts.browser.removeBookmark') }}</AppTooltip>
                 </div>
             </header>
 
@@ -299,16 +299,18 @@ function openInSession() {
             <div v-if="available === false" class="abv-missing panel-card">
                 <wa-callout variant="warning">
                     <wa-icon slot="icon" name="file-circle-exclamation"></wa-icon>
-                    <strong>This artifact is no longer available.</strong>
-                    <div>The file <code>{{ bookmark.relative_path }}</code> was moved, renamed, or deleted.</div>
+                    <strong>{{ $t('artifacts.browser.unavailable') }}</strong>
+                    <i18n-t tag="div" scope="global" keypath="artifacts.browser.fileMissing">
+                        <template #file><code>{{ bookmark.relative_path }}</code></template>
+                    </i18n-t>
                     <div class="abv-callout-actions">
                         <wa-button size="small" variant="danger" appearance="outlined" @click="removeArtifactBookmark">
                             <wa-icon slot="start" name="trash"></wa-icon>
-                            Remove bookmark
+                            {{ $t('artifacts.browser.removeBookmark') }}
                         </wa-button>
                         <wa-button size="small" variant="neutral" appearance="outlined" @click="openInSession">
                             <wa-icon slot="start" name="arrow-up-right-from-square"></wa-icon>
-                            Open the session that created it
+                            {{ $t('artifacts.browser.openSourceSession') }}
                         </wa-button>
                     </div>
                 </wa-callout>

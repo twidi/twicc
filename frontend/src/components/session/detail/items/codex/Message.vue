@@ -157,12 +157,14 @@ const nativeContent = computed(() => {
 </script>
 
 <template>
+    <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- "starting" is an internal status token; WorkingAssistantMessage translates the complete provider message. -->
     <WorkingAssistantMessage
         v-if="isStartingAssistantMessage"
         label="starting"
         process-state="starting"
         :session-id="sessionId"
     />
+    <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
     <WorkingAssistantMessage
         v-else-if="isWorkingAssistantMessage"
         :label="data.label || null"

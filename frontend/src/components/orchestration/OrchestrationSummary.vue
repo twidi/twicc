@@ -59,7 +59,7 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
             <span class="osum-value">{{ total }}</span>
         </div>
         <div class="osum-tile">
-            <span class="osum-label">State</span>
+            <span class="osum-label">{{ $t('session.orchestration.state') }}</span>
             <span class="osum-states-group">
                 <span v-if="stateRows.length > 1" class="osum-donut" :style="{ background: donut }" aria-hidden="true"></span>
                 <span v-if="stateRows.length" class="osum-states">
@@ -80,11 +80,11 @@ const cumulative = computed(() => (props.cumulativeSeconds == null ? '-' : forma
             </span>
         </div>
         <div v-if="showCosts" class="osum-tile">
-            <span class="osum-label">Total cost</span>
+            <span class="osum-label">{{ $t('session.orchestration.totalCost') }}</span>
             <span class="osum-value"><CostDisplay :cost="cost" /></span>
         </div>
         <div class="osum-tile">
-            <span class="osum-label">Cumulative time</span>
+            <span class="osum-label">{{ $t('session.orchestration.cumulativeTime') }}</span>
             <span class="osum-value">{{ cumulative }}</span>
         </div>
     </div>

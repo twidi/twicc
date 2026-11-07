@@ -50,14 +50,14 @@ function onSelect(event) {
             class="attach-terminal-trigger reduced-height"
             appearance="plain"
             size="small"
-            title="Attach terminal from…"
-            aria-label="Attach terminal from a parent level"
+            :title="$t('terminal.attach.title')"
+            :aria-label="$t('terminal.attach.label')"
         >
             <wa-icon name="link"></wa-icon>
             <wa-icon name="chevron-down"></wa-icon>
         </wa-button>
 
-        <wa-dropdown-item disabled class="attach-terminal-header">Attach terminal from</wa-dropdown-item>
+        <wa-dropdown-item disabled class="attach-terminal-header">{{ $t('terminal.attach.header') }}</wa-dropdown-item>
 
         <template v-if="hasItems">
             <template v-for="section in sections" :key="section.scope">
@@ -79,7 +79,7 @@ function onSelect(event) {
 
         <template v-else>
             <wa-divider></wa-divider>
-            <wa-dropdown-item disabled>No terminals to attach</wa-dropdown-item>
+            <wa-dropdown-item disabled>{{ $t('terminal.attach.empty') }}</wa-dropdown-item>
         </template>
     </wa-dropdown>
 </template>

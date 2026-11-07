@@ -58,7 +58,7 @@ function buttonLabelFor(wt) {
         <wa-option disabled class="worktrees-header-option">
             <span class="worktree-option" :style="{ paddingLeft: `${headerDepth * 12}px` }">
                 <wa-icon name="code-branch" auto-width class="worktrees-icon"></wa-icon>
-                Worktrees ({{ worktrees.length }})
+                {{ $t('project.worktrees.count', { count: worktrees.length }) }}
             </span>
         </wa-option>
         <wa-option v-for="wt in worktrees" :key="wt.id" :value="wt.id" :label="buttonLabelFor(wt)">

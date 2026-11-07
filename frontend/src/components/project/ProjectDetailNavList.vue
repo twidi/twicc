@@ -188,7 +188,7 @@ const items = computed(() => {
             <span v-else-if="item.type === 'break'" class="nav-break"></span>
             <span v-else-if="item.type === 'worktrees-label'" class="nav-section-label">
                 <wa-icon name="code-branch" auto-width class="nav-item-icon"></wa-icon>
-                <span class="nav-item-name">Worktrees</span>
+                <span class="nav-item-name">{{ $t('project.worktrees.label') }}</span>
             </span>
             <RouterLink
                 v-else

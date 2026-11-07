@@ -10,7 +10,7 @@ const tooltipTags = source => [...source.matchAll(/<AppTooltip\b[^>]*>/g)].map(m
 test('the Show JSON button and its tooltip mount only in debug mode', () => {
     const source = read('./SessionItem.vue')
     assert.match(source, /<wa-button\s+v-if="isEffectiveDebug && !showJson"\s+:id="`json-toggle-\$\{sessionId\}-\$\{lineNum\}`"/)
-    assert.match(source, /<AppTooltip v-if="isEffectiveDebug && !showJson" :for="`json-toggle-\$\{sessionId\}-\$\{lineNum\}`">Show JSON<\/AppTooltip>/)
+    assert.match(source, /<AppTooltip v-if="isEffectiveDebug && !showJson" :for="`json-toggle-\$\{sessionId\}-\$\{lineNum\}`">\{\{ \$t\('session\.items\.showJson'\) \}\}<\/AppTooltip>/)
 })
 
 test('the detail toggle tooltip is deferred', () => {

@@ -19,30 +19,27 @@ async function act(action) {
 <template>
     <div v-if="enabled || protection.incident" class="mcp-protection">
         <wa-callout v-if="protection.incident" :variant="protection.paused ? 'danger' : 'warning'" size="small">
-            <strong>Suspected OAuth abuse</strong>
+            <strong>{{ $t('mcp.protection.title') }}</strong>
             <p>{{ protection.incident.reason }}.</p>
-            <p v-if="!enabled">External MCP access is off. Enable it in Settings to resume.</p>
+            <p v-if="!enabled">{{ $t('mcp.protection.disabled') }}</p>
             <p v-else-if="protection.paused">
-                New registrations and authorization requests are paused for about {{ minutes }} more minutes.
-                Existing connections, token renewals, and requests already in progress remain available.
+                {{ $t('mcp.protection.paused', { count: minutes }, minutes) }}
             </p>
-            <p v-else>The temporary protection has ended. New connections are available again.</p>
+            <p v-else>{{ $t('mcp.protection.ended') }}</p>
             <p>
-                Recorded in the last 5 minutes: {{ protection.registrations || 0 }} registration attempts,
-                {{ protection.authorizations || 0 }} authorization attempts,
-                {{ protection.rejections || 0 }} refusals, {{ protection.sources || 0 }} network sources.
-                <span v-if="protection.sampleLimited">Traffic exceeded the recording limit; counts are lower bounds.</span>
+                {{ $t('mcp.protection.counts', { registrations: protection.registrations || 0, authorizations: protection.authorizations || 0, rejections: protection.rejections || 0, sources: protection.sources || 0 }) }}
+                <span v-if="protection.sampleLimited">{{ $t('mcp.protection.sampleLimited') }}</span>
             </p>
             <wa-button v-if="!protection.paused" size="small" :disabled="busy" @click="act('acknowledge_security')">
-                Dismiss alert
+                {{ $t('mcp.protection.dismiss') }}
             </wa-button>
         </wa-callout>
         <template v-if="enabled">
             <wa-button size="small" variant="danger" appearance="outlined" :disabled="busy" @click="act('suspend')">
-                Suspend all external access
+                {{ $t('mcp.protection.suspend') }}
             </wa-button>
             <span class="setting-group-hint">
-                Preserves authorizations. Re-enable external access manually to resume.
+                {{ $t('mcp.protection.suspendHint') }}
             </span>
         </template>
     </div>

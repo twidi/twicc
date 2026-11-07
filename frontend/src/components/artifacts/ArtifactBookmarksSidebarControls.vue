@@ -60,24 +60,24 @@ defineExpose({ focus })
                 value="show-all-artifacts"
                 :checked="showAllArtifacts"
             >
-                Show all (ignore scope)
+                {{ $t('artifacts.bookmarks.showAll') }}
             </wa-dropdown-item>
             <wa-dropdown-item
                 type="checkbox"
                 value="compact-view"
                 :checked="compactView"
             >
-                Compact view
+                {{ $t('artifacts.bookmarks.compactView') }}
             </wa-dropdown-item>
         </wa-dropdown>
-        <AppTooltip for="bookmark-options-button">Artifacts list options</AppTooltip>
+        <AppTooltip for="bookmark-options-button">{{ $t('artifacts.bookmarks.options') }}</AppTooltip>
 
         <!-- Filter input -->
         <wa-input
             ref="searchInputRef"
             :value="searchQuery"
             @input="emit('update:searchQuery', $event.target.value)"
-            placeholder="Filter artifacts..."
+            :placeholder="$t('artifacts.bookmarks.filter')"
             size="small"
             with-clear
             class="session-search"

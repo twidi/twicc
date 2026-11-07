@@ -157,38 +157,38 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Save layout"
+        :label="$t('session.layout.save.title')"
         class="layout-save-dialog"
         @wa-show="handleDialogShow"
         @wa-after-show="handleDialogAfterShow"
     >
         <form :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <div class="form-group">
-                <label class="form-label">Save to</label>
+                <label class="form-label">{{ $t('session.layout.save.target') }}</label>
                 <wa-select
                     :value.prop="target"
                     @change="target = $event.target.value"
                     size="small"
                 >
-                    <wa-option :value="NEW">New layout…</wa-option>
-                    <wa-option v-for="l in existingLayouts" :key="l.id" :value="l.id" :label="`Overwrite “${l.name}”`">
-                        Overwrite “{{ l.name }}”
+                    <wa-option :value="NEW">{{ $t('session.layout.save.new') }}</wa-option>
+                    <wa-option v-for="l in existingLayouts" :key="l.id" :value="l.id" :label="$t('session.layout.save.overwrite', { name: l.name })">
+                        {{ $t('session.layout.save.overwrite', { name: l.name }) }}
                     </wa-option>
                 </wa-select>
             </div>
 
             <div v-if="isNew" class="form-group">
-                <label class="form-label">Name</label>
+                <label class="form-label">{{ $t('common.fields.name') }}</label>
                 <wa-input
                     ref="nameInputRef"
                     :value.prop="newName"
                     @input="newName = $event.target.value"
-                    placeholder="Layout name"
+                    :placeholder="$t('session.layout.namePlaceholder')"
                 ></wa-input>
             </div>
 
             <div v-if="props.scopes.length" class="form-group">
-                <label class="form-label">Set as default for new sessions</label>
+                <label class="form-label">{{ $t('session.layout.save.default') }}</label>
                 <wa-checkbox
                     v-for="s in props.scopes"
                     :key="s.key"
@@ -196,12 +196,10 @@ defineExpose({ open, close })
                     :disabled="isSaving"
                     @change="checked[s.key] = $event.target.checked"
                 >{{ s.label }}
-                    <span class="scope-current">(current{{ s.inherited ? ' (inherited)' : '' }}: {{ s.currentName }})</span>
+                    <span class="scope-current">{{ s.inherited ? $t('session.layout.save.currentInherited', { name: s.currentName }) : $t('session.layout.save.current', { name: s.currentName }) }}</span>
                 </wa-checkbox>
                 <p class="dialog-help">
-                    The global default can also be changed later in Settings → Layouts, and the
-                    {{ hasWorktreeScope ? 'project / worktree defaults' : 'project default' }} in a
-                    project's edit dialog.
+                    {{ hasWorktreeScope ? $t('session.layout.save.worktreeHelp') : $t('session.layout.save.projectHelp') }}
                 </p>
             </div>
 
@@ -209,8 +207,8 @@ defineExpose({ open, close })
         </form>
 
         <div slot="footer" class="dialog-footer">
-            <wa-button variant="neutral" appearance="outlined" :disabled="isSaving" @click="close">Cancel</wa-button>
-            <wa-button ref="saveButtonRef" type="submit" variant="brand" :loading="isSaving">Save</wa-button>
+            <wa-button variant="neutral" appearance="outlined" :disabled="isSaving" @click="close">{{ $t('common.actions.cancel') }}</wa-button>
+            <wa-button ref="saveButtonRef" type="submit" variant="brand" :loading="isSaving">{{ $t('common.actions.save') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

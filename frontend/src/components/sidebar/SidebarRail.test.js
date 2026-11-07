@@ -195,7 +195,7 @@ test('tree mode: a collapsed node tooltip lists its active descendants inside th
     assert.match(preview, /<template v-if="row.activeDescendants\?\.length">\s*<wa-divider class="rail-preview-divider" \/>/)
     assert.match(preview, /row.activeDescendants.slice\(0, RAIL_PREVIEW_MAX_DESCENDANTS\)/)
     assert.match(preview, /type="button" class="rail-preview-child" @click="openSession\(child.session\)"/)
-    assert.match(preview, /\+\{\{ row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS \}\} more/)
+    assert.match(preview, /<div v-if="row\.activeDescendants\.length > RAIL_PREVIEW_MAX_DESCENDANTS" class="rail-preview-more">\s*\{\{ \$t\('navigation\.rail\.moreDescendants', \{ count: row\.activeDescendants\.length - RAIL_PREVIEW_MAX_DESCENDANTS \}\) \}\}\s*<\/div>/)
     assert.doesNotMatch(preview, /expand|toggle/)
 })
 

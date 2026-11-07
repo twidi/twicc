@@ -109,7 +109,7 @@ defineExpose({ open, close })
 <template>
     <wa-dialog
         ref="dialogRef"
-        label="Edit & Send Snippet"
+        :label="$t('terminal.snippets.sendTitle')"
         class="snippet-send-dialog"
         @wa-after-show="handleDialogAfterShow"
         @wa-hide="handleDialogHide"
@@ -124,37 +124,37 @@ defineExpose({ open, close })
 
             <!-- Unavailable placeholders warning -->
             <wa-callout v-if="sendDisabled" variant="danger" size="small">
-                Cannot send: unavailable placeholders — {{ unavailable.map(p => p.label).join(', ') }}
+                {{ $t('terminal.snippets.unavailable', { placeholders: unavailable.map(p => p.label).join(', ') }) }}
             </wa-callout>
         </div>
 
         <!-- ═══ FOOTER ═══ -->
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
 
             <!-- Split button: Send + dropdown for target selection -->
-            <wa-button-group label="Send options">
+            <wa-button-group :label="$t('terminal.snippets.sendOptions')">
                 <wa-button variant="brand"  class="send-main-btn" :disabled="sendDisabled" @click="handleSend">
-                    Send
+                    {{ $t('terminal.snippets.send') }}
                 </wa-button>
                 <wa-dropdown placement="top-end" :disabled="sendDisabled" @wa-select="handleSendTo">
                     <wa-button slot="trigger" variant="brand" class="send-arrow-btn" :disabled="sendDisabled">
                         <wa-icon name="chevron-up"></wa-icon>
                     </wa-button>
-                    <wa-dropdown-item disabled class="dropdown-label">Send to tab</wa-dropdown-item>
+                    <wa-dropdown-item disabled class="dropdown-label">{{ $t('terminal.snippets.sendToTab') }}</wa-dropdown-item>
                     <wa-dropdown-item
                         v-for="term in terminals"
                         :key="term.index"
                         :value="String(term.index)"
                     >
-                        {{ term.label }}<template v-if="term.index === activeTerminalIndex"> (current)</template>
+                        {{ term.index === activeTerminalIndex ? $t('terminal.tabs.currentLabel', { label: term.label }) : term.label }}
                     </wa-dropdown-item>
                     <wa-divider></wa-divider>
                     <wa-dropdown-item value="new">
                         <wa-icon slot="icon" name="plus"></wa-icon>
-                        New tab
+                        {{ $t('terminal.snippets.newTab') }}
                     </wa-dropdown-item>
                 </wa-dropdown>
             </wa-button-group>

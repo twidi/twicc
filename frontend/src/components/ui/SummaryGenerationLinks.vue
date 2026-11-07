@@ -10,10 +10,10 @@ defineEmits(['cancel', 'regenerate'])
 </script>
 
 <template>
-    <a v-if="running" href="#" class="summary-link" @click.prevent="$emit('cancel')">Cancel</a>
-    <a v-else-if="canRegenerate" href="#" class="summary-link" @click.prevent="$emit('regenerate')">Regenerate</a>
+    <a v-if="running" href="#" class="summary-link" @click.prevent="$emit('cancel')">{{ $t('common.actions.cancel') }}</a>
+    <a v-else-if="canRegenerate" href="#" class="summary-link" @click.prevent="$emit('regenerate')">{{ $t('summary.actions.regenerate') }}</a>
     <span v-if="running || loading" class="summary-status" role="status">
-        <wa-spinner></wa-spinner> {{ running ? 'Generating…' : 'Loading…' }}
+        <wa-spinner></wa-spinner> {{ running ? $t('summary.status.generating') : $t('summary.status.loading') }}
     </span>
 </template>
 

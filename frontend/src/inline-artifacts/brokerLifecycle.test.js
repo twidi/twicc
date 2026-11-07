@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { createArtifactBrokerBinding } from '../composables/useArtifactBroker.js'
 
 function fixture() {
@@ -112,6 +113,7 @@ async function promptFixture() {
             decisions.push(decision)
             binding.onBrokerDecision(decision)
         } }) })
+    app.use(createAppI18n())
     app.mount(node('root'))
     const dialog = nodes.find(n => n.type === 'wa-dialog')
     dialog.dialog = { open: false, close() { this.open = false } }

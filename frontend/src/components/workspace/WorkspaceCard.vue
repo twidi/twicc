@@ -183,7 +183,7 @@ function handleMenuSelect(event) {
                             <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(lastMtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                             <span v-else>{{ formatDate(lastMtime) }}</span>
                         </span>
-                        <AppTooltip :for="`workspace-mtime-${workspace.id}`">{{ useRelativeTime ? `Last activity: ${formatDate(lastMtime)}` : 'Last activity' }}</AppTooltip>
+                        <AppTooltip :for="`workspace-mtime-${workspace.id}`">{{ useRelativeTime ? $t('workspace.card.lastActivityAt', { date: formatDate(lastMtime) }) : $t('session.stats.activity.tooltip') }}</AppTooltip>
                     </template>
                 </div>
                 <div :id="`workspace-sparkline-${workspace.id}`" class="workspace-graph">

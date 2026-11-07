@@ -173,9 +173,9 @@ usePendingRequestSubmitShortcut((event) => {
 <template>
     <div v-scroll-shadow class="plan-implementation-body">
         <div class="plan-section">
-            <span class="summary-label">Implement this plan?</span>
+            <span class="summary-label">{{ $t('session.planImplementation.title') }}</span>
             <span class="plan-hint">
-                Codex proposed the plan above. Implement it now, or keep refining it in Plan mode.
+                {{ $t('session.planImplementation.hint') }}
             </span>
         </div>
 
@@ -189,9 +189,9 @@ usePendingRequestSubmitShortcut((event) => {
                 @click="stay"
             >
                 <wa-icon slot="start" name="comments" variant="classic"></wa-icon>
-                No, stay in Plan mode
+                {{ $t('session.planImplementation.stay') }}
             </wa-button>
-            <AppTooltip :for="stayButtonId">Continue planning with the model.</AppTooltip>
+            <AppTooltip :for="stayButtonId">{{ $t('session.planImplementation.stayHint') }}</AppTooltip>
 
             <wa-button
                 :id="newSessionButtonId"
@@ -202,9 +202,9 @@ usePendingRequestSubmitShortcut((event) => {
                 @click="implementInNewSession"
             >
                 <wa-icon slot="start" name="plus" variant="classic"></wa-icon>
-                Yes, implement in a new session
+                {{ $t('session.planImplementation.newSession') }}
             </wa-button>
-            <AppTooltip :for="newSessionButtonId">Start a fresh session seeded with the plan; this one stays in Plan mode.</AppTooltip>
+            <AppTooltip :for="newSessionButtonId">{{ $t('session.planImplementation.newSessionHint') }}</AppTooltip>
 
             <wa-button
                 :id="implementButtonId"
@@ -216,9 +216,9 @@ usePendingRequestSubmitShortcut((event) => {
                 @click="implement"
             >
                 <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                Yes, implement this plan
+                {{ $t('session.planImplementation.implement') }}
             </wa-button>
-            <AppTooltip :for="implementButtonId">Switch to Default and start coding.</AppTooltip>
+            <AppTooltip :for="implementButtonId">{{ $t('session.planImplementation.implementHint') }}</AppTooltip>
         </div>
     </div>
 </template>

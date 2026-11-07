@@ -298,7 +298,7 @@ function handleSave() {
     >
         <div v-if="view === 'list'" class="dialog-content">
             <div v-if="presets.length === 0" class="empty-message">
-                No presets yet. Add one to get started.
+                {{ $t('settings.presets.empty') }}
             </div>
             <div v-else class="preset-list" data-reorder-list>
                 <div v-for="(preset, index) in presets" :key="index" class="preset-row" data-reorder-row>
@@ -315,13 +315,13 @@ function handleSave() {
                         />
                     </div>
                     <div class="preset-actions">
-                        <button class="action-btn" title="Edit" @click="openEditForm(index)">
+                        <button class="action-btn" :title="$t('common.actions.edit')" @click="openEditForm(index)">
                             <wa-icon name="pen-to-square" />
                         </button>
-                        <button class="action-btn" title="Duplicate" @click="handleDuplicate(index)">
+                        <button class="action-btn" :title="$t('settings.presets.duplicate')" @click="handleDuplicate(index)">
                             <wa-icon name="copy" />
                         </button>
-                        <button class="action-btn action-btn-danger" title="Delete" @click="handleDelete(index)">
+                        <button class="action-btn action-btn-danger" :title="$t('common.actions.delete')" @click="handleDelete(index)">
                             <wa-icon name="trash-can" />
                         </button>
                     </div>
@@ -331,7 +331,9 @@ function handleSave() {
         <form v-else id="preset-form" class="dialog-content" @submit.prevent="handleSave">
             <div class="form-group">
                 <label class="form-label" for="preset-name-input">
-                    Name <span class="form-label-quiet">(mandatory)</span>
+                    <i18n-t keypath="settings.presets.nameLabel" scope="global">
+                        <template #mandatory><span class="form-label-quiet">{{ $t('settings.presets.mandatory') }}</span></template>
+                    </i18n-t>
                 </label>
                 <wa-input
                     id="preset-name-input"
@@ -347,7 +349,7 @@ function handleSave() {
                  on the default follows it at apply time. -->
             <div class="form-group">
                 <div class="matrix-heading">
-                    <label class="form-label">Model &amp; effort picker</label>
+                    <label class="form-label">{{ $t('settings.providers.modelEffortPicker') }}</label>
                     <MatrixHeadingLinks />
                 </div>
                 <AgentSettingsDefaultsPicker
@@ -373,8 +375,8 @@ function handleSave() {
                         :icon="permissionSelectIcon(field).icon"
                         :color="permissionSelectIcon(field).color"
                     />
-                    <wa-option :value="DEFAULT_SENTINEL">Default</wa-option>
-                    <small class="select-group-label">Force to:</small>
+                    <wa-option :value="DEFAULT_SENTINEL">{{ $t('settings.presets.default') }}</wa-option>
+                    <small class="select-group-label">{{ $t('settings.presets.forceTo') }}</small>
                     <wa-option
                         v-for="opt in providerHelpers.getFieldChoices(field)"
                         :key="String(opt.value)"
@@ -398,15 +400,15 @@ function handleSave() {
 
         <div slot="footer" class="dialog-footer">
             <template v-if="view === 'list'">
-                <wa-button variant="neutral" appearance="outlined" @click="closeDialog">Close</wa-button>
+                <wa-button variant="neutral" appearance="outlined" @click="closeDialog">{{ $t('common.actions.close') }}</wa-button>
                 <wa-button variant="brand" @click="openAddForm">
                     <wa-icon slot="start" name="plus"></wa-icon>
-                    Add preset
+                    {{ $t('settings.presets.add') }}
                 </wa-button>
             </template>
             <template v-else>
-                <wa-button variant="neutral" appearance="outlined" @click="cancelForm">Cancel</wa-button>
-                <wa-button ref="submitButtonRef" variant="brand" type="submit">Save</wa-button>
+                <wa-button variant="neutral" appearance="outlined" @click="cancelForm">{{ $t('common.actions.cancel') }}</wa-button>
+                <wa-button ref="submitButtonRef" variant="brand" type="submit">{{ $t('common.actions.save') }}</wa-button>
             </template>
         </div>
     </wa-dialog>

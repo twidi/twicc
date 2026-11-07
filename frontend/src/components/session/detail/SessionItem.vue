@@ -234,7 +234,7 @@ function toggleJsonView() {
                 <CodeCommentsIndicator :count="blockCommentsCount" :show-tooltip="false" class="detail-toggle-comments" />
             </div>
             <AppTooltip deferred v-if="showDetailToggle" :for="`detail-toggle-${sessionId}-${detailToggleFor}`">
-                {{ isBlockDetailed ? 'Show conversation' : 'Show details' }}
+                {{ isBlockDetailed ? $t('session.items.showConversation') : $t('session.items.showDetails') }}
             </AppTooltip>
 
             <!-- JSON toggle button (visible on hover), only in debug mode: the CSS hides it
@@ -250,7 +250,7 @@ function toggleJsonView() {
                 >
                     <wa-icon name="code"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="isEffectiveDebug && !showJson" :for="`json-toggle-${sessionId}-${lineNum}`">Show JSON</AppTooltip>
+                <AppTooltip v-if="isEffectiveDebug && !showJson" :for="`json-toggle-${sessionId}-${lineNum}`">{{ $t('session.items.showJson') }}</AppTooltip>
             </div>
         </div>
 
@@ -265,9 +265,9 @@ function toggleJsonView() {
             >
                 <wa-icon name="code"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`json-toggle-hide-${sessionId}-${lineNum}`">Hide JSON</AppTooltip>
+            <AppTooltip :for="`json-toggle-hide-${sessionId}-${lineNum}`">{{ $t('session.items.hideJson') }}</AppTooltip>
             <wa-tag :id="`line-number-${sessionId}-${lineNum}`" size="small" variant="brand" class="line-number">{{ lineNum }}</wa-tag>
-            <AppTooltip :for="`line-number-${sessionId}-${lineNum}`">Line number</AppTooltip>
+            <AppTooltip :for="`line-number-${sessionId}-${lineNum}`">{{ $t('session.items.lineNumber') }}</AppTooltip>
             <div class="json-tree">
                 <JsonViewer
                     :data="content"

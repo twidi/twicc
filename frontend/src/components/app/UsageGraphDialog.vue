@@ -869,13 +869,13 @@ function onTabShow(event) {
 </script>
 
 <template>
-    <wa-dialog ref="dialogRef" label="Usage History" class="usage-graph-dialog" without-header>
+    <wa-dialog ref="dialogRef" :label="$t('settings.usage.history.title')" class="usage-graph-dialog" without-header>
         <div class="usage-graph-content">
             <div class="usage-graph-header">
                 <div class="usage-graph-header-left">
                     <h2 class="usage-graph-title">
                         <wa-icon name="chart-line"></wa-icon>
-                        Usage History
+                        {{ $t('settings.usage.history.title') }}
                     </h2>
                     <wa-select
                         v-if="showProviderSelect"
@@ -908,7 +908,7 @@ function onTabShow(event) {
                     ></wa-slider>
                 </div>
                 <div class="usage-graph-cap-control">
-                    <span class="usage-graph-cap-label">Y axis max {{ yCap }}%</span>
+                    <span class="usage-graph-cap-label">{{ $t('settings.usage.history.yAxisMax', { value: yCap }) }}</span>
                     <wa-slider
                         :min.prop="100"
                         :max.prop="1000"
@@ -929,15 +929,15 @@ function onTabShow(event) {
             </div>
 
             <TabBar @wa-tab-show="onTabShow">
-                <wa-tab v-if="!fiveHourHidden" slot="nav" panel="five-hour" :active="activeTab === 'five-hour'">5h Quota</wa-tab>
-                <wa-tab slot="nav" panel="seven-day" :active="activeTab === 'seven-day'">7d Quota</wa-tab>
+                <wa-tab v-if="!fiveHourHidden" slot="nav" panel="five-hour" :active="activeTab === 'five-hour'">{{ $t('settings.usage.history.fiveHourQuota') }}</wa-tab>
+                <wa-tab slot="nav" panel="seven-day" :active="activeTab === 'seven-day'">{{ $t('settings.usage.history.sevenDayQuota') }}</wa-tab>
 
                 <!-- ═══ Five Hour Panel ═══ -->
                 <wa-tab-panel v-if="!fiveHourHidden" name="five-hour">
                     <div class="usage-chart-panel">
                         <div v-if="isLoading" class="usage-chart-loading">
                             <wa-spinner></wa-spinner>
-                            <span>Loading usage history…</span>
+                            <span>{{ $t('settings.usage.history.loading') }}</span>
                         </div>
                         <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
                         <template v-else-if="fiveHourData.length > 0">
@@ -1028,13 +1028,13 @@ function onTabShow(event) {
                                 </div>
                                 <div class="usage-chart-legend-item">
                                     <span class="usage-chart-legend-ref"></span>
-                                    <span class="usage-chart-legend-text">100% threshold</span>
+                                    <span class="usage-chart-legend-text">{{ $t('settings.usage.history.threshold') }}</span>
                                 </div>
                             </div>
                         </template>
                         <div v-else class="usage-chart-empty">
                             <wa-icon name="chart-line"></wa-icon>
-                            <span>No data available for this period</span>
+                            <span>{{ $t('settings.usage.history.noData') }}</span>
                         </div>
                     </div>
                 </wa-tab-panel>
@@ -1044,7 +1044,7 @@ function onTabShow(event) {
                     <div class="usage-chart-panel">
                         <div v-if="isLoading" class="usage-chart-loading">
                             <wa-spinner></wa-spinner>
-                            <span>Loading usage history…</span>
+                            <span>{{ $t('settings.usage.history.loading') }}</span>
                         </div>
                         <wa-callout v-else-if="errorMessage" variant="danger" size="small">{{ errorMessage }}</wa-callout>
                         <template v-else-if="sevenDayData.length > 0">
@@ -1135,13 +1135,13 @@ function onTabShow(event) {
                                 </div>
                                 <div class="usage-chart-legend-item">
                                     <span class="usage-chart-legend-ref"></span>
-                                    <span class="usage-chart-legend-text">100% threshold</span>
+                                    <span class="usage-chart-legend-text">{{ $t('settings.usage.history.threshold') }}</span>
                                 </div>
                             </div>
                         </template>
                         <div v-else class="usage-chart-empty">
                             <wa-icon name="chart-line"></wa-icon>
-                            <span>No data available for this period</span>
+                            <span>{{ $t('settings.usage.history.noData') }}</span>
                         </div>
                     </div>
                 </wa-tab-panel>

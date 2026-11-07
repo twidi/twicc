@@ -31,23 +31,23 @@ const hint = computed(() => (settingsStore.isTouchDevice ? 'Tap an element to co
             <wa-button :id="`select-clear-${instanceId}`" appearance="plain" size="small" class="nav-btn reduced-height" :disabled="!state?.locked" @click="$emit('clear')">
                 <wa-icon name="ban"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`select-clear-${instanceId}`">Clear the selection</AppTooltip>
+            <AppTooltip :for="`select-clear-${instanceId}`">{{ $t('preview.selection.clear') }}</AppTooltip>
             <wa-button :id="`select-parent-${instanceId}`" appearance="plain" size="small" class="nav-btn reduced-height" :disabled="!state?.canParent" @click="$emit('nav', 'parent')">
                 <wa-icon name="arrow-up"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`select-parent-${instanceId}`">Select the parent</AppTooltip>
+            <AppTooltip :for="`select-parent-${instanceId}`">{{ $t('preview.selection.parent') }}</AppTooltip>
             <wa-button :id="`select-child-${instanceId}`" appearance="plain" size="small" class="nav-btn reduced-height" :disabled="!state?.canFirstChild" @click="$emit('nav', 'first-child')">
                 <wa-icon name="arrow-down"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`select-child-${instanceId}`">Select the first child</AppTooltip>
+            <AppTooltip :for="`select-child-${instanceId}`">{{ $t('preview.selection.firstChild') }}</AppTooltip>
             <wa-button :id="`select-prev-${instanceId}`" appearance="plain" size="small" class="nav-btn reduced-height" :disabled="!state?.canPrevSibling" @click="$emit('nav', 'prev-sibling')">
                 <wa-icon name="arrow-left"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`select-prev-${instanceId}`">Select the previous sibling</AppTooltip>
+            <AppTooltip :for="`select-prev-${instanceId}`">{{ $t('preview.selection.previousSibling') }}</AppTooltip>
             <wa-button :id="`select-next-${instanceId}`" appearance="plain" size="small" class="nav-btn reduced-height" :disabled="!state?.canNextSibling" @click="$emit('nav', 'next-sibling')">
                 <wa-icon name="arrow-right"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`select-next-${instanceId}`">Select the next sibling</AppTooltip>
+            <AppTooltip :for="`select-next-${instanceId}`">{{ $t('preview.selection.nextSibling') }}</AppTooltip>
         </div>
     </div>
 </template>

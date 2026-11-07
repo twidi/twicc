@@ -103,7 +103,7 @@ defineExpose({ open, close })
     >
         <form :id="formId" class="dialog-content" @submit.prevent="handleSave">
             <div class="form-group">
-                <label class="form-label">Name</label>
+                <label class="form-label">{{ $t('common.fields.name') }}</label>
                 <wa-input
                     ref="nameInputRef"
                     :value.prop="localName"
@@ -117,11 +117,11 @@ defineExpose({ open, close })
         </form>
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isSaving">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button ref="saveButtonRef" type="submit" variant="brand" :disabled="isSaving">
                 <wa-spinner v-if="isSaving" slot="start"></wa-spinner>
-                Create
+                {{ $t('common.actions.create') }}
             </wa-button>
         </div>
     </wa-dialog>

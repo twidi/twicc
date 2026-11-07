@@ -334,7 +334,7 @@ const showFileHeader = computed(() => fileEntries.value.length > 1)
     <div class="apply-patch-content">
         <div v-if="fileEntries.length === 0" class="apply-patch-empty">
             <wa-icon name="circle-info"></wa-icon>
-            Patch envelope not parseable yet.
+            {{ $t('session.tools.patch.notParseable') }}
         </div>
         <ApplyPatchFileEntry
             v-for="(entry, idx) in fileEntries"

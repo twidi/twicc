@@ -25,86 +25,65 @@ const explainerSeen = computed(() => settingsStore.isClaudeHybridExplainerSeen)
 
 <template>
     <wa-details :open="open" class="hybrid-mode-explainer">
-        <span v-if="!explainerSeen" slot="summary">Why you may <strong><em>need</em></strong> this in the future</span>
-        <span v-else slot="summary">What is hybrid mode</span>
+        <i18n-t v-if="!explainerSeen" keypath="session.hybridExplainer.summaryNew" scope="global" tag="span" slot="summary">
+            <template #need><strong><em>{{ $t('session.hybridExplainer.need') }}</em></strong></template>
+        </i18n-t>
+        <span v-else slot="summary">{{ $t('session.hybridExplainer.summary') }}</span>
 
         <wa-callout variant="neutral" size="small" class="explainer-maintenance-note">
             <wa-icon slot="icon" name="screwdriver-wrench" variant="classic"></wa-icon>
-            <strong>Internal reminder</strong> — the copy below was written for Anthropic's
-            programmatic-billing change announced for 15 June 2026, which has since been
-            postponed. Hybrid mode is kept dormant behind the
-            <code>TWICC_CLAUDE_HYBRID_ENABLED</code> flag. Revisit this wording and its
-            source link before the feature is un-gated.
+            <i18n-t keypath="session.hybridExplainer.maintenance" scope="global">
+                <template #lead><strong>{{ $t('session.hybridExplainer.maintenanceLead') }}</strong></template>
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This environment flag is a technical identifier. -->
+                <template #flag><code>TWICC_CLAUDE_HYBRID_ENABLED</code></template>
+            </i18n-t>
         </wa-callout>
 
         <wa-callout variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation" variant="classic"></wa-icon>
-            <strong>Worth a minute</strong> — hybrid mode changes what your Claude usage costs.
+            <i18n-t keypath="session.hybridExplainer.warning" scope="global">
+                <template #lead><strong>{{ $t('session.hybridExplainer.warningLead') }}</strong></template>
+            </i18n-t>
         </wa-callout>
 
-        <p class="explainer-section-title">The change</p>
+        <p class="explainer-section-title">{{ $t('session.hybridExplainer.changeTitle') }}</p>
+        <i18n-t keypath="session.hybridExplainer.change" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.changeLead') }}</strong></template>
+            <template #date><a href="https://x.com/ClaudeDevs/status/2054610152817619388" target="_blank" rel="noopener">{{ $t('session.hybridExplainer.changeDate') }}</a></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.plan" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.planLead') }}</strong></template>
+        </i18n-t>
 
-        <p>
-            <strong>What changed —</strong> from
-            <a href="https://x.com/ClaudeDevs/status/2054610152817619388" target="_blank" rel="noopener">15 June 2026</a>,
-            Anthropic bills programmatic usage — the SDK TwiCC normally runs — at
-            full API rates, from a small monthly pool.
-        </p>
+        <p class="explainer-section-title">{{ $t('session.hybridExplainer.twiccTitle') }}</p>
+        <i18n-t keypath="session.hybridExplainer.terminal" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.terminalLead') }}</strong></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.input" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.inputLead') }}</strong></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.preserved" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.preservedLead') }}</strong></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.streaming" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.streamingLead') }}</strong></template>
+            <template #thinking><em>{{ $t('session.hybridExplainer.thinking') }}</em></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.automatic" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.automaticLead') }}</strong></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.orchestration" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.orchestrationLead') }}</strong></template>
+        </i18n-t>
 
-        <p>
-            <strong>Stay on your plan —</strong> hybrid runs the real CLI instead,
-            which still uses your Pro/Max quota: several times more usage for the
-            same money.
-        </p>
-
-        <p class="explainer-section-title">In TwiCC</p>
-
-        <p>
-            <strong>Real CLI inside —</strong> the CLI runs in a terminal above
-            the message input, opened on demand.
-        </p>
-
-        <p>
-            <strong>Same input —</strong> you still type as usual: slash commands,
-            attachments and snippets all work like normal mode.
-        </p>
-
-        <p>
-            <strong>Nothing lost —</strong> the rich session view, approvals, the
-            question widget, notifications — everything.
-        </p>
-
-        <p>
-            <strong>No live streaming —</strong> the message list shows
-            <em>Claude is thinking…</em>, then the finished reply and tools — not
-            live; open the Claude CLI terminal to watch it stream.
-        </p>
-
-        <p>
-            <strong>Mostly hands-off —</strong> TwiCC drives the CLI for you; the
-            rare time it needs you on a prompt only it can show, open the Claude
-            CLI terminal to answer.
-        </p>
-
-        <p>
-            <strong>No orchestration —</strong> that's also why hybrid sessions
-            can't be orchestrated: no human to step in. To opt Claude out
-            entirely, turn off Enabled in orchestration under Settings → Claude.
-        </p>
-
-        <p class="explainer-section-title">Turning it on</p>
-
-        <p>
-            <strong>Turn it on —</strong> click the
-            <wa-icon class="inline-terminal-icon" name="terminal" variant="classic"></wa-icon>
-            icon at the bottom-right of the message input, or default new sessions
-            under Settings → Claude → Hybrid Mode.
-        </p>
-
-        <p>
-            <strong>One-way —</strong> a hybrid session can never go back to
-            normal mode.
-        </p>
+        <p class="explainer-section-title">{{ $t('session.hybridExplainer.activationTitle') }}</p>
+        <i18n-t keypath="session.hybridExplainer.activation" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.activationLead') }}</strong></template>
+            <template #icon><wa-icon class="inline-terminal-icon" name="terminal" variant="classic"></wa-icon></template>
+        </i18n-t>
+        <i18n-t keypath="session.hybridExplainer.oneWay" scope="global" tag="p">
+            <template #lead><strong>{{ $t('session.hybridExplainer.oneWayLead') }}</strong></template>
+        </i18n-t>
     </wa-details>
 </template>
 

@@ -37,7 +37,7 @@ const itemDepth = computed(() => props.baseDepth + 2)
         <wa-dropdown-item :value="`worktrees-toggle:${parentId}`" class="worktrees-toggle-item">
             <span class="worktree-picker-content" :style="{ paddingLeft: `${headerDepth * 12}px` }">
                 <wa-icon name="code-branch" class="worktrees-icon"></wa-icon>
-                Worktrees ({{ worktrees.length }})
+                {{ $t('project.worktrees.count', { count: worktrees.length }) }}
                 <wa-icon :name="expanded ? 'chevron-down' : 'chevron-right'" class="worktrees-toggle-caret"></wa-icon>
             </span>
         </wa-dropdown-item>

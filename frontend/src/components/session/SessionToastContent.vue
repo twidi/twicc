@@ -161,11 +161,11 @@ function goToSession() {
 <template>
     <div class="session-toast-content">
         <span v-if="projectId" class="session-toast-row">
-            <span class="session-toast-label">Project:</span>
+            <span class="session-toast-label">{{ $t('session.toast.projectLabel') }}</span>
             <ProjectBadge :project-id="projectId" class="session-toast-project" />
         </span>
         <span class="session-toast-session">
-            <span class="session-toast-label">Session:</span>
+            <span class="session-toast-label">{{ $t('session.toast.sessionLabel') }}</span>
             <span class="session-toast-title">{{ sessionTitle }}</span>
         </span>
         <span v-if="detail" class="session-toast-detail">{{ detail }}</span>
@@ -173,9 +173,9 @@ function goToSession() {
             {{ parsedError.summary }}<span v-if="parsedError.status" class="error-status"> ({{ parsedError.status }})</span>
         </span>
         <div v-if="!isCurrentSession" class="session-toast-actions">
-            <wa-button v-if="showActions" size="small" variant="brand" appearance="outlined" @click="archiveSession">Archive</wa-button>
-            <wa-button v-if="showActions" size="small" variant="brand" appearance="outlined" @click="markRead">Mark as read</wa-button>
-            <wa-button size="small" variant="brand" appearance="outlined" @click="goToSession">Go to session</wa-button>
+            <wa-button v-if="showActions" size="small" variant="brand" appearance="outlined" @click="archiveSession">{{ $t('common.actions.archive') }}</wa-button>
+            <wa-button v-if="showActions" size="small" variant="brand" appearance="outlined" @click="markRead">{{ $t('session.actions.markRead') }}</wa-button>
+            <wa-button size="small" variant="brand" appearance="outlined" @click="goToSession">{{ $t('session.toast.goToSession') }}</wa-button>
         </div>
     </div>
 </template>

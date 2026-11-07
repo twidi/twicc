@@ -24,24 +24,22 @@ const displacedPreference = computed(() => settings.summaryModel !== 'auto' && s
 
 <template>
     <div class="summary-settings">
-        <h3>Summaries</h3>
-        <p>Messages and selections need at least 500 characters. Summaries target one third of the source, up to 140 words.</p>
-        <label>Summary model</label>
+        <h3>{{ $t('settings.sections.summaries') }}</h3>
+        <p>{{ $t('settings.summaries.hint') }}</p>
+        <label>{{ $t('settings.summaries.model') }}</label>
         <div class="summary-model-row">
-            <SegmentedControl :model-value="choice" :options="choices" label="Summary model" @update:model-value="settings.setSummaryModel($event)" />
+            <SegmentedControl :model-value="choice" :options="choices" :label="$t('settings.summaries.model')" @update:model-value="settings.setSummaryModel($event)" />
         </div>
         <small v-if="displacedPreference">
-            Stored preference: {{ displacedPreference.label }}. {{ displacedPreference.title }}.
-            Effective engine: {{ TITLE_SUGGESTION_MODEL_LABELS[effective] || 'Unavailable' }}.
-            The stored preference returns when it is available.
+            {{ $t('settings.summaries.storedPreference', { preference: displacedPreference.label, reason: displacedPreference.title, engine: TITLE_SUGGESTION_MODEL_LABELS[effective] || $t('settings.summaries.unavailable') }) }}
         </small>
-        <small v-if="hints.noProvider">No Claude or Codex provider is enabled. Set an OpenRouter key or enable a provider.</small>
-        <small v-if="!speech.keyPresent">OpenRouter is unavailable: its key is not set. Set the key in Text to Speech settings.</small>
-        <small v-if="hints.openrouter">OpenRouter uses {{ OPENROUTER_MODEL_DESCRIPTION }}. It sends the source to OpenRouter and uses your credits.</small>
+        <small v-if="hints.noProvider">{{ $t('settings.summaries.noProvider') }}</small>
+        <small v-if="!speech.keyPresent">{{ $t('settings.summaries.noKey') }}</small>
+        <small v-if="hints.openrouter">{{ $t('settings.summaries.openrouterHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</small>
         <wa-switch :checked="settings.timelineSummaryEnabled" @change="settings.setTimelineSummaryEnabled($event.target.checked)">
-            Read summaries in timeline speech
+            {{ $t('settings.summaries.timelineSpeech') }}
         </wa-switch>
-        <small>On by default. Manual summaries remain available when this is off.</small>
+        <small>{{ $t('settings.summaries.timelineSpeechHint') }}</small>
     </div>
 </template>
 

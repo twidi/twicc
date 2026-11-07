@@ -387,46 +387,49 @@ function answerNo(id) {
 <template>
     <section class="settings-section">
         <div class="settings-section-heading">
-            <h3 class="settings-section-title">Text to Speech <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
-            <HelpFeatureLink help-key="text-to-speech" label="How does text to speech work?" />
+            <h3 class="settings-section-title">{{ $t('settings.sections.textToSpeech') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></h3>
+            <HelpFeatureLink help-key="text-to-speech" :label="$t('settings.textToSpeech.help')" />
         </div>
 
-        <p class="setting-group-hint">
-            Read the chat messages aloud with OpenRouter, or with your own script. See the
-            <a href="https://openrouter.ai/docs/guides/overview/multimodal/tts" target="_blank" rel="noopener">OpenRouter TTS guide</a>
-            and the <a href="https://openrouter.ai/models?output_modalities=speech" target="_blank" rel="noopener">speech models</a>.
-            Prices are OpenRouter's list prices: the real cost can differ.
-        </p>
+        <i18n-t tag="p" class="setting-group-hint" keypath="settings.textToSpeech.intro" scope="global">
+            <template #guide><a href="https://openrouter.ai/docs/guides/overview/multimodal/tts" target="_blank" rel="noopener">{{ $t('settings.textToSpeech.guide') }}</a></template>
+            <template #models><a href="https://openrouter.ai/models?output_modalities=speech" target="_blank" rel="noopener">{{ $t('settings.textToSpeech.models') }}</a></template>
+        </i18n-t>
 
         <wa-callout v-if="store.keyPresent" variant="success" size="small">
             <wa-icon slot="icon" name="circle-check"></wa-icon>
-            <code>TWICC_OPENROUTER_API_KEY</code> is loaded. After you change it in
-            <code>{{ store.envPath }}</code>, restart TwiCC.
+            <i18n-t keypath="settings.textToSpeech.keyLoaded" scope="global">
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- Environment variable names are technical identifiers. -->
+                <template #apiKey><code>TWICC_OPENROUTER_API_KEY</code></template>
+                <template #path><code>{{ store.envPath }}</code></template>
+            </i18n-t>
         </wa-callout>
         <wa-callout v-else variant="warning" size="small">
             <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-            Add <code>TWICC_OPENROUTER_API_KEY</code> to <code>{{ store.envPath }}</code>,
-            then restart TwiCC. Testing OpenRouter configs and the OpenRouter adaptation are
-            disabled until then.
+            <i18n-t keypath="settings.textToSpeech.keyMissing" scope="global">
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- Environment variable names are technical identifiers. -->
+                <template #apiKey><code>TWICC_OPENROUTER_API_KEY</code></template>
+                <template #path><code>{{ store.envPath }}</code></template>
+            </i18n-t>
         </wa-callout>
 
         <div class="setting-group tts-adapt-group">
-            <span class="setting-group-label">Adapt the text for speech</span>
+            <span class="setting-group-label">{{ $t('settings.textToSpeech.adapt') }}</span>
             <div class="tts-format-row">
                 <SegmentedControl
-                    label="Adapt the text for speech"
+                    :label="$t('settings.textToSpeech.adapt')"
                     :model-value="adaptChoice"
                     :options="adaptChoices"
                     @update:model-value="store.setAdapt($event)"
                 />
             </div>
-            <span v-if="adaptHints.noProvider" class="setting-group-hint">No Claude or Codex provider is enabled.</span>
-            <span v-else class="setting-group-hint">A small model rewrites the message for the ear before it is read.</span>
-            <span v-if="adaptHints.openrouter" class="setting-group-hint">OpenRouter uses {{ OPENROUTER_MODEL_DESCRIPTION }}; it sends the text to OpenRouter, paid on your OpenRouter account.</span>
+            <span v-if="adaptHints.noProvider" class="setting-group-hint">{{ $t('settings.textToSpeech.noProvider') }}</span>
+            <span v-else class="setting-group-hint">{{ $t('settings.textToSpeech.adaptHint') }}</span>
+            <span v-if="adaptHints.openrouter" class="setting-group-hint">{{ $t('settings.textToSpeech.openRouterAdaptHint', { model: OPENROUTER_MODEL_DESCRIPTION }) }}</span>
         </div>
 
         <div class="setting-group">
-            <label class="setting-group-label" for="tts-test-text">Test text</label>
+            <label class="setting-group-label" for="tts-test-text">{{ $t('settings.textToSpeech.testText') }}</label>
             <wa-textarea
                 id="tts-test-text"
                 size="small"
@@ -464,15 +467,15 @@ function answerNo(id) {
                         v-if="isConfigValidated(config)"
                         class="tts-mark tts-mark-validated"
                         name="circle-check"
-                        label="Validated"
-                        title="Validated: tested and confirmed"
+                        :label="$t('settings.textToSpeech.validated')"
+                        :title="$t('settings.textToSpeech.validatedHint')"
                     ></wa-icon>
                     <wa-icon
                         v-else-if="store.activeId === config.id"
                         class="tts-mark tts-mark-warning"
                         name="triangle-exclamation"
-                        label="Changed since its last test"
-                        title="Changed since its last test"
+                        :label="$t('settings.textToSpeech.changed')"
+                        :title="$t('settings.textToSpeech.changed')"
                     ></wa-icon>
                     <!-- A native <summary> toggles on any click inside it, a button's included, and
                          on Enter / Space / arrows: the actions stop all of these here. Escape stays
@@ -496,7 +499,7 @@ function answerNo(id) {
                             :title.attr="'Active: click to deactivate'"
                             @click="store.deactivateConfig()"
                         >
-                            <wa-icon name="circle-dot" label="Deactivate"></wa-icon>
+                            <wa-icon name="circle-dot" :label="$t('settings.textToSpeech.deactivate')"></wa-icon>
                         </wa-button>
                         <wa-button
                             v-else
@@ -507,7 +510,7 @@ function answerNo(id) {
                             :title.attr="isConfigValidated(config) ? 'Activate: use this config to read messages' : 'Test and confirm this config first'"
                             @click="store.activateConfig(config.id)"
                         >
-                            <wa-icon name="circle" variant="regular" label="Activate"></wa-icon>
+                            <wa-icon name="circle" variant="regular" :label="$t('settings.textToSpeech.activate')"></wa-icon>
                         </wa-button>
                         <!-- One icon in every state: the button keeps its icon-button size and its
                              accessible name (the icon label); loading turns a spinner icon. -->
@@ -529,16 +532,16 @@ function answerNo(id) {
 
                 <div class="tts-config-body">
                     <div v-if="lastTestTexts[config.id]?.facts" class="tts-last-test">
-                        <span class="setting-group-label">Last test run · {{ lastTestWhen(config.last_test) }}</span>
+                        <span class="setting-group-label">{{ $t('settings.textToSpeech.lastTest', { date: lastTestWhen(config.last_test) }) }}</span>
                         <span class="setting-group-hint">{{ lastTestTexts[config.id].facts }}</span>
                         <span v-if="lastTestTexts[config.id].adaptation" class="setting-group-hint">{{ lastTestTexts[config.id].adaptation }}</span>
                         <details v-if="config.last_test.adapted_text" class="tts-adapted-text">
-                            <summary>Adapted text</summary>
+                            <summary>{{ $t('settings.textToSpeech.adaptedText') }}</summary>
                             <div class="tts-adapted-text-body">{{ config.last_test.adapted_text }}</div>
                         </details>
                     </div>
                     <div class="tts-field">
-                        <label class="setting-group-label" :for="`tts-${config.id}-name`">Name</label>
+                        <label class="setting-group-label" :for="`tts-${config.id}-name`">{{ $t('common.fields.name') }}</label>
                         <wa-input
                             :id="`tts-${config.id}-name`"
                             size="small"
@@ -550,7 +553,7 @@ function answerNo(id) {
 
                     <template v-if="kindOf(config) === 'script'">
                         <div class="tts-field">
-                            <label class="setting-group-label" :for="`tts-${config.id}-command`">Command</label>
+                            <label class="setting-group-label" :for="`tts-${config.id}-command`">{{ $t('settings.textToSpeech.command') }}</label>
                             <wa-textarea
                                 :id="`tts-${config.id}-command`"
                                 class="tts-command"
@@ -564,10 +567,10 @@ function answerNo(id) {
                         </div>
 
                         <div class="tts-field">
-                            <span class="setting-group-label">Output</span>
+                            <span class="setting-group-label">{{ $t('settings.textToSpeech.output') }}</span>
                             <div class="tts-format-row">
                                 <SegmentedControl
-                                    label="Output"
+                                    :label="$t('settings.textToSpeech.output')"
                                     :model-value="config.output"
                                     :options="SCRIPT_OUTPUT_OPTIONS"
                                     @update:model-value="onScriptChoice(config, 'output', $event)"
@@ -580,15 +583,15 @@ function answerNo(id) {
                                 :checked="config.delete_file"
                                 @change="onDeleteFileChange(config, $event)"
                             >
-                                Delete the file after reading
+                                {{ $t('settings.textToSpeech.deleteFile') }}
                             </wa-checkbox>
                         </div>
 
                         <div class="tts-field">
-                            <span class="setting-group-label">Format</span>
+                            <span class="setting-group-label">{{ $t('settings.textToSpeech.format') }}</span>
                             <div class="tts-format-row">
                                 <SegmentedControl
-                                    label="Format"
+                                    :label="$t('settings.textToSpeech.format')"
                                     :model-value="config.audio_format"
                                     :options="SCRIPT_FORMAT_OPTIONS"
                                     @update:model-value="onScriptChoice(config, 'audio_format', $event)"
@@ -599,7 +602,7 @@ function answerNo(id) {
                         <!-- Raw PCM has no header: its sample rate and channels come from here. -->
                         <div v-if="config.audio_format === 'pcm'" class="tts-config-row">
                             <div class="tts-field tts-field-grow">
-                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-rate`">Sample rate (Hz)</label>
+                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-rate`">{{ $t('settings.textToSpeech.sampleRate') }}</label>
                                 <wa-input
                                     :id="`tts-${config.id}-pcm-rate`"
                                     size="small"
@@ -609,7 +612,7 @@ function answerNo(id) {
                                 ></wa-input>
                             </div>
                             <div class="tts-field tts-field-grow">
-                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-channels`">Channels</label>
+                                <label class="setting-group-label" :for="`tts-${config.id}-pcm-channels`">{{ $t('settings.textToSpeech.channels') }}</label>
                                 <wa-input
                                     :id="`tts-${config.id}-pcm-channels`"
                                     size="small"
@@ -621,20 +624,19 @@ function answerNo(id) {
                         </div>
 
                         <div class="tts-field">
-                            <label class="setting-group-label" :for="`tts-${config.id}-max-chars`">Max characters per run</label>
+                            <label class="setting-group-label" :for="`tts-${config.id}-max-chars`">{{ $t('settings.textToSpeech.maxCharacters') }}</label>
                             <wa-input
                                 :id="`tts-${config.id}-max-chars`"
                                 size="small"
                                 inputmode="numeric"
-                                placeholder="Whole text in one run"
+                                :placeholder="$t('settings.textToSpeech.wholeText')"
                                 :value.prop="integerText(config.max_chars)"
                                 @change="onIntegerChange(config, 'max_chars', Number.MAX_SAFE_INTEGER, $event)"
                             ></wa-input>
                         </div>
 
                         <p class="setting-group-hint tts-script-help">
-                            The text goes to the command's standard input; the audio (or a file path) comes back on
-                            its standard output. The help at the top of this section tells the rest.
+                            {{ $t('settings.textToSpeech.scriptHelp') }}
                         </p>
                     </template>
                     <template v-else>
@@ -642,18 +644,18 @@ function answerNo(id) {
                         <div class="tts-config-row tts-pickers">
                             <div class="tts-field tts-field-grow">
                                 <div class="tts-label-row">
-                                    <label class="setting-group-label" :for="`tts-${config.id}-model`">Model</label>
+                                    <label class="setting-group-label" :for="`tts-${config.id}-model`">{{ $t('common.labels.model') }}</label>
                                     <a
                                         v-if="config.model"
                                         class="tts-model-link"
                                         :href="openRouterModelUrl(config.model)"
                                         target="_blank"
                                         rel="noopener"
-                                    >View on OpenRouter <wa-icon name="arrow-up-right-from-square"></wa-icon></a>
+                                    >{{ $t('settings.textToSpeech.viewModel') }} <wa-icon name="arrow-up-right-from-square"></wa-icon></a>
                                 </div>
                                 <FilterableSelect
                                     :input-id="`tts-${config.id}-model`"
-                                    label="Model"
+                                    :label="$t('common.labels.model')"
                                     size="small"
                                     :placeholder="store.modelsStatus === 'loading' ? 'Loading the models...' : 'Choose a model'"
                                     :empty-text="modelsEmptyText()"
@@ -663,18 +665,18 @@ function answerNo(id) {
                                 />
                                 <!-- One link through the retry: it keeps the keyboard focus. -->
                                 <span v-if="store.modelsStatus === 'failed' || retryingModels" class="setting-group-hint">
-                                    {{ retryingModels ? 'Loading the OpenRouter model list...' : 'The OpenRouter model list did not load.' }}
-                                    <a href="#" :aria-disabled="retryingModels" @click.prevent="retryModels">{{ retryingModels ? 'Retrying...' : 'Retry' }}</a>
+                                    {{ retryingModels ? $t('settings.textToSpeech.loadingModels') : $t('settings.textToSpeech.modelsFailed') }}
+                                    <a href="#" :aria-disabled="retryingModels" @click.prevent="retryModels">{{ retryingModels ? $t('settings.textToSpeech.retrying') : $t('common.actions.retry') }}</a>
                                 </span>
                             </div>
                             <div class="tts-field tts-field-grow">
-                                <label class="setting-group-label" :for="`tts-${config.id}-voice`">Voice</label>
+                                <label class="setting-group-label" :for="`tts-${config.id}-voice`">{{ $t('settings.textToSpeech.voice') }}</label>
                                 <FilterableSelect
                                     v-if="hasVoiceChoice(config)"
                                     :input-id="`tts-${config.id}-voice`"
-                                    label="Voice"
+                                    :label="$t('settings.textToSpeech.voice')"
                                     size="small"
-                                    placeholder="Choose a voice"
+                                    :placeholder="$t('settings.textToSpeech.chooseVoice')"
                                     :model-value="config.voice"
                                     :options="voiceOptionsFor(config)"
                                     @update:model-value="onVoiceSelect(config, $event)"
@@ -684,10 +686,10 @@ function answerNo(id) {
                         </div>
 
                         <div class="tts-field">
-                            <span class="setting-group-label">Format</span>
+                            <span class="setting-group-label">{{ $t('settings.textToSpeech.format') }}</span>
                             <div class="tts-format-row">
                                 <SegmentedControl
-                                    label="Format"
+                                    :label="$t('settings.textToSpeech.format')"
                                     :model-value="config.response_format"
                                     :options="ttsFormatOptions(modelFactsOf(config))"
                                     @update:model-value="onFormatChange(config, $event)"
@@ -700,13 +702,13 @@ function answerNo(id) {
                     </template>
 
                     <div class="tts-field">
-                        <label class="setting-group-label" :for="`tts-${config.id}-note`">Personal note</label>
+                        <label class="setting-group-label" :for="`tts-${config.id}-note`">{{ $t('settings.textToSpeech.note') }}</label>
                         <wa-textarea
                             :id="`tts-${config.id}-note`"
                             size="small"
                             rows="1"
                             resize="auto"
-                            placeholder="Optional notes about this choice, for you only"
+                            :placeholder="$t('settings.textToSpeech.notePlaceholder')"
                             :value.prop="config.note"
                             @change="onNoteChange(config, $event)"
                         ></wa-textarea>
@@ -721,23 +723,23 @@ function answerNo(id) {
                         >
                             <wa-spinner v-if="testStateOf(config) === 'loading'" slot="start"></wa-spinner>
                             <wa-icon v-else slot="start" name="volume-up"></wa-icon>
-                            Test
+                            {{ $t('settings.textToSpeech.test') }}
                         </wa-button>
                         <div v-if="prompts[config.id]" class="tts-prompt">
-                            <span>Did you hear it correctly?</span>
-                            <wa-button size="small" appearance="outlined" @click="answerYes(config.id)">Yes</wa-button>
-                            <wa-button size="small" appearance="outlined" @click="answerNo(config.id)">No</wa-button>
+                            <span>{{ $t('settings.textToSpeech.heardQuestion') }}</span>
+                            <wa-button size="small" appearance="outlined" @click="answerYes(config.id)">{{ $t('settings.textToSpeech.yes') }}</wa-button>
+                            <wa-button size="small" appearance="outlined" @click="answerNo(config.id)">{{ $t('settings.textToSpeech.no') }}</wa-button>
                         </div>
                         <div class="tts-config-actions">
-                            <wa-button size="small" appearance="outlined" @click="duplicateConfig(config)">Duplicate</wa-button>
+                            <wa-button size="small" appearance="outlined" @click="duplicateConfig(config)">{{ $t('settings.textToSpeech.duplicate') }}</wa-button>
                             <wa-button
                                 size="small"
                                 appearance="plain"
                                 variant="danger"
-                                title="Delete this config"
+                                :title="$t('settings.textToSpeech.delete')"
                                 @click="deleteConfig(config)"
                             >
-                                <wa-icon name="trash" label="Delete this config"></wa-icon>
+                                <wa-icon name="trash" :label="$t('settings.textToSpeech.delete')"></wa-icon>
                             </wa-button>
                         </div>
                     </div>
@@ -746,7 +748,7 @@ function answerNo(id) {
 
                     <wa-callout v-if="store.activeId === config.id && !isConfigValidated(config)" variant="warning" size="small">
                         <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                        This config changed since its last test: the read-aloud buttons are hidden until a new test is confirmed.
+                        {{ $t('settings.textToSpeech.changedWarning') }}
                     </wa-callout>
                 </div>
             </wa-details>
@@ -754,10 +756,10 @@ function answerNo(id) {
 
         <div class="tts-new-configs">
             <wa-button size="small" appearance="outlined" @click="addConfig('openrouter')">
-                <wa-icon slot="start" :name="KIND_ICONS.openrouter.name"></wa-icon> New OpenRouter config
+                <wa-icon slot="start" :name="KIND_ICONS.openrouter.name"></wa-icon> {{ $t('settings.textToSpeech.newOpenRouter') }}
             </wa-button>
             <wa-button size="small" appearance="outlined" @click="addConfig('script')">
-                <wa-icon slot="start" :name="KIND_ICONS.script.name"></wa-icon> New script config
+                <wa-icon slot="start" :name="KIND_ICONS.script.name"></wa-icon> {{ $t('settings.textToSpeech.newScript') }}
             </wa-button>
         </div>
     </section>

@@ -214,12 +214,12 @@ function retry() {
         <wa-callout variant="danger" size="small">
             <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
             <div class="error-content">
-                <div class="error-message">Error from {{ providerLabel }}: {{ errorInfo.message }}</div>
+                <div class="error-message">{{ $t('session.apiError.message', { provider: providerLabel, message: errorInfo.message }) }}</div>
                 <div v-if="errorInfo.status || errorInfo.retryAttempt" class="error-details">
-                    <span v-if="errorInfo.status">Status: {{ errorInfo.status }}</span>
+                    <span v-if="errorInfo.status">{{ $t('session.apiError.status', { status: errorInfo.status }) }}</span>
                     <span v-if="errorInfo.status && errorInfo.retryAttempt" class="separator">•</span>
                     <span v-if="errorInfo.retryAttempt">
-                        Retry {{ errorInfo.retryAttempt }}/{{ errorInfo.maxRetries }}
+                        {{ $t('session.apiError.retryAttempt', { attempt: errorInfo.retryAttempt, max: errorInfo.maxRetries }) }}
                     </span>
                 </div>
             </div>
@@ -232,7 +232,7 @@ function retry() {
                     @click="resend"
                 >
                     <wa-icon slot="start" name="paper-plane"></wa-icon>
-                    Resend your message
+                    {{ $t('session.apiError.resend') }}
                 </wa-button>
                 <wa-button
                     v-else
@@ -242,7 +242,7 @@ function retry() {
                     @click="retry"
                 >
                     <wa-icon slot="start" name="rotate-right"></wa-icon>
-                    Retry
+                    {{ $t('common.actions.retry') }}
                 </wa-button>
             </div>
         </wa-callout>

@@ -125,7 +125,7 @@ function toggleSession() {
             ><!--
                 The tooltip is the only visual label of this icon-only control. Unpressed it equals the name: browsers
                 drop an accessible description identical to the name, so it is not announced twice.
-                --><wa-icon name="filter"></wa-icon><span class="timeline-row-only-text">Only this session</span></button><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
+                --><wa-icon name="filter"></wa-icon><span class="timeline-row-only-text">{{ $t('timeline.event.onlySession') }}</span></button><template v-if="identity.showProject && identity.projectId">{{ ' ' }}<!--
                 A plain jump to that project: the router guard keeps the current workspace when the project belongs to it.
                 --><RouterLink
                     v-if="knownProject"

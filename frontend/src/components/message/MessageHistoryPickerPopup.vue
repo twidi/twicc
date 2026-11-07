@@ -397,7 +397,7 @@ defineExpose({ open, close, isOpen })
                 <wa-input
                     ref="searchInputRef"
                     :value="searchQuery"
-                    placeholder="Filter messages..."
+                    :placeholder="$t('composer.history.filter')"
                     size="small"
                     with-clear
                     class="picker-search-input"
@@ -417,14 +417,14 @@ defineExpose({ open, close, isOpen })
             >
                 <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
                 <template v-if="loading">
-                    <div class="picker-status">Loading...</div>
+                    <div class="picker-status">{{ $t('composer.history.loading') }}</div>
                 </template>
                 <template v-else-if="error">
                     <div class="picker-status picker-error">{{ error }}</div>
                 </template>
                 <template v-else-if="filteredMessages.length === 0">
                     <div class="picker-status">
-                        {{ searchQuery ? 'No matching messages' : 'No messages in this session' }}
+                        {{ searchQuery ? $t('composer.history.noMatch') : $t('composer.history.empty') }}
                     </div>
                 </template>
                 <template v-else>

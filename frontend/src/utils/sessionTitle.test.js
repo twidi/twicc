@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { reactive, watch, nextTick } from 'vue'
 import { getSessionCutoffMs } from './sessions.js'
@@ -224,7 +225,10 @@ test('server title and origin updates preserve the text typed in the dialog', as
 test('dialog hint and settings label use the required automatic-title copy', () => {
     assert.match(dialog, /showAutomaticTitleHint\(props\.session\)/)
     assert.match(dialog, /v-if="[^"]*utomaticTitle[^"]*" class="context-hint"/)
-    assert.ok(dialog.includes('This title is automatic. Save to validate it and stop automatic updates.'))
+    assert.match(dialog, /<p v-if="automaticTitleHint" class="context-hint">\s*\{\{ \$t\('session\.rename\.automaticHint'\) \}\}\s*<\/p>/)
+    const { t } = createAppI18n().global
+    assert.equal(t('session.rename.automaticHint'), 'This title is automatic. Save to validate it and stop automatic updates.')
+    assert.equal(t('settings.titles.automaticTitles'), 'Automatic titles')
     assert.match(read('../components/app/SettingsPopover.vue'), /:checked="titleAutoApply"[\s\S]*?>\{\{ \$t\('settings\.titles\.automaticTitles'\) \}\}<\/wa-switch>/)
     const start = dialog.indexOf('function close()')
     const close = dialog.slice(start, dialog.indexOf('/**', start))

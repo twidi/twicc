@@ -324,8 +324,8 @@ onBeforeUnmount(() => {
             <wa-icon name="triangle-exclamation"></wa-icon>
             <span>{{ error }}</span>
         </div>
-        <div v-else-if="loading && !hasLoaded" class="workflows-state">Loading…</div>
-        <div v-else-if="!rows.length" class="workflows-state">No workflows for this session.</div>
+        <div v-else-if="loading && !hasLoaded" class="workflows-state">{{ $t('workflows.loading') }}</div>
+        <div v-else-if="!rows.length" class="workflows-state">{{ $t('workflows.empty') }}</div>
         <TabBar v-else class="workflows-tabs" :active="activeRunId" @wa-tab-show.stop="onTabShow">
             <wa-tab v-for="row in rows" :key="row.run_id" slot="nav" :panel="row.run_id" class="workflow-tab">
                 <span class="workflow-tab-name">{{ row.name }}</span>

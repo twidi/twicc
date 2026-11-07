@@ -81,3 +81,40 @@ test('a translation can move rich slots to a different position', async () => {
     const html = await renderMessage('workspace/WorkspaceManageDialog.vue', 'workspace.edit.patterns.wildcardHint', 'pt-BR', {}, '{wildcard}: reordered')
     assert.equal(html, '<code>*</code>: reordered')
 })
+
+test('request toasts keep sender names and translated prose in one inline container', async () => {
+    for (const locale of ['en', 'pt-BR']) {
+        const mcp = await renderMessage('mcp/McpToast.vue', 'mcp.toast.request', locale, { clientName: '<client>&' })
+        assert.match(mcp, /^<span class="mcp-toast-sentence"><strong>&lt;client&gt;&amp;<\/strong> /)
+        assert.match(mcp, /<\/span>$/)
+        const peer = await renderMessage('peer/PeerToastContent.vue', 'peer.toast.pairRequest', locale,
+            { peer: { name: '<peer>&' } })
+        assert.match(peer, /^<span><strong>&lt;peer&gt;&amp;<\/strong> /)
+        assert.match(peer, /<\/span>$/)
+    }
+})
+
+test('workflow completion agreement follows completed phases while the phase label follows total phases', async () => {
+    for (const locale of ['en', 'pt-BR']) {
+        for (const completed of [0, 1, 2]) {
+            const html = await renderMessage('workflows/WorkflowRunDetail.vue', 'workflows.detail.incomplete', locale,
+                { phaseCompletion: { completed, total: 3 } })
+            assert.match(html, new RegExp(`<strong>${completed} ${locale === 'en' ? 'of its 3 phases' : 'de suas 3 fases'}</strong>`))
+            if (locale === 'pt-BR') assert.match(html, completed === 1 ? /foi concluída/ : /foram concluídas/)
+        }
+    }
+})
+
+test('artifact host warnings escape host names and retain count selection', async () => {
+    for (const locale of ['en', 'pt-BR']) {
+        for (const blockedHosts of [['<host>&'], ['<host>&', 'other.test']]) {
+            const html = await renderMessage('../artifact-shell/ArtifactShellApp.vue', 'artifacts.shell.blockedHosts', locale,
+                { blockedHosts })
+            assert.match(html, /<code>&lt;host&gt;&amp;/)
+            assert.doesNotMatch(html, /<host>|undefined/)
+            assert.match(html, locale === 'en'
+                ? blockedHosts.length === 1 ? /this host is not authorized/ : /these hosts are not authorized/
+                : blockedHosts.length === 1 ? /este host não foi autorizado/ : /estes hosts não foram autorizados/)
+        }
+    }
+})

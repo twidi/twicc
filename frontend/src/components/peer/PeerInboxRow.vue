@@ -204,7 +204,7 @@ const timestampSeconds = computed(() =>
             <span class="pir__fill"></span>
             <span v-if="attachments" class="pir__attachments">
                 <wa-icon name="paperclip" auto-width></wa-icon>
-                {{ attachments.count }}<template v-if="attachments.purged"> (purged)</template>
+                {{ attachments.purged ? $t('peer.inbox.purgedAttachmentCount', { count: attachments.count }, attachments.count) : attachments.count }}
             </span>
             <wa-tag v-if="showStatus" :variant="statusVariant" size="small">{{ message.status }}</wa-tag>
             <span v-if="date" class="pir__time">
@@ -228,8 +228,10 @@ const timestampSeconds = computed(() =>
             <span class="pir__route-label">{{ route.label }}</span>
             <span v-if="route.display" class="pir__route-title" :title="route.title">“{{ route.display }}”</span>
             <template v-if="route.projectId">
-                <span v-if="!route.projectOnly" class="pir__route-label">in</span>
-                <ProjectBadge :project-id="route.projectId" class="pir__route-project" />
+                <i18n-t v-if="!route.projectOnly" scope="global" keypath="peer.routing.inProject" tag="span" class="pir__route-label" style="display: contents">
+                    <template #project><ProjectBadge :project-id="route.projectId" class="pir__route-project" /></template>
+                </i18n-t>
+                <ProjectBadge v-else :project-id="route.projectId" class="pir__route-project" />
                 <span v-if="route.hint" class="pir__route-label">{{ route.hint }}</span>
             </template>
         </span>
@@ -352,5 +354,5 @@ const timestampSeconds = computed(() =>
     white-space: nowrap;
     min-width: 6ch;
 }
-.pir__route-project { --project-badge-name-max-width: 20ch; }
+.pir__route-project { --project-badge-name-max-width: 20ch; color: var(--wa-color-text-normal); }
 </style>

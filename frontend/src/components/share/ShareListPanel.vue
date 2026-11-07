@@ -72,14 +72,14 @@ async function toggleViews(s) {
     <div class="share-list">
         <div v-if="activeShares.length >= 2" class="share-list-toolbar">
             <template v-if="revokeAllConfirm">
-                <span class="revoke-confirm-label">Revoke {{ activeShares.length }} active links? They stop working until unrevoked.</span>
+                <span class="revoke-confirm-label">{{ $t('sharing.links.revokeAllQuestion', { count: activeShares.length }) }}</span>
                 <wa-button :id="`${uid}-revoke-all-ok`" size="small" appearance="plain" variant="warning" :loading="revokingAll" @click="revokeAll"><wa-icon name="check"></wa-icon></wa-button>
-                <AppTooltip :for="`${uid}-revoke-all-ok`">Confirm revoke all</AppTooltip>
+                <AppTooltip :for="`${uid}-revoke-all-ok`">{{ $t('sharing.links.confirmRevokeAll') }}</AppTooltip>
                 <wa-button :id="`${uid}-revoke-all-no`" size="small" appearance="plain" :disabled="revokingAll" @click="revokeAllConfirm = false"><wa-icon name="xmark"></wa-icon></wa-button>
-                <AppTooltip :for="`${uid}-revoke-all-no`">Cancel revoke all</AppTooltip>
+                <AppTooltip :for="`${uid}-revoke-all-no`">{{ $t('sharing.links.cancelRevokeAll') }}</AppTooltip>
             </template>
             <wa-button v-else size="small" appearance="plain" variant="warning" @click="revokeAllConfirm = true">
-                <wa-icon slot="start" name="ban"></wa-icon>Revoke all ({{ activeShares.length }})
+                <wa-icon slot="start" name="ban"></wa-icon>{{ $t('sharing.links.revokeAll', { count: activeShares.length }) }}
             </wa-button>
         </div>
         <div v-for="s in shares" :key="s.id" class="share-row">
@@ -96,40 +96,40 @@ async function toggleViews(s) {
                     <template v-else>{{ creatorBadge(s).label }}</template>
                 </wa-tag>
                 <wa-tag v-if="s.has_password" size="small" variant="neutral"><wa-icon name="lock"></wa-icon></wa-tag>
-                <wa-tag v-if="isShareOutdated(s)" size="small" variant="warning">outdated</wa-tag>
-                <button class="share-views" type="button" @click="toggleViews(s)">{{ s.view_count }} views</button>
+                <wa-tag v-if="isShareOutdated(s)" size="small" variant="warning">{{ $t('sharing.links.outdated') }}</wa-tag>
+                <button class="share-views" type="button" @click="toggleViews(s)">{{ $t('sharing.links.views', { count: s.view_count }, s.view_count) }}</button>
             </div>
             <!-- Recent views expand right under their trigger, above the actions. -->
             <div v-if="s.id in accesses" class="share-views-panel">
-                <p v-if="accesses[s.id] === null" class="muted">Loading…</p>
-                <p v-else-if="!accesses[s.id].length" class="muted">No views yet.</p>
+                <p v-if="accesses[s.id] === null" class="muted">{{ $t('sharing.links.loading') }}</p>
+                <p v-else-if="!accesses[s.id].length" class="muted">{{ $t('sharing.links.noViews') }}</p>
                 <AccessLogList v-else :entries="accesses[s.id]" />
             </div>
             <div class="share-row-actions">
                 <wa-button :id="`${uid}-copy-${s.id}`" size="small" appearance="plain" @click="copy(s)"><wa-icon name="copy"></wa-icon></wa-button>
-                <AppTooltip :for="`${uid}-copy-${s.id}`">Copy share URL</AppTooltip>
-                <wa-button v-if="isShareOutdated(s)" :id="`${uid}-push-${s.id}`" size="small" variant="warning" @click="store.propagateShare(s.id)">Push update</wa-button>
-                <AppTooltip v-if="isShareOutdated(s)" :for="`${uid}-push-${s.id}`">Push the current files to this link</AppTooltip>
+                <AppTooltip :for="`${uid}-copy-${s.id}`">{{ $t('sharing.links.copyUrl') }}</AppTooltip>
+                <wa-button v-if="isShareOutdated(s)" :id="`${uid}-push-${s.id}`" size="small" variant="warning" @click="store.propagateShare(s.id)">{{ $t('sharing.links.pushUpdate') }}</wa-button>
+                <AppTooltip v-if="isShareOutdated(s)" :for="`${uid}-push-${s.id}`">{{ $t('sharing.links.pushUpdateHint') }}</AppTooltip>
                 <wa-button :id="`${uid}-edit-${s.id}`" size="small" appearance="plain" @click="emit('edit', s)"><wa-icon name="pen"></wa-icon></wa-button>
-                <AppTooltip :for="`${uid}-edit-${s.id}`">Edit share settings</AppTooltip>
-                <wa-button v-if="s.status !== 'revoked'" :id="`${uid}-revoke-${s.id}`" size="small" appearance="plain" @click="store.revokeShare(s.id, true)">Revoke</wa-button>
-                <AppTooltip v-if="s.status !== 'revoked'" :for="`${uid}-revoke-${s.id}`">Disable this link (viewers get a 404)</AppTooltip>
-                <wa-button v-if="s.status === 'revoked'" :id="`${uid}-unrevoke-${s.id}`" size="small" appearance="plain" @click="store.revokeShare(s.id, false)">Unrevoke</wa-button>
-                <AppTooltip v-if="s.status === 'revoked'" :for="`${uid}-unrevoke-${s.id}`">Re-enable this link</AppTooltip>
+                <AppTooltip :for="`${uid}-edit-${s.id}`">{{ $t('sharing.links.edit') }}</AppTooltip>
+                <wa-button v-if="s.status !== 'revoked'" :id="`${uid}-revoke-${s.id}`" size="small" appearance="plain" @click="store.revokeShare(s.id, true)">{{ $t('sharing.links.revoke') }}</wa-button>
+                <AppTooltip v-if="s.status !== 'revoked'" :for="`${uid}-revoke-${s.id}`">{{ $t('sharing.links.revokeHint') }}</AppTooltip>
+                <wa-button v-if="s.status === 'revoked'" :id="`${uid}-unrevoke-${s.id}`" size="small" appearance="plain" @click="store.revokeShare(s.id, false)">{{ $t('sharing.links.unrevoke') }}</wa-button>
+                <AppTooltip v-if="s.status === 'revoked'" :for="`${uid}-unrevoke-${s.id}`">{{ $t('sharing.links.unrevokeHint') }}</AppTooltip>
                 <template v-if="deleteConfirmId === s.id">
-                    <span class="delete-confirm-label">Delete? It cannot be undone.</span>
+                    <span class="delete-confirm-label">{{ $t('sharing.links.deleteQuestion') }}</span>
                     <wa-button :id="`${uid}-del-ok-${s.id}`" size="small" appearance="plain" variant="danger" :loading="deleting" @click="confirmDelete(s)"><wa-icon name="check"></wa-icon></wa-button>
-                    <AppTooltip :for="`${uid}-del-ok-${s.id}`">Confirm delete</AppTooltip>
+                    <AppTooltip :for="`${uid}-del-ok-${s.id}`">{{ $t('sharing.links.confirmDelete') }}</AppTooltip>
                     <wa-button :id="`${uid}-del-no-${s.id}`" size="small" appearance="plain" :disabled="deleting" @click="deleteConfirmId = null"><wa-icon name="xmark"></wa-icon></wa-button>
-                    <AppTooltip :for="`${uid}-del-no-${s.id}`">Cancel delete</AppTooltip>
+                    <AppTooltip :for="`${uid}-del-no-${s.id}`">{{ $t('sharing.links.cancelDelete') }}</AppTooltip>
                 </template>
                 <template v-else>
                     <wa-button :id="`${uid}-del-${s.id}`" size="small" appearance="plain" variant="danger" @click="deleteConfirmId = s.id"><wa-icon name="trash"></wa-icon></wa-button>
-                    <AppTooltip :for="`${uid}-del-${s.id}`">Delete this link permanently</AppTooltip>
+                    <AppTooltip :for="`${uid}-del-${s.id}`">{{ $t('sharing.links.deleteHint') }}</AppTooltip>
                 </template>
             </div>
         </div>
-        <p v-if="!shares.length" class="share-empty muted">No share links yet.</p>
+        <p v-if="!shares.length" class="share-empty muted">{{ $t('sharing.links.empty') }}</p>
     </div>
 </template>
 

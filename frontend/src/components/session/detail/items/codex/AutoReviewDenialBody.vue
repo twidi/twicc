@@ -71,10 +71,10 @@ usePendingRequestSubmitShortcut((event) => {
     <div v-scroll-shadow class="auto-review-denial-body">
         <div class="denial-section">
             <div class="denial-summary">
-                <span class="summary-label">Auto-review denied this action</span>
+                <span class="summary-label">{{ $t('session.autoReview.denied') }}</span>
                 <wa-badge variant="neutral">{{ actionLabel }}</wa-badge>
                 <wa-badge v-if="input.riskLevel" :variant="riskVariant">
-                    {{ input.riskLevel }} risk
+                    {{ $t('session.autoReview.risk', { level: input.riskLevel }) }}
                 </wa-badge>
             </div>
 
@@ -84,36 +84,36 @@ usePendingRequestSubmitShortcut((event) => {
             </div>
 
             <div v-if="commandText" class="detail-row">
-                <span class="summary-label">Command</span>
+                <span class="summary-label">{{ $t('session.tools.command') }}</span>
                 <code>{{ commandText }}</code>
             </div>
             <div v-if="action.cwd" class="detail-row">
-                <span class="summary-label">cwd</span>
+                <span class="summary-label">{{ $t('session.tools.workingDirectory') }}</span>
                 <code>{{ action.cwd }}</code>
             </div>
 
             <div v-if="actionType === 'networkAccess'" class="detail-row">
-                <span class="summary-label">Target</span>
+                <span class="summary-label">{{ $t('session.autoReview.target') }}</span>
                 <code>{{ action.target || action.host }}</code>
                 <span v-if="action.protocol || action.port" class="quiet">
-                    {{ action.protocol || '' }}<template v-if="action.port"> · port {{ action.port }}</template>
+                    {{ action.port ? (action.protocol ? $t('session.autoReview.protocolPort', { protocol: action.protocol, port: action.port }) : $t('session.autoReview.port', { port: action.port })) : action.protocol }}
                 </span>
             </div>
 
             <template v-if="actionType === 'applyPatch'">
-                <span class="summary-label">Files</span>
+                <span class="summary-label">{{ $t('session.tools.files') }}</span>
                 <ul class="file-list">
                     <li v-for="file in action.files || []" :key="file"><code>{{ file }}</code></li>
                 </ul>
             </template>
 
             <div v-if="actionType === 'mcpToolCall'" class="detail-row">
-                <span class="summary-label">Tool</span>
+                <span class="summary-label">{{ $t('session.tools.tool') }}</span>
                 <code>{{ action.server }} · {{ action.toolTitle || action.toolName }}</code>
             </div>
 
             <details v-if="actionType === 'requestPermissions' || actionType === 'unknown'">
-                <summary class="summary-label">Details</summary>
+                <summary class="summary-label">{{ $t('session.tools.details') }}</summary>
                 <pre>{{ JSON.stringify(action.permissions || action, null, 2) }}</pre>
             </details>
         </div>
@@ -128,9 +128,9 @@ usePendingRequestSubmitShortcut((event) => {
                 @click="keepDenied"
             >
                 <wa-icon slot="start" name="xmark" variant="classic"></wa-icon>
-                Keep denied
+                {{ $t('session.autoReview.keepDenied') }}
             </wa-button>
-            <AppTooltip :for="keepDeniedButtonId">Keep Auto-review's decision. Codex may use another approach.</AppTooltip>
+            <AppTooltip :for="keepDeniedButtonId">{{ $t('session.autoReview.keepDeniedHint') }}</AppTooltip>
 
             <wa-button
                 :id="approveButtonId"
@@ -142,9 +142,9 @@ usePendingRequestSubmitShortcut((event) => {
                 @click="approve"
             >
                 <wa-icon slot="start" name="check" variant="classic"></wa-icon>
-                Approve and retry
+                {{ $t('session.autoReview.approveRetry') }}
             </wa-button>
-            <AppTooltip :for="approveButtonId">Approve this exact action and ask Codex to retry it.</AppTooltip>
+            <AppTooltip :for="approveButtonId">{{ $t('session.autoReview.approveRetryHint') }}</AppTooltip>
         </div>
     </div>
 </template>

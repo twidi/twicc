@@ -29,7 +29,7 @@ defineProps({
     </div>
     <template v-if="todos && todos.length">
         <wa-divider></wa-divider>
-        <div class="task-list-title">Task list:</div>
+        <div class="task-list-title">{{ $t('session.tools.taskList') }}</div>
         <TodoContent :todos="todos" />
     </template>
 </template>

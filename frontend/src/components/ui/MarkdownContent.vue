@@ -885,7 +885,7 @@ function handleLinkClick(event) {
             </ul>
         </wa-details>
         <div v-if="showToolbar" ref="toolbar" class="markdown-toolbar" :data-open="toolbarOpen">
-            <wa-button-group orientation="vertical" label="Markdown tools">
+            <wa-button-group orientation="vertical" :label="$t('markdown.tools.label')">
                 <wa-button
                     ref="toolbarToggle"
                     class="markdown-toolbar-toggle"
@@ -912,7 +912,7 @@ function handleLinkClick(event) {
                     size="small"
                     variant="neutral"
                     appearance="filled"
-                    title="Copy raw markdown"
+                    :title="$t('markdown.tools.copyRaw')"
                     @click="copySource"
                 >
                     <wa-icon name="copy"></wa-icon>
@@ -953,17 +953,17 @@ function handleLinkClick(event) {
             <template v-for="block in blocks" :key="block.key">
                 <template v-if="block.type === 'inline-artifact'">
                     <div v-if="artifactPlacement(block).status === 'invalid'" class="inline-artifact-error" role="status">
-                        Inline artifact invalid: {{ block.span.error }}
+                        {{ $t('artifacts.inline.invalid', { error: block.span.error }) }}
                     </div>
                     <blockquote v-else-if="artifactPlacement(block).status === 'superseded'" class="inline-artifact-replaced" role="status">
                         <p>
-                            <em>This artifact has been replaced. Its latest version appears later in the conversation.</em>
+                            <em>{{ $t('artifacts.inline.replaced') }}</em>
                             <button
                                 v-if="navigateToInlinePublication"
                                 type="button"
                                 class="inline-artifact-replaced-link"
                                 @click="navigateToInlinePublication(artifactPlacement(block).latestLineNum, artifactPlacement(block).latestPublicationKey)"
-                            >Go to the latest version</button>
+                            >{{ $t('artifacts.inline.goToLatest') }}</button>
                         </p>
                     </blockquote>
                     <InlineArtifactBlock

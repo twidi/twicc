@@ -109,7 +109,9 @@ useGlideInk({
                 <div class="switcher-panel glass-surface" role="listbox" :aria-label="modeLabel">
                     <div class="switcher-header">
                         <span class="switcher-mode">{{ modeLabel }}</span>
-                        <span class="switcher-hint"><kbd>⇧</kbd> to switch</span>
+                        <i18n-t tag="span" class="switcher-hint" keypath="session.switcher.switchHint" scope="global">
+                            <template #shortcut><kbd>⇧</kbd></template>
+                        </i18n-t>
                     </div>
                     <div ref="listRef" class="switcher-list">
                         <span ref="listInkRef" class="glide-ink" aria-hidden="true"></span>
@@ -135,26 +137,26 @@ useGlideInk({
                             <wa-icon
                                 v-if="row.session.archived"
                                 name="box-archive"
-                                label="Archived"
+                                :label="$t('common.status.archived')"
                                 class="session-state-icon session-state-icon--archived"
                             ></wa-icon>
                             <wa-icon
                                 v-if="row.session.ephemeral && !row.session.archived"
                                 name="ghost"
-                                label="Ephemeral session"
+                                :label="$t('session.status.ephemeral')"
                                 class="session-state-icon session-state-icon--ephemeral"
                                 :class="row.session.ephemeralPhase"
                             ></wa-icon>
                             <wa-icon
                                 v-if="row.isDraft && !row.session.archived"
                                 name="pencil"
-                                label="Draft"
+                                :label="$t('session.status.draft')"
                                 class="session-state-icon session-state-icon--draft"
                             ></wa-icon>
                             <wa-icon
                                 v-if="row.session.stale"
                                 name="circle-xmark"
-                                label="Session files deleted"
+                                :label="$t('session.status.filesDeletedLabel')"
                                 class="session-state-icon session-state-icon--stale"
                             ></wa-icon>
                             <span class="switcher-name">{{ row.name }}</span>

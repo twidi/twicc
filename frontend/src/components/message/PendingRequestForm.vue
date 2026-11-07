@@ -286,11 +286,11 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
                     class="pending-count-badge"
                     :id="`pending-count-${sessionId}`"
                     role="status"
-                >+{{ extraPendingCount }} pending</span>
+                >{{ $t('session.pending.extraCount', { count: extraPendingCount }, extraPendingCount) }}</span>
                 <AppTooltip
                     v-if="extraPendingCount > 0"
                     :for="`pending-count-${sessionId}`"
-                >{{ extraPendingCount }} more request{{ extraPendingCount > 1 ? 's' : '' }} waiting after this one</AppTooltip>
+                >{{ $t('session.pending.moreWaiting', { count: extraPendingCount }, extraPendingCount) }}</AppTooltip>
             </template>
         </CollapsedBar>
         <!-- Normal header (window controls). Title + icon vary on requestType. -->
@@ -313,11 +313,11 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
                 class="pending-count-badge"
                 :id="`pending-count-${sessionId}`"
                 role="status"
-            >+{{ extraPendingCount }} pending</span>
+            >{{ $t('session.pending.extraCount', { count: extraPendingCount }, extraPendingCount) }}</span>
             <AppTooltip
                 v-if="extraPendingCount > 0"
                 :for="`pending-count-${sessionId}`"
-            >{{ extraPendingCount }} more request{{ extraPendingCount > 1 ? 's' : '' }} waiting after this one</AppTooltip>
+            >{{ $t('session.pending.moreWaiting', { count: extraPendingCount }, extraPendingCount) }}</AppTooltip>
             <wa-button
                 variant="neutral"
                 appearance="plain"
@@ -328,7 +328,7 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
             >
                 <wa-icon name="window-minimize" variant="classic"></wa-icon>
             </wa-button>
-            <AppTooltip :for="minimizeToggleId">Minimize</AppTooltip>
+            <AppTooltip :for="minimizeToggleId">{{ $t('session.pending.minimize') }}</AppTooltip>
             <wa-button
                 variant="neutral"
                 appearance="plain"
@@ -339,7 +339,7 @@ watch(() => props.pendingRequest?.request_id, (newId, oldId) => {
             >
                 <wa-icon :name="isMaximized ? 'compress' : 'expand'" variant="classic"></wa-icon>
             </wa-button>
-            <AppTooltip :for="maximizeToggleId">{{ isMaximized ? 'Restore' : 'Maximize' }}</AppTooltip>
+            <AppTooltip :for="maximizeToggleId">{{ isMaximized ? $t('session.pending.restore') : $t('session.pending.maximize') }}</AppTooltip>
         </div>
 
         <!-- Provider-routed body. Always mounted (hidden by CSS while minimized) so

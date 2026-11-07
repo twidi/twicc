@@ -408,11 +408,11 @@ onBeforeUnmount(() => {
                 class="matrix-old-toggle"
                 @click="showOldModels = !showOldModels"
             >
-                {{ showOldModels ? 'Hide older models' : 'Show older models' }}
+                {{ showOldModels ? $t('session.agentSettings.matrix.hideOlder') : $t('session.agentSettings.matrix.showOlder') }}
             </button>
             <span class="matrix-legend">
-                <span v-if="hasDefaultCell" class="matrix-legend-item"><span class="matrix-default-dot"></span> default</span>
-                <span class="matrix-legend-item"><wa-icon class="matrix-legend-check" name="check"></wa-icon> selected</span>
+                <span v-if="hasDefaultCell" class="matrix-legend-item"><span class="matrix-default-dot"></span> {{ $t('session.agentSettings.matrix.default') }}</span>
+                <span class="matrix-legend-item"><wa-icon class="matrix-legend-check" name="check"></wa-icon> {{ $t('session.agentSettings.matrix.selected') }}</span>
             </span>
         </div>
 
@@ -437,9 +437,9 @@ onBeforeUnmount(() => {
                     </div>
                     <!-- The panel never takes the pointer, so no link here: point
                          at the help link above the matrix instead. -->
-                    <div class="cell-tip-help">More on these numbers: “What are those numbers?” above the matrix.</div>
+                    <div class="cell-tip-help">{{ $t('session.agentSettings.matrix.numbersHelp') }}</div>
                 </template>
-                <div v-else class="cell-tip-empty">Artificial Analysis provides no usable data for this model &times; effort.</div>
+                <div v-else class="cell-tip-empty">{{ $t('session.agentSettings.matrix.noData') }}</div>
             </div>
         </HoverInfoPanel>
     </div>

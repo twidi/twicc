@@ -72,7 +72,7 @@ const errorRestId = computed(() => `timeline-error-rest-${props.eventId}`)
                     :aria-expanded="expanded ? 'true' : 'false'"
                     :aria-controls="errorRestId"
                     @click="expanded = !expanded"
-                >{{ expanded ? 'Show less' : 'Show more' }}</button>
+                >{{ expanded ? $t('timeline.event.showLess') : $t('timeline.event.showMore') }}</button>
                 <template v-if="expanded && vm.detail.rest">{{ ' ' }}<pre :id="errorRestId" class="timeline-error-rest">{{ vm.detail.rest }}</pre></template>
             </span></template>
         </div><template v-if="showTime">{{ ' ' }}<span :id="timeId" class="timeline-time" :class="{ 'timeline-time--estimated': vm.time.estimated }">{{ vm.time.text }}</span><AppTooltip :for="timeId" :trigger="tooltipTrigger" force>{{ vm.time.stamp }}<template v-if="vm.time.caption"><br>{{ vm.time.caption }}</template></AppTooltip></template>

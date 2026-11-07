@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
@@ -49,7 +50,7 @@ function fixture(t, overrides = {}, rootGeometry = {}) {
         onDragStart: () => events.push('drag-start'), onDragEnd: () => events.push('drag-end'),
     })
     const root = Object.assign(element('root'), rootGeometry)
-    const app = renderer.createApp({ render: () => Vue.h(Tools, props) })
+    const app = renderer.createApp({ render: () => Vue.h(Tools, props) }).use(createAppI18n())
     for (const tag of ['wa-button', 'wa-icon']) {
         app.component(tag, { inheritAttrs: false, render() { return Vue.h(tag, this.$attrs, this.$slots.default?.()) } })
     }

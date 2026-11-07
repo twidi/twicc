@@ -83,27 +83,25 @@ function handleCancel() {
                 <p>{{ shellsSentence }}</p>
             </wa-callout>
             <wa-callout v-if="shown.cronCount > 0" variant="warning" size="small" open>
+                <i18n-t tag="p" keypath="session.stopConfirmation.activeCrons" scope="global" :plural="shown.cronCount">
+                    <template #count><strong>{{ shown.cronCount }}</strong></template>
+                </i18n-t>
                 <p>
-                    This session has
-                    <strong>{{ shown.cronCount }} active cron{{ shown.cronCount > 1 ? 's' : '' }}</strong>.
+                    {{ $t('session.stopConfirmation.cronWarning') }}
                 </p>
                 <p>
-                    Stopping the process manually will cancel all active crons. They will not be
-                    restored automatically when the process restarts.
-                </p>
-                <p>
-                    You can always ask the agent to set them up again later.
+                    {{ $t('session.stopConfirmation.restoreHint') }}
                 </p>
             </wa-callout>
         </div>
 
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="handleCancel">
-                Cancel, keep the process
+                {{ $t('session.stopConfirmation.cancel') }}
             </wa-button>
             <wa-button variant="danger" appearance="filled" @click="handleConfirm">
                 <wa-icon slot="start" name="ban"></wa-icon>
-                {{ mode === 'archive' ? 'Stop and archive' : 'Stop the process' }}
+                {{ mode === 'archive' ? $t('session.stopConfirmation.stopAndArchive') : $t('session.stopConfirmation.stop') }}
             </wa-button>
         </div>
     </wa-dialog>

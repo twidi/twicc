@@ -165,13 +165,13 @@ function copyHash() {
             <wa-tag v-if="selectedBranch" :id="branchTagId" variant="neutral" class="branch-tag clickable-tag" @click="copyBranch">
                 {{ selectedBranch }}
             </wa-tag>
-            <AppTooltip :for="branchTagId">Click to copy branch name</AppTooltip>
+            <AppTooltip :for="branchTagId">{{ $t('git.commit.details.copyBranch') }}</AppTooltip>
 
             <wa-tag v-if="commitShortHash" :id="commitHashId" variant="neutral" class="commit-hash clickable-tag" @click="stopProp">
                 {{ commitShortHash }}
                 <wa-icon name="chevron-down" class="hash-chevron"></wa-icon>
             </wa-tag>
-            <AppTooltip :for="commitHashId">Click to view commit details</AppTooltip>
+            <AppTooltip :for="commitHashId">{{ $t('git.commit.details.view') }}</AppTooltip>
 
             <wa-icon
                 class="chevron"
@@ -196,28 +196,28 @@ function copyHash() {
                 </template>
                 <template v-else-if="commitDetail">
                     <div class="detail-row">
-                        <span class="detail-label">Hash</span>
+                        <span class="detail-label">{{ $t('git.commit.details.hash') }}</span>
                         <span :id="popoverHashId" class="detail-value hash-value" @click="copyHash">
                             {{ commitDetail.hash }}
                             <wa-icon name="copy" class="copy-icon"></wa-icon>
                         </span>
-                        <AppTooltip :for="popoverHashId">Click to copy</AppTooltip>
+                        <AppTooltip :for="popoverHashId">{{ $t('git.commit.details.copy') }}</AppTooltip>
                     </div>
 
                     <div class="detail-row">
-                        <span class="detail-label">Title</span>
+                        <span class="detail-label">{{ $t('git.commit.details.title') }}</span>
                         <span class="detail-value">{{ commitDetail.message }}</span>
                     </div>
 
                     <div v-if="commitDetail.body" class="detail-row">
-                        <span class="detail-label">Description</span>
+                        <span class="detail-label">{{ $t('git.commit.details.description') }}</span>
                         <div class="detail-value body-value">
                             <MarkdownContent :source="commitDetail.body" />
                         </div>
                     </div>
 
                     <div v-if="commitDetail.author" class="detail-row">
-                        <span class="detail-label">Author</span>
+                        <span class="detail-label">{{ $t('git.commit.details.author') }}</span>
                         <span class="detail-value">
                             {{ formatPerson(commitDetail.author) }}
                             <span v-if="commitDetail.authorDate" class="detail-date">{{ formatGitDate(commitDetail.authorDate) }}</span>
@@ -226,7 +226,7 @@ function copyHash() {
 
                     <template v-if="hasDistinctCommitter(commitDetail)">
                         <div class="detail-row">
-                            <span class="detail-label">Committer</span>
+                            <span class="detail-label">{{ $t('git.commit.details.committer') }}</span>
                             <span class="detail-value">
                                 {{ formatPerson(commitDetail.committer) }}
                                 <span class="detail-date">{{ formatGitDate(commitDetail.committerDate) }}</span>
@@ -235,7 +235,7 @@ function copyHash() {
                     </template>
                     <template v-else-if="!commitDetail.author">
                         <div class="detail-row">
-                            <span class="detail-label">Date</span>
+                            <span class="detail-label">{{ $t('git.commit.details.date') }}</span>
                             <span class="detail-value">{{ formatGitDate(commitDetail.committerDate) }}</span>
                         </div>
                     </template>

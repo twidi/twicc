@@ -80,8 +80,8 @@ function onShow(event) { emit('select', event.detail.name) }
                         class="overlay-close reduced-height"
                         appearance="plain"
                         size="small"
-                        title="Close"
-                        aria-label="Close overlay"
+                        :title="$t('common.actions.close')"
+                        :aria-label="$t('session.layout.closeOverlay')"
                         @click.stop="emit('close')"
                     >
                         <wa-icon name="xmark"></wa-icon>

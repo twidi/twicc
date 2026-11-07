@@ -10,7 +10,7 @@ test('controls declare the showAsTree prop and the checkbox item after compact v
     assert.match(controls, /showAsTree: \{ type: Boolean, default: false \}/)
     assert.match(
         controls,
-        /value="compact-view"[\s\S]*?<\/wa-dropdown-item>\s*<wa-dropdown-item\s+type="checkbox"\s+value="show-as-tree"\s+:checked="showAsTree"\s*>\s*Show orchestrated sessions as tree\s*<\/wa-dropdown-item>/,
+        /value="compact-view"[\s\S]*?<\/wa-dropdown-item>\s*<wa-dropdown-item\s+type="checkbox"\s+value="show-as-tree"\s+:checked="showAsTree"\s*>\s*\{\{ \$t\('session\.list\.showAsTree'\) \}\}\s*<\/wa-dropdown-item>/,
     )
 })
 

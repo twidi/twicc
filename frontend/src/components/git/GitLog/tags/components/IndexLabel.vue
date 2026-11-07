@@ -4,7 +4,7 @@ import GitIcon from './GitIcon.vue'
 
 <template>
   <span class="indexLabel">
-    index
+    {{ $t('git.index.label') }}
   </span>
   <GitIcon />
 </template>

@@ -90,14 +90,14 @@ watch([entries, prefix], measure)
                 <span class="oann-key">{{ entry.key }}</span>
                 <span class="oann-value">{{ annotationValueText(entry.value) }}</span>
             </span>
-            <button :id="buttonId" type="button" class="oann-button" aria-label="Show all annotations">
+            <button :id="buttonId" type="button" class="oann-button" :aria-label="$t('session.orchestration.showAnnotations')">
                 <span v-if="hiddenCount > 0" class="oann-count">+{{ hiddenCount }}</span>
                 <wa-icon auto-width name="chevron-down"></wa-icon>
             </button>
         </div>
         <wa-popover v-popover-focus-fix :for="buttonId" placement="bottom-start" class="oann-popover">
             <div class="oann-popover-body">
-                <div class="oann-popover-title">Annotations</div>
+                <div class="oann-popover-title">{{ $t('session.orchestration.annotations') }}</div>
                 <AnnotationTreeLevel :nodes="tree" />
             </div>
         </wa-popover>

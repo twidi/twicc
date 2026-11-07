@@ -1391,7 +1391,7 @@ defineExpose({
                             value="auto-open"
                             :checked="autoOpen"
                         >
-                            Auto-open
+                            {{ $t('files.options.autoOpen') }}
                         </wa-dropdown-item>
                         <wa-divider></wa-divider>
                         <wa-dropdown-item
@@ -1399,7 +1399,7 @@ defineExpose({
                             value="reveal-in-tree"
                         >
                             <wa-icon slot="icon" name="crosshairs"></wa-icon>
-                            <div>Scroll to selected file</div>
+                            <div>{{ $t('files.selection.scrollToFile') }}</div>
                             <div class="reveal-path">{{ selectedFile }}</div>
                         </wa-dropdown-item>
                     </template>
@@ -1408,10 +1408,10 @@ defineExpose({
                         value="refresh"
                     >
                         <wa-icon slot="icon" name="arrows-rotate"></wa-icon>
-                        Refresh
+                        {{ $t('files.actions.refresh') }}
                     </wa-dropdown-item>
                 </wa-dropdown>
-                <AppTooltip :for="fileOptionsButtonId">Files options</AppTooltip>
+                <AppTooltip :for="fileOptionsButtonId">{{ $t('files.options.title') }}</AppTooltip>
                 <wa-input
                     ref="searchInputRef"
                     :value="searchQuery"
@@ -1432,7 +1432,7 @@ defineExpose({
                 <wa-spinner></wa-spinner>
             </div>
             <div v-else-if="isSearching && !hasExtraTree && !searchTree?.children?.length && searchResponded" class="panel-placeholder">
-                No matches
+                {{ $t('files.search.noMatches') }}
             </div>
             <div v-else-if="!isSearching && loading" class="panel-placeholder">
                 <wa-spinner></wa-spinner>
@@ -1441,7 +1441,7 @@ defineExpose({
                 {{ error }}
             </div>
             <div v-else-if="!isSearching && !rootPath && !hasExtraTree" class="panel-placeholder">
-                {{ mode === 'git' ? 'No changes' : 'No directory' }}
+                {{ mode === 'git' ? $t('files.search.noChanges') : $t('files.directories.none') }}
             </div>
 
             <!-- Tree (same structure for both browse and search) -->
@@ -1484,7 +1484,7 @@ defineExpose({
                     />
                 </div>
                 <div v-if="isSearching && searchTruncated" class="search-truncated">
-                    {{ searchTotal }} matches — showing first {{ searchTree.children.length }}
+                    {{ $t('files.search.truncated', { count: searchTotal, shown: searchTree.children.length }, searchTotal) }}
                 </div>
             </template>
         </div>

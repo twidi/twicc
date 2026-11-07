@@ -1757,7 +1757,7 @@ function openPeerInbox() {
                                 :color="selectedProjectColor"
                             />
                             <span v-if="isWorkspaceMode" class="project-selector-label"><wa-icon name="layer-group" auto-width :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon> {{ activeWorkspace?.name }}</span>
-                            <span v-else-if="isAllProjectsMode" class="project-selector-label">All Projects</span>
+                            <span v-else-if="isAllProjectsMode" class="project-selector-label">{{ $t('project.selector.allProjects') }}</span>
                             <span v-else class="project-selector-label"><ProjectBadge :project-id="projectId" :dot="false" gap="var(--wa-space-2xs)" /></span>
 
                             <wa-icon slot="end" name="chevron-down" class="project-selector-caret"></wa-icon>
@@ -1767,14 +1767,14 @@ function openPeerInbox() {
                         <template v-if="!activeWorkspaceId">
                             <wa-dropdown-item :value="ALL_PROJECTS_ID">
                                 <wa-icon slot="icon" name="check" :style="{ visibility: isAllProjectsMode ? 'visible' : 'hidden' }"></wa-icon>
-                                All Projects
+                                {{ $t('project.selector.allProjects') }}
                             </wa-dropdown-item>
 
                             <wa-divider></wa-divider>
                             <template v-if="workspacesStore.getSelectableWorkspaces.length">
                                 <wa-dropdown-item disabled class="section-header-item">
                                     <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
-                                    Workspaces
+                                    {{ $t('common.entities.workspaces') }}
                                 </wa-dropdown-item>
                                 <wa-dropdown-item
                                     v-for="ws in workspacesStore.getSelectableWorkspaces"
@@ -1792,19 +1792,19 @@ function openPeerInbox() {
                                         <span class="row-menu" @click.stop>
                                             <wa-dropdown placement="bottom-end" @wa-select.stop="onWorkspaceRowMenuSelect($event, ws)">
                                                 <wa-button slot="trigger" appearance="plain" size="small" class="row-menu-trigger">
-                                                    <wa-icon name="ellipsis-v" label="Workspace actions"></wa-icon>
+                                                    <wa-icon name="ellipsis-v" :label="$t('workspace.card.actionsTooltip')"></wa-icon>
                                                 </wa-button>
                                                 <wa-dropdown-item value="edit">
                                                     <wa-icon slot="icon" name="pencil"></wa-icon>
-                                                    Edit
+                                                    {{ $t('common.actions.edit') }}
                                                 </wa-dropdown-item>
                                                 <wa-dropdown-item v-if="!ws.archived" value="archive">
                                                     <wa-icon slot="icon" name="box-archive"></wa-icon>
-                                                    Archive
+                                                    {{ $t('common.actions.archive') }}
                                                 </wa-dropdown-item>
                                                 <wa-dropdown-item v-else value="unarchive">
                                                     <wa-icon slot="icon" name="box-open"></wa-icon>
-                                                    Unarchive
+                                                    {{ $t('common.actions.unarchive') }}
                                                 </wa-dropdown-item>
                                             </wa-dropdown>
                                         </span>
@@ -1813,7 +1813,7 @@ function openPeerInbox() {
                             </template>
                             <wa-dropdown-item value="__manage_workspaces__">
                                 <wa-icon slot="icon" name="gear"></wa-icon>
-                                Manage workspaces...
+                                {{ $t('project.selector.manageWorkspaces') }}
                             </wa-dropdown-item>
 
                             <!-- Named projects -->
@@ -1861,13 +1861,13 @@ function openPeerInbox() {
                         <template v-else>
                             <wa-dropdown-item :value="ALL_PROJECTS_ID">
                                 <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
-                                All Projects
+                                {{ $t('project.selector.allProjects') }}
                             </wa-dropdown-item>
 
                             <wa-divider></wa-divider>
                             <wa-dropdown-item disabled class="section-header-item">
                                 <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
-                                Workspaces
+                                {{ $t('common.entities.workspaces') }}
                             </wa-dropdown-item>
                             <wa-dropdown-item
                                 v-for="ws in workspacesStore.getSelectableWorkspaces"
@@ -1885,19 +1885,19 @@ function openPeerInbox() {
                                     <span class="row-menu" @click.stop>
                                         <wa-dropdown placement="bottom-end" @wa-select.stop="onWorkspaceRowMenuSelect($event, ws)">
                                             <wa-button slot="trigger" appearance="plain" size="small" class="row-menu-trigger">
-                                                <wa-icon name="ellipsis-v" label="Workspace actions"></wa-icon>
+                                                <wa-icon name="ellipsis-v" :label="$t('workspace.card.actionsTooltip')"></wa-icon>
                                             </wa-button>
                                             <wa-dropdown-item value="edit">
                                                 <wa-icon slot="icon" name="pencil"></wa-icon>
-                                                Edit
+                                                {{ $t('common.actions.edit') }}
                                             </wa-dropdown-item>
                                             <wa-dropdown-item v-if="!ws.archived" value="archive">
                                                 <wa-icon slot="icon" name="box-archive"></wa-icon>
-                                                Archive
+                                                {{ $t('common.actions.archive') }}
                                             </wa-dropdown-item>
                                             <wa-dropdown-item v-else value="unarchive">
                                                 <wa-icon slot="icon" name="box-open"></wa-icon>
-                                                Unarchive
+                                                {{ $t('common.actions.unarchive') }}
                                             </wa-dropdown-item>
                                         </wa-dropdown>
                                     </span>
@@ -1905,18 +1905,18 @@ function openPeerInbox() {
                             </wa-dropdown-item>
                             <wa-dropdown-item value="__manage_workspaces__">
                                 <wa-icon slot="icon" name="gear"></wa-icon>
-                                Manage workspaces...
+                                {{ $t('project.selector.manageWorkspaces') }}
                             </wa-dropdown-item>
 
                             <wa-divider></wa-divider>
                             <!-- Workspace projects sub-section -->
                             <wa-dropdown-item disabled class="section-header-item">
                                 <wa-icon slot="icon" name="layer-group" :style="activeWorkspace?.color ? { color: activeWorkspace.color } : null"></wa-icon>
-                                {{ activeWorkspace?.name }} projects
+                                {{ $t('project.picker.workspaceProjects', { workspace: activeWorkspace?.name }) }}
                             </wa-dropdown-item>
                             <wa-dropdown-item value="ws-all">
                                 <wa-icon slot="icon" name="check" :style="{ visibility: isAllProjectsMode ? 'visible' : 'hidden' }"></wa-icon>
-                                All projects
+                                {{ $t('session.pin.allProjects') }}
                             </wa-dropdown-item>
                             <template v-for="pid in workspaceSelectorProjectIds" :key="pid">
                                 <ProjectSelectorRow :project-id="pid" :current-project-id="projectId" :is-all-projects-mode="isAllProjectsMode" />
@@ -1935,7 +1935,7 @@ function openPeerInbox() {
                                 <wa-divider></wa-divider>
                                 <wa-dropdown-item disabled class="section-header-item">
                                     <wa-icon slot="icon" name="check" style="visibility: hidden;"></wa-icon>
-                                    Other projects
+                                    {{ $t('project.list.otherSection') }}
                                 </wa-dropdown-item>
                             </template>
                             <!-- Other named projects -->
@@ -2024,13 +2024,13 @@ function openPeerInbox() {
                         :loading="isInitialLoading"
                         @retry="handleRetry"
                     >
-                        Failed to load sessions
+                        {{ $t('project.sessions.loadFailed') }}
                     </FetchErrorPanel>
 
                     <!-- Initial loading state (only before first fetch) -->
                     <div v-else-if="isInitialLoading" class="sessions-loading">
                         <wa-spinner></wa-spinner>
-                        <span>Loading...</span>
+                        <span>{{ $t('project.sessions.loading') }}</span>
                     </div>
 
                     <!-- Normal content (shown once we have sessions, handles its own "load more" state) -->
@@ -2073,7 +2073,7 @@ function openPeerInbox() {
                 <wa-button-group
                     v-if="!isArtifactsMode && !isAllProjectsMode"
                     class="new-session-split-button"
-                    label="New session actions"
+                    :label="$t('project.sessions.actions')"
                 >
                     <!-- Main button: creates session in current project. On a
                          stale project it takes a disabled LOOK but stays live
@@ -2088,8 +2088,8 @@ function openPeerInbox() {
                         @click="onNewSessionButtonClick"
                     >
                         <wa-icon name="plus"></wa-icon>
-                        <span class="new-session-label-full">New session</span>
-                        <span class="new-session-label-short">Session</span>
+                        <span class="new-session-label-full">{{ $t('session.actions.create') }}</span>
+                        <span class="new-session-label-short">{{ $t('project.sessions.sessionLabel') }}</span>
                     </wa-button>
 
                     <!-- Dropdown arrow: choose a different project -->
@@ -2105,15 +2105,15 @@ function openPeerInbox() {
                                 appearance="accent"
                                 size="small"
                             >
-                                <wa-icon name="chevron-up" label="Choose another project"></wa-icon>
+                                <wa-icon name="chevron-up" :label="$t('project.sessions.chooseAnotherProject')"></wa-icon>
                             </wa-button>
                         </template>
                     </NewSessionProjectPicker>
                 </wa-button-group>
 
                 <template v-if="!isAllProjectsMode">
-                    <AppTooltip for="new-session-button">{{ isCurrentProjectStale ? 'This project\'s directory is missing — click for details' : 'Create a new session in this project' }}</AppTooltip>
-                    <AppTooltip for="new-session-project-picker">Choose a different project</AppTooltip>
+                    <AppTooltip for="new-session-button">{{ isCurrentProjectStale ? $t('project.sessions.missingDirectory') : $t('project.sessions.createInProject') }}</AppTooltip>
+                    <AppTooltip for="new-session-project-picker">{{ $t('project.sessions.chooseDifferentProject') }}</AppTooltip>
                 </template>
 
                 <!-- In all projects mode: dropdown to choose project (Sessions mode only) -->
@@ -2134,12 +2134,12 @@ function openPeerInbox() {
                         >
                             <wa-icon slot="end" name="chevron-up"></wa-icon>
                             <wa-icon name="plus"></wa-icon>
-                            <span class="new-session-label-full">New session</span>
-                            <span class="new-session-label-short">Session</span>
+                            <span class="new-session-label-full">{{ $t('session.actions.create') }}</span>
+                            <span class="new-session-label-short">{{ $t('project.sessions.sessionLabel') }}</span>
                         </wa-button>
                     </template>
                 </NewSessionProjectPicker>
-                <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">Create a new session</AppTooltip>
+                <AppTooltip v-if="isAllProjectsMode" for="new-session-all-projects-button">{{ $t('project.sessions.create') }}</AppTooltip>
             </div>
 
             <wa-divider v-if="hasSidebarFooter"></wa-divider>
@@ -2163,8 +2163,8 @@ function openPeerInbox() {
                         </div>
                         <AppTooltip for="usage-provider-group" hoist>
                             <div class="usage-provider-tooltip">
-                                <span class="usage-provider-tooltip-name">{{ currentUsageProviderLabel }} usage</span>
-                                <span v-if="hasMultipleUsageProviders" class="usage-provider-tooltip-hint">Click to switch to the next provider</span>
+                                <span class="usage-provider-tooltip-name">{{ $t('usage.provider.label', { provider: currentUsageProviderLabel }) }}</span>
+                                <span v-if="hasMultipleUsageProviders" class="usage-provider-tooltip-hint">{{ $t('usage.provider.next') }}</span>
                             </div>
                         </AppTooltip>
                         <div class="usage-header-when">
@@ -2176,10 +2176,10 @@ function openPeerInbox() {
                         </div>
                         <AppTooltip v-if="quotaIsStale" for="quota-stale-warning" hoist force interactive :placement="usageTooltipPlacement" :trigger="usageTooltipTrigger">
                             <div class="quota-tooltip">
-                                <div class="quota-stale-header"><wa-icon name="triangle-exclamation" class="quota-stale-header-icon"></wa-icon><span>Data may be outdated</span></div>
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Last update</span><span>{{ quotaLastUpdateFormatted }}</span></div>
+                                <div class="quota-stale-header"><wa-icon name="triangle-exclamation" class="quota-stale-header-icon"></wa-icon><span>{{ $t('usage.staleWarning') }}</span></div>
+                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.lastUpdate') }}</span><span>{{ quotaLastUpdateFormatted }}</span></div>
                                 <div class="quota-tooltip-buttons">
-                                    <wa-button v-if="canRefreshUsage" size="small" variant="brand" appearance="outlined" :loading="usageRefreshing" :disabled="usageRefreshing" class="quota-stale-button" @click="refreshUsage()"><wa-icon slot="start" name="arrow-rotate-right"></wa-icon>Refresh now</wa-button>
+                                    <wa-button v-if="canRefreshUsage" size="small" variant="brand" appearance="outlined" :loading="usageRefreshing" :disabled="usageRefreshing" class="quota-stale-button" @click="refreshUsage()"><wa-icon slot="start" name="arrow-rotate-right"></wa-icon>{{ $t('usage.refreshNow') }}</wa-button>
                                     <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener" class="quota-stale-button"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
                                 </div>
                             </div>
@@ -2200,7 +2200,7 @@ function openPeerInbox() {
                         </div>
                         <span v-if="quotaFiveHourChip" class="usage-burn-chip" :class="burnChipClass(quotaFiveHourRingColor)" :style="burnChipStyle(quotaFiveHourRingColor)">{{ quotaFiveHourChip.text }}</span>
                         <div class="usage-quota-info">
-                            <span class="usage-quota-label">5h</span>
+                            <span class="usage-quota-label">{{ $t('usage.period.fiveHoursShort') }}</span>
                             <span v-if="quotaFiveHour.resetsAt" class="usage-quota-reset">
                                 <wa-relative-time v-if="usageUseRelativeTime" :date.prop="resetsAtToDate(quotaFiveHour.resetsAt)" :format="usageRelativeFormat" numeric="always" sync></wa-relative-time>
                                 <template v-else>{{ formatUsageDateAbsolute(resetsAtToDate(quotaFiveHour.resetsAt)) }}</template>
@@ -2236,7 +2236,7 @@ function openPeerInbox() {
                         </div>
                         <span v-if="quotaSevenDayChip" class="usage-burn-chip" :class="burnChipClass(quotaSevenDayRingColor)" :style="burnChipStyle(quotaSevenDayRingColor)">{{ quotaSevenDayChip.text }}</span>
                         <div class="usage-quota-info">
-                            <span class="usage-quota-label">7d</span>
+                            <span class="usage-quota-label">{{ $t('usage.period.sevenDaysShort') }}</span>
                             <span v-if="quotaSevenDay.resetsAt" class="usage-quota-reset">
                                 <wa-relative-time v-if="usageUseRelativeTime" :date.prop="resetsAtToDate(quotaSevenDay.resetsAt)" :format="usageRelativeFormat" numeric="always" sync></wa-relative-time>
                                 <template v-else>{{ formatUsageDateAbsolute(resetsAtToDate(quotaSevenDay.resetsAt)) }}</template>
@@ -2263,12 +2263,12 @@ function openPeerInbox() {
                                 <div class="usage-lane-fill" :style="{ width: quotaExtraUsageRingValue + '%', '--usage-fill': quotaExtraUsageRingColor }"></div>
                             </div>
                             <span v-else-if="quotaExtraUsage.remainingCredits != null" class="usage-balance">
-                                <span class="usage-balance-dot" :style="{ background: quotaExtraUsageRingColor }"></span>{{ Math.round(quotaExtraUsage.remainingCredits).toLocaleString() }} credits
+                                <span class="usage-balance-dot" :style="{ background: quotaExtraUsageRingColor }"></span>{{ $t('usage.extra.credits', { count: Math.round(quotaExtraUsage.remainingCredits).toLocaleString() }, Math.round(quotaExtraUsage.remainingCredits)) }}
                             </span>
                         </div>
                         <span v-if="quotaExtraUsageChipText" class="usage-burn-chip usage-burn-chip-neutral">{{ quotaExtraUsageChipText }}</span>
                         <div class="usage-quota-info">
-                            <span class="usage-quota-label">Extra</span>
+                            <span class="usage-quota-label">{{ $t('usage.extra.label') }}</span>
                             <span v-if="quotaExtraUsage.utilization != null" class="usage-quota-reset">
                                 <wa-relative-time v-if="usageUseRelativeTime" :date.prop="extraUsageResetDate()" :format="usageRelativeFormat" numeric="always" sync></wa-relative-time>
                                 <template v-else>{{ formatUsageDateAbsolute(extraUsageResetDate()) }}</template>
@@ -2279,19 +2279,19 @@ function openPeerInbox() {
                         <div class="quota-tooltip">
                             <template v-if="quotaExtraUsage.utilization != null">
                                 <template v-if="quotaExtraUsageMoney">
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">Used</span><span>{{ quotaExtraUsageMoney.used }} {{ quotaExtraUsageMoney.currency }}</span></div>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">Monthly limit</span><span><template v-if="quotaExtraUsageMoney.limit != null">{{ quotaExtraUsageMoney.limit }} {{ quotaExtraUsageMoney.currency }}</template><template v-else>?</template></span></div>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">Usage</span><span>{{ quotaExtraUsage.utilization.toFixed(1) }}%</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.used') }}</span><span>{{ quotaExtraUsageMoney.used }} {{ quotaExtraUsageMoney.currency }}</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.monthlyLimit') }}</span><span><template v-if="quotaExtraUsageMoney.limit != null">{{ quotaExtraUsageMoney.limit }} {{ quotaExtraUsageMoney.currency }}</template><template v-else>?</template></span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.usage') }}</span><span>{{ quotaExtraUsage.utilization.toFixed(1) }}%</span></div>
                                 </template>
                                 <template v-else>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">Used</span><span>{{ quotaExtraUsage.usedCredits ?? 0 }} credits</span></div>
-                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">Monthly limit</span><span>{{ quotaExtraUsage.monthlyLimit ?? '?' }} credits</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.used') }}</span><span>{{ $t('usage.extra.credits', { count: quotaExtraUsage.usedCredits ?? 0 }, quotaExtraUsage.usedCredits ?? 0) }}</span></div>
+                                    <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.monthlyLimit') }}</span><span>{{ $t('usage.extra.credits', { count: quotaExtraUsage.monthlyLimit ?? '?' }, quotaExtraUsage.monthlyLimit ?? 2) }}</span></div>
                                 </template>
                             </template>
                             <template v-else-if="quotaExtraUsage.remainingCredits != null">
-                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">Remaining</span><span>{{ Math.round(quotaExtraUsage.remainingCredits) }} credits</span></div>
+                                <div class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.remaining') }}</span><span>{{ $t('usage.extra.credits', { count: Math.round(quotaExtraUsage.remainingCredits) }, Math.round(quotaExtraUsage.remainingCredits)) }}</span></div>
                             </template>
-                            <div v-if="quotaExtraUsage.utilization != null" class="quota-tooltip-row"><span class="quota-tooltip-label">Reset</span><span>{{ formatResetTime(extraUsageResetDate()) }}</span></div>
+                            <div v-if="quotaExtraUsage.utilization != null" class="quota-tooltip-row"><span class="quota-tooltip-label">{{ $t('usage.extra.reset') }}</span><span>{{ formatResetTime(extraUsageResetDate()) }}</span></div>
                             <div class="quota-tooltip-buttons">
                                <wa-button v-if="usageExternalLink" size="small" variant="brand" appearance="outlined" :href="usageExternalLink.url" target="_blank" rel="noopener" class="quota-stale-button"><wa-icon slot="start" name="up-right-from-square"></wa-icon>{{ usageExternalLink.label }}</wa-button>
                             </div>
@@ -2303,11 +2303,13 @@ function openPeerInbox() {
                     <div class="sidebar-footer-provider-auth">
                         <wa-callout variant="warning" size="small" class="sidebar-footer-provider-auth-callout glass-shadow">
                             <div class="sidebar-footer-provider-auth-head">
-                                <strong class="sidebar-footer-provider-auth-title">{{ entry.label }} not authenticated</strong>
-                                <button type="button" class="sidebar-footer-provider-auth-toggle" :aria-expanded="authExpanded.has(entry.provider)" @click="toggleAuthExpanded(entry.provider)">{{ authExpanded.has(entry.provider) ? 'less' : 'more' }}</button>
+                                <strong class="sidebar-footer-provider-auth-title">{{ $t('usage.auth.notAuthenticated', { provider: entry.label }) }}</strong>
+                                <button type="button" class="sidebar-footer-provider-auth-toggle" :aria-expanded="authExpanded.has(entry.provider)" @click="toggleAuthExpanded(entry.provider)">{{ authExpanded.has(entry.provider) ? $t('usage.auth.less') : $t('usage.auth.more') }}</button>
                             </div>
                             <div v-if="authExpanded.has(entry.provider)" class="sidebar-footer-provider-auth-row">
-                                <span class="sidebar-footer-provider-auth-text">Run <code class="copyable" title="Click to copy" @click="copyLoginCommand(entry.loginCommand)">{{ entry.loginCommand }}</code>.</span>
+                                <i18n-t tag="span" class="sidebar-footer-provider-auth-text" scope="global" keypath="usage.auth.runCommand">
+                                    <template #command><code class="copyable" :title="$t('usage.auth.copyCommand')" @click="copyLoginCommand(entry.loginCommand)">{{ entry.loginCommand }}</code></template>
+                                </i18n-t>
                                 <div class="sidebar-footer-provider-auth-buttons">
                                     <wa-button
                                         v-if="entry.canDisable"
@@ -2316,7 +2318,7 @@ function openPeerInbox() {
                                         appearance="outlined"
                                         @click="disableProvider(entry.provider)"
                                     >
-                                        <wa-icon name="power-off"></wa-icon>Disable provider
+                                        <wa-icon name="power-off"></wa-icon>{{ $t('usage.auth.disable') }}
                                     </wa-button>
                                     <wa-button
                                         size="small"
@@ -2324,7 +2326,7 @@ function openPeerInbox() {
                                         appearance="outlined"
                                         @click="launchProviderAuthInTerminal(entry.loginCommand)"
                                     >
-                                        <wa-icon name="terminal"></wa-icon>Launch in terminal
+                                        <wa-icon name="terminal"></wa-icon>{{ $t('usage.auth.launchTerminal') }}
                                     </wa-button>
                                     <wa-button
                                         size="small"
@@ -2332,7 +2334,7 @@ function openPeerInbox() {
                                         appearance="outlined"
                                         :disabled="authChecking.has(entry.provider)"
                                         @click="recheckProviderAuth(entry.provider)"
-                                    >Check again</wa-button>
+                                    >{{ $t('usage.auth.recheck') }}</wa-button>
                                 </div>
                             </div>
                         </wa-callout>

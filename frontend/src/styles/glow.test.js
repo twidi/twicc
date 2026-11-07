@@ -7,6 +7,10 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { parse, compileTemplate } from '@vue/compiler-sfc'
+import * as Vue from 'vue'
+import { renderToString } from 'vue/server-renderer'
+import { createAppI18n } from '../i18n/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(here, '..')
@@ -514,22 +518,45 @@ test('16. the working pill: every rule pinned whole, in the stated order (§5.2,
     assert.ok(!rules.some((r) => r.head.includes('--calm')), 'no calm variant: a request waiting for the user keeps the full animation')
 })
 
-test('17. the working pill template: phrase spans, dots, calm class (§5.1)', () => {
+test('17. the working pill template: phrase spans, dots, calm class (§5.1)', async () => {
     const template = collapse(templateOf(read(WAM)))
     const DOTS = '<span class="working-assistant-message__dots" aria-hidden="true"><i></i><i></i><i></i></span>'
     const phrases = [...template.matchAll(/<span\b[^>]*class="working-assistant-message__phrase"[^>]*>/g)]
     assert.equal(phrases.length, 2, 'two phrase spans')
     assert.match(phrases[0][0], /\sv-if="plainPhrase !== null"/)
     assert.match(phrases[1][0], /\sv-else[\s>]/)
-    for (const m of phrases) {
-        const inner = spanInner(template, m.index)
-        assert.ok(inner.endsWith(DOTS), `the dots end the phrase: ${m[0]}`)
-        assert.equal(inner.split(DOTS).length, 2, 'one dots span per phrase')
-        // No whitespace before the dots, in either branch: it renders a space before them.
-        assert.ok(!inner.endsWith(` ${DOTS}`), `no space before the dots: ${m[0]}`)
+    const activities = spanInner(template, phrases[1].index)
+    assert.match(activities, /<i18n-t keypath="session\.working\.activities" scope="global">/)
+    assert.match(activities, /<template #provider>\{\{ providerLabel \}\}<\/template>/)
+    assert.match(activities, /<template #activities>/)
+    assert.match(activities, /v-for="\(part, index\) in activityParts"/)
+
+    // Compile the actual template. Source formatting around i18n-t does not define rendered whitespace.
+    const compiled = compileTemplate({ source: parse(read(WAM)).descriptor.template.content,
+        filename: 'WorkingAssistantMessage.vue', id: 'working-pill-dots',
+        compilerOptions: { mode: 'function', isCustomElement: tag => tag.startsWith('wa-') } })
+    assert.deepEqual(compiled.errors, [])
+    const render = new Function('Vue', compiled.code)(Vue)
+    for (const locale of ['en', 'pt-BR']) {
+        for (const plain of [true, false]) {
+            const i18n = createAppI18n(locale)
+            const phrase = plain
+                ? i18n.global.t('session.working.thinking', { provider: 'Claude' })
+                : i18n.global.t('session.working.activities', { provider: 'Claude', activities: 'reading' })
+            const app = Vue.createSSRApp({ render, setup: () => ({ isAwaiting: false, processState: 'assistant_turn',
+                plainPhrase: plain ? phrase : null, providerLabel: 'Claude', phraseGroups: [],
+                activityParts: [{ literal: 'reading' }],
+            }) }).use(i18n)
+            app.component('AgentStatusLine', { render() { return Vue.h('div', this.$slots.default?.()) } })
+            app.component('ProcessIndicator', { render: () => null })
+            const html = (await renderToString(app)).replace(/<!--[\s\S]*?-->/g, '')
+            const rendered = html.match(/<span class="working-assistant-message__phrase">/)
+            assert.ok(rendered, `${locale}: phrase span renders`)
+            const inner = spanInner(html, rendered.index)
+            assert.equal(inner, `${phrase}${DOTS}`, `${locale}: ${plain ? 'plain' : 'activity'} phrase has one dots span at the end, without whitespace`)
+            assert.equal(inner.split(DOTS).length, 2, `${locale}: one dots span per phrase`)
+        }
     }
-    // No whitespace between the text and the dots: it would render a space before them.
-    assert.ok(spanInner(template, phrases[0].index).endsWith(`}}${DOTS}`), 'plain branch: }}<span class="working-assistant-message__dots"')
     assert.ok(!template.includes('--calm'), 'no calm class: the full animation runs while a request waits too')
     assert.ok(!template.includes('text-content'), 'no text-content class')
     assert.ok(!template.includes('...'), 'no literal "..."')

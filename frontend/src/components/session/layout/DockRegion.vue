@@ -154,8 +154,8 @@ function onEmptyBarDblClick(event) {
                 variant="brand"
                 appearance="accent"
                 size="small"
-                title="Restore (Alt+Shift+Enter)"
-                aria-label="Restore"
+                :title="$t('session.layout.restoreTooltip')"
+                :aria-label="$t('session.layout.restore')"
                 @click.stop="emit('restore')"
             >
                 <wa-icon name="compress"></wa-icon>
@@ -165,8 +165,8 @@ function onEmptyBarDblClick(event) {
                     class="dock-winbtn dock-minimize reduced-height"
                     appearance="plain"
                     size="small"
-                    title="Minimize to gutter (Alt+Shift+Backspace)"
-                    aria-label="Minimize to gutter"
+                    :title="$t('session.layout.minimizeTooltip')"
+                    :aria-label="$t('session.layout.minimize')"
                     @click.stop="emit('minimize', dockIds)"
                 >
                     <wa-icon name="window-minimize"></wa-icon>
@@ -175,8 +175,8 @@ function onEmptyBarDblClick(event) {
                     class="dock-winbtn dock-maximize reduced-height"
                     appearance="plain"
                     size="small"
-                    title="Maximize (Alt+Shift+Enter)"
-                    aria-label="Maximize"
+                    :title="$t('session.layout.maximizeTooltip')"
+                    :aria-label="$t('session.layout.maximize')"
                     @click.stop="emit('maximize', dockIds, activeTabId)"
                 >
                     <wa-icon name="expand"></wa-icon>

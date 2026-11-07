@@ -2440,7 +2440,7 @@ onBeforeUnmount(() => {
             >
                 <SessionTabLink :href="sessionTabHref('main')">
                     <wa-icon :name="TAB_ICONS.main"></wa-icon>
-                    Chat
+                    {{ $t('session.tabs.chat') }}
                     <CodeCommentsIndicator :count="chatCommentsCount" :show-tooltip="false" class="tab-comments-indicator" />
                     <wa-icon
                         v-if="store.getPendingRequests(sessionId).length > 0"
@@ -2449,7 +2449,7 @@ onBeforeUnmount(() => {
                         class="pending-request-indicator"
                     ></wa-icon>
                 </SessionTabLink>
-                <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-tab-chat-${sessionId}-pending-request`">Waiting for your response</AppTooltip>
+                <AppTooltip v-if="store.getPendingRequests(sessionId).length > 0" :for="`session-tab-chat-${sessionId}-pending-request`">{{ $t('session.status.awaitingResponse') }}</AppTooltip>
             </wa-tab>
 
             <!-- Subagent tabs with close button -->
@@ -2467,7 +2467,7 @@ onBeforeUnmount(() => {
                             <CodeCommentsIndicator :count="agentCommentsCount(tab.agentId)" :show-tooltip="false" class="tab-comments-indicator" />
                         </SessionTabLink>
                         <span class="tab-close-icon" @click.stop="closeTab(tab.id)">
-                            <wa-icon name="xmark" label="Close tab"></wa-icon>
+                            <wa-icon name="xmark" :label="$t('session.tabs.close')"></wa-icon>
                         </span>
                     </span>
                 </wa-tab>
@@ -2593,7 +2593,7 @@ onBeforeUnmount(() => {
         <div v-else-if="sessionLoadError === 'not-found'" class="empty-state panel-card">
             <wa-callout variant="warning" size="small">
                 <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
-                Session not found
+                {{ $t('session.load.notFound') }}
             </wa-callout>
         </div>
 
@@ -2601,14 +2601,14 @@ onBeforeUnmount(() => {
         <div v-else-if="sessionLoadError === 'error'" class="empty-state panel-card">
             <wa-callout variant="danger" size="small">
                 <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
-                Failed to load session
+                {{ $t('session.load.failed') }}
             </wa-callout>
         </div>
 
         <!-- Loading state -->
         <div v-else class="empty-state panel-card">
             <wa-spinner></wa-spinner>
-            <span>Loading session...</span>
+            <span>{{ $t('session.load.loading') }}</span>
         </div>
 
         <!-- Save-layout dialog (opened from the tab nav's Save button) -->

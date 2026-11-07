@@ -62,7 +62,7 @@ function onHide(e) {
     <wa-dialog
         ref="dialogRef"
         :open="open"
-        label="Telemetry payload"
+        :label="$t('settings.telemetry.payload.title')"
         class="telemetry-payload-dialog"
         @wa-hide="onHide"
     >
@@ -70,11 +70,11 @@ function onHide(e) {
             <wa-spinner></wa-spinner>
         </div>
         <template v-else>
-            <p v-if="payload === null" class="muted">Nothing to send yet.</p>
+            <p v-if="payload === null" class="muted">{{ $t('settings.telemetry.payload.empty') }}</p>
             <template v-else>
                 <p class="telemetry-payload-heading">
-                    <template v-if="preview">Preview — not sent yet</template>
-                    <template v-else>Last sent {{ formattedSentAt }}</template>
+                    <template v-if="preview">{{ $t('settings.telemetry.payload.preview') }}</template>
+                    <template v-else>{{ $t('settings.telemetry.payload.lastSent', { date: formattedSentAt }) }}</template>
                 </p>
                 <div class="telemetry-payload-json">
                     <JsonViewer
@@ -88,7 +88,7 @@ function onHide(e) {
         </template>
 
         <div slot="footer" class="dialog-footer">
-            <wa-button @click="emit('close')">Close</wa-button>
+            <wa-button @click="emit('close')">{{ $t('common.actions.close') }}</wa-button>
         </div>
     </wa-dialog>
 </template>

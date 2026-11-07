@@ -162,7 +162,9 @@ defineExpose({ open, close })
     >
         <form :id="formId" class="dialog-content" @submit.prevent="handleMove">
             <div class="move-source">
-                Moving <strong>{{ sourceName }}</strong>
+                <i18n-t keypath="files.move.source" scope="global">
+                    <template #name><strong>{{ sourceName }}</strong></template>
+                </i18n-t>
             </div>
 
             <div class="tree-wrapper">
@@ -185,7 +187,9 @@ defineExpose({ open, close })
             </div>
 
             <div v-if="selectedDir" class="move-destination">
-                Destination: <span class="destination-path">{{ displaySelectedDir() }}</span>
+                <i18n-t keypath="files.move.destination" scope="global">
+                    <template #path><span class="destination-path">{{ displaySelectedDir() }}</span></template>
+                </i18n-t>
             </div>
 
             <wa-callout v-if="errorMessage" variant="danger" size="small">
@@ -195,7 +199,7 @@ defineExpose({ open, close })
 
         <div slot="footer" class="dialog-footer">
             <wa-button variant="neutral" appearance="outlined" @click="close" :disabled="isMoving">
-                Cancel
+                {{ $t('common.actions.cancel') }}
             </wa-button>
             <wa-button
                 ref="saveButtonRef"
@@ -204,7 +208,7 @@ defineExpose({ open, close })
                 :disabled="isMoving || !selectedDir"
             >
                 <wa-spinner v-if="isMoving" slot="start"></wa-spinner>
-                Move
+                {{ $t('files.actions.move') }}
             </wa-button>
         </div>
     </wa-dialog>

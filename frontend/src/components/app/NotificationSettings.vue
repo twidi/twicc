@@ -279,21 +279,21 @@ defineExpose({ sync })
 
 <template>
     <section class="settings-section">
-        <h3 class="settings-section-title">Notifications</h3>
+        <h3 class="settings-section-title">{{ $t('settings.sections.notifications') }}</h3>
 
         <div v-if="isAndroidApp" class="notif-permission-row">
             <p class="setting-group-hint">{{ androidStatus }}</p>
             <wa-button v-if="androidPushState?.permission === 'denied'" size="small" appearance="outlined"
-                @click="requestAndroidPushPermission">Open Android settings</wa-button>
+                @click="requestAndroidPushPermission">{{ $t('settings.notifications.android.openSettings') }}</wa-button>
             <wa-button v-else-if="['error', 'server'].includes(androidPushState?.status)" size="small" appearance="outlined"
-                @click="retryAndroidPush">Try again</wa-button>
+                @click="retryAndroidPush">{{ $t('common.actions.retry') }}</wa-button>
         </div>
         <!-- Browser notification permission (shown once for both) -->
         <div v-else-if="browserNotifPermission === 'unsupported'" class="notif-permission-row">
-            <span class="setting-group-hint">Browser notifications not supported</span>
+            <span class="setting-group-hint">{{ $t('settings.notifications.browser.unsupported') }}</span>
         </div>
         <div v-else-if="browserNotifPermission === 'denied'" class="notif-permission-row">
-            <span class="setting-group-hint notif-denied">Browser notifications blocked</span>
+            <span class="setting-group-hint notif-denied">{{ $t('settings.notifications.browser.blocked') }}</span>
         </div>
         <div v-else-if="browserNotifPermission === 'default'" class="notif-permission-row">
             <wa-button
@@ -301,12 +301,12 @@ defineExpose({ sync })
                 appearance="outlined"
                 size="small"
                 @click="requestPermission"
-            >Enable browser notifications</wa-button>
+            >{{ $t('settings.notifications.browser.enable') }}</wa-button>
         </div>
 
         <!-- Agent finished working -->
         <div class="setting-group">
-            <label class="setting-group-label">Agent finished working</label>
+            <label class="setting-group-label">{{ $t('settings.notifications.finished.label') }}</label>
             <wa-select
                 :value.prop="userTurnSound"
                 @change="onUserTurnSoundChange"
@@ -319,14 +319,14 @@ defineExpose({ sync })
                 >{{ opt.label }}</wa-option>
             </wa-select>
             <a v-if="userTurnSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testUserTurnSound">
-                <wa-icon name="volume-up"></wa-icon> Test sound
+                <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div class="notif-toast-row">
                 <wa-switch
                     :checked="userTurnToast"
                     @change="onUserTurnToastChange"
                     size="small"
-                >In-app toast</wa-switch>
+                >{{ $t('settings.notifications.inAppToast') }}</wa-switch>
             </div>
             <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
@@ -339,7 +339,7 @@ defineExpose({ sync })
 
         <!-- Agent needs your attention -->
         <div class="setting-group">
-            <label class="setting-group-label">Agent needs your attention</label>
+            <label class="setting-group-label">{{ $t('settings.notifications.attention.label') }}</label>
             <wa-select
                 :value.prop="pendingRequestSound"
                 @change="onPendingRequestSoundChange"
@@ -352,7 +352,7 @@ defineExpose({ sync })
                 >{{ opt.label }}</wa-option>
             </wa-select>
             <a v-if="pendingRequestSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPendingRequestSound">
-                <wa-icon name="volume-up"></wa-icon> Test sound
+                <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
@@ -365,12 +365,12 @@ defineExpose({ sync })
 
         <!-- When extra usage starts -->
         <div class="setting-group">
-            <label class="setting-group-label">When extra usage starts</label>
+            <label class="setting-group-label">{{ $t('settings.usage.extraUsageNotification.label') }}</label>
             <wa-switch
                 :checked="notifyOnExtraUsageStart"
                 @change="onNotifyOnExtraUsageStartChange"
                 size="small"
-            >Notify me</wa-switch>
+            >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
             <wa-select
                 :value.prop="extraUsageStartSound"
                 @change="onExtraUsageStartSoundChange"
@@ -383,7 +383,7 @@ defineExpose({ sync })
                 >{{ opt.label }}</wa-option>
             </wa-select>
             <a v-if="extraUsageStartSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testExtraUsageStartSound">
-                <wa-icon name="volume-up"></wa-icon> Test sound
+                <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
@@ -393,16 +393,13 @@ defineExpose({ sync })
                 >{{ notificationLabel }}</wa-switch>
             </div>
             <p class="setting-group-hint">
-                Turn "Notify me" off to silence extra-usage alerts everywhere —
-                in-app toast, sound, browser and pushed devices — without
-                touching your per-device or per-target settings. Enabling a
-                sound, browser notification or a pushed device turns it back on.
+                {{ $t('settings.notifications.extraUsage.hint') }}
             </p>
         </div>
 
         <!-- A peer needs you -->
         <div class="setting-group">
-            <label class="setting-group-label">A peer needs you</label>
+            <label class="setting-group-label">{{ $t('settings.notifications.peer.label') }}</label>
             <wa-select
                 :value.prop="peerSound"
                 @change="onPeerSoundChange"
@@ -415,7 +412,7 @@ defineExpose({ sync })
                 >{{ opt.label }}</wa-option>
             </wa-select>
             <a v-if="peerSound !== 'none'" href="#" class="notif-test-link" @click.prevent="testPeerSound">
-                <wa-icon name="volume-up"></wa-icon> Test sound
+                <wa-icon name="volume-up"></wa-icon> {{ $t('settings.notifications.testSound') }}
             </a>
             <div v-if="canChooseNotification" class="notif-browser-row">
                 <wa-switch
@@ -425,37 +422,37 @@ defineExpose({ sync })
                 >{{ notificationLabel }}</wa-switch>
             </div>
             <p class="setting-group-hint">
-                A peer sent you a message, or an instance asks to pair with
-                yours. Both wait for you to act; every other peer event can
-                wait for your next visit.
+                {{ $t('settings.notifications.peer.hint') }}
             </p>
         </div>
 
         <!-- External notifications (Apprise) -->
         <wa-divider></wa-divider>
         <div class="setting-group">
-            <label class="setting-group-label">Push to your devices <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
+            <label class="setting-group-label">{{ $t('settings.notifications.push.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>
             <p class="setting-group-hint">
-                Forward these notifications to external services (ntfy, Pushover, Telegram, …)
-                using <a href="https://appriseit.com" target="_blank" rel="noopener">Apprise URLs</a>,
-                e.g. <code>ntfy://ntfy.sh/your-secret-topic</code> —
-                the <a href="https://appriseit.com/url-builder/" target="_blank" rel="noopener">URL builder</a>
-                can compose one for your service.
+                <i18n-t keypath="settings.notifications.push.hint" scope="global">
+                    <template #apprise><a href="https://appriseit.com" target="_blank" rel="noopener">{{ $t('settings.notifications.push.appriseUrls') }}</a></template>
+                    <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- This is an Apprise URL syntax example. -->
+                    <template #example><code>ntfy://ntfy.sh/your-secret-topic</code></template>
+                    <template #builder><a href="https://appriseit.com/url-builder/" target="_blank" rel="noopener">{{ $t('settings.notifications.push.urlBuilder') }}</a></template>
+                </i18n-t>
             </p>
             <wa-callout v-if="!hasPublicBaseUrl" variant="neutral" size="small" class="public-base-url-callout">
                 <wa-icon slot="icon" name="link"></wa-icon>
-                No <strong>External address</strong> is set, so these notifications won't link back
-                to the session.
-                <a href="#" @click.prevent="emit('go-to-public-base-url')">Set it in General settings</a>.
+                <i18n-t keypath="settings.notifications.push.missingAddress" scope="global">
+                    <template #address><strong>{{ $t('settings.general.externalAddress.label') }}</strong></template>
+                    <template #settings><a href="#" @click.prevent="emit('go-to-public-base-url')">{{ $t('settings.notifications.push.setAddress') }}</a></template>
+                </i18n-t>
             </wa-callout>
-            <label class="setting-group-label">Targets</label>
+            <label class="setting-group-label">{{ $t('settings.notifications.targets.label') }}</label>
             <div class="apprise-targets">
                 <div v-for="(target, index) in externalRows" :key="index" class="apprise-target">
                     <div class="apprise-target-row">
                         <wa-input
                             class="apprise-name-input"
                             size="small"
-                            placeholder="Name (optional)"
+                            :placeholder="$t('settings.notifications.targets.namePlaceholder')"
                             :value.prop="target.name"
                             @change="onExternalTargetNameChange(index, $event)"
                         ></wa-input>
@@ -464,7 +461,7 @@ defineExpose({ sync })
                                 class="apprise-enabled-switch"
                                 size="small"
                                 :checked="target.enabled"
-                                title="Enabled"
+                                :title="$t('common.status.enabled')"
                                 @change="onExternalTargetEnabledChange(index, $event)"
                             ></wa-switch>
                             <wa-button
@@ -472,7 +469,7 @@ defineExpose({ sync })
                                 size="small"
                                 appearance="plain"
                                 variant="danger"
-                                title="Remove this target"
+                                :title="$t('settings.notifications.targets.remove')"
                                 @click="removeExternalTarget(index)"
                             >
                                 <wa-icon name="trash"></wa-icon>
@@ -480,6 +477,7 @@ defineExpose({ sync })
                         </div>
                     </div>
                     <div class="apprise-target-row">
+                        <!-- eslint-disable @intlify/vue-i18n/no-raw-text -- The placeholder is an Apprise URL syntax example. -->
                         <wa-input
                             class="apprise-url-input"
                             size="small"
@@ -488,18 +486,19 @@ defineExpose({ sync })
                             @input="onExternalTargetUrlInput(index, $event)"
                             @change="onExternalTargetUrlChange(index, $event)"
                         ></wa-input>
+                        <!-- eslint-enable @intlify/vue-i18n/no-raw-text -->
                         <wa-button
                             class="apprise-test-button"
                             size="small"
                             appearance="outlined"
                             :class="{ 'apprise-test-ok': target.tested === true, 'apprise-test-fail': target.tested === false }"
                             :disabled="!effectiveTargetUrl(index) || !!testingTargets[index]"
-                            title="Send a test notification to this target"
+                            :title="$t('settings.notifications.targets.testTooltip')"
                             @click="testExternalTarget(index)"
                         >
                             <wa-spinner v-if="testingTargets[index]" slot="start"></wa-spinner>
                             <wa-icon v-else slot="start" :name="externalTestIcon(target)"></wa-icon>
-                            Test
+                            {{ $t('settings.notifications.targets.test') }}
                         </wa-button>
                     </div>
                     <div class="apprise-target-events">
@@ -507,43 +506,39 @@ defineExpose({ sync })
                             size="small"
                             :checked="target.notifyUserTurn !== false"
                             @change="onExternalTargetEventChange(index, 'notifyUserTurn', $event)"
-                        >Finished working</wa-switch>
+                        >{{ $t('settings.notifications.targets.finished') }}</wa-switch>
                         <wa-switch
                             size="small"
                             :checked="target.notifyPendingRequest !== false"
                             @change="onExternalTargetEventChange(index, 'notifyPendingRequest', $event)"
-                        >Needs attention</wa-switch>
+                        >{{ $t('settings.notifications.targets.attention') }}</wa-switch>
                         <wa-switch
                             size="small"
                             :checked="target.notifyExtraUsageStart !== false"
                             @change="onExternalTargetEventChange(index, 'notifyExtraUsageStart', $event)"
-                        >Extra usage</wa-switch>
+                        >{{ $t('settings.notifications.targets.extraUsage') }}</wa-switch>
                         <wa-switch
                             size="small"
                             :checked="target.notifyPeer !== false"
                             @change="onExternalTargetEventChange(index, 'notifyPeer', $event)"
-                        >Peer</wa-switch>
+                        >{{ $t('settings.notifications.targets.peer') }}</wa-switch>
                         <wa-switch
                             size="small"
                             :checked="target.awayOnly === true"
                             @change="onExternalTargetEventChange(index, 'awayOnly', $event)"
-                        >Only when you're away</wa-switch>
+                        >{{ $t('settings.notifications.targets.awayOnly') }}</wa-switch>
                     </div>
                     <div v-if="targetTestErrors[index]" class="apprise-test-error">{{ targetTestErrors[index] }}</div>
                 </div>
             </div>
             <wa-button size="small" appearance="outlined" @click="addExternalTarget">
-                <wa-icon slot="start" name="plus"></wa-icon> Add target
+                <wa-icon slot="start" name="plus"></wa-icon> {{ $t('settings.notifications.targets.add') }}
             </wa-button>
             <p v-if="externalRows.length" class="setting-group-hint">
-                Notifications are only sent to targets whose last test succeeded
-                (green check). A green check means the service accepted the test
-                message — confirm it actually arrived on your device.
+                {{ $t('settings.notifications.targets.testHint') }}
             </p>
             <p v-if="externalRows.length" class="setting-group-hint">
-                "Only when you're away" keeps a target silent while you're active
-                in TwiCC on any device (desktop or phone), so it won't notify
-                while you're at your computer — turn it off to always notify.
+                {{ $t('settings.notifications.targets.awayHint') }}
             </p>
         </div>
     </section>

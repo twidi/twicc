@@ -35,15 +35,13 @@ function onClickHelp(key) {
 <template>
     <div class="help-settings">
         <p class="help-hint">
-            Help pages open by themselves the first time you reach a feature,
-            and you can reopen any of them from the list below. There are only
-            a few for now — the list will grow as the app evolves.
+            {{ $t('settings.help.hint') }}
         </p>
 
-        <h4 class="help-list-title">All help</h4>
+        <h4 class="help-list-title">{{ $t('settings.help.all') }}</h4>
 
         <p v-if="availableHelp.length === 0" class="help-empty">
-            No help available yet.
+            {{ $t('settings.help.empty') }}
         </p>
 
         <ul v-else class="help-list">

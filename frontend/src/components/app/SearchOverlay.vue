@@ -542,7 +542,7 @@ defineExpose({ open })
                     <wa-input
                         ref="searchInputRef"
                         v-model="query"
-                        placeholder="Search in all sessions..."
+                        :placeholder="$t('search.global.placeholder')"
                         size="medium"
                         with-clear
                         :autofocus.attr="true"
@@ -566,7 +566,7 @@ defineExpose({ open })
                 <div class="search-filters" :class="{ 'filters-expanded': filtersExpanded }">
                     <wa-select
                         v-model="filters.projectId"
-                        placeholder="All projects"
+                        :placeholder="$t('search.global.allProjects')"
                         size="small"
                         with-clear
                         class="filter-select glass-listbox-direct"
@@ -586,7 +586,7 @@ defineExpose({ open })
                         ></wa-icon>
                         <!-- Workspaces -->
                         <template v-if="selectableWorkspaces.length">
-                            <wa-option disabled class="section-header-option">Workspaces</wa-option>
+                            <wa-option disabled class="section-header-option">{{ $t('common.entities.workspaces') }}</wa-option>
                             <wa-option
                                 v-for="ws in selectableWorkspaces"
                                 :key="ws.id"
@@ -599,7 +599,7 @@ defineExpose({ open })
                                 </span>
                             </wa-option>
                             <wa-divider></wa-divider>
-                            <wa-option v-if="!activeWsProjectIds" disabled class="section-header-option">Projects</wa-option>
+                            <wa-option v-if="!activeWsProjectIds" disabled class="section-header-option">{{ $t('common.entities.projects') }}</wa-option>
                         </template>
                         <!-- Projects -->
                         <ProjectSelectOptions :projects="projects" :priority-project-ids="activeWsProjectIds" :priority-label="activeWsLabel" :priority-color="activeWsColor" />
@@ -607,55 +607,55 @@ defineExpose({ open })
 
                     <wa-select
                         v-model="filters.from"
-                        placeholder="Any source"
+                        :placeholder="$t('search.global.anySource')"
                         size="small"
                         with-clear
                         class="filter-select glass-listbox-direct"
                     >
-                        <wa-option value="user">User</wa-option>
-                        <wa-option value="assistant">Assistant</wa-option>
-                        <wa-option value="title">Title</wa-option>
+                        <wa-option value="user">{{ $t('search.global.sources.user') }}</wa-option>
+                        <wa-option value="assistant">{{ $t('search.global.sources.assistant') }}</wa-option>
+                        <wa-option value="title">{{ $t('search.global.sources.title') }}</wa-option>
                     </wa-select>
 
                     <wa-select
                         v-model="filters.newerThan"
-                        placeholder="Any recent"
+                        :placeholder="$t('search.global.anyRecent')"
                         size="small"
                         with-clear
                         class="filter-select glass-listbox-direct"
                     >
-                        <wa-option value="24h">Newer than 24 hours</wa-option>
-                        <wa-option value="3d">Newer than 3 days</wa-option>
-                        <wa-option value="7d">Newer than 7 days</wa-option>
-                        <wa-option value="10d">Newer than 10 days</wa-option>
-                        <wa-option value="20d">Newer than 20 days</wa-option>
-                        <wa-option value="30d">Newer than 30 days</wa-option>
-                        <wa-option value="2m">Newer than 2 months</wa-option>
-                        <wa-option value="3m">Newer than 3 months</wa-option>
-                        <wa-option value="6m">Newer than 6 months</wa-option>
+                        <wa-option value="24h">{{ $t('search.global.newerThan.hours', { count: 24 }, 24) }}</wa-option>
+                        <wa-option value="3d">{{ $t('search.global.newerThan.days', { count: 3 }, 3) }}</wa-option>
+                        <wa-option value="7d">{{ $t('search.global.newerThan.days', { count: 7 }, 7) }}</wa-option>
+                        <wa-option value="10d">{{ $t('search.global.newerThan.days', { count: 10 }, 10) }}</wa-option>
+                        <wa-option value="20d">{{ $t('search.global.newerThan.days', { count: 20 }, 20) }}</wa-option>
+                        <wa-option value="30d">{{ $t('search.global.newerThan.days', { count: 30 }, 30) }}</wa-option>
+                        <wa-option value="2m">{{ $t('search.global.newerThan.months', { count: 2 }, 2) }}</wa-option>
+                        <wa-option value="3m">{{ $t('search.global.newerThan.months', { count: 3 }, 3) }}</wa-option>
+                        <wa-option value="6m">{{ $t('search.global.newerThan.months', { count: 6 }, 6) }}</wa-option>
                     </wa-select>
 
                     <wa-select
                         v-model="filters.olderThan"
-                        placeholder="Any old"
+                        :placeholder="$t('search.global.anyOld')"
                         size="small"
                         with-clear
                         class="filter-select glass-listbox-direct"
                     >
-                        <wa-option value="24h">Older than 24 hours</wa-option>
-                        <wa-option value="3d">Older than 3 days</wa-option>
-                        <wa-option value="7d">Older than 7 days</wa-option>
-                        <wa-option value="10d">Older than 10 days</wa-option>
-                        <wa-option value="20d">Older than 20 days</wa-option>
-                        <wa-option value="30d">Older than 30 days</wa-option>
-                        <wa-option value="2m">Older than 2 months</wa-option>
-                        <wa-option value="3m">Older than 3 months</wa-option>
-                        <wa-option value="6m">Older than 6 months</wa-option>
+                        <wa-option value="24h">{{ $t('search.global.olderThan.hours', { count: 24 }, 24) }}</wa-option>
+                        <wa-option value="3d">{{ $t('search.global.olderThan.days', { count: 3 }, 3) }}</wa-option>
+                        <wa-option value="7d">{{ $t('search.global.olderThan.days', { count: 7 }, 7) }}</wa-option>
+                        <wa-option value="10d">{{ $t('search.global.olderThan.days', { count: 10 }, 10) }}</wa-option>
+                        <wa-option value="20d">{{ $t('search.global.olderThan.days', { count: 20 }, 20) }}</wa-option>
+                        <wa-option value="30d">{{ $t('search.global.olderThan.days', { count: 30 }, 30) }}</wa-option>
+                        <wa-option value="2m">{{ $t('search.global.olderThan.months', { count: 2 }, 2) }}</wa-option>
+                        <wa-option value="3m">{{ $t('search.global.olderThan.months', { count: 3 }, 3) }}</wa-option>
+                        <wa-option value="6m">{{ $t('search.global.olderThan.months', { count: 6 }, 6) }}</wa-option>
                     </wa-select>
 
                     <label class="filter-checkbox">
                         <input type="checkbox" v-model="filters.includeArchived" />
-                        <span>Archived</span>
+                        <span>{{ $t('common.status.archived') }}</span>
                     </label>
                 </div>
             </div>
@@ -663,7 +663,7 @@ defineExpose({ open })
             <!-- Indexing in progress banner (non-blocking — shown alongside results) -->
             <div v-if="!searchIndexReady" class="search-index-banner">
                 <wa-icon name="hourglass-half"></wa-icon>
-                <span>Indexing in progress ({{ searchIndexPercent }}%) — results may be incomplete</span>
+                <span>{{ $t('search.global.indexing', { percent: searchIndexPercent }) }}</span>
                 <wa-progress-bar :value="searchIndexPercent"></wa-progress-bar>
             </div>
 
@@ -681,8 +681,7 @@ defineExpose({ open })
                     size="small"
                 >
                     <wa-icon slot="icon" name="circle-info"></wa-icon>
-                    No session contains all your terms in one message. Showing sessions
-                    that match at least one, most relevant first.
+                    {{ $t('search.global.partialMatches') }}
                 </wa-callout>
             </div>
 
@@ -706,7 +705,7 @@ defineExpose({ open })
                     @pointerenter="selectedIndex = index"
                 >
                     <div class="result-header">
-                        <wa-icon v-if="result.archived" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
+                        <wa-icon v-if="result.archived" name="box-archive" :label="$t('common.status.archived')" class="session-state-icon session-state-icon--archived"></wa-icon>
                         <span class="result-title">{{ result.session_title || result.session_id }}</span>
                         <div class="result-meta">
                             <ProjectBadge
@@ -734,7 +733,7 @@ defineExpose({ open })
                             <span class="snippet-text" v-html="match.snippet"></span>
                         </div>
                         <div v-if="result.matches.length > 3" class="snippet-more">
-                            +{{ result.matches.length - 3 }} more matches
+                            {{ $t('search.global.moreMatches', { count: result.matches.length - 3 }, result.matches.length - 3) }}
                         </div>
                     </div>
                 </div>
@@ -749,7 +748,7 @@ defineExpose({ open })
                         @click="loadMore"
                     >
                         <wa-spinner v-if="isLoading" slot="start"></wa-spinner>
-                        Load more results
+                        {{ $t('search.global.loadMore') }}
                     </wa-button>
                 </div>
             </div>
@@ -757,17 +756,17 @@ defineExpose({ open })
             <!-- Loading state (initial search) -->
             <div v-else-if="isLoading" class="search-loading">
                 <wa-spinner></wa-spinner>
-                <span>Searching…</span>
+                <span>{{ $t('search.global.searching') }}</span>
             </div>
 
             <!-- Empty state -->
             <div v-else-if="query.trim().length >= 2 && !isLoading" class="search-empty">
-                No results found
+                {{ $t('search.global.noResults') }}
             </div>
 
             <!-- Initial state (no query) -->
             <div v-else-if="query.trim().length < 2 && query.trim().length > 0" class="search-hint">
-                Type at least 2 characters to search
+                {{ $t('search.global.minimumCharacters') }}
             </div>
 
         </div>

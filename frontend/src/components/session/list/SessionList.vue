@@ -955,12 +955,12 @@ defineExpose({
     <div class="session-list-container" :class="{ 'session-list-container--compact': compactView }">
         <!-- Empty state: no sessions at all -->
         <div v-if="allSessions.length === 0 && !isLoading" class="empty-state" :class="{ 'pagination-empty': hasMore }">
-            No sessions
+            {{ $t('session.list.empty') }}
         </div>
 
         <!-- Empty state: no matching sessions (search returned nothing) -->
         <div v-else-if="displayItems.length === 0 && !isLoading" class="empty-state" :class="{ 'pagination-empty': hasMore }">
-            No matching sessions
+            {{ $t('session.list.noMatches') }}
         </div>
 
         <!-- Session list with virtual scroller -->
@@ -1014,7 +1014,7 @@ defineExpose({
             :style="paginationNoProgress && !loadMoreError ? { position: 'absolute', insetInline: 0, bottom: 0, zIndex: 1 } : null"
         >
             <wa-callout :variant="loadMoreError ? 'danger' : 'neutral'">
-                <span>{{ loadMoreError ? 'Failed to load more sessions' : 'No additional sessions received' }}</span>
+                <span>{{ loadMoreError ? $t('session.list.loadMoreFailed') : $t('session.list.noAdditionalSessions') }}</span>
                 <wa-button
                     slot="footer"
                     :variant="loadMoreError ? 'danger' : 'neutral'"
@@ -1024,7 +1024,7 @@ defineExpose({
                     @click="handleRetry"
                 >
                     <wa-icon name="arrow-rotate-right" slot="start"></wa-icon>
-                    Retry
+                    {{ $t('common.actions.retry') }}
                 </wa-button>
             </wa-callout>
         </div>

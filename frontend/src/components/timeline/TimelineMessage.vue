@@ -85,7 +85,7 @@ watch(() => props.eventId, () => { expanded.value = false }, { flush: 'sync' })
         >
             <MessageSummaryControls v-if="summary?.hasSummary" :summary="summary" />
             <MarkdownContent v-if="bodyText" :source="bodyText" />
-            <button type="button" class="timeline-message-control timeline-message-close" @click="toggle">Close message</button>
+            <button type="button" class="timeline-message-control timeline-message-close" @click="toggle">{{ $t('timeline.message.close') }}</button>
         </div>
     </div>
 </template>

@@ -66,7 +66,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <h3 class="tsc-summary-title">Summary</h3>
+    <h3 class="tsc-summary-title">{{ $t('session.summary.title') }}</h3>
     <div v-if="entry?.text" class="tsc-summary-text" aria-live="polite" :aria-busy="entry.state === 'running'">
         <MarkdownContent :source="entry.text" :show-toolbar="false" />
     </div>
@@ -85,15 +85,15 @@ onBeforeUnmount(() => {
                 class="tsc-summary-retry"
                 :title="generation.unavailableReason"
                 @click.prevent="generation.retryLookup"
-            >Retry availability check</a>
+            >{{ $t('session.summary.retryAvailability') }}</a>
         </div>
         <div class="tsc-summary-buttons">
             <wa-button
                 size="small"
                 variant="neutral"
                 appearance="filled"
-                title="Copy summary"
-                aria-label="Copy summary"
+                :title="$t('session.summary.copy')"
+                :aria-label="$t('session.summary.copy')"
                 :disabled="!entry?.text"
                 @click="copy"
             >

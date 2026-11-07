@@ -14,7 +14,10 @@ defineProps({
 <template>
     <footer class="share-footer" :class="{ 'share-footer--solid': solid }">
         <a class="share-footer-link" href="https://github.com/twidi/twicc" target="_blank" rel="noopener noreferrer">
-            <BrandLogo :size="32" /> <span>Shared with <u>TwiCC</u></span>
+            <BrandLogo :size="32" /> <i18n-t tag="span" scope="global" keypath="sharing.footer.withBrand">
+                <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- TwiCC is the product name. -->
+                <template #brand><u>TwiCC</u></template>
+            </i18n-t>
         </a>
         <slot />
     </footer>

@@ -51,11 +51,11 @@ function swap() {
 
 <template>
     <div class="viewport-toolbar">
-        <span class="subbar-label">Viewport</span>
+        <span class="subbar-label">{{ $t('preview.viewport.title') }}</span>
         <wa-select
             class="viewport-preset reduced-height"
             size="small"
-            placeholder="Custom size"
+            :placeholder="$t('preview.viewport.customSize')"
             :value="presetValue"
             @change="onPresetChange"
         >
@@ -85,16 +85,17 @@ function swap() {
                 :value="String(height)"
                 @change="onSizeChange('h', $event)"
             ></wa-input>
+            <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -- px is the standard CSS pixel unit. -->
             <span class="viewport-glue">px</span>
             <wa-button :id="`viewport-swap-${instanceId}`" appearance="plain" size="small" class="subbar-btn reduced-height" @click="swap">
                 <wa-icon name="right-left"></wa-icon>
             </wa-button>
-            <AppTooltip :for="`viewport-swap-${instanceId}`">Swap width and height</AppTooltip>
+            <AppTooltip :for="`viewport-swap-${instanceId}`">{{ $t('preview.viewport.swapDimensions') }}</AppTooltip>
         </div>
         <wa-button :id="`viewport-close-${instanceId}`" appearance="plain" size="small" class="subbar-btn reduced-height subbar-close" @click="$emit('close')">
             <wa-icon name="xmark"></wa-icon>
         </wa-button>
-        <AppTooltip :for="`viewport-close-${instanceId}`">Exit responsive mode</AppTooltip>
+        <AppTooltip :for="`viewport-close-${instanceId}`">{{ $t('preview.viewport.exitResponsive') }}</AppTooltip>
     </div>
 </template>
 

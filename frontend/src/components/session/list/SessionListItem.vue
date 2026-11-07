@@ -585,7 +585,7 @@ function handleMenuSelect(event) {
             @click="handleClick"
             @mousedown="handleMousedown"
         >
-            <div v-if="treeRow?.hint" class="tree-hint">↰ from {{ treeRow.hint }}</div>
+            <div v-if="treeRow?.hint" class="tree-hint">{{ $t('session.list.fromParent', { parent: treeRow.hint }) }}</div>
             <div class="session-name-row">
                 <!-- Compact mode: inline project color dot (instead of full ProjectBadge line) -->
                 <ProjectMark
@@ -601,13 +601,13 @@ function handleMenuSelect(event) {
                 <!-- Marker icons: tighter gap among themselves; the gaps to the project mark and to the title are the row's -->
                 <span class="session-leading-icons">
                 <wa-icon v-if="session.pinned" name="thumbtack" class="pinned-icon"></wa-icon>
-                <wa-icon v-if="session.archived" :id="rowId('session-archived')" name="box-archive" label="Archived" class="session-state-icon session-state-icon--archived"></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.archived" :for="rowId('session-archived')">Archived</AppTooltip>
-                <wa-icon v-if="session.ephemeral && !session.archived" name="ghost" label="Ephemeral session" class="session-state-icon session-state-icon--ephemeral" :class="session.ephemeralPhase"></wa-icon>
-                <wa-icon v-if="session.draft && !processState && !session.archived" :id="rowId('session-draft')" name="pencil" label="Draft" class="session-state-icon session-state-icon--draft"></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">Draft</AppTooltip>
-                <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="circle-xmark" label="Session files deleted" class="session-state-icon session-state-icon--stale"></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">Session files were deleted from disk</AppTooltip>
+                <wa-icon v-if="session.archived" :id="rowId('session-archived')" name="box-archive" :label="$t('common.status.archived')" class="session-state-icon session-state-icon--archived"></wa-icon>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.archived" :for="rowId('session-archived')">{{ $t('common.status.archived') }}</AppTooltip>
+                <wa-icon v-if="session.ephemeral && !session.archived" name="ghost" :label="$t('session.status.ephemeral')" class="session-state-icon session-state-icon--ephemeral" :class="session.ephemeralPhase"></wa-icon>
+                <wa-icon v-if="session.draft && !processState && !session.archived" :id="rowId('session-draft')" name="pencil" :label="$t('session.status.draft')" class="session-state-icon session-state-icon--draft"></wa-icon>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="!session.archived && session.draft && !processState" :for="rowId('session-draft')">{{ $t('session.status.draft') }}</AppTooltip>
+                <wa-icon v-if="session.stale" :id="rowId('session-stale')" name="circle-xmark" :label="$t('session.status.filesDeletedLabel')" class="session-state-icon session-state-icon--stale"></wa-icon>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="session.stale" :for="rowId('session-stale')">{{ $t('session.status.filesDeletedTooltip') }}</AppTooltip>
                 <ProviderIcon v-if="showProviderIcon && providerIcon" :provider="session.provider" :colored="false" class="provider-icon" />
                 <wa-icon
                     v-if="showWorktreeIcon"
@@ -635,7 +635,7 @@ function handleMenuSelect(event) {
                     name="eye"
                     class="compact-unread-indicator"
                 ></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread && !processState" :for="rowId('compact-unread')">New content to read</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && hasUnread && !processState" :for="rowId('compact-unread')">{{ $t('session.list.unread') }}</AppTooltip>
                 <!-- Compact mode: pending request indicator (takes priority over process indicator) -->
                 <wa-icon
                     v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest"
@@ -643,7 +643,7 @@ function handleMenuSelect(event) {
                     name="hand"
                     class="compact-pending-request-indicator"
                 ></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">Waiting for your response</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && !hasUnread && pendingRequest" :for="rowId('compact-pending-request')">{{ $t('session.status.awaitingResponse') }}</AppTooltip>
                 <!-- Compact mode: process indicator (shows the unread eye itself; hidden when the pending request hand is shown) -->
                 <ProcessIndicator
                     v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)"
@@ -657,7 +657,7 @@ function handleMenuSelect(event) {
                     :style="hasUnread ? { fontSize: 'var(--wa-font-size-xs)' } : undefined"
                     class="compact-process-indicator"
                 />
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)" :for="rowId('compact-process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="compactView && !cumulativeMode && processState && !session.ephemeral && (hasUnread || !pendingRequest)" :for="rowId('compact-process-indicator')">{{ hasUnread ? $t('session.list.unreadProcess', { status: processTooltip }) : processTooltip }}</AppTooltip>
                 <!-- Collapsed tree row, compact: the cumulative indicator replaces the three above -->
                 <ProcessActivityIndicator
                     v-if="compactView && cumulativeMode"
@@ -682,7 +682,7 @@ function handleMenuSelect(event) {
                     name="eye"
                     class="unread-indicator standalone-unread-indicator"
                 ></wa-icon>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="hasUnread && !processState && !cumulativeMode" :for="rowId('standalone-unread')">New content to read</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="hasUnread && !processState && !cumulativeMode" :for="rowId('standalone-unread')">{{ $t('session.list.unread') }}</AppTooltip>
             </div>
             <!-- Process info row (hidden in compact mode): the own process (memory, duration, indicator) and/or
                  the cumulative indicator of a collapsed tree parent, which takes the place of the own indicators -->
@@ -696,7 +696,7 @@ function handleMenuSelect(event) {
                         {{ formatMemory(processState.memory) }}
                     </template>
                 </span>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-memory')">{{ providerLabel }} memory usage</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-memory')">{{ $t('session.process.memoryUsageTooltip', { provider: providerLabel }) }}</AppTooltip>
 
                 <span :id="rowId('process-duration')" class="process-duration">
                     <ProcessDuration
@@ -704,7 +704,7 @@ function handleMenuSelect(event) {
                         :state-changed-at="processState.state_changed_at"
                     />
                 </span>
-                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-duration')">Assistant turn duration</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" v-if="processState && !session.ephemeral" :for="rowId('process-duration')">{{ $t('session.process.turnDurationTooltip') }}</AppTooltip>
 
                 <span class="process-indicator-cell">
                     <ProcessActivityIndicator
@@ -719,7 +719,7 @@ function handleMenuSelect(event) {
                             name="hand"
                             class="pending-request-indicator"
                         ></wa-icon>
-                        <AppTooltip deferred :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">Waiting for your response</AppTooltip>
+                        <AppTooltip deferred :hoist="!!idPrefix" v-if="pendingRequest" :for="rowId('pending-request')">{{ $t('session.status.awaitingResponse') }}</AppTooltip>
                         <!-- The indicator shows the unread eye itself (alone, or alternating with background work) -->
                         <ProcessIndicator
                             :id="rowId('process-indicator')"
@@ -730,18 +730,18 @@ function handleMenuSelect(event) {
                             size="small"
                             :animate-states="animateStates"
                         />
-                        <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('process-indicator')"><template v-if="hasUnread">New content to read · </template>{{ processTooltip }}</AppTooltip>
+                        <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('process-indicator')">{{ hasUnread ? $t('session.list.unreadProcess', { status: processTooltip }) : processTooltip }}</AppTooltip>
                     </template>
                 </span>
             </div>
             <!-- Meta row (not shown for draft sessions, hidden in compact mode) -->
             <div v-if="!compactView && !session.draft && !session.ephemeral" class="session-meta" :class="{ 'session-meta--no-cost': !showCosts }">
                 <span :id="rowId('session-messages')" class="session-messages"><wa-icon auto-width name="comment" variant="regular"></wa-icon>{{ session.user_message_count ?? '??' }}</span>
-                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-messages')">Number of message turns</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-messages')">{{ $t('session.stats.messages.tooltip') }}</AppTooltip>
 
                 <template v-if="showCosts">
                     <CostDisplay :id="rowId('session-cost')" :cost="session.total_cost" class="session-cost" />
-                    <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-cost')">Total session cost</AppTooltip>
+                    <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-cost')">{{ $t('session.stats.cost.tooltip') }}</AppTooltip>
                 </template>
 
                 <span :id="rowId('session-mtime')" class="session-mtime">
@@ -749,7 +749,7 @@ function handleMenuSelect(event) {
                     <wa-relative-time v-if="useRelativeTime" :date.prop="timestampToDate(session.mtime)" :format="relativeTimeFormat" numeric="always" sync></wa-relative-time>
                     <template v-else>{{ formatDate(session.mtime, { smart: true }) }}</template>
                 </span>
-                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-mtime')">{{ useRelativeTime ? `Last activity: ${formatDate(session.mtime, { smart: true })}` : 'Last activity' }}</AppTooltip>
+                <AppTooltip deferred :hoist="!!idPrefix" :for="rowId('session-mtime')">{{ useRelativeTime ? $t('session.list.activityAt', { date: formatDate(session.mtime, { smart: true }) }) : $t('session.stats.activity.tooltip') }}</AppTooltip>
             </div>
         </wa-button>
         <AppTooltip deferred :hoist="!!idPrefix" v-if="showTitleTooltip" :for="rowId('session-button')" placement="right">{{ session.title || session.id }}</AppTooltip>
@@ -757,7 +757,7 @@ function handleMenuSelect(event) {
         <LazyRowMenu
             v-if="showMenu"
             :trigger-id="rowId('session-menu-trigger')"
-            label="Session actions"
+            :label="$t('session.list.actionsLabel')"
             menu-class="session-menu"
             trigger-class="session-menu-trigger"
             :hoist-tooltip="!!idPrefix"
@@ -767,43 +767,43 @@ function handleMenuSelect(event) {
             <!-- Standard actions -->
             <wa-dropdown-item v-if="!session.ephemeral || session.draft" value="rename">
                 <wa-icon slot="icon" name="pencil"></wa-icon>
-                Rename
+                {{ $t('common.actions.rename') }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral && sharingEnabled" value="share">
                 <wa-icon slot="icon" name="share-nodes"></wa-icon>
-                Share…
+                {{ $t('session.list.share') }}
             </wa-dropdown-item>
             <template v-if="!session.draft && !session.ephemeral">
                 <wa-divider></wa-divider>
                 <wa-dropdown-item type="checkbox" :checked="!session.pinned" value="pin-none">
-                    Not pinned
+                    {{ $t('session.pin.none') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item type="checkbox" :checked="session.pinned === 'project'" value="pin-project">
-                    Pin in project
+                    {{ $t('session.pin.project') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item type="checkbox" :checked="session.pinned === 'workspace'" value="pin-workspace">
-                    Pin in workspace
+                    {{ $t('session.pin.workspace') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item type="checkbox" :checked="session.pinned === 'all'" value="pin-all">
-                    Pin everywhere
+                    {{ $t('session.pin.everywhere') }}
                 </wa-dropdown-item>
                 <wa-divider v-if="hasItemsAfterPinBlock"></wa-divider>
             </template>
             <wa-dropdown-item v-if="canToggleReadState && hasUnread" value="mark-read">
                 <wa-icon slot="icon" name="eye-slash"></wa-icon>
-                Mark as read
+                {{ $t('session.actions.markRead') }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="canToggleReadState && !hasUnread" value="mark-unread">
                 <wa-icon slot="icon" name="eye"></wa-icon>
-                Mark as unread
+                {{ $t('session.actions.markUnread') }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral" :value="session.mute_on_user_turn ? 'unmute' : 'mute'">
                 <wa-icon slot="icon" :name="session.mute_on_user_turn ? 'bell' : 'bell-slash'"></wa-icon>
-                {{ session.mute_on_user_turn ? 'Unmute notifications' : 'Mute notifications' }}
+                {{ session.mute_on_user_turn ? $t('session.list.unmute') : $t('session.list.mute') }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="showTreeDetachEntry" :value="session.tree_detached ? 'attach-tree' : 'detach-tree'">
                 <wa-icon slot="icon" name="sitemap"></wa-icon>
-                {{ session.tree_detached ? 'Reattach to parent' : 'Detach from parent' }}
+                {{ session.tree_detached ? $t('session.list.reattach') : $t('session.list.detach') }}
             </wa-dropdown-item>
             <wa-dropdown-item v-if="!session.draft && !session.ephemeral && !session.archived" value="archive">
                 <wa-icon slot="icon" name="box-archive"></wa-icon>
@@ -811,22 +811,22 @@ function handleMenuSelect(event) {
             </wa-dropdown-item>
             <wa-dropdown-item v-if="session.archived" value="unarchive">
                 <wa-icon slot="icon" name="box-open"></wa-icon>
-                Unarchive
+                {{ $t('common.actions.unarchive') }}
             </wa-dropdown-item>
             <!-- Danger actions -->
             <template v-if="canStop || session.draft || session.ephemeral">
                 <wa-divider></wa-divider>
                 <wa-dropdown-item v-if="canInterrupt" value="interrupt">
                     <wa-icon slot="icon" name="circle-stop"></wa-icon>
-                    Interrupt the current turn
+                    {{ $t('session.list.interrupt') }}
                 </wa-dropdown-item>
                 <wa-dropdown-item v-if="canStop" value="stop" :disabled="stoppingProcess">
                     <wa-icon slot="icon" name="ban"></wa-icon>
-                    {{ stoppingProcess ? 'Stopping…' : `Stop the ${providerLabel} process` }}
+                    {{ stoppingProcess ? $t('session.list.stopping') : $t('session.process.stopProviderTooltip', { provider: providerLabel }) }}
                 </wa-dropdown-item>
                 <wa-dropdown-item v-if="session.draft || session.ephemeral" value="delete-draft" variant="danger">
                     <wa-icon slot="icon" name="trash"></wa-icon>
-                    Discard
+                    {{ $t('session.actions.discard') }}
                 </wa-dropdown-item>
             </template>
             <!-- Project actions, last: they leave the session untouched. Offered
@@ -842,7 +842,7 @@ function handleMenuSelect(event) {
                      projects, so the entry names it instead of relying on the
                      route. -->
                 <span class="menu-project-entry">
-                    Edit project
+                    {{ $t('session.list.editProject') }}
                     <span class="menu-project-badge">
                         <ProjectBadge :project-id="session.project_id" />…
                     </span>

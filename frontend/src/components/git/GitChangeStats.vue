@@ -26,22 +26,22 @@ const hasStats = computed(() => {
     <span v-if="hasStats" class="status-badges">
         <span v-if="stats.modified > 0" class="status-badge modified">
             <span class="status-count">{{ stats.modified }}</span>
-            <img :src="pencilIcon" class="status-icon" alt="modified">
+            <img :src="pencilIcon" class="status-icon" :alt="$t('git.changes.modified')">
         </span>
 
         <span v-if="stats.added > 0" class="status-badge added">
             <span class="status-count">{{ stats.added }}</span>
-            <img :src="plusIcon" class="status-icon" alt="added">
+            <img :src="plusIcon" class="status-icon" :alt="$t('git.changes.added')">
         </span>
 
         <span v-if="stats.deleted > 0" class="status-badge deleted">
             <span class="status-count">{{ stats.deleted }}</span>
-            <img :src="minusIcon" class="status-icon" alt="deleted">
+            <img :src="minusIcon" class="status-icon" :alt="$t('git.changes.deleted')">
         </span>
 
         <span v-if="stats.conflicted > 0" class="status-badge conflicted">
             <span class="status-count">{{ stats.conflicted }}</span>
-            <wa-icon name="triangle-exclamation" class="status-icon" label="conflicts"></wa-icon>
+            <wa-icon name="triangle-exclamation" class="status-icon" :label="$t('git.changes.conflicts')"></wa-icon>
         </span>
     </span>
 </template>

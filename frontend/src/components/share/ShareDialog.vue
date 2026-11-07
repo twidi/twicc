@@ -224,67 +224,64 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
         <form :id="formId" @submit.prevent="handleSave">
             <wa-callout v-if="error" variant="danger">{{ error }}</wa-callout>
             <wa-callout v-for="failure in inlineDataErrors" :key="failure.artifact_id" variant="warning">
-                Saved data export failed for {{ failure.artifact_id }}. The share keeps its last complete saved data.
+                {{ $t('sharing.edit.dataExportFailed', { artifactId: failure.artifact_id }) }}
             </wa-callout>
 
             <wa-callout v-if="!sharingEnabled" variant="warning">
-                No share host configured. Set one in Settings → Sharing before creating links.
+                {{ $t('sharing.edit.noHost') }}
             </wa-callout>
 
             <wa-callout variant="warning">
-                Anyone with the link can read this {{ isSession ? 'transcript' : 'artifact' }} as-is,
-                including file paths, commands and output. There is no redaction.
-                <HelpIconButton help-key="sharing" label="Learn about sharing" />
+                {{ isSession ? $t('sharing.edit.transcriptWarning') : $t('sharing.edit.artifactWarning') }}
+                <HelpIconButton help-key="sharing" :label="$t('sharing.edit.learn')" />
             </wa-callout>
 
-            <label>Label (private)
+            <label>{{ $t('sharing.edit.privateLabel') }}
                 <wa-input id="share-label-input" :value="form.label"
-                          @input="form.label = $event.target.value" placeholder="e.g. for Alice"></wa-input>
+                          @input="form.label = $event.target.value" :placeholder="$t('sharing.edit.labelPlaceholder')"></wa-input>
             </label>
 
-            <label>Title (shown to viewers)
+            <label>{{ $t('sharing.edit.viewerTitle') }}
                 <wa-input :value="form.display_title" @input="form.display_title = $event.target.value"
                           :placeholder="defaultTitle || 'Default title'"
                           :disabled="!form.show_title"></wa-input>
             </label>
             <wa-switch :checked="form.show_title"
                        @change.stop="form.show_title = $event.target.checked">
-                Show title <span class="switch-hint">— off shows viewers a generic label</span>
+                {{ $t('sharing.edit.showTitle') }} <span class="switch-hint">{{ $t('sharing.edit.showTitleHint') }}</span>
             </wa-switch>
 
             <template v-if="isSession">
-                <label>Snapshot / live
+                <label>{{ $t('sharing.edit.mode') }}
                     <wa-select :value="form.mode" @change.stop="form.mode = $event.target.value">
-                        <wa-option value="live">Live (follows the session)</wa-option>
-                        <wa-option value="snapshot">Snapshot (frozen now)</wa-option>
+                        <wa-option value="live">{{ $t('sharing.edit.live') }}</wa-option>
+                        <wa-option value="snapshot">{{ $t('sharing.edit.snapshot') }}</wa-option>
                     </wa-select>
                 </label>
-                <label>Max detail
+                <label>{{ $t('sharing.edit.maxDetail') }}
                     <wa-select :value="form.max_display_mode" @change.stop="form.max_display_mode = $event.target.value">
-                        <wa-option value="conversation">Conversation</wa-option>
-                        <wa-option value="simplified">Simplified</wa-option>
-                        <wa-option value="normal">Normal</wa-option>
-                        <wa-option value="debug">Debug (raw JSON)</wa-option>
+                        <wa-option value="conversation">{{ $t('sharing.edit.conversation') }}</wa-option>
+                        <wa-option value="simplified">{{ $t('sharing.edit.simplified') }}</wa-option>
+                        <wa-option value="normal">{{ $t('sharing.edit.normal') }}</wa-option>
+                        <wa-option value="debug">{{ $t('sharing.edit.debug') }}</wa-option>
                     </wa-select>
                 </label>
-                <wa-switch :checked="form.include_subagents" @change.stop="form.include_subagents = $event.target.checked">Include subagents</wa-switch>
-                <wa-switch :checked="form.include_inline_artifacts" @change.stop="form.include_inline_artifacts = $event.target.checked">Include inline artifacts</wa-switch>
-                <p v-if="form.include_inline_artifacts" class="net-hint">Includes inline artifact pages, their assets, and their saved data/ files. Visitors cannot modify the saved data.</p>
-                <wa-switch :checked="form.show_timestamps" @change.stop="form.show_timestamps = $event.target.checked">Show timestamps</wa-switch>
+                <wa-switch :checked="form.include_subagents" @change.stop="form.include_subagents = $event.target.checked">{{ $t('sharing.edit.subagents') }}</wa-switch>
+                <wa-switch :checked="form.include_inline_artifacts" @change.stop="form.include_inline_artifacts = $event.target.checked">{{ $t('sharing.edit.inlineArtifacts') }}</wa-switch>
+                <p v-if="form.include_inline_artifacts" class="net-hint">{{ $t('sharing.edit.inlineArtifactsHint') }}</p>
+                <wa-switch :checked="form.show_timestamps" @change.stop="form.show_timestamps = $event.target.checked">{{ $t('sharing.edit.timestamps') }}</wa-switch>
             </template>
 
             <template v-else-if="isHtmlArtifact">
                 <p class="net-hint">
-                    The snapshot includes any files the artifact saved under its data/ folder.
+                    {{ $t('sharing.edit.snapshotData') }}
                 </p>
                 <wa-callout v-if="allowedHostList.length" variant="neutral">
-                    Viewers will be able to reach these hosts (already allowed on this artifact):
+                    {{ $t('sharing.edit.allowedHosts') }}
                     <ul><li v-for="h in allowedHostList" :key="h"><code>{{ h }}</code></li></ul>
                 </wa-callout>
                 <wa-callout v-if="promotableHosts.length" variant="warning">
-                    These hosts are allowed only for your current session — viewers won't reach
-                    them unless you allow them on this artifact. Checked hosts are saved
-                    permanently when the link is created:
+                    {{ $t('sharing.edit.promoteHosts') }}
                     <ul class="promote-list">
                         <li v-for="[h] in promotableHosts" :key="h">
                             <wa-checkbox :checked="promote[h]"
@@ -300,20 +297,18 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
                      quiet one-liner when some hosts already are. -->
                 <wa-callout v-if="!edit && !allowedHostList.length && !promotableHosts.length"
                             variant="neutral">
-                    No network access is allowed on this artifact — any request it makes
-                    will be refused for viewers. If it needs the network, manage its
-                    allowed hosts from the bookmark settings.
+                    {{ $t('sharing.edit.noNetwork') }}
                 </wa-callout>
                 <p v-else-if="!edit" class="net-hint">
-                    Requests to hosts not listed above will be refused for viewers.
+                    {{ $t('sharing.edit.unlistedHosts') }}
                 </p>
                 <p class="net-hint">
-                    Network access (allowed and refused hosts) is managed in the bookmark settings.
-                    <wa-button size="small" appearance="outlined" @click="openBookmarkDialog">Manage network access…</wa-button>
+                    {{ $t('sharing.edit.networkHint') }}
+                    <wa-button size="small" appearance="outlined" @click="openBookmarkDialog">{{ $t('sharing.edit.manageNetwork') }}</wa-button>
                 </p>
             </template>
 
-            <label>Password (optional)
+            <label>{{ $t('sharing.edit.password') }}
                 <div class="password-row">
                     <wa-input type="password" :value="form.password"
                               @input="onPasswordInput"
@@ -324,21 +319,21 @@ function onHide(e) { if (e.target === dialogRef.value) emit('close') }
                         <wa-icon :name="removePassword ? 'arrow-rotate-left' : 'xmark'"></wa-icon>
                     </wa-button>
                     <AppTooltip v-if="form.password || edit?.has_password" :for="clearPwId">
-                        {{ form.password ? 'Clear' : (removePassword ? 'Keep the password' : 'Remove the password') }}
+                        {{ form.password ? $t('sharing.edit.clear') : (removePassword ? $t('sharing.edit.keepPassword') : $t('sharing.edit.removePassword')) }}
                     </AppTooltip>
                 </div>
             </label>
-            <label>Expires (optional)
+            <label>{{ $t('sharing.edit.expires') }}
                 <wa-input type="datetime-local" :value="form.expires_at"
                           @input="form.expires_at = $event.target.value"></wa-input>
             </label>
-            <wa-switch :checked="form.notify_on_view" @change.stop="form.notify_on_view = $event.target.checked">Notify me when viewed</wa-switch>
+            <wa-switch :checked="form.notify_on_view" @change.stop="form.notify_on_view = $event.target.checked">{{ $t('sharing.edit.notify') }}</wa-switch>
 
         </form>
         <div slot="footer" class="dialog-footer">
-            <wa-button v-if="linkUrl" class="copy-link" @click="copyUrl"><wa-icon slot="start" name="copy"></wa-icon>Copy link</wa-button>
-            <wa-button @click="emit('close')">Close</wa-button>
-            <wa-button ref="submitBtnRef" type="submit" variant="brand" :form="formId" :disabled="!sharingEnabled">{{ edit ? 'Save' : 'Create link' }}</wa-button>
+            <wa-button v-if="linkUrl" class="copy-link" @click="copyUrl"><wa-icon slot="start" name="copy"></wa-icon>{{ $t('sharing.edit.copyLink') }}</wa-button>
+            <wa-button @click="emit('close')">{{ $t('common.actions.close') }}</wa-button>
+            <wa-button ref="submitBtnRef" type="submit" variant="brand" :form="formId" :disabled="!sharingEnabled">{{ edit ? $t('common.actions.save') : $t('sharing.edit.createLink') }}</wa-button>
         </div>
         <ArtifactBookmarkDialog v-if="kind === 'artifact'" ref="bookmarkDialogRef" hide-share-entry />
     </wa-dialog>

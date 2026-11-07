@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createAppI18n } from '../../i18n/index.js'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
@@ -22,7 +23,7 @@ async function render(android, permission) {
         compilerOptions:{ mode:'function', isCustomElement:tag => tag.startsWith('wa-') } })
     assert.deepEqual(compiled.errors, [])
     const template = runInNewContext(`(function(){${compiled.code}})()`, { Vue })
-    const app = Vue.createSSRApp({ render:template, data:() => ctx })
+    const app = Vue.createSSRApp({ render:template, data:() => ctx }).use(createAppI18n())
     app.config.warnHandler = () => {}
     return renderToString(app)
 }

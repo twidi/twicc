@@ -127,7 +127,7 @@ const cssVars = computed(() => ({
             v-if="showHeaders"
             class="title"
           >
-            Branch / Tag
+            {{ $t('git.log.branchTag') }}
           </div>
 
           <slot name="tags" />
@@ -138,7 +138,7 @@ const cssVars = computed(() => ({
             v-if="showHeaders"
             class="title"
           >
-            Graph
+            {{ $t('git.log.graph') }}
           </div>
 
           <slot name="graph" />

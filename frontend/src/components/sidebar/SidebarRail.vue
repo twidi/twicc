@@ -314,7 +314,7 @@ async function stopSpeech() {
                                     <wa-icon v-else-if="child.hasUnread" name="eye" class="rail-unread" />
                                 </button>
                                 <div v-if="row.activeDescendants.length > RAIL_PREVIEW_MAX_DESCENDANTS" class="rail-preview-more">
-                                    +{{ row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS }} more
+                                    {{ $t('navigation.rail.moreDescendants', { count: row.activeDescendants.length - RAIL_PREVIEW_MAX_DESCENDANTS }) }}
                                 </div>
                             </template>
                         </div>

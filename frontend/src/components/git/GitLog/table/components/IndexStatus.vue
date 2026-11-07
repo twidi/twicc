@@ -26,7 +26,7 @@ const { indexStatus } = useGitContext()
       </span>
 
       <div class="iconWrapper">
-        <img :src="pencilIcon" class="pencil" alt="modified">
+        <img :src="pencilIcon" class="pencil" :alt="$t('git.index.status.modified')">
       </div>
     </div>
 
@@ -39,7 +39,7 @@ const { indexStatus } = useGitContext()
       </span>
 
       <div class="iconWrapper">
-        <img :src="plusIcon" class="plus" alt="added">
+        <img :src="plusIcon" class="plus" :alt="$t('git.index.status.added')">
       </div>
     </div>
 
@@ -52,7 +52,7 @@ const { indexStatus } = useGitContext()
       </span>
 
       <div class="iconWrapper">
-        <img :src="minusIcon" class="minus" alt="deleted">
+        <img :src="minusIcon" class="minus" :alt="$t('git.index.status.deleted')">
       </div>
     </div>
   </div>

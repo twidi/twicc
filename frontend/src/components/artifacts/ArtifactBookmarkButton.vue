@@ -167,9 +167,9 @@ defineExpose({
         class="bookmark-button reduced-height"
         @click.stop="viewInArtifacts"
     >
-        <wa-icon :name="ARTIFACT_ICON" label="Open in the artifacts list"></wa-icon>
+        <wa-icon :name="ARTIFACT_ICON" :label="$t('artifacts.bookmarks.openInList')"></wa-icon>
     </wa-button>
-    <AppTooltip v-if="bookmark" :for="viewButtonId">Open in the artifacts list</AppTooltip>
+    <AppTooltip v-if="bookmark" :for="viewButtonId">{{ $t('artifacts.bookmarks.openInList') }}</AppTooltip>
     <wa-button
         v-if="bookmark"
         :id="sessionButtonId"
@@ -179,9 +179,9 @@ defineExpose({
         class="bookmark-button reduced-height"
         @click.stop="openInSession"
     >
-        <wa-icon name="house" label="Open in session"></wa-icon>
+        <wa-icon name="house" :label="$t('artifacts.bookmarks.openInSession')"></wa-icon>
     </wa-button>
-    <AppTooltip v-if="bookmark" :for="sessionButtonId">Open in session</AppTooltip>
+    <AppTooltip v-if="bookmark" :for="sessionButtonId">{{ $t('artifacts.bookmarks.openInSession') }}</AppTooltip>
     <!-- Keep the bookmark toggle before Share. When sharing is unavailable it
          remains the right-most button and receives the host's positioning attrs. -->
     <wa-button
@@ -195,7 +195,7 @@ defineExpose({
             'bookmark-button--attention': pendingCount > 0 }]"
         @click.stop="openDialog"
     >
-        <wa-icon name="bookmark" :variant="bookmark ? 'solid' : 'regular'" label="Bookmark"></wa-icon>
+        <wa-icon name="bookmark" :variant="bookmark ? 'solid' : 'regular'" :label="$t('artifacts.bookmarks.bookmark')"></wa-icon>
     </wa-button>
     <AppTooltip :for="buttonId">{{ bookmarkTooltip }}</AppTooltip>
     <!-- Share this artifact only when a share host is configured. It is last in
@@ -212,7 +212,7 @@ defineExpose({
             'bookmark-button--attention': outdatedShareCount > 0 }]"
         @click.stop="shareArtifact"
     >
-        <wa-icon name="share-nodes" label="Share artifact"></wa-icon>
+        <wa-icon name="share-nodes" :label="$t('artifacts.sharing.share')"></wa-icon>
     </wa-button>
     <AppTooltip v-if="sharingEnabled" :for="shareButtonId">{{ shareTooltip }}</AppTooltip>
     <ArtifactBookmarkDialog

@@ -321,30 +321,30 @@ onUnmounted(() => {
                 <strong>{{ meta.title || 'Shared session' }}</strong>
             </div>
             <wa-button id="share-menu-trigger" size="small" appearance="plain" class="share-menu-button">
-                <wa-icon name="bars" label="View options"></wa-icon>
+                <wa-icon name="bars" :label="$t('sharing.session.viewOptions')"></wa-icon>
             </wa-button>
             <wa-popover for="share-menu-trigger" placement="bottom-end" class="share-menu">
                 <div class="share-menu-content">
-                    <label class="share-menu-field">Detail level
+                    <label class="share-menu-field">{{ $t('sharing.session.detailLevel') }}
                         <wa-select size="small" :value="settings.displayMode"
                                    @change.stop="settings.setDisplayMode($event.target.value)">
                             <wa-option v-for="m in displayModes" :key="m" :value="m">{{ capitalize(m) }}</wa-option>
                         </wa-select>
                     </label>
                     <wa-switch size="small" :checked="settings.areMessageTimestampsShown"
-                               @change.stop="settings.setMessageTimestampsShown($event.target.checked)">Show timestamps</wa-switch>
+                               @change.stop="settings.setMessageTimestampsShown($event.target.checked)">{{ $t('sharing.session.showTimestamps') }}</wa-switch>
                     <!-- Above: per-share view options. Below: the viewer's own -->
                     <!-- persisted preferences (carry across every share). -->
                     <wa-divider></wa-divider>
-                    <label class="share-menu-field">Color scheme
+                    <label class="share-menu-field">{{ $t('settings.general.colorScheme.label') }}
                         <wa-select size="small" :value="settings._colorScheme"
                                    @change.stop="settings.setColorScheme($event.target.value)">
-                            <wa-option value="system">System</wa-option>
-                            <wa-option value="light">Light</wa-option>
-                            <wa-option value="dark">Dark</wa-option>
+                            <wa-option value="system">{{ $t('settings.general.colorScheme.system') }}</wa-option>
+                            <wa-option value="light">{{ $t('settings.general.colorScheme.light') }}</wa-option>
+                            <wa-option value="dark">{{ $t('settings.general.colorScheme.dark') }}</wa-option>
                         </wa-select>
                     </label>
-                    <label class="share-menu-field">Font size ({{ settings.getFontSize }}px)
+                    <label class="share-menu-field">{{ $t('sharing.session.fontSize', { size: settings.getFontSize }) }}
                         <wa-slider size="small" :min.prop="12" :max.prop="32" :step.prop="1"
                                    :value.prop="settings.getFontSize"
                                    @input.stop="settings.setFontSize($event.target.value)"></wa-slider>
@@ -354,11 +354,11 @@ onUnmounted(() => {
         </header>
 
         <wa-callout v-if="revoked" variant="warning" class="share-banner">
-            This share is no longer available.
+            {{ $t('sharing.session.unavailable') }}
         </wa-callout>
 
         <wa-callout v-else-if="!ready" variant="neutral" class="share-banner">
-            This shared session is being prepared. Refresh this page later.
+            {{ $t('sharing.session.preparing') }}
         </wa-callout>
 
         <ShareItemsList
