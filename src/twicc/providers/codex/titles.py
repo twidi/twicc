@@ -60,7 +60,8 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
     ``run_compute_sync`` inside :func:`db_writer._settle_async_job`. Reads
     the Codex sessions named in the map, updates the rows whose title
     actually differs, and returns them serialised for ``session_updated``.
-    Only conditional NULL transitions stamp the automatic origin.
+    Only conditional NULL transitions stamp the automatic origin. A user title
+    is never replaced.
     """
     from twicc.core.models import Session
     from twicc.core.serializers import serialize_session
@@ -73,6 +74,9 @@ def _apply_sync_session_titles_job(job: SyncSessionTitlesJob) -> list[dict]:
         changed: list = []
         for session in sessions:
             new_title = job.titles.get(session.id)
+            # Codex derives thread names by itself: a person's title stays.
+            if session.title_origin == "user" and session.title:
+                continue
             if new_title and session.title != new_title:
                 stamped = Session.objects.filter(id=session.id, title__isnull=True).update(
                     title=new_title, title_origin="auto",

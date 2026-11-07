@@ -117,12 +117,24 @@ def test_provider_writes_preserve_existing_origin(session, origin, old_title, wr
     Session.objects.filter(id=session.id).update(title=old_title, title_origin=origin, provider=Provider.CODEX)
     if writer == "codex_import":
         changed = _apply_sync_session_titles_job(SyncSessionTitlesJob({session.id: "Same"}, None))
-        assert len(changed) == (old_title != "Same")
+        rejected = origin == "user" and old_title == "Other"
+        assert len(changed) == (old_title != "Same" and not rejected)
         if changed:
             assert changed[0]["title_origin"] == ("auto" if old_title is None else origin)
+        if rejected:
+            session.refresh_from_db()
+            assert (session.title, session.title_origin) == ("Other", "user")
+            return
     elif writer == "base":
         BaseSessionCompute.apply_session_title(get_compute(), session.id, "Same")
     else:
         get_compute().apply_session_title(session.id, "Same")
     session.refresh_from_db()
     assert (session.title, session.title_origin) == ("Same", "auto" if old_title is None else origin)
+
+
+def test_codex_import_records_nothing_for_a_rejected_title(session):
+    from twicc.core.models import TimelineEvent
+    Session.objects.filter(id=session.id).update(title="Toto", title_origin="user", provider=Provider.CODEX)
+    assert _apply_sync_session_titles_job(SyncSessionTitlesJob({session.id: "First message"}, None)) == []
+    assert not TimelineEvent.objects.filter(session_id=session.id, kind="title.changed").exists()

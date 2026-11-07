@@ -56,7 +56,7 @@ def managed(monkeypatch):
     coordinator = TitleSyncCoordinator()
     monkeypatch.setattr(publication, '_coordinator', coordinator)
     session = Session.objects.create(id='s', provider=Provider.CLAUDE_CODE,
-                                    project=Project.objects.create(id='p'), title='B', title_origin='user')
+                                    project=Project.objects.create(id='p'), title='B', title_origin='auto')
     with publication.title_state_transaction():
         publication.attach_claude_process_locked('s', 'process', hybrid=False)
         session.refresh_from_db()

@@ -515,9 +515,74 @@ def apply_claude_observations_locked(records: tuple[TitleObservation, ...]) -> t
     return tuple(dict.fromkeys(changed))
 
 
+def _same_title(left: str, right: str) -> bool:
+    """Compare titles as the provider and the title validators can rewrite spacing."""
+    return left.split() == right.split()
+
+
+def _accept_created_title_locked(session_id: str, title: str) -> None:
+    """Complete a pending creation title in this transaction, without a new decision.
+
+    The provider already holds the title. The pending entry, not the transcript,
+    proves that a person chose it. The entry ends only after the origin commits.
+    """
+    from django.db import transaction
+    from twicc.core.models import Session
+    from twicc.core.services.session_timeline import record_title_change
+    from twicc.pending_titles import get_pending_title_origin, pop_pending_title
+
+    old_title, old_origin = Session.objects.filter(pk=session_id).values_list('title', 'title_origin').get()
+    Session.objects.filter(pk=session_id).update(title=title, title_origin='user')
+    if old_title != title:
+        record_title_change(session_id, title, source='user', old=old_title, old_origin=old_origin,
+                            origin=get_pending_title_origin(session_id))
+    transaction.on_commit(lambda: pop_pending_title(session_id))
+
+
+def _enforce_user_title_locked(session_id: str, title: str) -> None:
+    """Send the accepted user title back to a process that reports another one."""
+    from django.db import transaction
+    from .title_control import can_publish_existing_title
+
+    # A title the CLI rewrites would come back as a difference on every persist.
+    if can_publish_existing_title(title):
+        decision = get_title_coordinator().accept_decision(session_id, title)
+        transaction.on_commit(lambda: request_publication(decision))
+
+
+def _apply_provider_title_locked(record: TitleObservation) -> bool:
+    """Apply one admitted title. Return whether the session row changes.
+
+    Only a person chooses a protected title: at creation, through UI, CLI or MCP,
+    or with a terminal ``/rename``. A live process cannot replace it with a bare
+    ``custom-title``. An inactive session keeps the import of external changes.
+    """
+    from django.db import transaction
+    from twicc.core.models import Session
+    from twicc.pending_titles import get_pending_title, pop_pending_title
+    from twicc.providers.compute_base import BaseSessionCompute
+
+    session_id = record.target_session_id
+    explicit = record.kind == 'command_success'
+    if get_title_coordinator().manages(session_id):
+        pending = get_pending_title(session_id)
+        if pending is not None:
+            if explicit or _same_title(pending, record.title):
+                _accept_created_title_locked(session_id, record.title)
+                return True
+            # The pending flush accepts and republishes the created title.
+            return False
+        row = Session.objects.filter(pk=session_id).values('title', 'title_origin', 'stale').first()
+        if (not explicit and row is not None and row['title_origin'] == 'user' and row['title']
+                and not row['stale'] and not _same_title(row['title'], record.title)):
+            _enforce_user_title_locked(session_id, row['title'])
+            return False
+    transaction.on_commit(lambda: pop_pending_title(session_id))
+    return BaseSessionCompute._write_provider_title(session_id, record.title)
+
+
 def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[str, ...]:
     """Apply observer/ACK output and bounded stored replay in the same transaction."""
-    from twicc.providers.compute_base import BaseSessionCompute
     from twicc.core.content_storage.readers import effective_current, iter_current_items
     from twicc.core.models import Session, SessionItem
     from .compute import get_compute
@@ -528,12 +593,8 @@ def apply_claude_observation_result_locked(result: ObservationResult) -> tuple[s
     replayed = {}
     def write_applied(current):
         for record in current.apply:
-            if record.title is not None:
-                from django.db import transaction
-                from twicc.pending_titles import pop_pending_title
-                transaction.on_commit(lambda sid=record.target_session_id: pop_pending_title(sid))
-                if BaseSessionCompute._write_provider_title(record.target_session_id, record.title):
-                    changed[record.target_session_id] = None
+            if record.title is not None and _apply_provider_title_locked(record):
+                changed[record.target_session_id] = None
     while pending:
         current = pending.popleft()
         write_applied(current)

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import orjson
 import pytest
+from asgiref.sync import sync_to_async
 from django.db import transaction
 
 from tests.db_write_helpers import run_with_writer
@@ -631,7 +632,7 @@ def test_replaced_source_rejects_old_ack_and_keeps_unrelated_metadata(setup, rep
                 Session.objects.filter(pk=row.id).update(**updates)
                 current = Session.objects.get(pk=row.id)
                 fresh = TitleObservation(SourceCursor(row.id, current.storage_incarnation, current.history_epoch, 2),
-                    row.id, 'title', 'E', None, None)
+                    row.id, 'command_success', 'E', None, None)
                 publication.apply_claude_observations_locked((fresh,))
                 publication.acknowledge_claude_title_locked(accepted.decision, True, old)
                 BaseSessionCompute.apply_session_complete({'session_id': row.id, 'history_facts': [],
@@ -654,7 +655,10 @@ def test_sql_rollback_replays_manual_title_event_exactly_once(setup, rollback_at
         worker = manager._ensure_title_publications()
         try:
             await manager._attach_title_process(agent())
-            accepted = await accept_explicit_title(row.id, 'D')
+            # A bare provider title replaces only an automatic title.
+            from twicc.providers.db_writer import run_under_db_write_lock
+            accepted = await with_title_boundary(row.id, lambda: run_under_db_write_lock(
+                lambda: accept_title_locked(row.id, 'D', source='auto')))
             stored = await Session.objects.aget(pk=row.id)
             cursor = SourceCursor(row.id, stored.storage_incarnation, stored.history_epoch, 1)
             await manager._title_lane(lambda: worker.coordinator.start_dispatch(accepted.decision, cursor))
@@ -827,6 +831,259 @@ def test_resume_publishes_exact_existing_title_without_reclassification(setup, m
             assert worker.coordinator.current_decision(row.id) is None
             assert prompts == ['first prompt']
             assert await manager._title_lane(lambda: TimelineEvent.objects.filter(session_id=row.id, kind='title.changed').count()) == before
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def publish_as_cli(monkeypatch, path):
+    """Answer the control request like the CLI: it appends the title it accepted."""
+    sent = []
+    async def control(client, sid, value, **kwargs):
+        sent.append(value)
+        append(path, title(value))
+    monkeypatch.setattr(publication, 'rename_running_session', control)
+    return sent
+
+
+async def start_created_session(manager, worker, row, path, chosen):
+    """Reach the state of a creation: the process owns the title, the row is still missing."""
+    from twicc.pending_titles import set_pending_title
+    current = agent()
+    await sync_to_async(Session.objects.filter(pk=row.id).delete)()
+    set_pending_title(row.id, chosen)
+    path.unlink(missing_ok=True)
+    await manager._attach_title_process(current)
+    await manager._title_process_ready(current)
+    assert await worker.flush_publications(row.id, timeout=3)
+    assert await manager._try_flush_pending_title(current, chosen) is False
+    return current
+
+
+def automatic_generation_allowed(row):
+    from twicc.core.services.title_automation import _is_eligible
+    return _is_eligible(Session.objects.get(pk=row.id), closing=False)
+
+
+def test_created_title_becomes_a_user_title_from_its_provider_echo(setup, monkeypatch):
+    row, path, watcher = setup
+    from twicc.pending_titles import get_pending_title, pop_pending_title
+    sent = publish_as_cli(monkeypatch, path)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            current = await start_created_session(manager, worker, row, path, 'Toto')
+            await watcher.process_path(path)
+            assert not await sync_to_async(automatic_generation_allowed)(row)
+            # The CLI re-appends its title each time it persists its metadata.
+            append(path, title('Toto'))
+            await manager._ingest_title_available(row.id)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Toto', 'user')
+            assert get_pending_title(row.id) is None
+            assert not await sync_to_async(automatic_generation_allowed)(row)
+            # The flush retry finds nothing left to do and publishes nothing.
+            assert await manager._try_flush_pending_title(current, 'Toto')
+            assert worker.coordinator.current_decision(row.id) is None
+            assert sent == ['Toto']
+            assert [(event['source'], event['new']) for event in await events(manager)] == [('user', 'Toto')]
+        finally:
+            pop_pending_title(row.id)
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_flush_after_the_first_echo_still_makes_a_user_title(setup, monkeypatch):
+    row, path, watcher = setup
+    from twicc.pending_titles import get_pending_title, pop_pending_title
+    publish_as_cli(monkeypatch, path)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            current = await start_created_session(manager, worker, row, path, 'Toto')
+            await watcher.process_path(path)
+            await manager._flush_pending_title(current)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Toto', 'user')
+            assert get_pending_title(row.id) is None
+        finally:
+            pop_pending_title(row.id)
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_harness_title_during_creation_loses_to_the_created_title(setup, monkeypatch):
+    row, path, watcher = setup
+    from twicc.pending_titles import get_pending_title, pop_pending_title
+    sent = publish_as_cli(monkeypatch, path)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            current = await start_created_session(manager, worker, row, path, 'Toto')
+            await watcher.process_path(path)
+            append(path, title('Harness'))
+            await manager._ingest_title_available(row.id)
+            assert (await Session.objects.aget(pk=row.id)).title != 'Harness'
+            assert get_pending_title(row.id) == 'Toto'
+            assert not await sync_to_async(automatic_generation_allowed)(row)
+            assert await manager._try_flush_pending_title(current, 'Toto')
+            assert await worker.flush_publications(row.id, timeout=3)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Toto', 'user')
+            assert sent == ['Toto', 'Toto']
+        finally:
+            pop_pending_title(row.id)
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_terminal_rename_during_creation_wins_and_stays_protected(setup, monkeypatch):
+    row, path, watcher = setup
+    from twicc.pending_titles import get_pending_title, pop_pending_title
+    publish_as_cli(monkeypatch, path)
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            current = await start_created_session(manager, worker, row, path, 'Toto')
+            await watcher.process_path(path)
+            append(path, *rename('Manual'))
+            await manager._ingest_title_available(row.id)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Manual', 'user')
+            assert get_pending_title(row.id) is None
+            assert await manager._try_flush_pending_title(current, 'Toto')
+            assert (await Session.objects.aget(pk=row.id)).title == 'Manual'
+        finally:
+            pop_pending_title(row.id)
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+async def live_session_with_user_title(manager, worker, row, sent, chosen):
+    current = agent()
+    await manager._attach_title_process(current)
+    await manager._title_process_ready(current)
+    assert await worker.flush_publications(row.id, timeout=3)
+    sent.clear()  # Resume publishes the stored title. This test starts after that.
+    await accept_explicit_title(row.id, chosen)
+    assert await worker.flush_publications(row.id, timeout=3)
+    assert worker.coordinator.current_decision(row.id) is None
+    return current
+
+
+def test_harness_title_on_a_user_title_is_rejected_and_republished(setup, monkeypatch):
+    row, path, watcher = setup
+    sent = publish_as_cli(monkeypatch, path)
+    append(path, title('B'))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            await live_session_with_user_title(manager, worker, row, sent, 'Toto')
+            append(path, title('Harness'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Toto', 'user')
+            assert sent == ['Toto', 'Toto']
+            assert [event['new'] for event in await events(manager)] == ['Toto']
+            assert worker.coordinator.current_decision(row.id) is None
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_user_rename_after_a_rejected_harness_title_is_enforced_in_turn(setup, monkeypatch):
+    row, path, watcher = setup
+    sent = publish_as_cli(monkeypatch, path)
+    append(path, title('B'))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            await live_session_with_user_title(manager, worker, row, sent, 'Toto')
+            append(path, title('Harness'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            await accept_explicit_title(row.id, 'Renamed')
+            assert await worker.flush_publications(row.id, timeout=3)
+            append(path, title('Toto'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Renamed', 'user')
+            assert sent[-1] == 'Renamed'
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_terminal_rename_on_a_user_title_is_accepted(setup, monkeypatch):
+    row, path, watcher = setup
+    sent = publish_as_cli(monkeypatch, path)
+    append(path, title('B'))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            await live_session_with_user_title(manager, worker, row, sent, 'Toto')
+            append(path, *rename('Manual'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            assert (await Session.objects.aget(pk=row.id)).title == 'Manual'
+            assert sent == ['Toto']
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_provider_title_on_an_automatic_title_is_still_adopted(setup, monkeypatch):
+    row, path, watcher = setup
+    sent = publish_as_cli(monkeypatch, path)
+    append(path, title('B'))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            current = agent()
+            await manager._attach_title_process(current)
+            await manager._title_process_ready(current)
+            assert await worker.flush_publications(row.id, timeout=3)
+            sent.clear()
+            append(path, title('Harness'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            stored = await Session.objects.aget(pk=row.id)
+            assert (stored.title, stored.title_origin) == ('Harness', 'auto')
+            assert sent == []
+        finally:
+            await close(worker, watcher)
+    run_with_writer(scenario)
+
+
+def test_user_title_the_cli_cannot_retain_is_kept_without_a_publication_loop(setup, monkeypatch):
+    row, path, watcher = setup
+    sent = publish_as_cli(monkeypatch, path)
+    append(path, title('B'))
+    async def scenario():
+        manager = ClaudeCodeAgentManager()
+        worker = manager._ensure_title_publications()
+        try:
+            await manager._ingest_title_available(row.id)
+            await sync_to_async(Session.objects.filter(pk=row.id).update)(title='Legacy\x07title', title_origin='user')
+            current = agent()
+            await manager._attach_title_process(current)
+            await manager._title_process_ready(current)
+            sent.clear()
+            append(path, title('Legacy title'))
+            await manager._ingest_title_available(row.id)
+            assert await worker.flush_publications(row.id, timeout=3)
+            assert (await Session.objects.aget(pk=row.id)).title == 'Legacy\x07title'
+            assert sent == []
         finally:
             await close(worker, watcher)
     run_with_writer(scenario)
