@@ -27,8 +27,9 @@ import {
     processStateTooltip,
     userTurnBackgroundShellCount,
 } from '../../../utils/backgroundWork'
-import { markSessionReadState, cancelSessionViewedThrottle } from '../../../composables/useWebSocket'
+import { markSessionReadState, cancelSessionViewedThrottle, interruptSession } from '../../../composables/useWebSocket'
 import { stopSessionProcess } from '../../../composables/useStopSessionProcess'
+import { toggleSessionMute } from '../../../composables/useSessionMute'
 import { useDragHover } from '../../../composables/useDragHover'
 import ProjectBadge from '../../project/ProjectBadge.vue'
 import ProjectMark from '../../project/ProjectMark.vue'
@@ -39,7 +40,7 @@ import CostDisplay from '../../ui/CostDisplay.vue'
 import AppTooltip from '../../ui/AppTooltip.vue'
 import LazyRowMenu from '../../ui/LazyRowMenu.vue'
 import ScrollableText from '../../ui/ScrollableText.vue'
-import { getProviderLabel, getProviderIcon } from '../../../providers'
+import { getProviderHelpers, getProviderLabel, getProviderIcon } from '../../../providers'
 import ProviderIcon from '../../ui/ProviderIcon.vue'
 
 const props = defineProps({
@@ -377,6 +378,18 @@ const canStop = computed(() => {
 // Stopping state, shared across all UIs via the store.
 const stoppingProcess = computed(() => store.isSessionStopping(props.session.id))
 
+/**
+ * Whether the current turn can be interrupted in place (session stays alive).
+ * Same rule as the session header: a real process in ASSISTANT_TURN, on a
+ * provider that wired the soft-interrupt hook.
+ */
+const canInterrupt = computed(() => {
+    const s = props.session
+    const ps = processState.value
+    if (s.ephemeral || !ps || ps.synthetic || ps.state !== PROCESS_STATE.ASSISTANT_TURN) return false
+    return !!getProviderHelpers(s.provider)?.canInterruptTurn()
+})
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Link href for native "open in new tab" support
 // ═══════════════════════════════════════════════════════════════════════════
@@ -471,6 +484,10 @@ function handleMenuSelect(event) {
         window.dispatchEvent(new CustomEvent('twicc:open-share-dialog', {
             detail: { sessionId: session.id },
         }))
+    } else if (action === 'mute' || action === 'unmute') {
+        toggleSessionMute(session.id)
+    } else if (action === 'interrupt') {
+        if (canInterrupt.value) interruptSession(session.id)
     } else if (action === 'stop') {
         if (!stoppingProcess.value) stopSessionProcess(session.id)
     } else if (action === 'delete-draft') {
@@ -780,6 +797,10 @@ function handleMenuSelect(event) {
                 <wa-icon slot="icon" name="eye"></wa-icon>
                 Mark as unread
             </wa-dropdown-item>
+            <wa-dropdown-item v-if="!session.draft && !session.ephemeral" :value="session.mute_on_user_turn ? 'unmute' : 'mute'">
+                <wa-icon slot="icon" :name="session.mute_on_user_turn ? 'bell' : 'bell-slash'"></wa-icon>
+                {{ session.mute_on_user_turn ? 'Unmute notifications' : 'Mute notifications' }}
+            </wa-dropdown-item>
             <wa-dropdown-item v-if="showTreeDetachEntry" :value="session.tree_detached ? 'attach-tree' : 'detach-tree'">
                 <wa-icon slot="icon" name="sitemap"></wa-icon>
                 {{ session.tree_detached ? 'Reattach to parent' : 'Detach from parent' }}
@@ -795,6 +816,10 @@ function handleMenuSelect(event) {
             <!-- Danger actions -->
             <template v-if="canStop || session.draft || session.ephemeral">
                 <wa-divider></wa-divider>
+                <wa-dropdown-item v-if="canInterrupt" value="interrupt">
+                    <wa-icon slot="icon" name="circle-stop"></wa-icon>
+                    Interrupt the current turn
+                </wa-dropdown-item>
                 <wa-dropdown-item v-if="canStop" value="stop" :disabled="stoppingProcess">
                     <wa-icon slot="icon" name="ban"></wa-icon>
                     {{ stoppingProcess ? 'Stopping…' : `Stop the ${providerLabel} process` }}
