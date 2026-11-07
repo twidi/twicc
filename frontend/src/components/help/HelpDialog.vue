@@ -10,22 +10,20 @@
 // it shows by default. When shown, leaving it on at close marks the page
 // seen (it won't auto-open again) and turning it off keeps it in rotation;
 // when hidden, the seen-state is left untouched.
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useHelpStore } from '../../stores/help'
 import { renderMarkdown } from '../../utils/markdown'
-import { stripFrontMatter } from '../../utils/frontMatter'
-import { resolvePublicAssetUrl } from '../../utils/publicAsset'
+import { createLocalizedContentLoader } from '../../utils/localizedContent.js'
+import { useLocalizedContentBody } from '../../composables/useLocalizedContentBody.js'
 import { rewriteAssetUrls } from '../../utils/contentAssets'
 import { handleHelpLinkClick } from '../../utils/helpLinks'
 
 const helpStore = useHelpStore()
+const { locale } = useI18n()
 
 const dialogRef = ref(null)
-const bodyHtml = ref('')
-const loading = ref(false)
-const errored = ref(false)
 const dontShowAgain = ref(true)
-const bodyCache = new Map()
 
 const currentKey = computed(() => helpStore.currentHelpKey)
 const meta = computed(() => (currentKey.value ? helpStore.manifest[currentKey.value] : null))
@@ -33,38 +31,12 @@ const title = computed(() => meta.value?.title || '')
 // The switch visibility is a per-call decision carried by the store.
 const showSwitch = computed(() => helpStore.currentHelpShowSwitch)
 
-async function loadBody(key) {
-    // In dev, always re-fetch so on-disk edits to a help .md show on every
-    // open. This dialog is a singleton, so its bodyCache would otherwise
-    // persist a page's HTML for the whole app session (unlike tip toasts,
-    // which re-mount per toast). In prod the cache avoids redundant fetches.
-    if (!import.meta.env.DEV && bodyCache.has(key)) {
-        bodyHtml.value = bodyCache.get(key)
-        loading.value = false
-        errored.value = false
-        return
-    }
-    loading.value = true
-    errored.value = false
-    try {
-        const r = await fetch(resolvePublicAssetUrl(`help/${key}.md`))
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const raw = await r.text()
-        const body = stripFrontMatter(raw)
-        // Help pages are authored with soft line wraps for source
-        // readability; render with CommonMark paragraph behavior (soft wrap
-        // -> space) rather than the chat-style breaks: true.
-        const html = await renderMarkdown(body, { softBreakAsSpace: true })
-        const finalHtml = rewriteAssetUrls(html, { folder: 'help' })
-        bodyCache.set(key, finalHtml)
-        bodyHtml.value = finalHtml
-    } catch (e) {
-        console.error('Failed to load help', key, e)
-        errored.value = true
-    } finally {
-        loading.value = false
-    }
-}
+const loadMarkdown = createLocalizedContentLoader('help')
+const { bodyHtml, contentLocale, loading, errored } = useLocalizedContentBody(currentKey, locale, async (key, language) => {
+    const content = await loadMarkdown(key, language)
+    const html = await renderMarkdown(content.body, { softBreakAsSpace: true })
+    return { html: rewriteAssetUrls(html, { folder: 'help' }), locale: content.locale }
+})
 
 // Open / swap the dialog when the active help key changes. Swapping in
 // place (e.g. following a cross-link) keeps the dialog open; clearing the
@@ -72,8 +44,8 @@ async function loadBody(key) {
 watch(currentKey, async (key) => {
     if (!key) return
     dontShowAgain.value = true
-    await loadBody(key)
-    if (dialogRef.value) dialogRef.value.open = true
+    await nextTick()
+    if (currentKey.value === key && dialogRef.value) dialogRef.value.open = true
 }, { immediate: true })
 
 function closeDialog() {
@@ -103,7 +75,7 @@ function onAfterHide(event) {
     >
         <div v-if="loading" class="help-loading">{{ $t('help.dialog.loading') }}</div>
         <div v-else-if="errored" class="help-error">{{ $t('help.dialog.loadError') }}</div>
-        <div v-else class="help-body" v-html="bodyHtml" @click="handleHelpLinkClick" />
+        <div v-else class="help-body" :lang="contentLocale" v-html="bodyHtml" @click="handleHelpLinkClick" />
 
         <div slot="footer" class="help-footer">
             <wa-switch

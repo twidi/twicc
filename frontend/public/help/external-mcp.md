@@ -128,7 +128,7 @@ token or the verification code. You do not need to copy it to approve a request.
 Open **Settings → External MCP → Manage connections**. The list shows three sections
 when they contain entries:
 
-- **Reviews** — requests waiting for your decision;
+- **Pending requests** — requests waiting for your decision;
 - **Active** — approved connections, including those still completing OAuth;
 - **Revoked** — connections that no longer have access.
 

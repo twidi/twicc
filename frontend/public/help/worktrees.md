@@ -31,10 +31,10 @@ projects that are git repositories.)
 
 In the dialog:
 
-- **New branch** — TwiCC creates the worktree and its branch at the chosen
+- **New worktree** — TwiCC creates the worktree and its branch at the chosen
   location.
 - **Existing worktree** — adopt a worktree already on disk that TwiCC doesn't
-  know about yet (the "Existing" tab).
+  know about yet (the "Existing worktree" tab).
 
 Either way, you can start a draft session in the new worktree right away.
 

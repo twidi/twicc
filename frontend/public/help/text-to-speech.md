@@ -67,10 +67,10 @@ The summary targets about one third of the source, with a maximum of 140 words.
 
 Message summaries are saved. Chat, timeline views, and automatic listening share
 the same result when the source and model policy match. Automatic preparation
-also saves successful summaries. An older policy result remains available as
-**Previous policy**. Regeneration replaces a result only after success.
+also saves successful summaries. An older policy result remains available.
+Regeneration replaces a result only after success.
 
-Use **Original** and **Summary** to select the visible text. Copy and **Read
+Use **Show summary** to switch between the original text and its summary. Copy and **Read
 aloud** use that view. Original chat speech keeps its original block scope.
 Original timeline speech uses the assembled timeline snapshot. Manual speech
 interrupts automatic speech and works independently of the automatic summary

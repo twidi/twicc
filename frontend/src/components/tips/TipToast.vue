@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { computed, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useTipsStore } from '../../stores/tips'
 import { useSettingsStore } from '../../stores/settings'
 import { renderMarkdown } from '../../utils/markdown'
-import { stripFrontMatter } from '../../utils/frontMatter'
-import { resolvePublicAssetUrl } from '../../utils/publicAsset'
+import { createLocalizedContentLoader } from '../../utils/localizedContent.js'
+import { useLocalizedContentBody } from '../../composables/useLocalizedContentBody.js'
 import { rewriteAssetUrls } from '../../utils/contentAssets'
 import { handleHelpLinkClick } from '../../utils/helpLinks'
 import { TIP_COOLDOWN_MS } from '../../composables/useTipScheduler'
@@ -17,17 +18,13 @@ const props = defineProps({
 
 const tipsStore = useTipsStore()
 const settings = useSettingsStore()
+const { locale } = useI18n()
 
 const tip = computed(() => {
     const k = tipsStore.currentToastTipKey
     if (!k) return null
     return { key: k, ...tipsStore.manifest[k] }
 })
-
-const bodyHtml = ref('')
-const loading = ref(false)
-const errored = ref(false)
-const bodyCache = new Map()
 
 const env = computed(() => ({
     platform: settings._isTouchDevice ? 'mobile' : 'desktop',
@@ -41,34 +38,13 @@ const hasMoreCandidates = computed(() => {
     return candidates.filter((c) => c.key !== tip.value.key).length > 0
 })
 
-async function loadBody(key) {
-    if (bodyCache.has(key)) {
-        bodyHtml.value = bodyCache.get(key)
-        loading.value = false
-        errored.value = false
-        return
-    }
-    loading.value = true
-    errored.value = false
-    try {
-        const r = await fetch(resolvePublicAssetUrl(`tips/${key}.md`))
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const raw = await r.text()
-        const body = stripFrontMatter(raw)
-        // Tips are authored with soft line wraps for source readability; render
-        // them with CommonMark paragraph behavior (soft wrap -> space, blank line
-        // -> new paragraph) rather than the chat-style breaks: true.
-        const html = await renderMarkdown(body, { softBreakAsSpace: true })
-        const finalHtml = rewriteAssetUrls(html, { folder: 'tips' })
-        bodyCache.set(key, finalHtml)
-        bodyHtml.value = finalHtml
-    } catch (e) {
-        console.error('Failed to load tip', key, e)
-        errored.value = true
-    } finally {
-        loading.value = false
-    }
-}
+const loadMarkdown = createLocalizedContentLoader('tips')
+const currentKey = computed(() => tipsStore.currentToastTipKey)
+const { bodyHtml, contentLocale, loading, errored } = useLocalizedContentBody(currentKey, locale, async (key, language) => {
+    const content = await loadMarkdown(key, language)
+    const html = await renderMarkdown(content.body, { softBreakAsSpace: true })
+    return { html: rewriteAssetUrls(html, { folder: 'tips' }), locale: content.locale }
+})
 
 // Mark the current tip as seen. Called only on voluntary close / Next tip,
 // never on display. A tip the user really wants back is re-openable from the
@@ -77,13 +53,6 @@ function commitSeen(key) {
     if (!key) return
     tipsStore.markSeen(key)
 }
-
-// React to currentToastTipKey changes : load new body.
-// No markSeen here — commit happens only on voluntary close / Next.
-watch(() => tipsStore.currentToastTipKey, async (newKey) => {
-    if (!newKey) return
-    await loadBody(newKey)
-}, { immediate: true })
 
 // Tear down without re-committing (used after commitSeen has already run).
 function teardown() {
@@ -141,7 +110,7 @@ function onNextTip() {
 
         <div v-if="loading" class="tip-loading">{{ $t('tips.toast.loading') }}</div>
         <div v-else-if="errored" class="tip-error">{{ $t('tips.toast.loadFailed') }}</div>
-        <div v-else class="tip-body" v-html="bodyHtml" @click="handleHelpLinkClick" />
+        <div v-else class="tip-body" :lang="contentLocale" v-html="bodyHtml" @click="handleHelpLinkClick" />
 
         <template v-if="hasMoreCandidates">
             <wa-divider></wa-divider>

@@ -24,6 +24,20 @@ There is **no scheduler** for help. A help page only appears when some
 code path calls for it — so adding a page does nothing on its own until a
 trigger references its key (see "Wiring a trigger" below).
 
+## Translations
+
+Keep the English source at `help/<key>.md`. Add each translated body at
+`help/<locale>/<key>.md`, for example `help/pt-BR/worktrees.md`.
+Translated files contain the body only, without YAML front matter.
+Keep constraints in the English source and translated titles in the interface catalogs.
+The backend scans English files only; the frontend selects the body by locale with English fallback.
+
+Preserve code, URLs and `help/<key>` targets. Translate prose, link labels and image alt text.
+Image paths remain relative to the shared `help/` root, not the locale directory.
+Use `docs/i18n-checklist.md` for review status: one entry per English source covers
+all translations. Git changes to either source or translation reopen that entry.
+Do not add source fingerprints or separate checklist entries for translations.
+
 ## File naming
 
 Create a file named `<key>.md` where `<key>` is **lowercase**, made of

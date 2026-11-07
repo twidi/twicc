@@ -12,6 +12,20 @@ etc.), so they live happily alongside the actual tips.
 > the new manifest over WebSocket. In production the manifest is built
 > once at startup, so a change there needs a **backend restart**.
 
+## Translations
+
+Keep the English source at `tips/<key>.md`. Add each translated body at
+`tips/<locale>/<key>.md`, for example `tips/pt-BR/project-trust.md`.
+Translated files contain the body only, without YAML front matter.
+Keep constraints in the English source and translated titles in the interface catalogs.
+The backend scans English files only; the frontend selects the body by locale with English fallback.
+
+Preserve code, URLs and `help/<key>` targets. Translate prose, link labels and image alt text.
+Image paths remain relative to the shared `tips/` root, not the locale directory.
+Use `docs/i18n-checklist.md` for review status: one entry per English source covers
+all translations. Git changes to either source or translation reopen that entry.
+Do not add source fingerprints or separate checklist entries for translations.
+
 ## File naming
 
 Create a file named `<key>.md` where `<key>` is **lowercase**, made of

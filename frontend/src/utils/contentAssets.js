@@ -16,33 +16,30 @@
  * This is what lets a tip link to a help page, and a help page link to
  * another.
  */
-import { resolvePublicAssetUrl } from './publicAsset'
+import { resolvePublicAssetUrl } from './publicAsset.js'
 
 const HELP_LINK_RE = /^help\/([a-z0-9-]+)$/
 
-export function rewriteAssetUrls(html, { folder }) {
-    const base = resolvePublicAssetUrl(`${folder}/`)
+// Resolve the complete path before adding the build-version query string.
+// Locale-specific Markdown still shares the English folder's image assets.
+export function resolveContentAssetUrl(value, folder) {
+    if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('//') || value.startsWith('#')) return value
     const absPrefix = `/${folder}/`
+    let path = value
+    if (path.startsWith(absPrefix)) path = path.slice(absPrefix.length)
+    else if (path.startsWith('/')) return value
+    else if (path.startsWith('./')) path = path.slice(2)
+    return resolvePublicAssetUrl(`${folder}/${path}`)
+}
+
+export function rewriteAssetUrls(html, { folder }) {
     const tmp = document.createElement('div')
     tmp.innerHTML = html
 
     const rewriteAttr = (el, attr) => {
         const v = el.getAttribute(attr)
         if (!v) return
-        if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return   // scheme: http:, data:, mailto:, ...
-        if (v.startsWith('//')) return                // protocol-relative
-        if (v.startsWith('#')) return                 // in-page anchor
-        if (v.startsWith(absPrefix)) {
-            el.setAttribute(attr, base + v.slice(absPrefix.length))
-            return
-        }
-        if (v.startsWith('/')) return                 // other absolute path — leave alone
-        if (v.startsWith('./')) {
-            el.setAttribute(attr, base + v.slice(2))
-            return
-        }
-        // Bare relative path: treat as relative to the content folder.
-        el.setAttribute(attr, base + v)
+        el.setAttribute(attr, resolveContentAssetUrl(v, folder))
     }
 
     tmp.querySelectorAll('img').forEach((el) => rewriteAttr(el, 'src'))

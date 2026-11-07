@@ -21,10 +21,9 @@ use the document language.
 
 `docs/i18n-checklist.md` records the status of the complete file-by-file
 pass and independent reviews. A clean lint result alone does not establish
-complete interface coverage. Backend-generated literal interface text remains
-an explicit external finding for a backend pass. Long help pages, tips and their
-media need a separate content translation workflow; their headings and controls
-belong to the frontend interface pass.
+complete interface coverage. Backend-owned interface messages carry semantic
+translation metadata. Help and tip bodies use translated Markdown files.
+Their titles and controls use the interface catalogs; images remain shared assets.
 
 The share viewer and artifact shell install the same translation plugin for
 reused components. Their language preference belongs to their browser origin;
@@ -166,9 +165,9 @@ and emphasis in named `i18n-t` slots. Use a narrow, explained ESLint exception
 for a literal product name, URL, keyboard chord or code example when necessary.
 Do not suppress interface prose or add a baseline for untranslated text.
 
-Tests, fixtures and generated dependencies are excluded. Long content under
-`public/help/` and `public/tips/` needs its separate translation workflow. Their
-frontend controls remain included.
+Tests, fixtures and generated dependencies are excluded. Markdown bodies under
+`public/help/` and `public/tips/` use the content workflow below, outside ESLint's
+template-text detection. Their frontend controls remain included in lint.
 
 A clean result covers the official rules, not the entire interface. The rule
 does not trace template variables through dictionaries, computed values, props,
@@ -218,10 +217,13 @@ into `frontend/index.html`.
 
 Keep help/tip interface components and metadata sources in this source inventory.
 Their controls and titles are translated. The catalogs contain 12 help titles
-and 54 tip titles per locale. Long Markdown bodies need a separate content pass.
+and 54 tip titles per locale. Include one content entry per English Markdown
+source; that entry covers the source and all its translated bodies.
 
 Do not add checkboxes for images, icons, screenshots, videos, public assets,
-help/tip Markdown, authoring guides, tests, harnesses, fixtures or benchmark data.
+help/tip authoring guides, tests, harnesses, fixtures or benchmark data.
+Help/tip Markdown bodies belong to the content inventory described below.
+Translated bodies are dependencies of their English entry, not separate checkboxes.
 Exclude package manifests, lockfiles and tooling/build configuration without
 interface messages. List these exclusions once in the scope, not as checked files.
 The checklist's **Deliberate exclusions** table defines recognition rules for every later pass.
@@ -284,13 +286,13 @@ translation contracts are unchanged.
 
 New UI copy should use an English catalog key and a matching Portuguese
 translation. Code, comments and contributor documentation remain English;
-translated catalogs are the exception to the English source convention.
+translated catalogs and localized Markdown bodies are the exceptions.
 
 ## Backend interface messages
 
 Only messages intended for the browser interface require translation metadata.
 Console logs, terminal output, CLI/MCP responses, prompts and provider/user content remain English or verbatim.
-Long help/tip bodies remain a separate content pass.
+Help/tip bodies use the localized Markdown workflow below.
 The pages listed under **Pages that deliberately stay English** are excluded, not deferred.
 Mixed HTML modules stay in scope for their application-facing paths; preserve the excluded pages.
 
@@ -321,3 +323,50 @@ metadata or database fields for these labels.
 Migration `0170_ui_message_provenance` adds peer error provenance only.
 It requires the normal user-controlled migration and backend restart before live use.
 The compute versions refresh historical generated tool-error metadata through normal background computation.
+
+## Help and tip content
+
+English sources keep their existing paths: `frontend/public/help/<id>.md`
+and `frontend/public/tips/<id>.md`. Each translation has the same filename
+under a locale directory, for example `frontend/public/help/pt-BR/worktrees.md`.
+The locale directory matches the application's supported locale identifier.
+
+Translations contain Markdown bodies only. Keep front-matter constraints in
+the English source and translated titles in the existing interface catalogs.
+Do not duplicate provider/platform/OS constraints or title translations.
+Stable content IDs, help cross-link targets and seen-state keys do not change with language.
+
+The frontend loads the selected language, with English fallback when its body
+is missing, empty or unavailable. It rejects HTML error/SPA responses, even
+with HTTP 200. If the English source also fails, the existing localized load-error
+interface appears. An English fallback body carries `lang="en"`.
+An open dialog or tip updates when the application locale changes.
+Older asynchronous responses cannot overwrite the current page or language.
+Locale changes do not mark content seen or reset dismissal controls.
+Production caches separate files by language; development fetches fresh bodies.
+
+Preserve code blocks, inline code, command examples, URLs and `help/<id>` targets.
+Translate prose, link labels and image alt text. Keep image paths relative to
+the shared `help/` or `tips/` root, even in translated bodies. Screenshots and
+other media remain shared and excluded from the source checklist.
+
+### Follow-up audits use Git
+
+Use the last completed `docs/i18n-checklist.md` commit as the baseline, exactly
+as for application code. Add no source hashes, fingerprints or parallel status files.
+Keep one checkbox for each English source. That checkbox covers all its translations.
+
+- When an English source changes, reopen its entry and review all translated bodies.
+- When a translated body changes, reopen its English entry and review that translation.
+- When a new source appears, add its unchecked entry and translations for supported languages.
+- When adding a language, reopen the content entries and add their translated bodies.
+- When a source is renamed or deleted, reconcile its entry, translations and help links.
+- Include untracked sources and translations when reconciling the Git diff.
+
+Check the entry only after the source and affected translations pass implementation
+review and independent review. Commit the completed inventory with the validated
+translations when requested. Authoring guides and media remain deliberate exclusions.
+
+`node --test src/utils/localizedContent*.test.js src/utils/contentAssets.test.js src/composables/useLocalizedContentBody.test.js src/components/help/HelpDialog.test.js`
+from `frontend/` checks loading, language changes, fallback, technical-content parity
+and translated-file coverage. These checks do not replace the meaning review.

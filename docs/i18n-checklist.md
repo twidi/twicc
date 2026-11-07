@@ -23,6 +23,8 @@ Include standalone entry points and HTML that displays application messages.
 Keep `frontend/vite.config.js`: it injects catalog messages into the startup recovery interface.
 Keep help/tip interface components and metadata sources. Their controls and titles are translated.
 The catalogs contain 12 help titles and 54 tip titles per locale; they contain no Markdown bodies.
+Include help/tip Markdown sources in the content inventory, with one checkbox per English source.
+Each content entry covers the English file and all translated bodies under locale subdirectories.
 
 ### Deliberate exclusions
 
@@ -32,7 +34,8 @@ An excluded file is not missing, unchecked or awaiting review. Give it no checkb
 | File type | Recognition rule or example | Reason |
 | --- | --- | --- |
 | Images and video | PNG, ICO, SVG, WebP, MP4; icons, screenshots and release media | Media is outside this source pass. |
-| Long help/tip content | Markdown under `frontend/public/help/` and `frontend/public/tips/`, including their authoring guides | Translate these bodies in a separate content pass. |
+| Help/tip authoring guides | `frontend/public/help/README.md`, `frontend/public/tips/README.md` and equivalent contributor guides | Contributor documentation stays English; actual Markdown content belongs in the content inventory. |
+| Translated content entries | Locale subdirectories such as `frontend/public/help/pt-BR/` and `frontend/public/tips/pt-BR/` | Review these as dependencies of their English source entry. Do not add separate checkboxes. |
 | Static public assets | Public media and `frontend/public/site.webmanifest` | Asset metadata has no interface messages in the current application. |
 | Tests and harnesses | `*.test.*`, `*.spec.*`, `frontend/tests/`, `__tests__/` | Test text is not production interface copy. |
 | Test fixtures | `__fixtures__/`, fixture-only data such as `GitLog/__tests__/fakeData.ts` | Synthetic data is not application interface copy. |
@@ -70,7 +73,7 @@ Use that commit as the baseline; do not use a date or the current branch tip.
 3. Enumerate untracked source files too; a Git diff does not list them.
 4. Apply the scope and exclusion rules before comparing files with this inventory.
 5. Add every new in-scope file as unchecked. Remove deleted entries and update renamed paths.
-6. Audit changed files in full and review their affected display dependencies.
+6. Audit changed files in full and review their affected display dependencies. English help/tip changes reopen their content entry and all translations. Translation changes reopen the corresponding English entry.
 7. Carry unchanged files forward only when their display dependencies remain valid; then check their entries again.
 8. Complete the reviews and validation. Commit the fully checked inventory with the translations.
 
@@ -79,10 +82,11 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 
 ## Current pass
 
-- State: source audit and independent reviews complete. Available integration checks pass; runtime limitations are recorded below.
+- State: source and localized Markdown implementation reviews complete. Automated and browser validation pass; historical backend/native limitations remain recorded below.
 - Frontend baseline: commit `6bbedd9ed`, with 835 reviewed source files.
 - Retain unchanged frontend approvals only when affected display dependencies remain valid.
-- Inventory: 837 frontend sources, 417 backend sources and 5 native transport dependencies. All source checks pass.
+- Previous inventory: 837 frontend sources, 417 backend sources and 5 native transport dependencies.
+- Inventory: 839 frontend sources, 417 backend sources, 5 native transport dependencies and 66 English content entries. Each content entry covers its pt-BR body. All implementation and independent reviews pass.
 - New in-scope files join this list before completion. Checked states reopen when reviewed content changes.
 - This pass forms the combined source-audit checkpoint. No main changes, development-server restart or development-database migration run.
 
@@ -115,6 +119,107 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - Browser scope: Share surfaces without a configured host, image fallback previews, Terminal/TTS and real provider/edit/trust/rename flows are not exercised in this browser run. Full-file review, focused tests and production builds cover their local interface code.
 - Browser scope: Locale returns to en; dialogs, drafts, composer and search are cleared. Fixtures stay unchanged.
 - Browser scope: Known language polish: Portuguese date separators capitalize De; workspace terminology uses both workspaces and espaços de trabalho. These observations do not hide untranslated backend/help content.
+
+## Localized Markdown validation
+
+- All 12 help and 54 tip translations receive full paired reading and independent review.
+- Final frontend suite: 4,787 tests; pass. This includes body loading, fallback, race protection,
+  retained-help mounting, live locale changes, dismissal-state preservation and shared asset URLs.
+- Translated-content checks cover all 66 files, technical code and link destinations.
+- Official Vue I18n lint and all 6 production bundles pass.
+- All 66 translated files match their production copies under `static/frontend/`.
+- Inventory reconciliation: 1,327 unique existing checked paths, including 66 English content entries.
+- Chrome validation through Claude passes: 66 pt-BR and 66 English Markdown URLs;
+  all 12 help bodies switch live; all 54 tips load in pt-BR; rapid locale changes,
+  Next, dismissal-switch preservation, tip-to-help and help-to-help cross-links pass.
+- Narrow layout: 455px same-origin iframe, no page overflow; long code scrolls inside its block.
+  Console has no i18n, missing-key, parent-scope, Vue warning or error messages.
+- Browser state restored: locale en, original seen-help timestamps, empty seen-tips map,
+  tips still disabled, no dialogs/toasts/iframe/drafts left open.
+- Browser limits: missing-translation fallback is covered by unit tests, not a live missing file.
+  First-use auto-opening, closing with dismissal ON and random tip scheduling are not exercised.
+- Existing terminology note: the help title uses "A aba Browser" while its body and tab use "Navegador".
+- No backend restart, database migration or package installation occurs.
+
+## Help and tip content
+
+Each English source entry covers its translated bodies under `<locale>/`.
+A change to either side reopens this entry. No source fingerprints are stored.
+All 66 English/pt-BR pairs receive full reading and independent meaning review.
+Code, URLs, help targets and Markdown structure remain intact.
+The three corrected English control references receive a second paired review.
+
+### Help pages
+
+- [x] `frontend/public/help/browser-tab.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/external-mcp.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/external-url.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/layout-docks.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/model-effort-score.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/peers.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/projects.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/sharing.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/text-to-speech.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/what-are-artifacts.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/workspaces.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/help/worktrees.md` — English source and pt-BR body complete; independent review passes.
+
+### Tips
+
+- [x] `frontend/public/tips/active-sessions-across-projects.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/agent-settings-presets.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/apply-settings.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/archive-sessions.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/artifacts.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/attach-files.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/choose-provider.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/code-comments.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/command-palette-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/command-palette-non-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/default-worktree-directory.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/display-modes.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/dockable-layouts.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/draft-sessions.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/emergency-stop.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/files-options.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/files-preview.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/full-text-search-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/full-text-search-non-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/git-options.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/in-session-search-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/in-session-search-non-mac.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/keyboard-shortcuts-list.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/mark-unread.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/message-inserts.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/message-snippets.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/mobile-session-header.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/new-session-anywhere.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/notifications.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/orchestration.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/project-agent-defaults.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/project-page.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/project-selector-menu.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/project-trust.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/quota-wakeup.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/rename-sessions.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/selection-comments.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/send-snippet-long-press.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/session-compact-view.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/session-multi-select.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/session-pins.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/session-switcher.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/start-session-from-selection.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/steer-running-agent.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/terminal-copy-on-select.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/terminal-option-as-meta.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/terminal-snippets.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/terminal-tabs.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/tips-list.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/title-suggestions.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/twicc-skills.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/usage-quotas.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/workspaces.md` — English source and pt-BR body complete; independent review passes.
+- [x] `frontend/public/tips/worktrees.md` — English source and pt-BR body complete; independent review passes.
 
 ## Frontend sources
 
@@ -263,7 +368,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/git/GitLog/utils/units.ts` — complete; review pass; batch 4. Read full module; layout, public type exports, colors, and Git ref values contain no interface prose.
 - [x] `frontend/src/components/git/GitPanel.vue` — complete; review pass; batch 4. Read in full. Whole rich route callouts, header issue text, first-party fetch errors and locale-aware GitLog timestamps. Computed root labels remain reactive. Commit metadata, branches, images and diagnostics stay external/technical. Review repair: local errors/warnings store localUiMessage descriptors and resolve at display time; server/native strings stay literal. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/git/GitPanelHeader.vue` — complete; review pass; batch 4. Read in full. Localized synthetic index label, clipboard toasts and selected-locale date formatting. Commit content remains external.
-- [x] `frontend/src/components/help/HelpDialog.vue` — complete; review pass; batch 7. Controls already translated. Verified computed help-store manifest supplies live translated titles with unchanged string contract. Long Markdown bodies deferred.
+- [x] `frontend/src/components/help/HelpDialog.vue` — complete; review pass; batch 7. Controls and titles stay translated. Shared body loader now selects the current locale with English fallback and ignores stale loads. Retained help opens after mount; locale changes preserve the dismissal switch.
 - [x] `frontend/src/components/help/HelpFeatureLink.vue` — complete; review pass; batch 7. Required caller label is displayed without mutation; parent owns caller audit.
 - [x] `frontend/src/components/help/HelpIconButton.vue` — complete; review pass; batch 7. Optional accessibility/title label now resolves translated Learn more at render time.
 - [x] `frontend/src/components/help/HelpTextLink.vue` — complete; review pass; batch 7. Optional link/accessibility label now resolves translated Learn more at render time.
@@ -432,10 +537,10 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/session/list/SessionSelectionBar.vue` — complete; review pass; batch 2. Read all source. Translated destructive confirmation and archive action. Localized affected counts. Shared batchStopConfirmationMessage translates at call time in computed.
 - [x] `frontend/src/components/session/SessionsSidebarControls.vue` — complete; review pass; batch 2. All controls, option labels, age thresholds and placeholders already use reactive catalog messages; wire option values remain unchanged.
 - [x] `frontend/src/components/session/SessionToastContent.vue` — complete; review pass; batch 2. Read script, template and styles. Translated missing-title fallback. Preserved session titles, provider errors and caller-owned detail text.
-- [x] `frontend/src/components/settings/HelpSettings.vue` — complete; review pass; batch 7. Verified reactive localized manifest titles; title sorting uses active locale. Controls translated; long Markdown bodies deferred.
+- [x] `frontend/src/components/settings/HelpSettings.vue` — complete; review pass; batch 7. Verified reactive localized manifest titles; title sorting uses active locale. Controls translated; Markdown bodies belong to the content inventory.
 - [x] `frontend/src/components/settings/SummarySettings.vue` — complete; review pass; batch 7. OpenRouter description resolves shared description key reactively. Verified adaptOptions translates at call time within computed.
 - [x] `frontend/src/components/settings/TextToSpeechSettings.vue` — complete; review pass; batch 7. Read full speech configuration and playback lifecycle/styles; translated local model/voice hints, test/activation tooltips, kind labels and locale dates; shared OpenRouter description key resolves reactively. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
-- [x] `frontend/src/components/settings/TipsSettings.vue` — complete; review pass; batch 7. Localized seen-state controls and locale-aware title sorting. Verified reactive translated manifest titles. Long tip bodies deferred.
+- [x] `frontend/src/components/settings/TipsSettings.vue` — complete; review pass; batch 7. Localized seen-state controls and locale-aware title sorting. Verified reactive translated manifest titles. Markdown bodies belong to the content inventory.
 - [x] `frontend/src/components/share/AccessLogList.vue` — complete; review pass; batch 11. Read all source. Translated user-agent expansion title and localized view date/count. IP addresses and user-agent strings remain external technical data.
 - [x] `frontend/src/components/share/ShareDialog.vue` — complete; review pass; batch 11. Read all 377 lines. Translated computed password placeholders, dialog title, local errors and toast results. User labels, title overrides, passwords, host keys and API error prose remain content. Backend pass: affected transport, cache and display paths rechecked for explicit descriptors and literal external fallbacks.
 - [x] `frontend/src/components/share/ShareListPanel.vue` — complete; review pass; batch 11. Read all source. Translated status codes, empty label fallback, copy guidance and action toasts. Share labels/URLs remain content; shareCreatorBadge translates at call time.
@@ -466,7 +571,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/components/timeline/TimelineSessionMention.vue` — complete; review pass; batch 11. Read all source. Reused whole translated unread/process tooltip. Shared process tooltip helper runs in computed; session titles, providers and links remain technical/user content.
 - [x] `frontend/src/components/timeline/TimelineWordingPart.vue` — complete; review pass; batch 11. Read all source. Renders caller-provided structured prose/value/arrow/session parts as escaped text. Shared timeline presentation helpers own localization; user titles remain values.
 - [x] `frontend/src/components/tips/showTipToast.js` — complete; review pass; batch 7. Toast mounting/state adapter contains no UI copy; technical style and scheduling markers preserved.
-- [x] `frontend/src/components/tips/TipToast.vue` — complete; review pass; batch 7. Full loading/navigation/seen-state/CSS read. Controls translated; computed tip reads reactive translated manifest title. Long tip bodies deferred.
+- [x] `frontend/src/components/tips/TipToast.vue` — complete; review pass; batch 7. Full loading/navigation/seen-state/CSS read. Controls and reactive titles stay translated. Shared body loader now selects the current locale with English fallback and ignores stale loads. Locale changes do not mark tips seen.
 - [x] `frontend/src/components/ui/AggregatedProcessIndicator.vue` — complete; review pass; batch 7. Aggregation adapter exposes numeric/session activity only; local display text absent.
 - [x] `frontend/src/components/ui/AnimatedNumber.vue` — complete; review pass; batch 7. Animated integer rendering now follows locale with Intl.NumberFormat; shared average/cost helpers retained.
 - [x] `frontend/src/components/ui/AppTooltip.vue` — complete; review pass; batch 7. Full lazy/deferred tooltip lifecycle, event wiring and template read; content/attributes belong to callers; no local UI copy.
@@ -527,6 +632,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/composables/useGroupReveal.js` — complete; review pass; batch 5. Read the complete file. Motion, focus, request persistence, navigation or technical state only; no interface prose.
 - [x] `frontend/src/composables/useHomeCardCascade.js` — complete; review pass; batch 5. Read the complete file. Motion, focus, request persistence, navigation or technical state only; no interface prose.
 - [x] `frontend/src/composables/useListCascade.js` — complete; review pass; batch 5. Read the complete file. Motion, focus, request persistence, navigation or technical state only; no interface prose.
+- [x] `frontend/src/composables/useLocalizedContentBody.js` — Latest page/locale publication, loading/error state and cleanup; independent final review passes.
 - [x] `frontend/src/composables/useListExit.js` — complete; review pass; batch 5. Read the complete file. Motion, focus, request persistence, navigation or technical state only; no interface prose.
 - [x] `frontend/src/composables/useMarkdownRenderEligibility.js` — complete; review pass; batch 5. Read the complete file. Only technical state, DOM mechanics, motion, navigation or user/provider content; no interface prose.
 - [x] `frontend/src/composables/useMarkdownToolbar.js` — complete; review pass; batch 5. Read the complete file. Only technical state, DOM mechanics, motion, navigation or user/provider content; no interface prose.
@@ -751,7 +857,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/compactHeight.js` — complete; review pass; batch 6. Viewport geometry and CSS/reactive flags only.
 - [x] `frontend/src/utils/composerAttachments.js` — complete; review pass; batch 6. Read full staged attachment state/actions. Translate chip statuses, plural badge details and legacy migration notices at call time. Format byte values with selected locale; preserve names, MIME types, stored refs, protocol values and console diagnostics.
 - [x] `frontend/src/utils/computePendingHint.js` — complete; review pass; batch 6. Timers emit phase discriminants only. Consumer owns guidance messages.
-- [x] `frontend/src/utils/contentAssets.js` — complete; review pass; batch 6. HTML asset/help-link URL rewriting only. Preserve user-authored content and attribute values.
+- [x] `frontend/src/utils/contentAssets.js` — complete; review pass. Resolve shared image paths before build-version query strings; preserve help cross-links, external URLs and original code blocks. Localized content extension receives independent review.
 - [x] `frontend/src/utils/contentVisibility.js` — complete; review pass; batch 6. Pure content-type/group boundary classification only.
 - [x] `frontend/src/utils/countUp.js` — complete; review pass; batch 6. Format average with selected locale and maximum one decimal. Preserve null dash and animation math.
 - [x] `frontend/src/utils/crypto.js` — complete; review pass; batch 6. UUID generation only; no display strings.
@@ -836,6 +942,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `frontend/src/utils/projectTabs.js` — complete; review pass; batch 6. Translate project tab labels with live getters. Preserve shortcut numbering, icons, route names and tab IDs.
 - [x] `frontend/src/utils/projectTree.js` — complete; review pass; batch 6. Trie/path tree and flattening only. Preserve directory segments, paths and project identities.
 - [x] `frontend/src/utils/providersStatus.js` — complete; review pass; batch 6. Translate complete provider status title/body with product/vendor interpolation. Localize incident window defaults; preserve status/episode wire values.
+- [x] `frontend/src/utils/localizedContent.js` — Locale-aware Markdown fetch/cache, English fallback, front-matter stripping and rejection of HTML fallback responses; independent final review passes.
 - [x] `frontend/src/utils/publicAsset.js` — complete; review pass; batch 10. Read full public URL/cache-version resolver. Public paths, BASE_URL and version query values are technical; no display text.
 - [x] `frontend/src/utils/publicOrigin.js` — complete; review pass; batch 10. Read full origin parser and canonical shape checks. Error results are stable codes (type/scheme/host/credentials/port), translated by forms; preserve origin and URL syntax.
 - [x] `frontend/src/utils/railActiveSessions.js` — complete; review pass; batch 9. Read in full. Selects external session metadata and stable indicator codes; no prose.
@@ -1110,7 +1217,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/git.py` — GitError preserves explicit error metadata. Synthetic index/commit root labels gain name_ui_message; actual refs and filenames remain data. Empty-stderr worktree failure is tagged; Git stderr remains verbatim.
 - [x] `src/twicc/gzip_middleware.py` — HTTP compression middleware only; no UI prose.
 - [x] `src/twicc/heartbeat.py` — Heartbeat file and machine timing only; no UI prose.
-- [x] `src/twicc/help_manifest.py` — Long help Markdown manifest and content metadata. Long help content is explicitly deferred.
+- [x] `src/twicc/help_manifest.py` — English help manifest and common constraints remain authoritative. Root-only scan ignores translated body directories; frontend selects the locale.
 - [x] `src/twicc/inline_artifacts/__init__.py` — Empty package marker; no presentation output.
 - [x] `src/twicc/inline_artifacts/files.py` — Inline artifact file validation and materialization preserve file/user contents and technical validation codes.
 - [x] `src/twicc/inline_artifacts/publications.py` — Publication lifecycle stores technical records and artifact content; no interface prose.
@@ -1332,7 +1439,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/telemetry/task.py` — Background telemetry transport and diagnostics target logs; no browser prose.
 - [x] `src/twicc/terminal.py` — Only config-path validation helper messages gain descriptors for browser validation. PTY output, shell commands, tmux errors and terminal lifecycle stay unchanged.
 - [x] `src/twicc/terminal_config.py` — Terminal config defaults and technical command selection only; shell values remain exact.
-- [x] `src/twicc/tips_manifest.py` — Long tip Markdown manifest and metadata. Long tip content is explicitly deferred.
+- [x] `src/twicc/tips_manifest.py` — English tip manifest and common constraints remain authoritative. Root-only scan ignores translated body directories; frontend selects the locale.
 - [x] `src/twicc/title_auto_task.py` — Automatic title scheduling, state and diagnostics. Generated provider title content remains verbatim.
 - [x] `src/twicc/title_cadence.py` — Automatic title timing and cadence values only.
 - [x] `src/twicc/title_echo.py` — Title echo bookkeeping; user/provider title content remains unchanged.
@@ -1372,7 +1479,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 - [x] `src/twicc/usage_task.py` — Quota polling, cache/state and logs; browser receives provider data and numeric values.
 - [x] `src/twicc/version.py` — Package version lookup only.
 - [x] `src/twicc/version_check_task.py` — Release version checks and technical update metadata. Display instruction prose is handled by installation client adapter.
-- [x] `src/twicc/views.py` — Read all 4,500 original lines. Added explicit semantic metadata for 183 REST validation/error branches. Shared services retain English errors and expose UiMessageText metadata only at this browser boundary. File/git result dictionaries preserve helper metadata. Per-URL notification results expose their descriptors. Browser bootstrap exposes update-instruction field metadata and provider model disable reasons. Commands expose plain descriptions, including deliberately untranslated English defaults. User/provider/file content, worktree reasons from git, logs, technical download/data-store protocol errors, and Http404 server-rendered HTML remain verbatim. Long help/tip manifests are deferred by contract.
+- [x] `src/twicc/views.py` — Read all 4,500 original lines. Added explicit semantic metadata for 183 REST validation/error branches. Shared services retain English errors and expose UiMessageText metadata only at this browser boundary. File/git result dictionaries preserve helper metadata. Per-URL notification results expose their descriptors. Browser bootstrap exposes update-instruction field metadata and provider model disable reasons. Commands expose plain descriptions, including deliberately untranslated English defaults. User/provider/file content, worktree reasons from git, logs, technical download/data-store protocol errors, and Http404 server-rendered HTML remain verbatim. Help/tip manifests supply common constraints; translated bodies load as frontend static assets.
 - [x] `src/twicc/websocket_transport.py` — WebSocket frame serialization/compression and limits only.
 - [x] `src/twicc/workspaces.py` — Shared workspace/URL/pattern validation and mutation messages gain explicit metadata while preserving result tuple shape. Technical fields and user values remain params.
 - [x] `src/twicc/worktree_backfill.py` — Worktree relationship backfill and diagnostic logs only.
@@ -1387,7 +1494,7 @@ Do not commit a partially completed checklist. Its next commit becomes the next 
 
 ## Deferred content and preserved external data
 
-- Long help/tip Markdown bodies and their media remain a separate content pass.
+- Help/tip Markdown bodies belong to the content inventory. Media and authoring guides remain excluded.
 - Public sharing, standalone share/artifact password forms, the MCP waiting page, collector information and standard Django errors require no translation. See the deliberate exclusions above; these are not deferred work.
 - Provider/user text, model answers, terminal/CLI/MCP output and file contents remain verbatim.
 - Raw OS, upstream SDK, browser and remote-server diagnostics remain verbatim where no TwiCC-owned message exists.
