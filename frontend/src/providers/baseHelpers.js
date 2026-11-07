@@ -103,15 +103,13 @@ export class BaseProviderHelpers {
     }
 
     /**
-     * Provider-specific note appended to the placeholder shown during
-     * ``assistant_turn`` (after the generic "you can send a message now…"
-     * sentence). Returns null when no note is needed. Example: Claude Code
-     * appends a warning that the message won't appear in the conversation
-     * history (the SDK queues it as in-band signal rather than persisting
-     * it); providers that persist mid-turn messages (Codex via
-     * ``turn/steer``) leave this null.
+     * Catalog key for the complete ``assistant_turn`` placeholder. Returns
+     * null to use the generic message. Claude Code needs a history warning:
+     * its SDK queues the message as an in-band signal without persisting it.
+     * Providers that persist mid-turn messages (Codex via ``turn/steer``)
+     * use the generic message.
      */
-    getPlaceholderAssistantTurnNote() {
+    getPlaceholderAssistantTurnMessageKey() {
         return null
     }
 

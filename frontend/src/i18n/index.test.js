@@ -52,7 +52,18 @@ test('Portuguese interpolates and pluralizes complete session and project messag
     assert.equal(t('session.selection.count', { count: 1 }, 1), '1 selecionada')
     assert.equal(t('session.selection.count', { count: 2 }, 2), '2 selecionadas')
     assert.equal(t('composer.status.startingProvider', { provider: 'Codex' }), 'Iniciando processo do Codex...')
-    assert.equal(t('composer.shortcuts.filePaths'), 'Em qualquer lugar: @ = caminhos de arquivos')
+})
+
+test('card session counts use complete plural forms, including zero', () => {
+    for (const locale of ['en', 'pt-BR']) {
+        const { t } = createAppI18n(locale).global
+        for (const count of [0, 1, 2, 21]) {
+            const noun = locale === 'en'
+                ? (count === 1 ? 'session' : 'sessions')
+                : (count === 1 ? 'sessão' : 'sessões')
+            assert.equal(t('common.sessionCount', { count }, count), `${count} ${noun}`)
+        }
+    }
 })
 
 test('a missing translation falls back to English', () => {
@@ -103,7 +114,7 @@ test('component translations reference existing catalog messages', () => {
             else if (entry.name.endsWith('.vue')) {
                 const source = readFileSync(file, 'utf8')
                 const keys = [...source.matchAll(/\b(?:t|\$t)\('([^']+)'/g),
-                    ...source.matchAll(/keypath="([^"]+)"/g)]
+                    ...source.matchAll(/(?<!:)keypath="([^"]+)"/g)]
                 for (const [, key] of keys) assert.ok(Object.hasOwn(en, key), `${file.pathname}: ${key}`)
             }
         }

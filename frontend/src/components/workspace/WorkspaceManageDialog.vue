@@ -568,8 +568,12 @@ defineExpose({ open, close, openForWorkspace, openNew })
                 <label class="form-label">{{ $t('workspace.edit.patterns.label') }}</label>
                 <p class="form-help-text">
                     {{ $t('workspace.edit.patterns.hint') }}
-                    <br>{{ $t('common.fragments.usePrefix') }} <code>*</code> {{ $t('workspace.edit.patterns.wildcardSuffix') }}
-                    <br>{{ $t('workspace.edit.patterns.addExistingPrefix') }} <strong>{{ $t('workspace.edit.patterns.addMatching') }}</strong>.
+                    <br><i18n-t keypath="workspace.edit.patterns.wildcardHint" scope="global">
+                        <template #wildcard><code>*</code></template>
+                    </i18n-t>
+                    <br><i18n-t keypath="workspace.edit.patterns.addExistingHint" scope="global">
+                        <template #action><strong>{{ $t('workspace.edit.patterns.addMatching') }}</strong></template>
+                    </i18n-t>
                 </p>
 
                 <!-- Existing patterns -->

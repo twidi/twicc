@@ -101,7 +101,9 @@ function handleToggleShowArchived(event) {
         </div>
         <wa-callout v-else variant="brand" class="naming-hint">
             <wa-icon slot="icon" name="lightbulb"></wa-icon>
-            {{ $t('project.list.namingHintPrefix') }} <wa-icon name="ellipsis-v" auto-width></wa-icon> {{ $t('project.list.namingHintSuffix') }}
+            <i18n-t keypath="project.list.namingHint" scope="global">
+                <template #menuIcon><wa-icon name="ellipsis-v" auto-width></wa-icon></template>
+            </i18n-t>
         </wa-callout>
 
         <!-- Section 2: Unnamed projects (tree) -->

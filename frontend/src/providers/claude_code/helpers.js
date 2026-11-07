@@ -205,8 +205,8 @@ export class ClaudeCodeHelpers extends BaseProviderHelpers {
         return ['/']
     }
 
-    getPlaceholderAssistantTurnNote() {
-        return 'Note: it will not appear in the conversation history.'
+    getPlaceholderAssistantTurnMessageKey() {
+        return 'composer.shortcuts.sendWhileWorkingWithoutHistory'
     }
 
     getBuiltInCommands(activationChar) {

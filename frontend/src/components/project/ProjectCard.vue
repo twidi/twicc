@@ -128,7 +128,7 @@ function handleMenuSelect(event) {
                 <div class="project-meta">
                     <span :id="`sessions-count-${project.id}`" class="sessions-count">
                         <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                        <span>{{ project.sessions_count }} {{ $t('session.labels.singular') }}{{ project.sessions_count !== 1 ? 's' : '' }}</span>
+                        <span>{{ $t('common.sessionCount', { count: project.sessions_count }, project.sessions_count) }}</span>
                     </span>
                     <AppTooltip :for="`sessions-count-${project.id}`">{{ $t('project.card.sessionCountTooltip') }}</AppTooltip>
                     <template v-if="showCosts">

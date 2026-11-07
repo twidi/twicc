@@ -34,7 +34,7 @@ translation of the public viewer.
 `frontend/src/i18n/index.js` configures Vue I18n in Composition API mode with
 English fallback. `locales/en.json` is the source catalog, and
 `locales/pt-BR.json` contains Brazilian Portuguese translations. Messages
-are rendered as text, never as HTML.
+render as text or Vue component slots, never as HTML strings.
 
 Components use `$t('key')` in templates or `useI18n().t` in setup code. Build
 translated option arrays and labels in `computed()` so switching languages
@@ -70,15 +70,39 @@ messages with the same meaning across domains, such as `common.actions.cancel`.
 Do not share keys only because their current English text is identical.
 
 Use roles such as `label`, `hint`, `tooltip`, `placeholder` or `errors` when
-they distinguish messages within a feature. Existing sentence fragments use
-`Prefix` or `Suffix` where applicable; their names do not imply that they form
-complete messages. Completing coverage and combining fragments are separate
-changes from naming keys.
+they distinguish messages within a feature. Each message must contain a complete
+sentence, label or instruction. Do not concatenate translated prefixes, values
+and suffixes, or add English plural endings. Put punctuation and named value
+parameters inside the message. Use a complete message for each conditional
+variant, such as inherited trust with or without a source project.
+
+For rich text, use `<i18n-t scope="global">` with named slots. Keep links,
+icons, code and emphasis in the component; put their placement in the catalog.
+The explicit global scope prevents parent-scope warnings. For example:
+
+```vue
+<i18n-t keypath="workspace.edit.patterns.wildcardHint" scope="global">
+    <template #wildcard><code>*</code></template>
+</i18n-t>
+```
+
+```json
+{
+    "workspace.edit.patterns.wildcardHint": "Use {wildcard} as wildcard. A plain directory matches all projects inside it."
+}
+```
+
+`i18n/composerPlaceholder.js` selects complete shortcut messages for keyboard,
+touch and draft states. `Intl.ListFormat` formats independent shortcut labels
+and alternative activation/send keys in the current locale. Provider helpers
+return a catalog key for a complete working-state message when they need
+provider-specific wording. They do not append untranslated notes.
 
 When renaming a key, inspect every translation call and `<i18n-t keypath>` that
 uses it, including conditional keys. Update both catalogs and relevant tests.
 Do not change route names, setting values or API identifiers that happen to
-match an old key. Keep the message text and interpolation parameters unchanged.
+match an old key. A key rename alone must preserve message text and parameters.
+Changing sentence structure requires updating both locales and the callers.
 
 ## Adding a language
 

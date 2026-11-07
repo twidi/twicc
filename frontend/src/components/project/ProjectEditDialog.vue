@@ -829,8 +829,7 @@ defineExpose({
                  heals it once the folder is back (nothing detects that live). -->
             <div v-if="directoryMissing" class="dialog-title-missing">
                 <span class="dialog-title-missing-text">
-                    {{ recheckOutcome === 'confirmed' ? 'Still not found on disk' : 'Directory not found on disk' }}
-                    <template v-if="recheckOutcome === 'error'"> {{ $t('project.trust.recheckFailedSuffix') }}</template>
+                    {{ recheckOutcome === 'error' ? $t('project.edit.directory.recheckFailed') : recheckOutcome === 'confirmed' ? $t('project.edit.directory.stillMissing') : $t('project.edit.directory.missing') }}
                 </span>
                 <wa-button
                     size="small"
@@ -992,7 +991,7 @@ defineExpose({
                                 @click="useGlobalWorktreeDir"
                             >
                                 <wa-icon slot="start" name="wand-magic-sparkles"></wa-icon>
-                                {{ $t('common.fragments.usePrefix') }} {{ composedGlobalWorktreeDir }}
+                                {{ $t('project.edit.worktreeDirectory.useDefault', { directory: composedGlobalWorktreeDir }) }}
                             </wa-button>
                         </div>
 
@@ -1018,12 +1017,14 @@ defineExpose({
                                 <wa-option value="untrusted">{{ $t('project.trust.options.untrusted') }}</wa-option>
                             </wa-select>
                             <div v-if="localTrustChoice === 'inherit'" class="form-hint">
-                                <template v-if="resolvedTrust?.state === true">
-                                    {{ $t('project.trust.inheritedPrefix') }} <strong>{{ $t('project.trust.resolved.trusted') }}</strong><template v-if="resolvedSourceName"> {{ $t('project.trust.sourcePrefix') }} {{ resolvedSourceName }})</template>
-                                </template>
-                                <template v-else-if="resolvedTrust?.state === false">
-                                    {{ $t('project.trust.inheritedPrefix') }} <strong>{{ $t('project.trust.resolved.untrusted') }}</strong><template v-if="resolvedSourceName"> {{ $t('project.trust.sourcePrefix') }} {{ resolvedSourceName }})</template>
-                                </template>
+                                <i18n-t
+                                    v-if="resolvedTrust?.state === true || resolvedTrust?.state === false"
+                                    :keypath="resolvedSourceName ? 'project.trust.inheritedFrom' : 'project.trust.inherited'"
+                                    scope="global"
+                                >
+                                    <template #status><strong>{{ resolvedTrust.state ? $t('project.trust.resolved.trusted') : $t('project.trust.resolved.untrusted') }}</strong></template>
+                                    <template #source>{{ resolvedSourceName }}</template>
+                                </i18n-t>
                                 <template v-else>
                                     {{ $t('project.trust.unresolvedHint') }}
                                 </template>

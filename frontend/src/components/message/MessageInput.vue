@@ -1,5 +1,6 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
+import { getComposerPlaceholder } from '../../i18n/composerPlaceholder.js'
 // MessageInput.vue - Text input + send/apply controls for a session.
 // Per-session agent settings (model, effort, …) live in the
 // ``useSessionAgentSettings`` composable; the trigger summary and the
@@ -51,7 +52,7 @@ import { useWorkspacesStore } from '../../stores/workspaces'
 import { mapGroupedEntries } from '../../utils/snippetGroups'
 import { getUnavailablePlaceholders, resolveSnippetText } from '../../utils/snippetPlaceholders'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps({
     sessionId: {
@@ -559,54 +560,18 @@ const buttonIcon = computed(() => {
     return 'paper-plane'
 })
 
-// Join activation chars with "or" (oxford-style without comma before "or"):
-//   1 char  → "/"
-//   2 chars → "/ or $"
-//   3+      → "/, $ or @"
-function formatCharList(items) {
-    if (items.length <= 1) return items.join('')
-    const last = items[items.length - 1]
-    const rest = items.slice(0, -1)
-    return `${rest.join(', ')} or ${last}`
-}
-
-// Placeholder text based on process state. Provider-specific parts come
-// from the helpers: ``getCommandActivationChars()`` drives the "At start:"
-// hint; ``getPlaceholderAssistantTurnNote()`` controls the optional warning
-// shown during ``assistant_turn``.
+// Provider helpers select the complete working message and available commands.
 const placeholderText = computed(() => {
     const helpers = getProviderHelpers(session.value?.provider)
-    const state = processState.value?.state
-
-    if (state === 'starting') {
-        return t('composer.status.startingProvider', { provider: providerLabel.value })
-    }
-
-    if (state === 'assistant_turn') {
-        const base = t('composer.shortcuts.sendWhileWorking', { provider: providerLabel.value })
-        const note = helpers?.getPlaceholderAssistantTurnNote()
-        return note ? `${base} ${note}` : base
-    }
-
-    const chars = helpers?.getCommandActivationChars() ?? []
-    const historyHint = !isDraft.value
-        ? (settingsStore.isTouchDevice ? t('composer.shortcuts.historyTouch') : t('composer.shortcuts.historyKeyboard'))
-        : null
-
-    const atStartItems = []
-    if (chars.length > 0) atStartItems.push(t('composer.shortcuts.commands', { chars: formatCharList(chars) }))
-    if (historyHint) atStartItems.push(historyHint)
-
-    const segments = []
-    if (atStartItems.length > 0) segments.push(t('composer.shortcuts.atStart', { hints: atStartItems.join(', ') }))
-    segments.push(t('composer.shortcuts.filePaths'))
-
-    let text = t('composer.shortcuts.summary', { hints: segments.join('; ') })
-    if (!settingsStore.isTouchDevice) {
-        const keys = settingsStore.isMac ? '⌘↵ or Ctrl↵' : 'Ctrl↵ or Meta↵'
-        text += t('composer.shortcuts.sendSuffix', { keys })
-    }
-    return text
+    return getComposerPlaceholder(t, locale.value, {
+        state: processState.value?.state,
+        provider: providerLabel.value,
+        workingMessageKey: helpers?.getPlaceholderAssistantTurnMessageKey(),
+        commandChars: helpers?.getCommandActivationChars() ?? [],
+        isDraft: isDraft.value,
+        isTouchDevice: settingsStore.isTouchDevice,
+        isMac: settingsStore.isMac,
+    })
 })
 
 // Restore draft message when session changes

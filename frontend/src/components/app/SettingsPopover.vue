@@ -1969,13 +1969,13 @@ function onChangelogClose() {
                                 @keydown="onTitleSuggestionModelKeydown"
                             >
                                 <wa-radio :value="TITLE_SUGGESTION_MODEL.PROVIDER">
-                                    {{ $t('settings.titles.model.matchProviderPrefix') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('settings.titles.model.claudeSuffix') }} {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('settings.titles.model.codexSuffix') }}
+                                    {{ $t('settings.titles.model.matchProvider', { claudeModel: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU], codexModel: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }) }}
                                 </wa-radio>
                                 <wa-radio
                                     :value="TITLE_SUGGESTION_MODEL.HAIKU"
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                                 >
-                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }} {{ $t('settings.titles.model.everySessionSuffix') }}
+                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.HAIKU] }) }}
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.HAIKU]"
                                         class="radio-note"
@@ -1985,7 +1985,7 @@ function onChangelogClose() {
                                     :value="TITLE_SUGGESTION_MODEL.LUNA"
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                 >
-                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }} {{ $t('settings.titles.model.everySessionSuffix') }}
+                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.LUNA] }) }}
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.LUNA]"
                                         class="radio-note"
@@ -1995,7 +1995,7 @@ function onChangelogClose() {
                                     :value="TITLE_SUGGESTION_MODEL.OPENROUTER"
                                     :disabled="!!disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.OPENROUTER]"
                                 >
-                                    {{ TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.OPENROUTER] }} for every session
+                                    {{ $t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.OPENROUTER] }) }}
                                     <span
                                         v-if="disabledTitleSuggestionModels[TITLE_SUGGESTION_MODEL.OPENROUTER]"
                                         class="radio-note"
@@ -2029,7 +2029,10 @@ function onChangelogClose() {
                                     class="title-prompt-textarea"
                                 ></wa-textarea>
                                 <div class="title-prompt-hint">
-                                    <span>{{ $t('common.fragments.usePrefix') }} <code>{text}</code> {{ $t('settings.titles.systemPrompt.placeholderSuffix') }}</span>
+                                    <i18n-t keypath="settings.titles.systemPrompt.hint" tag="span" scope="global">
+                                        <template #placeholder><code>{text}</code></template>
+                                        <template #apply>{{ $t('common.actions.apply') }}</template>
+                                    </i18n-t>
                                     <div class="title-prompt-actions">
                                         <wa-button
                                             v-if="!isDefaultPrompt"
@@ -2181,11 +2184,9 @@ function onChangelogClose() {
                                 @change="onNotifyOnExtraUsageStartChange"
                                 size="small"
                             >{{ $t('settings.usage.extraUsageNotification.notify') }}</wa-switch>
-                            <span class="setting-group-hint">
-                                {{ $t('settings.usage.extraUsageNotification.hintPrefix') }}
-                                <a href="#" @click.prevent="selectSection('notifications')">{{ $t('settings.sections.notifications') }}</a>
-                                {{ $t('settings.usage.extraUsageNotification.hintSuffix') }}
-                            </span>
+                            <i18n-t keypath="settings.usage.extraUsageNotification.hint" tag="span" class="setting-group-hint" scope="global">
+                                <template #notificationsLink><a href="#" @click.prevent="selectSection('notifications')">{{ $t('settings.sections.notifications') }}</a></template>
+                            </i18n-t>
                         </div>
                         <template v-for="(provider, idx) in usageProviders" :key="provider">
                             <wa-divider v-if="idx === 0"></wa-divider>
@@ -2354,7 +2355,7 @@ function onChangelogClose() {
             <footer v-if="currentVersion" class="settings-footer">
                 <span class="settings-footer-version">
                     <BrandLogo :size="16" class="settings-footer-logo" />
-                    <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">{{ $t('settings.about.currentVersionPrefix') }}{{ currentVersion }}</a><template v-if="store.isDevMode"> {{ $t('settings.about.devBadge') }}</template>
+                    <a href="https://github.com/twidi/twicc/" target="_blank" rel="noopener">{{ $t('settings.about.currentVersion', { version: currentVersion }) }}</a><template v-if="store.isDevMode"> {{ $t('settings.about.devBadge') }}</template>
                     <template v-if="latestVersion">
                         &rarr;
                         <wa-button
@@ -2365,7 +2366,7 @@ function onChangelogClose() {
                             @click="onShowUpdateInstructions"
                         >
                             <wa-icon slot="start" name="arrow-up"></wa-icon>
-                            {{ $t('settings.about.latestVersionPrefix') }}{{ latestVersion.version }} {{ $t('settings.about.updateAvailableSuffix') }}
+                            {{ $t('settings.about.updateAvailable', { version: latestVersion.version }) }}
                         </wa-button>
                     </template>
                 </span>

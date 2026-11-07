@@ -25,7 +25,8 @@ function radioFor(value) {
 test('the Titles setting offers OpenRouter, disabled while the OpenRouter key is not set', () => {
     const radio = radioFor('TITLE_SUGGESTION_MODEL.OPENROUTER')
     assert.match(radio, /:disabled="!!disabledTitleSuggestionModels\[TITLE_SUGGESTION_MODEL\.OPENROUTER\]"/)
-    assert.match(flat(radio), /\{\{ TITLE_SUGGESTION_MODEL_LABELS\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] \}\} for every session/)
+    assert.ok(flat(radio).includes("$t('settings.titles.model.everySession', { model: TITLE_SUGGESTION_MODEL_LABELS[TITLE_SUGGESTION_MODEL.OPENROUTER] })"))
+    assert.equal(en['settings.titles.model.everySession'], '{model} for every session')
     // The disabled map holds OpenRouter exactly when the key is absent.
     assert.match(popoverSource, /if \(!openrouterKeySet\.value\) \{\s*disabled\[TITLE_SUGGESTION_MODEL\.OPENROUTER\] =/)
     // The note says what to do (the variable, where, and the restart), not only that the key is missing.

@@ -60,7 +60,9 @@ const visibleWorkspaces = computed(() =>
         </div>
         <wa-callout v-if="!visibleWorkspaces.length" variant="brand" class="workspace-hint">
             <wa-icon slot="icon" name="lightbulb"></wa-icon>
-            {{ $t('workspace.list.introPrefix') }} <wa-icon name="plus" auto-width></wa-icon> {{ $t('workspace.list.introSuffix') }}
+            <i18n-t keypath="workspace.list.intro" scope="global">
+                <template #createIcon><wa-icon name="plus" auto-width></wa-icon></template>
+            </i18n-t>
         </wa-callout>
         <div v-else class="workspace-cards">
             <WorkspaceCard

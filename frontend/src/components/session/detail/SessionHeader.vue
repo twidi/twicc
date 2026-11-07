@@ -715,7 +715,7 @@ defineExpose({
                     <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
                     <span class="git-directory-text"><span class="git-directory-inner">{{ displayDirectoryParts.head }}<strong>{{ displayDirectoryParts.last }}</strong></span></span>
                 </span>
-                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }} (click to copy)</AppTooltip>
+                <AppTooltip v-if="displayDirectory" :for="`session-header-${sessionId}-git-directory`">{{ displayDirectoryTooltip }}</AppTooltip>
 
                 <span v-if="session.git_branch" :id="`session-header-${sessionId}-git-branch`" class="git-info-item git-branch" @click="copyToClipboard(session.git_branch, 'Branch')">
                     <wa-icon auto-width name="code-branch"></wa-icon>
@@ -1011,7 +1011,7 @@ defineExpose({
                     >
                         {{ formatMemory(processState.memory) }}
                     </span>
-                    <AppTooltip v-if="processState?.memory" :for="`session-header-${sessionId}-process-memory`">{{ providerLabel }} {{ $t('session.process.memoryUsageSuffix') }}</AppTooltip>
+                    <AppTooltip v-if="processState?.memory" :for="`session-header-${sessionId}-process-memory`">{{ $t('session.process.memoryUsageTooltip', { provider: providerLabel }) }}</AppTooltip>
                 </span>
 
                 <wa-button-group v-if="canInterruptTurn || canStopProcess || canStopAgent" class="process-actions" :label="$t('session.process.controlsLabel')">

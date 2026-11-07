@@ -170,7 +170,7 @@ function handleMenuSelect(event) {
                 <div class="workspace-meta">
                     <span :id="`workspace-sessions-${workspace.id}`" class="sessions-count">
                         <wa-icon auto-width name="folder-open" variant="regular"></wa-icon>
-                        <span>{{ totalSessionsCount }} {{ $t('session.labels.singular') }}{{ totalSessionsCount !== 1 ? 's' : '' }}</span>
+                        <span>{{ $t('common.sessionCount', { count: totalSessionsCount }, totalSessionsCount) }}</span>
                     </span>
                     <AppTooltip :for="`workspace-sessions-${workspace.id}`">{{ $t('workspace.card.sessionCountTooltip') }}</AppTooltip>
                     <template v-if="showCosts">
