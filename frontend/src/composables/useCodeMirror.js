@@ -19,13 +19,14 @@ import { getSurfaceColor, getSelectionColor } from '../utils/theme'
 
 /**
  * Helper to create a loader for legacy CodeMirror modes via StreamLanguage.
- * @param {string} modPath     - Path segment under @codemirror/legacy-modes/mode/
+ * Each loader uses a literal import so Vite can include the mode in the build.
+ * @param {() => Promise<object>} loadMode - Legacy mode module loader
  * @param {string} exportName  - Named export from the legacy mode module
  * @returns {() => Promise<import('@codemirror/language').StreamLanguage>}
  */
-const legacyMode = (modPath, exportName) => async () => {
+const legacyMode = (loadMode, exportName) => async () => {
     const [mod, { StreamLanguage }] = await Promise.all([
-        import(`@codemirror/legacy-modes/mode/${modPath}`),
+        loadMode(),
         import('@codemirror/language'),
     ])
     return StreamLanguage.define(mod[exportName])
@@ -120,29 +121,29 @@ export const CM6_LANGUAGE_MAP = {
     },
 
     // ── Legacy modes via StreamLanguage ─────────────────────────────────────
-    go: legacyMode('go', 'go'),
-    yaml: legacyMode('yaml', 'yaml'),
-    ruby: legacyMode('ruby', 'ruby'),
-    bash: legacyMode('shell', 'shell'),
-    zsh: legacyMode('shell', 'shell'),
-    shell: legacyMode('shell', 'shell'),
-    shellscript: legacyMode('shell', 'shell'),
-    dockerfile: legacyMode('dockerfile', 'dockerFile'),
-    lua: legacyMode('lua', 'lua'),
-    kotlin: legacyMode('clike', 'kotlin'),
-    swift: legacyMode('swift', 'swift'),
-    scss: legacyMode('css', 'sCSS'),
-    sass: legacyMode('sass', 'sass'),
-    less: legacyMode('css', 'less'),
-    perl: legacyMode('perl', 'perl'),
-    r: legacyMode('r', 'r'),
-    scala: legacyMode('clike', 'scala'),
-    clojure: legacyMode('clojure', 'clojure'),
-    haskell: legacyMode('haskell', 'haskell'),
-    erlang: legacyMode('erlang', 'erlang'),
-    toml: legacyMode('toml', 'toml'),
-    diff: legacyMode('diff', 'diff'),
-    powershell: legacyMode('powershell', 'powerShell'),
+    go: legacyMode(() => import('@codemirror/legacy-modes/mode/go'), 'go'),
+    yaml: legacyMode(() => import('@codemirror/legacy-modes/mode/yaml'), 'yaml'),
+    ruby: legacyMode(() => import('@codemirror/legacy-modes/mode/ruby'), 'ruby'),
+    bash: legacyMode(() => import('@codemirror/legacy-modes/mode/shell'), 'shell'),
+    zsh: legacyMode(() => import('@codemirror/legacy-modes/mode/shell'), 'shell'),
+    shell: legacyMode(() => import('@codemirror/legacy-modes/mode/shell'), 'shell'),
+    shellscript: legacyMode(() => import('@codemirror/legacy-modes/mode/shell'), 'shell'),
+    dockerfile: legacyMode(() => import('@codemirror/legacy-modes/mode/dockerfile'), 'dockerFile'),
+    lua: legacyMode(() => import('@codemirror/legacy-modes/mode/lua'), 'lua'),
+    kotlin: legacyMode(() => import('@codemirror/legacy-modes/mode/clike'), 'kotlin'),
+    swift: legacyMode(() => import('@codemirror/legacy-modes/mode/swift'), 'swift'),
+    scss: legacyMode(() => import('@codemirror/legacy-modes/mode/css'), 'sCSS'),
+    sass: legacyMode(() => import('@codemirror/legacy-modes/mode/sass'), 'sass'),
+    less: legacyMode(() => import('@codemirror/legacy-modes/mode/css'), 'less'),
+    perl: legacyMode(() => import('@codemirror/legacy-modes/mode/perl'), 'perl'),
+    r: legacyMode(() => import('@codemirror/legacy-modes/mode/r'), 'r'),
+    scala: legacyMode(() => import('@codemirror/legacy-modes/mode/clike'), 'scala'),
+    clojure: legacyMode(() => import('@codemirror/legacy-modes/mode/clojure'), 'clojure'),
+    haskell: legacyMode(() => import('@codemirror/legacy-modes/mode/haskell'), 'haskell'),
+    erlang: legacyMode(() => import('@codemirror/legacy-modes/mode/erlang'), 'erlang'),
+    toml: legacyMode(() => import('@codemirror/legacy-modes/mode/toml'), 'toml'),
+    diff: legacyMode(() => import('@codemirror/legacy-modes/mode/diff'), 'diff'),
+    powershell: legacyMode(() => import('@codemirror/legacy-modes/mode/powershell'), 'powerShell'),
 }
 
 // ─── b) Language resolution with caching ────────────────────────────────────

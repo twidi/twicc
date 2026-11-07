@@ -27,6 +27,7 @@ class BrowserRecoveryTest {
         val requests = CopyOnWriteArrayList<String>()
         val ready = CopyOnWriteArrayList<String>()
         val fallback = CopyOnWriteArrayList<String>()
+        val featureFallback = CopyOnWriteArrayList<String>()
         val server = MockWebServer()
         init {
             val assets = instrumentation.context.assets
@@ -38,12 +39,29 @@ class BrowserRecoveryTest {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     val url = request.requestUrl!!
+                    // WebView also requests this icon. It is not a document reload.
+                    if (url.encodedPath == "/favicon.ico") return MockResponse().setResponseCode(404)
                     if (url.encodedPath == "/ready") { ready += url.queryParameter("state") ?: ""; return MockResponse() }
                     if (url.encodedPath == "/fallback") { fallback += "shown"; return MockResponse() }
+                    if (url.encodedPath == "/feature-fallback") { featureFallback += "handled"; return MockResponse() }
+                    if (url.encodedPath == "/static/assets/runtime-error.js") return MockResponse()
+                        .setHeader("Content-Type", "text/javascript").setBody("throw new TypeError('Editor initialization failed');")
                     if (url.encodedPath.startsWith("/static/")) return MockResponse().setResponseCode(404)
                     requests += request.path!!
                     val broken = failure == "always" || (failure != "none" && url.queryParameter("__twicc_reload") == null)
                     val asset = when {
+                        failure == "bare" || failure == "runtime" -> {
+                            val module = if (failure == "bare") "@codemirror/legacy-modes/mode/toml" else "/static/assets/runtime-error.js"
+                            """<script type=module>
+                                window.dispatchEvent(new Event('twicc:assets-ready'));
+                                import('$module').catch(error=>{
+                                    // Vite forwards both import resolution and module evaluation errors.
+                                    const event=new Event('vite:preloadError',{cancelable:true});
+                                    event.payload=error;window.dispatchEvent(event);
+                                    if(!event.defaultPrevented) fetch('/feature-fallback');
+                                });
+                            </script>"""
+                        }
                         !broken -> "<script type=module>window.dispatchEvent(new Event('twicc:assets-ready'));fetch('/ready?state='+sessionStorage.getItem('login-fixture'));</script>"
                         failure == "css" -> "<link rel=stylesheet href=/static/assets/old.css>"
                         else -> "<script type=module src=/static/assets/old.js></script>"
@@ -97,6 +115,14 @@ class BrowserRecoveryTest {
             Thread.sleep(500)
             assertEquals(2, site.requests.size)
             assertEquals(1, site.fallback.size)
+        } }
+    }
+
+    @Test fun optionalModuleErrorsStayWithTheFeatureInsteadOfReplacingThePage() {
+        for (failure in listOf("bare", "runtime")) Site(failure).use { site -> withBrowser(site) {
+            waitFor { site.featureFallback.isNotEmpty() }
+            assertEquals(1, site.requests.size)
+            assertTrue(site.fallback.isEmpty())
         } }
     }
 

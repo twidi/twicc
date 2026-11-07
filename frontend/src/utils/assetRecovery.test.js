@@ -63,7 +63,7 @@ test('a second broken document shows Retry instead of looping', () => {
 test('a dynamic import failure also recovers an already loaded page', () => {
     const p = page()
     let prevented = false
-    p.events.get('vite:preloadError')?.({ preventDefault() { prevented = true } })
+    p.events.get('vite:preloadError')?.({ payload: new TypeError('error loading dynamically imported module: https://twicc.test/static/assets/editor-old.js'), preventDefault() { prevented = true } })
     assert.equal(p.navigation.length, 1)
     assert.equal(prevented, true)
 })
@@ -91,4 +91,46 @@ test('successful asset startup removes only the temporary recovery query', () =>
     const p = page({ href: 'https://twicc.test/project/p/session/s?workspace=w&__twicc_reload=1#item' })
     p.events.get('twicc:assets-ready')?.()
     assert.equal(p.window.location.href, 'https://twicc.test/project/p/session/s?workspace=w#item')
+})
+
+
+test('module resolution and execution errors do not replace a working app with Retry', () => {
+    for (const payload of [
+        new TypeError("Failed to resolve module specifier '@codemirror/legacy-modes/mode/toml'"),
+        new TypeError('The specifier “@codemirror/legacy-modes/mode/toml” was a bare specifier, but was not remapped to anything.'),
+        new ReferenceError('missingEditorVariable is not defined'),
+        new SyntaxError('Unexpected token'),
+        new Error('Editor initialization failed'),
+    ]) {
+        const p = page({ storage: new Map([['twicc:asset-recovery', String(Date.now())]]) })
+        p.events.get('twicc:assets-ready')?.()
+        let prevented = false
+        p.events.get('vite:preloadError')?.({ payload, preventDefault() { prevented = true } })
+        assert.equal(p.navigation.length, 0, payload.message)
+        assert.equal(p.panels.length, 0, payload.message)
+        assert.equal(prevented, false, 'the importing feature must receive its error')
+    }
+})
+
+test('only actual same-origin build resource loading failures trigger recovery', () => {
+    for (const message of [
+        'Failed to fetch dynamically imported module: https://twicc.test/static/assets/editor-old.js',
+        'error loading dynamically imported module: https://twicc.test/static/assets/editor-old.js',
+        'Unable to preload CSS for https://twicc.test/static/assets/editor-old.css',
+    ]) {
+        const p = page()
+        let prevented = false
+        p.events.get('vite:preloadError')?.({ payload: new TypeError(message), preventDefault() { prevented = true } })
+        assert.equal(p.navigation.length, 1, message)
+        assert.equal(prevented, true)
+    }
+    for (const message of [
+        'Failed to fetch dynamically imported module: https://other.test/static/assets/editor.js',
+        'error loading dynamically imported module: https://twicc.test/user-script.js',
+    ]) {
+        const p = page()
+        p.events.get('vite:preloadError')?.({ payload: new TypeError(message), preventDefault() {} })
+        assert.equal(p.navigation.length, 0, message)
+        assert.equal(p.panels.length, 0, message)
+    }
 })
