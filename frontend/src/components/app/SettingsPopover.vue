@@ -2411,7 +2411,7 @@ function onChangelogClose() {
                 >
                     <wa-icon name="right-from-bracket"></wa-icon>
                 </wa-button>
-                <AppTooltip v-if="showLogout" :for="logoutButtonId">Logout</AppTooltip>
+                <AppTooltip v-if="showLogout" :for="logoutButtonId">{{ $t('logout') }}</AppTooltip>
             </footer>
         </wa-popover>
         <ChangelogDialog ref="changelogDialogRef" @close="onChangelogClose" />

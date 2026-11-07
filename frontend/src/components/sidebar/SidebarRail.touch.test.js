@@ -27,12 +27,13 @@ async function renderTimeline(items, speech) {
         top: items.filter(item => item.id === 'timeline'), bottom: [], speech,
         rows: [], railRows: [], recentProjects: [], recentWorkspaces: [], hasCentralContent: false,
     }) })
+    app.use(createAppI18n())
     app.component('AppTooltip', { setup: (_, { slots }) => () => Vue.h('span', { 'data-tooltip': true }, slots.default?.()) })
     app.config.warnHandler = () => {}
     return renderToString(app)
 }
 
-function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }, { speech = { activePageId: null, activeLabel: '' }, realNavigation = false } = {}) {
+function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }, { speech = { activePageId: null, activeLabel: '' }, realNavigation = false, locale = 'en' } = {}) {
     t.mock.timers.enable({ apis: ['setTimeout'] })
     const document = new EventTarget()
     const listeners = new Map()
@@ -59,7 +60,7 @@ function fixture(t, isTouchDevice = true, tts = { status: 'idle', stop() {} }, {
     const { descriptor } = parse(source)
     const script = descriptor.scriptSetup.content.replace(/^import .*$/gm, '')
     const api = runInNewContext(`${script}\n;({setSessionTooltip, sessionPointerDown, sessionPointerEnter, sessionClick, sessionTooltipTrigger, setEntryTooltip, entryPointerDown, scopeClick, scopeSelected, handleEntryTooltipHide, activate, items})`, {
-        document, Map, createRailSessionLongPress, useI18n: () => createAppI18n().global,
+        document, Map, createRailSessionLongPress, useI18n: () => createAppI18n(locale).global,
         ALL_PROJECTS_ID, extractWorkspaceId, isWorkspaceProjectId, resolveRailItems,
         ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
         defineProps: () => ({ mode: 'sessions', sidebarOpen: false }), defineEmits: () => () => {},
@@ -285,3 +286,21 @@ for (const [pageId, label, expected] of [
         assert.equal(speech.activePageId, pageId)
     })
 }
+
+
+test('Portuguese rail labels preserve the timeline destination and speech controls', t => {
+    const speech = { activePageId: 'ws:one', activeLabel: 'Workspace one' }
+    const tts = { status: 'loading', stop() {} }
+    const f = fixture(t, false, tts, { speech, locale: 'pt-BR' })
+    const label = id => f.api.items.value.find(item => item.id === id)?.label
+    assert.equal(label('timeline'), 'Ouvindo a linha do tempo: Workspace one')
+    assert.equal(label('speech'), 'Cancelar a solicitação de leitura em voz alta')
+    tts.status = 'playing'
+    assert.equal(label('speech'), 'Parar a leitura em voz alta')
+    tts.status = 'idle'
+    assert.equal(label('speech'), undefined)
+    assert.equal(label('timeline'), 'Ouvindo a linha do tempo: Workspace one')
+    speech.activePageId = null
+    assert.equal(label('timeline'), 'Linha do tempo de todos os projetos')
+    assert.ok(f.api.items.value.every(item => typeof item.label === 'string' && item.label.length > 0))
+})

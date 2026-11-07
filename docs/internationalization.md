@@ -15,7 +15,10 @@ responses, project names, saved snippets, terminal output or file contents.
 The first translation covers the home page, navigation rail, project and
 workspace cards and management dialogs, most general settings controls,
 session header controls, session search and selection, and the message
-composer's main controls. Dates rendered by the shared date utility follow
+composer's main controls. The navigation rail also translates the global
+timeline destination, its active listening label, and speech playback controls.
+The Summaries and Text to Speech section names are translated; their detailed
+settings panels remain English. Dates rendered by the shared date utility follow
 the selected language. The HTML `lang` attribute follows it too, including
 Web Awesome controls that use the document language.
 

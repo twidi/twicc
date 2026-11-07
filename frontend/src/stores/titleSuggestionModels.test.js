@@ -1,3 +1,4 @@
+import en from '../i18n/locales/en.json' with { type: 'json' }
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -49,8 +50,9 @@ test('the OpenRouter radio says where the text goes and who pays, unless the key
 
 test('the Titles hints hold for every model', () => {
     const source = flat(popoverSource)
-    assert.match(source, /TwiCC generates the title with another model/)
-    assert.doesNotMatch(source, /generates the title with the other provider/)
+    assert.ok(source.includes("$t('if_the_selected_model_cannot_be_used')"))
+    assert.match(en.if_the_selected_model_cannot_be_used, /TwiCC generates the title with another model/)
+    assert.doesNotMatch(en.if_the_selected_model_cannot_be_used, /generates the title with the other provider/)
     // The radio note says where the text goes: the hint does not say it twice.
     assert.equal(source.match(/paid on your OpenRouter account/g)?.length, 1)
     // The model words come from the one constant, never written in the component.
@@ -59,13 +61,15 @@ test('the Titles hints hold for every model', () => {
 
 test('a displaced OpenRouter choice says it comes back with the key, an agent choice with its provider', () => {
     const source = flat(popoverSource)
+    assert.match(en.your_choice_returns_after_openrouter_setup, /once the OpenRouter key is set and TwiCC restarted\./)
+    assert.match(en.your_choice_is_kept_and_comes_back_as_soon, /as soon as you enable its provider again\./)
     assert.match(
         source,
-        /<template v-if="displacedTitleModelIsOpenRouter"> Your choice is kept, and comes back once the OpenRouter key is set and TwiCC restarted\. <\/template>/,
+        /<template v-if="displacedTitleModelIsOpenRouter"> \{\{ \$t\('your_choice_returns_after_openrouter_setup'\) \}\} <\/template>/,
     )
     assert.match(
         source,
-        /<template v-else> Your choice is kept, and comes back as soon as you enable its provider again\. <\/template>/,
+        /<template v-else> \{\{ \$t\('your_choice_is_kept_and_comes_back_as_soon'\) \}\} <\/template>/,
     )
     assert.match(
         popoverSource,
