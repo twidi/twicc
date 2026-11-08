@@ -259,6 +259,9 @@ def make_started_claude_agent(monkeypatch, directory, connect=None, query=None, 
     monkeypatch.setattr(agent_module, "patch_client_for_logging", lambda *args: None)
     monkeypatch.setattr(agent_module, "attach_elicitation_handler", lambda *args: None)
     monkeypatch.setattr(agent_module, "apply_pending_context", lambda session_id, text: text)
+    # ``start`` removes DJANGO_SETTINGS_MODULE from the process environment for the SDK. Here that is
+    # the pytest process: the compute workers' forkserver, started later, would then fail its preload.
+    monkeypatch.setattr(agent_module, "strip_django_settings_env", lambda env: None)
     monkeypatch.setattr(sessions_watcher, "get_watcher", lambda: SimpleNamespace(request_fast_poll=lambda: None))
     monkeypatch.setattr(trust, "project_is_untrusted", lambda project: False)
     agent = agent_module.ClaudeCodeAgent(
