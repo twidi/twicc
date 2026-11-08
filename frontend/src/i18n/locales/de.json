@@ -4511,7 +4511,7 @@
     "android.push.genericTitle": "TwiCC-Benachrichtigung",
     "android.push.genericBody": "Öffne TwiCC, um diese Benachrichtigung anzusehen.",
     "android.push.errors.updateApp": "Android-Benachrichtigungen sind nicht verfügbar. Aktualisiere die Android-App und versuche es erneut.",
-    "android.push.errors.updateServer": "Aktualisiere diesen TwiCC-Server, um Android-Benachrichtigungen zu verwenden.",
+    "android.push.errors.updateServer": "Aktualisiere diesen TwiCC-Server, um detaillierte Android-Benachrichtigungen zu verwenden. Bis dahin zeigen Benachrichtigungen eine allgemeine Nachricht.",
     "android.push.finishedWithShells": "{finished} — {shells}",
     "android.push.extraUsageBody": "{sentence}\n{usage}",
     "android.push.peerBody": "„{title}“\n{preview}",

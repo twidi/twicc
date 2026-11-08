@@ -88,6 +88,7 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AndroidPush.reconcilePayloadSupport(this)
         rendererRecovery = RendererRecovery(savedInstanceState?.takeIf { it.containsKey("rendererRecoveryAt") }
             ?.getLong("rendererRecoveryAt"))
         store = InstanceStore(this)
@@ -488,6 +489,7 @@ class BrowserActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        AndroidPush.reconcilePayloadSupport(this)
         foreground = true
         refreshNativeUi()
         reportPushSession()

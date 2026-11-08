@@ -2,6 +2,7 @@ package com.twidi.twicc.push
 
 import android.Manifest
 import android.app.Activity
+import android.app.Application
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -13,6 +14,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
@@ -98,10 +100,48 @@ object AndroidPush {
     }
     @Synchronized fun pending(context: Context): Map<String, JSONObject> = preferences(context).all.keys
         .associateWith { read(context, it) }.filterValues { it.optBoolean("dirty") && it.optString("token").isNotEmpty() }
-    @Synchronized fun complete(context: Context, id: String, snapshot: JSONObject, status: String, retry: Boolean) {
+    @Synchronized fun complete(context: Context, id: String, snapshot: JSONObject, status: String, retry: Boolean,
+        payloadVersion: Int? = null) {
         if (read(context, id).optString("revision") != snapshot.optString("revision")) return
         if (snapshot.optBoolean("deleted") && !retry) preferences(context).edit().remove(id).commit()
-        else update(context, id) { it.put("dirty", retry).put("status", status) }
+        else update(context, id) {
+            it.put("dirty", retry).put("status", status)
+            if (status == "ready" && payloadVersion == 2) it.put("notification_payload_version", 2)
+        }
+    }
+
+    private val reconciled = mutableSetOf<String>()
+    private var observingForeground = false
+
+    /** Each foreground session makes one finite attempt for every unconfirmed saved grant. */
+    @Synchronized fun reconcilePayloadSupport(context: Context) {
+        if (!observingForeground) {
+            observingForeground = true
+            (context.applicationContext as Application).registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                private val started = mutableSetOf<Activity>()
+                override fun onActivityStarted(activity: Activity) { started.add(activity) }
+                override fun onActivityStopped(activity: Activity) {
+                    started.remove(activity)
+                    if (started.isEmpty() && !activity.isChangingConfigurations) synchronized(AndroidPush) { reconciled.clear() }
+                }
+                override fun onActivityCreated(activity: Activity, state: Bundle?) {}
+                override fun onActivityResumed(activity: Activity) {}
+                override fun onActivityPaused(activity: Activity) {}
+                override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {}
+            })
+        }
+        val store = com.twidi.twicc.InstanceStore(context)
+        var pending = false
+        for (id in preferences(context).all.keys) {
+            val value = read(context, id)
+            if (value.optString("token").isEmpty() || value.optBoolean("deleted") ||
+                value.optString("status") == "login" || value.optInt("notification_payload_version") == 2 || store.find(id) == null) continue
+            if (!reconciled.add(id)) continue
+            if (!value.optBoolean("dirty")) update(context, id) { it.put("dirty", true).put("enabled", allowed(context)) }
+            pending = true
+        }
+        if (pending) schedule(context, 30_000)
     }
     fun schedule(context: Context, delayMillis: Long = 0) {
         context.getSystemService(JobScheduler::class.java).schedule(JobInfo.Builder(JOB_ID,
@@ -141,8 +181,11 @@ object AndroidPush {
             update(context, instance.id) { it.put("enabled", enabled).put("dirty", true) }
             schedule(context)
         }
-        return JSONObject().put("device_id", instance.id).put("name", "${Build.MODEL} · ${instance.name}".take(160))
-            .put("permission", permission(context)).put("status", value.optString("status", "idle"))
+        val status = value.optString("status", "idle").let {
+            if (it == "ready" && value.optInt("notification_payload_version") != 2) "update_server" else it
+        }
+        return JSONObject().put("payloadVersion", 2).put("device_id", instance.id).put("name", "${Build.MODEL} · ${instance.name}".take(160))
+            .put("permission", permission(context)).put("status", status)
     }
     fun choices(value: JSONObject): JSONObject {
         require(value.keys().asSequence().toSet() == PushPayload.kinds && value.keys().asSequence().toSet().all { value.opt(it) is Boolean })
@@ -193,10 +236,13 @@ object AndroidPush {
                 require(Regex("[A-Za-z0-9_-]{87}").matches(vapid) && key.size == 65 && key[0] == 4.toByte())
                 val token = request.getString("token").also { require(it.matches(Regex("[A-Za-z0-9_-]{40,100}"))) }
                 val choices = choices(request.getJSONObject("preferences"))
+                val payloadVersion = request.opt("payloadVersion")
+                require(payloadVersion == null || payloadVersion is Int && payloadVersion == 2)
                 val old = read(activity, instance.id)
                 update(activity, instance.id) {
                     it.put("address", instance.address).put("token", token).put("vapid", vapid).put("preferences", choices)
                         .put("enabled", allowed(activity)).put("deleted", false).put("status", "registering").put("needsEndpoint", true)
+                    if (payloadVersion == 2) it.put("notification_payload_version", 2)
                     if (old.optString("vapid") != vapid || old.optBoolean("deleted")) it.remove("subscription")
                     it.put("dirty", true)
                 }

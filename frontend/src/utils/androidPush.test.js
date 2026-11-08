@@ -80,3 +80,75 @@ test('a ready old endpoint cannot hide failed enrollment or prevent its retry', 
         Date.now = originalNow
     }
 })
+
+
+async function compatibilityFixture(payloadVersion, serverVersion) {
+    const states = [], uploads = [], calls = []
+    const controller = createAndroidPush({ request: async (command, args) => {
+        calls.push([command, args])
+        return { device_id: 'phone', name: 'Phone', permission: 'granted', status: command === 'push.configure' ? 'ready' : 'idle',
+            ...(payloadVersion === undefined ? {} : { payloadVersion }) }
+    } }, { onState: state => states.push(state), fetchImpl: async (_, options) => {
+        uploads.push(JSON.parse(options.body))
+        return Response.json({ protocol: 1, public_key: 'key', token: 'grant',
+            ...(serverVersion === undefined ? {} : { notification_payload_version: serverVersion }) })
+    } })
+    await controller.synchronize(preferences)
+    return { states, uploads, calls, controller }
+}
+
+test('newApkOldServerShowsGenericCompatibility', async () => {
+    const f = await compatibilityFixture(2, undefined)
+    assert.equal(f.states.at(-1).status, 'update_server')
+    assert.deepEqual(f.uploads, [{ device_id: 'phone', name: 'Phone', enabled: true, preferences, notification_payload_version: 2 }])
+    await f.controller.synchronize(preferences)
+    assert.equal(f.uploads.length, 1)
+    assert.equal(f.states.at(-1).status, 'update_server')
+})
+
+test('oldApkNewServerShowsUpdateRequired', async () => {
+    const f = await compatibilityFixture(undefined, 2)
+    assert.equal(f.states.at(-1).status, 'update_app')
+    assert.deepEqual(f.uploads, [{ device_id: 'phone', name: 'Phone', enabled: true, preferences }])
+    assert.equal(f.calls.at(-1)[0], 'push.configure')
+})
+
+test('compatible APK and server keep enrollment protocol separate from payload capability', async () => {
+    const f = await compatibilityFixture(2, 2)
+    assert.equal(f.states.at(-1).status, 'ready')
+    assert.deepEqual(f.calls.at(-1), ['push.configure', { vapid: 'key', token: 'grant', preferences, payloadVersion: 2 }])
+    assert.equal(f.uploads[0].notification_payload_version, 2)
+})
+
+test('old APK and old server retain the legacy enrollment flow', async () => {
+    const f = await compatibilityFixture(undefined, undefined)
+    assert.equal(f.states.at(-1).status, 'ready')
+    assert.deepEqual(f.calls.at(-1), ['push.configure', { vapid: 'key', token: 'grant', preferences }])
+})
+
+
+test('native confirmation after a server upgrade clears the earlier compatibility state', async () => {
+    let status = 'idle'
+    const states = []
+    const controller = createAndroidPush({ request: async command => ({ device_id: 'phone', name: 'Phone',
+        permission: 'granted', payloadVersion: 2, status: command === 'push.configure' ? 'update_server' : status }) },
+    { onState: value => states.push(value), fetchImpl: async () => Response.json({ protocol: 1, public_key: 'key', token: 'grant' }) })
+    await controller.synchronize(preferences)
+    assert.equal(states.at(-1).status, 'update_server')
+    status = 'ready' // The finite native renewal confirms payload 2 on the upgraded server.
+    await controller.synchronize(preferences)
+    assert.equal(states.at(-1).status, 'ready')
+})
+
+
+test('old APK heartbeats preserve the app update instruction without scheduling enrollment', async () => {
+    const { observeAndroidPush } = await import('./androidPush.js')
+    const { androidPushState } = await import('./androidEnvironment.js')
+    androidPushState.value = { status: 'update_app', compatibility: 'update_app', permission: 'granted' }
+    try {
+        observeAndroidPush({ status: 'ready', permission: 'granted' })
+        assert.equal(androidPushState.value.status, 'update_app')
+        observeAndroidPush({ status: 'ready', payloadVersion: 2, permission: 'granted' })
+        assert.equal(androidPushState.value.status, 'ready')
+    } finally { androidPushState.value = null }
+})

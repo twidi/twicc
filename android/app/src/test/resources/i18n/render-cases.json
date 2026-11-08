@@ -1627,7 +1627,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Update this TwiCC server to use Android notifications."
+                  "value": "Update this TwiCC server to use detailed Android notifications. Until then, notifications show a generic message."
                 }
               ],
               "parameters": []
@@ -6544,7 +6544,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Aktualisiere diesen TwiCC-Server, um Android-Benachrichtigungen zu verwenden."
+                  "value": "Aktualisiere diesen TwiCC-Server, um detaillierte Android-Benachrichtigungen zu verwenden. Bis dahin zeigen Benachrichtigungen eine allgemeine Nachricht."
                 }
               ],
               "parameters": []
@@ -11477,7 +11477,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Actualiza este servidor TwiCC para usar las notificaciones de Android."
+                  "value": "Actualiza este servidor TwiCC para usar notificaciones de Android detalladas. Hasta entonces, las notificaciones muestran un mensaje genérico."
                 }
               ],
               "parameters": []
@@ -16430,7 +16430,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Mettez à jour ce serveur TwiCC pour utiliser les notifications Android."
+                  "value": "Mettez à jour ce serveur TwiCC pour utiliser des notifications Android détaillées. En attendant, les notifications affichent un message générique."
                 }
               ],
               "parameters": []
@@ -21359,7 +21359,7 @@
               "tokens": [
                 {
                   "type": "text",
-                  "value": "Atualize este servidor TwiCC para usar as notificações do Android."
+                  "value": "Atualize este servidor TwiCC para usar notificações detalhadas do Android. Até lá, as notificações mostram uma mensagem genérica."
                 }
               ],
               "parameters": []
@@ -25484,7 +25484,7 @@
         "key": "android.push.errors.updateServer",
         "params": {}
       },
-      "expected": "Update this TwiCC server to use Android notifications."
+      "expected": "Update this TwiCC server to use detailed Android notifications. Until then, notifications show a generic message."
     },
     {
       "locale": "en",
@@ -28064,7 +28064,7 @@
         "key": "android.push.errors.updateServer",
         "params": {}
       },
-      "expected": "Aktualisiere diesen TwiCC-Server, um Android-Benachrichtigungen zu verwenden."
+      "expected": "Aktualisiere diesen TwiCC-Server, um detaillierte Android-Benachrichtigungen zu verwenden. Bis dahin zeigen Benachrichtigungen eine allgemeine Nachricht."
     },
     {
       "locale": "de",
@@ -30644,7 +30644,7 @@
         "key": "android.push.errors.updateServer",
         "params": {}
       },
-      "expected": "Actualiza este servidor TwiCC para usar las notificaciones de Android."
+      "expected": "Actualiza este servidor TwiCC para usar notificaciones de Android detalladas. Hasta entonces, las notificaciones muestran un mensaje genérico."
     },
     {
       "locale": "es",
@@ -33224,7 +33224,7 @@
         "key": "android.push.errors.updateServer",
         "params": {}
       },
-      "expected": "Mettez à jour ce serveur TwiCC pour utiliser les notifications Android."
+      "expected": "Mettez à jour ce serveur TwiCC pour utiliser des notifications Android détaillées. En attendant, les notifications affichent un message générique."
     },
     {
       "locale": "fr",
@@ -36208,7 +36208,7 @@
         "key": "android.push.errors.updateServer",
         "params": {}
       },
-      "expected": "Atualize este servidor TwiCC para usar as notificações do Android."
+      "expected": "Atualize este servidor TwiCC para usar notificações detalhadas do Android. Até lá, as notificações mostram uma mensagem genérica."
     },
     {
       "locale": "pt-BR",

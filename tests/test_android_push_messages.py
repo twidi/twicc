@@ -174,7 +174,7 @@ def test_push_has_no_rendered_prose_or_locale(monkeypatch):
     async def capture(device, payload):
         sent.append(payload)
     monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: False)
-    monkeypatch.setattr(delivery.storage, 'devices', lambda: [{'preferences': {k: True for k in ('peer', 'user_turn', 'pending_request', 'extra_usage')}}])
+    monkeypatch.setattr(delivery.storage, 'devices', lambda *, notification_payload_version: [{'notification_payload_version': 2, 'preferences': {k: True for k in ('peer', 'user_turn', 'pending_request', 'extra_usage')}}])
     monkeypatch.setattr(delivery, '_send_one', capture)
     for kind in ('peer', 'user_turn', 'pending_request', 'extra_usage'):
         asyncio.run(delivery.send(kind, ui_message('android.push.genericTitle'), ui_message('android.push.genericBody')))

@@ -88,7 +88,7 @@ async def send(kind: str, title_ui_message: dict, body_ui_message: dict, *, path
         payload = bounded_payload(payload)
         if payload is None:
             return
-        for device in await asyncio.to_thread(storage.devices):
+        for device in await asyncio.to_thread(storage.devices, notification_payload_version=2):
             if device.get("preferences", {}).get(kind) and not presence.is_browser_present() and await _session_can_notify(path):
                 await _send_one(device, payload)
     except Exception as error:

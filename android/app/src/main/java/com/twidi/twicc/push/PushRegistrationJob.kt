@@ -36,7 +36,12 @@ class PushRegistrationJob : JobService() {
                         val again = response.code == 429 || response.code >= 500
                         retry = retry || again
                         val status = when { response.isSuccessful -> "ready"; response.code == 401 -> "login"; again -> "retrying"; else -> "error" }
-                        AndroidPush.complete(this, id, snapshot, status, again)
+                        // Old-server success ends retries without confirming payload compatibility.
+                        val payloadVersion = if (response.isSuccessful && !snapshot.optBoolean("deleted"))
+                            PushRegistrationRequest.confirmedPayloadVersion(response.body?.source()?.let { source ->
+                                if (source.request(8193)) null else source.readUtf8()
+                            }) else null
+                        AndroidPush.complete(this, id, snapshot, status, again, payloadVersion)
                     }
                 } catch (_: Exception) {
                     retry = true
@@ -64,12 +69,18 @@ class PushRegistrationJob : JobService() {
 }
 
 internal object PushRegistrationRequest {
+    fun confirmedPayloadVersion(body: String?): Int? = runCatching {
+        val version = JSONObject(body ?: return@runCatching null).opt("notification_payload_version")
+        if (version is Int && version == 2) 2 else null
+    }.getOrNull()
+
     fun build(id: String, value: JSONObject): Request {
         val address = com.twidi.twicc.InstanceUrl.parse(value.getString("address")).origin
         val body = JSONObject().put("device_id", id)
         val deleted = value.optBoolean("deleted")
         if (!deleted) body.put("subscription", value.getJSONObject("subscription"))
             .put("enabled", value.getBoolean("enabled")).put("preferences", value.getJSONObject("preferences"))
+            .put("notification_payload_version", 2)
         return Request.Builder().url("$address/api/auth/android-push/")
             .header("Authorization", "Bearer ${value.getString("token")}")
             .method(if (deleted) "DELETE" else "PUT", body.toString().toRequestBody("application/json".toMediaType())).build()

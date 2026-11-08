@@ -23,6 +23,15 @@ def body(request):
     return value
 
 
+def payload_capability(value):
+    if "notification_payload_version" not in value:
+        return None
+    capability = value["notification_payload_version"]
+    if type(capability) is not int or capability != 2:
+        raise ValueError("Invalid notification payload version")
+    return capability
+
+
 def enrollment(request):
     # PasswordAuthMiddleware protects this API through the existing session.
     if request.method == "GET":
@@ -39,7 +48,7 @@ def enrollment(request):
             raise ValueError("Invalid preferences")
         if any(type(choice) is not bool for choice in preferences.values()) or type(value["enabled"]) is not bool:
             raise ValueError("Invalid preferences")
-        token = storage.enroll(value["device_id"], name.strip(), preferences, value["enabled"])
+        token = storage.enroll(value["device_id"], name.strip(), preferences, value["enabled"], payload_capability(value))
     except (ValueError, TypeError, KeyError, AttributeError):
         return response(ui_error("Invalid Android notification registration.", 'backend.androidPush.invalidRegistration'), 400)
     return response({**storage.configuration(), "token": token})
@@ -61,7 +70,10 @@ def native_registration(request):
             if request.method == "DELETE":
                 storage.device_path(value["device_id"]).unlink(missing_ok=True)
             else:
+                capability = payload_capability(value)
                 device["subscription"] = subscription(value["subscription"])
+                if capability is not None:
+                    device["notification_payload_version"] = capability
                 if "enabled" in value:
                     if type(value["enabled"]) is not bool:
                         raise ValueError("Invalid permission")
@@ -78,4 +90,4 @@ def native_registration(request):
                 storage.save_device(device)
     except (ValueError, TypeError, KeyError, AttributeError):
         return response(ui_error("Invalid Android notification registration.", 'backend.androidPush.invalidRegistration'), 400)
-    return response({"ok": True})
+    return response({"ok": True, "notification_payload_version": 2})

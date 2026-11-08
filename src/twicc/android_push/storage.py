@@ -55,7 +55,7 @@ def configuration() -> dict:
         public = private.public_key().public_bytes(
             serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
         )
-        return {"protocol": 1, "public_key": base64.urlsafe_b64encode(public).decode().rstrip("=")}
+        return {"protocol": 1, "notification_payload_version": 2, "public_key": base64.urlsafe_b64encode(public).decode().rstrip("=")}
 
 
 def device_path(device_id: str) -> Path:
@@ -77,7 +77,7 @@ def valid_binding(device: dict) -> bool:
     return device.get("fingerprint") == compute_fingerprint(settings.TWICC_PASSWORD_HASH)
 
 
-def enroll(device_id: str, name: str, preferences: dict, enabled: bool) -> str:
+def enroll(device_id: str, name: str, preferences: dict, enabled: bool, notification_payload_version: int | None = None) -> str:
     configuration()
     token = secrets.token_urlsafe(32)
     with lock:
@@ -90,6 +90,7 @@ def enroll(device_id: str, name: str, preferences: dict, enabled: bool) -> str:
                 "fingerprint": compute_fingerprint(settings.TWICC_PASSWORD_HASH),
                 "token_hash": hashlib.sha256(token.encode()).hexdigest(),
                 "subscription": None,
+                **({"notification_payload_version": 2} if notification_payload_version == 2 else {}),
             }
         )
     return token
@@ -106,13 +107,14 @@ def grant_device(device_id: str, token: str) -> dict | None:
     )
 
 
-def devices() -> list[dict]:
+def devices(*, notification_payload_version: int | None = None) -> list[dict]:
     with lock:
         result = []
         for path in (directory() / "devices").glob("*.json"):
             device = read_device(path.stem)
             if device and valid_binding(device) and device.get("enabled") and device.get("subscription"):
-                result.append(device)
+                if notification_payload_version is None or device.get("notification_payload_version") == notification_payload_version:
+                    result.append(device)
         return result
 
 

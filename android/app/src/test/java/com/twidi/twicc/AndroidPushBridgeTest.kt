@@ -40,6 +40,16 @@ class AndroidPushBridgeTest {
         assertEquals(listOf("push.configure", "push.state", "push.preferences", "push.permission", "push.remove"), received)
     }
 
+    @Test fun payloadCapabilityStaysSeparateFromBridgeProtocol() {
+        val bridge = AndroidAppBridge({ JSONObject().put("push", JSONObject().put("payloadVersion", 2).put("status", "update_server")) },
+            { _, _ -> }, { _, _ -> null })
+        val reply = JSONObject(bridge.receive("""{"protocol":1,"id":"state","command":"getState"}"""))
+        assertTrue(reply.getBoolean("ok"))
+        assertEquals(1, reply.getInt("protocol"))
+        assertEquals(2, reply.getJSONObject("state").getJSONObject("push").getInt("payloadVersion"))
+        assertEquals("update_server", reply.getJSONObject("state").getJSONObject("push").getString("status"))
+    }
+
     @Test fun probeCannotUseTheLargeSpeechFrameAllowance() {
         val request = JSONObject().put("protocol", 1).put("id", "request").put("command", "push.configure")
             .put("padding", "x".repeat(17 * 1024))

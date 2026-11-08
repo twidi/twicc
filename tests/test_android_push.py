@@ -34,7 +34,7 @@ def choices(**overrides):
 
 
 def registration():
-    return {"device_id": str(uuid4()), "name": "Phone", "enabled": True, "preferences": choices()}
+    return {"device_id": str(uuid4()), "name": "Phone", "enabled": True, "preferences": choices(), "notification_payload_version": 2}
 
 
 def subscription(token="sample"):
@@ -397,7 +397,7 @@ def test_push_timestamps_describe_the_event_not_delayed_delivery(monkeypatch):
 
     monkeypatch.setattr(delivery, 'datetime', Clock)
     monkeypatch.setattr(delivery.presence, 'is_browser_present', lambda: False)
-    monkeypatch.setattr(delivery.storage, 'devices', lambda: [{'preferences': choices()}])
+    monkeypatch.setattr(delivery.storage, 'devices', lambda **_: [{'preferences': choices()}])
     sent = []
 
     async def capture(device, payload):
@@ -475,3 +475,93 @@ def test_read_actions_dismiss_only_the_target_sessions(push_server, monkeypatch,
     assert Session.objects.get(id='other').last_viewed_at == before
     if any(message.get('unread') is True for message in messages):
         assert Session.objects.get(id='a').last_viewed_at is None
+
+
+def renew(client, body, token, **changes):
+    return client.put("/api/auth/android-push/", data={
+        "device_id": body["device_id"], "subscription": subscription(), **changes,
+    }, content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {token}")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_old_registration_does_not_receive_structured_push(push_server, monkeypatch):
+    from twicc.android_push import delivery, storage
+
+    client, _ = push_server
+    body = registration()
+    body.pop("notification_payload_version")
+    response = client.post("/api/android-push/", data=body, content_type="application/json")
+    assert response.json()["protocol"] == 1
+    assert response.json()["notification_payload_version"] == 2
+    assert renew(Client(), body, response.json()["token"]).status_code == 200
+    sent = []
+
+    async def capture(device, payload):
+        sent.append(payload)
+
+    monkeypatch.setattr(delivery, "_send_one", capture)
+    monkeypatch.setattr(delivery.presence, "is_browser_present", lambda: False)
+    asyncio.run(delivery.send("user_turn", TITLE, BODY))
+    assert sent == []
+    assert storage.read_device(body["device_id"]) is not None
+    asyncio.run(delivery.send_dismissals(["session"]))
+    assert [payload["type"] for payload in sent] == ["twicc.dismiss_sessions"]
+
+
+def test_confirmed_version_survives_old_renewal(push_server):
+    from twicc.android_push import storage
+
+    client, _ = push_server
+    body = registration()
+    token = client.post("/api/android-push/", data=body, content_type="application/json").json()["token"]
+    response = renew(Client(), body, token)
+    assert response.status_code == 200
+    assert response.json()["notification_payload_version"] == 2
+    assert storage.read_device(body["device_id"])["notification_payload_version"] == 2
+
+
+def test_upgrade_promotes_registration_without_page(push_server):
+    from twicc.android_push import storage
+
+    client, root = push_server
+    body = registration()
+    body.pop("notification_payload_version")
+    token = client.post("/api/android-push/", data=body, content_type="application/json").json()["token"]
+    assert renew(Client(), body, token).status_code == 200
+    assert storage.devices(notification_payload_version=2) == []
+    response = renew(Client(), body, token, notification_payload_version=2)
+    assert response.status_code == 200
+    assert response.json()["notification_payload_version"] == 2
+    assert len(storage.devices(notification_payload_version=2)) == 1
+    saved = orjson.loads((root / "android-push/devices" / f"{body['device_id']}.json").read_bytes())
+    assert set(saved) == {"device_id", "name", "preferences", "enabled", "fingerprint", "token_hash", "subscription", "notification_payload_version"}
+    rotated = subscription("rotated")
+    assert renew(Client(), body, token, subscription=rotated).status_code == 200
+    assert storage.read_device(body["device_id"])["subscription"] == rotated
+
+
+@pytest.mark.parametrize("capability", [1, 3, True, "2", None, 2.0])
+def test_invalid_payload_capability_preserves_auth_and_registration(push_server, capability):
+    from twicc.android_push import storage
+
+    client, _ = push_server
+    body = registration()
+    token = client.post("/api/android-push/", data=body, content_type="application/json").json()["token"]
+    before = storage.read_device(body["device_id"])
+    assert renew(Client(), body, "wrong", notification_payload_version=capability).status_code == 401
+    assert renew(Client(), body, token, notification_payload_version=capability).status_code == 400
+    assert storage.read_device(body["device_id"]) == before
+    body["notification_payload_version"] = capability
+    assert client.post("/api/android-push/", data=body, content_type="application/json").status_code == 400
+    assert storage.read_device(body["device_id"]) == before
+
+
+def test_legacy_reenrollment_replaces_capability_for_the_new_grant(push_server):
+    from twicc.android_push import storage
+
+    client, _ = push_server
+    body = registration()
+    client.post("/api/android-push/", data=body, content_type="application/json")
+    body.pop("notification_payload_version")
+    assert client.post("/api/android-push/", data=body, content_type="application/json").status_code == 200
+    assert storage.read_device(body["device_id"]).get("notification_payload_version") != 2

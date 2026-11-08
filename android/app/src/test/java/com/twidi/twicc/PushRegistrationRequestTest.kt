@@ -20,11 +20,21 @@ class PushRegistrationRequestTest {
         request.body!!.writeTo(buffer)
         val body = JSONObject(buffer.readUtf8())
         assertEquals("device", body.getString("device_id"))
+        assertEquals(2, body.getInt("notification_payload_version"))
+        assertEquals(setOf("device_id", "subscription", "enabled", "preferences", "notification_payload_version"),
+            body.keys().asSequence().toSet())
         assertFalse(body.getBoolean("enabled"))
         assertTrue(body.getJSONObject("preferences").getBoolean("user_turn"))
         val deleted = PushRegistrationRequest.build("device", state.put("deleted", true))
         assertEquals("DELETE", deleted.method)
         deleted.body!!.writeTo(buffer)
         assertEquals(setOf("device_id"), JSONObject(buffer.readUtf8()).keys().asSequence().toSet())
+    }
+    @Test fun onlyExplicitVersionTwoResponsesConfirmCompatibility() {
+        assertEquals(2, PushRegistrationRequest.confirmedPayloadVersion("""{"ok":true,"notification_payload_version":2}"""))
+        for (body in listOf(null, "", "{}", """{"ok":true}""", """{"notification_payload_version":1}""",
+            """{"notification_payload_version":"2"}""", """{"notification_payload_version":true}""", "invalid")) {
+            assertNull(PushRegistrationRequest.confirmedPayloadVersion(body))
+        }
     }
 }

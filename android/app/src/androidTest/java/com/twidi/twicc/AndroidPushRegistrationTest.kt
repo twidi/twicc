@@ -1,6 +1,9 @@
 package com.twidi.twicc
 
 import android.app.job.JobScheduler
+import androidx.test.core.app.ActivityScenario
+import androidx.lifecycle.Lifecycle
+import com.twidi.twicc.push.PushRegistrationRequest
 import android.content.Context
 import android.content.Intent
 import android.content.ComponentName
@@ -18,6 +21,88 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 class AndroidPushRegistrationTest {
+    @Test fun apkFirstServerLaterReconfirmsOnNativeResume() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = InstanceStore(context)
+        val instances = (1..2).map { store.save(null, "Upgrade fixture $it", "https://upgrade-$it-${java.util.UUID.randomUUID()}.example") }
+        val terminal = listOf("login", "deleted").map { status ->
+            store.save(null, "Terminal $status", "https://$status-${java.util.UUID.randomUUID()}.example").also { saved ->
+                AndroidPush.update(context, saved.id) {
+                    it.put("token", "grant").put("status", status).put("deleted", status == "deleted").put("dirty", false)
+                }
+            }
+        }
+        val terminalRevisions = terminal.associate { it.id to AndroidPush.read(context, it.id).getString("revision") }
+        val scheduler = context.getSystemService(JobScheduler::class.java)
+        try {
+            instances.forEach { instance ->
+                AndroidPush.update(context, instance.id) {
+                    it.put("token", "grant").put("address", instance.address).put("status", "ready")
+                        .put("enabled", AndroidPush.allowed(context)).put("subscription", JSONObject().put("endpoint", "old"))
+                        .put("preferences", JSONObject().put("user_turn", true).put("pending_request", false).put("extra_usage", false).put("peer", false))
+                }
+            }
+            ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("manage", true)).use { scenario ->
+                scheduler.cancel(820) // Inspect work without a live network or instance page.
+                instances.forEach { instance ->
+                    val snapshot = AndroidPush.pending(context).getValue(instance.id)
+                    val request = PushRegistrationRequest.build(instance.id, snapshot)
+                    val buffer = okio.Buffer()
+                    request.body!!.writeTo(buffer)
+                    assertEquals(setOf("device_id", "subscription", "enabled", "preferences", "notification_payload_version"),
+                        JSONObject(buffer.readUtf8()).keys().asSequence().toSet())
+                    AndroidPush.complete(context, instance.id, snapshot, "ready", false,
+                        PushRegistrationRequest.confirmedPayloadVersion("""{"ok":true}"""))
+                    assertFalse(AndroidPush.read(context, instance.id).optBoolean("dirty"))
+                    assertEquals("update_server", AndroidPush.state(context, instance).getString("status"))
+                }
+                scenario.onActivity { AndroidPush.reconcilePayloadSupport(it) }
+                assertTrue("Old-server success must not continuously poll", AndroidPush.pending(context).keys.intersect(instances.map { it.id }.toSet()).isEmpty())
+                // Activity recreation and activity switches belong to the same foreground session.
+                scenario.recreate()
+                scheduler.cancel(820)
+                assertTrue(AndroidPush.pending(context).keys.intersect(instances.map { it.id }.toSet()).isEmpty())
+                ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("manage", true)).use {
+                    scheduler.cancel(820)
+                    assertTrue(AndroidPush.pending(context).keys.intersect(instances.map { it.id }.toSet()).isEmpty())
+                }
+                assertTrue(AndroidPush.pending(context).keys.intersect(instances.map { it.id }.toSet()).isEmpty())
+                scenario.moveToState(Lifecycle.State.CREATED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                scheduler.cancel(820)
+                instances.forEach { instance ->
+                    val oldEndpoint = AndroidPush.pending(context).getValue(instance.id)
+                    AndroidPush.update(context, instance.id) { it.put("subscription", JSONObject().put("endpoint", "rotated")) }
+                    AndroidPush.complete(context, instance.id, oldEndpoint, "ready", false, 2)
+                    assertTrue("Stale success cannot clear endpoint rotation", AndroidPush.read(context, instance.id).getBoolean("dirty"))
+                    assertFalse(AndroidPush.read(context, instance.id).has("notification_payload_version"))
+                    val snapshot = AndroidPush.pending(context).getValue(instance.id)
+                    assertEquals("rotated", snapshot.getJSONObject("subscription").getString("endpoint"))
+                    AndroidPush.complete(context, instance.id, snapshot, "ready", false,
+                        PushRegistrationRequest.confirmedPayloadVersion("""{"ok":true,"notification_payload_version":2}"""))
+                    assertEquals(2, AndroidPush.read(context, instance.id).getInt("notification_payload_version"))
+                    assertEquals("ready", AndroidPush.state(context, instance).getString("status"))
+                    val confirmed = AndroidPush.read(context, instance.id)
+                    AndroidPush.complete(context, instance.id, confirmed, "ready", false)
+                    assertEquals(2, AndroidPush.read(context, instance.id).getInt("notification_payload_version"))
+                    assertFalse(AndroidPush.read(context, instance.id).has("locale"))
+                    assertFalse(AndroidPush.read(context, instance.id).has("language"))
+                }
+                terminal.forEach { saved ->
+                    assertEquals("Reconciliation preserves 401 and deletion state", terminalRevisions[saved.id],
+                        AndroidPush.read(context, saved.id).getString("revision"))
+                }
+            }
+        } finally {
+            scheduler.cancel(820)
+            (instances + terminal).forEach { instance ->
+                context.getSharedPreferences("android-push", Context.MODE_PRIVATE).edit().remove(instance.id).commit()
+                store.remove(instance)
+            }
+            context.getSharedPreferences("instances", Context.MODE_PRIVATE).edit().commit()
+        }
+    }
+
     @Test fun failedEndpointRegistrationSchedulesNativeRetryAndStaleUploadCannotClearNewChanges() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

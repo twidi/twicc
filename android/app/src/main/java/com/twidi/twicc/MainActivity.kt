@@ -33,6 +33,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AndroidPush.reconcilePayloadSupport(this)
         store = InstanceStore(this)
         deleteUnusedProfiles()
         ui = InstanceManagerUi(this).apply { onAdd = { edit(null) } }
@@ -115,6 +116,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        AndroidPush.reconcilePayloadSupport(this)
         render()
         sheet?.window?.decorView?.refreshNativeMessages()
     }

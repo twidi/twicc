@@ -188,6 +188,8 @@ const androidStatus = computed(() => {
     const state = androidPushState.value
     if (state?.permission === 'denied') return t('settings.notifications.status.blocked')
     if (state?.permission === 'default') return t('settings.notifications.status.permission')
+    if (state?.status === 'update_app') return t('android.push.errors.updateApp')
+    if (state?.status === 'update_server') return t('android.push.errors.updateServer')
     if (state?.status === 'unavailable') return t('settings.notifications.status.unavailable')
     if (state?.status === 'login') return t('settings.notifications.status.login')
     if (state?.status === 'server') return t('settings.notifications.status.server')
