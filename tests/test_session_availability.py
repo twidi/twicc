@@ -756,3 +756,113 @@ def test_mcp_event_subscriptions_are_refused(sessions):
     assert exc.value.error.data["reason"] == SESSION_UNAVAILABLE
     refuse_unavailable_session(sessions.open)
     refuse_unavailable_session(None)
+
+
+def _registry_with(monkeypatch, manager):
+    monkeypatch.setattr("twicc.agent.registry.get_agent_manager_registry", lambda: SimpleNamespace(get=lambda p: manager))
+    monkeypatch.setattr("twicc.core.services.send_message.ensure_provider_running", lambda provider: None)
+    monkeypatch.setattr("twicc.core.services.session_creation.ensure_provider_running", lambda provider: None)
+
+
+def test_the_send_service_returns_the_code_and_the_reason(sessions, monkeypatch):
+    from twicc.agent.base_manager import BaseAgentManager
+    from twicc.core.services.send_message import send_message_to_session_from_payload
+
+    failure = _start_failure()
+    manager = MagicMock(spec=BaseAgentManager)
+    manager.send_to_session = AsyncMock(side_effect=failure)
+    manager.get_live_agent = lambda sid: None
+    _registry_with(monkeypatch, manager)
+
+    result = asyncio.run(send_message_to_session_from_payload({"session_id": "open", "text": "hi"}))
+
+    assert result.success is False
+    assert (result.errors[0].code, result.errors[0].reason) == ("agent_start_failed", "working_directory_missing")
+    assert result.errors[0].message == str(failure)
+
+
+def test_the_create_service_returns_the_code_and_the_reason(sessions, monkeypatch):
+    from twicc.agent.base_manager import BaseAgentManager
+    from twicc.core.services.session_creation import create_session_from_payload
+
+    manager = MagicMock(spec=BaseAgentManager)
+    manager.create_session = AsyncMock(side_effect=_start_failure())
+    _registry_with(monkeypatch, manager)
+
+    result = asyncio.run(create_session_from_payload({
+        "session_id": "new-session", "project_id": PROJECT_ID, "provider": "claude_code", "text": "hi",
+    }))
+
+    assert result.success is False
+    assert (result.errors[0].code, result.errors[0].reason) == ("agent_start_failed", "working_directory_missing")
+
+
+@pytest.fixture
+def db_write_passthrough(monkeypatch):
+    async def passthrough(operation, **kwargs):
+        return await operation()
+
+    monkeypatch.setattr("twicc.asgi.run_under_db_write_lock", passthrough)
+
+
+def test_the_websocket_new_session_frame_has_the_reason(sessions, consumer, monkeypatch, db_write_passthrough):
+    from twicc.core.services.session_creation import SessionCreationError, SessionCreationResult
+
+    error = SessionCreationError("session", "agent_start_failed", "did not start", "working_directory_missing")
+    monkeypatch.setattr("twicc.asgi.create_session_from_payload", AsyncMock(
+        return_value=SessionCreationResult(False, None, None, None, [error]),
+    ))
+
+    async def go():
+        await consumer._handle_send_message({
+            "type": "send_message", "session_id": "new-draft", "project_id": PROJECT_ID,
+            "provider": "claude_code", "text": "hi", "request_id": "req-1",
+        })
+        await _drain()
+
+    asyncio.run(go())
+
+    [frame] = _frames(consumer)
+    assert (frame["code"], frame["reason"]) == ("agent_start_failed", "working_directory_missing")
+
+
+def test_the_websocket_frame_has_the_reason_and_no_ack(sessions, consumer, db_write_passthrough):
+    failure = _start_failure()
+    consumer.manager.send_to_session = AsyncMock(side_effect=failure)
+
+    async def go():
+        await consumer._handle_send_message({
+            "type": "send_message", "session_id": "open", "project_id": PROJECT_ID,
+            "text": "hi", "request_id": "req-1", "selected_model": "opus",
+        })
+        await _drain()
+
+    with patch("twicc.asgi.logger") as logger:
+        asyncio.run(go())
+
+    [frame] = _frames(consumer)
+    assert (frame["type"], frame["code"], frame["reason"], frame["request_id"]) == (
+        "error", "agent_start_failed", "working_directory_missing", "req-1",
+    )
+    consumer.manager.send_to_session.assert_awaited_once()
+    logger.warning.assert_not_called()
+
+
+def test_the_websocket_frame_of_another_error_has_no_reason(sessions, consumer, db_write_passthrough):
+    consumer.manager.send_to_session = AsyncMock(side_effect=SessionUnavailableError(
+        "gone", session_id="open", reason="some_reason",
+    ))
+
+    async def go():
+        await consumer._handle_send_message({
+            "type": "send_message", "session_id": "open", "project_id": PROJECT_ID,
+            "text": "hi", "request_id": "req-1", "selected_model": "opus",
+        })
+        await _drain()
+
+    asyncio.run(go())
+
+    [frame] = _frames(consumer)
+    consumer.manager.send_to_session.assert_awaited_once()
+    assert frame["code"] == SESSION_UNAVAILABLE
+    assert "reason" not in frame

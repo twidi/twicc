@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from asgiref.sync import sync_to_async
 
+from twicc.agent.exceptions import AgentStartError
 from twicc.agent.send_lanes import send_lane
 from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
@@ -40,6 +41,7 @@ class SendMessageError(NamedTuple):
     field: str
     code: str
     message: str
+    reason: str | None = None
 
 
 class SendMessageResult(NamedTuple):
@@ -55,8 +57,8 @@ class SendMessageResult(NamedTuple):
     status_extra: dict = {}
 
 
-def _rejected(field: str, code: str, message: str) -> SendMessageResult:
-    return SendMessageResult(False, None, None, None, [SendMessageError(field, code, message)])
+def _rejected(field: str, code: str, message: str, reason: str | None = None) -> SendMessageResult:
+    return SendMessageResult(False, None, None, None, [SendMessageError(field, code, message, reason)])
 
 
 async def send_message_from_drop_payload(payload: dict) -> SendMessageResult:
@@ -289,7 +291,7 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
         code = getattr(e, "code", None) or "manager_busy"
         if attachment_drop.is_attachment_code(code):
             return _rejected("attachments", code, attachment_drop.message_with_names(e)), False
-        return _rejected("session", code, str(e)), False
+        return _rejected("session", code, str(e), reason=e.reason if isinstance(e, AgentStartError) else None), False
 
     manager_owns_refs = delivered is False
     if manager_owns_refs:
@@ -306,7 +308,8 @@ async def _send(payload: dict, *, retain_refs: Callable[[], None]) -> tuple[Send
         try:
             receipt = await manager.wait_for_completion_input(completion_token)
         except RuntimeError as exc:
-            return _rejected("session", getattr(exc, "code", "send_uncertain"), str(exc)), manager_owns_refs
+            reason = exc.reason if isinstance(exc, AgentStartError) else None
+            return _rejected("session", getattr(exc, "code", "send_uncertain"), str(exc), reason=reason), manager_owns_refs
         if receipt is not None:
             status_extra.update(last_line=receipt.admission_cursor, wait_token=completion_token)
 

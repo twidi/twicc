@@ -44,7 +44,7 @@ from twicc.core.services.attachments.target import resolve_existing_session_plan
 from twicc.core.services.session_creation import create_session_from_payload
 from twicc.core.services.title_suggestion import requested_title_model, suggest_title
 from twicc.agent import ephemeral as ephemeral_runs
-from twicc.agent.exceptions import SendDeliveryError, SessionUnavailableError
+from twicc.agent.exceptions import AgentStartError, SendDeliveryError, SessionUnavailableError
 from twicc.core.session_availability import (
     SESSION_UNAVAILABLE,
     aensure_session_id_available,
@@ -1473,6 +1473,8 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
                     # (provider_disabled, project_not_found, etc.).
                     first = result.errors[0]
                     extra = {"names": list(result.error_names)} if result.error_names else {}
+                    if first.reason:
+                        extra["reason"] = first.reason
                     await send_error(first.message, code=first.code, **extra)
                     return
                 # Success: the new agent started with the first message as its
@@ -1484,11 +1486,16 @@ class WSConsumer(AsyncJsonWebsocketConsumer):
             # Process busy or other expected delivery errors. SendDeliveryError
             # carries a specific code (agent_starting, hybrid_composer_busy, …);
             # plain RuntimeErrors fall back to the generic send_failed.
-            logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
+            # An AgentStartError is already logged where it was built. Its ``reason``
+            # is read only here: SessionUnavailableError has that attribute too.
+            start_failed = isinstance(e, AgentStartError)
+            if not start_failed:
+                logger.warning("send_message failed: %s", type(e).__name__ if ephemeral_admission and ephemeral_admission.ephemeral else e)
             names = getattr(e, "names", ())
             await send_error(
                 _exception_message(e), code=getattr(e, "code", None) or "send_failed",
                 **({"names": list(names)} if names else {}),
+                **({"reason": e.reason} if start_failed else {}),
             )
         except Exception as e:
             # Unexpected errors - log full traceback

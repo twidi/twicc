@@ -4235,7 +4235,7 @@ export const useDataStore = defineStore('data', {
                 this.localState.failedSends[sessionId] = {}
             }
             this.localState.failedSends[sessionId][requestId] = failedSend
-            saveInflightSend(requestId, { ...entry, failed: { code, message, messageKey, messageParams, failedAt } }).catch(err =>
+            saveInflightSend(requestId, { ...entry, failed: { code, message, messageKey, messageParams, ui_message: failedSend.ui_message, failedAt } }).catch(err =>
                 console.warn('Failed to persist send failure:', err)
             )
             this.recomputeVisualItems(sessionId)

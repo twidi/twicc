@@ -17,6 +17,7 @@ import importlib
 import logging
 import os
 from pathlib import Path
+from typing import NamedTuple
 
 from datetime import datetime, UTC
 
@@ -248,6 +249,11 @@ def stamp_status_times(data: dict) -> dict:
     return data
 
 
+def _error_payload(error: NamedTuple) -> dict:
+    """Return the status-file form of a service error, without a ``reason`` that is not set."""
+    return {key: value for key, value in error._asdict().items() if key != "reason" or value is not None}
+
+
 async def execute_drop_payload(payload: dict, kind: str | None) -> dict:
     """Route ``payload`` to its kind service and return the final status dict.
 
@@ -286,7 +292,7 @@ async def execute_drop_payload(payload: dict, kind: str | None) -> dict:
         return stamp_status_times(status_data)
     return stamp_status_times({
         "status": "rejected",
-        "errors": [e._asdict() for e in (result.errors or [])],
+        "errors": [_error_payload(e) for e in (result.errors or [])],
     })
 
 

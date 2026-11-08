@@ -61,3 +61,8 @@ test('a reported start failure raises neither a toast nor agent_died', () => {
     assert.match(code, /\['error', 'startup-failed', 'timeout_starting'\]/)
     assert.doesNotMatch(code, /agent-start-failed/)
 })
+
+test('a failed send keeps its translated message across a reload', () => {
+    const store = readFileSync(new URL('../stores/data.js', import.meta.url), 'utf8')
+    assert.match(store, /failed: \{ code, message, messageKey, messageParams, ui_message: failedSend\.ui_message, failedAt \}/)
+})

@@ -16,12 +16,13 @@ from twicc.core.services.timeline_feed import FeedError, parse_request
 from twicc.core.session_availability import unavailable_message
 from twicc.core.session_queries import aggregate_tool_state, aggregate_tool_states
 from twicc.core.ui_messages import UiMessageError, ui_message, ui_message_text
+from twicc.drop_requests_watcher import _error_payload
 
 
 def test_shared_errors_keep_original_cli_json_shape():
     error = _validate_annotations([])
     assert error == SessionCreationError('annotations', 'invalid_annotations', 'annotations must be a JSON object.')
-    assert orjson.loads(orjson.dumps(error._asdict())) == {
+    assert orjson.loads(orjson.dumps(_error_payload(error))) == {
         'field': 'annotations', 'code': 'invalid_annotations', 'message': 'annotations must be a JSON object.',
     }
     assert error.message.ui_message == ui_message('backend.sessions.annotations_object')

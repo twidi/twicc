@@ -26,7 +26,7 @@ from asgiref.sync import sync_to_async
 
 from twicc.agent.system_prompt import compose_addendum
 from twicc.agent import ephemeral as ephemeral_runs
-from twicc.agent.exceptions import SendDeliveryError
+from twicc.agent.exceptions import AgentStartError, SendDeliveryError
 from twicc.agent.send_lanes import send_lane
 from twicc.core.services.attachments import drop as attachment_drop
 from twicc.core.services.attachments import lifecycle as attachment_lifecycle
@@ -51,6 +51,7 @@ class SessionCreationError(NamedTuple):
     field: str
     code: str
     message: str
+    reason: str | None = None
 
 
 class SessionCreationResult(NamedTuple):
@@ -531,7 +532,10 @@ async def _create_session_from_payload(
                 error_names=names,
             )
         return SessionCreationResult(False, None, None, None, [
-            SessionCreationError("session", code, attachment_drop.message_with_names(e))
+            SessionCreationError(
+                "session", code, attachment_drop.message_with_names(e),
+                reason=e.reason if isinstance(e, AgentStartError) else None,
+            )
         ])
 
     status_extra = {}
@@ -544,7 +548,10 @@ async def _create_session_from_payload(
                 receipt = await manager.wait_for_completion_input(completion_token)
             except RuntimeError as exc:
                 return SessionCreationResult(False, None, None, None, [
-                    SessionCreationError("session", getattr(exc, "code", "send_uncertain"), attachment_drop.message_with_names(exc)),
+                    SessionCreationError(
+                        "session", getattr(exc, "code", "send_uncertain"), attachment_drop.message_with_names(exc),
+                        reason=exc.reason if isinstance(exc, AgentStartError) else None,
+                    ),
                 ])
             if receipt is not None:
                 status_extra["wait_token"] = completion_token

@@ -77,6 +77,7 @@ The `reply` block comes only with `--wait-reply` (file: `wait-reply.md`). A `cre
   - `provider_disabled` — enable the provider from the UI.
   - `project_not_found` / `project_no_directory` — `--project` did not resolve.
   - `manager_busy` — transient; retry.
+  - `agent_start_failed` — the agent did not start, and the message was not delivered: a new send is safe. `reason` is `working_directory_missing`, `cli_not_found`, `permission_denied` or `start_failed`.
 
 Codes specific to a topic (annotations, `--hidden`, worktree) are in its file.
 

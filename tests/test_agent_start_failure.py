@@ -494,3 +494,15 @@ def test_a_launched_cli_gets_the_graceful_exit(monkeypatch, tmp_path):
 
     asyncio.run(run())
     agent._graceful_cli_exit.assert_awaited_once()
+
+
+def test_status_file_has_reason_only_when_set():
+    from twicc.core.services.send_message import SendMessageError
+    from twicc.drop_requests_watcher import _error_payload
+
+    assert _error_payload(SendMessageError("session", "agent_start_failed", "m", "start_failed")) == {
+        "field": "session", "code": "agent_start_failed", "message": "m", "reason": "start_failed",
+    }
+    assert _error_payload(SendMessageError("session", "other", "m")) == {
+        "field": "session", "code": "other", "message": "m",
+    }
