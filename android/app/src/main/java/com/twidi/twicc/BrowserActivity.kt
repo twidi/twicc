@@ -90,6 +90,7 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!acceptSpeechNotification(intent)) { finish(); return }
         AndroidPush.reconcilePayloadSupport(this)
         rendererRecovery = RendererRecovery(savedInstanceState?.takeIf { it.containsKey("rendererRecoveryAt") }
             ?.getLong("rendererRecoveryAt"))
@@ -132,8 +133,20 @@ class BrowserActivity : Activity() {
     private fun notificationSession(request: Intent): SessionLink? =
         if (request.action == AndroidPush.ACTION_OPEN) SessionLink.parse(request.getStringExtra(AndroidPush.EXTRA_PATH)) else null
 
+    private fun acceptSpeechNotification(request: Intent): Boolean {
+        if (request.action != TtsNotification.ACTION_REOPEN) return true
+        val id = request.getStringExtra("instance") ?: return false
+        if (!TtsService.isCurrentSession(request.getStringExtra(TtsNotification.EXTRA_EPOCH), id)) return false
+        // Consume the tap so later Activity recreation does not recheck an expired speech session.
+        request.action = null
+        request.data = null
+        request.removeExtra(TtsNotification.EXTRA_EPOCH)
+        return true
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (!acceptSpeechNotification(intent)) return
         val target = store.find(intent.getStringExtra("instance")) ?: return
         if (target.id != instance.id) {
             switchInstance(target, intent.takeIf { it.action == AndroidPush.ACTION_OPEN })

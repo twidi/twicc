@@ -35,6 +35,108 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class TtsPlatformBoundaryTest {
+    @Test fun speechNotificationReusesBrowserAndRejectsStaleEpoch() {
+        prepareGeckoTestProfile()
+        ServiceFixture().use { fixture ->
+            val context = fixture.context
+            fixture.clientGate.countDown()
+            val store = com.twidi.twicc.InstanceStore(context)
+            val saved = store.save(null, "Speech navigation fixture", fixture.server.url("/").toString())
+            val url = fixture.server.url("/client").toString()
+            store.rememberPage(saved, url)
+            val activity = ActivityScenario.launch<com.twidi.twicc.BrowserActivity>(
+                Intent(context, com.twidi.twicc.BrowserActivity::class.java).putExtra("instance", saved.id))
+            fun resumedBrowser(): com.twidi.twicc.BrowserActivity? {
+                var result: com.twidi.twicc.BrowserActivity? = null
+                val read = {
+                    result = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                        .filterIsInstance<com.twidi.twicc.BrowserActivity>().singleOrNull()
+                }
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) read()
+                else fixture.instrumentation.runOnMainSync(read)
+                return result
+            }
+            fun loads() = fixture.requests.count { it.path == "/client" }
+            try {
+                fixture.await("Browser loads the document", 20000) {
+                    fixture.requests.any { it.path == "/fixture/client-start" }
+                }
+                awaitActivityFocus(activity)
+                lateinit var original: com.twidi.twicc.BrowserActivity
+                lateinit var document: DocumentOwner
+                activity.onActivity {
+                    original = it
+                    document = it.nativeTtsDocumentOwner()
+                    assertTrue(it.dispatchNativeTts(TtsCommand.Listen(document, ListeningScope("global", null),
+                        false, "2026-11-05T10:00:00.000000Z", "speech-navigation")).accepted)
+                }
+                fixture.await("Speech notification appears") {
+                    context.getSystemService(android.app.NotificationManager::class.java)
+                        .activeNotifications.any { it.id == TtsNotification.ID }
+                }
+                val reopen = fixture.notification().contentIntent
+                reopen.send()
+                fixture.instrumentation.waitForIdleSync()
+                fixture.await("Foreground tap returns to the browser") { resumedBrowser() != null }
+                assertSame("Speech tap must reuse the Activity", original, resumedBrowser())
+                assertEquals(1, loads())
+                activity.onActivity { assertEquals(document, it.nativeTtsDocumentOwner()) }
+
+                fixture.instrumentation.runOnMainSync { original.moveTaskToBack(true) }
+                fixture.await("Browser enters background") { resumedBrowser() == null }
+                reopen.send()
+                fixture.await("Background tap returns to the same browser") { resumedBrowser() === original }
+                fixture.instrumentation.waitForIdleSync()
+                assertEquals(1, loads())
+                assertEquals(url, store.page(saved))
+                activity.onActivity {
+                    assertEquals(document, it.nativeTtsDocumentOwner())
+                    assertEquals("speech-navigation", it.nativeTtsSnapshot().listening!!.pageId)
+                }
+
+                var snapshot: NativeTtsSnapshot? = null
+                fixture.instrumentation.runOnMainSync { snapshot = fixture.binding.binder.snapshot() }
+                val stale = TtsNotification(context).build(snapshot!!,
+                    "stale-navigation-epoch", saved.name).contentIntent
+                stale.send()
+                fixture.instrumentation.waitForIdleSync()
+                assertSame(original, resumedBrowser())
+                assertEquals(1, loads())
+
+                // Speech can outlive the browser. A current tap must restore the saved page.
+                activity.onActivity { it.finish() }
+                fixture.await("Original browser closes") { resumedBrowser() == null }
+                reopen.send()
+                fixture.await("Current notification restores the saved page", 20000) {
+                    resumedBrowser() != null && loads() == 2
+                }
+                assertNotSame(original, resumedBrowser())
+                assertEquals(url, store.page(saved))
+                fixture.instrumentation.runOnMainSync { fixture.binding.binder.dispatch(TtsCommand.StopAll) }
+                fixture.await("Speech session stops") {
+                    context.getSystemService(android.app.NotificationManager::class.java)
+                        .activeNotifications.none { it.id == TtsNotification.ID }
+                }
+                val restored = resumedBrowser()!!
+                fixture.instrumentation.runOnMainSync { restored.recreate() }
+                fixture.await("Browser survives recreation after speech stops", 20000) {
+                    resumedBrowser()?.let { it !== restored } == true && loads() == 3
+                }
+                fixture.instrumentation.runOnMainSync { resumedBrowser()?.finish() }
+                fixture.await("Browser closes after speech stops") { resumedBrowser() == null }
+                reopen.send()
+                fixture.instrumentation.waitForIdleSync()
+                assertNull("Expired notification must not create a browser", resumedBrowser())
+                assertEquals(3, loads())
+            } finally {
+                fixture.instrumentation.runOnMainSync { resumedBrowser()?.finish() }
+                activity.close()
+                store.remove(saved)
+            }
+        }
+    }
+
     @Test fun serviceNotificationUsesLatestLanguageOnNormalRefresh() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val originalProvider = com.twidi.twicc.i18n.NativeMessages.localeProvider

@@ -14,7 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import com.twidi.twicc.MainActivity
+import com.twidi.twicc.BrowserActivity
 import com.twidi.twicc.R
 import com.twidi.twicc.i18n.NativeMessages
 import com.twidi.twicc.i18n.UiMessage
@@ -50,9 +50,9 @@ class TtsNotification(private val context: Context) {
             snapshot.listening?.paused == true -> "android.speech.timelinePaused"
             else -> "android.speech.waiting"
         }
-        val reopen = Intent(context, MainActivity::class.java).setAction(ACTION_REOPEN)
+        val reopen = Intent(context, BrowserActivity::class.java).setAction(ACTION_REOPEN)
             .setData(Uri.parse("twicc-tts://reopen/$epoch"))
-            .putExtra(EXTRA_EPOCH, epoch).putExtra(EXTRA_INSTANCE, snapshot.instanceId)
+            .putExtra(EXTRA_EPOCH, epoch).putExtra("instance", snapshot.instanceId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
