@@ -19,6 +19,8 @@ import android.util.Base64
 import com.twidi.twicc.Instance
 import com.twidi.twicc.PushNotificationPolicy
 import com.twidi.twicc.SessionLink
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
 import org.json.JSONObject
 import org.unifiedpush.android.connector.UnifiedPush
 import java.util.UUID
@@ -108,9 +110,17 @@ object AndroidPush {
     }
     fun channel(kind: String) = "twicc-$kind"
     fun manager(context: Context): NotificationManager = context.getSystemService(NotificationManager::class.java).apply {
-        mapOf("user_turn" to "Finished work", "pending_request" to "Questions and approvals",
-            "extra_usage" to "Extra usage", "peer" to "Peer messages and requests").forEach { (kind, label) ->
-            createNotificationChannel(NotificationChannel(channel(kind), label, NotificationManager.IMPORTANCE_DEFAULT))
+        mapOf("user_turn" to "android.push.channels.finished", "pending_request" to "android.push.channels.attention",
+            "extra_usage" to "settings.notifications.targets.extraUsage", "peer" to "android.push.channels.peer").forEach { (kind, key) ->
+            val existing = getNotificationChannel(channel(kind))
+            if (existing != null) {
+                // Reuse the channel object so its importance and user settings stay intact.
+                existing.name = NativeMessages.text(context, UiMessage(key))
+                createNotificationChannel(existing)
+            } else {
+                createNotificationChannel(NotificationChannel(channel(kind), NativeMessages.text(context, UiMessage(key)),
+                    NotificationManager.IMPORTANCE_DEFAULT))
+            }
         }
         // Remove the temporary channel from installations that ran the transport probe.
         deleteNotificationChannel("push-probe")
@@ -146,7 +156,7 @@ object AndroidPush {
             return false
         }
         UnifiedPush.saveDistributor(context, context.packageName)
-        UnifiedPush.register(context, instance = id, messageForDistributor = "TwiCC notifications", vapid = vapid)
+        UnifiedPush.register(context, instance = id, messageForDistributor = NativeMessages.text(context, UiMessage("android.push.distributorLabel")), vapid = vapid)
         return true
     }
     fun remove(context: Context, instance: String) {

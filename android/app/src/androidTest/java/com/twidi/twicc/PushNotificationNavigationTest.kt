@@ -1,10 +1,12 @@
 package com.twidi.twicc
 
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.net.Uri
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
@@ -272,9 +274,13 @@ class PushNotificationNavigationTest {
         }
     }
 
-    private fun post(service: PushService, instance: String, path: String?, kind: String = "user_turn", expectNotification: Boolean = true): String {
+    private fun post(service: PushService, instance: String, path: String?, kind: String = "user_turn", expectNotification: Boolean = true, generic: Boolean = false): String {
         val id = UUID.randomUUID().toString()
-        val payload = JSONObject().put("type", "twicc.notification").put("id", id).put("sent_at", Instant.now().toString()).put("kind", kind).put("title", "Finished").put("body", id)
+        val payload = JSONObject().put("type", "twicc.notification").put("id", id).put("sent_at", Instant.now().toString()).put("kind", kind).put("version", 2)
+            .put("title_ui_message", JSONObject().put("key", "session.notifications.finished")
+                .put("params", JSONObject().put("provider", id)))
+            .put("body_ui_message", JSONObject().put("key", "android.push.genericBody"))
+        if (generic) payload.put("title_ui_message", JSONObject().put("key", "unknown.future.title"))
         if (path != null) payload.put("path", path)
         // The transport was tested on the phone. This test starts after successful decryption.
         instrumentation.runOnMainSync { service.onMessage(PushMessage(payload.toString().toByteArray(), true), instance) }
@@ -284,12 +290,21 @@ class PushNotificationNavigationTest {
     }
 
     private fun notification(id: String) = context.getSystemService(NotificationManager::class.java).activeNotifications
-        .singleOrNull { it.notification.extras.getString("android.text") == id }
+        .singleOrNull { it.notification.extras.getString("android.title")?.contains(id) == true }
 
     private fun tap(service: PushService, instance: String, path: String?) {
-        val id = post(service, instance, path)
-        waitFor { notification(id) != null }
-        notification(id)!!.notification.contentIntent.send()
+        val id = post(service, instance, path, expectNotification = false, generic = true)
+        // Generic prose has no event ID. Match the actual immutable PendingIntent and destination tag instead.
+        val expected = PendingIntent.getActivity(context, 0, Intent(context, BrowserActivity::class.java).apply {
+            action = AndroidPush.ACTION_OPEN
+            data = Uri.parse("twicc-push://open/$instance/$id")
+        }, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        assertNotNull(expected)
+        val tag = "twicc-push:$instance:user_turn" + (SessionLink.parse(path)?.sessionId?.let { ":$it" } ?: "")
+        fun genericNotification() = context.getSystemService(NotificationManager::class.java).activeNotifications
+            .singleOrNull { it.tag == tag && it.notification.contentIntent == expected }
+        waitFor { genericNotification() != null }
+        genericNotification()!!.notification.contentIntent.send()
     }
 
     private fun resumedBrowser(): BrowserActivity? {

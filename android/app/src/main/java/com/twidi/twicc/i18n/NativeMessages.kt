@@ -11,13 +11,17 @@ object NativeMessages {
     @Volatile var localeProvider: (Context) -> String = { AndroidLanguageStore(it).read().locale }
     @Volatile private var packagedRenderer: MessageRenderer? = null
 
-    fun text(context: Context, message: UiMessage): String {
-        val renderer = packagedRenderer ?: synchronized(this) {
-            packagedRenderer ?: context.assets.open("i18n/messages.json").bufferedReader().use { input ->
-                MessageRenderer(UiMessageJson.decodeCatalog(JSONObject(input.readText())), ::formatNumber)
-            }.also { packagedRenderer = it }
-        }
-        return text(renderer, localeProvider(context), message)
+    fun text(context: Context, message: UiMessage): String =
+        text(renderer(context), localeProvider(context), message)
+
+    /** Nullable rendering lets a caller fall back an entire presentation together. */
+    fun render(context: Context, message: UiMessage): String? =
+        renderer(context).render(localeProvider(context), message)
+
+    private fun renderer(context: Context): MessageRenderer = packagedRenderer ?: synchronized(this) {
+        packagedRenderer ?: context.assets.open("i18n/messages.json").bufferedReader().use { input ->
+            MessageRenderer(UiMessageJson.decodeCatalog(JSONObject(input.readText())), ::formatNumber)
+        }.also { packagedRenderer = it }
     }
 
     internal fun text(renderer: MessageRenderer, locale: String, message: UiMessage): String =

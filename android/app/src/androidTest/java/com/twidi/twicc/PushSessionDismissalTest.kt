@@ -104,12 +104,15 @@ class PushSessionDismissalTest {
     private fun post(service: PushService, instance: String, session: String?, kind: String, sentAt: Instant): String {
         val id = UUID.randomUUID().toString()
         val payload = JSONObject().put("type", "twicc.notification").put("id", id).put("sent_at", sentAt.toString())
-            .put("kind", kind).put("title", "Finished").put("body", id)
+            .put("kind", kind).put("version", 2)
+            .put("title_ui_message", JSONObject().put("key", "session.notifications.finished")
+                .put("params", JSONObject().put("provider", id)))
+            .put("body_ui_message", JSONObject().put("key", "android.push.genericBody"))
         session?.let { payload.put("path", "/project/p/session/$it") }
         receive(service, instance, payload)
         return id
     }
-    private fun notification(id: String) = notifications.activeNotifications.singleOrNull { it.notification.extras.getString("android.text") == id }
+    private fun notification(id: String) = notifications.activeNotifications.singleOrNull { it.notification.extras.getString("android.title")?.contains(id) == true }
     private fun waitFor(condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 10_000
         while (!condition()) { if (SystemClock.elapsedRealtime() > deadline) fail("Timed out waiting for notifications"); SystemClock.sleep(50) }

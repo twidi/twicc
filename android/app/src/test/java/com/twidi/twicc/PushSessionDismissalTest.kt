@@ -25,5 +25,9 @@ class PushSessionDismissalTest {
         assertNull(parse(message().put("sent_at", now.minusSeconds(601).toString())))
         assertNull(parse(message().put("sent_at", now.plusSeconds(301).toString())))
         assertNull(parse(message().put("id", "not-a-uuid")))
+        // Semantic notification fields cannot turn an event into a silent removal command.
+        assertNull(parse(message().put("type", "twicc.notification").put("version", 2)
+            .put("title_ui_message", JSONObject().put("key", "android.push.genericTitle"))
+            .put("body_ui_message", JSONObject().put("key", "android.push.genericBody"))))
     }
 }

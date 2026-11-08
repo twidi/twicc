@@ -8,6 +8,8 @@ import android.util.Log
 import com.twidi.twicc.InstanceStore
 import com.twidi.twicc.BrowserActivity
 import com.twidi.twicc.R
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
 import org.json.JSONObject
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.PushService
@@ -60,10 +62,16 @@ class AndroidPushService : PushService() {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val renderedTitle = NativeMessages.render(this, payload.title)
+        val renderedBody = NativeMessages.render(this, payload.body)
+        val generic = renderedTitle == null || renderedBody == null
+        val title = if (generic) NativeMessages.text(this, UiMessage("android.push.genericTitle")) else renderedTitle!!
+        val body = if (generic) NativeMessages.text(this, UiMessage("android.push.genericBody")) else renderedBody!!
         val notification = Notification.Builder(this, AndroidPush.channel(payload.kind))
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("${payload.title} · ${saved.name}")
-            .setContentText(payload.body).setStyle(Notification.BigTextStyle().bigText(payload.body))
+            .setContentTitle(NativeMessages.text(this, UiMessage("android.push.titleWithInstance",
+                mapOf("title" to title, "instance" to saved.name))))
+            .setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
             .setContentIntent(pending).setAutoCancel(true).build()
         try { AndroidPush.postNotification(this, instance, payload, notification) }
         catch (_: SecurityException) { Log.w("TwiCC.Push", "Notifications are blocked") }
