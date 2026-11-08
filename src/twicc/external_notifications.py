@@ -28,6 +28,7 @@ from twicc import presence
 from twicc.core.ui_messages import ui_message_text
 from twicc.agent.states import AgentInfo, AgentState
 from twicc.android_push import delivery as android_push
+from twicc.android_push.messages import agent_messages, extra_usage_messages, peer_message_messages, peer_request_messages
 from twicc.core.services.public_origin import usable_public_origin
 from twicc.providers.helpers import get_provider_helpers
 from twicc.synced_settings import read_synced_settings
@@ -149,9 +150,9 @@ def _detect_and_send(
         if isinstance(target, dict) and target.get("enabled") and target.get("url") and target.get("tested") is True
     ]
     label = get_provider_helpers(info.provider).LABEL or str(info.provider)
-    # (title, per-target opt-in key) — each target chooses its events via the
+    # (Apprise title, per-target opt-in key, semantic Android event). Each target chooses via the
     # ``notifyUserTurn`` / ``notifyPendingRequest`` flags (absent = opted in).
-    events: list[tuple[str, str]] = []
+    events: list[tuple[str, str, str]] = []
 
     # --- Transition to USER_TURN: "<Provider> finished working" ---
     # With a shell left running the work is not over: only
@@ -167,24 +168,26 @@ def _detect_and_send(
             title = f"{label} finished its turn — {shells} background shell{plural} still running"
         else:
             title = f"{label} finished working"
-        events.append((title, "notifyUserTurn"))
+        events.append((title, "notifyUserTurn", "user_turn"))
 
     # --- Pending request count grew: "<Provider> needs your attention" ---
     previous_pending_count = previous[1] if previous else 0
     if pending_count > previous_pending_count:
         latest = info.pending_requests[-1]
         if latest.request_type == "ask_user_question":
-            events.append((f"{label} has a question for you", "notifyPendingRequest"))
+            events.append((f"{label} has a question for you", "notifyPendingRequest", "question"))
         else:
-            events.append((f"{label} needs your approval", "notifyPendingRequest"))
+            events.append((f"{label} needs your approval", "notifyPendingRequest", "approval"))
 
     if not events:
         return
 
-    android_body = _build_body(session_title, project_name, project_parent_name, None)
-    for title, opt_in_key in events:
+    for _, opt_in_key, event in events:
         kind = "user_turn" if opt_in_key == "notifyUserTurn" else "pending_request"
-        android_push.dispatch(kind, title, android_body, path=f"/project/{info.project_id}/session/{info.session_id}")
+        android_push.dispatch(
+            kind, *agent_messages(event, info, session_title, project_name, project_parent_name),
+            path=f"/project/{info.project_id}/session/{info.session_id}",
+        )
     if not targets:
         return
 
@@ -199,7 +202,7 @@ def _detect_and_send(
     # deferred send later checks whether the user came back.
     present = presence.is_user_present()
     baseline = presence.latest_activity()
-    for title, opt_in_key in events:
+    for title, opt_in_key, _ in events:
         eligible = [target for target in targets if target.get(opt_in_key, True)]
         if not eligible:
             continue
@@ -283,7 +286,7 @@ def _send_extra_usage_started(provider, snapshot, settings: dict) -> None:
     eligible = [target for target in targets if target.get("notifyExtraUsageStart", True)]
     label = get_provider_helpers(provider).LABEL or str(provider)
     title = f"{label} — Extra usage started"
-    android_push.dispatch("extra_usage", title, _build_extra_usage_body(snapshot, label, None), action="home")
+    android_push.dispatch("extra_usage", *extra_usage_messages(provider, snapshot), action="home")
     if not eligible:
         return
     # No session to deep-link to: append the bare public base URL when set,
@@ -377,7 +380,7 @@ def notify_peer_message(message, routing: PeerRouting | None = None) -> None:
             if routing is not None and routing.session_id and routing.project_id
             else None
         )
-        _send_peer_event(title, body, session_ref=session_ref, action="peerInbox", detail=str(message.id) if getattr(message, "id", None) is not None else None)
+        _send_peer_event(title, body, android_messages=peer_message_messages(message, routing), session_ref=session_ref, action="peerInbox", detail=str(message.id) if getattr(message, "id", None) is not None else None)
     except Exception:
         logger.exception("Peer-message external notification dispatch failed")
 
@@ -394,6 +397,7 @@ def notify_peer_request(peer) -> None:
         _send_peer_event(
             f"Peer request from {claimed}",
             f"{claimed} wants to pair with your instance.\nAddress: {peer.base_url}",
+            android_messages=peer_request_messages(peer),
             action="peerRequests",
         )
     except Exception:
@@ -405,7 +409,7 @@ def _peer_label(peer) -> str:
     return peer.name or peer.remote_display_name or peer.base_url
 
 
-def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | None = None, action=None, detail=None) -> None:
+def _send_peer_event(title: str, body: str, *, android_messages: tuple[dict, dict], session_ref: tuple[str, str] | None = None, action=None, detail=None) -> None:
     """Deliver one peer event, mirroring the process-state push.
 
     Enabled + tested targets that opted into ``notifyPeer`` (absent = opted
@@ -416,7 +420,7 @@ def _send_peer_event(title: str, body: str, *, session_ref: tuple[str, str] | No
     when a public URL is configured at all.
     """
     path = f"/project/{session_ref[0]}/session/{session_ref[1]}" if session_ref else None
-    android_push.dispatch("peer", title, body, path=path, action=action, detail=detail)
+    android_push.dispatch("peer", *android_messages, path=path, action=action, detail=detail)
     settings = read_synced_settings()
     targets = [
         target

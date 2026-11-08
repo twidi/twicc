@@ -4518,6 +4518,7 @@
     "android.push.peerBodyWithProject": "{message}\nProjekt: {project}",
     "android.push.peerBodyWithSession": "{message}\nSitzung: {session}",
     "android.push.peerRequestBody": "{peer} möchte sich mit deiner Instanz koppeln.\nAdresse: {address}",
+    "android.push.projectWithParent": "{parent} › {project}",
     "android.language.errors.unsupported": "Diese Sprache ist in der Android-App nicht verfügbar. Aktualisiere die App und versuche es erneut.",
     "android.language.errors.changed": "Die App-Sprache hat sich geändert. Wähle die Sprache erneut aus.",
     "android.language.errors.invalidRevision": "Die Anfrage zur App-Sprache ist ungültig. Lade diese Seite neu und versuche es erneut.",

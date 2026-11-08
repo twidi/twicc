@@ -238,3 +238,35 @@ def test_peer_message_routing_reads_the_thread_session_and_names_the_worktree_un
     assert external_notifications.peer_message_routing({
         "direction": "in", "delivered_to_session": None, "effective_session": None, "effective_project": None,
     }) is None
+
+
+@pytest.mark.parametrize('session_id,project_id,path', [
+    ('s', 'p', '/project/p/session/s'),
+    ('s', None, None),
+    (None, 'p', None),
+])
+def test_android_peer_messages_keep_partial_routing_and_semantic_unknown_names(monkeypatch, session_id, project_id, path):
+    from twicc.core.ui_messages import ui_message
+
+    dispatched = []
+    monkeypatch.setattr(external_notifications.android_push, 'dispatch', lambda *args, **kw: dispatched.append((args, kw)))
+    _, patched = _capture(_settings())
+    routing = external_notifications.PeerRouting(session_id, None, project_id, 'Project', None)
+    with patched:
+        external_notifications.notify_peer_message(_message(id=42, reply_to_message_id=10), routing)
+        external_notifications.notify_peer_request(_peer(name='', remote_display_name=''))
+
+    args, destination = dispatched[0]
+    assert args[0] == 'peer'
+    assert args[1] == ui_message('session.notifications.peerReply', {'peer': 'Alice'})
+    assert destination == {'path': path, 'action': 'peerInbox', 'detail': '42'}
+    body = args[2]
+    if session_id:
+        assert body['key'] == 'android.push.peerBodyWithSession'
+        assert body['params']['session'] == ui_message('common.labels.unknown')
+    else:
+        assert body['key'] == 'android.push.peerBodyWithProject'
+    args, destination = dispatched[1]
+    assert args[1]['params']['peer'] == ui_message('session.notifications.instance')
+    assert args[2]['params']['address'] == 'https://alice.example.com'
+    assert destination == {'path': None, 'action': 'peerRequests', 'detail': None}

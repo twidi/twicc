@@ -296,7 +296,9 @@
     "backend.tts.adaptationStopped": {},
     "settings.notifications.targets.extraUsage": {},
     "settings.general.language.label": {},
-    "peer.toast.unnamedInstance": {}
+    "peer.toast.unnamedInstance": {},
+    "common.labels.unknown": {},
+    "android.push.projectWithParent": {}
   },
   "bootstrapResources": {
     "tts_channel": {

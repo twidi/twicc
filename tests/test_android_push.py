@@ -9,6 +9,10 @@ import orjson
 import pytest
 from django.test import Client
 from twicc.auth.session_auth import bind_session
+from twicc.core.ui_messages import ui_message
+
+TITLE = ui_message("session.notifications.finished", {"provider": "Codex"})
+BODY = ui_message("session.notifications.body", {"project": "Project", "session": "Session"})
 
 
 @pytest.fixture
@@ -177,19 +181,19 @@ def test_delivery_respects_choices_permission_and_browser_presence(push_server, 
 
     monkeypatch.setattr(delivery, "_send_one", send)
     monkeypatch.setattr(presence, "is_browser_present", lambda: False)
-    asyncio.run(delivery.send("pending_request", "Question", "Body"))
+    asyncio.run(delivery.send("pending_request", TITLE, BODY))
     assert sent == []
-    asyncio.run(delivery.send("user_turn", "Finished", "Body", path="/project/p/session/s"))
+    asyncio.run(delivery.send("user_turn", TITLE, BODY, path="/project/p/session/s"))
     assert len(sent) == 1
     assert sent[0]["path"] == "/project/p/session/s"
     monkeypatch.setattr(presence, "is_browser_present", lambda: True)
-    asyncio.run(delivery.send("user_turn", "Finished", "Body"))
+    asyncio.run(delivery.send("user_turn", TITLE, BODY))
     assert len(sent) == 1
     device = storage.read_device(body["device_id"])
     device["enabled"] = False
     storage.save_device(device)
     monkeypatch.setattr(presence, "is_browser_present", lambda: False)
-    asyncio.run(delivery.send("user_turn", "Finished", "Body"))
+    asyncio.run(delivery.send("user_turn", TITLE, BODY))
     assert len(sent) == 1
 
 
@@ -285,8 +289,11 @@ def test_real_encryption_and_stale_endpoint_retirement(push_server, monkeypatch)
 
     monkeypatch.setattr(requests, "post", post)
     monkeypatch.setattr(delivery.presence, "is_browser_present", lambda: False)
-    asyncio.run(delivery.send("user_turn", "Finished", "😀" * 800, path="/project/p/session/s"))
+    asyncio.run(delivery.send("user_turn", TITLE, ui_message("session.notifications.body", {"project": "Project", "session": "😀" * 8000}), path="/project/p/session/s"))
     assert captured[0]["type"] == "twicc.notification"
+    assert captured[0]["version"] == 2
+    assert captured[0]["title_ui_message"] == TITLE
+    assert "title" not in captured[0] and "body" not in captured[0]
     snapshot = storage.read_device(body["device_id"])
     # An old in-flight rejection cannot erase an endpoint that already rotated.
     update["subscription"] = subscription("rotated")
@@ -368,11 +375,11 @@ def test_notification_delivery_drops_sessions_that_are_no_longer_visible(push_se
         sent.append(payload)
 
     monkeypatch.setattr(delivery, '_send_one', capture)
-    asyncio.run(delivery.send('user_turn', 'Finished', 'Body', path='/project/p/session/s'))
+    asyncio.run(delivery.send('user_turn', TITLE, BODY, path='/project/p/session/s'))
     assert sent == []
     setattr(session, flag, False)
     session.save(update_fields=[flag])
-    asyncio.run(delivery.send('user_turn', 'Finished', 'Body', path='/project/p/session/s'))
+    asyncio.run(delivery.send('user_turn', TITLE, BODY, path='/project/p/session/s'))
     assert len(sent) == 1
 
 
@@ -399,7 +406,7 @@ def test_push_timestamps_describe_the_event_not_delayed_delivery(monkeypatch):
     monkeypatch.setattr(delivery, '_send_one', capture)
 
     async def scenario():
-        delivery.dispatch('user_turn', 'Finished', 'Body')
+        delivery.dispatch('user_turn', TITLE, BODY)
         delivery.dismiss_sessions(['s'])
         clock[0] += timedelta(seconds=30)
         await asyncio.gather(*list(delivery._tasks))

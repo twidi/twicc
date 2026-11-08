@@ -4644,6 +4644,50 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "common.labels.unknown": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Unknown"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.projectWithParent": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "named",
+                  "name": "parent"
+                },
+                {
+                  "type": "text",
+                  "value": " › "
+                },
+                {
+                  "type": "named",
+                  "name": "project"
+                }
+              ],
+              "parameters": [
+                "parent",
+                "project"
+              ]
+            }
+          ],
+          "parameters": [
+            "parent",
+            "project"
+          ],
+          "numberFormats": {}
+        },
         "fixture.literal": {
           "forms": [
             {
@@ -9519,6 +9563,50 @@
             }
           ],
           "parameters": [],
+          "numberFormats": {}
+        },
+        "common.labels.unknown": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Unbekannt"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.projectWithParent": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "named",
+                  "name": "parent"
+                },
+                {
+                  "type": "text",
+                  "value": " › "
+                },
+                {
+                  "type": "named",
+                  "name": "project"
+                }
+              ],
+              "parameters": [
+                "parent",
+                "project"
+              ]
+            }
+          ],
+          "parameters": [
+            "parent",
+            "project"
+          ],
           "numberFormats": {}
         },
         "fixture.literal": {
@@ -14430,6 +14518,50 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "common.labels.unknown": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Desconocido"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.projectWithParent": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "named",
+                  "name": "parent"
+                },
+                {
+                  "type": "text",
+                  "value": " › "
+                },
+                {
+                  "type": "named",
+                  "name": "project"
+                }
+              ],
+              "parameters": [
+                "parent",
+                "project"
+              ]
+            }
+          ],
+          "parameters": [
+            "parent",
+            "project"
+          ],
+          "numberFormats": {}
+        },
         "fixture.literal": {
           "forms": [
             {
@@ -19313,6 +19445,50 @@
             }
           ],
           "parameters": [],
+          "numberFormats": {}
+        },
+        "common.labels.unknown": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Inconnu"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.projectWithParent": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "named",
+                  "name": "parent"
+                },
+                {
+                  "type": "text",
+                  "value": " › "
+                },
+                {
+                  "type": "named",
+                  "name": "project"
+                }
+              ],
+              "parameters": [
+                "parent",
+                "project"
+              ]
+            }
+          ],
+          "parameters": [
+            "parent",
+            "project"
+          ],
           "numberFormats": {}
         },
         "fixture.literal": {
@@ -24200,6 +24376,50 @@
           "parameters": [],
           "numberFormats": {}
         },
+        "common.labels.unknown": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "text",
+                  "value": "Desconhecido"
+                }
+              ],
+              "parameters": []
+            }
+          ],
+          "parameters": [],
+          "numberFormats": {}
+        },
+        "android.push.projectWithParent": {
+          "forms": [
+            {
+              "tokens": [
+                {
+                  "type": "named",
+                  "name": "parent"
+                },
+                {
+                  "type": "text",
+                  "value": " › "
+                },
+                {
+                  "type": "named",
+                  "name": "project"
+                }
+              ],
+              "parameters": [
+                "parent",
+                "project"
+              ]
+            }
+          ],
+          "parameters": [
+            "parent",
+            "project"
+          ],
+          "numberFormats": {}
+        },
         "fixture.literal": {
           "forms": [
             {
@@ -26836,6 +27056,25 @@
     {
       "locale": "en",
       "message": {
+        "key": "common.labels.unknown",
+        "params": {}
+      },
+      "expected": "Unknown"
+    },
+    {
+      "locale": "en",
+      "message": {
+        "key": "android.push.projectWithParent",
+        "params": {
+          "parent": "parent: café 😀 \"quote\" {'|'} @",
+          "project": "project: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "parent: café 😀 \"quote\" {'|'} @ › project: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "en",
+      "message": {
         "key": "fixture.literal",
         "params": {
           "provider": "Codex"
@@ -29397,6 +29636,25 @@
     {
       "locale": "de",
       "message": {
+        "key": "common.labels.unknown",
+        "params": {}
+      },
+      "expected": "Unbekannt"
+    },
+    {
+      "locale": "de",
+      "message": {
+        "key": "android.push.projectWithParent",
+        "params": {
+          "parent": "parent: café 😀 \"quote\" {'|'} @",
+          "project": "project: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "parent: café 😀 \"quote\" {'|'} @ › project: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "de",
+      "message": {
         "key": "fixture.literal",
         "params": {
           "provider": "Codex"
@@ -31954,6 +32212,25 @@
         "params": {}
       },
       "expected": "Una instancia"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "common.labels.unknown",
+        "params": {}
+      },
+      "expected": "Desconocido"
+    },
+    {
+      "locale": "es",
+      "message": {
+        "key": "android.push.projectWithParent",
+        "params": {
+          "parent": "parent: café 😀 \"quote\" {'|'} @",
+          "project": "project: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "parent: café 😀 \"quote\" {'|'} @ › project: café 😀 \"quote\" {'|'} @"
     },
     {
       "locale": "es",
@@ -34787,6 +35064,25 @@
     {
       "locale": "fr",
       "message": {
+        "key": "common.labels.unknown",
+        "params": {}
+      },
+      "expected": "Inconnu"
+    },
+    {
+      "locale": "fr",
+      "message": {
+        "key": "android.push.projectWithParent",
+        "params": {
+          "parent": "parent: café 😀 \"quote\" {'|'} @",
+          "project": "project: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "parent: café 😀 \"quote\" {'|'} @ › project: café 😀 \"quote\" {'|'} @"
+    },
+    {
+      "locale": "fr",
+      "message": {
         "key": "fixture.literal",
         "params": {
           "provider": "Codex"
@@ -37480,6 +37776,25 @@
         "params": {}
       },
       "expected": "Uma instância"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "common.labels.unknown",
+        "params": {}
+      },
+      "expected": "Desconhecido"
+    },
+    {
+      "locale": "pt-BR",
+      "message": {
+        "key": "android.push.projectWithParent",
+        "params": {
+          "parent": "parent: café 😀 \"quote\" {'|'} @",
+          "project": "project: café 😀 \"quote\" {'|'} @"
+        }
+      },
+      "expected": "parent: café 😀 \"quote\" {'|'} @ › project: café 😀 \"quote\" {'|'} @"
     },
     {
       "locale": "pt-BR",
