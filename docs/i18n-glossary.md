@@ -1,8 +1,8 @@
 # Interface translation glossary
 
 This glossary fixes one translation for each recurring TwiCC term. It keeps
-the catalogs consistent across translation updates. The catalogs are
-`frontend/src/i18n/locales/{en,fr,es,de,pt-BR}.json`. The same terms apply to
+the catalogs consistent across translation updates. The catalogs are the
+`frontend/src/i18n/locales/*.json` files. The same terms apply to
 the translated help and tip Markdown bodies.
 
 ## How to use it
@@ -14,7 +14,7 @@ the translated help and tip Markdown bodies.
 - Add a row when you introduce a recurring domain term. A term is recurring
   when it appears in several messages. Fill the cells for every supported language.
 - When you change a row, update the catalogs and the help and tip bodies in
-  the same pass.
+  the same change.
 - Do not use this file for generic words (name, title, open, close,
   create, copy, save, send). Translate them in context.
 - The English column shows the lowercase source form. Plural forms appear in

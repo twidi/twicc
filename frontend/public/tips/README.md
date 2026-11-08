@@ -22,9 +22,10 @@ The backend scans English files only; the frontend selects the body by locale wi
 
 Preserve code, URLs and `help/<key>` targets. Translate prose, link labels and image alt text.
 Image paths remain relative to the shared `tips/` root, not the locale directory.
-Use `docs/i18n-checklist.md` for review status: one entry per English source covers
-all translations. Git changes to either source or translation reopen that entry.
-Do not add source fingerprints or separate checklist entries for translations.
+Review rules for English sources and their translations are in
+[`docs/internationalization.md`](../../../docs/internationalization.md#when-english-source-changes).
+Translation passes are tracked in [`docs/i18n-state.md`](../../../docs/i18n-state.md).
+Do not add source fingerprints or per-translation status files.
 
 ## File naming
 
