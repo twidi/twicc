@@ -24,8 +24,13 @@ import org.json.JSONObject
 /** Control URIs identify the session and listening activation. Extras do not distinguish PendingIntents. */
 class TtsNotification(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
-    init {
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, NativeMessages.text(context, UiMessage("android.speech.channel")), NotificationManager.IMPORTANCE_LOW))
+    init { refreshChannel() }
+    private fun refreshChannel() {
+        val channel = manager.getNotificationChannel(CHANNEL)
+            ?: NotificationChannel(CHANNEL, NativeMessages.text(context, UiMessage("android.speech.channel")), NotificationManager.IMPORTANCE_LOW)
+        // Reuse the channel and update only its label. Keep Android user settings.
+        channel.name = NativeMessages.text(context, UiMessage("android.speech.channel"))
+        manager.createNotificationChannel(channel)
     }
     fun error(): TtsActionError? {
         val permission = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -36,6 +41,7 @@ class TtsNotification(private val context: Context) {
             TtsActionError("notifications_blocked", "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.", "notification_settings", ttsUiMessage("android.speech.notificationsRequired")) else null
     }
     fun build(snapshot: NativeTtsSnapshot, epoch: String, name: String): Notification {
+        refreshChannel()
         val status = when {
             snapshot.sessionStatus == "reconnecting" -> "android.speech.reconnecting"
             snapshot.playback.phase in setOf("playing", "settling") -> "android.speech.reading"
@@ -88,7 +94,8 @@ class TtsNotification(private val context: Context) {
         const val PERMISSION_REQUEST = 8601
 
         /** A denial never resumes queued activation. The next attempt requires a fresh visible user action. */
-        fun visiblePreflight(activity: Activity): TtsActionError? {
+        fun visiblePreflight(activity: Activity,
+            onSettingsRequired: (TtsActionError) -> Unit = { showSettings(activity, it) }): TtsActionError? {
             if (activity.isFinishing || !activity.hasWindowFocus())
                 return TtsActionError("not_visible", "Open TwiCC before starting speech.", uiMessage = ttsUiMessage("android.speech.errors.visibleRequired"))
             if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -99,7 +106,7 @@ class TtsNotification(private val context: Context) {
                     return TtsActionError("permission_required", "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.", "notification_settings", ttsUiMessage("android.speech.notificationsRequired"))
                 }
             }
-            TtsNotification(activity).error()?.let { showSettings(activity, it); return it }
+            TtsNotification(activity).error()?.let { onSettingsRequired(it); return it }
             return null
         }
 
@@ -131,9 +138,9 @@ class TtsNotification(private val context: Context) {
                 activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
             }
         }
-        fun showSettings(activity: Activity, error: TtsActionError) {
-            if (activity.isFinishing) return
-            AlertDialog.Builder(activity).setTitle(NativeMessages.text(activity, UiMessage("android.speech.settingsTitle")))
+        fun showSettings(activity: Activity, error: TtsActionError): AlertDialog? {
+            if (activity.isFinishing) return null
+            return AlertDialog.Builder(activity).setTitle(NativeMessages.text(activity, UiMessage("android.speech.settingsTitle")))
                 .setMessage(error.uiMessage?.let { UiMessageJson.decode(JSONObject(it)) }?.let { NativeMessages.text(activity, it) } ?: error.message)
                 .setNegativeButton(NativeMessages.text(activity, UiMessage("common.actions.cancel")), null)
                 .setPositiveButton(NativeMessages.text(activity, UiMessage("android.speech.openSettings"))) { _, _ ->
@@ -143,6 +150,14 @@ class TtsNotification(private val context: Context) {
                         activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
                     }
                 }.show()
+        }
+
+        fun refreshSettings(activity: Activity, dialog: AlertDialog, error: TtsActionError) {
+            dialog.setTitle(NativeMessages.text(activity, UiMessage("android.speech.settingsTitle")))
+            dialog.setMessage(error.uiMessage?.let { UiMessageJson.decode(JSONObject(it)) }
+                ?.let { NativeMessages.text(activity, it) } ?: error.message)
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.text = NativeMessages.text(activity, UiMessage("common.actions.cancel"))
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.text = NativeMessages.text(activity, UiMessage("android.speech.openSettings"))
         }
     }
 }

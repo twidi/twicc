@@ -78,3 +78,10 @@ test('changedCatalogFailsFingerprintCheck', async () => {
     assert.ok((await verifyFingerprints('', read)).length)
     assert.ok((await verifyFingerprints(`${digest}  ../escape\n`, read)).length)
 })
+
+test('notificationChannelDescriptionPropertyAndSetterFail', () => {
+    for (const source of ['channel.description = "Owned description"', 'channel.setDescription("Owned description")']) {
+        assert.equal(scanKotlinSource(source).length, 1, source)
+    }
+    assert.deepEqual(scanKotlinSource('channel.description = NativeMessages.text(context, UiMessage("android.channel.description"))'), [])
+})

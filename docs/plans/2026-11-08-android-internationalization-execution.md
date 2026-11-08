@@ -51,7 +51,7 @@ Generation uses the installed compiler and Vite dependency. It writes:
 
 The two test modules bundle the real adapters and their transitive dependencies.
 They contain no unresolved external imports. They enter only the instrumentation
-APK. Their sizes are 2,013,254 and 2,018,707 bytes, respectively. This duplication
+APK. Their sizes are 2,013,266 and 2,018,719 bytes, respectively. This duplication
 keeps the existing fixture servers independent of a JavaScript dependency graph.
 The Node smoke check loads both bundles and exercises a localized client error.
 This check does not replace real browser-engine execution.
@@ -81,9 +81,9 @@ Its unused presentation key is removed from the manifest and all catalogs.
 
 ## Coordinated verification results
 
-Each command below runs once after the integration fixes. Focused RED/GREEN
-iterations precede this coordinated run. Frontend tests and the production build
-run concurrently. Their output tails retain their final results.
+The table records the coordinated Task 11 checks. The final review fix section
+below records the subsequent verification. Frontend tests and production builds
+run concurrently. Final fix logs retain complete output, including warnings.
 
 | Directory | Command | Actual result |
 | --- | --- | --- |
@@ -122,6 +122,55 @@ imports for provider WebSocket modules and the public-viewer API shim.
 Those source paths do not change in Task 11. No full baseline warning comparison
 runs. The complete frontend suite passes; its output tail is not a warning audit.
 The temporary fixture-generator deprecation warning is removed before acceptance.
+
+## Final review fixes
+
+All five findings from the final integration review receive source fixes.
+Native acceptance remains blocked by the missing toolchain and devices.
+
+| Finding | Correction and regression coverage | Execution status |
+| --- | --- | --- |
+| I1: failed initial capability probe | Native events and explicit reconciliation permit a bounded, shared capability probe. Recovery reads installation state and never replays browser intent. Tests cover stale browser storage, later native selection, concurrent probes, handshake selection, and events during startup/recovery. | Frontend RED/GREEN verified |
+| I2: pending and fallback rendering | Render attempts retain pending work and actual rendered locale. Reconciliation awaits pending work. Explicit selection retries catalog fallback. Passive reads do not repeatedly retry failed downloads. | Frontend RED/GREEN verified |
+| M1: retained speech channel label | Normal notification builds refresh the existing channel label. The channel ID, importance, sound, vibration, and visibility remain intact. The existing presenter test now checks those properties across a language change. | Instrumentation authored; uncompiled and unrun |
+| M2: channel description property | The Kotlin guard rejects direct `description` assignments and setter literals. A translated description remains allowed. | Scanner RED/GREEN verified |
+| M3: retained speech settings error | BrowserActivity retains the dialog and semantic error. Its existing language observer and resume lifecycle refresh title, error, and controls. Dismissal clears retained state. The settings action and raw diagnostic fallback remain unchanged. | Instrumentation authored; uncompiled and unrun |
+
+`setLocale()` now resolves to the locale actually applied, including English
+fallback. Superseded work still resolves without applying a language.
+Existing callers that ignore the result remain compatible. Controller callbacks
+that return no value retain their contract: successful resolution means the
+requested locale is applied. Production wiring returns the real manager result.
+
+The controller preserves revision checks, mutation serialization, generation
+ordering, and queued-intent cancellation. Ordinary browser selections and
+resumes do not probe Android again. Native state events or explicit reconciliation
+trigger recovery. No polling or notification replay listener is added.
+The existing startup `locale.get` failure still uses the last valid snapshot.
+
+The final fix changes no backend source, push protocol, speech ownership,
+spoken content, or permission policy. Targeted backend tests are not repeated.
+The 88 passing backend tests above remain Task 11 evidence.
+
+Final verification runs after the last source change:
+
+| Check | Final fix result |
+| --- | --- |
+| Focused frontend integration and scanner tests | PASS; 124 tests, zero failures/skips |
+| Full `npm test` | PASS; 5,102 tests, zero failures/skips; 121,933.704724 ms |
+| `npm run build` | PASS; all six configured builds |
+| `npm run i18n:android:generate` and `npm run i18n:android:check` | PASS; 256 keys, five locales; both adapter fixtures regenerated |
+| `npm run lint:i18n:android` and `npm run lint:i18n` | PASS |
+| Native unit and focused instrumentation attempts | BLOCKED before task execution; Java/JAVA_HOME absent |
+
+The earlier 5,092-test result is the Task 11 baseline. The final frontend count
+is **5,102**, including ten new executable regressions. Complete final fix logs
+retain warnings and expected failure diagnostics. The production build reports
+ineffective dynamic-import warnings. No warning-free result is claimed.
+
+Native Gradle attempts stop before task execution because Java/JAVA_HOME is absent.
+Neither native RED nor native GREEN execution is claimed. Both engines still
+require the native checks below, including the new settings and channel cases.
 
 ## Native acceptance still required
 

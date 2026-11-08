@@ -31331,7 +31331,7 @@ function xg(e = yg) {
 			if (n !== r) return;
 			console.warn(`Could not load locale ${i}; using English.`, e), i = "en";
 		}
-		n === r && s(i, t);
+		if (n === r) return s(i, t), i;
 	}
 	return {
 		createAppI18n: i,

@@ -13,12 +13,16 @@ function validLanguage(value) {
         && value.supportedLocales.every(locale => typeof locale === 'string')
 }
 
-/** Owns one document. Reads and restoration never represent language selection. */
+/**
+ * Owns one document. Reads and restoration never represent language selection.
+ * applyLocale resolves to the rendered locale (including fallback). Legacy void
+ * callbacks remain supported and promise that their requested locale is applied.
+ */
 export function createAndroidLocaleController({ client, document, applyLocale, readBrowserLocale, onCompatibility = () => {} }) {
     const state = reactive({ mode: 'browser', locale: DEFAULT_LOCALE, revision: null, supportedLocales: [...browserLocales] })
     let initialization, unsubscribe, disposed = false, native = false
     let authoritative, generation = 0, selection = 0, mutationQueue = Promise.resolve(), pendingMutations = 0, guards = 0
-    let renderedPreference, initializing = true, initializationDirty = false
+    let renderAttempt, recovery, initializing = true, initializationDirty = false
 
     function guard(event) {
         if (!guards) return
@@ -27,13 +31,28 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
     }
     function compatibility(key) { onCompatibility(key ? localUiMessage(key) : null) }
 
-    async function render(locale, ticket) {
-        if (disposed || ticket !== generation || renderedPreference === locale) return
-        renderedPreference = locale
-        await applyLocale(isSupportedLocale(locale) ? locale : DEFAULT_LOCALE)
+    async function render(locale, ticket, retry = false) {
+        if (disposed || ticket !== generation) return
+        const target = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE
+        if (renderAttempt?.locale === target) {
+            if (renderAttempt.status === 'pending') return renderAttempt.promise
+            if (renderAttempt.status === 'success' || !retry) return
+        }
+        const attempt = { locale: target, status: 'pending', renderedLocale: null, promise: null }
+        renderAttempt = attempt
+        attempt.promise = Promise.resolve().then(() => applyLocale(target)).then(rendered => {
+            // The locale manager reports English fallback. Legacy void callbacks
+            // promise successful application of their argument when they resolve.
+            attempt.renderedLocale = rendered ?? target
+            attempt.status = attempt.renderedLocale === target ? 'success' : 'fallback'
+        }, error => {
+            attempt.status = 'failed'
+            throw error
+        })
+        await attempt.promise
     }
 
-    async function accept(value, ticket) {
+    async function accept(value, ticket, retry = false) {
         if (!validLanguage(value) || disposed) return
         // Even a superseded local mutation supplies the next queued revision.
         if (authoritative && value.revision < authoritative.revision) return
@@ -41,7 +60,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
         if (ticket !== generation) return
         Object.assign(state, authoritative, { mode: isSupportedLocale(value.locale) ? 'native' : 'incompatible' })
         compatibility(state.mode === 'incompatible' ? 'android.language.errors.updateServer' : null)
-        await render(value.locale, ticket)
+        await render(value.locale, ticket, retry)
     }
 
     function backgroundReconcile() {
@@ -51,14 +70,14 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
             initializationDirty = true
             return
         }
-        if (!native) return
+        // State events are evidence of a bridge, even after an initial timeout.
         guards++
         void reconcile().catch(error => {
             if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
         }).finally(() => { guards-- })
     }
     function visibilityChanged() {
-        if (document.visibilityState === 'visible') backgroundReconcile()
+        if (native && document.visibilityState === 'visible') backgroundReconcile()
     }
 
     function initialize() {
@@ -102,7 +121,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
             }
             initializing = false
             // An event received while loading the degraded snapshot still counts.
-            if (native && initializationDirty && !disposed) {
+            if (initializationDirty && !disposed) {
                 initializationDirty = false
                 backgroundReconcile()
             }
@@ -110,9 +129,38 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
         })()
     }
 
+    function recoverCapability() {
+        // Only an explicit reconciliation or native event starts this bounded
+        // probe. Share concurrent probes; ordinary browser selections stay local.
+        return recovery ??= (async () => {
+            let fullState
+            try { fullState = await client.request('getState') }
+            catch { return }
+            if (disposed) return
+            if (fullState?.capabilities?.appLanguage !== 1 || !validLanguage(fullState.appLanguage)) {
+                if (fullState) {
+                    state.mode = 'incompatible'
+                    compatibility('android.language.errors.updateApp')
+                }
+                return
+            }
+            native = true
+            // Native takeover restores installation state, never prior web intent.
+            ++selection
+            const ticket = ++generation
+            try { await accept(await client.request('locale.get'), ticket) }
+            catch (error) {
+                await accept(authoritative || fullState.appLanguage, ticket)
+                if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
+            }
+            if (!disposed) markAndroidApp()
+        })().finally(() => { recovery = null })
+    }
+
     async function reconcile() {
         await initialize()
-        if (disposed || !native) return
+        if (disposed) return
+        if (!native) return recoverCapability()
         const ticket = ++generation
         await accept(await client.request('locale.get'), ticket)
     }
@@ -120,11 +168,12 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
     async function select(locale) {
         const intent = ++selection
         await initialize()
+        if (recovery) await recovery
         if (disposed || intent !== selection) return
         if (!native) {
             const ticket = ++generation
             state.locale = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE
-            await render(state.locale, ticket)
+            await render(state.locale, ticket, true)
             return
         }
         const expectedRevision = authoritative.revision
@@ -137,7 +186,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
                 const result = await client.request('locale.set', { locale, expectedRevision: previous?.revision ?? expectedRevision })
                 // A newer queued choice cancels display, but keeps this result's revision.
                 // Serialize bridge mutations, not optional catalog downloads.
-                return { revision: result.revision, rendering: accept(result, intent === selection ? ticket : -1) }
+                return { revision: result.revision, rendering: accept(result, intent === selection ? ticket : -1, true) }
             } catch (error) {
                 // Never replay intent after a revision or document rejection.
                 ++selection

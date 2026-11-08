@@ -29,7 +29,7 @@ function fixture({ initial = language(), browser = 'fr', request, applyLocale } 
     }
     const controller = createAndroidLocaleController({ client, document,
         readBrowserLocale: () => browser,
-        applyLocale: async locale => { applied.push(locale); await applyLocale?.(locale) },
+        applyLocale: async locale => { applied.push(locale); return applyLocale ? await applyLocale(locale) : locale },
         onCompatibility: message => compatibility.push(message),
     })
     return { controller, calls, applied, compatibility, document, listeners,
@@ -465,4 +465,173 @@ test('startup read failure retains the unsupported-language update status', asyn
     await tick()
     assert.equal(page.compatibility.at(-1).key, 'android.language.errors.updateServer')
     page.controller.dispose()
+})
+
+for (const trigger of ['event', 'reconcile']) test(`failed capability probe recovers through ${trigger} without replaying browser intent`, async () => {
+    let probes = 0, native = language('de', 3)
+    const page = fixture({ browser: 'fr', request: async (command, args) => {
+        if (command === 'getState') {
+            if (++probes === 1) throw new Error('Initial transport failure')
+            return { capabilities: { appLanguage: 1 }, appLanguage: native }
+        }
+        if (command === 'locale.set') native = language(args.locale, native.revision + 1)
+        return native
+    } })
+    try {
+        const state = await page.controller.initialize()
+        assert.equal(state.mode, 'browser')
+        await page.controller.select('es')
+        await tick()
+        assert.equal(probes, 1, 'browser selection must not retry a missing bridge')
+        if (trigger === 'event') { page.change(native); await tick() }
+        else await page.controller.reconcile()
+        assert.equal(state.mode, 'native')
+        assert.equal(state.locale, 'de')
+        assert.equal(page.applied.at(-1), 'de')
+        assert.equal(probes, 2)
+        assert.equal(page.calls.filter(([command]) => command === 'locale.set').length, 0)
+        await page.controller.select('en')
+        assert.equal(native.locale, 'en')
+        assert.deepEqual(page.calls.at(-1), ['locale.set', { locale: 'en', expectedRevision: 3 }])
+    } finally { page.controller.dispose() }
+})
+
+test('failed capability recovery is bounded and leaves ordinary browser preference intact', async () => {
+    const page = fixture({ request: async () => { throw new Error('No bridge') } })
+    try {
+        const state = await page.controller.initialize()
+        await page.controller.select('es')
+        await Promise.all([page.controller.reconcile(), page.controller.reconcile()])
+        await tick()
+        assert.equal(page.calls.length, 2, 'concurrent recovery shares one bounded probe')
+        assert.equal(state.locale, 'es')
+        assert.equal(state.mode, 'browser')
+        assert.deepEqual(page.applied, ['fr', 'es'])
+        page.document.dispatchEvent(new Event('visibilitychange'))
+        await tick()
+        assert.equal(page.calls.length, 2, 'ordinary browser resumes do not probe')
+    } finally { page.controller.dispose() }
+})
+
+test('explicit selection retries a failed catalog without replacing native preference', async () => {
+    let downloads = 0
+    const manager = createLocaleManager({ fr: async () => {
+        if (++downloads === 1) throw new Error('Offline chunk')
+        return {}
+    } })
+    const page = fixture({ applyLocale: locale => manager.setLocale(locale), request: async command =>
+        command === 'getState' ? { capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) } : language('fr', 1) })
+    try {
+        const state = await page.controller.initialize()
+        assert.equal(state.locale, 'fr')
+        assert.equal(manager.i18n.global.locale.value, 'en')
+        await page.controller.reconcile()
+        assert.equal(downloads, 1, 'passive reads must not repeatedly download failed catalogs')
+        await page.controller.select('fr')
+        assert.equal(downloads, 2)
+        assert.equal(manager.i18n.global.locale.value, 'fr')
+        assert.equal(state.locale, 'fr')
+        assert.equal(state.revision, 1)
+    } finally { page.controller.dispose() }
+})
+
+test('resume guard awaits an existing pending catalog for the same native language', async () => {
+    const download = deferred()
+    const manager = createLocaleManager({ de: () => download.promise })
+    let native = language()
+    const page = fixture({ applyLocale: locale => manager.setLocale(locale), request: async (command, args) => {
+        if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: native }
+        if (command === 'locale.set') native = language(args.locale, 1)
+        return native
+    } })
+    await page.controller.initialize()
+    const selection = page.controller.select('de')
+    await tick()
+    try {
+        page.document.dispatchEvent(new Event('visibilitychange'))
+        await tick()
+        const blocked = new Event('click', { cancelable: true })
+        page.document.dispatchEvent(blocked)
+        assert.equal(blocked.defaultPrevented, true)
+        assert.equal(manager.i18n.global.locale.value, 'en')
+        download.resolve({})
+        await selection
+        await tick()
+        assert.equal(manager.i18n.global.locale.value, 'de')
+        const allowed = new Event('click', { cancelable: true })
+        page.document.dispatchEvent(allowed)
+        assert.equal(allowed.defaultPrevented, false)
+        assert.equal(page.applied.filter(locale => locale === 'de').length, 1)
+    } finally { download.resolve({}); await selection; page.controller.dispose() }
+})
+
+test('selection during recovered document handshake waits for its revision', async () => {
+    const handshake = deferred()
+    let probes = 0
+    const page = fixture({ request: async (command, args) => {
+        if (command === 'getState') {
+            if (++probes === 1) throw new Error('Initial transport failure')
+            return { capabilities: { appLanguage: 1 }, appLanguage: language('de', 3) }
+        }
+        if (command === 'locale.get') return handshake.promise
+        return language(args.locale, 4)
+    } })
+    await page.controller.initialize()
+    const recovery = page.controller.reconcile()
+    await tick()
+    const selection = page.controller.select('en')
+    // Attach rejection handling immediately, so the assertion reports the failure.
+    const outcome = selection.catch(error => error)
+    await tick()
+    handshake.resolve(language('de', 3))
+    try {
+        await recovery
+        assert.equal(await outcome, undefined)
+        assert.deepEqual(page.calls.at(-1), ['locale.set', { locale: 'en', expectedRevision: 3 }])
+    } finally { page.controller.dispose() }
+})
+
+test('native event during recovered catalog loading applies the newest revision', async () => {
+    const german = deferred()
+    const manager = createLocaleManager({ de: () => german.promise, es: async () => ({}) })
+    let probes = 0, native = language('de', 3)
+    const page = fixture({ browser: 'en', applyLocale: locale => manager.setLocale(locale), request: async command => {
+        if (command === 'getState') {
+            if (++probes === 1) throw new Error('Initial transport failure')
+            return { capabilities: { appLanguage: 1 }, appLanguage: native }
+        }
+        return native
+    } })
+    const state = await page.controller.initialize()
+    const recovery = page.controller.reconcile()
+    await tick()
+    native = language('es', 4)
+    page.change(native)
+    await tick()
+    german.resolve({})
+    try {
+        await recovery
+        await tick()
+        assert.equal(state.locale, 'es')
+        assert.equal(manager.i18n.global.locale.value, 'es')
+    } finally { page.controller.dispose() }
+})
+
+test('native event before a failed capability response permits one recovery probe', async () => {
+    const probe = deferred()
+    let probes = 0
+    const page = fixture({ request: async command => {
+        if (command === 'getState') return ++probes === 1 ? probe.promise
+            : { capabilities: { appLanguage: 1 }, appLanguage: language('de', 3) }
+        return language('de', 3)
+    } })
+    const startup = page.controller.initialize()
+    page.change(language('de', 3))
+    probe.reject(new Error('Initial timeout'))
+    try {
+        const state = await startup
+        await tick()
+        assert.equal(state.locale, 'de')
+        assert.equal(probes, 2)
+    } finally { page.controller.dispose() }
 })

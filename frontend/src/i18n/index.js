@@ -113,6 +113,8 @@ export function createLocaleManager(loaders = localeLoaders) {
         }
     }
 
+    // Resolves to the language actually applied, or undefined for superseded work.
+    // Callers that previously ignored the result remain compatible.
     async function setLocale(value, document = globalThis.document) {
         const request = ++latestRequest
         let locale = isSupportedLocale(value) ? value : DEFAULT_LOCALE
@@ -125,7 +127,10 @@ export function createLocaleManager(loaders = localeLoaders) {
             }
         }
         // A slower download must not replace a more recent language choice.
-        if (request === latestRequest) applyLocale(locale, document)
+        if (request === latestRequest) {
+            applyLocale(locale, document)
+            return locale
+        }
     }
 
     return { createAppI18n, i18n, loadLocaleMessages, setLocale }

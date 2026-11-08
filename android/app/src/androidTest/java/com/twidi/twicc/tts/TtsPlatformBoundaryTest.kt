@@ -47,12 +47,25 @@ class TtsPlatformBoundaryTest {
                 pendingCount = 0, error = null, configurationAvailable = true, results = emptyList())
             val notification = TtsNotification(context)
             val english = notification.build(snapshot, "epoch", "User instance name")
+            val manager = context.getSystemService(android.app.NotificationManager::class.java)
+            val englishChannel = manager.getNotificationChannel(TtsNotification.CHANNEL)
+            assertEquals(com.twidi.twicc.i18n.NativeMessages.text(context,
+                com.twidi.twicc.i18n.UiMessage("android.speech.channel")), englishChannel.name.toString())
             assertEquals("Reading", english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
             assertEquals(listOf("Skip", "Pause timeline", "Stop all"), english.actions.map { it.title.toString() })
             locale = "fr"
             // No language listener or timer rebuilds the existing notification.
             assertEquals("Reading", english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
             val french = notification.build(snapshot, "epoch", "User instance name")
+            val frenchChannel = manager.getNotificationChannel(TtsNotification.CHANNEL)
+            assertNotEquals(englishChannel.name.toString(), frenchChannel.name.toString())
+            assertEquals(com.twidi.twicc.i18n.NativeMessages.text(context,
+                com.twidi.twicc.i18n.UiMessage("android.speech.channel")), frenchChannel.name.toString())
+            assertEquals(englishChannel.id, frenchChannel.id)
+            assertEquals(englishChannel.importance, frenchChannel.importance)
+            assertEquals(englishChannel.sound, frenchChannel.sound)
+            assertEquals(englishChannel.shouldVibrate(), frenchChannel.shouldVibrate())
+            assertEquals(englishChannel.lockscreenVisibility, frenchChannel.lockscreenVisibility)
             assertNotEquals(english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString(),
                 french.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
             assertNotEquals(english.actions.map { it.title.toString() }, french.actions.map { it.title.toString() })

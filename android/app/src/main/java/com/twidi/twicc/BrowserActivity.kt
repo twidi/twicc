@@ -75,6 +75,8 @@ class BrowserActivity : Activity() {
     private var ttsBound = false
     private var ttsSource: TtsActivationSource? = null
     private lateinit var ttsDocument: DocumentOwner
+    private var speechSettingsDialog: AlertDialog? = null
+    private var speechSettingsError: TtsActionError? = null
     private var batteryAdviceDialog: AlertDialog? = null
     private var batteryAdviceCommand: TtsCommand.Listen? = null
     private var batteryAdviceConfirmed = false
@@ -364,6 +366,9 @@ class BrowserActivity : Activity() {
         root.refreshNativeMessages()
         requests?.refreshMessages()
         batteryAdviceDialog?.let { TtsNotification.refreshBatteryAdvice(this, it) }
+        speechSettingsDialog?.let { dialog ->
+            speechSettingsError?.let { TtsNotification.refreshSettings(this, dialog, it) }
+        }
         menuMessages.forEach { (id, message) -> nativeMenu?.menu?.findItem(id)?.title = NativeMessages.text(this, message) }
         refreshConfirmation?.let { dialog ->
             dialog.setTitle(NativeMessages.text(this, UiMessage("navigation.android.refreshQuestion")))
@@ -539,6 +544,7 @@ class BrowserActivity : Activity() {
     override fun onDestroy() {
         nativeMenu?.dismiss()
         refreshConfirmation?.dismiss()
+        speechSettingsDialog?.dismiss()
         languageObserver?.close()
         languageObserver = null
         ttsSource?.let { ttsBinder?.detachSource(it) }
@@ -558,6 +564,19 @@ class BrowserActivity : Activity() {
         }
     }
 
+    private fun showSpeechSettings(error: TtsActionError) {
+        speechSettingsDialog?.dismiss()
+        val dialog = TtsNotification.showSettings(this, error) ?: return
+        speechSettingsDialog = dialog
+        speechSettingsError = error
+        dialog.setOnDismissListener {
+            if (speechSettingsDialog === dialog) {
+                speechSettingsDialog = null
+                speechSettingsError = null
+            }
+        }
+    }
+
     /** Task 8 uses these methods after validating the current top-level bridge request. */
     fun nativeTtsDocumentOwner(): DocumentOwner = ttsDocument
     fun nativeTtsSnapshot(): NativeTtsSnapshot = ttsBinder?.snapshot() ?: TtsService.cachedSnapshot(instance.id)
@@ -565,7 +584,7 @@ class BrowserActivity : Activity() {
         if (command is TtsCommand.Manual || command is TtsCommand.Listen || command is TtsCommand.Disable || command == TtsCommand.StopAll)
             clearBatteryAdvice()
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
-            TtsNotification.visiblePreflight(this)?.let { return Acceptance(false, error = it) }
+            TtsNotification.visiblePreflight(this, ::showSpeechSettings)?.let { return Acceptance(false, error = it) }
             if (command is TtsCommand.Listen && TtsNotification.batteryAdviceNeeded(this)) {
                 batteryAdviceCommand = command
                 val dialog = TtsNotification.showBatteryAdvice(this) {

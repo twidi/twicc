@@ -100,3 +100,14 @@ test('loaded catalogs retain English fallback and isolated messages in new compo
     assert.equal(manager.i18n.global.te('test.private', 'pt-BR'), false)
     assert.equal(manager.i18n.global.locale.value, 'en')
 })
+
+test('setLocale reports the rendered language after fallback and explicit retry', async () => {
+    let requests = 0
+    const manager = createLocaleManager({ fr: async () => {
+        if (++requests === 1) throw new Error('Offline catalog')
+        return {}
+    } })
+    assert.equal(await manager.setLocale('fr'), 'en')
+    assert.equal(await manager.setLocale('fr'), 'fr')
+    assert.equal(manager.i18n.global.locale.value, 'fr')
+})

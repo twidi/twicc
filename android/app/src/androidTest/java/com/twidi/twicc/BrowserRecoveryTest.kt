@@ -249,6 +249,72 @@ class BrowserRecoveryTest {
         } }
     }
 
+    @Test fun speechSettingsErrorRefreshesThroughActivityLanguageObserverAndResume() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            val language = AndroidLanguageStore(context)
+            val original = language.read().locale
+            val message = UiMessage("android.speech.notificationsRequired")
+            val error = com.twidi.twicc.tts.TtsActionError("notifications_blocked", "External fallback", "notification_settings",
+                com.twidi.twicc.tts.ttsUiMessage(message.key))
+            var dialog: android.app.AlertDialog? = null
+            scenario.onActivity { activity ->
+                BrowserActivity::class.java.getDeclaredMethod("showSpeechSettings", com.twidi.twicc.tts.TtsActionError::class.java)
+                    .apply { isAccessible = true }.invoke(activity, error)
+                dialog = field(activity, "speechSettingsDialog") as android.app.AlertDialog
+            }
+            try {
+                for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                    assertTrue(language.select(locale, language.read().revision).accepted)
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        assertSame(dialog, field(activity, "speechSettingsDialog"))
+                        assertSame(error, field(activity, "speechSettingsError"))
+                        assertTrue(dialog!!.isShowing)
+                        fun labels(view: View): List<String> = when (view) {
+                            is TextView -> listOf(view.text.toString())
+                            is android.view.ViewGroup -> (0 until view.childCount).flatMap { labels(view.getChildAt(it)) }
+                            else -> emptyList()
+                        }
+                        assertTrue(labels(dialog!!.window!!.decorView).contains(
+                            NativeMessages.text(activity, UiMessage("android.speech.settingsTitle"))))
+                        assertEquals(NativeMessages.text(activity, message),
+                            dialog!!.findViewById<TextView>(android.R.id.message).text.toString())
+                        assertEquals(NativeMessages.text(activity, UiMessage("common.actions.cancel")),
+                            dialog!!.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).text.toString())
+                        assertEquals(NativeMessages.text(activity, UiMessage("android.speech.openSettings")),
+                            dialog!!.getButton(android.app.AlertDialog.BUTTON_POSITIVE).text.toString())
+                    }
+                }
+                scenario.moveToState(Lifecycle.State.CREATED)
+                assertTrue(language.select("de", language.read().revision).accepted)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                scenario.onActivity { activity ->
+                    assertSame(dialog, field(activity, "speechSettingsDialog"))
+                    assertEquals(NativeMessages.text(activity, message),
+                        dialog!!.findViewById<TextView>(android.R.id.message).text.toString())
+                }
+                val monitor = instrumentation.addMonitor(android.content.IntentFilter(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS),
+                    android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, null), true)
+                try {
+                    instrumentation.runOnMainSync { dialog!!.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick() }
+                    instrumentation.waitForIdleSync()
+                    assertEquals(1, monitor.hits)
+                    scenario.onActivity { activity ->
+                        assertNull(field(activity, "speechSettingsDialog"))
+                        assertNull(field(activity, "speechSettingsError"))
+                    }
+                } finally { instrumentation.removeMonitor(monitor) }
+                assertEquals("notifications_blocked", error.code)
+                assertEquals("notification_settings", error.action)
+                assertEquals(1, site.requests.size)
+            } finally {
+                instrumentation.runOnMainSync { dialog?.dismiss() }
+                language.select(original, language.read().revision)
+            }
+        } }
+    }
+
     @Test fun oldFrontendKeepsFallbackMenuUntilTheCurrentDocumentReadsLanguage() {
         Site().use { site -> withBrowser(site) { scenario ->
             waitFor { site.ready.size == 1 }

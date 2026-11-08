@@ -27,7 +27,7 @@ export function scanKotlinSource(source) {
         if (!token?.string || !/[\p{L}]/u.test(token.value)) return
         failures.push({ line: source.slice(0, token.offset).split('\n').length, text: token.value })
     }
-    const presentation = new Set(['text', 'hint', 'contentDescription', 'title', 'message', 'error'])
+    const presentation = new Set(['text', 'hint', 'contentDescription', 'description', 'title', 'message', 'error'])
     const firstArg = new Set(['setText', 'setHint', 'setContentDescription', 'setTitle', 'setMessage',
         'setPositiveButton', 'setNegativeButton', 'setNeutralButton', 'setContentTitle', 'setContentText',
         'setSubText', 'setDescription', 'toast'])
