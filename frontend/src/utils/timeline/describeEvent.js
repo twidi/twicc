@@ -215,14 +215,14 @@ const NAME_MAX = 60
  * `interrupted` (its process ended; the row's `reason` says why). The set is open: an unknown status keeps its name.
  */
 export const WORKFLOW_ENDED_STATUSES = {
-    completed: ['Workflow completed', 'success', 'circle-check'],
-    failed: ['Workflow failed', 'danger', 'circle-xmark'],
-    killed: ['Workflow stopped', 'neutral', 'circle-stop'],
-    stopped: ['Workflow stopped', 'neutral', 'circle-stop'],
-    cancelled: ['Workflow cancelled', 'neutral', 'circle-stop'],
-    canceled: ['Workflow cancelled', 'neutral', 'circle-stop'],
-    paused: ['Workflow paused', 'neutral', 'circle-pause'],
-    interrupted: ['Workflow interrupted', 'warning', 'circle-stop'],
+    get completed() { return [i18n.global.t('session.timeline.workflowCompleted'), 'success', 'circle-check'] },
+    get failed() { return [i18n.global.t('session.timeline.workflowFailed'), 'danger', 'circle-xmark'] },
+    get killed() { return [i18n.global.t('session.timeline.workflowStopped'), 'neutral', 'circle-stop'] },
+    get stopped() { return [i18n.global.t('session.timeline.workflowStopped'), 'neutral', 'circle-stop'] },
+    get cancelled() { return [i18n.global.t('session.timeline.workflowCancelled'), 'neutral', 'circle-stop'] },
+    get canceled() { return [i18n.global.t('session.timeline.workflowCancelled'), 'neutral', 'circle-stop'] },
+    get paused() { return [i18n.global.t('session.timeline.workflowPaused'), 'neutral', 'circle-pause'] },
+    get interrupted() { return [i18n.global.t('session.timeline.workflowInterrupted'), 'warning', 'circle-stop'] },
 }
 
 /** "Workflow started " + the run's name as a value (its script's meta.name), cut near NAME_MAX. */
@@ -230,20 +230,20 @@ function withWorkflowName(label, data, tooltip) {
     const name = asString(data.name)
     if (!name) return [text(label)]
     const cut = truncateText(name, NAME_MAX)
-    if (cut.truncated) tooltip.push(`Workflow: ${name}`)
+    if (cut.truncated) tooltip.push(i18n.global.t('session.timeline.workflowName', { name }))
     return [text(`${label} `), valuePart(cut.text)]
 }
 
 function workflowTooltip(data) {
     const lines = []
-    if (asString(data.run_id)) lines.push(`Run id: ${data.run_id}`)
-    if (asString(data.task_id)) lines.push(`Task id: ${data.task_id}`)
+    if (asString(data.run_id)) lines.push(i18n.global.t('session.timeline.workflowRunId', { id: data.run_id }))
+    if (asString(data.task_id)) lines.push(i18n.global.t('session.timeline.workflowTaskId', { id: data.task_id }))
     return lines
 }
 
 function describeWorkflowStarted(event, data) {
     const tooltip = workflowTooltip(data)
-    const label = data.cause === 'resume' ? 'Workflow resumed' : 'Workflow started'
+    const label = data.cause === 'resume' ? i18n.global.t('session.timeline.workflowResumed') : i18n.global.t('session.timeline.workflowStarted')
     return { icon: 'sitemap', severity: 'neutral', parts: withWorkflowName(label, data, tooltip), tooltip }
 }
 
@@ -251,12 +251,15 @@ function describeWorkflowEnded(event, data) {
     const tooltip = workflowTooltip(data)
     const status = asString(data.status)
     const [label, severity, icon] = lookup(WORKFLOW_ENDED_STATUSES, status)
-        ?? [status ? `Workflow ended (${status})` : 'Workflow ended', 'neutral', 'sitemap']
+        ?? [status ? i18n.global.t('session.timeline.workflowEndedStatus', { status }) : i18n.global.t('session.timeline.workflowEnded'), 'neutral', 'sitemap']
     // An interruption names what ended the process, like `process.ended` does.
     let cause = null
     if (status === 'interrupted') {
         const [label, , tag] = lookup(PROCESS_ENDED_REASONS, event.reason) ?? []
-        cause = tag ?? label?.toLowerCase() ?? 'process stopped'
+        // German capitalizes nouns: its labels keep their case in the tag.
+        const locale = i18n.global.locale.value
+        const lower = (value) => (locale === 'de' ? value : value.toLocaleLowerCase(locale))
+        cause = tag ?? lower(label ?? i18n.global.t('session.timeline.processStopped'))
     }
     // The run ends on its own: its wording says what happened, an "automatic" tag would add nothing.
     return { icon, severity, parts: withWorkflowName(label, data, tooltip), tags: [cause], tooltip, saysAutomatic: true }

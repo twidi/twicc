@@ -357,7 +357,7 @@ Persist provenance when generated messages survive a reload.
 - CLI and MCP projections omit presentation-only fields, including persisted timeline metadata.
 - Existing records without provenance keep their fallback until a supported refresh or recomputation rebuilds their metadata.
 
-Migration `0170_ui_message_provenance` (history) added peer error provenance
+Migration `0171_ui_message_provenance` (history) added peer error provenance
 only (`PeerMessage.error_ui_message`). A new migration needs the normal user-run
 migration and a backend restart before live use. Bump `CLAUDE_CODE_COMPUTE_VERSION`
 or `CODEX_COMPUTE_VERSION` in `src/twicc/settings.py` to refresh historical
