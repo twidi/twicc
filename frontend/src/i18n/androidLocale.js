@@ -18,7 +18,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
     const state = reactive({ mode: 'browser', locale: DEFAULT_LOCALE, revision: null, supportedLocales: [...browserLocales] })
     let initialization, unsubscribe, disposed = false, native = false
     let authoritative, generation = 0, selection = 0, mutationQueue = Promise.resolve(), pendingMutations = 0, guards = 0
-    let renderedPreference
+    let renderedPreference, initializing = true, initializationDirty = false
 
     function guard(event) {
         if (!guards) return
@@ -45,7 +45,13 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
     }
 
     function backgroundReconcile() {
-        if (disposed || !native) return
+        if (disposed) return
+        if (initializing) {
+            // Native events can arrive before the initial capability response.
+            initializationDirty = true
+            return
+        }
+        if (!native) return
         guards++
         void reconcile().catch(error => {
             if (!disposed) onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
@@ -58,18 +64,24 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
     function initialize() {
         return initialization ??= (async () => {
             const ticket = ++generation
+            // Subscribe before probing so a delayed snapshot cannot lose changes.
+            unsubscribe = client.onStateChanged(backgroundReconcile)
+            document?.addEventListener('visibilitychange', visibilityChanged)
+            for (const type of guardedEvents) document?.addEventListener(type, guard, true)
             let fullState
             try { fullState = await client.request('getState') }
             catch { /* Ordinary browsers use the client's bounded probe timeout. */ }
             if (disposed) return state
-            // Subscribe before catalog loading. A native change during that await
-            // schedules a fresh read after initialization finishes.
-            unsubscribe = client.onStateChanged(backgroundReconcile)
-            document?.addEventListener('visibilitychange', visibilityChanged)
-            for (const type of guardedEvents) document?.addEventListener(type, guard, true)
             if (fullState?.capabilities?.appLanguage === 1 && validLanguage(fullState.appLanguage)) {
                 native = true
-                await accept(fullState.appLanguage, ticket)
+                if (!initializationDirty) await accept(fullState.appLanguage, ticket)
+                // Changes during either the snapshot or a catalog download extend
+                // startup. Do not call reconcile(), which awaits this same promise.
+                while (initializationDirty && !disposed) {
+                    initializationDirty = false
+                    const current = ++generation
+                    await accept(await client.request('locale.get'), current)
+                }
             } else {
                 state.mode = fullState ? 'incompatible' : 'browser'
                 const saved = readBrowserLocale()
@@ -77,6 +89,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
                 compatibility(fullState ? 'android.language.errors.updateApp' : null)
                 await render(state.locale, ticket)
             }
+            initializing = false
             return state
         })()
     }

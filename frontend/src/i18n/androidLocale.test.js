@@ -195,18 +195,46 @@ test('settings initialization preserves native bootstrap before its immediate wa
     page.controller.dispose()
 })
 
-test('native change during initial catalog load is not lost', async () => {
-    const download = deferred()
-    const page = fixture({ initial: language('fr', 1), applyLocale: locale => locale === 'fr' ? download.promise : undefined })
+test('native change during the initial state request reaches the startup result', async () => {
+    const snapshot = deferred()
+    const page = fixture({ request: async command => command === 'getState'
+        ? snapshot.promise : language('de', 2) })
     const startup = page.controller.initialize()
+    page.change(language('de', 2))
+    snapshot.resolve({ capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) })
+    const state = await startup
+    assert.equal(state.locale, 'de')
+    assert.equal(state.revision, 2)
+    assert.equal(page.applied.at(-1), 'de')
+    assert.ok(page.calls.every(([command]) => command !== 'locale.set'))
+    page.controller.dispose()
+})
+
+test('native change during initial catalog loading extends the startup catalog barrier', async () => {
+    const french = deferred(), german = deferred()
+    let rendered, finished = false
+    const page = fixture({ initial: language('fr', 1), applyLocale: async locale => {
+        if (locale === 'fr') await french.promise
+        if (locale === 'de') await german.promise
+        rendered = locale
+    } })
+    const startup = page.controller.initialize().then(state => { finished = true; return state })
     await tick()
     page.change(language('de', 2))
-    download.resolve()
-    const state = await startup
+    french.resolve()
     await tick()
-    assert.equal(state.locale, 'de')
-    assert.equal(page.applied.at(-1), 'de')
-    page.controller.dispose()
+    try {
+        assert.equal(finished, false, 'startup must await the newly selected catalog')
+        assert.equal(page.applied.at(-1), 'de')
+        german.resolve()
+        const state = await startup
+        assert.equal(state.locale, 'de')
+        assert.equal(rendered, 'de')
+    } finally {
+        german.resolve()
+        await startup
+        page.controller.dispose()
+    }
 })
 
 test('older APK preserves browser-local selection and reactive compatibility', async () => {
