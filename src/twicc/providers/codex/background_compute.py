@@ -409,13 +409,22 @@ class CodexComputeCoordinator:
             if source is not None:
                 source.close()
                 source = None
-            try:
-                if resolve or path.suffix == ".zst" or not path.exists():
-                    path = await asyncio.to_thread(resolve_rollout, path)
-                if path.suffix == ".zst" or path != candidate.file_path:
-                    source = await self._prepare_rollout(path)
-            except FileNotFoundError as error:
-                raise _RolloutMissing(f"Rollout is gone from disk: {path}") from error
+            for attempt in range(2):
+                try:
+                    if resolve or path.suffix == ".zst" or not path.exists():
+                        path = await asyncio.to_thread(resolve_rollout, path)
+                    if path.suffix == ".zst" or path != candidate.file_path:
+                        source = await self._prepare_rollout(path)
+                    return
+                except FileNotFoundError as error:
+                    try:
+                        path = await asyncio.to_thread(resolve_rollout, path)
+                    except FileNotFoundError as missing:
+                        raise _RolloutMissing(f"Rollout is gone from disk: {path}") from missing
+                    # A missing open can precede an exact sibling restoration
+                    # or replacement at the same pathname. Retry once only.
+                    if attempt:
+                        raise RolloutMigrationError(f"Cannot open available rollout: {path}") from error
 
         async def classify() -> HistoryMode:
             while True:

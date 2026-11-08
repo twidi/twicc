@@ -55,6 +55,7 @@ class _SourceApplication(NamedTuple):
     created: bool = False
     adopted: bool = False
     availability_changed: bool = False
+    retry: bool = False
 
 
 def source_checkpoint(session) -> SourceCheckpoint:
@@ -70,6 +71,7 @@ def _apply_codex_source_payload(payload: CodexSourcePayload, *, prepared=_UNPREP
     from twicc.providers.live_aggregates import apply_contribution_changes, session_contribution
 
     rejected = _SourceApplication(False)
+    obsolete = _SourceApplication(False, retry=True)
     if payload.provider != Provider.CODEX:
         return rejected
     physical = Path(payload.physical_path)
@@ -78,22 +80,30 @@ def _apply_codex_source_payload(payload: CodexSourcePayload, *, prepared=_UNPREP
     if payload.fingerprint.physical_path != codex_sessions_dir() / physical:
         return rejected
     if not source_is_current(payload.fingerprint):
-        return rejected
+        return obsolete
     ingestion = payload.ingestion
     if ingestion is not None and (ingestion.provider != Provider.CODEX or ingestion.session.id != payload.session_id):
         return rejected
     with transaction.atomic():
         session = Session.objects.filter(pk=payload.session_id).first()
         if payload.expected is None:
-            if session is not None or not isinstance(ingestion, CreateSessionPayload):
+            if session is not None:
+                if (session.provider == Provider.CODEX
+                        and logical_rollout_path(Path(session.file_path)) == logical_rollout_path(physical)):
+                    return obsolete
+                return rejected
+            if not isinstance(ingestion, CreateSessionPayload):
                 return rejected
             if ingestion.session.file_path != payload.physical_path:
                 return rejected
         else:
-            if (session is None or session.provider != Provider.CODEX
-                    or source_checkpoint(session) != payload.expected
+            if session is None:
+                return obsolete
+            if (session.provider != Provider.CODEX
                     or logical_rollout_path(Path(session.file_path)) != logical_rollout_path(physical)):
                 return rejected
+            if source_checkpoint(session) != payload.expected:
+                return obsolete
         if ingestion is not None and payload.expected is not None:
             if ingestion.last_offset < payload.expected.last_offset or ingestion.last_line < payload.expected.last_line:
                 return rejected
@@ -180,7 +190,8 @@ async def process_codex_source_payload(payload: CodexSourcePayload, *, prepared=
 
     result = await db_writer.run_compute_sync(_apply_codex_source_payload, payload, prepared=prepared)
     if not result.applied:
-        await request_selected_source_catch_up(payload)
+        if result.retry:
+            await request_selected_source_catch_up(payload)
         return False
     if result.project is not None:
         await db_writer._publish_created_project(result.project, result.created, result.adopted)

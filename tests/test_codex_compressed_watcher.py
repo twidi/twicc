@@ -131,6 +131,117 @@ def test_restoration_and_immediate_append_keep_history_and_generation(stored):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('compressed_source', [False, True])
+def test_unrelated_logical_source_keeps_generic_drain(stored, monkeypatch, compressed_source):
+    from twicc.providers import db_writer
+    from twicc.providers.codex.source_binding import ReconcileCodexSourceJob
+    watcher, path, _ = stored
+    jobs = []
+    submit = module.submit_async_job
+
+    async def track(job):
+        jobs.append(job)
+        return await submit(job)
+
+    monkeypatch.setattr(module, 'submit_async_job', track)
+    monkeypatch.setattr(module, '_watcher', watcher)
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            await watcher.process_path(path)
+            await settle(watcher)
+            other = path.with_name('rollout-unrelated.jsonl')
+            other.write_bytes(records())
+            selected = compress(other) if compressed_source else other
+            await asyncio.wait_for(watcher.process_path(selected), 2)
+            await settle(watcher)
+            assert not any(isinstance(job, ReconcileCodexSourceJob) for job in jobs)
+            assert watcher._queue.event_token(other) == 1
+            state = watcher._queue._paths[other]
+            assert watcher._queue.idle and not state.queued and not state.in_flight
+            assert not state.waiters
+            assert not watcher._target_waiters
+            assert not watcher._prepared and not watcher._preparations
+            assert not watcher._preparation_waiting
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('compressed_source', [False, True])
+def test_writer_logical_conflict_settles_waiter_without_retry(stored, monkeypatch, compressed_source):
+    from twicc.core.models import Session
+    from twicc.providers import db_writer
+    from twicc.providers.codex.source_binding import ReconcileCodexSourceJob
+    watcher, path, _ = stored
+    conflict = path.with_name('rollout-conflict.jsonl')
+    conflict.write_bytes(records())
+    jobs = []
+    temporary_paths = []
+    submit = module.submit_async_job
+    prepare = module.prepare_rollout
+
+    def track_preparation(*args, **kwargs):
+        prepared = prepare(*args, **kwargs)
+        if prepared.physical_path.suffix == '.zst':
+            temporary_paths.append(prepared.read_path)
+        return prepared
+
+    async def reject(job):
+        if isinstance(job, ReconcileCodexSourceJob):
+            jobs.append(job)
+            # The producer already validated an exact sibling. A different
+            # association wins before the real writer publishes its envelope.
+            await Session.objects.filter(pk=SID).aupdate(
+                file_path=str(conflict.relative_to(watcher.projects_dir)),
+            )
+        return await submit(job)
+
+    monkeypatch.setattr(module, '_watcher', watcher)
+
+    async def run():
+        db_writer.start_db_writer()
+        try:
+            selected = path if compressed_source else compress(path)
+            await watcher.process_path(selected)
+            await settle(watcher)
+            if compressed_source:
+                selected = compress(path)
+            else:
+                path.write_bytes(records())
+                selected.unlink()
+                selected = path
+            monkeypatch.setattr(module, 'submit_async_job', reject)
+            monkeypatch.setattr(module, 'prepare_rollout', track_preparation)
+            token = watcher._queue.event_token(path)
+            await asyncio.wait_for(watcher.process_path(selected), 2)
+            await settle(watcher)
+            assert len(jobs) == 1
+            assert watcher._queue.event_token(path) == token + 1
+            assert watcher._queue._paths[path].terminal == 'failed'
+            state = watcher._queue._paths[path]
+            assert watcher._queue.idle and not state.queued and not state.in_flight
+            assert not state.waiters
+            assert not watcher._target_waiters
+            assert not watcher._prepared and not watcher._preparations
+            assert not watcher._preparation_waiting
+            assert all(not temporary.exists() for temporary in temporary_paths)
+            row = await Session.objects.aget(pk=SID)
+            assert row.file_path == str(conflict.relative_to(watcher.projects_dir))
+            assert (row.last_offset, row.last_line) == (len(records()), 2)
+            assert not row.stale and row.unavailable_reason is None
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+            await db_writer.stop_db_writer()
+    asyncio.run(run())
+
+
+@pytest.mark.django_db(transaction=True)
 def test_compressed_drain_decodes_once_across_slices(stored, monkeypatch):
     from twicc.core.models import Session
     from twicc.providers import db_writer
@@ -631,7 +742,8 @@ def test_plain_open_race_rechecks_compressed_sibling_before_stale(stored, monkey
             await watcher.process_path(compressed)
             await settle(watcher)
             path.write_bytes(records(2))
-            compressed.unlink()
+            # Keep the compressed inode: the injected race rewrites this
+            # sibling in place before the watcher observes the plain source.
             monkeypatch.setattr(module, '_prepare_plain_rollout', prepare)
             watcher._enqueue(path, Change.added)
             await settle(watcher)

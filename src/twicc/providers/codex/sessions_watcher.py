@@ -525,7 +525,12 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
                     source_checkpoint(session), None,
                 )
                 future = asyncio.get_running_loop().create_future()
+                event_token = self._queue.event_token(path)
                 if not await submit_async_job(ReconcileCodexSourceJob(Provider.CODEX, payload, future)):
+                    # Obsolete evidence admits catch-up through the writer.
+                    # A stable conflict has no new event and must settle.
+                    if self._queue.event_token(path) == event_token:
+                        return SessionChangeResult('failed')
                     self._needs_resolution.add(path)
                     return SessionChangeResult('ready')
                 self._needs_resolution.discard(path)
@@ -600,8 +605,10 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         session = await get_session_by_id(parsed.session_id)
         if session is None:
             return False
-        if (getattr(session, 'file_path', parsed.file_path) != parsed.file_path
-                or (path in self._prepared and (session.stale or session.unavailable_reason == 'rollout_missing'))):
+        stored_path = getattr(session, 'file_path', parsed.file_path)
+        if ((stored_path != parsed.file_path
+             or (path in self._prepared and (session.stale or session.unavailable_reason == 'rollout_missing')))
+                and logical_rollout_path(Path(stored_path)) == logical_rollout_path(Path(parsed.file_path))):
             self._association_sessions[path] = session
         try:
             size = (read_path if read_path is not None else path).stat().st_size

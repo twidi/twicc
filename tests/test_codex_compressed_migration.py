@@ -1,6 +1,7 @@
 """Compressed sources retain migration gates and list-based rebuild jobs."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import orjson
@@ -323,6 +324,91 @@ def test_source_representation_changes_before_initial_classification(runtime, mo
     session.refresh_from_db()
     assert session.file_path == str(compressed.relative_to(runtime))
     assert session.unavailable_reason is None
+    assert session.history_epoch == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('replacement', ['plain', 'compressed'])
+def test_source_restored_at_adapter_open_recovers_before_missing_diagnosis(runtime, monkeypatch, replacement):
+    session, plain, compressed, content = _session(
+        runtime, 'adapter-open', disk_paginated=True, database_paginated=True,
+    )
+    opened = Path.open
+    transitions = []
+    prepared_paths = []
+    prepare = background_compute.prepare_rollout
+
+    def restore_before_open(path, *args, **kwargs):
+        if path == compressed and not transitions:
+            # Move the selected file away so the real physical open fails.
+            displaced = compressed.with_suffix('.missing')
+            compressed.rename(displaced)
+            if replacement == 'plain':
+                plain.write_bytes(content)
+            try:
+                return opened(path, *args, **kwargs)
+            finally:
+                if replacement == 'compressed':
+                    displaced.rename(compressed)
+                else:
+                    displaced.unlink()
+                transitions.append(path)
+        return opened(path, *args, **kwargs)
+
+    def track_preparation(*args, **kwargs):
+        source = prepare(*args, **kwargs)
+        prepared_paths.append(source.read_path)
+        return source
+
+    monkeypatch.setattr(Path, 'open', restore_before_open)
+    monkeypatch.setattr(background_compute, 'prepare_rollout', track_preparation)
+    result, jobs, items = asyncio.run(_prepare(session, compressed))
+
+    assert isinstance(result, PreparedCandidate), result
+    assert result.kind == 'compute'
+    assert transitions == [compressed]
+    assert all(name not in {'MarkSessionUnavailableJob', 'ReplaceCodexHistoryJob'} for name, _ in jobs)
+    assert items == [record.decode() for record in content.splitlines()]
+    session.refresh_from_db()
+    assert session.file_path == str((plain if replacement == 'plain' else compressed).relative_to(runtime))
+    assert session.unavailable_reason is None
+    assert session.history_epoch == 0
+    if replacement == 'compressed':
+        assert prepared_paths and all(not path.exists() for path in prepared_paths)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('failure', ['missing', 'permission', 'invalid', 'stable-missing-open'])
+def test_preparation_open_failure_settles_without_replacement(runtime, monkeypatch, failure):
+    session, _, compressed, content = _session(
+        runtime, 'adapter-failure', disk_paginated=True, database_paginated=True,
+    )
+    opened = Path.open
+    attempts = []
+
+    def fail_open(path, *args, **kwargs):
+        if path == compressed:
+            attempts.append(path)
+            if failure == 'missing':
+                compressed.unlink()
+            elif failure == 'permission':
+                raise PermissionError('stable permission denial')
+            elif failure == 'stable-missing-open':
+                raise FileNotFoundError('stable missing open with available selection')
+        return opened(path, *args, **kwargs)
+
+    if failure == 'invalid':
+        compressed.write_bytes(compressed.read_bytes()[:-1])
+    monkeypatch.setattr(Path, 'open', fail_open)
+    result, jobs, items = asyncio.run(asyncio.wait_for(_prepare(session, compressed), 3))
+
+    assert isinstance(result, FailedCandidate), result
+    assert result.unavailable_reason == ('rollout_missing' if failure == 'missing' else None)
+    assert any(name == 'MarkSessionUnavailableJob' for name, _ in jobs) == (failure == 'missing')
+    assert all(name != 'ReplaceCodexHistoryJob' for name, _ in jobs)
+    assert len(attempts) <= 2
+    assert items == [record.decode() for record in content.splitlines()]
+    session.refresh_from_db()
     assert session.history_epoch == 0
 
 
