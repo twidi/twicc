@@ -179,15 +179,28 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
     async def _prepare_source(self, path: Path, attempt: _PreparationAttempt) -> None:
         prepared = None
         error = None
+        fingerprint = None
+
+        def prepare():
+            nonlocal fingerprint
+            # Failed decoding returns no PreparedRollout. Retain source evidence
+            # so its error cannot terminate catch-up of a newer selection.
+            fingerprint = _prepare_plain_rollout(resolve_rollout(path)).fingerprint
+            return prepare_rollout(path, stop=attempt.stop)
+
         try:
             try:
                 prepared = await asyncio.get_running_loop().run_in_executor(
-                    self._preparation_executor, lambda: prepare_rollout(path, stop=attempt.stop),
+                    self._preparation_executor, prepare,
                 )
                 current = await asyncio.to_thread(source_is_current, prepared.fingerprint)
             except OSError as failure:
                 error = failure
-                current = True
+                try:
+                    current = fingerprint is None or await asyncio.to_thread(source_is_current, fingerprint)
+                except OSError:
+                    # Unreadability does not prove that the source changed.
+                    current = True
             if not self._attempt_current(path, attempt):
                 # A newer admitted event can have deferred behind this attempt.
                 # Resume that attempt without inventing a fresh filesystem event.

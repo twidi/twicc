@@ -829,3 +829,39 @@ def test_ready_migration_replay_replaces_obsolete_preparation(provider_home, mon
             watcher.stop_watcher()
             await watcher._drain_changes()
     asyncio.run(run())
+
+
+def test_decode_error_from_restored_plain_retries_without_new_event(provider_home, monkeypatch):
+    from twicc.providers.codex import rollout_sources
+    watcher = CodexSessionsWatcher()
+    data = records()
+    path = source(watcher, data)
+    compressed = compress(path)
+    processed = lightweight(watcher, monkeypatch)
+    decoded_chunks = rollout_sources._decoded_chunks
+    restorations = []
+
+    def restore_after_output(stream, stop):
+        for chunk in decoded_chunks(stream, stop):
+            yield chunk
+            if not restorations:
+                # The real decoder rejects its old source at final validation.
+                path.write_bytes(data)
+                compressed.unlink()
+                restorations.append(path)
+    monkeypatch.setattr(rollout_sources, '_decoded_chunks', restore_after_output)
+
+    async def run():
+        try:
+            await asyncio.wait_for(watcher.process_path(compressed), 3)
+            await settle(watcher)
+            assert restorations == [path]
+            assert processed == [(path, str(path.relative_to(watcher.projects_dir)), data)]
+            assert watcher._queue.event_token(path) == 1
+            assert watcher._queue._paths[path].terminal is None
+            assert not watcher._preparation_errors
+            assert not watcher._prepared
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+    asyncio.run(run())
