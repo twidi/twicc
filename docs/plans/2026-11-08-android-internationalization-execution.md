@@ -290,3 +290,25 @@ No SDK/model dependency changes require hermetic LLM diagnostics in this plan.
 The previous full translation-pass baseline remains
 `85f6fd78f95013ea768b575cf522f1eadab92bdf`. The Android status update does not
 claim a new complete translation pass or completed native acceptance.
+
+## Gecko ARM64 APK build after integration
+
+The requested APK build supersedes the earlier unavailable-toolchain status for
+Gecko release compilation, JVM tests, and lint. Existing cached JDK 17 and Android
+SDK installations provide the toolchain. No package installation is necessary.
+
+- Version: `0.5.17`, version code `28`.
+- Command: `./android/build.sh gecko 64` with the cached toolchain environment.
+- Result: `BUILD SUCCESSFUL`; the Android i18n verification passes.
+- JVM tests: 83 policy tests and 97 app tests pass, with no failures or skips.
+- Release lint: no errors; 67 warnings remain in the report.
+- Test compilation fix: use `JSONArray.length()` and `getString()` instead of
+  `JSONArray.toList()`, which the Android compile API does not provide.
+- APK: `android/dist/gecko/64/release/app-gecko-64-release.apk`.
+- Package: `com.twidi.twicc`; native libraries contain only `arm64-v8a`.
+- Signature verification passes and the signing certificate matches the previous
+  locally built APK, preserving the installation update identity.
+
+The APK and its SHA-256 checksum are copied into the session artifacts directory.
+WebView builds, instrumentation tests, and physical-device acceptance remain
+unrun. This build does not establish those results.
