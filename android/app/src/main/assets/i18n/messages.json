@@ -1842,6 +1842,51 @@
         "parameters": [],
         "numberFormats": {}
       },
+      "android.language.errors.invalidRevision": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "The app language request is invalid. Reload this page and try again."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.revisionExhausted": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "The app language cannot change."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.saveFailed": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Could not save the app language. Try again."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
       "android.language.errors.staleDocument": {
         "forms": [
           {
@@ -6415,6 +6460,51 @@
               {
                 "type": "text",
                 "value": "Die App-Sprache hat sich geändert. Wähle die Sprache erneut aus."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.invalidRevision": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Die Anfrage zur App-Sprache ist ungültig. Lade diese Seite neu und versuche es erneut."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.revisionExhausted": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Die App-Sprache kann nicht geändert werden."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.saveFailed": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Die App-Sprache konnte nicht gespeichert werden. Versuche es erneut."
               }
             ],
             "parameters": []
@@ -11012,6 +11102,51 @@
               {
                 "type": "text",
                 "value": "El idioma de la aplicación cambió. Selecciona el idioma de nuevo."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.invalidRevision": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "La solicitud de idioma de la aplicación no es válida. Recarga esta página e inténtalo de nuevo."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.revisionExhausted": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "El idioma de la aplicación no se puede cambiar."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.saveFailed": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "No se pudo guardar el idioma de la aplicación. Inténtalo de nuevo."
               }
             ],
             "parameters": []
@@ -15637,6 +15772,51 @@
         "parameters": [],
         "numberFormats": {}
       },
+      "android.language.errors.invalidRevision": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "La demande de langue de l’application est invalide. Rechargez cette page et réessayez."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.revisionExhausted": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "La langue de l’application ne peut pas changer."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.saveFailed": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Impossible d’enregistrer la langue de l’application. Réessayez."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
       "android.language.errors.staleDocument": {
         "forms": [
           {
@@ -20222,6 +20402,51 @@
               {
                 "type": "text",
                 "value": "O idioma do aplicativo mudou. Selecione o idioma novamente."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.invalidRevision": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "A solicitação de idioma do aplicativo é inválida. Recarregue esta página e tente novamente."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.revisionExhausted": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "O idioma do aplicativo não pode ser alterado."
+              }
+            ],
+            "parameters": []
+          }
+        ],
+        "parameters": [],
+        "numberFormats": {}
+      },
+      "android.language.errors.saveFailed": {
+        "forms": [
+          {
+            "tokens": [
+              {
+                "type": "text",
+                "value": "Não foi possível salvar o idioma do aplicativo. Tente novamente."
               }
             ],
             "parameters": []

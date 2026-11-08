@@ -7,8 +7,8 @@ import java.util.Locale
 import org.json.JSONObject
 
 object NativeMessages {
-    // Task 3 connects the installation store here. A fresh process starts in English.
-    @Volatile var localeProvider: (Context) -> String = { "en" }
+    // Read on every render. Headless services need no preceding activity initialization.
+    @Volatile var localeProvider: (Context) -> String = { AndroidLanguageStore(it).read().locale }
     @Volatile private var packagedRenderer: MessageRenderer? = null
 
     fun text(context: Context, message: UiMessage): String {
