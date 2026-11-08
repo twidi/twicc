@@ -1,5 +1,6 @@
 package com.twidi.twicc.browser
 
+import com.twidi.twicc.i18n.UiMessage
 import com.twidi.twicc.NavigationDecision
 import com.twidi.twicc.NavigationRequest
 import com.twidi.twicc.platform.DownloadSource
@@ -12,7 +13,7 @@ interface BrowserEvents {
     fun onProgressChanged(progress: Int)
     fun onPageFinished()
     fun onHistoryChanged(canGoBack: Boolean)
-    fun onFailure(message: String)
+    fun onFailure(message: UiMessage)
     fun onRendererStopped(crashed: Boolean)
     fun onAppMessage(message: String): String
     fun onDownload(source: DownloadSource)

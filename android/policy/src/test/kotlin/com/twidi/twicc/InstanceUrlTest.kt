@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InstanceUrlTest {
+    @Test fun instanceValidationIsTyped() {
+        val cases = mapOf(
+            "https://bad host" to InstanceValidationCode.INVALID_ADDRESS,
+            "http://example.com" to InstanceValidationCode.HTTPS_REQUIRED,
+            "https://user@example.com" to InstanceValidationCode.ORIGIN_REQUIRED,
+            "https://example.com/login" to InstanceValidationCode.ROOT_REQUIRED,
+            "https://example.com:65536" to InstanceValidationCode.INVALID_PORT,
+            "https://example.com:" to InstanceValidationCode.INVALID_PORT,
+        )
+        cases.forEach { (input, expected) ->
+            try {
+                InstanceUrl.parse(input)
+                fail("Accepted $input")
+            } catch (failure: InstanceValidationException) {
+                assertEquals(expected, failure.code)
+            }
+        }
+    }
+
     @Test fun normalizesOriginAndDefaultPort() {
         assertEquals("https://example.com", InstanceUrl.parse(" HTTPS://Example.COM:443/ ").origin)
         assertEquals("https://example.com:8443", InstanceUrl.parse("https://example.com:8443").origin)

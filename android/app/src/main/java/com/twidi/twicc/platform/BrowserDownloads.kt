@@ -1,5 +1,7 @@
 package com.twidi.twicc.platform
 
+import com.twidi.twicc.i18n.UiMessage
+import com.twidi.twicc.i18n.NativeMessages
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -40,7 +42,7 @@ object BrowserDownloads {
 
     private fun saveHttp(context: Context, source: DownloadSource.HttpRequest) {
         if (!source.url.startsWith("https://", true) || !InstanceUrl.canOpenExternally(source.url)) {
-            message(context, "This download needs a browser. Open the page in your browser to save blob or data exports.")
+            message(context, UiMessage("android.downloads.browserRequired"))
             return
         }
         try {
@@ -51,9 +53,9 @@ object BrowserDownloads {
             source.mime?.takeIf { it.isNotBlank() }?.let { request.setMimeType(it) }
             source.headers.forEach { (name, value) -> request.addRequestHeader(name, value) }
             (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-            message(context, "Download started. Check Android's Downloads notification.")
+            message(context, UiMessage("android.downloads.started"))
         } catch (_: RuntimeException) {
-            message(context, "The download could not start. Try opening this page in your browser.")
+            message(context, UiMessage("android.downloads.errors.startFailed"))
         }
     }
 
@@ -62,13 +64,13 @@ object BrowserDownloads {
         val body = response.body
         if (body == null || Uri.parse(response.url).scheme !in setOf("https", "blob", "data")) {
             runCatching { body?.close() }
-            message(app, "This download cannot be saved. Try opening the page in your browser.")
+            message(app, UiMessage("android.downloads.errors.saveUnavailable"))
             return
         }
         val disposition = response.disposition
         val mime = response.mime?.substringBefore(';')?.trim()?.takeIf { it.contains('/') } ?: "application/octet-stream"
         val filename = FileNames.safe(URLUtil.guessFileName(response.url, disposition, mime))
-        message(app, "Saving $filename to Downloads…")
+        message(app, UiMessage("android.downloads.saving", mapOf("filename" to filename)))
         worker.execute {
             var destination: Uri? = null
             try {
@@ -88,15 +90,15 @@ object BrowserDownloads {
                         put(MediaStore.MediaColumns.IS_PENDING, 0)
                     }, null, null)
                 }
-                message(app, "Saved $filename to Downloads.")
+                message(app, UiMessage("android.downloads.saved", mapOf("filename" to filename)))
             } catch (_: Exception) {
                 destination?.let { runCatching { app.contentResolver.delete(it, null, null) } }
-                message(app, "Download failed. Check your connection and try again.")
+                message(app, UiMessage("android.downloads.errors.failed"))
             }
         }
     }
 
-    private fun message(context: Context, text: String) {
-        main.post { Toast.makeText(context, text, Toast.LENGTH_LONG).show() }
+    private fun message(context: Context, message: UiMessage) {
+        main.post { Toast.makeText(context, NativeMessages.text(context, message), Toast.LENGTH_LONG).show() }
     }
 }

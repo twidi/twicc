@@ -1,5 +1,6 @@
 package com.twidi.twicc.engines.gecko
 
+import com.twidi.twicc.i18n.UiMessage
 import android.app.Activity
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -75,7 +76,7 @@ internal class GeckoPrompts(private val activity: Activity, private val requests
     override fun onFilePrompt(session: GeckoSession, prompt: FilePrompt): GeckoResult<PromptResponse> {
         val request = Pending(prompt)
         if (closed || prompt.type == FilePrompt.Type.FOLDER) {
-            if (!closed) requests.message("Folder uploads are not available. Select individual files instead.")
+            if (!closed) requests.message(UiMessage("android.files.errors.folderUnsupported"))
             request.finish()
             return request.result
         }
@@ -105,7 +106,7 @@ internal class GeckoPrompts(private val activity: Activity, private val requests
                     if (closed) worker.execute { uploads.deleteRecursively() }
                 } else copied.fold(
                     onSuccess = { files -> request.finish { prompt.confirm(activity.applicationContext, files) } },
-                    onFailure = { request.finish(); requests.message("The selected files could not be read. Try again.") },
+                    onFailure = { request.finish(); requests.message(UiMessage("android.files.errors.readFailed")) },
                 )
             }
         }

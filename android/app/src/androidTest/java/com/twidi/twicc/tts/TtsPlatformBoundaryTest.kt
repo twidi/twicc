@@ -407,8 +407,8 @@ class TtsPlatformBoundaryTest {
                     override fun onProgressChanged(progress: Int) {}
                     override fun onPageFinished() {}
                     override fun onHistoryChanged(canGoBack: Boolean) {}
-                    override fun onFailure(message: String) { accepted.completeExceptionally(AssertionError(message)); oldStop.completeExceptionally(AssertionError(message)) }
-                    override fun onRendererStopped(crashed: Boolean) { onFailure("Renderer stopped") }
+                    override fun onFailure(message: com.twidi.twicc.i18n.UiMessage) { accepted.completeExceptionally(AssertionError(message)); oldStop.completeExceptionally(AssertionError(message)) }
+                    override fun onRendererStopped(crashed: Boolean) { onFailure(com.twidi.twicc.i18n.UiMessage("android.browser.errors.rendererStopped")) }
                     override fun onDownload(source: DownloadSource) {}
                     override fun onAppMessage(message: String): String {
                         val request = JSONObject(message)
@@ -1188,7 +1188,7 @@ class TtsPlatformBoundaryTest {
         override fun onProgressChanged(progress: Int) {}
         override fun onPageFinished() {}
         override fun onHistoryChanged(canGoBack: Boolean) {}
-        override fun onFailure(message: String) { pageCookies.completeExceptionally(AssertionError(message)) }
+        override fun onFailure(message: com.twidi.twicc.i18n.UiMessage) { pageCookies.completeExceptionally(AssertionError(message)) }
         override fun onRendererStopped(crashed: Boolean) { pageCookies.completeExceptionally(AssertionError("Renderer stopped")) }
         override fun onAppMessage(message: String): String {
             if (message.startsWith("page-cookie:")) pageCookies.complete(message)

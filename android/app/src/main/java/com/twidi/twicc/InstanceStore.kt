@@ -36,9 +36,8 @@ class InstanceStore(context: Context) {
     fun save(previous: Instance?, name: String, input: String): Instance {
         val address = InstanceUrl.parse(input).origin
         val instances = all()
-        require(instances.none { it.id != previous?.id && it.address == address }) {
-            "This server address is already saved."
-        }
+        if (instances.any { it.id != previous?.id && it.address == address })
+            throw InstanceValidationException(InstanceValidationCode.DUPLICATE)
         val instance = Instance(
             previous?.id ?: UUID.randomUUID().toString(),
             name.trim().ifEmpty { java.net.URI(address).host },

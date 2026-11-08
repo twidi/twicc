@@ -57,13 +57,15 @@ test('login translates known errors and preserves server-supplied error text', a
 // A stale browser profile must never choose the Android login language.
 test('native preference chooses login language without an authenticated request', async () => {
     let selected
+    const calls = []
+    const nativeLanguage = { locale: 'en', revision: 2, supportedLocales: ['en', 'fr'] }
     const controller = createAndroidLocaleController({
         client: {
             async request(command) {
-                assert.equal(command, 'getState')
-                return { capabilities: { appLanguage: 1 }, appLanguage: {
-                    locale: 'en', revision: 2, supportedLocales: ['en', 'fr'],
-                } }
+                calls.push(command)
+                if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: nativeLanguage }
+                assert.equal(command, 'locale.get')
+                return nativeLanguage
             },
             onStateChanged: () => () => {},
         },
@@ -72,6 +74,7 @@ test('native preference chooses login language without an authenticated request'
         applyLocale: async locale => { selected = locale },
     })
     await controller.initialize()
+    assert.deepEqual(calls, ['getState', 'locale.get'])
     assert.match(await renderLogin(selected), /placeholder="Enter password"/)
     controller.dispose()
 })

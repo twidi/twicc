@@ -4,6 +4,12 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.view.View
+import android.widget.TextView
+import android.widget.PopupMenu
+import com.twidi.twicc.i18n.AndroidLanguageStore
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
+import org.json.JSONObject
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -151,6 +157,135 @@ class BrowserRecoveryTest {
             }
         } }
     }
+
+    @Test fun engineFailuresUseDescriptors() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            val language = AndroidLanguageStore(context)
+            val original = language.read().locale
+            val message = UiMessage("android.browser.errors.httpStatus", mapOf("status" to 503))
+            var originalPanel: android.view.ViewGroup? = null
+            scenario.onActivity { activity ->
+                fieldEvents(activity).onFailure(message)
+                originalPanel = field(activity, "errorPanel") as android.view.ViewGroup
+            }
+            try {
+                for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                    assertTrue(language.select(locale, language.read().revision).accepted)
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        val panel = field(activity, "errorPanel") as android.view.ViewGroup
+                        assertSame(originalPanel, panel)
+                        assertEquals(NativeMessages.text(activity, message), (panel.getChildAt(0) as TextView).text.toString())
+                    }
+                }
+                assertEquals(1, site.requests.size)
+            } finally { language.select(original, language.read().revision) }
+        } }
+    }
+
+    @Test fun nativeMenuUsesSharedWebKeys() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            val language = AndroidLanguageStore(context)
+            val original = language.read().locale
+            var popup: PopupMenu? = null
+            var browser: Any? = null
+            scenario.onActivity { activity ->
+                browser = field(activity, "browser")
+                BrowserActivity::class.java.getDeclaredMethod("showMenu").apply { isAccessible = true }.invoke(activity)
+                popup = field(activity, "nativeMenu") as PopupMenu
+            }
+            try {
+                for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                    language.select(locale, language.read().revision)
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        assertSame(popup, field(activity, "nativeMenu"))
+                        assertSame(browser, field(activity, "browser"))
+                        for ((id, key) in mapOf(R.id.browser_menu_manage to "navigation.android.manage",
+                            R.id.browser_menu_reload to "navigation.android.reload", R.id.browser_menu_force_refresh to "navigation.android.forceRefresh",
+                            R.id.browser_menu_home to "navigation.android.serverHome", R.id.browser_menu_external to "navigation.android.browser")) {
+                            assertEquals(NativeMessages.text(activity, UiMessage(key)), popup!!.menu.findItem(id).title.toString())
+                        }
+                    }
+                }
+                assertEquals(1, site.requests.size)
+            } finally {
+                instrumentation.runOnMainSync { popup?.dismiss() }
+                language.select(original, language.read().revision)
+            }
+        } }
+    }
+
+    @Test fun refreshConfirmationKeepsItsPendingActionWhileLanguageChanges() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            val language = AndroidLanguageStore(context)
+            val original = language.read().locale
+            var dialog: android.app.AlertDialog? = null
+            scenario.onActivity { activity ->
+                BrowserActivity::class.java.getDeclaredMethod("showRefreshConfirmation").apply { isAccessible = true }.invoke(activity)
+                dialog = field(activity, "refreshConfirmation") as android.app.AlertDialog
+            }
+            try {
+                for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                    language.select(locale, language.read().revision)
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        assertSame(dialog, field(activity, "refreshConfirmation"))
+                        assertTrue(dialog!!.isShowing)
+                        assertEquals(NativeMessages.text(activity, UiMessage("navigation.android.refresh")),
+                            dialog!!.getButton(android.app.AlertDialog.BUTTON_POSITIVE).text.toString())
+                    }
+                }
+                assertEquals(1, site.requests.size)
+                instrumentation.runOnMainSync { dialog!!.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick() }
+                assertEquals(1, site.requests.size)
+            } finally {
+                instrumentation.runOnMainSync { dialog?.dismiss() }
+                language.select(original, language.read().revision)
+            }
+        } }
+    }
+
+    @Test fun oldFrontendKeepsFallbackMenuUntilTheCurrentDocumentReadsLanguage() {
+        Site().use { site -> withBrowser(site) { scenario ->
+            waitFor { site.ready.size == 1 }
+            scenario.onActivity { activity ->
+                val events = fieldEvents(activity)
+                val browser = field(activity, "browser")
+                fun request(command: String) = JSONObject(events.onAppMessage(
+                    JSONObject().put("protocol", 1).put("id", "fixture").put("command", command)
+                        .put("owner", "fixture").put("visible", true).toString()))
+                assertTrue(request("menuVisibility").getBoolean("ok"))
+                request("getState") // A state read does not prove that the document synchronizes language.
+                val button = field(activity, "menuButton") as View
+                assertEquals(View.VISIBLE, button.visibility)
+                BrowserActivity::class.java.getDeclaredMethod("showMenu").apply { isAccessible = true }.invoke(activity)
+                val popup = field(activity, "nativeMenu") as PopupMenu
+                assertEquals(NativeMessages.text(activity, UiMessage("android.language.errors.updateServer")),
+                    popup.menu.findItem(R.id.browser_menu_language_limitation).title.toString())
+                popup.dismiss()
+                val invalid = JSONObject(events.onAppMessage("""{"protocol":1,"id":"","command":"locale.get"}"""))
+                assertFalse(invalid.getBoolean("ok"))
+                assertEquals(View.VISIBLE, button.visibility)
+                assertTrue(request("locale.get").getBoolean("ok"))
+                assertEquals(View.GONE, button.visibility)
+                assertSame(browser, field(activity, "browser"))
+                events.onPageStarted(site.server.url("/next").toString())
+                request("menuVisibility")
+                assertEquals(View.VISIBLE, button.visibility)
+                assertSame(browser, field(activity, "browser"))
+            }
+            assertEquals(1, site.requests.size)
+        } }
+    }
+
+    private fun field(activity: BrowserActivity, name: String): Any? = BrowserActivity::class.java
+        .getDeclaredField(name).apply { isAccessible = true }.get(activity)
+    private fun fieldEvents(activity: BrowserActivity): BrowserEvents = BrowserActivity::class.java
+        .getDeclaredMethod("events").apply { isAccessible = true }.invoke(activity) as BrowserEvents
 
     private fun waitFor(check: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 20_000

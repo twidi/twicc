@@ -3,6 +3,12 @@ package com.twidi.twicc
 import java.net.URI
 import java.util.Locale
 
+enum class InstanceValidationCode {
+    INVALID_ADDRESS, HTTPS_REQUIRED, ORIGIN_REQUIRED, ROOT_REQUIRED, INVALID_PORT, DUPLICATE,
+}
+
+class InstanceValidationException(val code: InstanceValidationCode) : IllegalArgumentException(code.name)
+
 /** A server origin, never a login URL containing credentials or a session token. */
 class InstanceUrl private constructor(val origin: String) {
     fun allowsNavigation(url: String): Boolean = runCatching {
@@ -15,19 +21,16 @@ class InstanceUrl private constructor(val origin: String) {
             val uri = try {
                 URI(input.trim())
             } catch (_: Exception) {
-                throw IllegalArgumentException("Enter a valid HTTPS address.")
+                throw InstanceValidationException(InstanceValidationCode.INVALID_ADDRESS)
             }
-            require(uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()) {
-                "Use an HTTPS address, such as https://twicc.example.com."
-            }
-            require(uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
-                "Use the server address without credentials, a query, or a fragment."
-            }
-            require(uri.rawPath.isNullOrEmpty() || uri.rawPath == "/") {
-                "Use the server root address, without a page path."
-            }
-            require(uri.port == -1 || uri.port in 1..65535) { "Enter a valid port number." }
-            require(!uri.rawAuthority.endsWith(":")) { "Enter a valid port number." }
+            if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank())
+                throw InstanceValidationException(InstanceValidationCode.HTTPS_REQUIRED)
+            if (uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null)
+                throw InstanceValidationException(InstanceValidationCode.ORIGIN_REQUIRED)
+            if (!uri.rawPath.isNullOrEmpty() && uri.rawPath != "/")
+                throw InstanceValidationException(InstanceValidationCode.ROOT_REQUIRED)
+            if ((uri.port != -1 && uri.port !in 1..65535) || uri.rawAuthority.endsWith(":"))
+                throw InstanceValidationException(InstanceValidationCode.INVALID_PORT)
             return InstanceUrl(originOf(uri)!!)
         }
 

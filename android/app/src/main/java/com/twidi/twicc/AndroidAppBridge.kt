@@ -12,7 +12,7 @@ import com.twidi.twicc.i18n.UiMessageJson
 class AndroidAppBridge(
     private val state: () -> JSONObject,
     private val visibility: (String, Boolean) -> Unit,
-    private val action: (AppCommand, String?) -> String?,
+    private val action: (AppCommand, String?) -> UiMessage?,
     private val nativeTts: ((String, JSONObject) -> JSONObject)? = null,
     private val androidPush: ((String, JSONObject) -> JSONObject)? = null,
     private val acknowledgeNavigation: ((String) -> Unit)? = null,
@@ -76,7 +76,7 @@ class AndroidAppBridge(
                         current.optJSONObject("push")?.let { put("push", it) }
                     })
                 }
-                else -> return reply(action(command, request.opt("instanceId") as? String))
+                else -> return reply(uiMessage = action(command, request.opt("instanceId") as? String))
             }
         } catch (error: Exception) {
             Logger.getLogger("TwiCC.AndroidAppBridge").log(Level.WARNING, "Android request failed", error)

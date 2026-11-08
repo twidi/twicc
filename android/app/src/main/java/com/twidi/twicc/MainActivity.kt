@@ -8,10 +8,17 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import com.twidi.twicc.i18n.AndroidLanguageStore
+import com.twidi.twicc.i18n.UiMessageJson
+import org.json.JSONObject
 
 class MainActivity : Activity() {
     private lateinit var store: InstanceStore
     private lateinit var ui: InstanceManagerUi
+    private var languageObserver: AutoCloseable? = null
+    private val ownerHandler = Handler(Looper.getMainLooper())
 
     // The open sheet, if any. Kept in plain fields and saved in the instance state: a system theme
     // change recreates this Activity (uiMode is deliberately not in configChanges) and the sheet,
@@ -33,6 +40,14 @@ class MainActivity : Activity() {
         setContentView(ui.root)
         render()
         restorePending(savedInstanceState)
+        languageObserver = AndroidLanguageStore(this).observe {
+            ownerHandler.post {
+                if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    ui.refreshMessages()
+                    sheet?.window?.decorView?.refreshNativeMessages()
+                }
+            }
+        }
         // A recreation (theme change, rotation) must not open an instance again.
         if (savedInstanceState != null) return
         if (routeSpeechNotification(intent)) return
@@ -55,7 +70,7 @@ class MainActivity : Activity() {
                 outState.putString(STATE_INSTANCE, state.previousId)
                 outState.putString(STATE_NAME, state.draft.name)
                 outState.putString(STATE_ADDRESS, state.draft.address)
-                outState.putString(STATE_ERROR, state.draft.error)
+                outState.putString(STATE_ERROR, state.draft.error?.let { UiMessageJson.encode(it).toString() })
             }
             is Pending.Remove -> {
                 outState.putString(STATE_SHEET, "remove")
@@ -67,6 +82,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         // Dismiss without clearing `pending`: the sheet is rebuilt from it after a recreation.
+        languageObserver?.close()
+        languageObserver = null
         sheet?.dismiss()
         sheet = null
         super.onDestroy()
@@ -82,7 +99,7 @@ class MainActivity : Activity() {
                 showForm(instance, InstanceManagerUi.FormDraft(
                     state.getString(STATE_NAME).orEmpty(),
                     state.getString(STATE_ADDRESS).orEmpty(),
-                    state.getString(STATE_ERROR),
+                    state.getString(STATE_ERROR)?.let { runCatching { UiMessageJson.decode(JSONObject(it)) }.getOrNull() },
                 ))
             }
             "remove" -> instance?.let { confirmRemove(it) }
@@ -99,10 +116,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         render()
+        sheet?.window?.decorView?.refreshNativeMessages()
     }
 
     private fun render() {
         ui.render(store.all(), store.last()?.id, ::open, ::edit, ::confirmRemove)
+        ui.refreshMessages()
     }
 
     private fun open(instance: Instance) {
@@ -132,8 +151,8 @@ class MainActivity : Activity() {
                     pending = null
                     render()
                     null
-                } catch (error: IllegalArgumentException) {
-                    error.message ?: "Enter a valid HTTPS address."
+                } catch (error: InstanceValidationException) {
+                    instanceValidationMessage(error.code)
                 }
             },
             onCancel = { pending = null },

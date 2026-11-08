@@ -1,5 +1,6 @@
 package com.twidi.twicc.engines.gecko
 
+import com.twidi.twicc.i18n.UiMessage
 import android.app.Activity
 import android.os.Handler
 import android.os.Looper
@@ -57,8 +58,8 @@ internal class GeckoBrowserSession(
                 }
                 override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
                     if (!closed) events.onFailure(if (error.category == WebRequestError.ERROR_CATEGORY_SECURITY)
-                        "The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date."
-                    else "Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.")
+                        UiMessage("android.browser.errors.certificate")
+                    else UiMessage("android.browser.errors.unreachable", mapOf("name" to instance.name)))
                     return null // No certificate-exception error page.
                 }
             }

@@ -42,7 +42,41 @@ test('nativeEnglishOverridesStaleProfileFrenchBeforeLogin', async () => {
     const page = fixture()
     assert.deepEqual({ ...await page.controller.initialize() }, { mode: 'native', ...language() })
     assert.deepEqual(page.applied, ['en'])
-    assert.deepEqual(page.calls.map(([command]) => command), ['getState'])
+    assert.deepEqual(page.calls.map(([command]) => command), ['getState', 'locale.get'])
+    page.controller.dispose()
+})
+
+test('compatible startup completes a document language handshake without waiting for a native event', async () => {
+    const page = fixture({ request: async command => command === 'getState'
+        ? { capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) }
+        : language('de', 2) })
+    const state = await page.controller.initialize()
+    assert.deepEqual(page.calls.map(([command]) => command), ['getState', 'locale.get'])
+    assert.equal(state.locale, 'de')
+    assert.equal(state.revision, 2)
+    assert.deepEqual(page.applied, ['de'])
+    page.controller.dispose()
+})
+
+test('failed initial document handshake keeps the snapshot and waits for a later event', async () => {
+    let reads = 0
+    const page = fixture({ request: async command => {
+        if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) }
+        if (++reads === 1) throw new Error('Bounded client timeout')
+        return language('de', 2)
+    } })
+    const state = await page.controller.initialize()
+    assert.equal(reads, 1)
+    assert.equal(state.locale, 'fr')
+    assert.equal(page.compatibility.at(-1).key, 'common.android.errors.unreachable')
+    await tick()
+    assert.equal(reads, 1)
+    assert.equal(await page.controller.initialize(), state)
+    page.change(language('de', 2))
+    await tick()
+    assert.equal(reads, 2)
+    assert.equal(state.locale, 'de')
+    assert.equal(page.compatibility.at(-1), null)
     page.controller.dispose()
 })
 
@@ -83,7 +117,7 @@ test('olderSelectionCannotWin', async () => {
     let reads = 0
     const page = fixture({ request: async command => {
         if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: language() }
-        if (command === 'locale.get') return ++reads === 1 ? oldRead.promise : language('de', 2)
+        if (command === 'locale.get') return ++reads === 1 ? language() : reads === 2 ? oldRead.promise : language('de', 2)
         return language('es', 1)
     } })
     const state = await page.controller.initialize()
@@ -101,6 +135,7 @@ test('latestQueuedSelectionUsesNewRevision', async () => {
     const first = deferred()
     const page = fixture({ request: async (command, args) => {
         if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: language() }
+        if (command === 'locale.get') return language()
         if (args.locale === 'fr') return first.promise
         return language(args.locale, 2)
     } })
@@ -285,6 +320,7 @@ test('a pending older catalog does not delay the latest native selection', async
     let revision = 0
     const page = fixture({ applyLocale: locale => manager.setLocale(locale), request: async (command, args) => {
         if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: language() }
+        if (command === 'locale.get') return language()
         return language(args.locale, ++revision)
     } })
     await page.controller.initialize()
@@ -306,10 +342,11 @@ test('a pending older catalog does not delay the latest native selection', async
 
 test('queued intent cannot adopt a broadcast revision after another page changes language', async () => {
     const pending = deferred()
+    let reads = 0
     const error = Object.assign(new Error('Changed'), { state: language('de', 2) })
     const page = fixture({ request: async (command, args) => {
         if (command === 'getState') return { capabilities: { appLanguage: 1 }, appLanguage: language() }
-        if (command === 'locale.get') return error.state
+        if (command === 'locale.get') return ++reads === 1 ? language() : error.state
         if (args.locale === 'fr') return pending.promise
         if (args.expectedRevision !== 2) throw error
         return language('es', 3)

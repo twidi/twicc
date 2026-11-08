@@ -74,7 +74,9 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
             if (disposed) return state
             if (fullState?.capabilities?.appLanguage === 1 && validLanguage(fullState.appLanguage)) {
                 native = true
-                if (!initializationDirty) await accept(fullState.appLanguage, ticket)
+                // An explicit locale.get completes this document's native menu handshake.
+                // Capability detection alone must not hide the native fallback menu.
+                initializationDirty = true
                 // Changes during either the snapshot or a catalog download extend
                 // startup. Do not call reconcile(), which awaits this same promise.
                 while (initializationDirty && !disposed) {

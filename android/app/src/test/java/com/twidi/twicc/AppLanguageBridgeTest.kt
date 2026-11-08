@@ -95,6 +95,15 @@ class AppLanguageBridgeTest {
         assertEquals("android.language.errors.saveFailed", response.getJSONObject("ui_message").getString("key"))
     }
 
+    @Test fun applicationActionFailuresKeepSemanticIdentity() {
+        val message = com.twidi.twicc.i18n.UiMessage("android.browser.errors.instanceRemoved")
+        val bridge = AndroidAppBridge({ JSONObject() }, { _, _ -> }, { _, _ -> message })
+        val response = JSONObject(bridge.receive("""{"protocol":1,"id":"action","command":"switchInstance","instanceId":"gone"}"""))
+        assertFalse(response.getBoolean("ok"))
+        assertEquals(message.key, response.getJSONObject("ui_message").getString("key"))
+        assertFalse(response.has("error"))
+    }
+
     private fun assertRejected(f: Fixture, response: JSONObject, key: String) {
         assertFalse(response.getBoolean("ok"))
         assertEquals(f.persisted.locale, response.getJSONObject("state").getString("locale"))

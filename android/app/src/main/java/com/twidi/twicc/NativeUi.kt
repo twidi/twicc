@@ -1,6 +1,12 @@
 package com.twidi.twicc
 
 import android.app.Activity
+import android.content.Context
+import android.view.ViewGroup
+import com.twidi.twicc.i18n.AndroidLanguageStore
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
+import java.util.Locale
 import android.graphics.Insets
 import android.os.Build
 import android.view.View
@@ -72,3 +78,45 @@ fun Activity.label(text: String, size: Float = 16f): TextView = TextView(this).a
     textSize = size
     setPadding(dp(16), dp(12), dp(16), dp(12))
 }
+
+/** Keep message identity on the existing view, including open dialog fields and actions. */
+fun TextView.bindUiMessage(message: UiMessage?, uppercase: Boolean = false) {
+    setTag(R.id.native_text_message, message)
+    setTag(R.id.native_text_uppercase, uppercase)
+    val value = message?.let { NativeMessages.text(context, it) }.orEmpty()
+    text = if (uppercase) value.uppercase(interfaceLocale(context)) else value
+}
+
+fun View.bindUiDescription(message: UiMessage) {
+    setTag(R.id.native_description_message, message)
+    contentDescription = NativeMessages.text(context, message)
+}
+
+fun TextView.bindUiHint(message: UiMessage) {
+    setTag(R.id.native_hint_message, message)
+    hint = NativeMessages.text(context, message)
+}
+
+/** Refresh labels only. Never replace views, input values, focus, or selection. */
+fun View.refreshNativeMessages() {
+    (getTag(R.id.native_text_message) as? UiMessage)?.let {
+        (this as? TextView)?.bindUiMessage(it, getTag(R.id.native_text_uppercase) == true)
+    }
+    (getTag(R.id.native_description_message) as? UiMessage)?.let { bindUiDescription(it) }
+    (getTag(R.id.native_hint_message) as? UiMessage)?.let { (this as? TextView)?.bindUiHint(it) }
+    if (this is ViewGroup) for (index in 0 until childCount) getChildAt(index).refreshNativeMessages()
+}
+
+fun interfaceLocale(context: Context): Locale = Locale.forLanguageTag(
+    AndroidLanguageStore(context).read().locale,
+)
+
+fun instanceValidationMessage(code: InstanceValidationCode): UiMessage =
+    UiMessage(when (code) {
+        InstanceValidationCode.INVALID_ADDRESS -> "android.instances.errors.invalidAddress"
+        InstanceValidationCode.HTTPS_REQUIRED -> "android.instances.errors.httpsRequired"
+        InstanceValidationCode.ORIGIN_REQUIRED -> "android.instances.errors.originRequired"
+        InstanceValidationCode.ROOT_REQUIRED -> "android.instances.errors.rootRequired"
+        InstanceValidationCode.INVALID_PORT -> "android.instances.errors.invalidPort"
+        InstanceValidationCode.DUPLICATE -> "android.instances.errors.duplicate"
+    })

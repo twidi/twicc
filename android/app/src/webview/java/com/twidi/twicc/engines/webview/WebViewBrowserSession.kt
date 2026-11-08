@@ -1,5 +1,6 @@
 package com.twidi.twicc.engines.webview
 
+import com.twidi.twicc.i18n.UiMessage
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Bitmap
@@ -107,7 +108,7 @@ internal class WebViewBrowserSession(
                 view.stopLoading()
                 val decision = events.onNavigationRequest(NavigationRequest(url))
                 if (decision == NavigationDecision.OPEN_EXTERNAL) load(safeUrl, false)
-                else fail("This page cannot open inside TwiCC. Retry to return to your server.")
+                else fail(UiMessage("android.browser.errors.pageBlocked"))
                 return
             }
             documentLease.begin()
@@ -145,16 +146,16 @@ internal class WebViewBrowserSession(
             events.onPageFinished()
         }
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (!closed && request.isForMainFrame) fail("Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.")
+            if (!closed && request.isForMainFrame) fail(UiMessage("android.browser.errors.unreachable", mapOf("name" to instance.name)))
         }
         override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
             if (!closed && request.isForMainFrame && response.statusCode >= 400)
-                fail("The server returned HTTP ${response.statusCode}. Check your tunnel or server, then retry.")
+                fail(UiMessage("android.browser.errors.httpStatus", mapOf("status" to response.statusCode)))
         }
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
             handler.cancel()
             if (!closed && (error.url == safeUrl || error.url == view.url))
-                fail("The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date.")
+                fail(UiMessage("android.browser.errors.certificate"))
         }
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             if (!closed) events.onRendererStopped(crashed = detail.didCrash())
@@ -167,7 +168,7 @@ internal class WebViewBrowserSession(
         override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
             if (closed) { callback.onReceiveValue(null); return true }
             if (params.mode != FileChooserParams.MODE_OPEN && params.mode != FileChooserParams.MODE_OPEN_MULTIPLE) {
-                requests.message("Folder uploads are not available. Select individual files instead.")
+                requests.message(UiMessage("android.files.errors.folderUnsupported"))
                 callback.onReceiveValue(null)
                 return true
             }
@@ -222,7 +223,7 @@ internal class WebViewBrowserSession(
         track { done -> requests.showPrompt(PromptRequest(kind, instance.name, message, text)) { callback(it); done() } }
         return true
     }
-    private fun fail(message: String) { restoreCacheMode(); events.onFailure(message) }
+    private fun fail(message: UiMessage) { restoreCacheMode(); events.onFailure(message) }
     private fun restoreCacheMode() {
         if (forceLoading) { view.settings.cacheMode = WebSettings.LOAD_DEFAULT; forceLoading = false }
     }

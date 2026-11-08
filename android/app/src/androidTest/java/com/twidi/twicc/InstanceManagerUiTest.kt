@@ -10,6 +10,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import android.widget.EditText
+import com.twidi.twicc.i18n.AndroidLanguageStore
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -49,12 +53,101 @@ class InstanceManagerUiTest {
         shell("cmd uimode night ${originalNight.takeIf { it in setOf("yes", "no", "auto", "custom") } ?: "no"}")
     }
 
+    @Test fun refreshKeepsFormDraftAndSemanticError() {
+        val language = AndroidLanguageStore(context)
+        val original = language.read().locale
+        try {
+            launch()
+            clickId(R.id.instance_add_button)
+            fields("Draft café", "http://invalid.example")
+            clickId(R.id.instance_form_save)
+            var nameNode: EditText? = null
+            var addressNode: EditText? = null
+            scenario!!.onActivity { activity ->
+                val sheet = MainActivity::class.java.getDeclaredField("sheet").apply { isAccessible = true }.get(activity) as android.app.Dialog
+                nameNode = sheet.findViewById(R.id.instance_form_name)
+                addressNode = sheet.findViewById(R.id.instance_form_address)
+                nameNode!!.requestFocus()
+                nameNode!!.setSelection(3)
+            }
+            for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                assertTrue(language.select(locale, language.read().revision).accepted)
+                instrumentation.waitForIdleSync()
+                scenario!!.onActivity { activity ->
+                    val sheet = MainActivity::class.java.getDeclaredField("sheet").apply { isAccessible = true }.get(activity) as android.app.Dialog
+                    assertSame(nameNode, sheet.findViewById<EditText>(R.id.instance_form_name))
+                    assertSame(addressNode, sheet.findViewById<EditText>(R.id.instance_form_address))
+                    assertEquals("Draft café", nameNode!!.text.toString())
+                    assertEquals("http://invalid.example", addressNode!!.text.toString())
+                    assertTrue(nameNode!!.hasFocus())
+                    assertEquals(3, nameNode!!.selectionStart)
+                    val error = sheet.findViewById<ViewGroup>(R.id.instance_form_error).getChildAt(1) as TextView
+                    assertEquals(NativeMessages.text(activity, UiMessage("android.instances.errors.httpsRequired")), error.text.toString())
+                    val add = activity.findViewById<ViewGroup>(R.id.instance_add_button)
+                    val addLabel = NativeMessages.text(activity, UiMessage("android.instances.add"))
+                    assertEquals(addLabel, add.contentDescription.toString())
+                    assertEquals(addLabel, (add.getChildAt(1) as TextView).text.toString())
+                    assertEquals(NativeMessages.text(activity, UiMessage("android.instances.nameLabel")), nameNode!!.hint.toString())
+                    assertEquals(NativeMessages.text(activity, UiMessage("common.actions.save")),
+                        sheet.findViewById<TextView>(R.id.instance_form_save).text.toString())
+                }
+            }
+            scenario!!.recreate()
+            assertEditor("Draft café", "http://invalid.example")
+            assertTrue(nodes().any { it.text?.toString() == NativeMessages.text(context, UiMessage("android.instances.errors.httpsRequired")) })
+        } finally { language.select(original, language.read().revision) }
+    }
+
+    @Test fun nativeEnglishIgnoresFrenchAndroidResources() {
+        val language = AndroidLanguageStore(context)
+        val original = language.read().locale
+        try {
+            language.select("en", language.read().revision)
+            val configuration = Configuration(context.resources.configuration).apply { setLocale(java.util.Locale.FRENCH) }
+            val frenchAndroid = context.createConfigurationContext(configuration)
+            assertEquals("Add instance", NativeMessages.text(frenchAndroid, UiMessage("android.instances.add")))
+            assertEquals("Cancel", NativeMessages.text(frenchAndroid, UiMessage("common.actions.cancel")))
+        } finally { language.select(original, language.read().revision) }
+    }
+
+    @Test fun refreshKeepsRemoveConfirmationAndCancelPreservesTheInstance() {
+        val saved = InstanceStore(context).save(null, "Saved café", "https://saved.example")
+        val language = AndroidLanguageStore(context)
+        val original = language.read().locale
+        try {
+            launch()
+            removeAction(saved.name)
+            var originalSheet: android.app.Dialog? = null
+            scenario!!.onActivity { originalSheet = MainActivity::class.java.getDeclaredField("sheet")
+                .apply { isAccessible = true }.get(it) as android.app.Dialog }
+            for (locale in listOf("en", "de", "es", "fr", "pt-BR")) {
+                language.select(locale, language.read().revision)
+                instrumentation.waitForIdleSync()
+                scenario!!.onActivity { activity ->
+                    val sheet = MainActivity::class.java.getDeclaredField("sheet").apply { isAccessible = true }.get(activity) as android.app.Dialog
+                    assertSame(originalSheet, sheet)
+                    assertEquals(NativeMessages.text(activity, UiMessage("android.instances.removeTitle", mapOf("name" to saved.name))),
+                        sheet.findViewById<TextView>(R.id.instance_remove_title).text.toString())
+                }
+            }
+            clickId(R.id.instance_remove_cancel)
+            assertNotNull(InstanceStore(context).find(saved.id))
+        } finally { language.select(original, language.read().revision) }
+    }
+
+    private fun clickId(id: Int) {
+        val resource = context.resources.getResourceName(id)
+        waitFor { nodes().any { it.viewIdResourceName == resource } }
+        assertTrue(nodes().first { it.viewIdResourceName == resource }.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+    }
+
     @Test fun systemThemeChangesPreserveTheEditorAndDoNotOpenTheLastInstance() {
         val saved = InstanceStore(context).save(null, "Saved", "https://saved.example")
         InstanceStore(context).select(saved)
         launch()
         val lightText = titleColor()
-        click("Add instance")
+        clickId(R.id.instance_add_button)
         fields("Draft laptop", "https://laptop.example")
         night(true)
         assertNotEquals(lightText, titleColor())
@@ -62,7 +155,7 @@ class InstanceManagerUiTest {
         night(false)
         assertEquals(lightText, titleColor())
         assertEditor("Draft laptop", "https://laptop.example")
-        click("Save")
+        clickId(R.id.instance_form_save)
         waitFor { InstanceStore(context).all().any { it.name == "Draft laptop" } }
         assertTrue(InstanceStore(context).all().any { it.address == "https://laptop.example" })
         assertEquals(saved.id, InstanceStore(context).last()!!.id)
@@ -72,17 +165,17 @@ class InstanceManagerUiTest {
     @Test fun invalidAndDuplicateAddressesStayEditableAcrossAThemeChange() {
         InstanceStore(context).save(null, "Saved", "https://saved.example")
         launch()
-        click("Add instance")
+        clickId(R.id.instance_add_button)
         fields("Other", "http://invalid.example")
-        click("Save")
+        clickId(R.id.instance_form_save)
         assertEditor("Other", "http://invalid.example")
         assertEquals(1, InstanceStore(context).all().size)
         fields("Other", "https://saved.example")
-        click("Save")
-        waitFor { nodes().any { it.text?.toString()?.contains("already saved") == true } }
+        clickId(R.id.instance_form_save)
+        waitFor { nodes().any { it.text?.toString() == NativeMessages.text(context, UiMessage("android.instances.errors.duplicate")) } }
         night(true)
         assertEditor("Other", "https://saved.example")
-        assertTrue(nodes().any { it.text?.toString()?.contains("already saved") == true })
+        assertTrue(nodes().any { it.text?.toString() == NativeMessages.text(context, UiMessage("android.instances.errors.duplicate")) })
         assertEquals(1, InstanceStore(context).all().size)
     }
 
@@ -91,14 +184,14 @@ class InstanceManagerUiTest {
         launch()
         removeAction("Saved")
         night(true)
-        click("Cancel")
+        clickId(R.id.instance_remove_cancel)
         assertNotNull(InstanceStore(context).find(saved.id))
         removeAction("Saved")
-        click("Remove")
+        clickId(R.id.instance_remove_confirm)
         waitFor { InstanceStore(context).all().isEmpty() }
         val otherEngine = if (BuildConfig.FLAVOR == "webview") "gecko" else "webview"
         assertTrue(InstanceStore(context).pendingProfileDeletions(otherEngine).contains(saved.profileName))
-        waitFor { nodes().any { it.text?.toString() == "No instances yet" } }
+        waitFor { nodes().any { it.text?.toString() == NativeMessages.text(context, UiMessage("android.instances.emptyTitle")) } }
     }
 
     @Test fun lastUsedInstanceNameStaysReadableOnANarrowScreenWithLargeFonts() {
@@ -120,8 +213,8 @@ class InstanceManagerUiTest {
                 val name = requireNotNull(find(activity.findViewById(android.R.id.content)))
                 assertTrue("Last used must leave space for the instance name", name.width >= activity.dp(64))
             }
-            assertTrue(nodes().any { it.contentDescription?.toString() == "Edit ${saved.name}" })
-            assertTrue(nodes().any { it.contentDescription?.toString() == "Remove ${saved.name}" })
+            assertTrue(nodes().any { it.contentDescription?.toString() == NativeMessages.text(context, UiMessage("android.instances.editDescription", mapOf("name" to saved.name))) })
+            assertTrue(nodes().any { it.contentDescription?.toString() == NativeMessages.text(context, UiMessage("android.instances.removeDescription", mapOf("name" to saved.name))) })
         } finally {
             scenario?.close()
             scenario = null
@@ -132,10 +225,7 @@ class InstanceManagerUiTest {
 
     private fun launch() {
         scenario = ActivityScenario.launch(Intent(context, MainActivity::class.java).putExtra("manage", true))
-        waitFor { nodes().any {
-            it.text?.toString()?.equals("Add instance", ignoreCase = true) == true ||
-                it.contentDescription?.toString() == "Add instance"
-        } }
+        waitFor { nodes().any { it.viewIdResourceName == context.resources.getResourceName(R.id.instance_add_button) } }
     }
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
@@ -153,7 +243,7 @@ class InstanceManagerUiTest {
         var color = 0
         scenario!!.onActivity { activity ->
             fun find(view: View): TextView? {
-                if (view is TextView && view.text.toString() in setOf("TwiCC", "TwiCC instances")) return view
+                if (view is TextView && view.id == R.id.instance_title) return view
                 if (view is ViewGroup) for (index in 0 until view.childCount) find(view.getChildAt(index))?.let { return it }
                 return null
             }
@@ -167,32 +257,34 @@ class InstanceManagerUiTest {
             result += node
             for (index in 0 until node.childCount) node.getChild(index)?.let(::walk)
         }
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         instrumentation.uiAutomation.rootInActiveWindow?.let(::walk)
         return result
     }
-    private fun click(text: String) {
-        waitFor { nodes().any { (it.text?.toString()?.equals(text, ignoreCase = true) == true || it.contentDescription?.toString() == text) && it.isClickable } }
-        assertTrue(nodes().first { (it.text?.toString()?.equals(text, ignoreCase = true) == true || it.contentDescription?.toString() == text) && it.isClickable }
-            .performAction(AccessibilityNodeInfo.ACTION_CLICK))
-        instrumentation.waitForIdleSync()
-    }
     private fun removeAction(name: String) {
-        waitFor { nodes().any { it.contentDescription?.toString() == "Remove $name" } }
-        assertTrue(nodes().first { it.contentDescription?.toString() == "Remove $name" }
+        val description = NativeMessages.text(context, UiMessage("android.instances.removeDescription", mapOf("name" to name)))
+        val resource = context.resources.getResourceName(R.id.instance_remove_button)
+        waitFor { nodes().any { it.viewIdResourceName == resource && it.contentDescription?.toString() == description } }
+        assertTrue(nodes().first { it.viewIdResourceName == resource && it.contentDescription?.toString() == description }
             .performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
     }
     private fun fields(name: String, address: String) {
-        waitFor { nodes().count { it.isEditable } == 2 }
-        for ((index, value) in listOf(name, address).withIndex()) {
-            assertTrue(nodes().filter { it.isEditable }[index].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
+        val values = listOf(R.id.instance_form_name to name, R.id.instance_form_address to address)
+        for ((id, value) in values) {
+            val resource = context.resources.getResourceName(id)
+            waitFor { nodes().any { it.viewIdResourceName == resource && it.isEditable } }
+            assertTrue(nodes().first { it.viewIdResourceName == resource }.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
                 Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }))
         }
         instrumentation.waitForIdleSync()
     }
     private fun assertEditor(name: String, address: String) {
-        waitFor { nodes().count { it.isEditable } == 2 }
-        assertEquals(listOf(name, address), nodes().filter { it.isEditable }.map { it.text.toString() })
+        val resources = listOf(R.id.instance_form_name, R.id.instance_form_address).map(context.resources::getResourceName)
+        waitFor { resources.all { resource -> nodes().any { it.viewIdResourceName == resource && it.isEditable } } }
+        assertEquals(listOf(name, address), resources.map { resource -> nodes().first { it.viewIdResourceName == resource }.text.toString() })
     }
     private fun waitFor(condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 10_000

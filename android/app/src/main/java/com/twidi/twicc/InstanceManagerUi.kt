@@ -1,5 +1,6 @@
 package com.twidi.twicc
 
+import com.twidi.twicc.i18n.UiMessage
 import android.app.Activity
 import android.app.Dialog
 import android.content.res.ColorStateList
@@ -69,7 +70,7 @@ class InstanceManagerUi(private val activity: Activity) {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
         setPadding(activity.dp(12), activity.dp(12), activity.dp(12), activity.dp(12))
-        contentDescription = activity.getString(R.string.instances_add)
+        bindUiDescription(UiMessage("android.instances.add"))
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         isFocusable = true
         minimumHeight = activity.dp(52)
@@ -82,7 +83,7 @@ class InstanceManagerUi(private val activity: Activity) {
         }, LinearLayout.LayoutParams(activity.dp(24), activity.dp(24)).apply {
             marginEnd = activity.dp(8)
         })
-        addView(text(activity.getString(R.string.instances_add), 16f, palette.accentOn, bold = true).apply {
+        addView(text(UiMessage("android.instances.add"), 16f, palette.accentOn, bold = true).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
         background = ripple(
@@ -111,7 +112,8 @@ class InstanceManagerUi(private val activity: Activity) {
             content.addView(emptyState())
             return
         }
-        content.addView(text(activity.getString(R.string.instances_saved).uppercase(), 12f, palette.textQuiet, bold = true).apply {
+        content.addView(text(UiMessage("android.instances.saved"), 12f, palette.textQuiet, bold = true).apply {
+            bindUiMessage(UiMessage("android.instances.saved"), uppercase = true)
             letterSpacing = 0.06f
             setPadding(activity.dp(4), 0, 0, activity.dp(8))
         })
@@ -135,12 +137,13 @@ class InstanceManagerUi(private val activity: Activity) {
             setImageResource(R.drawable.twicc_robot)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(activity.dp(80), activity.dp(80)))
-        addView(text(activity.getString(R.string.instances_title), 22f, palette.text, bold = true).apply {
+        addView(text(UiMessage("android.instances.title"), 22f, palette.text, bold = true).apply {
             letterSpacing = 0.05f
             gravity = Gravity.CENTER
             isAccessibilityHeading = true
+            id = R.id.instance_title
         })
-        addView(text(activity.getString(R.string.instances_subtitle), 14f, palette.textQuiet).apply {
+        addView(text(UiMessage("android.instances.subtitle"), 14f, palette.textQuiet).apply {
             gravity = Gravity.CENTER
             setPadding(0, activity.dp(2), 0, 0)
         })
@@ -152,8 +155,8 @@ class InstanceManagerUi(private val activity: Activity) {
         gravity = Gravity.CENTER_HORIZONTAL
         setPadding(activity.dp(16), activity.dp(32), activity.dp(16), activity.dp(32))
         background = rounded(palette.veil, 12).apply { setStroke(activity.dp(1), palette.border, activity.dp(6).toFloat(), activity.dp(4).toFloat()) }
-        addView(text(activity.getString(R.string.instances_empty_title), 18f, palette.text, bold = true).apply { gravity = Gravity.CENTER })
-        addView(text(activity.getString(R.string.instances_empty_body), 14f, palette.textQuiet).apply {
+        addView(text(UiMessage("android.instances.emptyTitle"), 18f, palette.text, bold = true).apply { gravity = Gravity.CENTER })
+        addView(text(UiMessage("android.instances.emptyBody"), 14f, palette.textQuiet).apply {
             gravity = Gravity.CENTER
             setPadding(0, activity.dp(4), 0, 0)
         })
@@ -179,7 +182,8 @@ class InstanceManagerUi(private val activity: Activity) {
             isClickable = true
             isFocusable = true
             background = ripple(null, palette.pressed, 0)
-            contentDescription = activity.getString(R.string.instances_open_description, instance.name, instance.address)
+            id = R.id.instance_open_button
+            bindUiDescription(UiMessage("android.instances.openDescription", mapOf("name" to instance.name, "address" to instance.address)))
             setOnClickListener { onOpen(instance) }
             addView(avatar(instance), LinearLayout.LayoutParams(activity.dp(40), activity.dp(40)).apply { marginEnd = activity.dp(12) })
             addView(LinearLayout(activity).apply {
@@ -198,12 +202,12 @@ class InstanceManagerUi(private val activity: Activity) {
             }, LinearLayout.LayoutParams(0, -2, 1f))
         }, LinearLayout.LayoutParams(0, -2, 1f))
         addView(View(activity).apply { setBackgroundColor(palette.divider) }, LinearLayout.LayoutParams(activity.dp(1), -1))
-        addView(iconButton(R.drawable.ic_edit, palette.textQuiet, activity.getString(R.string.instances_edit_description, instance.name), "instance-edit:${instance.id}") { onEdit(instance) })
-        addView(iconButton(R.drawable.ic_trash, palette.danger, activity.getString(R.string.instances_remove_description, instance.name), "instance-remove:${instance.id}") { onRemove(instance) })
+        addView(iconButton(R.drawable.ic_edit, palette.textQuiet, UiMessage("android.instances.editDescription", mapOf("name" to instance.name)), "instance-edit:${instance.id}") { onEdit(instance) })
+        addView(iconButton(R.drawable.ic_trash, palette.danger, UiMessage("android.instances.removeDescription", mapOf("name" to instance.name)), "instance-remove:${instance.id}") { onRemove(instance) })
     }
 
     private fun avatar(instance: Instance): View = TextView(activity).apply {
-        text = instance.name.firstOrNull()?.uppercase() ?: "?"
+        text = instance.name.take(1).uppercase(interfaceLocale(activity)).ifEmpty { "?" }
         gravity = Gravity.CENTER
         textSize = 16f
         typeface = Typeface.create(typeface, Typeface.BOLD)
@@ -214,17 +218,18 @@ class InstanceManagerUi(private val activity: Activity) {
         }
     }
 
-    private fun lastUsedPill(): View = text(activity.getString(R.string.instances_last_used), 11f, palette.accentText, bold = true).apply {
+    private fun lastUsedPill(): View = text(UiMessage("android.instances.lastUsed"), 11f, palette.accentText, bold = true).apply {
         maxLines = 1
         setPadding(activity.dp(8), activity.dp(1), activity.dp(8), activity.dp(1))
         background = rounded(palette.accentQuiet, 99)
     }
 
-    private fun iconButton(icon: Int, tint: Int, description: String, viewTag: String, onClick: () -> Unit) = ImageButton(activity).apply {
+    private fun iconButton(icon: Int, tint: Int, description: UiMessage, viewTag: String, onClick: () -> Unit) = ImageButton(activity).apply {
         tag = viewTag
         setImageResource(icon)
         imageTintList = ColorStateList.valueOf(tint)
-        contentDescription = description
+        id = if (icon == R.drawable.ic_edit) R.id.instance_edit_button else R.id.instance_remove_button
+        bindUiDescription(description)
         scaleType = ImageView.ScaleType.CENTER
         minimumWidth = activity.dp(48)
         minimumHeight = activity.dp(48)
@@ -236,14 +241,14 @@ class InstanceManagerUi(private val activity: Activity) {
     // ── Bottom sheet ────────────────────────────────────────────────────────────
 
     /** Draft values of the add/edit form, kept by the caller so they survive a recreation. */
-    class FormDraft(var name: String, var address: String, var error: String?)
+    class FormDraft(var name: String, var address: String, var error: UiMessage?)
 
     /**
      * Add/edit form in a bottom sheet. [onSave] returns an error message, or null when saved (the
      * sheet then closes). Back, scrim tap and Cancel call [onCancel].
      */
-    fun showForm(isEdit: Boolean, draft: FormDraft, onSave: (name: String, address: String) -> String?, onCancel: () -> Unit): Dialog {
-        val name = field(R.id.instance_form_name, activity.getString(R.string.instances_name_label), draft.name, InputType.TYPE_TEXT_FLAG_CAP_SENTENCES, EditorInfo.IME_ACTION_NEXT)
+    fun showForm(isEdit: Boolean, draft: FormDraft, onSave: (name: String, address: String) -> UiMessage?, onCancel: () -> Unit): Dialog {
+        val name = field(R.id.instance_form_name, "", draft.name, InputType.TYPE_TEXT_FLAG_CAP_SENTENCES, EditorInfo.IME_ACTION_NEXT).apply { bindUiHint(UiMessage("android.instances.nameLabel")) }
         val address = field(R.id.instance_form_address, "https://twicc.example.com", draft.address, InputType.TYPE_TEXT_VARIATION_URI, EditorInfo.IME_ACTION_DONE)
         val error = LinearLayout(activity).apply {
             id = R.id.instance_form_error
@@ -259,10 +264,10 @@ class InstanceManagerUi(private val activity: Activity) {
             }, LinearLayout.LayoutParams(activity.dp(20), activity.dp(20)).apply { marginEnd = activity.dp(8) })
             addView(text("", 14f, palette.text), LinearLayout.LayoutParams(0, -2, 1f))
         }
-        fun showError(message: String?) {
+        fun showError(message: UiMessage?) {
             draft.error = message
             error.visibility = if (message == null) View.GONE else View.VISIBLE
-            (error.getChildAt(1) as TextView).text = message.orEmpty()
+            (error.getChildAt(1) as TextView).bindUiMessage(message)
         }
         showError(draft.error)
         val clearError = object : TextWatcher {
@@ -291,17 +296,17 @@ class InstanceManagerUi(private val activity: Activity) {
         }
         val body = sheetBody(
             R.id.instance_form_title,
-            activity.getString(if (isEdit) R.string.instances_edit_title else R.string.instances_add),
+            UiMessage(if (isEdit) "android.instances.editTitle" else "android.instances.add"),
         ).apply {
             addView(error, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(12) })
-            addView(label(activity.getString(R.string.instances_name_label), R.id.instance_form_name))
+            addView(label(UiMessage("android.instances.nameLabel"), R.id.instance_form_name))
             addView(name, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(12) })
-            addView(label(activity.getString(R.string.instances_address_label), R.id.instance_form_address))
+            addView(label(UiMessage("android.instances.addressLabel"), R.id.instance_form_address))
             addView(address, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(4) })
-            addView(text(activity.getString(R.string.instances_address_hint), 12f, palette.textQuiet), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(16) })
+            addView(text(UiMessage("android.instances.addressHint"), 12f, palette.textQuiet), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(16) })
         }
-        val cancelButton = sheetButton(R.id.instance_form_cancel, activity.getString(R.string.instances_cancel), primary = false) { sheet.cancel() }
-        body.addView(buttonRow(cancelButton, sheetButton(R.id.instance_form_save, activity.getString(R.string.instances_save), primary = true) { save() }))
+        val cancelButton = sheetButton(R.id.instance_form_cancel, UiMessage("common.actions.cancel"), primary = false) { sheet.cancel() }
+        body.addView(buttonRow(cancelButton, sheetButton(R.id.instance_form_save, UiMessage("common.actions.save"), primary = true) { save() }))
         sheet = buildSheet(body, onCancel)
         sheet.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         sheet.show()
@@ -313,11 +318,11 @@ class InstanceManagerUi(private val activity: Activity) {
     /** Removal confirmation in a bottom sheet. [onConfirm] runs, then the sheet closes. */
     fun showRemove(instance: Instance, onConfirm: () -> Unit, onCancel: () -> Unit): Dialog {
         lateinit var sheet: Dialog
-        val body = sheetBody(R.id.instance_remove_title, activity.getString(R.string.instances_remove_title, instance.name)).apply {
-            addView(text(activity.getString(R.string.instances_remove_message), 14f, palette.textQuiet), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(16) })
+        val body = sheetBody(R.id.instance_remove_title, UiMessage("android.instances.removeTitle", mapOf("name" to instance.name))).apply {
+            addView(text(UiMessage("android.instances.removeMessage"), 14f, palette.textQuiet), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = activity.dp(16) })
             addView(buttonRow(
-                sheetButton(R.id.instance_remove_cancel, activity.getString(R.string.instances_cancel), primary = false) { sheet.cancel() },
-                sheetButton(R.id.instance_remove_confirm, activity.getString(R.string.instances_remove), primary = true, danger = true) {
+                sheetButton(R.id.instance_remove_cancel, UiMessage("common.actions.cancel"), primary = false) { sheet.cancel() },
+                sheetButton(R.id.instance_remove_confirm, UiMessage("android.instances.remove"), primary = true, danger = true) {
                     onConfirm()
                     sheet.dismiss()
                 },
@@ -328,7 +333,7 @@ class InstanceManagerUi(private val activity: Activity) {
         return sheet
     }
 
-    private fun sheetBody(titleId: Int, title: String) = LinearLayout(activity).apply {
+    private fun sheetBody(titleId: Int, title: UiMessage) = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(View(activity).apply { background = rounded(palette.border, 99) }, LinearLayout.LayoutParams(activity.dp(36), activity.dp(4)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
@@ -346,9 +351,9 @@ class InstanceManagerUi(private val activity: Activity) {
         addView(right, LinearLayout.LayoutParams(0, -2, 1f))
     }
 
-    private fun sheetButton(id: Int, label: String, primary: Boolean, danger: Boolean = false, onClick: () -> Unit) = Button(activity).apply {
+    private fun sheetButton(id: Int, label: UiMessage, primary: Boolean, danger: Boolean = false, onClick: () -> Unit) = Button(activity).apply {
         this.id = id
-        text = label
+        bindUiMessage(label)
         isAllCaps = false
         textSize = 16f
         typeface = Typeface.create(typeface, Typeface.BOLD)
@@ -365,7 +370,7 @@ class InstanceManagerUi(private val activity: Activity) {
         setOnClickListener { onClick() }
     }
 
-    private fun label(label: String, forId: Int) = text(label, 14f, palette.text, bold = true).apply {
+    private fun label(label: UiMessage, forId: Int) = text(label, 14f, palette.text, bold = true).apply {
         labelFor = forId
         setPadding(0, 0, 0, activity.dp(4))
     }
@@ -433,6 +438,11 @@ class InstanceManagerUi(private val activity: Activity) {
         dialog.setOnCancelListener { onCancel() }
         return dialog
     }
+
+    fun refreshMessages() = root.refreshNativeMessages()
+
+    private fun text(message: UiMessage, size: Float, color: Int, bold: Boolean = false) =
+        text("", size, color, bold).apply { bindUiMessage(message) }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────
 

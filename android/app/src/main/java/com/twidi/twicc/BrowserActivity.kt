@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.FutureTask
 import com.twidi.twicc.i18n.AndroidLanguageStore
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
 import com.twidi.twicc.tts.*
 import java.util.UUID
 import android.graphics.Color
@@ -65,6 +67,10 @@ class BrowserActivity : Activity() {
     private val notificationNavigation = NotificationNavigation()
     private var documentGeneration = 0
     private val expireMenu = Runnable { updateNativeMenu() }
+    private var documentLanguageHandshake = false
+    private var nativeMenu: PopupMenu? = null
+    private val menuMessages = mutableMapOf<Int, UiMessage>()
+    private var refreshConfirmation: AlertDialog? = null
     private var ttsBinder: TtsService.LocalBinder? = null
     private var ttsBound = false
     private var ttsSource: TtsActivationSource? = null
@@ -109,7 +115,10 @@ class BrowserActivity : Activity() {
         languageObserver = languageStore.observe {
             // Store observers hold a shared lock. Post without waiting for the activity thread.
             ownerHandler.post {
-                if (languageObserver != null && !isFinishing && !isDestroyed) browser?.notifyAppStateChanged()
+                if (languageObserver != null && !isFinishing && !isDestroyed) {
+                    refreshNativeUi()
+                    browser?.notifyAppStateChanged()
+                }
             }
         }
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
@@ -174,7 +183,8 @@ class BrowserActivity : Activity() {
             val ripple = TypedValue()
             theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true)
             setBackgroundResource(ripple.resourceId)
-            contentDescription = "Android app menu for ${instance.name}"
+            id = R.id.browser_menu_button
+            bindUiDescription(UiMessage("android.browser.menuDescription", mapOf("name" to instance.name)))
             setOnClickListener { showMenu() }
         }
         root.addView(menuButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.LEFT).apply {
@@ -197,7 +207,7 @@ class BrowserActivity : Activity() {
             page.load(safeUrl, force)
         } catch (_: RuntimeException) {
             disposeBrowser()
-            showError("${EngineProvider.engine.displayName} could not start. Check the engine installation, then reopen TwiCC.")
+            showError(UiMessage("android.browser.errors.engineStart", mapOf("engine" to EngineProvider.engine.displayName)))
         }
     }
 
@@ -206,7 +216,7 @@ class BrowserActivity : Activity() {
             val decision = NavigationPolicy.decide(instance.url, request)
             if (decision == NavigationDecision.OPEN_EXTERNAL) openExternal(request.url)
             if (decision == NavigationDecision.BLOCK && (!request.newWindow || request.userGesture))
-                toast("This link type is not supported.")
+                toast(NativeMessages.text(this@BrowserActivity, UiMessage("android.browser.errors.linkUnsupported")))
             return decision
         }
         override fun onPageStarted(url: String) {
@@ -236,21 +246,34 @@ class BrowserActivity : Activity() {
             reportPushSession()
         }
         override fun onHistoryChanged(canGoBack: Boolean) { this@BrowserActivity.canGoBack = canGoBack }
-        override fun onFailure(message: String) { showError(message) }
+        override fun onFailure(message: UiMessage) { showError(message) }
         override fun onRendererStopped(crashed: Boolean) {
             android.util.Log.w("TwiCCBrowser", "Renderer ${if (crashed) "crashed" else "was killed"}; foreground=$foreground")
             rendererRecovery.stopped()
             disposeBrowser()
-            showError("The page stopped unexpectedly. Retry to reopen TwiCC.")
+            showError(UiMessage("android.browser.errors.rendererStopped"))
             recoverRenderer()
         }
         override fun onAppMessage(message: String): String {
-            if (Looper.myLooper() == ownerHandler.looper) return appBridge.receive(message)
-            val response = FutureTask { appBridge.receive(message) }
+            if (Looper.myLooper() == ownerHandler.looper) return receiveAppMessage(message)
+            val response = FutureTask { receiveAppMessage(message) }
             ownerHandler.post(response)
             return response.get()
         }
         override fun onDownload(source: DownloadSource) { BrowserDownloads.save(this@BrowserActivity, source) }
+    }
+
+    /** Only an explicit, valid locale.get marks this document as language-aware. */
+    private fun receiveAppMessage(message: String): String {
+        val response = appBridge.receive(message)
+        if (runCatching { JSONObject(message).optString("command") == "locale.get" &&
+                JSONObject(response).optBoolean("ok") }.getOrDefault(false)) {
+            documentLanguageHandshake = true
+            nativeMenu?.menu?.removeItem(R.id.browser_menu_language_limitation)
+            menuMessages.remove(R.id.browser_menu_language_limitation)
+            updateNativeMenu()
+        }
+        return response
     }
 
     private fun refresh(force: Boolean) {
@@ -263,51 +286,88 @@ class BrowserActivity : Activity() {
         browser?.load(safeUrl)
     }
 
-    private fun showError(message: String, canRetry: Boolean = true) {
+    private fun showError(message: UiMessage, canRetry: Boolean = true) {
         failed = true
         reportPushSession()
         resetWebMenu()
         progress.visibility = View.GONE
         errorPanel.removeAllViews()
-        errorPanel.addView(label(message))
+        errorPanel.addView(label("").apply { bindUiMessage(message) })
         if (canRetry) errorPanel.addView(Button(this).apply {
-            text = "Retry"
+            id = R.id.browser_retry
+            isAllCaps = false
+            bindUiMessage(UiMessage("common.actions.retry"))
             setOnClickListener { refresh(false) }
         })
         errorPanel.addView(Button(this).apply {
-            text = "Manage instances"
+            id = R.id.browser_manage
+            isAllCaps = false
+            bindUiMessage(UiMessage("navigation.android.manage"))
             setOnClickListener { manageInstances() }
         })
         errorPanel.visibility = View.VISIBLE
     }
 
     private fun showMenu() {
-        PopupMenu(this, menuButton).apply {
-            menu.add("TwiCC ${BuildConfig.VERSION_NAME} · ${EngineProvider.engine.displayName}").isEnabled = false
-            store.all().forEach { saved ->
-                menu.add(saved.name).apply {
-                    isCheckable = true
-                    isChecked = saved.id == instance.id
-                    setOnMenuItemClickListener { switchInstance(saved); true }
-                }
+        nativeMenu?.dismiss()
+        val popup = PopupMenu(this, menuButton)
+        nativeMenu = popup
+        menuMessages.clear()
+        fun item(id: Int, key: String, params: Map<String, Any?> = emptyMap()): android.view.MenuItem {
+            val message = UiMessage(key, params)
+            menuMessages[id] = message
+            return popup.menu.add(0, id, 0, NativeMessages.text(this, message))
+        }
+        item(R.id.browser_menu_version, "android.browser.version",
+            mapOf("version" to BuildConfig.VERSION_NAME, "engine" to EngineProvider.engine.displayName)).isEnabled = false
+        if (documentLoaded && !documentLanguageHandshake)
+            item(R.id.browser_menu_language_limitation, "android.language.errors.updateServer").isEnabled = false
+        store.all().forEach { saved ->
+            popup.menu.add(saved.name).apply {
+                isCheckable = true
+                isChecked = saved.id == instance.id
+                setOnMenuItemClickListener { switchInstance(saved); true }
             }
-            menu.add("Manage instances").setOnMenuItemClickListener { manageInstances(); true }
-            menu.add("Reload page").setOnMenuItemClickListener { refresh(false); true }
-            menu.add("Force refresh (keep login)").setOnMenuItemClickListener {
-                AlertDialog.Builder(this@BrowserActivity)
-                    .setTitle("Force refresh?")
-                    .setMessage("Reload this page and bypass its resource cache. Your login and preferences stay saved. Unsaved text may be lost.")
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Refresh") { _, _ -> refresh(true) }.show()
-                true
-            }
-            menu.add("Server home").setOnMenuItemClickListener {
-                safeUrl = "${instance.address}/"
-                refresh(false)
-                true
-            }
-            menu.add("Open in browser").setOnMenuItemClickListener { openExternal(safeUrl); true }
-            show()
+        }
+        item(R.id.browser_menu_manage, "navigation.android.manage").setOnMenuItemClickListener { manageInstances(); true }
+        item(R.id.browser_menu_reload, "navigation.android.reload").setOnMenuItemClickListener { refresh(false); true }
+        item(R.id.browser_menu_force_refresh, "navigation.android.forceRefresh").setOnMenuItemClickListener {
+            showRefreshConfirmation()
+            true
+        }
+        item(R.id.browser_menu_home, "navigation.android.serverHome").setOnMenuItemClickListener {
+            safeUrl = "${instance.address}/"
+            refresh(false)
+            true
+        }
+        item(R.id.browser_menu_external, "navigation.android.browser").setOnMenuItemClickListener { openExternal(safeUrl); true }
+        popup.setOnDismissListener { if (nativeMenu === popup) { nativeMenu = null; menuMessages.clear() } }
+        popup.show()
+    }
+
+    private fun showRefreshConfirmation() {
+        if (refreshConfirmation != null) return
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(NativeMessages.text(this, UiMessage("navigation.android.refreshQuestion")))
+            .setMessage(NativeMessages.text(this, UiMessage("navigation.android.refreshHint")))
+            .setNegativeButton(NativeMessages.text(this, UiMessage("common.actions.cancel")), null)
+            .setPositiveButton(NativeMessages.text(this, UiMessage("navigation.android.refresh"))) { _, _ -> refresh(true) }.create()
+        refreshConfirmation = dialog
+        dialog.setOnDismissListener { if (refreshConfirmation === dialog) refreshConfirmation = null }
+        dialog.show()
+        refreshNativeUi()
+    }
+
+    private fun refreshNativeUi() {
+        if (!::root.isInitialized) return
+        root.refreshNativeMessages()
+        requests?.refreshMessages()
+        menuMessages.forEach { (id, message) -> nativeMenu?.menu?.findItem(id)?.title = NativeMessages.text(this, message) }
+        refreshConfirmation?.let { dialog ->
+            dialog.setTitle(NativeMessages.text(this, UiMessage("navigation.android.refreshQuestion")))
+            dialog.setMessage(NativeMessages.text(this, UiMessage("navigation.android.refreshHint")))
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.apply { isAllCaps = false; bindUiMessage(UiMessage("common.actions.cancel")) }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { isAllCaps = false; bindUiMessage(UiMessage("navigation.android.refresh")) }
         }
     }
 
@@ -337,11 +397,12 @@ class BrowserActivity : Activity() {
     }
 
     private fun updateNativeMenu() {
-        menuButton.visibility = if (!failed && menuLease.isVisible(SystemClock.uptimeMillis())) View.GONE else View.VISIBLE
+        menuButton.visibility = if (!failed && documentLanguageHandshake && menuLease.isVisible(SystemClock.uptimeMillis())) View.GONE else View.VISIBLE
     }
 
     private fun resetWebMenu() {
         clearBatteryAdvice()
+        documentLanguageHandshake = false
         documentGeneration++
         if (::instance.isInitialized) {
             ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
@@ -352,10 +413,10 @@ class BrowserActivity : Activity() {
         if (::menuButton.isInitialized) updateNativeMenu()
     }
 
-    private fun queueAppAction(command: AppCommand, instanceId: String?): String? {
+    private fun queueAppAction(command: AppCommand, instanceId: String?): UiMessage? {
         val target = if (command == AppCommand.SWITCH_INSTANCE)
-            store.find(instanceId) ?: return "This instance is no longer saved." else null
-        val source = browser ?: return "The browser session is closed."
+            store.find(instanceId) ?: return UiMessage("android.browser.errors.instanceRemoved") else null
+        val source = browser ?: return UiMessage("android.browser.errors.sessionClosed")
         val generation = documentGeneration
         // Return the transport reply before a navigation can destroy its document.
         root.post {
@@ -427,6 +488,7 @@ class BrowserActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        refreshNativeUi()
         reportPushSession()
         recoverRenderer()
     }
@@ -472,6 +534,8 @@ class BrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        nativeMenu?.dismiss()
+        refreshConfirmation?.dismiss()
         languageObserver?.close()
         languageObserver = null
         ttsSource?.let { ttsBinder?.detachSource(it) }

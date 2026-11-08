@@ -1,5 +1,8 @@
 package com.twidi.twicc.platform
 
+import com.twidi.twicc.i18n.UiMessage
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.bindUiMessage
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
@@ -25,7 +28,7 @@ data class PromptAnswer(val text: String = "", val choices: List<String> = empty
 
 /** Activity-owned UI. Cancellation and late picker results complete each callback at most once. */
 class NativeRequests(private val activity: Activity) {
-    private val pending = mutableSetOf<PendingRequest>()
+    private val pending = mutableSetOf<Completion<*>>()
     private var closed = false
     private var file: PendingRequest? = null
     private var pickerCode = -1
@@ -67,7 +70,7 @@ class NativeRequests(private val activity: Activity) {
             activity.startActivityForResult(intent, pickerCode)
         } catch (_: ActivityNotFoundException) {
             request.cancel()
-            message("No file picker is available.")
+            message(UiMessage("android.files.errors.pickerUnavailable"))
         }
         return request
     }
@@ -77,21 +80,21 @@ class NativeRequests(private val activity: Activity) {
         if (closed) { request.cancel(); return request }
         val builder = AlertDialog.Builder(activity).setTitle(spec.title).setMessage(spec.message)
         when (spec.kind) {
-            PromptKind.ALERT -> builder.setPositiveButton("OK") { _, _ -> request.finish(PromptAnswer()) }
-            PromptKind.CONFIRM -> builder.setPositiveButton("OK") { _, _ -> request.finish(PromptAnswer()) }
-                .setNegativeButton("Cancel") { _, _ -> request.cancel() }
+            PromptKind.ALERT -> builder.setPositiveButton(NativeMessages.text(activity, UiMessage("common.actions.ok"))) { _, _ -> request.finish(PromptAnswer()) }
+            PromptKind.CONFIRM -> builder.setPositiveButton(NativeMessages.text(activity, UiMessage("common.actions.ok"))) { _, _ -> request.finish(PromptAnswer()) }
+                .setNegativeButton(NativeMessages.text(activity, UiMessage("common.actions.cancel"))) { _, _ -> request.cancel() }
             PromptKind.TEXT -> {
                 val input = EditText(activity).apply { setText(spec.text) }
-                builder.setView(input).setPositiveButton("OK") { _, _ -> request.finish(PromptAnswer(text = input.text.toString())) }
-                    .setNegativeButton("Cancel") { _, _ -> request.cancel() }
+                builder.setView(input).setPositiveButton(NativeMessages.text(activity, UiMessage("common.actions.ok"))) { _, _ -> request.finish(PromptAnswer(text = input.text.toString())) }
+                    .setNegativeButton(NativeMessages.text(activity, UiMessage("common.actions.cancel"))) { _, _ -> request.cancel() }
             }
             PromptKind.CHOICE -> {
                 val labels = spec.choices.map { it.label }.toTypedArray()
-                builder.setNegativeButton("Cancel") { _, _ -> request.cancel() }
+                builder.setNegativeButton(NativeMessages.text(activity, UiMessage("common.actions.cancel"))) { _, _ -> request.cancel() }
                 if (spec.multiple) {
                     val checked = spec.choices.map { it.selected }.toBooleanArray()
                     builder.setMultiChoiceItems(labels, checked) { _, index, selected -> checked[index] = selected }
-                        .setPositiveButton("OK") { _, _ -> request.finish(PromptAnswer(choices =
+                        .setPositiveButton(NativeMessages.text(activity, UiMessage("common.actions.ok"))) { _, _ -> request.finish(PromptAnswer(choices =
                             spec.choices.filterIndexed { index, _ -> checked[index] }.map { it.id })) }
                 } else builder.setSingleChoiceItems(labels, spec.choices.indexOfFirst { it.selected }) { _, index ->
                     request.finish(PromptAnswer(choices = listOf(spec.choices[index].id)))
@@ -101,6 +104,7 @@ class NativeRequests(private val activity: Activity) {
         request.dialog = builder.setOnCancelListener { request.cancel() }.create().also { dialog ->
             dialog.setOnDismissListener { request.cancel() }
             dialog.show()
+            refreshDialog(dialog)
         }
         return request
     }
@@ -118,6 +122,13 @@ class NativeRequests(private val activity: Activity) {
         pending.toList().forEach { it.cancel() }
     }
 
-    fun message(text: String) = Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
+    fun refreshMessages() { pending.toList().forEach { it.dialog?.let(::refreshDialog) } }
+
+    private fun refreshDialog(dialog: AlertDialog) {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { isAllCaps = false; bindUiMessage(UiMessage("common.actions.ok")) }
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.apply { isAllCaps = false; bindUiMessage(UiMessage("common.actions.cancel")) }
+    }
+
+    fun message(message: UiMessage) = Toast.makeText(activity, NativeMessages.text(activity, message), Toast.LENGTH_LONG).show()
     companion object { private var nextPickerCode = 1000 }
 }

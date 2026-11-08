@@ -15,4 +15,22 @@
     <item name="instance_remove_title" type="id" />
     <item name="instance_remove_confirm" type="id" />
     <item name="instance_remove_cancel" type="id" />
+    <item name="native_text_message" type="id" />
+    <item name="native_text_uppercase" type="id" />
+    <item name="native_description_message" type="id" />
+    <item name="native_hint_message" type="id" />
+    <item name="instance_title" type="id" />
+    <item name="instance_open_button" type="id" />
+    <item name="instance_edit_button" type="id" />
+    <item name="instance_remove_button" type="id" />
+    <item name="browser_menu_button" type="id" />
+    <item name="browser_menu_manage" type="id" />
+    <item name="browser_menu_reload" type="id" />
+    <item name="browser_menu_force_refresh" type="id" />
+    <item name="browser_menu_home" type="id" />
+    <item name="browser_menu_external" type="id" />
+    <item name="browser_menu_version" type="id" />
+    <item name="browser_menu_language_limitation" type="id" />
+    <item name="browser_retry" type="id" />
+    <item name="browser_manage" type="id" />
 </resources>
