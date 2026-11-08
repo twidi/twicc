@@ -672,7 +672,7 @@ def _create(manager, draft_id: str, text: str, plan: AttachmentPlan) -> str:
     async def run() -> str:
         async with send_lanes.send_lane(draft_id):
             return await manager.create_session(
-                draft_id, "project-id", "/project", text, AgentSettings(permission_mode="yolo"),
+                draft_id, "project-id", "/tmp", text, AgentSettings(permission_mode="yolo"),
                 attachment_plan=plan,
             )
 

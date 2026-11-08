@@ -195,7 +195,7 @@ def test_a_codex_start_keeps_the_captured_origins_of_the_title_and_the_creation_
     manager.notify_session_bound = AsyncMock()
     manager._register_and_start = AsyncMock()
     canonical = asyncio.run(manager._start_agent(
-        "draft-id", "-tl-origin-tc", "/tmp/tl-origin-tc", "Work", False, settings=AgentSettings(),
+        "draft-id", "-tl-origin-tc", "/tmp", "Work", False, settings=AgentSettings(),
     ))
     assert canonical == "canonical-id"
     assert get_pending_title_origin("canonical-id") == AGENT

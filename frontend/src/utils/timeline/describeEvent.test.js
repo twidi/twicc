@@ -68,8 +68,8 @@ test('data missing or not an object is treated as empty and never throws', () =>
     }
 })
 
-test('process.ended: every reason has its wording, severity and cause tag; the table has 15 reasons', () => {
-    assert.equal(Object.keys(PROCESS_ENDED_REASONS).length, 15)
+test('process.ended: every reason has its wording, severity and cause tag; the table has 16 reasons', () => {
+    assert.equal(Object.keys(PROCESS_ENDED_REASONS).length, 16)
     const expected = {
         manual: ['Process stopped', 'neutral', []], force: ['Process killed', 'neutral', []],
         archived: ['Process stopped', 'neutral', ['session archived']], shutdown: ['Process stopped', 'neutral', ['TwiCC shutdown']],
@@ -80,6 +80,7 @@ test('process.ended: every reason has its wording, severity and cause tag; the t
         timeout_assistant_turn: ['Process stopped: no activity', 'warning', []],
         cron_restart_timeout: ['Cron restart timed out', 'warning', []], lost: ['Process lost', 'warning', ['found dead at boot']],
         auth_required: ['Process stopped: login required', 'danger', []], 'startup-failed': ['Process failed to start', 'danger', []],
+        'agent-start-failed': ['Process failed to start', 'danger', []],
         error: ['Process crashed', 'danger', []],
     }
     for (const [reason, [wording, severity, tags]] of Object.entries(expected)) {

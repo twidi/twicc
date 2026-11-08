@@ -38,6 +38,7 @@ export const PROCESS_ENDED_REASONS = {
     get lost() { return [i18n.global.t('session.timeline.processLost'), 'warning', i18n.global.t('session.timeline.deadAtBoot')] },
     get auth_required() { return [i18n.global.t('session.timeline.loginRequired'), 'danger'] },
     get 'startup-failed'() { return [i18n.global.t('session.timeline.startFailed'), 'danger'] },
+    get 'agent-start-failed'() { return [i18n.global.t('session.timeline.startFailed'), 'danger'] },
     get error() { return [i18n.global.t('session.timeline.crashed'), 'danger'] },
 }
 

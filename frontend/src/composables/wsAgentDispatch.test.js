@@ -54,3 +54,10 @@ test('tool_state no longer changes an agent state: only setToolState is called',
 
     assert.deepEqual(calls.map(c => c[0]), ['setToolState'])
 })
+
+test('a reported start failure raises neither a toast nor agent_died', () => {
+    const code = block("if (msg.state === 'dead' && !ephemeral)", 'export function showUpdateToast')
+    assert.match(code, /kill_reason === 'error'/)
+    assert.match(code, /\['error', 'startup-failed', 'timeout_starting'\]/)
+    assert.doesNotMatch(code, /agent-start-failed/)
+})

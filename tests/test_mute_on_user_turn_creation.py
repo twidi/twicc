@@ -115,7 +115,7 @@ def test_canonical_id_rekey_preserves_mute_on_user_turn():
         canonical_id = asyncio.run(manager._start_agent(
             "draft-id",
             "-mute-create",
-            "/tmp/mute-create",
+            "/tmp",
             "Work",
             False,
             settings=AgentSettings(),

@@ -77,7 +77,7 @@ EXTERNAL_AUTHORS: frozenset[str] = frozenset({"external_mcp"})
 #: (``PROCESS_ENDED_REASONS`` in ``frontend/src/utils/timeline/describeEvent.js``), section 4.4.
 PROBLEM_REASONS: frozenset[str] = frozenset({
     "timeout_starting", "timeout_assistant_turn", "cron_restart_timeout", "lost", "auth_required",
-    "startup-failed", "error",
+    "startup-failed", "agent-start-failed", "error",
 })
 
 #: The ``workflow.ended`` statuses whose severity is warning or danger in the row wording

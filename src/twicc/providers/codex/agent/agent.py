@@ -65,7 +65,9 @@ from twicc.agent.shell_notice import (
     merge_resolution,
     needs_lookup,
 )
-from twicc.agent.states import build_background_work
+from twicc.agent.exceptions import AgentStartError
+from twicc.agent.start_failure import classify_start_failure
+from twicc.agent.states import AGENT_START_FAILED_KILL_REASON, build_background_work
 from twicc.context_injection import apply_pending_context
 from twicc.core.enums import Provider
 from twicc.core.ui_messages import UiMessageError, ui_message, ui_message_text
@@ -846,6 +848,7 @@ class CodexAgent(BaseAgent):
             # ``/plan`` settles to USER_TURN while ``/plan <prompt>`` schedules
             # a real turn itself). The agent is still STARTING here; the
             # command's first ``_set_state`` moves it forward.
+            self.handoff_attempted = True
             await self.run_hardcoded_command(command)
             return
 
@@ -1506,6 +1509,7 @@ class CodexAgent(BaseAgent):
         await self._admit_async_question_owner()
         if submission is not None:
             submission["delivery_route"] = "start"
+        self.handoff_attempted = True
         handle = await self._thread.turn_with_policy(
             turn_input,
             model=sdk_model,
@@ -1619,6 +1623,16 @@ class CodexAgent(BaseAgent):
                     await self._finish_question_submission(submission, "uncertain")
                 raise
             except Exception as e:
+                # Only a launch reports a start failure, and only while Codex cannot have received the message.
+                start_failure = classify_start_failure(
+                    e, directory=self.cwd, provider=self.provider, ephemeral=getattr(self, "ephemeral", False),
+                ) if self.report_start_failure and not self.handoff_attempted else None
+                if isinstance(start_failure, AgentStartError):
+                    start_failure.__cause__ = e
+                    cause = e
+                    e = start_failure
+                else:
+                    start_failure = None
                 status = question_send_failure_status(e)
                 try:
                     await self._finish_question_submission(submission, status)
@@ -1631,8 +1645,13 @@ class CodexAgent(BaseAgent):
                 if submission is not None and not submission["_delivery_future"].done():
                     submission["_delivery_future"].set_exception(e)
                 if completion_token is not None:
-                    self._completion_input_settled(completion_token, status)
+                    self._completion_input_settled(completion_token, status, failure=start_failure)
                     self._completion_scheduled_tokens.discard(completion_token)
+                if start_failure is not None:
+                    await self._handle_error(f"Failed to open turn: {e}", exc=cause,
+                                             error_ui_message=start_failure.ui_message,
+                                             kill_reason=AGENT_START_FAILED_KILL_REASON)
+                    return
                 await self._handle_error(f"Failed to open turn: {e}", exc=e,
                                          error_ui_message=getattr(e, "ui_message", None) or ui_message(
                                              "backend.codex.openTurnFailed", {"diagnostic": str(e)}))
@@ -3199,6 +3218,7 @@ class CodexAgent(BaseAgent):
 
     async def _handle_error(
         self, error_message: str, exc: Exception | None = None, *, error_ui_message: dict | None = None,
+        kill_reason: str = "error",
     ) -> None:
         """Surface a runtime error as a clean DEAD transition."""
         if getattr(self, "ephemeral", False):
@@ -3211,7 +3231,7 @@ class CodexAgent(BaseAgent):
             )
         self.error = error_message
         self.error_ui_message = error_ui_message or getattr(exc, "ui_message", None)
-        self.kill_reason = "error"
+        self.kill_reason = kill_reason
         try:
             await self._codex.close()
         except Exception:

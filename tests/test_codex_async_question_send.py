@@ -1361,3 +1361,109 @@ def test_native_recovery_does_not_import_unmatched_history_as_new_human_reply(ha
     assert state["facts"]["send:pending-native"]["data"]["status"] == "accepted"
     assert state["facts"]["send:pending-native"]["data"]["source_item_id"] == "matching-user"
     assert state["facts"]["send:pending-native"]["data"]["boundary"] == prepared.submission["boundary"]
+
+
+def test_codex_start_failure_is_rejected_and_answers_stay_ready(harness, monkeypatch):
+    harness.manager._agents.clear()
+    monkeypatch.setattr(harness.manager, "_create_agent", AsyncMock(side_effect=OSError("spawn failed")))
+    with pytest.raises(SendDeliveryError) as caught:
+        asyncio.run(harness.send("next", response()))
+    assert caught.value.code == "agent_start_failed"
+    assert caught.value.reason == "start_failed"
+    assert snapshot(harness)["batches"][0]["status"] == "ready"
+    assert (
+        AsyncQuestionState.objects.get(session=harness.session).state["facts"]["send:send-1"]["data"]["status"]
+        == "rejected"
+    )
+
+
+def test_codex_command_launch_failure_is_reported(harness, monkeypatch):
+    harness.manager._agents.clear()
+    monkeypatch.setattr(harness.manager, "_create_agent", AsyncMock(side_effect=OSError("spawn failed")))
+    with pytest.raises(SendDeliveryError) as caught:
+        asyncio.run(harness.send("/compact"))
+    assert caught.value.code == "agent_start_failed"
+
+
+def cold_send(harness, monkeypatch, prepare):
+    """Run one cold send through the real agent start; ``prepare(agent, thread)`` installs the failure."""
+    from twicc.providers import db_writer
+
+    async def run():
+        db_writer.start_db_writer()
+        agent, _sdk, thread, _turn = runtime_agent(harness)
+        harness.manager._agents.clear()
+        agent._work_dirs = []
+        agent._reconcile_question_submissions = AsyncMock()
+        agent._reconcile_async_question_owners = AsyncMock()
+        del agent._handle_error  # runtime_agent mocks it; these tests read the kill_reason that it assigns
+        agent.report_start_failure = True
+        agent._codex = SimpleNamespace(close=AsyncMock())
+        agent._transition_to_dead = AsyncMock()
+        prepare(agent, thread)
+
+        async def start(session_id, project_id, cwd, text, *, resume, settings, images, submission):
+            harness.manager._agents[session_id] = agent
+            await agent.start(text, AsyncMock(), resume=resume, images=images, submission=submission)
+            return session_id
+
+        monkeypatch.setattr(harness.manager, "_start_agent", start)
+        try:
+            with pytest.raises(SendDeliveryError) as caught:
+                await harness.manager.send_to_session(
+                    harness.session.id, harness.session.project_id, "/tmp", "next", AgentSettings(),
+                    request_id="cold-1", send_origin="human", async_questions=response(),
+                )
+            return agent, thread, caught.value
+        finally:
+            if agent._turn_task:
+                agent._turn_task.cancel()
+                await asyncio.gather(agent._turn_task, return_exceptions=True)
+            await db_writer.stop_db_writer()
+
+    return asyncio.run(run())
+
+
+def test_codex_failure_before_the_turn_opens_is_a_start_failure(harness, monkeypatch):
+    def prepare(agent, _thread):
+        agent._build_turn_input = AsyncMock(side_effect=RuntimeError("bad input"))
+
+    agent, thread, error = cold_send(harness, monkeypatch, prepare)
+    assert (error.code, error.reason) == ("agent_start_failed", "start_failed")
+    assert agent.kill_reason == "agent-start-failed"
+    thread.turn_with_policy.assert_not_awaited()
+
+
+def test_codex_failure_while_the_turn_opens_stays_uncertain(harness, monkeypatch):
+    def prepare(_agent, thread):
+        thread.turn_with_policy = AsyncMock(side_effect=OSError("connection lost"))
+
+    agent, _thread, error = cold_send(harness, monkeypatch, prepare)
+    assert error.code == "send_uncertain"
+    assert agent.kill_reason == "error"
+
+
+def test_codex_new_session_failure_before_the_turn_reaches_the_wait(harness):
+    from twicc.providers import db_writer
+
+    async def run():
+        db_writer.start_db_writer()
+        agent, _sdk, thread, _turn = runtime_agent(harness)
+        agent._work_dirs = []
+        del agent._handle_error
+        agent.report_start_failure = True
+        agent._codex = SimpleNamespace(close=AsyncMock())
+        agent._transition_to_dead = AsyncMock()
+        agent._build_turn_input = AsyncMock(side_effect=RuntimeError("bad input"))
+        harness.manager._bind_completion_callbacks(agent)
+        try:
+            await agent.start("hi", AsyncMock(), resume=False, completion_token="t")
+            await agent._turn_task
+            with pytest.raises(SendDeliveryError) as caught:
+                await harness.manager.wait_for_completion_input("t")
+            assert (caught.value.code, caught.value.reason) == ("agent_start_failed", "start_failed")
+            thread.turn_with_policy.assert_not_awaited()
+        finally:
+            await db_writer.stop_db_writer()
+
+    asyncio.run(run())

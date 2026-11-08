@@ -25,7 +25,7 @@ from twicc.logging_context import provider_log_context
 from twicc.providers.db_writer import run_under_db_write_lock
 
 from .base_agent import BaseAgent
-from .exceptions import SendDeliveryError
+from .exceptions import AgentStartError, SendDeliveryError
 from .completion_types import CompletionCandidate, CompletionInput, CompletionSnapshot, VerifiedMessageRef
 from . import ephemeral as ephemeral_runs
 from .shell_notice import (
@@ -37,7 +37,8 @@ from .shell_notice import (
     resolve_shell_owners,
     select_concerned_shells,
 )
-from .states import AgentInfo, AgentState
+from .start_failure import classify_start_failure, launch_directory_failure, log_start_failure
+from .states import AGENT_START_FAILED_KILL_REASON, AgentInfo, AgentState
 
 if TYPE_CHECKING:
     from twicc.core.enums import Provider
@@ -477,8 +478,10 @@ class BaseAgentManager:
     async def _start_agent(
         self, session_id: str, project_id: str, cwd: str, text: str, resume: bool,
         *, settings: AgentSettings, ephemeral: bool = False, ephemeral_admission=None,
+        report_start_failure: bool = True,
         **start_kwargs: Any,
     ) -> str:
+        """Launch an agent. ``report_start_failure=False`` means that no caller waits for the launch."""
         self._check_ephemeral_readonly(session_id, ephemeral_admission)
         if resume:
             # Last guard of every resume (sends, parked restarts, commands): the
@@ -489,10 +492,11 @@ class BaseAgentManager:
         ids = [session_id]
         succeeded = False
         try:
+            await self._check_launch_directory(session_id, cwd, ephemeral=ephemeral)
             canonical_id = await self._start_agent_with_admission(
                 session_id, project_id, cwd, text, resume, settings=settings,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
-                ephemeral_ids=ids, **start_kwargs,
+                ephemeral_ids=ids, report_start_failure=report_start_failure, **start_kwargs,
             )
             succeeded = True
             return canonical_id
@@ -500,6 +504,24 @@ class BaseAgentManager:
             if ephemeral:
                 ephemeral_runs.drain_buffers(*ids)
             await ephemeral_runs.finish(ephemeral_admission, failed=not succeeded)
+
+    async def _check_launch_directory(self, session_id: str, directory: str, *, ephemeral: bool) -> None:
+        """Refuse a launch whose directory is unusable, before any provider work."""
+        failure = await asyncio.to_thread(
+            launch_directory_failure, directory, provider=self.provider, ephemeral=ephemeral,
+        )
+        if failure is not None:
+            logger.error("Agent launch refused for session %s: launch directory %s is unavailable", session_id, directory)
+            raise failure
+
+    def _classified_start_failure(
+        self, exc: Exception, *, session_id: str, directory: str, ephemeral: bool, report: bool,
+    ) -> SendDeliveryError | None:
+        """Log and classify a launch failure, or return ``None`` to let ``exc`` propagate unchanged."""
+        if not report or isinstance(exc, SendDeliveryError):
+            return None
+        log_start_failure(exc, session_id=session_id, ephemeral=ephemeral)
+        return classify_start_failure(exc, directory=directory, provider=self.provider, ephemeral=ephemeral)
 
     async def _start_agent_with_admission(
         self,
@@ -514,6 +536,7 @@ class BaseAgentManager:
         ephemeral_admission=None,
         ephemeral_ids: list[str],
         prepared_attachments: PreparedAttachments | None = None,
+        report_start_failure: bool = True,
         **start_kwargs: Any,
     ) -> str:
         """Build a provider agent, bind it to its canonical id, register and start.
@@ -557,10 +580,18 @@ class BaseAgentManager:
             if prepared_attachments is not None:
                 factory_kwargs["prepared_attachments"] = prepared_attachments
                 factory_kwargs["initial_text"] = text
-            agent = await self._create_agent(
-                session_id, project_id, cwd, resume=resume, settings=settings,
-                **factory_kwargs,
-            )
+            try:
+                agent = await self._create_agent(
+                    session_id, project_id, cwd, resume=resume, settings=settings,
+                    **factory_kwargs,
+                )
+            except Exception as exc:
+                failure = self._classified_start_failure(
+                    exc, session_id=session_id, directory=cwd, ephemeral=ephemeral, report=report_start_failure,
+                )
+                if failure is not None:
+                    raise failure from exc
+                raise
 
             # Once ``_create_agent`` returns, the agent owns external resources
             # (SDK client / subprocess). If any of the post-creation steps below
@@ -572,6 +603,7 @@ class BaseAgentManager:
             # ``interrupt_or_kill`` (which is required to be safe on a not-yet-
             # started agent — see the docstring of ``_create_agent``).
             try:
+                agent.report_start_failure = report_start_failure
                 if ephemeral_admission is not None:
                     ephemeral_ids.append(agent.session_id)
                     ephemeral_runs.bind(ephemeral_admission, agent.session_id)
@@ -625,10 +657,19 @@ class BaseAgentManager:
                     )
 
                 await self._register_and_start(agent, text, resume=resume, **start_kwargs)
-                return agent.session_id
-            except BaseException:
+            except BaseException as exc:
+                failure = None
+                if isinstance(exc, Exception) and not getattr(agent, "handoff_attempted", False):
+                    failure = self._classified_start_failure(
+                        exc, session_id=agent.session_id, directory=cwd, ephemeral=ephemeral,
+                        report=report_start_failure,
+                    )
+                completion_token = start_kwargs.get("completion_token")
+                if failure is not None and completion_token:
+                    agent._completion_input_settled(completion_token, "rejected")
+                kill_reason = AGENT_START_FAILED_KILL_REASON if isinstance(failure, AgentStartError) else "startup-failed"
                 try:
-                    await agent.interrupt_or_kill(reason="startup-failed")
+                    await agent.interrupt_or_kill(reason=kill_reason)
                 except Exception as cleanup_error:
                     if ephemeral:
                         logger.error("Ephemeral startup cleanup failed (%s)", type(cleanup_error).__name__)
@@ -640,7 +681,15 @@ class BaseAgentManager:
                 if self._agents.get(agent.session_id) is agent:
                     self._agents.pop(agent.session_id, None)
                     ephemeral_runs.agent_ended(agent.session_id)
+                if failure is not None:
+                    raise failure from exc
                 raise
+
+            # Outside the ``try``: the agent that recorded this failure is already DEAD.
+            failure = getattr(agent, "start_failure", None)
+            if failure is not None:
+                raise failure
+            return agent.session_id
 
     async def _register_and_start(
         self,

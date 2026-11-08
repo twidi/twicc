@@ -36,6 +36,7 @@ from twicc.request_origin import RequestOrigin, capture_origin, system_marker
 from .states import AgentInfo, AgentState, PendingRequest, get_process_memory
 
 if TYPE_CHECKING:
+    from twicc.agent.exceptions import SendDeliveryError
     from twicc.providers.helpers import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,14 @@ class BaseAgent(StopOriginMixin):
         # Property from StopOriginMixin: the reason and the origin of the request that asked for the stop
         # are assigned together (design 2026-10-14, section 7).
         self.kill_reason = None
+        # The launch failure recorded during ``start()``. The base manager raises it once
+        # ``start()`` has returned, so that the caller that waits for the launch receives it.
+        self.start_failure: SendDeliveryError | None = None
+        # True once the provider may have received the message. A later failure
+        # cannot prove that the agent did not start.
+        self.handoff_attempted = False
+        # Set by the base manager before the start: True when a caller waits for the launch.
+        self.report_start_failure = False
 
         # Cached ``Session.hidden`` for this agent, gating every live-update
         # broadcast (see ``_is_session_hidden``). ``None`` = not resolved yet.
@@ -353,7 +362,9 @@ class BaseAgent(StopOriginMixin):
         self.completion_controller.input_pending(token, asyncio.get_running_loop().time())
         self._completion_refresh()
 
-    def _completion_input_settled(self, token: str, status: str) -> None:
+    def _completion_input_settled(
+        self, token: str, status: str, *, failure: SendDeliveryError | None = None,
+    ) -> None:
         item = self._completion_inputs.get(token)
         if item is not None and item.status in ("accepted", "rejected") and status != item.status:
             return
@@ -361,7 +372,12 @@ class BaseAgent(StopOriginMixin):
             self._timeline_input_origins.pop(token, None)
         receipt = self._completion_input_receipts.get(token)
         if status in ("rejected", "uncertain") and receipt is not None and not receipt.done():
-            receipt.set_result(False)
+            if failure is None:
+                receipt.set_result(False)
+            else:
+                receipt.set_exception(failure)
+                # Mark the exception as read: a receipt that nobody awaits must not log a warning.
+                receipt.exception()
         if token in self._completion_inputs:
             turn_id, cursor, _ = self._completion_inputs[token]
             self._completion_inputs[token] = CompletionInput(turn_id, cursor, status)

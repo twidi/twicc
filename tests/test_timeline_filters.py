@@ -36,7 +36,7 @@ TITLE_DATA = ({"source": "auto"}, {"source": "agent"}, {"source": None}, {})
 FRONTEND_REASONS = (
     "manual", "force", "archived", "shutdown", "apply-settings", "switch-hybrid", "timeout_user_turn", "cli-exit",
     "timeout_starting", "timeout_assistant_turn", "cron_restart_timeout", "lost", "auth_required",
-    "startup-failed", "error",
+    "startup-failed", "agent-start-failed", "error",
 )
 
 
@@ -132,7 +132,7 @@ def test_author_examples_from_the_spec(fields, author):
 def test_the_problem_reasons_are_the_warning_and_danger_reasons():
     assert PROBLEM_REASONS == frozenset({
         "timeout_starting", "timeout_assistant_turn", "cron_restart_timeout", "lost", "auth_required",
-        "startup-failed", "error",
+        "startup-failed", "agent-start-failed", "error",
     })
     assert PROBLEM_REASONS < set(FRONTEND_REASONS)
 
