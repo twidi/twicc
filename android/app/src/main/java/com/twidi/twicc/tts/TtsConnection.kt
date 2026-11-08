@@ -63,7 +63,9 @@ class TtsCookieJar(val origin: HttpUrl, cookies: List<TtsCookie>) : CookieJar {
 class TtsCredentials(val instanceId: String, val origin: String, val cookies: List<TtsCookie>) {
     override fun toString() = "TtsCredentials(instanceId=$instanceId)"
 }
-class TtsAuthorizationException : IOException("Authentication expired. Open TwiCC and sign in again.")
+open class TtsUiException(message: String, val uiMessage: TtsFrame) : IOException(message)
+class TtsAuthorizationException : TtsUiException("Authentication expired. Open TwiCC and sign in again.",
+    ttsUiMessage("backend.tts.authenticationExpired"))
 sealed interface TtsConnectionEvent {
     val connectionId: String
     data class Opened(override val connectionId: String) : TtsConnectionEvent
@@ -231,7 +233,7 @@ class TtsConnection(
             response.header("Content-Type")?.contains("html", true) == true) {
             response.close(); throw TtsAuthorizationException()
         }
-        if (!response.isSuccessful) { val status = response.code; response.close(); throw IOException("TTS request failed ($status)") }
+        if (!response.isSuccessful) { val status = response.code; response.close(); throw TtsUiException("TTS request failed ($status)", ttsUiMessage("android.speech.errors.audioRequest", mapOf("status" to status))) }
     }
     private fun audioKey(resource: AudioResource) = "${resource.sessionId}/${resource.audioId}"
     /** Cancels an opening or streaming body immediately, without stopping the control socket. */
@@ -246,7 +248,7 @@ class TtsConnection(
             response = call.execute()
             validate(response)
             if (isCancelled()) throw java.io.InterruptedIOException("Speech audio opening cancelled")
-            val body = response.body ?: throw IOException("TTS audio is empty")
+            val body = response.body ?: throw TtsUiException("TTS audio is empty", ttsUiMessage("android.speech.errors.audioEmpty"))
             // Detect a tunnel that returns HTML with a misleading media content type, without consuming audio bytes.
             val source = body.source()
             source.request(32)

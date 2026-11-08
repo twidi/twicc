@@ -62,4 +62,27 @@ class TtsPresentationMetadataTest {
         assertEquals("Original English failure", result.ended["error"])
         assertEquals(metadata, result.ended["ui_message"])
     }
+    @Test fun nativeAuthorizationAndOutageFailuresRetainIdentity() {
+        val closed = controller()
+        val descriptor = mapOf("key" to "android.speech.errors.instanceClosed", "params" to emptyMap<String, Any?>())
+        closed.dispatch(TtsCommand.AuthorizationLost("Original fallback", descriptor))
+        assertEquals(descriptor, closed.snapshot().error?.get("ui_message"))
+        assertEquals(descriptor, closed.snapshot().results.single().start["ui_message"])
+        assertEquals(descriptor, closed.snapshot().results.single().ended["ui_message"])
+        val offline = controller()
+        offline.dispatch(TtsCommand.TransportLost("socket"))
+        offline.dispatch(TtsCommand.Manual(owner, "offline", mapOf("kind" to "text", "text" to "Unchanged")))
+        assertEquals("session.speech.errors.unreachable", (offline.snapshot().error?.get("ui_message") as? Map<*, *>)?.get("key"))
+        assertNotNull(offline.snapshot().results.last().start["ui_message"])
+        assertNotNull(offline.snapshot().results.last().ended["ui_message"])
+    }
+
+    @Test fun unstructuredBackendDiagnosticRemainsVerbatim() {
+        val controller = controller()
+        controller.dispatch(TtsCommand.ServerFrame("socket", mapOf("protocol" to 1, "type" to "error", "code" to "failed",
+            "message" to "External diagnostic: status 9876")))
+        assertEquals("External diagnostic: status 9876", controller.snapshot().error?.get("message"))
+        assertNull(controller.snapshot().error?.get("ui_message"))
+    }
+
 }

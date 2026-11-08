@@ -26,9 +26,9 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         clearTimeout(entry.timer)
         if (response.ok) entry.resolve(response.state ?? null)
         else {
-            const error = response.ui_message
+            const error = response.ui_message || typeof response.error === 'string'
                 ? remoteUiError(response, localUiError('common.android.errors.actionFailed').message)
-                : typeof response.error === 'string' ? new Error(response.error) : localUiError('common.android.errors.actionFailed')
+                : localUiError('common.android.errors.actionFailed')
             if (response.state !== undefined) error.state = response.state
             entry.reject(error)
         }

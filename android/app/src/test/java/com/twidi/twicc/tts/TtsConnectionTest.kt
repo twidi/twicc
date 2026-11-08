@@ -211,4 +211,13 @@ class TtsConnectionTest {
         assertEquals("ping", TtsJson.decode(received.poll(5, TimeUnit.SECONDS)!!)["type"])
     }
 
+    @Test fun nativeHttpFailureKeepsStatusAndPresentationIdentity() = fixture { server, connection, _ ->
+        server.enqueue(MockResponse().setResponseCode(503).setBody("Raw server diagnostic"))
+        val failure = assertThrows(TtsUiException::class.java) { connection.openAudio(resource()) }
+        assertEquals("TTS request failed (503)", failure.message)
+        assertEquals("android.speech.errors.audioRequest", failure.uiMessage["key"])
+        assertEquals(mapOf("status" to 503), failure.uiMessage["params"])
+        assertEquals("backend.tts.authenticationExpired", TtsAuthorizationException().uiMessage["key"])
+    }
+
 }

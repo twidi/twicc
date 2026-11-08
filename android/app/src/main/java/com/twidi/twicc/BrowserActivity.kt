@@ -362,6 +362,7 @@ class BrowserActivity : Activity() {
         if (!::root.isInitialized) return
         root.refreshNativeMessages()
         requests?.refreshMessages()
+        batteryAdviceDialog?.let { TtsNotification.refreshBatteryAdvice(this, it) }
         menuMessages.forEach { (id, message) -> nativeMenu?.menu?.findItem(id)?.title = NativeMessages.text(this, message) }
         refreshConfirmation?.let { dialog ->
             dialog.setTitle(NativeMessages.text(this, UiMessage("navigation.android.refreshQuestion")))
@@ -575,12 +576,12 @@ class BrowserActivity : Activity() {
                         if (!batteryAdviceConfirmed) batteryAdviceCommand = null
                     }
                 }
-                return Acceptance(false, error = TtsActionError("confirmation_required", "Choose how to continue in the battery advice dialog."))
+                return Acceptance(false, error = TtsActionError("confirmation_required", "Choose how to continue in the battery advice dialog.", uiMessage = ttsUiMessage("android.speech.errors.batteryChoiceRequired")))
             }
             attachNativeTtsDocument()
         }
         return ttsBinder?.dispatch(command) ?: Acceptance(false,
-            error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment."))
+            error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment.", uiMessage = ttsUiMessage("common.android.errors.speechPreparing")))
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -592,7 +593,10 @@ class BrowserActivity : Activity() {
         // Dialog dismissal restores window focus asynchronously. Never revive a stopped or replaced page.
         if (isFinishing || isDestroyed || command.owner != ttsDocument) return
         val acceptance = dispatchNativeTts(command)
-        if (!acceptance.accepted) acceptance.error?.let { toast(it.message) }
+        if (!acceptance.accepted) acceptance.error?.let { error ->
+            toast(error.uiMessage?.let { com.twidi.twicc.i18n.UiMessageJson.decode(JSONObject(it)) }
+                ?.let { NativeMessages.text(this, it) } ?: error.message)
+        }
     }
 
     private fun clearBatteryAdvice() {

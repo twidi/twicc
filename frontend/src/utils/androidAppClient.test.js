@@ -175,3 +175,21 @@ test('WebView missing document rejects language selection with a language explan
         })
     } finally { f.client.close() }
 })
+
+
+for (const webview of [false, true]) test(`bridgeErrorsRemainReactive (${webview})`, async () => {
+    const f = fixture(webview)
+    const pending = f.client.request('getState')
+    f.reply({ protocol: 1, id: f.sent[0].id, ok: false,
+        ui_message: { key: 'common.android.errors.actionFailed', params: {} } })
+    try {
+        await assert.rejects(pending, error => {
+            i18n.global.locale.value = 'en'
+            const english = error.message
+            assert.equal(error.uiMessage.key, 'common.android.errors.actionFailed')
+            i18n.global.locale.value = 'fr'
+            assert.notEqual(error.message, english)
+            return true
+        })
+    } finally { i18n.global.locale.value = 'en'; f.client.close() }
+})

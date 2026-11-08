@@ -35,6 +35,35 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class TtsPlatformBoundaryTest {
+    @Test fun serviceNotificationUsesLatestLanguageOnNormalRefresh() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val originalProvider = com.twidi.twicc.i18n.NativeMessages.localeProvider
+        var locale = "en"
+        com.twidi.twicc.i18n.NativeMessages.localeProvider = { locale }
+        try {
+            val snapshot = NativeTtsSnapshot(revision = 3, instanceId = "instance", sessionStatus = "connected",
+                playback = NativePlayback(readingId = "reading", operationId = "operation", phase = "playing", text = "User content"),
+                listening = NativeListening("activation", "page", ListeningScope("global", null), "now", false),
+                pendingCount = 0, error = null, configurationAvailable = true, results = emptyList())
+            val notification = TtsNotification(context)
+            val english = notification.build(snapshot, "epoch", "User instance name")
+            assertEquals("Reading", english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+            assertEquals(listOf("Skip", "Pause timeline", "Stop all"), english.actions.map { it.title.toString() })
+            locale = "fr"
+            // No language listener or timer rebuilds the existing notification.
+            assertEquals("Reading", english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+            val french = notification.build(snapshot, "epoch", "User instance name")
+            assertNotEquals(english.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString(),
+                french.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+            assertNotEquals(english.actions.map { it.title.toString() }, french.actions.map { it.title.toString() })
+            assertEquals(english.contentIntent, french.contentIntent)
+            assertEquals(english.actions.map { it.actionIntent }, french.actions.map { it.actionIntent })
+            assertTrue(french.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString().contains("User instance name"))
+            assertEquals("reading", snapshot.playback.readingId)
+            assertEquals("User content", snapshot.playback.text)
+        } finally { com.twidi.twicc.i18n.NativeMessages.localeProvider = originalProvider }
+    }
+
     @Test fun foreground_service_survives_activity_close() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

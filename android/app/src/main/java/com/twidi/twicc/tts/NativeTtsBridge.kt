@@ -14,10 +14,10 @@ class NativeTtsBridge(
     private val dispatch: (TtsCommand) -> Acceptance,
 ) {
     fun receive(command: String, args: JSONObject): JSONObject {
-        if (!enabled()) return acceptance(Acceptance(false, error = TtsActionError("unsupported", "Speech is unavailable. Update the Android app and try again.")))
-        val expected = documentToken() ?: return acceptance(Acceptance(false, error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment.")))
+        if (!enabled()) return acceptance(Acceptance(false, error = TtsActionError("unsupported", "Speech is unavailable. Update the Android app and try again.", uiMessage = ttsUiMessage("android.speech.errors.updateRequired"))))
+        val expected = documentToken() ?: return acceptance(Acceptance(false, error = TtsActionError("initializing", "Speech is getting ready. Try again in a moment.", uiMessage = ttsUiMessage("common.android.errors.speechPreparing"))))
         if (args.opt("documentToken") != expected) return acceptance(Acceptance(false,
-            error = TtsActionError("stale_document", "Reload this page, then try speech again.")))
+            error = TtsActionError("stale_document", "Reload this page, then try speech again.", uiMessage = ttsUiMessage("android.speech.errors.staleDocument"))))
         return try {
             val document = owner()
             val control = when (command) {
@@ -54,7 +54,7 @@ class NativeTtsBridge(
             else acceptance(dispatch(control)).put("snapshot", snapshot().json())
         } catch (error: Exception) {
             Logger.getLogger("TwiCC.NativeTtsBridge").log(Level.WARNING, "Speech request failed", error)
-            acceptance(Acceptance(false, error = TtsActionError("invalid_request", "Speech could not start. Reload the page and try again.")))
+            acceptance(Acceptance(false, error = TtsActionError("invalid_request", "Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed"))))
         }
     }
     private fun acceptance(value: Acceptance) = JSONObject().put("accepted", value.accepted)

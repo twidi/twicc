@@ -53,7 +53,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         mapOf("protocol" to 1, "type" to type, "seq" to nextSeq()) + fields
     private fun queue(type: String, fields: TtsFrame = emptyMap()): Long {
         // A full replay lane must fail closed instead of dropping cancellation intent.
-        if (retained.size >= 256) { terminate("replay_overflow", "Speech stopped. Start playback or turn on timeline reading again."); return seq }
+        if (retained.size >= 256) { terminate("replay_overflow", "Speech stopped. Start playback or turn on timeline reading again.", mapOf("ui_message" to ttsUiMessage("backend.tts.sessionLost"))); return seq }
         val value = frame(type, fields); val sequence = (value["seq"] as Number).toLong()
         retained[sequence] = value
         if (ready) flushPending()
@@ -93,7 +93,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         val operationId = playback.operationId ?: if (playback.automatic && !ok && !aborted && playback.readingId != null)
             "automatic:${playback.readingId}:${playback.generation}" else return
         if (results.size == 64) results.removeFirst()
-        val outcome = if (aborted) mapOf("ok" to false, "aborted" to true) else if (ok) mapOf("ok" to true) else mapOf("ok" to false, "error" to (message ?: "The audio stopped before the end"))
+        val outcome = if (aborted) mapOf("ok" to false, "aborted" to true) else if (ok) mapOf("ok" to true) else mapOf("ok" to false, "error" to (message ?: "The audio stopped before the end")) +
+            (if (message == null) mapOf("ui_message" to ttsUiMessage("session.speech.errors.cut")) else emptyMap())
         results.addLast(NativeTtsResult(operationId, playback.started,
             if (playback.started) mapOf("ok" to true) else outcome + details, outcome + details,
             playback.automatic, playback.readingId, playback.generation))
@@ -137,10 +138,10 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 // During an outage cancel old speech locally; never queue a fresh manual request.
                 if (active && !ready && status != "starting") {
                     cancel(sendSkip = true)
-                    results.addLast(NativeTtsResult(command.operationId, false, mapOf("ok" to false, "error" to "Could not reach TwiCC"),
-                        mapOf("ok" to false, "error" to "Could not reach TwiCC")))
+                    results.addLast(NativeTtsResult(command.operationId, false, mapOf("ok" to false, "error" to "Could not reach TwiCC", "ui_message" to ttsUiMessage("session.speech.errors.unreachable")),
+                        mapOf("ok" to false, "error" to "Could not reach TwiCC", "ui_message" to ttsUiMessage("session.speech.errors.unreachable"))))
                     while (results.size > 64) results.removeFirst()
-                    error = mapOf("code" to "unreachable", "message" to "Could not reach TwiCC")
+                    error = mapOf("code" to "unreachable", "message" to "Could not reach TwiCC", "ui_message" to ttsUiMessage("session.speech.errors.unreachable"))
                 } else {
                     activate(); reserve(command.operationId, command.request["identity"] as? TtsFrame,
                         if (command.request["kind"] == "summary") "summary" else command.request["source"] as? String,
@@ -227,7 +228,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                 } else when (f["type"]) {
                     "opened_session" -> {
                         sessionId = f["session_id"] as? String; secret = f["resume_secret"] as? String
-                        if (sessionId == null || secret == null) terminate("invalid_protocol", "Speech could not start. Reload the page and try again.")
+                        if (sessionId == null || secret == null) terminate("invalid_protocol", "Speech could not start. Reload the page and try again.", mapOf("ui_message" to ttsUiMessage("session.speech.errors.startFailed")))
                         else { ready = true; status = "connected"; flushPending() }
                     }
                     "state" -> {
@@ -287,7 +288,7 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
                         if (playback.started && playback.phase != "settling") audibleEndedAt = elapsedMs()
                         playback = playback.copy(phase = "settling")
                     }
-                    PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.")
+                    PlayerSignal.AuthorizationLost -> terminate("unauthorized", "Authentication expired. Open TwiCC and sign in again.", mapOf("ui_message" to ttsUiMessage("backend.tts.authenticationExpired")))
                     is PlayerSignal.Ended -> {
                         finish(signal.ok, signal.error, details = signal.uiMessage?.let { mapOf("ui_message" to it) } ?: emptyMap())
                         queue("finished", readingFields() + mapOf("outcome" to if (signal.ok) "complete" else "failed", "error" to signal.error))
@@ -298,10 +299,10 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             }
             is TtsCommand.SwitchInstance -> {
                 if (command.instanceId == instanceId) return emptyList()
-                terminate("instance_changed", "The active instance changed")
+                terminate("instance_changed", "The active instance changed", mapOf("ui_message" to ttsUiMessage("android.speech.errors.instanceChanged")))
                 instanceId = command.instanceId; owner = null; status = "idle"; error = null; ack = 0
             }
-            is TtsCommand.AuthorizationLost -> terminate("unauthorized", command.message)
+            is TtsCommand.AuthorizationLost -> terminate("unauthorized", command.message, command.uiMessage?.let { mapOf("ui_message" to it) } ?: emptyMap())
         }
         if (active && stopSeq == null && listening == null && playback.readingId == null) {
             stopSeq = queue("stop_all"); stopEpoch = newId(); status = "stopped"
@@ -327,7 +328,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
         if (obsoleteListeningError(f)) return
         val code = f["code"] as? String ?: "failed"
         val message = f["message"] as? String ?: "Speech failed"
-        val presentation = f["ui_message"]?.let { mapOf("ui_message" to it) } ?: emptyMap()
+        val presentation = f["ui_message"]?.let { mapOf("ui_message" to it) }
+            ?: if (f["message"] !is String) mapOf("ui_message" to ttsUiMessage("android.speech.errors.failed")) else emptyMap()
         if (code in setOf("unauthorized", "session_lost")) terminate(code, message, presentation)
         else if (code in setOf("catchup_incomplete", "scope_unavailable", "tts_unavailable")) {
             listening?.let { queue("disable", mapOf("activation_id" to it.activationId)) }
@@ -336,7 +338,8 @@ class TtsController(private var instanceId: String, private val newId: () -> Str
             val failedOwner = errorOwner(playback)
             val details = (if (f["summary_changed"] == true) mapOf("summaryChanged" to true, "savedId" to f["saved_id"]) else emptyMap()) + presentation
             if (playback.readingId != null) { finish(false, message, details = details); playback = playback.copy(operationId = null, automatic = false); cancel() }
-            error = f.filterKeys { it in setOf("code", "message", "status", "saved_id", "summary_changed", "reading_id", "generation", "ui_message") } + failedOwner
+            error = f.filterKeys { it in setOf("code", "message", "status", "saved_id", "summary_changed", "reading_id", "generation", "ui_message") } +
+                mapOf("message" to message) + presentation + failedOwner
         }
     }
 }

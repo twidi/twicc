@@ -104,7 +104,7 @@ class TtsService : Service() {
         fun stopForInstance(instanceId: String) {
             current?.let { service ->
                 if (service.owner.snapshot().instanceId == instanceId)
-                    service.owner.dispatch(TtsCommand.AuthorizationLost("The active instance was closed. Start speech again to continue."))
+                    service.owner.dispatch(TtsCommand.AuthorizationLost("The active instance was closed. Start speech again to continue.", ttsUiMessage("android.speech.errors.instanceClosed")))
             }
         }
     }

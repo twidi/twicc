@@ -1,6 +1,5 @@
 import { remoteUiMessage } from '../i18n/remoteMessages.js'
-import { resolveUiMessage } from '../i18n/uiMessages.js'
-import { i18n } from '../i18n/index.js'
+import { localUiMessage, resolveUiMessage } from '../i18n/uiMessages.js'
 
 import { getAndroidAppClient } from './androidAppClient.js'
 
@@ -10,7 +9,7 @@ const copy = value => JSON.parse(JSON.stringify(value))
 // Keep the native error fields and codes, with a live presentation identity for page consumers.
 function browserFailure(value, field = 'error') {
     if (!value) return value
-    const uiMessage = remoteUiMessage(value, null)
+    const uiMessage = value.uiMessage ?? remoteUiMessage(value, null)
     if (!uiMessage) return value
     return { ...value, uiMessage, get [field]() { return resolveUiMessage(uiMessage) } }
 }
@@ -71,7 +70,10 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
             const response = await appClient.request(`tts.${name}`, args)
             if (attached && mine === epoch) apply(response?.snapshot)
             return response?.error ? { ...response, error: browserFailure(response.error, 'message') } : response
-        } catch (error) { return { accepted: false, error: { message: error.message || i18n.global.t('session.speech.errors.unavailable') } } }
+        } catch (error) {
+            return { accepted: false, error: browserFailure({ code: error.code, status: error.status,
+                message: error.message, uiMessage: error.uiMessage ?? (!error.message ? localUiMessage('session.speech.errors.unavailable') : undefined) }, 'message') }
+        }
     }
     function abortOperations(predicate = () => true) {
         for (const [id, entry] of pending) if (predicate(id)) {
@@ -121,7 +123,7 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
         subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
         acknowledge: revision => command('acknowledge', { revision }),
         manual(request) {
-            if (!attached) return Promise.resolve({ ok: false, error: i18n.global.t('session.speech.errors.unavailable') })
+            if (!attached) return Promise.resolve(browserFailure({ ok: false, uiMessage: localUiMessage('session.speech.errors.unavailable') }))
             abortOperations()
             const operationId = `${prefix}-${++operation}`
             pageOperations.add(operationId)
@@ -136,8 +138,8 @@ export function createNativeTtsClient({ appClient, document, timers = globalThis
                 if (!entry) return
                 if (acceptance?.accepted) { entry.accepted = true; return }
                 pending.delete(operationId)
-                entry.resolve(browserFailure({ ok: false, error: acceptance?.error?.message || i18n.global.t('session.speech.errors.startFailed'),
-                    ...(acceptance?.error?.ui_message ? { ui_message: acceptance.error.ui_message } : {}) }))
+                entry.resolve(browserFailure({ ...acceptance?.error, ok: false, error: acceptance?.error?.message,
+                    uiMessage: acceptance?.error?.uiMessage ?? (!acceptance?.error?.message ? localUiMessage('session.speech.errors.startFailed') : undefined) }))
                 entry.resolveEnded(ABORTED)
             })
             return Object.assign(result, { operationId })

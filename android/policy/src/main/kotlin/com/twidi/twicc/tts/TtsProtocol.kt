@@ -2,6 +2,10 @@ package com.twidi.twicc.tts
 
 /** JSON values only. Maps cross the service boundary without credentials entering UI snapshots. */
 typealias TtsFrame = Map<String, Any?>
+
+/** Semantic presentation data stays language-neutral through retained speech state. */
+fun ttsUiMessage(key: String, params: Map<String, Any?> = emptyMap()): TtsFrame =
+    mapOf("key" to key, "params" to params)
 data class DocumentOwner(val instanceId: String, val pageId: String, val generation: Long)
 data class ListeningScope(val kind: String, val id: String?, val label: String? = null) {
     init { require(kind in setOf("global", "project", "workspace", "worktree")); require((kind == "global") == (id == null)) }
@@ -52,7 +56,7 @@ sealed interface TtsCommand {
     data class ServerFrame(val connectionId: String, val frame: TtsFrame) : TtsCommand
     data class PlayerFeedback(val readingId: String, val generation: Long, val signal: PlayerSignal) : TtsCommand
     data class SwitchInstance(val instanceId: String) : TtsCommand
-    data class AuthorizationLost(val message: String) : TtsCommand
+    data class AuthorizationLost(val message: String, val uiMessage: TtsFrame? = null) : TtsCommand
 }
 sealed interface TtsEffect {
     data object RequireForeground : TtsEffect

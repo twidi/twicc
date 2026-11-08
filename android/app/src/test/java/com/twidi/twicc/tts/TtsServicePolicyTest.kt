@@ -380,4 +380,43 @@ class TtsServicePolicyTest {
         assertEquals("idle", stopped.playback.status)
     }
 
+    @Test fun allOwnedServiceRejectionsCarryDescriptors() {
+        val h = Harness()
+        val stale = h.owner.dispatch(TtsCommand.Manual(h.document.copy(generation = 0), "stale", emptyMap()))
+        val invalid = h.owner.dispatch(TtsCommand.Heartbeat)
+        val changed = h.owner.dispatch(TtsCommand.Acknowledge(h.document, Long.MAX_VALUE))
+        val notification = h.owner.notificationCommand("old", TtsCommand.Skip)
+        for ((acceptance, key) in listOf(stale to "android.speech.errors.staleDocument",
+            invalid to "android.speech.errors.changeFailed", changed to "android.speech.errors.playbackChanged",
+            notification to "android.speech.errors.staleSession")) {
+            assertFalse(acceptance.accepted)
+            assertEquals(key, acceptance.error?.uiMessage?.get("key"))
+        }
+        h.manual()
+        h.exported!!(Result.failure(IllegalStateException("Raw credential diagnostic")))
+        val failed = h.owner.snapshot()
+        assertEquals("session.speech.errors.startFailed", (failed.error?.get("ui_message") as? Map<*, *>)?.get("key"))
+        assertEquals(failed.error?.get("ui_message"), failed.results.single().start["ui_message"])
+        assertEquals(failed.error?.get("ui_message"), failed.results.single().ended["ui_message"])
+    }
+
+    @Test fun platformFailureDescriptorSurvivesControlShutdownAndCache() {
+        val h = Harness(); h.manual(); h.connect()
+        val descriptor = mapOf("key" to "android.speech.notificationsRequired", "params" to emptyMap<String, Any?>())
+        h.blocked = TtsActionError("notifications_blocked", "Original fallback", "notification_settings", descriptor)
+        h.socket.event(TtsConnectionEvent.HeartbeatDue("connection"))
+        assertEquals(descriptor, h.owner.snapshot().error?.get("ui_message"))
+        assertEquals(descriptor, h.owner.snapshot().results.single().ended["ui_message"])
+        assertTrue(h.stopped)
+    }
+
+    @Test fun unavailableNativeOutputReportsItsOwnMessageIdentity() {
+        var signal: PlayerSignal? = null
+        UnavailableTtsOutput().prepare(AudioResource("instance", "session", "secret", "reading", 1, "audio", "audio/mpeg"),
+            Socket()) { signal = it }
+        val ended = signal as PlayerSignal.Ended
+        assertFalse(ended.ok)
+        assertEquals("android.speech.errors.updateRequired", ended.uiMessage?.get("key"))
+    }
+
 }

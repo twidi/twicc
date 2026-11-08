@@ -31,14 +31,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Mirrors speechOutcome.js. A decoder/network error cannot become success after generation completes. */
 @Suppress("UNCHECKED_CAST")
-internal fun speechEndResult(drained: Boolean, started: Boolean, refused: Boolean, backend: TtsFrame?): PlayerSignal.Ended {
+internal fun speechEndResult(drained: Boolean, started: Boolean, refused: Boolean, backend: TtsFrame?, nativeUiMessage: TtsFrame? = null): PlayerSignal.Ended {
     val state = backend?.get("state")
-    if (state == "failed") return PlayerSignal.Ended(false, backend["error"] as? String ?: "Speech generation failed", backend["ui_message"] as? TtsFrame)
-    if (drained) return if (state == "running") PlayerSignal.Ended(false, "The audio stopped before the end") else PlayerSignal.Ended(true)
-    if (refused) return PlayerSignal.Ended(false, if (started) "Audio playback was interrupted." else "Audio playback could not start.")
-    if (backend == null) return PlayerSignal.Ended(false, "Could not reach TwiCC")
-    if (state != "complete" && state != "running") return PlayerSignal.Ended(false, "The audio is no longer available")
-    return PlayerSignal.Ended(false, if (started) "The audio stopped before the end" else "Could not reach TwiCC")
+    if (state == "failed") return PlayerSignal.Ended(false, backend["error"] as? String ?: "Speech generation failed",
+        backend["ui_message"] as? TtsFrame ?: if (backend["error"] !is String) ttsUiMessage("android.speech.errors.generationFailed") else null)
+    if (drained) return if (state == "running") PlayerSignal.Ended(false, "The audio stopped before the end", ttsUiMessage("session.speech.errors.cut")) else PlayerSignal.Ended(true)
+    if (refused) return PlayerSignal.Ended(false, if (started) "Audio playback was interrupted." else "Audio playback could not start.",
+        ttsUiMessage(if (started) "android.speech.errors.interrupted" else "android.speech.errors.playbackFailed"))
+    if (backend == null) return PlayerSignal.Ended(false, "Could not reach TwiCC", nativeUiMessage ?: ttsUiMessage("session.speech.errors.unreachable"))
+    if (state != "complete" && state != "running") return PlayerSignal.Ended(false, "The audio is no longer available", nativeUiMessage ?: ttsUiMessage("session.speech.errors.gone"))
+    return PlayerSignal.Ended(false, if (started) "The audio stopped before the end" else "Could not reach TwiCC",
+        nativeUiMessage ?: ttsUiMessage(if (started) "session.speech.errors.cut" else "session.speech.errors.unreachable"))
 }
 
 /** One response, one forward read. Media3 cannot reopen a partially consumed resource or issue a Range request. */
@@ -101,7 +104,7 @@ class TtsPlayer(context: Context, renderersFactory: RenderersFactory = DefaultRe
     override fun prepare(resource: AudioResource, connection: TtsTransport, feedback: (PlayerSignal) -> Unit) {
         checkOwner(); check(!closed)
         current?.let { cancel(it.resource.readingId, it.resource.generation) }
-        val http = connection.connection ?: run { feedback(PlayerSignal.Ended(false, "Could not reach TwiCC. Start playback again.")); return }
+        val http = connection.connection ?: run { feedback(PlayerSignal.Ended(false, "Could not reach TwiCC. Start playback again.", ttsUiMessage("android.speech.errors.retryPlayback"))); return }
         val reading = Reading(resource, http, feedback); current = reading
         reading.listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -114,7 +117,8 @@ class TtsPlayer(context: Context, renderersFactory: RenderersFactory = DefaultRe
             override fun onPlayerError(error: PlaybackException) {
                 if (!active(reading)) return
                 if (generateSequence<Throwable>(error) { it.cause }.any { it is TtsAuthorizationException }) authorizationLost(reading)
-                else settle(reading, drained = false)
+                else settle(reading, drained = false, nativeUiMessage = generateSequence<Throwable>(error) { it.cause }
+                    .filterIsInstance<TtsUiException>().firstOrNull()?.uiMessage)
             }
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (active(reading) && !playWhenReady && reason in setOf(Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS,
@@ -150,7 +154,7 @@ class TtsPlayer(context: Context, renderersFactory: RenderersFactory = DefaultRe
                 return when (contentType.substringBefore(';').trim().lowercase()) {
                     "audio/pcm" -> arrayOf(PcmExtractor(PcmFormat.parse(contentType)))
                     "audio/mpeg", "audio/mp3" -> arrayOf(Mp3Extractor().apply { disableSeeking() })
-                    else -> throw IOException("Unsupported speech audio format")
+                    else -> throw TtsUiException("Unsupported speech audio format", ttsUiMessage("android.speech.errors.audioFormat"))
                 }
             }
         }
@@ -177,16 +181,17 @@ class TtsPlayer(context: Context, renderersFactory: RenderersFactory = DefaultRe
         reading.settling = true; detach(reading); current = null
         reading.feedback(PlayerSignal.AuthorizationLost)
     }
-    private fun settle(reading: Reading, drained: Boolean, refused: Boolean = false) {
+    private fun settle(reading: Reading, drained: Boolean, refused: Boolean = false, nativeUiMessage: TtsFrame? = null) {
         if (!active(reading)) return
         reading.settling = true
         detach(reading)
         reading.feedback(PlayerSignal.Settling)
         workers.execute {
             val result = try {
-                speechEndResult(drained, reading.started, refused, reading.connection.readEnding(reading.resource))
+                speechEndResult(drained, reading.started, refused, reading.connection.readEnding(reading.resource), nativeUiMessage)
             } catch (_: TtsAuthorizationException) { PlayerSignal.AuthorizationLost }
-              catch (_: Exception) { speechEndResult(drained, reading.started, refused, null) }
+              catch (error: Exception) { speechEndResult(drained, reading.started, refused, null,
+                  nativeUiMessage ?: (error as? TtsUiException)?.uiMessage) }
             handler.post {
                 if (!closed && current === reading) { current = null; reading.feedback(result) }
             }

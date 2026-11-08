@@ -52,7 +52,7 @@ class NativeTtsTransport(credentials: TtsCredentials) : TtsTransport {
 }
 class UnavailableTtsOutput : TtsPlaybackOutput {
     override fun prepare(resource: AudioResource, connection: TtsTransport, feedback: (PlayerSignal) -> Unit) {
-        feedback(PlayerSignal.Ended(false, "Speech is unavailable. Update the Android app and try again."))
+        feedback(PlayerSignal.Ended(false, "Speech is unavailable. Update the Android app and try again.", uiMessage = ttsUiMessage("android.speech.errors.updateRequired")))
     }
     override fun play(readingId: String, generation: Long) {}
     override fun cancel(readingId: String, generation: Long) {}
@@ -165,13 +165,13 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     @Suppress("UNCHECKED_CAST")
     fun dispatch(command: TtsCommand): Acceptance {
         if (command is TtsCommand.SwitchInstance && command.instanceId != instanceId) {
-            if (active) internal(TtsCommand.AuthorizationLost("The active instance changed."))
+            if (active) internal(TtsCommand.AuthorizationLost("The active instance changed.", uiMessage = ttsUiMessage("android.speech.errors.instanceChanged")))
             controller = TtsController(command.instanceId, elapsedMs = elapsedMs); instanceId = command.instanceId
             source = null; document = null
             cache.publish(controller!!.snapshot(), mirrorOnly = true)
             return Acceptance(true)
         }
-        val policy = controller ?: return rejected("not_attached", "Open a saved instance before starting speech.")
+        val policy = controller ?: return rejected("not_attached", "Open a saved instance before starting speech.", uiMessage = ttsUiMessage("android.speech.errors.instanceRequired"))
         // An idle bound service has no speech session to lose. Do not recreate a consumed failure.
         if (command is TtsCommand.AuthorizationLost && !active) return Acceptance(true)
         val owner = when (command) {
@@ -183,41 +183,42 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
             is TtsCommand.StopReading -> command.owner
             else -> null
         }
-        if (owner != null && owner != document) return rejected("stale_document", "Reload this page, then try speech again.")
+        if (owner != null && owner != document) return rejected("stale_document", "Reload this page, then try speech again.", uiMessage = ttsUiMessage("android.speech.errors.staleDocument"))
         if (command is TtsCommand.Acknowledge) {
-            if (command.revision !in 0..snapshot().revision) return rejected("stale_command", "Speech playback changed. Try again.")
+            if (command.revision !in 0..snapshot().revision) return rejected("stale_command", "Speech playback changed. Try again.", uiMessage = ttsUiMessage("android.speech.errors.playbackChanged"))
             forget(cache.acknowledge(instanceId, command.revision))
             return Acceptance(true)
         }
         if (command is TtsCommand.AttachDocument) {
             if (command.owner.instanceId != instanceId || (document != null && command.owner.generation < document!!.generation))
-                return rejected("stale_document", "Reload this page, then try speech again.")
+                return rejected("stale_document", "Reload this page, then try speech again.", uiMessage = ttsUiMessage("android.speech.errors.staleDocument"))
             document = command.owner
         } else if (command !is TtsCommand.Manual && command !is TtsCommand.Listen && command !is TtsCommand.SetMuted &&
             command !is TtsCommand.Disable && command !is TtsCommand.StopReading && command != TtsCommand.Skip &&
             command !is TtsCommand.PauseTimeline && command !is TtsCommand.ResumeTimeline &&
             command != TtsCommand.StopAll && command !is TtsCommand.SwitchInstance && command !is TtsCommand.AuthorizationLost)
-            return rejected("invalid_command", "Could not change speech playback. Reload the page and try again.")
+            return rejected("invalid_command", "Could not change speech playback. Reload the page and try again.", uiMessage = ttsUiMessage("android.speech.errors.changeFailed"))
         if (command is TtsCommand.Manual || command is TtsCommand.Listen) {
             platform.notificationError()?.let { return Acceptance(false, error = it) }
-            if (!active && source == null) return rejected("credentials_unavailable", "Reopen this instance, then start speech again.")
-            if (terminal) return rejected("stopping", "Speech is stopping. Wait a moment, then try again.")
+            if (!active && source == null) return rejected("credentials_unavailable", "Reopen this instance, then start speech again.", uiMessage = ttsUiMessage("android.speech.errors.credentialsUnavailable"))
+            if (terminal) return rejected("stopping", "Speech is stopping. Wait a moment, then try again.", uiMessage = ttsUiMessage("android.speech.errors.stopping"))
         }
         if (command is TtsCommand.ResumeTimeline)
             platform.notificationError()?.let { return Acceptance(false, error = it) }
         val effects = policy.dispatch(command)
-        if (effects.isEmpty()) return rejected("stale_command", "Speech playback changed. Try again.")
+        if (effects.isEmpty()) return rejected("stale_command", "Speech playback changed. Try again.", uiMessage = ttsUiMessage("android.speech.errors.playbackChanged"))
         if (command == TtsCommand.StopAll) { terminal = true; exporting = false }
         if (command is TtsCommand.SwitchInstance) { source = null; document = null }
         try { process(effects) } catch (error: Exception) {
             Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Speech activation failed", error)
-            internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
-            return rejected("activation_failed", "Speech could not start. Reload the page and try again.")
+            internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed")))
+            return rejected("activation_failed", "Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed"))
         }
         val value = snapshot()
         if (command is TtsCommand.Manual && value.playback.operationId != command.operationId)
             return rejected("unreachable", value.error?.get("message") as? String ?: "Could not reach TwiCC",
-                uiMessage = value.error?.get("ui_message") as? TtsFrame)
+                uiMessage = value.error?.get("ui_message") as? TtsFrame
+                    ?: if (value.error?.get("message") !is String) ttsUiMessage("session.speech.errors.unreachable") else null)
         return Acceptance(true, when (command) {
             is TtsCommand.Manual -> command.operationId
             is TtsCommand.Listen -> value.listening?.activationId
@@ -227,7 +228,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     fun notificationCommand(epoch: String, command: TtsCommand): Acceptance {
         if (!active || epoch != sessionEpoch || (command != TtsCommand.Skip && command != TtsCommand.StopAll &&
                 command !is TtsCommand.PauseTimeline && command !is TtsCommand.ResumeTimeline))
-            return rejected("stale_session", "This notification belongs to an old speech session.")
+            return rejected("stale_session", "This notification belongs to an old speech session.", uiMessage = ttsUiMessage("android.speech.errors.staleSession"))
         return dispatch(command)
     }
     fun feedback(readingId: String, generation: Long, signal: PlayerSignal) {
@@ -239,7 +240,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
     }
     private fun controlsAvailable(): Boolean {
         val error = platform.notificationError() ?: return true
-        internal(TtsCommand.AuthorizationLost(error.message))
+        internal(TtsCommand.AuthorizationLost(error.message, error.uiMessage))
         return false
     }
     private fun process(effects: List<TtsEffect>) {
@@ -297,7 +298,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         val existing = transport
         if (existing != null) { connectionId = existing.connect(handshake); return }
         if (exporting || terminal) return
-        val activation = source ?: run { internal(TtsCommand.AuthorizationLost("Reopen this instance and start speech again.")); return }
+        val activation = source ?: run { internal(TtsCommand.AuthorizationLost("Reopen this instance and start speech again.", uiMessage = ttsUiMessage("android.speech.errors.credentialsUnavailable"))); return }
         source = null // Never retain an Activity/browser through the service lifetime.
         val epoch = sessionEpoch!!
         exporting = true
@@ -313,11 +314,11 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                     connectionId = socket.connect(handshake)
                 } catch (error: Exception) {
                     Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Speech connection failed", error)
-                    internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
+                    internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed")))
                 }
             }, { error ->
                 Logger.getLogger("TwiCC.TtsServiceOwner").log(Level.WARNING, "Browser credential export failed", error)
-                internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again."))
+                internal(TtsCommand.AuthorizationLost("Speech could not start. Reload the page and try again.", uiMessage = ttsUiMessage("session.speech.errors.startFailed")))
             })
         } }
     }
@@ -338,7 +339,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
                         internal(TtsCommand.Reconnect)
                 }
             }
-            is TtsConnectionEvent.AuthorizationLost -> internal(TtsCommand.AuthorizationLost("Authentication expired. Open TwiCC and sign in again."))
+            is TtsConnectionEvent.AuthorizationLost -> internal(TtsCommand.AuthorizationLost("Authentication expired. Open TwiCC and sign in again.", uiMessage = ttsUiMessage("backend.tts.authenticationExpired")))
             is TtsConnectionEvent.HeartbeatDue -> internal(TtsCommand.Heartbeat)
         }
     }
@@ -356,7 +357,7 @@ class TtsServiceOwner(private val platform: TtsServicePlatform,
         platform.wakeLock(false); platform.stop()
     }
     fun destroy() {
-        if (active) process(controller?.dispatch(TtsCommand.AuthorizationLost("Android stopped speech. Start it again.")).orEmpty())
+        if (active) process(controller?.dispatch(TtsCommand.AuthorizationLost("Android stopped speech. Start it again.", uiMessage = ttsUiMessage("android.speech.errors.androidStopped"))).orEmpty())
         else { closeTransport(); output?.close(); output = null; platform.wakeLock(false) }
         source = null
     }

@@ -29,7 +29,7 @@ class AndroidAppBridge(
             }.toString()
         fun invalid(reason: String): String {
             Logger.getLogger("TwiCC.AndroidAppBridge").warning(reason)
-            return reply("Could not complete this action. Reload this page and try again.")
+            return reply(uiMessage = UiMessage("common.android.errors.actionFailed"))
         }
         try {
             frameError(text)?.let { return it }
@@ -42,9 +42,9 @@ class AndroidAppBridge(
                     ?: return reply(uiMessage = UiMessage("android.language.errors.updateApp"))
                 return reply(state = selection.state.bridgeState(), uiMessage = selection.error)
             }
-            if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply("Speech is unavailable. Update the Android app and try again.")
+            if (wire in TTS_COMMANDS) return nativeTts?.let { reply(state = it(wire, request)) } ?: reply(uiMessage = UiMessage("android.speech.errors.updateRequired"))
             if (wire in setOf("push.state", "push.preferences", "push.configure", "push.permission", "push.remove")) return androidPush?.let { reply(state = it(wire, request)) }
-                ?: reply("Android notifications are unavailable. Update the Android app and try again.")
+                ?: reply(uiMessage = UiMessage("android.push.errors.updateApp"))
             if (wire == "navigation.acknowledge") {
                 val navigationId = request.opt("navigationId") as? String ?: return invalid("Missing navigation ID")
                 if (navigationId.isEmpty() || navigationId.length > 96) return invalid("Invalid navigation ID")
@@ -80,7 +80,7 @@ class AndroidAppBridge(
             }
         } catch (error: Exception) {
             Logger.getLogger("TwiCC.AndroidAppBridge").log(Level.WARNING, "Android request failed", error)
-            return reply("Could not complete this action. Reload this page and try again.")
+            return reply(uiMessage = UiMessage("common.android.errors.actionFailed"))
         }
     }
 
@@ -96,7 +96,8 @@ class AndroidAppBridge(
             val tts = request?.optString("command") in TTS_COMMANDS
             if (tts && bytes <= TTS_MAX_BYTES) return null
             return JSONObject().put("protocol", 1).put("id", (request?.opt("id") as? String).orEmpty().take(96))
-                .put("ok", false).put("error", "This action contains too much data. Try a smaller selection.").toString()
+                .put("ok", false).put("error", "This action contains too much data. Try a smaller selection.")
+                .put("ui_message", UiMessageJson.encode(UiMessage("common.android.errors.tooLarge"))).toString()
         }
     }
 }

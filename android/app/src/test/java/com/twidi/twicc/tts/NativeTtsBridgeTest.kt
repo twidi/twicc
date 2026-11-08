@@ -129,4 +129,31 @@ class NativeTtsBridgeTest {
         assertEquals(0, result.getJSONObject("ui_message").getJSONObject("params").length())
     }
 
+    @Test fun allOwnedTtsRejectionsCarryDescriptors() {
+        val initializing = NativeTtsBridge({ true }, { owner }, { snapshot }, { null }) { Acceptance(true) }
+        val cases = listOf(
+            bridge(false).receive("tts.attach", JSONObject()) to "android.speech.errors.updateRequired",
+            initializing.receive("tts.attach", JSONObject()) to "common.android.errors.speechPreparing",
+            bridge().receive("tts.attach", JSONObject().put("documentToken", "old")) to "android.speech.errors.staleDocument",
+            bridge().request("tts.manual", JSONObject()) to "session.speech.errors.startFailed",
+        )
+        for ((reply, key) in cases) {
+            assertFalse(reply.getBoolean("accepted"))
+            assertEquals(key, reply.getJSONObject("error").getJSONObject("ui_message").getString("key"))
+        }
+    }
+
+    @Test fun topLevelBridgeFallbacksCarryDescriptors() {
+        val bridge = AndroidAppBridge({ throw IllegalStateException("raw internal diagnostic") }, { _, _ -> }, { _, _ -> null })
+        for ((command, key) in listOf("getState" to "common.android.errors.actionFailed",
+            "tts.attach" to "android.speech.errors.updateRequired", "push.state" to "android.push.errors.updateApp",
+            "unknown" to "common.android.errors.actionFailed")) {
+            val result = JSONObject(bridge.receive(JSONObject().put("protocol", 1).put("id", "test").put("command", command).toString()))
+            assertFalse(result.getBoolean("ok"))
+            assertEquals(key, result.getJSONObject("ui_message").getString("key"))
+        }
+        val oversized = JSONObject(AndroidAppBridge.frameError("x".repeat(AndroidAppBridge.MENU_MAX_BYTES + 1))!!)
+        assertEquals("common.android.errors.tooLarge", oversized.getJSONObject("ui_message").getString("key"))
+    }
+
 }

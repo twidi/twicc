@@ -16,12 +16,16 @@ import android.os.PowerManager
 import android.provider.Settings
 import com.twidi.twicc.MainActivity
 import com.twidi.twicc.R
+import com.twidi.twicc.i18n.NativeMessages
+import com.twidi.twicc.i18n.UiMessage
+import com.twidi.twicc.i18n.UiMessageJson
+import org.json.JSONObject
 
 /** Control URIs identify the session and listening activation. Extras do not distinguish PendingIntents. */
 class TtsNotification(private val context: Context) {
     private val manager = context.getSystemService(NotificationManager::class.java)
     init {
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.tts_channel), NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, NativeMessages.text(context, UiMessage("android.speech.channel")), NotificationManager.IMPORTANCE_LOW))
     }
     fun error(): TtsActionError? {
         val permission = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -29,16 +33,16 @@ class TtsNotification(private val context: Context) {
         val appOp = context.getSystemService(AppOpsManager::class.java).unsafeCheckOpNoThrow(
             "android:post_notification", android.os.Process.myUid(), context.packageName)
         return if (!permission || appOp !in setOf(AppOpsManager.MODE_ALLOWED, AppOpsManager.MODE_DEFAULT) || !manager.areNotificationsEnabled() || manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE)
-            TtsActionError("notifications_blocked", context.getString(R.string.tts_notifications_required), "notification_settings") else null
+            TtsActionError("notifications_blocked", "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.", "notification_settings", ttsUiMessage("android.speech.notificationsRequired")) else null
     }
     fun build(snapshot: NativeTtsSnapshot, epoch: String, name: String): Notification {
         val status = when {
-            snapshot.sessionStatus == "reconnecting" -> R.string.tts_reconnecting
-            snapshot.playback.phase in setOf("playing", "settling") -> R.string.tts_reading
-            snapshot.playback.readingId != null || snapshot.sessionStatus == "starting" -> R.string.tts_preparing
-            snapshot.sessionStatus == "stopped" -> R.string.tts_stopping
-            snapshot.listening?.paused == true -> R.string.tts_timeline_paused
-            else -> R.string.tts_waiting
+            snapshot.sessionStatus == "reconnecting" -> "android.speech.reconnecting"
+            snapshot.playback.phase in setOf("playing", "settling") -> "android.speech.reading"
+            snapshot.playback.readingId != null || snapshot.sessionStatus == "starting" -> "android.speech.preparing"
+            snapshot.sessionStatus == "stopped" -> "android.speech.stopping"
+            snapshot.listening?.paused == true -> "android.speech.timelinePaused"
+            else -> "android.speech.waiting"
         }
         val reopen = Intent(context, MainActivity::class.java).setAction(ACTION_REOPEN)
             .setData(Uri.parse("twicc-tts://reopen/$epoch"))
@@ -46,21 +50,21 @@ class TtsNotification(private val context: Context) {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.tts_notification_title, name))
-            .setContentText(context.getString(status))
+            .setContentTitle(NativeMessages.text(context, UiMessage("android.speech.notificationTitle", mapOf("name" to name))))
+            .setContentText(NativeMessages.text(context, UiMessage(status)))
             .setContentIntent(PendingIntent.getActivity(context, 0, reopen, PendingIntent.FLAG_IMMUTABLE))
             .setCategory(Notification.CATEGORY_SERVICE).setOngoing(true).setOnlyAlertOnce(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .apply {
                 if (snapshot.playback.readingId != null) addAction(Notification.Action.Builder(null,
-                    context.getString(R.string.tts_skip), command(ACTION_SKIP, epoch)).build())
+                    NativeMessages.text(context, UiMessage("android.speech.skip")), command(ACTION_SKIP, epoch)).build())
                 snapshot.listening?.let { listening ->
                     addAction(Notification.Action.Builder(null,
-                        context.getString(if (listening.paused) R.string.tts_resume_timeline else R.string.tts_pause_timeline),
+                        NativeMessages.text(context, UiMessage(if (listening.paused) "android.speech.resumeTimeline" else "android.speech.pauseTimeline")),
                         command(if (listening.paused) ACTION_RESUME_TIMELINE else ACTION_PAUSE_TIMELINE,
                             epoch, listening.activationId)).build())
                 }
-                addAction(Notification.Action.Builder(null, context.getString(R.string.tts_stop_all), command(ACTION_STOP_ALL, epoch)).build())
+                addAction(Notification.Action.Builder(null, NativeMessages.text(context, UiMessage("android.speech.stopAll")), command(ACTION_STOP_ALL, epoch)).build())
                 if (Build.VERSION.SDK_INT >= 31) setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             }.build()
     }
@@ -86,13 +90,13 @@ class TtsNotification(private val context: Context) {
         /** A denial never resumes queued activation. The next attempt requires a fresh visible user action. */
         fun visiblePreflight(activity: Activity): TtsActionError? {
             if (activity.isFinishing || !activity.hasWindowFocus())
-                return TtsActionError("not_visible", "Open TwiCC before starting speech.")
+                return TtsActionError("not_visible", "Open TwiCC before starting speech.", uiMessage = ttsUiMessage("android.speech.errors.visibleRequired"))
             if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 val preferences = activity.getSharedPreferences("tts_platform", Context.MODE_PRIVATE)
                 if (!preferences.getBoolean("notification_requested", false)) {
                     preferences.edit().putBoolean("notification_requested", true).apply()
                     activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), PERMISSION_REQUEST)
-                    return TtsActionError("permission_required", activity.getString(R.string.tts_notifications_required), "notification_settings")
+                    return TtsActionError("permission_required", "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.", "notification_settings", ttsUiMessage("android.speech.notificationsRequired"))
                 }
             }
             TtsNotification(activity).error()?.let { showSettings(activity, it); return it }
@@ -105,14 +109,22 @@ class TtsNotification(private val context: Context) {
 
         /** Only Continue acknowledges the advice. Opening Settings never queues an activation. */
         fun showBatteryAdvice(activity: Activity, onContinue: () -> Unit): AlertDialog =
-            AlertDialog.Builder(activity).setTitle(R.string.tts_battery_title).setMessage(R.string.tts_battery_advice)
-                .setNegativeButton(R.string.tts_continue_without_changes) { _, _ ->
+            AlertDialog.Builder(activity).setTitle(NativeMessages.text(activity, UiMessage("android.speech.batteryTitle")))
+                .setMessage(NativeMessages.text(activity, UiMessage("android.speech.batteryAdvice")))
+                .setNegativeButton(NativeMessages.text(activity, UiMessage("android.speech.continueWithoutChanges"))) { _, _ ->
                     activity.getSharedPreferences("tts_platform", Context.MODE_PRIVATE).edit()
                         .putBoolean("battery_advice_acknowledged", true).apply()
                     onContinue()
                 }
-                .setPositiveButton(R.string.tts_open_settings) { _, _ -> openBatterySettings(activity) }
+                .setPositiveButton(NativeMessages.text(activity, UiMessage("android.speech.openSettings"))) { _, _ -> openBatterySettings(activity) }
                 .show()
+
+        fun refreshBatteryAdvice(activity: Activity, dialog: AlertDialog) {
+            dialog.setTitle(NativeMessages.text(activity, UiMessage("android.speech.batteryTitle")))
+            dialog.setMessage(NativeMessages.text(activity, UiMessage("android.speech.batteryAdvice")))
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.text = NativeMessages.text(activity, UiMessage("android.speech.continueWithoutChanges"))
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.text = NativeMessages.text(activity, UiMessage("android.speech.openSettings"))
+        }
 
         private fun openBatterySettings(activity: Activity) {
             runCatching { activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }.onFailure {
@@ -121,9 +133,10 @@ class TtsNotification(private val context: Context) {
         }
         fun showSettings(activity: Activity, error: TtsActionError) {
             if (activity.isFinishing) return
-            AlertDialog.Builder(activity).setTitle(R.string.tts_settings_title).setMessage(error.message)
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.tts_open_settings) { _, _ ->
+            AlertDialog.Builder(activity).setTitle(NativeMessages.text(activity, UiMessage("android.speech.settingsTitle")))
+                .setMessage(error.uiMessage?.let { UiMessageJson.decode(JSONObject(it)) }?.let { NativeMessages.text(activity, it) } ?: error.message)
+                .setNegativeButton(NativeMessages.text(activity, UiMessage("common.actions.cancel")), null)
+                .setPositiveButton(NativeMessages.text(activity, UiMessage("android.speech.openSettings"))) { _, _ ->
                     val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
                         .putExtra(Settings.EXTRA_CHANNEL_ID, CHANNEL)
                     runCatching { activity.startActivity(intent) }.onFailure {

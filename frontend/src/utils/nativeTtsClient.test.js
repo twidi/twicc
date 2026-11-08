@@ -5,15 +5,16 @@ import { createNativeTtsClient } from './nativeTtsClient.js'
 const snapshot = (revision = 1, extra = {}) => ({ version: 1, revision, instanceId: 'instance', sessionStatus: 'connected', playback: { status: 'idle' }, listening: null, pendingCount: 0, results: [], ...extra })
 function fixture({ capability = 1, server = true } = {}) {
     const calls = [], listeners = new Map(), scheduled = new Map(), delays = []
-    let next = 0, current = snapshot()
+    let next = 0, current = snapshot(), failure = null
     const document = { visibilityState: 'visible', addEventListener: (n, fn) => listeners.set(n, fn), removeEventListener: n => listeners.delete(n) }
     const appClient = { request(command, args) {
         calls.push({ command, args })
+        if (failure?.command === command) return Promise.reject(failure.error)
         if (command === 'getState') return Promise.resolve({ capabilities: { nativeTts: capability } })
         return Promise.resolve(command === 'tts.state' || command === 'tts.attach' ? { snapshot: current } : { accepted: true, operationId: args?.operationId, snapshot: current })
     } }
     const client = createNativeTtsClient({ appClient, document, fetchImpl: async () => ({ ok: true, json: async () => ({ protocol: 1, available: server }) }), timers: { setTimeout(fn, delay) { delays.push(delay); scheduled.set(++next, fn); return next }, clearTimeout(id) { scheduled.delete(id) } } })
-    return { client, calls, scheduled, delays, document, listeners, set(value) { current = value }, async poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() } }
+    return { client, calls, scheduled, delays, document, listeners, fail(command, error) { failure = { command, error } }, set(value) { current = value }, async poll() { const [id, fn] = scheduled.entries().next().value; scheduled.delete(id); await fn() } }
 }
 for (const options of [{ capability: null }, { capability: 0 }, { server: false }]) test(`unsupported capability remains Web ${JSON.stringify(options)}`, async () => {
     const f = fixture(options)
@@ -154,4 +155,44 @@ test('unknown native wire keys retain raw English diagnostics', async () => {
     assert.equal(result.error, 'External diagnostic')
     assert.equal(result.uiMessage, undefined)
     f.client.detach()
+})
+
+
+test('cachedSpeechFailureChangesLanguage across native catch boundaries', async () => {
+    const { i18n, loadLocaleMessages } = await import('../i18n/index.js')
+    const { localUiError } = await import('../i18n/uiMessages.js')
+    await loadLocaleMessages('fr')
+    const f = fixture()
+    i18n.global.locale.value = 'en'
+    try {
+        await f.client.attach()
+        const failure = localUiError('android.speech.errors.staleDocument')
+        failure.code = 'stale_document'
+        f.fail('tts.manual', failure)
+        const result = await f.client.manual({ kind: 'text', text: 'User content stays unchanged' })
+        const english = result.error
+        assert.equal(result.uiMessage?.key, 'android.speech.errors.staleDocument')
+        assert.equal(result.code, 'stale_document')
+        i18n.global.locale.value = 'fr'
+        assert.notEqual(result.error, english)
+        assert.equal(result.error, i18n.global.t('android.speech.errors.staleDocument'))
+        f.fail('tts.listen', failure)
+        const acceptance = await f.client.listen({})
+        assert.equal(acceptance.error.uiMessage.key, 'android.speech.errors.staleDocument')
+        i18n.global.locale.value = 'en'
+        assert.equal(acceptance.error.message, english)
+    } finally { f.client.detach(); i18n.global.locale.value = 'en' }
+})
+
+test('unattached speech failure retains a live local identity', async () => {
+    const { i18n, loadLocaleMessages } = await import('../i18n/index.js')
+    await loadLocaleMessages('fr')
+    const f = fixture()
+    try {
+        i18n.global.locale.value = 'en'
+        const failure = await f.client.manual({ kind: 'text' })
+        assert.equal(failure.uiMessage?.key, 'session.speech.errors.unavailable')
+        i18n.global.locale.value = 'fr'
+        assert.equal(failure.error, i18n.global.t('session.speech.errors.unavailable'))
+    } finally { f.client.detach(); i18n.global.locale.value = 'en' }
 })
