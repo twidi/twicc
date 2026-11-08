@@ -1989,3 +1989,117 @@ def test_send_message_hands_accepted_token_to_its_wait(monkeypatch):
         "project_id": "cursor-wiring-project", "last_line": 0, "wait_token": "accepted-input",
     })
     assert seen["wait_token"] == "accepted-input"
+
+
+@pytest.mark.parametrize('provider', ['codex', 'claude_code'])
+def test_plain_wait_keeps_existing_size_check(project, jsonl, monkeypatch, provider):
+    """A valid plain source must not resolve or inspect a compressed sibling."""
+    from twicc.providers.codex import rollout_sources
+    session = make_session(project, provider=provider)
+    path = jsonl(session, size=200)
+    session.refresh_from_db()
+    seen = []
+    getsize = _wait_reply.os.path.getsize
+
+    def size(value):
+        seen.append(value)
+        return getsize(value)
+
+    monkeypatch.setattr(_wait_reply.os.path, 'getsize', size)
+    monkeypatch.setattr(rollout_sources, 'resolve_rollout', lambda *_: pytest.fail('sibling resolution'))
+    monkeypatch.setattr(rollout_sources, 'compressed_backlog_hint', lambda *_: pytest.fail('header read'))
+    assert _wait_reply._watcher_is_behind(session)
+    session.last_offset = 200
+    assert not _wait_reply._watcher_is_behind(session)
+    assert seen == [path, path]
+
+
+@pytest.mark.parametrize('stored_compressed', [False, True])
+def test_compressed_wait_detects_declared_logical_backlog(project, jsonl, stored_compressed):
+    import zstandard
+    session = make_session(project, provider='codex')
+    path = jsonl(session, size=100_000)
+    compressed = path.with_suffix('.jsonl.zst')
+    compressed.write_bytes(zstandard.ZstdCompressor().compress(path.read_bytes()))
+    path.unlink()
+    session.refresh_from_db()
+    if stored_compressed:
+        session.file_path += '.zst'
+    session.last_offset = 50_000
+    assert _wait_reply._watcher_is_behind(session)
+
+
+@pytest.mark.parametrize('kind', ['unknown_size', 'at_offset', 'below_offset', 'concatenated', 'invalid'])
+def test_compressed_wait_uses_unknown_source_fallback(project, jsonl, kind):
+    import zstandard
+    session = make_session(project, provider='codex')
+    path = jsonl(session, size=100)
+    if kind == 'invalid':
+        data = b'not a frame'
+    else:
+        size = 100 if kind != 'below_offset' else 50
+        data = zstandard.ZstdCompressor(write_content_size=kind != 'unknown_size').compress(b'x' * size)
+        if kind == 'concatenated':
+            data += zstandard.ZstdCompressor().compress(b'y' * 10_000)
+    compressed = path.with_suffix('.jsonl.zst')
+    compressed.write_bytes(data)
+    path.unlink()
+    session.refresh_from_db()
+    session.file_path += '.zst'
+    session.last_offset = 100
+    assert not _wait_reply._watcher_is_behind(session)
+
+
+@pytest.mark.parametrize('keep_compressed', [False, True])
+def test_wait_stale_compressed_path_prefers_restored_plain(project, jsonl, keep_compressed):
+    session = make_session(project, provider='codex')
+    path = jsonl(session, size=10_000)
+    if keep_compressed:
+        path.with_suffix('.jsonl.zst').write_bytes(b'invalid unused sibling')
+    session.refresh_from_db()
+    session.file_path += '.zst'
+    session.last_offset = 9999
+    assert _wait_reply._watcher_is_behind(session)
+    session.last_offset = 10_000
+    assert not _wait_reply._watcher_is_behind(session)
+
+
+def test_compressed_wait_never_decodes_or_blocks_other_waiters(project, jsonl, monkeypatch):
+    import zstandard
+    from pathlib import Path
+    from twicc.providers.codex import rollout_sources
+    session = make_session(project, provider='codex')
+    path = jsonl(session, size=100_000)
+    compressed = path.with_suffix('.jsonl.zst')
+    compressed.write_bytes(zstandard.ZstdCompressor().compress(path.read_bytes()))
+    path.unlink()
+    Session.objects.filter(pk=session.pk).update(file_path='session.jsonl.zst', last_offset=50_000)
+    other = make_session(project, session_id='other')
+    process(other, AgentState.ASSISTANT_TURN)
+    reads = []
+    original_open = Path.open
+
+    class HeaderReader:
+        def __enter__(self):
+            self.source = original_open(compressed, 'rb')
+            return self
+
+        def read(self, count=-1):
+            assert 0 <= count <= 18
+            data = self.source.read(count)
+            reads.append(len(data))
+            return data
+
+        def __exit__(self, *args):
+            self.source.close()
+
+    def opened(value, *args, **kwargs):
+        return HeaderReader() if value == compressed else original_open(value, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', opened)
+    monkeypatch.setattr(rollout_sources, '_decoded_chunks', lambda *_a, **_k: pytest.fail('decode during wait'))
+    monkeypatch.setattr(rollout_sources.tempfile, 'NamedTemporaryFile', lambda *_a, **_k: pytest.fail('copy during wait'))
+    result = _wait_reply.wait_for_replies({session.id: 0, other.id: 0}, timeout=.3, want_text=False, first=False)
+    assert {sid: block['outcome'] for sid, block in result.items()} == {session.id: TIMEOUT, other.id: TIMEOUT}
+    assert reads and max(reads) <= 18
+    assert result[other.id]['waited_seconds'] <= .3 + TICK_SECONDS

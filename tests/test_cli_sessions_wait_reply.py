@@ -588,3 +588,29 @@ def test_a_known_workspace_reaches_the_query(project, other_project, capsysbinar
     payload = run(capsysbinary, workspace="w1")
 
     assert set(payload["results"]) == {"here"}
+
+
+def test_real_batch_wait_keeps_compressed_backlog_pending(project, provider_home, capsysbinary, monkeypatch):
+    """The CLI shares the bounded backlog check and one deadline across sessions."""
+    from types import SimpleNamespace
+    import zstandard
+    from twicc.cli import _twicc_info, _wait_reply
+
+    compressed = make_session(project, 'compressed', last_line=0, last_offset=50_000)
+    plain = make_session(project, 'plain', last_line=0, last_offset=0)
+    root = provider_home.codex / 'sessions'
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'rollout-compressed.jsonl.zst').write_bytes(zstandard.ZstdCompressor().compress(b'x' * 100_000))
+    (root / 'rollout-plain.jsonl').write_bytes(b'x')
+    Session.objects.filter(pk=compressed.pk).update(provider='codex', file_path='rollout-compressed.jsonl.zst')
+    Session.objects.filter(pk=plain.pk).update(provider='codex', file_path='rollout-plain.jsonl')
+    now = [0.0]
+    monkeypatch.setattr(_wait_reply, 'time', SimpleNamespace(
+        monotonic=lambda: now[0], sleep=lambda duration: now.__setitem__(0, now[0] + duration),
+    ))
+    monkeypatch.setattr(_wait_reply, 'AGENT_FLUSH_SECONDS', 0)
+    monkeypatch.setattr(_twicc_info, 'resolve_live_twicc', lambda: SimpleNamespace(pid=4242))
+    payload = run(capsysbinary, compressed.id, plain.id, timeout=1)
+    assert {sid: result['outcome'] for sid, result in payload['results'].items()} == {
+        'compressed': 'timeout', 'plain': 'timeout',
+    }

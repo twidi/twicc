@@ -736,6 +736,7 @@ def test_classification_failure_before_lease_notifies_candidate_path(tmp_path, e
         releases = []
         coordinator = CodexComputeCoordinator(SimpleNamespace(), asyncio.Event(), on_migration_released=releases.append)
         candidate = CodexComputeCandidate('early', tmp_path / 'early.jsonl', 'session')
+        candidate.file_path.write_bytes(b'{}\n')
         coordinator._source_mode = AsyncMock(side_effect=error)
         coordinator.runner.stop = AsyncMock()
         gate = gate_for('early')
@@ -746,6 +747,7 @@ def test_classification_failure_before_lease_notifies_candidate_path(tmp_path, e
                     await coordinator.prepare_candidate(candidate)
             else:
                 await coordinator.prepare_candidate(candidate)
+            coordinator._source_mode.assert_awaited_once_with(candidate.file_path, candidate.session_id)
             assert len(releases) == 1 and releases[0].path == candidate.file_path
             assert releases[0].outcome == ('cancelled' if isinstance(error, asyncio.CancelledError) else 'failed')
             assert gate.locked()

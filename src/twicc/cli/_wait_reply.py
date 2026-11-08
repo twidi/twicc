@@ -301,16 +301,36 @@ def _watcher_is_behind(session) -> bool:
     can be visible while the message that closed its turn is not, and the lag
     has no useful upper bound: a timer cannot cover it.
 
-    Comparing the file's size to ``Session.last_offset`` does, exactly and for
-    free — that offset is where the watcher stopped reading. Unknown states
-    (no path, file gone, unreadable) answer ``False``: the timer guard stays,
-    and refusing to ever conclude would be worse than concluding late.
+    Plain JSONL uses its size against the logical ``Session.last_offset``.
+    Only compressed or missing Codex paths require sibling resolution. A
+    restored plain sibling retains the complete size comparison, even when
+    this waiter still holds the old compressed path.
+
+    Compressed sources read at most the first frame header, without decoding.
+    A declared size above the offset proves backlog. Unknown sizes, smaller
+    frames and concatenated tails cannot prove EOF. They retain the existing
+    ``False`` advisory fallback, as do missing or unreadable sources. Thus
+    unmanaged compressed history can end its wait before all content is
+    indexed when the first header cannot prove backlog. Answer confirmation
+    and managed intervals retain their existing rules.
     """
     path = _session_jsonl_path(session)
     if path is None:
         return False
+    if session.provider != "codex" or path.suffix != ".zst":
+        try:
+            return os.path.getsize(path) > session.last_offset
+        except OSError:
+            if session.provider != "codex":
+                return False
+
+    from twicc.providers.codex.rollout_sources import compressed_backlog_hint, resolve_rollout
+
     try:
-        return os.path.getsize(path) > session.last_offset
+        selected = resolve_rollout(path)
+        if selected.suffix == ".zst":
+            return compressed_backlog_hint(selected, session.last_offset) is True
+        return os.path.getsize(selected) > session.last_offset
     except OSError:
         return False
 
@@ -364,8 +384,8 @@ class _SessionWait:
         self.twicc_pid = twicc_pid
         self.want_text = want_text
         self.wait_background = wait_background
-        # Read once and kept: ``provider`` and ``file_path`` never change, and
-        # ``last_offset`` is refreshed below only where it is actually used.
+        # Keep the provider and original path. The backlog check resolves a
+        # changed Codex representation. Refresh last_offset only when needed.
         self.session = None
         self.stopped_since = None
         self.confirming = False
