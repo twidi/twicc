@@ -20,7 +20,7 @@ from twicc.agent import (
     BaseAgentManager,
     SendDeliveryError,
 )
-from twicc.agent.exceptions import SessionUnavailableError
+from twicc.agent.exceptions import AgentStartError, SessionUnavailableError
 from twicc.agent.completion_types import CompletionInput, CompletionSnapshot
 from twicc.core.enums import Provider
 from twicc.core.ui_messages import ui_message_text
@@ -681,6 +681,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                             settings=settings,
                                             images=pending.get("images"),
                                             documents=pending.get("documents"),
+                                            report_start_failure=cancel_cron_restart,
                                             **_parked_start_kwargs(pending),
                                         )
                                 finally:
@@ -744,12 +745,18 @@ class ClaudeCodeAgentManager(BaseAgentManager):
 
                 # Create and start new agent with resume
                 provider_admission = True
-                await self._start_agent(
-                    session_id, project_id, cwd, text, resume=True,
-                    settings=settings,
-                    images=images, documents=documents,
-                    **content_kwargs,
-                )
+                try:
+                    await self._start_agent(
+                        session_id, project_id, cwd, text, resume=True,
+                        settings=settings,
+                        images=images, documents=documents,
+                        report_start_failure=cancel_cron_restart,
+                        **content_kwargs,
+                    )
+                except AgentStartError as failure:
+                    if not cancel_cron_restart:
+                        await self._notify_automatic_start_failure(session_id, project_id, failure)
+                    raise
                 return True
         finally:
             if staged_agent is not None and completion_token is not None and not provider_admission and has_input:
@@ -826,6 +833,7 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 settings=settings,
                 images=images, documents=documents,
                 ephemeral=ephemeral, ephemeral_admission=ephemeral_admission,
+                report_start_failure=not ephemeral,
                 **content_kwargs,
             )
 
@@ -1757,24 +1765,47 @@ class ClaudeCodeAgentManager(BaseAgentManager):
         The availability check runs before the kill; the one inside
         ``_start_agent`` is defence in depth. Should it ever refuse here, DEAD
         is broadcast so the UI does not stay on STARTING with no process.
+
+        A start failure also clears STARTING. A waiting caller reports the
+        failure; without one, the failure is notified here.
         """
         try:
             return await self._start_agent(session_id, project_id, cwd, text, resume=True, **start)
         except SessionUnavailableError:
             await self._broadcast_agent_state(session_id, project_id, AgentState.DEAD)
             raise
+        except AgentStartError as failure:
+            if start.get("report_start_failure", True):
+                await self._broadcast_agent_state(session_id, project_id, AgentState.DEAD)
+            else:
+                await self._notify_automatic_start_failure(session_id, project_id, failure)
+            raise
+
+    async def _notify_automatic_start_failure(
+        self, session_id: str, project_id: str, failure: SendDeliveryError,
+    ) -> None:
+        """Broadcast the DEAD state of an automatic launch that no caller waits for."""
+        await self._broadcast_agent_state(
+            session_id, project_id, AgentState.DEAD,
+            error=str(failure), error_ui_message=failure.ui_message, kill_reason="error",
+        )
 
     async def _broadcast_agent_state(
         self,
         session_id: str,
         project_id: str | None = None,
         override_state: AgentState | None = None,
+        *,
+        error: str | None = None,
+        error_ui_message: dict | None = None,
+        kill_reason: str | None = None,
     ) -> None:
         """Trigger an agent state broadcast for a session.
 
         When override_state is provided, broadcasts a synthetic AgentInfo with
-        that state (useful for broadcasting "starting" after a kill). Otherwise
-        broadcasts the current agent state (used after cron changes).
+        that state (useful for broadcasting "starting" after a kill) and the
+        given error fields. Otherwise broadcasts the current agent state (used
+        after cron changes).
         """
         if self._broadcast_callback is None:
             return
@@ -1790,6 +1821,9 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                     started_at=now,
                     state_changed_at=now,
                     last_activity=now,
+                    error=error,
+                    error_ui_message=error_ui_message,
+                    kill_reason=kill_reason,
                 )
                 await self._broadcast_callback(info)
             else:
@@ -1944,13 +1978,18 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 pending = self._pending_after_restart.pop(agent.session_id)
                 # Automatic even when it re-sends a parked user text; this path is also reached from
                 # tasks with a stale context (a shell ending), so the marker is explicit here too.
-                with system_marker():
-                    await self._restart_after_kill(
-                        agent.session_id, agent.project_id, agent.cwd,
-                        pending["text"], settings=requested_settings,
-                        images=pending.get("images"), documents=pending.get("documents"),
-                        **_parked_start_kwargs(pending),
-                    )
+                try:
+                    with system_marker():
+                        await self._restart_after_kill(
+                            agent.session_id, agent.project_id, agent.cwd,
+                            pending["text"], settings=requested_settings,
+                            images=pending.get("images"), documents=pending.get("documents"),
+                            report_start_failure=False,
+                            **_parked_start_kwargs(pending),
+                        )
+                except AgentStartError:
+                    # Already notified by _restart_after_kill. The parked refs go to the reaper.
+                    return
                 # The callback only schedules a detached task, which never
                 # takes ``_lock`` (held here by some callers).
                 release = self._parked_release_after_start(agent.session_id, pending)

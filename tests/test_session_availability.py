@@ -397,6 +397,114 @@ def test_a_late_refusal_after_starting_broadcasts_dead(sessions):
     manager._broadcast_agent_state.assert_awaited_once_with("blocked", PROJECT_ID, AgentState.DEAD)
 
 
+def _start_failure():
+    from twicc.agent.exceptions import AgentStartError
+    return AgentStartError("Claude Code did not start", reason="working_directory_missing")
+
+
+def test_inline_restart_reports_and_clears_starting(sessions):
+    from twicc.agent.exceptions import AgentStartError
+    from twicc.agent.states import AgentState
+    from twicc.providers.helpers import AgentSettings
+
+    manager, _agent = _idle_claude_manager("open", AgentSettings())
+    manager._start_agent = AsyncMock(side_effect=_start_failure())
+    with pytest.raises(AgentStartError):
+        asyncio.run(manager._restart_after_kill(
+            "open", PROJECT_ID, "/tmp", "hi", settings=AgentSettings(), report_start_failure=True,
+        ))
+    manager._broadcast_agent_state.assert_awaited_once_with("open", PROJECT_ID, AgentState.DEAD)
+
+
+def test_automatic_parked_restart_notifies_and_does_not_raise(sessions):
+    from twicc.agent.states import AgentState
+    from twicc.providers.helpers import AgentSettings, get_provider_helpers
+
+    helpers = get_provider_helpers("claude_code")
+    requested = helpers.enforce_agent_settings_consistency(
+        helpers.resolve_agent_settings(AgentSettings.from_session(sessions.open)),
+    )
+    manager, agent = _idle_claude_manager("open", _other_effort(requested))
+    manager._pending_after_restart["open"] = {"text": "parked", "images": None, "documents": None}
+    failure = _start_failure()
+    manager._start_agent = AsyncMock(side_effect=failure)
+
+    asyncio.run(manager._apply_pending_settings(agent))
+
+    manager._broadcast_agent_state.assert_any_await(
+        "open", PROJECT_ID, AgentState.DEAD, error=str(failure), error_ui_message=failure.ui_message, kill_reason="error",
+    )
+
+
+def test_cron_send_notifies_then_raises(sessions):
+    from twicc.agent.exceptions import AgentStartError
+    from twicc.agent.states import AgentState
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+    from twicc.providers.helpers import AgentSettings
+
+    manager = ClaudeCodeAgentManager()
+    manager._broadcast_agent_state = AsyncMock()
+    failure = _start_failure()
+    manager._start_agent = AsyncMock(side_effect=failure)
+    with pytest.raises(AgentStartError):
+        asyncio.run(manager.send_to_session(
+            "open", PROJECT_ID, "/tmp", "hi", AgentSettings(), cancel_cron_restart=False,
+        ))
+    manager._broadcast_agent_state.assert_awaited_once_with(
+        "open", PROJECT_ID, AgentState.DEAD, error=str(failure), error_ui_message=failure.ui_message, kill_reason="error",
+    )
+
+
+@pytest.mark.parametrize("cancel, expected", [(True, True), (False, False)])
+def test_cold_send_report_flag_follows_the_cron_marker(sessions, cancel, expected):
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+    from twicc.providers.helpers import AgentSettings
+
+    manager = ClaudeCodeAgentManager()
+    manager._start_agent = AsyncMock(return_value="open")
+    asyncio.run(manager.send_to_session("open", PROJECT_ID, "/tmp", "hi", AgentSettings(), cancel_cron_restart=cancel))
+    assert manager._start_agent.await_args.kwargs["report_start_failure"] is expected
+
+
+@pytest.mark.parametrize("cancel, expected", [(True, True), (False, False)])
+def test_inline_restart_forwards_the_report_flag(sessions, cancel, expected):
+    from twicc.providers.helpers import AgentSettings
+
+    requested = AgentSettings(effort="high")
+    manager, _agent = _idle_claude_manager("open", _other_effort(requested))
+    manager._start_agent = AsyncMock(return_value="open")
+    asyncio.run(manager.send_to_session("open", PROJECT_ID, "/tmp", "hi", requested, cancel_cron_restart=cancel))
+    assert manager._start_agent.await_args.kwargs["report_start_failure"] is expected
+
+
+def test_restart_without_a_waiting_caller_notifies_then_raises(sessions):
+    from twicc.agent.exceptions import AgentStartError
+    from twicc.agent.states import AgentState
+    from twicc.providers.helpers import AgentSettings
+
+    manager, _agent = _idle_claude_manager("open", AgentSettings())
+    failure = _start_failure()
+    manager._start_agent = AsyncMock(side_effect=failure)
+    with pytest.raises(AgentStartError):
+        asyncio.run(manager._restart_after_kill(
+            "open", PROJECT_ID, "/tmp", "hi", settings=AgentSettings(), report_start_failure=False,
+        ))
+    manager._broadcast_agent_state.assert_awaited_once_with(
+        "open", PROJECT_ID, AgentState.DEAD, error=str(failure), error_ui_message=failure.ui_message, kill_reason="error",
+    )
+
+
+@pytest.mark.parametrize("ephemeral, expected", [(False, True), (True, False)])
+def test_create_report_flag_follows_ephemeral(sessions, ephemeral, expected):
+    from twicc.providers.claude_code.agent.manager import ClaudeCodeAgentManager
+    from twicc.providers.helpers import AgentSettings
+
+    manager = ClaudeCodeAgentManager()
+    manager._start_agent = AsyncMock(return_value="draft")
+    asyncio.run(manager.create_session("draft", PROJECT_ID, "/tmp", "hi", AgentSettings(), ephemeral=ephemeral))
+    assert manager._start_agent.await_args.kwargs["report_start_failure"] is expected
+
+
 def test_the_hybrid_terminal_is_refused(sessions, settings, monkeypatch):
     from twicc.terminal import terminal_application
 

@@ -49,7 +49,8 @@ from twicc.agent.shell_notice import (
     merge_resolution,
     needs_lookup,
 )
-from twicc.agent.states import build_background_work
+from twicc.agent.start_failure import classify_start_failure
+from twicc.agent.states import AGENT_START_FAILED_KILL_REASON, build_background_work
 from twicc.context_injection import apply_goal_instruction, apply_pending_context
 from twicc.core.enums import Provider
 from twicc.core.models import Session
@@ -1398,6 +1399,7 @@ class ClaudeCodeAgent(BaseAgent):
             query_prompt = await self._build_query_prompt(
                 prompt, images, documents, content=content, message_uuid=completion_token,
             )
+            self.handoff_attempted = True
             await self._client.query(query_prompt)
             self._completion_input_settled(completion_token, "accepted")
 
@@ -1426,6 +1428,9 @@ class ClaudeCodeAgent(BaseAgent):
             self._completion_input_settled(completion_token, "uncertain")
             raise
         except Exception as e:
+            if self.report_start_failure and not self.handoff_attempted:
+                await self._record_start_failure(e, completion_token)
+                return
             self._completion_input_settled(completion_token, "uncertain")
             # Handle error and transition to DEAD state. Do not re-raise as the
             # spec requires process errors to be logged and reported, never propagated.
@@ -1434,6 +1439,15 @@ class ClaudeCodeAgent(BaseAgent):
                 f"Failed to start process: {e}", exc=e,
                 presentation=ui_message("backend.claude.start_failed", {"diagnostic": str(e)}),
             )
+
+    async def _record_start_failure(self, exc: Exception, completion_token: str) -> None:
+        """Record why the agent did not start, for the caller that waits for the launch."""
+        failure = classify_start_failure(exc, directory=self.cwd, provider=self.provider)
+        self._completion_input_settled(completion_token, "rejected")
+        self.start_failure = failure
+        await self._handle_error(
+            str(failure), exc=exc, presentation=failure.ui_message, kill_reason=AGENT_START_FAILED_KILL_REASON,
+        )
 
     async def _resolve_untrusted_now(self) -> bool:
         """Re-resolve the project's trust state live (fresh DB read).
@@ -2822,13 +2836,20 @@ class ClaudeCodeAgent(BaseAgent):
             )
 
     async def _handle_error(
-        self, error_message: str, exc: Exception | None = None, *, presentation: dict | None = None,
+        self,
+        error_message: str,
+        exc: Exception | None = None,
+        *,
+        presentation: dict | None = None,
+        kill_reason: str = "error",
     ) -> None:
         """Handle an error by transitioning to DEAD state.
 
         Args:
             error_message: Description of what went wrong
             exc: Optional exception that caused the error (logged with full traceback)
+            presentation: UI message to use when the exception does not carry its own
+            kill_reason: Reason recorded on the agent for this death
         """
         if getattr(self, "ephemeral", False):
             self._logger.error("Ephemeral agent for session %s failed", self.session_id)
@@ -2849,7 +2870,7 @@ class ClaudeCodeAgent(BaseAgent):
         if source_presentation is None and exc is not None and exc.args:
             source_presentation = getattr(exc.args[0], "ui_message", None)
         self.error_ui_message = source_presentation or presentation
-        self.kill_reason = "error"
+        self.kill_reason = kill_reason
         self.last_activity = time.time()
         self._first_turn_done_event.set()  # Unblock any waiters (cron restart)
 

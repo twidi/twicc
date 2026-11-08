@@ -246,3 +246,86 @@ def test_an_ephemeral_create_failure_logs_only_the_exception_type(tmp_path):
     with patch("twicc.agent.start_failure.logger") as logger, pytest.raises(AgentStartError):
         start(Manager(AsyncMock(side_effect=RuntimeError("secret prompt"))), str(tmp_path), ephemeral=True)
     logger.error.assert_called_once_with("Ephemeral agent failed to start (%s)", "RuntimeError")
+
+
+def make_started_claude_agent(monkeypatch, directory, connect=None, query=None, report=True):
+    from twicc.core.services import trust
+    from twicc.providers.claude_code import sessions_watcher
+    from twicc.providers.claude_code.agent import agent as agent_module
+
+    fake = SimpleNamespace(connect=connect or AsyncMock(), query=query or AsyncMock())
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", lambda *, options: fake)
+    monkeypatch.setattr(agent_module, "patch_client_for_logging", lambda *args: None)
+    monkeypatch.setattr(agent_module, "attach_elicitation_handler", lambda *args: None)
+    monkeypatch.setattr(agent_module, "apply_pending_context", lambda session_id, text: text)
+    monkeypatch.setattr(sessions_watcher, "get_watcher", lambda: SimpleNamespace(request_fast_poll=lambda: None))
+    monkeypatch.setattr(trust, "project_is_untrusted", lambda project: False)
+    agent = agent_module.ClaudeCodeAgent(
+        "id", "project", directory, AgentSettings(permission_mode="default"),
+        AsyncMock(), AsyncMock(), AsyncMock(), ephemeral=False,
+    )
+    agent._seed_context_baseline = AsyncMock()
+    agent._reconcile_context = AsyncMock()
+    agent._run_message_loop = AsyncMock()
+    agent.report_start_failure = report
+    agent._transition_to_dead = AsyncMock()
+    agent._shutdown_sdk_client = AsyncMock()
+    return agent
+
+
+def run_start(agent):
+    asyncio.run(agent.start("hi", AsyncMock(), resume=True, completion_token="token"))
+
+
+@pytest.mark.django_db(transaction=True)
+def test_connect_failure_is_recorded_when_a_caller_waits(monkeypatch, tmp_path):
+    connect = AsyncMock(side_effect=CLIConnectionError("no"))
+    agent = make_started_claude_agent(monkeypatch, str(tmp_path), connect=connect)
+    run_start(agent)
+    connect.assert_awaited_once()
+    assert agent.start_failure.code == "agent_start_failed"
+    assert agent.start_failure.reason == "start_failed"
+    assert agent.kill_reason == "agent-start-failed"
+    assert agent._completion_inputs["token"].status == "rejected"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_connect_failure_keeps_the_process_error_without_a_waiting_caller(monkeypatch, tmp_path):
+    connect = AsyncMock(side_effect=CLIConnectionError("no"))
+    agent = make_started_claude_agent(monkeypatch, str(tmp_path), connect=connect, report=False)
+    run_start(agent)
+    connect.assert_awaited_once()
+    assert agent.start_failure is None
+    assert agent.kill_reason == "error"
+    assert agent._completion_inputs["token"].status == "uncertain"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failure_between_connect_and_query_is_a_start_failure(monkeypatch, tmp_path):
+    agent = make_started_claude_agent(monkeypatch, str(tmp_path))
+    agent._build_query_prompt = AsyncMock(side_effect=RuntimeError("prompt build failed"))
+    run_start(agent)
+    agent._build_query_prompt.assert_awaited_once()
+    assert agent.start_failure.reason == "start_failed"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_query_failure_stays_uncertain(monkeypatch, tmp_path):
+    query = AsyncMock(side_effect=CLIConnectionError("no"))
+    agent = make_started_claude_agent(monkeypatch, str(tmp_path), query=query)
+    run_start(agent)
+    query.assert_awaited_once()
+    assert agent.start_failure is None
+    assert agent.handoff_attempted is True
+    assert agent.kill_reason == "error"
+    assert agent._completion_inputs["token"].status == "uncertain"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_missing_directory_at_connect_gets_its_reason(monkeypatch, tmp_path):
+    gone = str(tmp_path / "gone")
+    connect = AsyncMock(side_effect=CLIConnectionError("no"))
+    agent = make_started_claude_agent(monkeypatch, gone, connect=connect)
+    run_start(agent)
+    connect.assert_awaited_once()
+    assert agent.start_failure.reason == "working_directory_missing"
