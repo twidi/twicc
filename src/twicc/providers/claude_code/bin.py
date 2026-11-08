@@ -21,6 +21,10 @@ from twicc.core.ui_messages import ui_message_text
 _BIN_PATH: Path | None = None
 
 
+class ClaudeBinaryNotFound(FileNotFoundError):
+    """The Claude binary is absent from the SDK wheel."""
+
+
 def resolve_bundled_binary() -> Path:
     """Return the path to the Claude binary shipped inside the SDK wheel."""
     global _BIN_PATH
@@ -30,7 +34,7 @@ def resolve_bundled_binary() -> Path:
     bundled_dir = Path(str(files("claude_agent_sdk"))) / "_bundled"
     bin_path = bundled_dir / "claude"
     if not bin_path.is_file():
-        raise FileNotFoundError(ui_message_text(
+        raise ClaudeBinaryNotFound(ui_message_text(
             f"Bundled Claude binary not found at {bin_path}",
             "backend.claude.binary_not_found", {"path": str(bin_path)},
         ))

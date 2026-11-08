@@ -56,6 +56,10 @@ def get_process_memory(pid: int) -> int | None:
 # unsolicited crash — is a death nobody asked for, where restoring is the point.
 DELIBERATE_STOP_REASONS = frozenset({"manual", "force", "archived"})
 
+# Kill reason of an agent whose launch failed before it took ownership of the
+# message. The failure is reported as ``agent_start_failed``, not as a death.
+AGENT_START_FAILED_KILL_REASON = "agent-start-failed"
+
 
 @dataclass(frozen=True)
 class PendingRequest:

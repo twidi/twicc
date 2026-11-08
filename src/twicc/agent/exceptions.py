@@ -2,6 +2,8 @@
 
 from twicc.core.session_availability import SESSION_UNAVAILABLE
 
+AGENT_START_FAILED = "agent_start_failed"
+
 
 class SendDeliveryError(RuntimeError):
     """A message could not be delivered to the agent.
@@ -13,7 +15,8 @@ class SendDeliveryError(RuntimeError):
     the composer draft and drop the optimistic chat message.
 
     Known codes: ``agent_starting``, ``agent_dead``,
-    ``hybrid_composer_busy``, and the generic default ``send_failed``.
+    ``hybrid_composer_busy``, ``agent_start_failed``, and the generic default
+    ``send_failed``.
     """
 
     def __init__(self, message: str, *, code: str = "send_failed", ui_message: dict | None = None) -> None:
@@ -24,6 +27,28 @@ class SendDeliveryError(RuntimeError):
     def __str__(self) -> str:
         # Retain UiMessageText metadata through shared send error boundaries.
         return self.args[0]
+
+
+class AgentStartError(SendDeliveryError):
+    """The agent did not start, so it never took ownership of the message.
+
+    Built by :mod:`twicc.agent.start_failure`, which owns the classification
+    and the messages. ``reason`` is one of its ``REASON_*`` constants.
+    ``diagnostic`` is the bounded provider text of a ``start_failed`` reason,
+    and ``None`` for every other reason and for every ephemeral run.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        diagnostic: str | None = None,
+        ui_message: dict | None = None,
+    ) -> None:
+        super().__init__(message, code=AGENT_START_FAILED, ui_message=ui_message)
+        self.reason = reason
+        self.diagnostic = diagnostic
 
 
 class SessionUnavailableError(SendDeliveryError):
