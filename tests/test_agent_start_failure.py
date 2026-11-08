@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -331,16 +332,17 @@ def test_missing_directory_at_connect_gets_its_reason(monkeypatch, tmp_path):
     assert agent.start_failure.reason == "working_directory_missing"
 
 
-def make_hybrid_agent(monkeypatch, directory, create=None, argv=None):
+def make_hybrid_agent(monkeypatch, directory, create=None, argv=None, real_tmux=False):
     from twicc.core.services import trust
     from twicc.providers.claude_code import sessions_watcher
     from twicc.providers.claude_code.agent.hybrid import agent as agent_module
 
     monkeypatch.setattr(sessions_watcher, "get_watcher", lambda: SimpleNamespace(request_fast_poll=lambda: None))
     monkeypatch.setattr(trust, "project_is_untrusted", lambda project: False)
-    monkeypatch.setattr(agent_module.hybrid_tmux, "session_exists", lambda session_id: False)
-    monkeypatch.setattr(agent_module.hybrid_tmux, "pane_status", MagicMock(return_value=(1, False)))
-    monkeypatch.setattr(agent_module.hybrid_tmux, "create_session", create or MagicMock())
+    if not real_tmux:
+        monkeypatch.setattr(agent_module.hybrid_tmux, "session_exists", lambda session_id: False)
+        monkeypatch.setattr(agent_module.hybrid_tmux, "pane_status", MagicMock(return_value=(1, False)))
+        monkeypatch.setattr(agent_module.hybrid_tmux, "create_session", create or MagicMock())
     monkeypatch.setattr(agent_module, "build_argv", argv or MagicMock(return_value=["claude"]))
     monkeypatch.setattr(agent_module, "write_addendum_file", lambda session_id, addendum: None)
     monkeypatch.setattr(agent_module, "get_session_hybrid_dir", lambda session_id: directory)
@@ -403,3 +405,92 @@ def test_an_absent_hybrid_binary_gets_its_reason(monkeypatch, tmp_path):
     with pytest.raises(AgentStartError) as caught:
         start(manager, str(tmp_path))
     assert caught.value.reason == "cli_not_found"
+
+
+def run_hybrid_start_with_real_kill(agent, directory):
+    """Run a launch through the base manager, with the real ``interrupt_or_kill``."""
+    on_state_change = AsyncMock()
+    manager = Manager(AsyncMock(return_value=agent))
+
+    async def register(agent, text, resume, **kwargs):
+        await agent.start(text, on_state_change, resume=resume, **kwargs)
+
+    manager._register_and_start = register
+    with pytest.raises(AgentStartError) as caught:
+        start(manager, directory, completion_token="token")
+    return caught.value, on_state_change
+
+
+@pytest.mark.parametrize("kind", ["absent", "hang"])
+@pytest.mark.django_db(transaction=True)
+def test_a_hybrid_launch_without_a_working_tmux_ends_dead(monkeypatch, tmp_path, kind):
+    from twicc.agent.states import AgentState
+    from twicc.providers.claude_code.agent.hybrid import tmux
+
+    if kind == "absent":
+        monkeypatch.setattr(tmux, "get_tmux_path", lambda: None)
+    else:
+        monkeypatch.setattr(tmux, "_run", MagicMock(side_effect=subprocess.TimeoutExpired("tmux", 5)))
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), real_tmux=True)
+    with patch("twicc.agent.base_manager.logger") as manager_logger, \
+            patch("twicc.agent.start_failure.logger") as failure_logger:
+        failure, on_state_change = run_hybrid_start_with_real_kill(agent, str(tmp_path))
+    assert failure.reason == "start_failed"
+    assert agent.state == AgentState.DEAD
+    assert agent.kill_reason == "agent-start-failed"
+    on_state_change.assert_awaited()
+    assert agent._completion_inputs["token"].status == "rejected"
+    manager_logger.exception.assert_not_called()
+    failure_logger.error.assert_called_once()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_refused_tmux_session_skips_the_graceful_exit(monkeypatch, tmp_path):
+    from twicc.agent.states import AgentState
+    from twicc.providers.claude_code.agent.hybrid import tmux
+
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), create=MagicMock(side_effect=RuntimeError("refused")))
+    monkeypatch.setattr(tmux, "pane_status", MagicMock(return_value=(None, True)))
+    monkeypatch.setattr(tmux, "kill_session", MagicMock())
+    agent._graceful_cli_exit = AsyncMock(return_value=False)
+    agent._kill_system_process = AsyncMock()
+    failure, _ = run_hybrid_start_with_real_kill(agent, str(tmp_path))
+    assert failure.reason == "start_failed"
+    agent._graceful_cli_exit.assert_not_awaited()
+    agent._kill_system_process.assert_not_awaited()
+    assert agent.state == AgentState.DEAD
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_cli_created_before_a_status_failure_is_force_killed(monkeypatch, tmp_path):
+    from twicc.agent.states import AgentState
+    from twicc.providers.claude_code.agent.hybrid import tmux
+
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path))
+    monkeypatch.setattr(tmux, "pane_status", MagicMock(side_effect=[RuntimeError("status failed"), (4242, False)]))
+    kill_session = MagicMock()
+    monkeypatch.setattr(tmux, "kill_session", kill_session)
+    agent._graceful_cli_exit = AsyncMock(return_value=False)
+    agent._kill_system_process = AsyncMock()
+    failure, _ = run_hybrid_start_with_real_kill(agent, str(tmp_path))
+    assert failure.reason == "start_failed"
+    agent._graceful_cli_exit.assert_not_awaited()
+    agent._kill_system_process.assert_awaited_once_with(4242)
+    kill_session.assert_called_once()
+    assert agent.state == AgentState.DEAD
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_launched_cli_gets_the_graceful_exit(monkeypatch, tmp_path):
+    from twicc.providers.claude_code.agent.hybrid import tmux
+
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path))
+    monkeypatch.setattr(tmux, "kill_session", MagicMock())
+    agent._graceful_cli_exit = AsyncMock(return_value=True)
+
+    async def run():
+        await agent.start("hi", AsyncMock(), resume=True, completion_token="token")
+        await agent.kill("manual")
+
+    asyncio.run(run())
+    agent._graceful_cli_exit.assert_awaited_once()

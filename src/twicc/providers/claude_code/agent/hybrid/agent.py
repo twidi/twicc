@@ -324,8 +324,8 @@ class HybridClaudeAgent(BaseAgent):
             hybrid_tmux.create_session(self.session_id, self.cwd, argv)
             return hybrid_tmux.pane_status(self.session_id)
 
-        self._cli_launched = True
         self.agent_pid, _ = await asyncio.to_thread(_create)
+        self._cli_launched = True
         # The tmux session exists: the launch is over, later failures are not start failures.
         self.handoff_attempted = True
         logger.info(
@@ -1232,12 +1232,20 @@ class HybridClaudeAgent(BaseAgent):
         exited = False
         if reason != "shutdown" and self._cli_launched and not self._force_kill.is_set():
             exited = await self._graceful_cli_exit()
+        # The forced teardown is best-effort: tmux can be absent or hang, and the
+        # agent must reach DEAD anyway.
         if not exited:
-            pane_pid, _ = await asyncio.to_thread(hybrid_tmux.pane_status, self.session_id)
-            if pane_pid is not None:
-                await self._kill_system_process(pane_pid)
+            try:
+                pane_pid, _ = await asyncio.to_thread(hybrid_tmux.pane_status, self.session_id)
+                if pane_pid is not None:
+                    await self._kill_system_process(pane_pid)
+            except Exception as exc:
+                logger.warning("Forced kill failed for hybrid session %s (%s)", self.session_id, type(exc).__name__)
         # Drop the tmux session itself either way (best-effort cleanup).
-        await asyncio.to_thread(hybrid_tmux.kill_session, self.session_id)
+        try:
+            await asyncio.to_thread(hybrid_tmux.kill_session, self.session_id)
+        except Exception as exc:
+            logger.warning("tmux kill-session failed for hybrid session %s (%s)", self.session_id, type(exc).__name__)
         await self._transition_to_dead()
 
     async def interrupt_or_kill(self, reason: str) -> None:
