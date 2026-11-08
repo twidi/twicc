@@ -24,7 +24,13 @@ export function resolveUiMessage(message, composer = i18n.global) {
             params[name] = message.count
         }
     }
-    return composer.t(message.key, formatMessageParams(message.key, params, composer.locale.value), count === undefined ? {} : count)
+    const formatted = formatMessageParams(message.key, params, composer.locale.value)
+    // Vue prioritizes numeric aliases over its plural argument. Keep their display
+    // values as text so the original numeric choice remains authoritative.
+    for (const name of ['count', 'n']) {
+        if (typeof formatted[name] === 'number') formatted[name] = String(formatted[name])
+    }
+    return composer.t(message.key, formatted, count === undefined ? {} : count)
 }
 
 // Keep the Error contract for callers and retain local message identity for caches.

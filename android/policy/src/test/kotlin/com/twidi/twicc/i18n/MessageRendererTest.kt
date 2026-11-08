@@ -52,4 +52,19 @@ class MessageRendererTest {
         assertEquals("12 345,6700 / 12345 / Annuler", renderer.render("fr", message))
     }
 
+    @Test fun interpolatesNumbersWithJavaScriptNotationAndShortestDecimals() {
+        val cases = listOf<Pair<Number, String>>(
+            1e-6 to "0.000001", 1e-7 to "1e-7", 1e20 to "100000000000000000000",
+            1e21 to "1e+21", 1e23 to "1e+23", -0.0 to "0",
+            -1e-7 to "-1e-7", -1e21 to "-1e+21", Double.MIN_VALUE to "5e-324",
+            1000000000000000128.0 to "1000000000000000100", 0.1 to "0.1",
+            1.0f to "1", 0.1f to "0.1", 1e-7f to "1e-7", 1e21f to "1e+21",
+            -0.0f to "0", 9007199254740993L to "9007199254740992",
+        )
+        for ((value, expected) in cases) {
+            assertEquals("$value (${value.javaClass.simpleName})", expected,
+                renderer.render("en", UiMessage("wrapper", mapOf("body" to value))))
+        }
+    }
+
 }

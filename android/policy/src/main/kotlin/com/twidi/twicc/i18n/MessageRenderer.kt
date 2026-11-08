@@ -1,5 +1,8 @@
 package com.twidi.twicc.i18n
 
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -52,10 +55,7 @@ class MessageRenderer(
                             val value = params[token.name] ?: return null
                             append(if (definition.numberFormats[token.name] == "decimal") {
                                 numberFormatter(locale, value) ?: return null
-                            } else if (value is Double && value % 1.0 == 0.0 && abs(value) < 1e21) {
-                                // JSON and Vue show integer-valued numbers without a .0 suffix.
-                                java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
-                            } else value.toString())
+                            } else if (value is Number) javascriptNumberText(value) else value.toString())
                         }
                     }
                 }
@@ -63,4 +63,26 @@ class MessageRenderer(
         }
         return renderNode(message, 1)
     }
+}
+
+/** Match JavaScript's shortest round-trip decimal and exponent thresholds. */
+private fun javascriptNumberText(value: Number): String {
+    // Float crosses JSON through its decimal spelling, rather than a widened binary fraction.
+    val number = if (value is Float) value.toString().toDouble() else value.toDouble()
+    if (number == 0.0) return "0"
+    val exact = BigDecimal(number)
+    var shortest = exact
+    for (precision in 1..17) {
+        val candidate = exact.round(MathContext(precision, RoundingMode.HALF_EVEN))
+        if (candidate.toDouble() == number) {
+            shortest = candidate.stripTrailingZeros()
+            break
+        }
+    }
+    if (abs(number) >= 1e-6 && abs(number) < 1e21) return shortest.toPlainString()
+    val digits = shortest.unscaledValue().abs().toString()
+    val exponent = shortest.precision() - shortest.scale() - 1
+    val sign = if (number < 0) "-" else ""
+    val coefficient = if (digits.length == 1) digits else digits.take(1) + "." + digits.drop(1)
+    return sign + coefficient + "e" + (if (exponent >= 0) "+" else "") + exponent
 }

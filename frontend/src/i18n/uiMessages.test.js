@@ -86,3 +86,35 @@ test('implicit plural count receives declared number formatting', () => {
     const composer = createAppI18n().global
     assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', {}, 12345), composer), '12,345 sessions')
 })
+
+test('formatted plural aliases preserve the original numeric count priority', () => {
+    const composer = createAppI18n().global
+    const cases = [
+        [{ count: 2, n: 1 }, undefined, '2 sessions'],
+        [{ count: 1, n: 2 }, undefined, '1 session'],
+        [{ count: 2, n: 1 }, 1, '2 sessions'],
+        [{ count: 0, n: 1 }, 2, '0 sessions'],
+        [{ count: '2.00', n: 1 }, 2, '2.00 session'],
+        [{ n: 2 }, 1, '1 sessions'],
+    ]
+    for (const [params, count, expected] of cases) {
+        assert.equal(resolveUiMessage(localUiMessage('common.sessionCount', params, count), composer), expected,
+            JSON.stringify({ params, count }))
+    }
+    composer.mergeLocaleMessage('en', { conflictingAliases: '{count} / {n} item | {count} / {n} items' })
+    assert.equal(resolveUiMessage(localUiMessage('conflictingAliases', { count: 2, n: 1 }), composer), '2 / 1 items')
+})
+
+test('Vue numeric interpolation defines JavaScript exponent and shortest-decimal boundaries', () => {
+    const composer = createAppI18n().global
+    composer.mergeLocaleMessage('en', { numericText: '{value}' })
+    for (const [value, expected] of [
+        [1e-6, '0.000001'], [1e-7, '1e-7'], [1e20, '100000000000000000000'],
+        [1e21, '1e+21'], [1e23, '1e+23'], [-0, '0'],
+        [-1e-7, '-1e-7'], [-1e21, '-1e+21'], [Number.MIN_VALUE, '5e-324'],
+        [1000000000000000128, '1000000000000000100'], [0.1, '0.1'],
+    ]) {
+        assert.equal(composer.t('numericText', { value }), expected)
+        assert.equal(resolveUiMessage(localUiMessage('numericText', { value }), composer), expected)
+    }
+})
