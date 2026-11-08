@@ -287,3 +287,80 @@ def test_source_representation_changes_while_waiting_for_gate(runtime, monkeypat
     assert items == [record.decode() for record in content.splitlines()]
     session.refresh_from_db()
     assert session.file_path == str(compressed.relative_to(runtime))
+
+
+@pytest.mark.django_db(transaction=True)
+def test_source_representation_changes_before_initial_classification(runtime, monkeypatch):
+    session, plain, compressed, content = _session(
+        runtime, 'initial-transition', disk_paginated=True, database_paginated=True,
+    )
+    plain.write_bytes(content)
+    compressed.unlink()
+    session.file_path = str(plain.relative_to(runtime))
+    session.save(update_fields=['file_path'])
+    original_mode = CodexComputeCoordinator._source_mode
+    selected = []
+
+    async def source_mode(owner, path, sid, read_path=None):
+        selected.append((path, read_path))
+        if len(selected) == 1:
+            _write_compressed(compressed, content)
+            plain.unlink()
+        return await original_mode(owner, path, sid, read_path)
+
+    monkeypatch.setattr(CodexComputeCoordinator, '_source_mode', source_mode)
+    result, jobs, items = asyncio.run(_prepare(session, plain))
+
+    assert isinstance(result, PreparedCandidate), result
+    assert result.kind == 'compute'
+    assert selected[0] == (plain, None)
+    assert selected[1][0] == compressed
+    assert selected[1][1] is not None
+    assert not selected[1][1].exists()
+    assert all(name != 'MarkSessionUnavailableJob' for name, _ in jobs)
+    assert all(name != 'ReplaceCodexHistoryJob' for name, _ in jobs)
+    assert items == [record.decode() for record in content.splitlines()]
+    session.refresh_from_db()
+    assert session.file_path == str(compressed.relative_to(runtime))
+    assert session.unavailable_reason is None
+    assert session.history_epoch == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize('change', ['none', 'malformed', 'missing'])
+def test_initial_plain_classification_preserves_existing_diagnoses(runtime, monkeypatch, change):
+    session, plain, compressed, content = _session(
+        runtime, 'plain-classification', disk_paginated=True, database_paginated=True,
+    )
+    plain.write_bytes(content)
+    compressed.unlink()
+    session.file_path = str(plain.relative_to(runtime))
+    session.save(update_fields=['file_path'])
+    original_mode = CodexComputeCoordinator._source_mode
+    original_resolve = background_compute.resolve_rollout
+    resolutions = []
+
+    async def source_mode(owner, path, sid, read_path=None):
+        if change == 'missing':
+            plain.unlink()
+        elif change == 'malformed':
+            plain.write_bytes(b'not-json\n')
+        return await original_mode(owner, path, sid, read_path)
+
+    def resolve(path):
+        resolutions.append(path)
+        return original_resolve(path)
+
+    monkeypatch.setattr(CodexComputeCoordinator, '_source_mode', source_mode)
+    monkeypatch.setattr(background_compute, 'resolve_rollout', resolve)
+    result, jobs, items = asyncio.run(_prepare(session, plain))
+
+    if change == 'none':
+        assert isinstance(result, PreparedCandidate), result
+        assert result.kind == 'compute'
+    else:
+        assert isinstance(result, FailedCandidate), result
+        assert result.unavailable_reason == ('rollout_missing' if change == 'missing' else None)
+    assert bool(resolutions) == (change == 'missing')
+    assert any(name == 'MarkSessionUnavailableJob' for name, _ in jobs) == (change == 'missing')
+    assert items == [record.decode() for record in content.splitlines()]

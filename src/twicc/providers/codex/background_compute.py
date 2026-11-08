@@ -418,9 +418,14 @@ class CodexComputeCoordinator:
                 raise _RolloutMissing(f"Rollout is gone from disk: {path}") from error
 
         async def classify() -> HistoryMode:
-            if source is None:
-                return await self._source_mode(path, session_id)
-            return await self._source_mode(path, session_id, source.read_path)
+            while True:
+                try:
+                    if source is None:
+                        return await self._source_mode(path, session_id)
+                    return await self._source_mode(path, session_id, source.read_path)
+                except _RolloutMissing:
+                    # A representation can disappear between selection and classification.
+                    await refresh_source(resolve=True)
 
         async def reconcile_source() -> None:
             if source is not None:
