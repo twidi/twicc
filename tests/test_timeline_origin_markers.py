@@ -184,6 +184,7 @@ def test_the_pending_settings_restart_that_re_sends_a_parked_text_is_system(proj
     )
     manager = ClaudeCodeAgentManager.__new__(ClaudeCodeAgentManager)
     manager._pending_after_restart = {"s1": {"text": "parked", "images": None, "documents": None}}
+    manager._deferred_completion_receipts = {}
     manager._broadcast_agent_state = AsyncMock()
     manager._check_session_writable = AsyncMock()  # no DB here: availability is tested elsewhere
     manager._parked_release_after_start = lambda session_id, pending: None
