@@ -509,6 +509,12 @@ onMounted(() => {
                     // Invalidate any cached 0-height measurements
                     invalidateZeroHeights()
                 }
+                // A scroller mounted hidden (a subagent tab panel) gets its first
+                // sentinel report while its height is 0, and the callback drops it.
+                // The observer reports changes only, so the flag would stay at its
+                // initial "at bottom" and keep the chat navigation buttons disabled.
+                // Observing again makes the browser deliver the current state.
+                if (wasHidden && isNowVisible) reobserveSentinel()
                 lastKnownViewportHeight = height
                 measuredViewportHeight.value = height
 
@@ -561,10 +567,15 @@ onMounted(() => {
  * sentinel again makes the browser deliver its current state, which is exactly
  * what the resume needs. The chat navigation buttons read the flag.
  */
-watch(composableSuspended, (isSuspended, wasSuspended) => {
-    if (isSuspended || !wasSuspended || !sentinelObserver || !sentinelRef.value) return
+function reobserveSentinel() {
+    if (!sentinelObserver || !sentinelRef.value) return
     sentinelObserver.unobserve(sentinelRef.value)
     sentinelObserver.observe(sentinelRef.value)
+}
+
+watch(composableSuspended, (isSuspended, wasSuspended) => {
+    if (isSuspended || !wasSuspended) return
+    reobserveSentinel()
 })
 
 onUnmounted(() => {
