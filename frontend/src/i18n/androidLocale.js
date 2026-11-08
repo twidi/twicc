@@ -54,7 +54,7 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
         if (!native) return
         guards++
         void reconcile().catch(error => {
-            if (!disposed) onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
+            if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
         }).finally(() => { guards-- })
     }
     function visibilityChanged() {
@@ -80,7 +80,16 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
                 while (initializationDirty && !disposed) {
                     initializationDirty = false
                     const current = ++generation
-                    await accept(await client.request('locale.get'), current)
+                    let language
+                    try { language = await client.request('locale.get') }
+                    catch (error) {
+                        // One failed read must not poison the cached startup promise.
+                        // Render the last valid snapshot and recover on a later event.
+                        await accept(authoritative || fullState.appLanguage, ++generation)
+                        if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
+                        break
+                    }
+                    await accept(language, current)
                 }
             } else {
                 state.mode = fullState ? 'incompatible' : 'browser'
@@ -90,6 +99,11 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
                 await render(state.locale, ticket)
             }
             initializing = false
+            // An event received while loading the degraded snapshot still counts.
+            if (native && initializationDirty && !disposed) {
+                initializationDirty = false
+                backgroundReconcile()
+            }
             return state
         })()
     }

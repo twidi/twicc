@@ -331,3 +331,101 @@ test('queued intent cannot adopt a broadcast revision after another page changes
     ])
     page.controller.dispose()
 })
+
+test('failed startup reconciliation completes with the native snapshot and later broadcasts recover', async () => {
+    const snapshot = deferred()
+    let reads = 0
+    const error = Object.assign(new Error('Transient read timeout'), { uiMessage: {
+        type: 'local-ui-message', key: 'common.android.errors.unreachable', params: {},
+    } })
+    const page = fixture({ request: async command => {
+        if (command === 'getState') return snapshot.promise
+        if (command === 'locale.get' && ++reads === 1) throw error
+        return language('de', 2)
+    } })
+    const startup = page.controller.initialize()
+    page.change(language('de', 2))
+    snapshot.resolve({ capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) })
+    try {
+        const state = await startup
+        assert.equal(state.locale, 'fr')
+        assert.equal(state.revision, 1)
+        assert.equal(page.applied.at(-1), 'fr')
+        assert.equal(page.compatibility.at(-1), error.uiMessage)
+        await tick()
+        assert.equal(reads, 1, 'startup failure must not trigger an automatic retry loop')
+        page.change(language('de', 2))
+        await tick()
+        assert.equal(state.locale, 'de')
+        assert.equal(page.applied.at(-1), 'de')
+        assert.equal(page.compatibility.at(-1), null)
+        assert.equal(await page.controller.initialize(), state)
+        await page.controller.reconcile()
+        assert.equal(reads, 3)
+        assert.ok(page.calls.every(([command]) => command !== 'locale.set'))
+    } finally { page.controller.dispose() }
+})
+
+test('failed startup read keeps native preference separate from English catalog fallback', async () => {
+    const snapshot = deferred()
+    const manager = createLocaleManager({ fr: async () => { throw new Error('Offline catalog') } })
+    const page = fixture({ applyLocale: locale => manager.setLocale(locale), request: async command => {
+        if (command === 'getState') return snapshot.promise
+        throw new Error('Transient read timeout')
+    } })
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+        const startup = page.controller.initialize()
+        page.change(language('de', 2))
+        snapshot.resolve({ capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) })
+        const state = await startup
+        assert.equal(state.locale, 'fr')
+        assert.equal(state.revision, 1)
+        assert.equal(manager.i18n.global.locale.value, 'en')
+        assert.equal(page.compatibility.at(-1).key, 'common.android.errors.unreachable')
+        assert.ok(page.calls.every(([command]) => command !== 'locale.set'))
+    } finally { console.warn = warn; page.controller.dispose() }
+})
+
+test('a healthy event during degraded catalog loading remains recoverable', async () => {
+    const snapshot = deferred(), catalog = deferred()
+    let reads = 0
+    const page = fixture({ applyLocale: locale => locale === 'fr' ? catalog.promise : undefined, request: async command => {
+        if (command === 'getState') return snapshot.promise
+        if (++reads === 1) throw new Error('Transient read timeout')
+        return language('de', 2)
+    } })
+    const startup = page.controller.initialize()
+    page.change(language('de', 2))
+    snapshot.resolve({ capabilities: { appLanguage: 1 }, appLanguage: language('fr', 1) })
+    await tick()
+    page.change(language('de', 2))
+    catalog.resolve()
+    const state = await startup
+    await tick()
+    assert.equal(reads, 2)
+    assert.equal(state.locale, 'de')
+    assert.equal(page.compatibility.at(-1), null)
+    page.controller.dispose()
+})
+
+test('startup read failure retains the unsupported-language update status', async () => {
+    const snapshot = deferred()
+    const page = fixture({ request: async command => {
+        if (command === 'getState') return snapshot.promise
+        throw new Error('Transient read timeout')
+    } })
+    const startup = page.controller.initialize()
+    page.change(language('it', 3, [...languages, 'it']))
+    snapshot.resolve({ capabilities: { appLanguage: 1 }, appLanguage: language('it', 3, [...languages, 'it']) })
+    const state = await startup
+    assert.equal(state.locale, 'it')
+    assert.equal(state.mode, 'incompatible')
+    assert.deepEqual(page.applied, ['en'])
+    assert.equal(page.compatibility.at(-1).key, 'android.language.errors.updateServer')
+    page.change(language('it', 3, [...languages, 'it']))
+    await tick()
+    assert.equal(page.compatibility.at(-1).key, 'android.language.errors.updateServer')
+    page.controller.dispose()
+})
