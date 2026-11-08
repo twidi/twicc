@@ -13,14 +13,19 @@ cron with its original id and ``created_at``. Three rules follow:
   monitor keeps renewing them.
 """
 
+import asyncio
 from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from django.utils import timezone as djtz
 
+from twicc.agent.exceptions import AgentStartError
 from twicc.agent.states import AgentState
 from twicc.core.enums import Provider
 from twicc.core.models import ProcessRun, Session, SessionCron, SessionType
+from twicc.providers.claude_code import cron_restart
 from twicc.providers.claude_code.cron_restart import (
     _build_restart_message,
     _prepare_restarts,
@@ -232,3 +237,27 @@ def test_reattach_leaves_another_session_alone(transactional_db):
 
     assert reattach_crons_and_purge_old_runs(SESSION_ID, current.pk) == (0, 0)
     assert ProcessRun.objects.filter(pk=other.pk).exists()
+
+
+def test_a_start_failure_retries_with_a_warning_and_no_unexpected_error(monkeypatch):
+    manager = SimpleNamespace(
+        _agents={},
+        _session_is_hybrid=AsyncMock(return_value=False),
+        send_to_session=AsyncMock(side_effect=AgentStartError("did not start", reason="start_failed")),
+    )
+    monkeypatch.setattr(
+        "twicc.providers.claude_code.agent.manager.get_claude_code_agent_manager", lambda: manager,
+    )
+    monkeypatch.setattr(cron_restart, "_retry_delays", lambda initial_delay: iter([0, 0]))
+    restart_data = {"session_id": SESSION_ID, "restored_crons": [], "crons_to_recreate": []}
+    # The second attempt finds nothing left to restart, which ends the loop.
+    monkeypatch.setattr(cron_restart, "_collect_restart_data", MagicMock(side_effect=[restart_data, None]))
+    monkeypatch.setattr(cron_restart, "_build_restart_message", lambda restored, to_recreate: "restart")
+
+    with patch.object(cron_restart, "logger") as logger:
+        asyncio.run(cron_restart.restart_session_crons(SESSION_ID, stop_event=asyncio.Event()))
+
+    manager.send_to_session.assert_awaited_once()
+    logger.error.assert_not_called()
+    logger.warning.assert_called_once()
+    assert logger.warning.call_args.args[1:3] == (SESSION_ID, 1)

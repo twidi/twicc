@@ -684,6 +684,12 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                                             report_start_failure=cancel_cron_restart,
                                             **_parked_start_kwargs(pending),
                                         )
+                                except AgentStartError:
+                                    # No process took this input, and the ``finally`` of this method
+                                    # skips it: provider admission is already set.
+                                    if staged_agent is not None and completion_token is not None and has_input:
+                                        staged_agent._completion_input_settled(completion_token, "rejected")
+                                    raise
                                 finally:
                                     self._finish_deferred_completion_handoff(pending.get("completion_token"))
                                 release_after_lock = self._parked_release_after_start(session_id, pending)
@@ -1990,6 +1996,8 @@ class ClaudeCodeAgentManager(BaseAgentManager):
                 except AgentStartError:
                     # Already notified by _restart_after_kill. The parked refs go to the reaper.
                     return
+                finally:
+                    self._finish_deferred_completion_handoff(pending.get("completion_token"))
                 # The callback only schedules a detached task, which never
                 # takes ``_lock`` (held here by some callers).
                 release = self._parked_release_after_start(agent.session_id, pending)

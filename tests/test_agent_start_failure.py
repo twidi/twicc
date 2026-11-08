@@ -55,6 +55,12 @@ def test_absent_program(tmp_path, error):
     assert failure.ui_message == ui_message("backend.agent.startFailed.cli_not_found", {"provider": "Codex"})
 
 
+def test_an_exception_without_text_gives_its_type_as_diagnostic(tmp_path):
+    failure = classify_start_failure(TimeoutError(), directory=str(tmp_path), provider=Provider.CODEX)
+    assert failure.reason == "start_failed"
+    assert failure.diagnostic == "TimeoutError"
+
+
 def test_permission_error_is_found_through_the_cause_chain(tmp_path):
     wrapper = CLIConnectionError("Failed to start Claude Code: denied")
     wrapper.__cause__ = PermissionError(13, "denied")

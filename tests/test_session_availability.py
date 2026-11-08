@@ -436,6 +436,49 @@ def test_automatic_parked_restart_notifies_and_does_not_raise(sessions):
     )
 
 
+def test_automatic_parked_restart_failure_finishes_the_deferred_handoff(sessions):
+    from twicc.providers.helpers import AgentSettings, get_provider_helpers
+
+    helpers = get_provider_helpers("claude_code")
+    requested = helpers.enforce_agent_settings_consistency(
+        helpers.resolve_agent_settings(AgentSettings.from_session(sessions.open)),
+    )
+    manager, agent = _idle_claude_manager("open", _other_effort(requested))
+    manager._pending_after_restart["open"] = {
+        "text": "parked", "images": None, "documents": None, "completion_token": "t",
+    }
+    manager._start_agent = AsyncMock(side_effect=_start_failure())
+
+    async def scenario():
+        handoff = asyncio.get_running_loop().create_future()
+        manager._deferred_completion_receipts["t"] = handoff
+        await manager._apply_pending_settings(agent)
+        return handoff
+
+    handoff = asyncio.run(scenario())
+
+    assert handoff.done()
+    assert handoff.result() is None
+
+
+def test_inline_restart_failure_rejects_the_staged_receipt(sessions):
+    from twicc.agent.exceptions import AgentStartError
+    from twicc.providers.helpers import AgentSettings
+
+    requested = AgentSettings(effort="high")
+    manager, agent = _idle_claude_manager("open", _other_effort(requested))
+    agent._completion_input_pending = MagicMock()
+    agent._completion_input_settled = MagicMock()
+    manager._start_agent = AsyncMock(side_effect=_start_failure())
+
+    with pytest.raises(AgentStartError):
+        asyncio.run(manager.send_to_session(
+            "open", PROJECT_ID, "/tmp", "hi", requested, completion_token="t", completion_cursor=0,
+        ))
+
+    agent._completion_input_settled.assert_called_once_with("t", "rejected")
+
+
 def test_cron_send_notifies_then_raises(sessions):
     from twicc.agent.exceptions import AgentStartError
     from twicc.agent.states import AgentState

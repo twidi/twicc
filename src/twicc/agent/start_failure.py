@@ -53,8 +53,8 @@ def _cause_chain(exc: BaseException) -> Iterator[BaseException]:
 
 
 def _bounded_diagnostic(exc: BaseException) -> str:
-    """Return ``str(exc)``, cut to at most :data:`DIAGNOSTIC_MAX_CHARS` characters."""
-    text = str(exc)
+    """Return ``str(exc)`` or its type name if empty, cut to :data:`DIAGNOSTIC_MAX_CHARS` characters."""
+    text = str(exc) or type(exc).__name__
     if len(text) <= DIAGNOSTIC_MAX_CHARS:
         return text
     return f"{text[:DIAGNOSTIC_MAX_CHARS - 1]}…"

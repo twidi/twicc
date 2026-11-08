@@ -385,6 +385,7 @@ async def _restart_session_crons(
     (_restart_crons_for_session in ClaudeCodeAgentManager).
     """
     from twicc.agent import AgentState
+    from twicc.agent.exceptions import AgentStartError
     from twicc.providers.claude_code.agent.manager import get_claude_code_agent_manager
 
     manager = get_claude_code_agent_manager()
@@ -477,6 +478,13 @@ async def _restart_session_crons(
                     session_id, attempt,
                 )
                 continue
+
+        except AgentStartError as e:
+            logger.warning(
+                "Cron restart for session %s: agent did not start (attempt %d): %s",
+                session_id, attempt, e,
+            )
+            continue
 
         except Exception as e:
             logger.error(
