@@ -23,7 +23,7 @@ class AppLanguagePersistenceTest {
         preferenceFiles.forEach { context.deleteSharedPreferences(it) }
     }
 
-    // Each test owns its backing file. The production API still requests only app-language.
+    // Each test owns both preference files. No fixture can change saved target instances.
     private fun fixture(base: Context = context): Pair<SharedPreferences, Context> {
         val name = "app-language-test-${java.util.UUID.randomUUID()}"
         preferenceFiles += name
@@ -31,9 +31,17 @@ class AppLanguagePersistenceTest {
         return preferences to using(preferences, base)
     }
 
-    private fun using(preferences: SharedPreferences, base: Context = context): Context = object : ContextWrapper(base) {
-        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
-            if (name == "app-language") preferences else super.getSharedPreferences(name, mode)
+    private fun using(preferences: SharedPreferences, base: Context = context): Context {
+        val instanceFile = "instances-language-test-${java.util.UUID.randomUUID()}"
+        preferenceFiles += instanceFile
+        val instances = base.getSharedPreferences(instanceFile, Context.MODE_PRIVATE)
+        return object : ContextWrapper(base) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences = when (name) {
+                "app-language" -> preferences
+                "instances" -> instances
+                else -> super.getSharedPreferences(name, mode)
+            }
+        }
     }
 
     @Test fun defaultsToEnglishOnFrenchSystem() {

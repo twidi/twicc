@@ -1530,21 +1530,6 @@
         "parameters": [],
         "numberFormats": {}
       },
-      "android.push.registrationLabel": {
-        "forms": [
-          {
-            "tokens": [
-              {
-                "type": "text",
-                "value": "TwiCC push registration"
-              }
-            ],
-            "parameters": []
-          }
-        ],
-        "parameters": [],
-        "numberFormats": {}
-      },
       "android.push.titleWithInstance": {
         "forms": [
           {
@@ -6192,21 +6177,6 @@
               {
                 "type": "text",
                 "value": "TwiCC-Benachrichtigungen"
-              }
-            ],
-            "parameters": []
-          }
-        ],
-        "parameters": [],
-        "numberFormats": {}
-      },
-      "android.push.registrationLabel": {
-        "forms": [
-          {
-            "tokens": [
-              {
-                "type": "text",
-                "value": "TwiCC-Push-Registrierung"
               }
             ],
             "parameters": []
@@ -10878,21 +10848,6 @@
               {
                 "type": "text",
                 "value": "Notificaciones de TwiCC"
-              }
-            ],
-            "parameters": []
-          }
-        ],
-        "parameters": [],
-        "numberFormats": {}
-      },
-      "android.push.registrationLabel": {
-        "forms": [
-          {
-            "tokens": [
-              {
-                "type": "text",
-                "value": "Registro push de TwiCC"
               }
             ],
             "parameters": []
@@ -15592,21 +15547,6 @@
         "parameters": [],
         "numberFormats": {}
       },
-      "android.push.registrationLabel": {
-        "forms": [
-          {
-            "tokens": [
-              {
-                "type": "text",
-                "value": "Enregistrement push TwiCC"
-              }
-            ],
-            "parameters": []
-          }
-        ],
-        "parameters": [],
-        "numberFormats": {}
-      },
       "android.push.titleWithInstance": {
         "forms": [
           {
@@ -20266,21 +20206,6 @@
               {
                 "type": "text",
                 "value": "Notificações do TwiCC"
-              }
-            ],
-            "parameters": []
-          }
-        ],
-        "parameters": [],
-        "numberFormats": {}
-      },
-      "android.push.registrationLabel": {
-        "forms": [
-          {
-            "tokens": [
-              {
-                "type": "text",
-                "value": "Registro de push do TwiCC"
               }
             ],
             "parameters": []

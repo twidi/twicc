@@ -4506,7 +4506,6 @@
     "android.push.channels.attention": "Perguntas e aprovações",
     "android.push.channels.peer": "Mensagens e solicitações de instâncias parceiras",
     "android.push.distributorLabel": "Notificações do TwiCC",
-    "android.push.registrationLabel": "Registro de push do TwiCC",
     "android.push.titleWithInstance": "{title} · {instance}",
     "android.push.genericTitle": "Notificação do TwiCC",
     "android.push.genericBody": "Abra o TwiCC para ver esta notificação.",

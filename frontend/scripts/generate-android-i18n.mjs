@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { baseCompile, detectHtmlTag } from '@intlify/message-compiler'
 import { createAppI18n } from '../src/i18n/index.js'
+import { generateAndroidTestFixtures } from './generate-android-test-fixtures.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const supportedLocales = ['en', 'de', 'es', 'fr', 'pt-BR']
@@ -174,7 +175,11 @@ function bootstrapXml(compiled, manifest) {
 
 /** Regenerate all committed outputs, or fail without writing when check is true. */
 export async function generateAndroidI18n({ check = false } = {}) {
-    const sourcePaths = [manifestPath, generatorPath, 'frontend/src/i18n/index.js', 'frontend/package-lock.json',
+    const sourcePaths = [manifestPath, generatorPath, 'frontend/scripts/generate-android-test-fixtures.mjs',
+        'frontend/src/i18n/index.js', 'frontend/package-lock.json',
+        'frontend/src/i18n/uiMessages.js', 'frontend/src/i18n/remoteMessages.js', 'frontend/src/i18n/messageDescriptors.js',
+        'frontend/src/utils/androidAppClient.js', 'frontend/src/utils/nativeTtsClient.js',
+        ...supportedLocales.filter(locale => locale !== 'en').map(locale => `frontend/src/i18n/locales/${locale}.js`),
         ...supportedLocales.map(locale => `frontend/src/i18n/locales/${locale}.json`)]
     const sources = Object.fromEntries(await Promise.all(sourcePaths.map(async path => [path, await readFile(resolve(root, path))])))
     const manifest = JSON.parse(sources[manifestPath])
@@ -190,8 +195,11 @@ export async function generateAndroidI18n({ check = false } = {}) {
         [catalogPath]: serialize(compiled),
         [fixturePath]: serialize(createFixtures(catalogs, manifest)),
         [xmlPath]: bootstrapXml(compiled, manifest),
-        [fingerprintPath]: sourcePaths.map(path => `${createHash('sha256').update(sources[path]).digest('hex')}  ${path}`).join('\n') + '\n',
+        ...await generateAndroidTestFixtures(),
     }
+    // Hash every input and generated output. Never hash this fingerprint file.
+    outputs[fingerprintPath] = Object.entries({ ...sources, ...outputs }).map(([path, bytes]) =>
+        `${createHash('sha256').update(bytes).digest('hex')}  ${path}`).join('\n') + '\n'
     for (const [path, expected] of Object.entries(outputs)) {
         if (check) {
             let actual

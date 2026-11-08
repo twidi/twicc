@@ -12,6 +12,75 @@ page reload. Both Android builds use native TTS when the engine and server
 support it. There is no build-time speech selector. Ordinary browser users
 keep the Web TTS players. Physical-phone acceptance remains pending.
 
+## Interface language
+
+The installation starts in **English**. Select English, German, Spanish, French,
+or Brazilian Portuguese in an instance's interface language control.
+The selection updates native controls and every compatible embedded instance.
+It persists across process restarts, instance removal, and engine replacement.
+Each Android device keeps its own selection. Android's system language does not
+select the TwiCC language. Ordinary browsers keep their browser preference.
+
+Native controls and device-rendered notifications use packaged messages offline.
+The server receives no language preference. User content, provider content,
+spoken text, instance names, and external diagnostics remain verbatim.
+Existing event notifications keep their posted text. Later notifications and
+normal ongoing speech notification updates use the current language.
+
+Compatible pages require bridge `protocol: 1`, `capabilities.appLanguage: 1`,
+and the revisioned `locale.get` / `locale.set` commands. Stale page selections
+cannot overwrite a newer installation selection. Old pages keep native controls
+in the installation language; update the server for shared page selection.
+Update an old APK to enable installation language ownership.
+
+**Push rollout:** update both the server and APK. The new server sends descriptor
+payloads only to registrations with `notification_payload_version: 2`.
+Old APKs require an update after the server upgrade. The notification settings
+show `update_app` or `update_server` compatibility status where applicable.
+A new APK renders valid legacy text pushes as localized generic notifications.
+It keeps safe tap destinations. Unknown descriptor keys also use generic text.
+Malformed envelopes and unknown payload versions remain rejected.
+Open each saved instance after upgrading so foreground reconciliation can renew
+its registration with the new payload capability.
+
+### Catalog generation and build checks
+
+The editable translations live only in `frontend/src/i18n/locales/*.json`.
+`android/i18n/messages.json` selects native keys and numeric parameter formats.
+Do not edit generated Android resources or create translated Android XML copies.
+After changing catalogs, the manifest, generators, or fixture adapter sources:
+
+```bash
+cd frontend && npm run i18n:android:generate
+cd frontend && npm run i18n:android:check
+cd frontend && npm run lint:i18n:android
+```
+
+Run these commands from the checkout root. Existing frontend dependencies are
+required for generation. Package installation remains a separate setup action.
+Generation also bundles real page adapters into
+`android/app/src/androidTest/generated/`. These deterministic modules contain
+their i18n dependencies and enter only the instrumentation APK.
+Gradle copies the source `frontend/index.html` recovery guard separately.
+The fixture generator uses the installed Vite dependency and package lock.
+
+Commit all generated outputs, including `sources.sha256`. It fingerprints all
+five catalogs, the manifest, both generators, the locale manager and adapters,
+the descriptor helpers, the package lock, and every generated output.
+The fingerprint file excludes itself. Gradle's `verifyAndroidI18n` uses Java
+SHA-256 before `preBuild`. A source or generated output mismatch fails the build.
+Standalone Gradle and `build.sh` do not invoke Node or install npm packages.
+The opt-in CI template performs explicit frontend dependency setup and checks.
+
+The Kotlin checker detects direct presentation literals in main, Gecko, WebView,
+and policy sources. It does not trace variables, interpolated data flows,
+reflection, or dynamic error provenance. Review these paths manually.
+Diagnostics and user/provider content stay verbatim. Semantic error producers
+can retain English fallback prose beside their descriptor.
+
+See the [execution handoff](../docs/plans/2026-11-08-android-internationalization-execution.md)
+for recorded checks and outstanding native/device acceptance.
+
 ## Choosing an engine
 
 | Build | Choose it when | Trade-offs |

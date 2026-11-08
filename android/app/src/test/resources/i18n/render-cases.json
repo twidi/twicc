@@ -1532,21 +1532,6 @@
           "parameters": [],
           "numberFormats": {}
         },
-        "android.push.registrationLabel": {
-          "forms": [
-            {
-              "tokens": [
-                {
-                  "type": "text",
-                  "value": "TwiCC push registration"
-                }
-              ],
-              "parameters": []
-            }
-          ],
-          "parameters": [],
-          "numberFormats": {}
-        },
         "android.push.titleWithInstance": {
           "forms": [
             {
@@ -6441,21 +6426,6 @@
                 {
                   "type": "text",
                   "value": "TwiCC-Benachrichtigungen"
-                }
-              ],
-              "parameters": []
-            }
-          ],
-          "parameters": [],
-          "numberFormats": {}
-        },
-        "android.push.registrationLabel": {
-          "forms": [
-            {
-              "tokens": [
-                {
-                  "type": "text",
-                  "value": "TwiCC-Push-Registrierung"
                 }
               ],
               "parameters": []
@@ -11374,21 +11344,6 @@
                 {
                   "type": "text",
                   "value": "Notificaciones de TwiCC"
-                }
-              ],
-              "parameters": []
-            }
-          ],
-          "parameters": [],
-          "numberFormats": {}
-        },
-        "android.push.registrationLabel": {
-          "forms": [
-            {
-              "tokens": [
-                {
-                  "type": "text",
-                  "value": "Registro push de TwiCC"
                 }
               ],
               "parameters": []
@@ -16335,21 +16290,6 @@
           "parameters": [],
           "numberFormats": {}
         },
-        "android.push.registrationLabel": {
-          "forms": [
-            {
-              "tokens": [
-                {
-                  "type": "text",
-                  "value": "Enregistrement push TwiCC"
-                }
-              ],
-              "parameters": []
-            }
-          ],
-          "parameters": [],
-          "numberFormats": {}
-        },
         "android.push.titleWithInstance": {
           "forms": [
             {
@@ -21264,21 +21204,6 @@
           "parameters": [],
           "numberFormats": {}
         },
-        "android.push.registrationLabel": {
-          "forms": [
-            {
-              "tokens": [
-                {
-                  "type": "text",
-                  "value": "Registro de push do TwiCC"
-                }
-              ],
-              "parameters": []
-            }
-          ],
-          "parameters": [],
-          "numberFormats": {}
-        },
         "android.push.titleWithInstance": {
           "forms": [
             {
@@ -25438,14 +25363,6 @@
     {
       "locale": "en",
       "message": {
-        "key": "android.push.registrationLabel",
-        "params": {}
-      },
-      "expected": "TwiCC push registration"
-    },
-    {
-      "locale": "en",
-      "message": {
         "key": "android.push.titleWithInstance",
         "params": {
           "instance": "instance: café 😀 \"quote\" {'|'} @",
@@ -28014,14 +27931,6 @@
         "params": {}
       },
       "expected": "TwiCC-Benachrichtigungen"
-    },
-    {
-      "locale": "de",
-      "message": {
-        "key": "android.push.registrationLabel",
-        "params": {}
-      },
-      "expected": "TwiCC-Push-Registrierung"
     },
     {
       "locale": "de",
@@ -30598,14 +30507,6 @@
     {
       "locale": "es",
       "message": {
-        "key": "android.push.registrationLabel",
-        "params": {}
-      },
-      "expected": "Registro push de TwiCC"
-    },
-    {
-      "locale": "es",
-      "message": {
         "key": "android.push.titleWithInstance",
         "params": {
           "instance": "instance: café 😀 \"quote\" {'|'} @",
@@ -33174,14 +33075,6 @@
         "params": {}
       },
       "expected": "Notifications TwiCC"
-    },
-    {
-      "locale": "fr",
-      "message": {
-        "key": "android.push.registrationLabel",
-        "params": {}
-      },
-      "expected": "Enregistrement push TwiCC"
     },
     {
       "locale": "fr",
@@ -36158,14 +36051,6 @@
         "params": {}
       },
       "expected": "Notificações do TwiCC"
-    },
-    {
-      "locale": "pt-BR",
-      "message": {
-        "key": "android.push.registrationLabel",
-        "params": {}
-      },
-      "expected": "Registro de push do TwiCC"
     },
     {
       "locale": "pt-BR",

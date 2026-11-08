@@ -11,6 +11,10 @@ immediate.
 - It is local to the browser, like the color scheme. It does not change the language on other devices.
 - English is the default, also when stored settings are invalid or unavailable.
 
+These persistence rules describe ordinary browsers. Android uses the
+[installation language](#android-installation-language) instead of browser
+storage as its authority.
+
 The language list here and in the table below must match `SUPPORTED_LOCALES`.
 The language affects the interface only. It does not affect agent prompts,
 responses, project names, saved snippets, terminal output or file contents.
@@ -245,6 +249,51 @@ Follow backend-supplied interface prose to its producer. Add semantic
 metadata there. See [Backend interface messages](#backend-interface-messages).
 
 ## Checks
+
+### Android installation language
+
+Android owns one persisted installation language: `en`, `de`, `es`, `fr`, or
+`pt-BR`. It starts in English and does not read Android's system language.
+Compatible embedded pages synchronize through the revisioned native language
+bridge. Browser storage restoration is not an explicit native selection.
+Each device and ordinary browser keeps an independent preference.
+
+Keep editable messages in the existing JSON catalogs. Select the native subset
+in `android/i18n/messages.json`. Reuse existing keys for equivalent meanings.
+Declare numeric parameter formatting there. Keep identifiers and HTTP codes
+verbatim. Add complete messages in all five catalogs for new native meanings.
+Do not maintain translated Kotlin or Android XML copies.
+
+From `frontend/`, run `npm run i18n:android:generate`, then
+`npm run i18n:android:check` and `npm run lint:i18n:android`.
+Commit the compiled token catalog, bootstrap XML, Vue oracle cases, bundled
+instrumentation adapters, and `sources.sha256`. The generator uses the existing
+compiler and Vite dependencies. The fixture bundles contain the real adapters
+and their transitive i18n imports. They enter only the instrumentation APK.
+
+Gradle checks source/output SHA-256 fingerprints with Java before `preBuild`.
+Android standalone builds require no Node/npm setup. The opt-in Android CI
+template installs frontend dependencies explicitly and checks deterministic
+generation, Vue parity, and direct Kotlin source literals.
+
+The direct-literal checker covers text, hints, accessibility text, dialogs,
+menus, notification actions/channels, Toasts, and direct owned error producers.
+It does not prove complete coverage. Review variable interpolation, dynamic
+presentation helpers, and external error provenance manually.
+No untranslated-message baseline exempts interface text.
+
+Native controls and notifications render offline from the packaged catalog.
+Device language never travels in backend requests or registration records.
+New push payloads contain descriptors only. Update old APKs after the server
+upgrade. A new APK renders valid legacy pushes with localized generic text and
+retains their safe tap destinations. Open saved instances to reconcile their
+payload capabilities after either upgrade direction.
+Bridge capability and catalog compatibility can require a server or APK update.
+See [Android documentation](../android/README.md#interface-language) and the
+[execution handoff](plans/2026-11-08-android-internationalization-execution.md)
+for rollout details and outstanding native acceptance.
+
+### Browser and backend checks
 
 Run from `frontend/`:
 

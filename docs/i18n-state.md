@@ -3,17 +3,29 @@
 This file records the last complete translation pass. Its Git history is the
 baseline for the next pass.
 
-**Invariant:** the last commit that changes this file represents a complete,
-validated pass. Change this file only when a pass is complete, in the same
-commit as the translations. Never commit partial progress here.
+**Full-pass baseline:** the last complete pass remains the commit before the
+Android integration status update. That update records scoped integration work,
+not a complete native/device validation pass. Use this baseline until the next
+complete pass supersedes it:
 
-Find the baseline with:
+`85f6fd78f95013ea768b575cf522f1eadab92bdf`
+
+After that next complete pass, the last commit that changes this file again
+represents a complete, validated pass. Do not treat scoped status updates as
+translation-review baselines.
+
+Until the next complete pass, use the recorded baseline:
 
 ```bash
-baseline=$(git log -1 --follow --format=%H -- docs/i18n-state.md)
+baseline=85f6fd78f95013ea768b575cf522f1eadab92bdf
 ```
 
-Do not move or rename this file. If the command prints nothing, run a full
+After the next complete pass, find it with
+`git log -1 --follow --format=%H -- docs/i18n-state.md`.
+The rebase recovery commands below apply to complete passes. During this
+scoped Android integration, retain the explicit baseline above instead.
+
+Do not move or rename this file. If the history command prints nothing, run a full
 initial pass. Do not substitute another commit.
 
 A merge of `main` keeps the baseline. The baseline diff includes what `main`
@@ -50,12 +62,28 @@ translations follow.
 
 ## Scope
 
+### Android integration status — 2026-11-08
+
+The implementation includes five-language packaged catalogs, installation
+language ownership, both bridge engines, native presentation, structured push
+messages, payload-capability renewal, and generation/source checks.
+The native translation source remains the shared frontend catalogs.
+
+**Native validation remains outstanding.** This environment has no Java/JDK,
+Android SDK, or connected device. Source checks and frontend/backend tests do
+not prove Kotlin compilation or device behavior. See the exact coordinated
+results, process-death procedure, and remaining interaction checks in the
+[execution handoff](plans/2026-11-08-android-internationalization-execution.md).
+This status entry does not advance the complete-pass baseline above.
+
+### Full-pass scope
+
 A pass covers:
 
 - `frontend/` application sources: Vue, JavaScript, TypeScript, HTML and CSS, standalone entry points, display metadata and the catalogs in `frontend/src/i18n/locales/`.
 - `frontend/vite.config.js`, because it injects the startup recovery messages into `frontend/index.html`.
 - `src/twicc/` Python code that implements or supports browser-facing behavior. Shared dependencies under CLI or MCP directories are included.
-- `android/` transport dependencies that carry browser messages. This is not a full native Android interface review.
+- `android/` application-owned native interface, policy errors, bridge messages, and device-rendered notifications. Generated resources come from the shared catalogs.
 - Help and tip English sources in `frontend/public/help/` and `frontend/public/tips/`, with their translated bodies under the locale directories.
 - `docs/i18n-glossary.md`.
 

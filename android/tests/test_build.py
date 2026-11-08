@@ -107,6 +107,20 @@ class BuildScriptTest(unittest.TestCase):
         self.assertIn("--debug", result.stdout)
         self.assertFalse((self.project / "gradle-arguments").exists())
 
+    def test_build_entry_runs_i18n_verification(self):
+        result = self.run_build("webview", "emulator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = (self.project / "gradle-arguments").read_text().splitlines()
+        self.assertLess(arguments.index(":app:verifyAndroidI18n"), arguments.index(":policy:test"))
+
+    def test_prebuild_verifies_fingerprints_without_node(self):
+        gradle = (BUILD_SCRIPT.parent / "app/build.gradle.kts").read_text()
+        self.assertIn('tasks.register("verifyAndroidI18n")', gradle)
+        self.assertIn('MessageDigest.getInstance("SHA-256")', gradle)
+        self.assertIn('dependsOn(verifyAndroidI18n)', gradle)
+        self.assertNotIn('commandLine("npm"', gradle)
+        self.assertNotIn('commandLine("node"', gradle)
+
     def test_failed_build_does_not_publish_a_stale_apk(self):
         self.environment["FAIL_BUILD"] = "1"
         for mode, flags in (("release", ()), ("debug", ("--debug",))):

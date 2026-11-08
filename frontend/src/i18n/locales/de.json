@@ -4506,7 +4506,6 @@
     "android.push.channels.attention": "Fragen und Genehmigungen",
     "android.push.channels.peer": "Peer-Nachrichten und -Anfragen",
     "android.push.distributorLabel": "TwiCC-Benachrichtigungen",
-    "android.push.registrationLabel": "TwiCC-Push-Registrierung",
     "android.push.titleWithInstance": "{title} · {instance}",
     "android.push.genericTitle": "TwiCC-Benachrichtigung",
     "android.push.genericBody": "Öffne TwiCC, um diese Benachrichtigung anzusehen.",

@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
 }
@@ -77,9 +79,40 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
-// Package the actual page adapters only in the instrumentation APK, without a copied test implementation.
+// Java-only verification: standalone APK builds consume committed generated files.
+// Never install or invoke Node/npm from Gradle or the Android build entry point.
+val i18nRoot = rootProject.projectDir.parentFile
+val i18nFingerprints = i18nRoot.resolve("android/app/src/main/assets/i18n/sources.sha256")
+val verifyAndroidI18n = tasks.register("verifyAndroidI18n") {
+    group = "verification"
+    description = "Reject stale generated Android catalogs and browser test fixtures."
+    // Deliberately always verify. Missing/changed inputs must not pass an up-to-date cache.
+    doLast {
+        val seen = mutableSetOf<String>()
+        val entries = i18nFingerprints.readLines()
+        if (entries.isEmpty()) throw GradleException("Empty Android i18n fingerprints")
+        for (line in entries) {
+            val match = Regex("^([a-f0-9]{64})  ([A-Za-z0-9_./-]+)$").matchEntire(line)
+                ?: throw GradleException("Invalid Android i18n fingerprint: $line")
+            val (expected, path) = match.destructured
+            if (path.startsWith("/") || ".." in path.split("/") || !seen.add(path)) {
+                throw GradleException("Invalid Android i18n fingerprint path: $path")
+            }
+            val source = i18nRoot.resolve(path)
+            val actual = if (source.isFile) MessageDigest.getInstance("SHA-256")
+                .digest(source.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) } else null
+            if (actual != expected) throw GradleException(
+                "Stale Android i18n input/output: $path. Run cd frontend && npm run i18n:android:generate, then commit all outputs."
+            )
+        }
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyAndroidI18n) }
+
+// Generated self-contained adapters live only in the instrumentation APK.
 val nativeTtsFixtureAssets by tasks.registering(Sync::class) {
-    from("../../frontend/src/utils") { include("androidAppClient.js", "nativeTtsClient.js") }
+    dependsOn(verifyAndroidI18n)
+    from("src/androidTest/generated") { include("androidAppClient.js", "nativeTtsClient.js") }
     from("../../frontend") { include("index.html") }
     into(layout.buildDirectory.dir("generated/nativeTtsFixtureAssets"))
 }

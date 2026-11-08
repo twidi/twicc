@@ -100,7 +100,6 @@
     "android.push.channels.attention": {},
     "android.push.channels.peer": {},
     "android.push.distributorLabel": {},
-    "android.push.registrationLabel": {},
     "android.push.titleWithInstance": {},
     "android.push.genericTitle": {},
     "android.push.genericBody": {},
@@ -532,9 +531,6 @@
     "android/app/src/main/java/com/twidi/twicc/push/AndroidPushService.kt": {
       "${payload.title} · ${saved.name}": "android.push.titleWithInstance"
     },
-    "android/app/src/main/java/com/twidi/twicc/push/PushRegistrationJob.kt": {
-      "TwiCC push registration": "android.push.registrationLabel"
-    },
     "android/app/src/main/java/com/twidi/twicc/tts/NativeTtsBridge.kt": {
       "Speech is unavailable. Update the Android app and try again.": "android.speech.errors.updateRequired",
       "Speech is getting ready. Try again in a moment.": "common.android.errors.speechPreparing",
@@ -867,6 +863,12 @@
       {
         "text": "AudioResource(readingId=$readingId, generation=$generation, audioId=$audioId)",
         "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/push/PushRegistrationJob.kt": [
+      {
+        "text": "TwiCC push registration",
+        "reason": "Worker thread name; never displayed in the interface"
       }
     ]
   }

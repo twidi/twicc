@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint:i18n": "eslint --config eslint.i18n.config.js \"src/**/*.{vue,js,ts}\" \"src/i18n/locales/*.json\"",
     "i18n:android:generate": "node scripts/generate-android-i18n.mjs",
-    "i18n:android:check": "node scripts/generate-android-i18n.mjs --check"
+    "i18n:android:check": "node scripts/generate-android-i18n.mjs --check",
+    "lint:i18n:android": "node scripts/check-android-i18n-source.mjs"
   },
   "type": "module",
   "keywords": [],

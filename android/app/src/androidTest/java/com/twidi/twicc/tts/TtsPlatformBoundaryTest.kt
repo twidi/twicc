@@ -787,7 +787,7 @@ class TtsPlatformBoundaryTest {
                 val error = TtsNotification.visiblePreflight(it)!!
                 assertEquals("notification_settings", error.action)
             }
-            clickVisibleNode(text = "Open Settings")
+            clickVisibleNode(viewId = "android:id/button1")
             val end = android.os.SystemClock.elapsedRealtime() + 5000
             var settings = ""
             while (!settings.contains("com.android.settings") && android.os.SystemClock.elapsedRealtime() < end) {
@@ -825,7 +825,7 @@ class TtsPlatformBoundaryTest {
                 assertTrue(TtsNotification.batteryAdviceNeeded(it))
                 TtsNotification.showBatteryAdvice(it) { continued = true }
             }
-            clickVisibleNode(text = "Open Settings")
+            clickVisibleNode(viewId = "android:id/button1")
             val end = android.os.SystemClock.elapsedRealtime() + 5000
             while (instrumentation.uiAutomation.rootInActiveWindow?.packageName != "com.android.settings" && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(50)
             assertEquals("com.android.settings", instrumentation.uiAutomation.rootInActiveWindow?.packageName)
@@ -858,7 +858,7 @@ class TtsPlatformBoundaryTest {
         try {
             awaitActivityFocus(activity)
             activity.onActivity { TtsNotification.showBatteryAdvice(it) { confirmations++ } }
-            awaitVisibleNode(text = "Continue without changes")
+            awaitVisibleNode(viewId = "android:id/button2")
             shell("input keyevent KEYCODE_BACK")
             awaitActivityFocus(activity)
             activity.onActivity {
@@ -866,7 +866,7 @@ class TtsPlatformBoundaryTest {
                 assertTrue(TtsNotification.batteryAdviceNeeded(it))
                 TtsNotification.showBatteryAdvice(it) { confirmations++ }
             }
-            clickVisibleNode(text = "Continue without changes")
+            clickVisibleNode(viewId = "android:id/button2")
             awaitActivityFocus(activity)
             activity.onActivity {
                 assertEquals(1, confirmations)
@@ -911,7 +911,7 @@ class TtsPlatformBoundaryTest {
                 // Native confirmation must not inherit the bridge RPC's short deadline.
                 Thread.sleep(1800)
                 assertTrue(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.none { it.id == TtsNotification.ID })
-                clickVisibleNode(text = "Continue without changes")
+                clickVisibleNode(viewId = "android:id/button2")
                 awaitActivityFocus(activity)
                 fixture.await("Window focus continuation activates the service") {
                     var listening = false
@@ -956,7 +956,7 @@ class TtsPlatformBoundaryTest {
                     it.dispatchNativeTts(TtsCommand.Listen(it.nativeTtsDocumentOwner(), ListeningScope("global", null),
                         false, "2026-11-05T10:00:00.000000Z", "global"))
                 }
-                awaitVisibleNode(text = "Continue without changes")
+                awaitVisibleNode(viewId = "android:id/button2")
                 shell("input keyevent KEYCODE_BACK")
                 awaitActivityFocus(activity)
                 activity.onActivity {

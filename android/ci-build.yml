@@ -22,6 +22,22 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      # Dependency installation is explicit and isolated to this opt-in workflow.
+      # Android's standalone build.sh and Gradle never invoke npm or Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Prepare frontend generation dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Verify generated catalogs, fixtures, and source coverage
+        working-directory: frontend
+        run: |
+          npm run i18n:android:check
+          npm run lint:i18n:android
+          node --test scripts/check-android-i18n-source.test.mjs scripts/generate-android-i18n.test.mjs src/i18n/index.test.js src/i18n/uiMessages.test.js src/i18n/remoteMessages.test.js
       - name: Test build entry point
         run: python3 -m unittest discover -s tests -v
       - uses: actions/setup-java@v4

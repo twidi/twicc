@@ -1,6 +1,6 @@
 # Android internationalization specification
 
-Status: Approved by the user after adversarial review. Implementation planning is authorized; implementation has not started.
+Status: Approved by the user after adversarial review. Tasks 1–11 are implemented. Native compilation and device acceptance remain outstanding. See [the execution handoff](2026-11-08-android-internationalization-execution.md) for exact results and environment limits. The original decisions and review history remain below.
 
 ## Intent
 

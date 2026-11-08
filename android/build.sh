@@ -41,7 +41,7 @@ fi
 export ANDROID_USER_HOME="$project_dir/.signing"
 mkdir -p -- "$ANDROID_USER_HOME"
 chmod 700 "$ANDROID_USER_HOME"
-./gradlew --no-daemon "-PtargetProfile=$profile" :policy:test ":app:test${variant}${build_type}UnitTest" ":app:lint${variant}${build_type}" ":app:assemble${variant}${build_type}"
+./gradlew --no-daemon "-PtargetProfile=$profile" :app:verifyAndroidI18n :policy:test ":app:test${variant}${build_type}UnitTest" ":app:lint${variant}${build_type}" ":app:assemble${variant}${build_type}"
 output="$project_dir/dist/$engine/$profile/$mode"
 apk_name="app-$engine-$profile-$mode.apk"
 mkdir -p -- "$output"
