@@ -326,6 +326,8 @@ class HybridClaudeAgent(BaseAgent):
 
         self._cli_launched = True
         self.agent_pid, _ = await asyncio.to_thread(_create)
+        # The tmux session exists: the launch is over, later failures are not start failures.
+        self.handoff_attempted = True
         logger.info(
             "Hybrid CLI launched for session %s (pid=%s, resume=%s)",
             self.session_id, self.agent_pid, resume,

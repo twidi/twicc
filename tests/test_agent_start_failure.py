@@ -329,3 +329,77 @@ def test_missing_directory_at_connect_gets_its_reason(monkeypatch, tmp_path):
     run_start(agent)
     connect.assert_awaited_once()
     assert agent.start_failure.reason == "working_directory_missing"
+
+
+def make_hybrid_agent(monkeypatch, directory, create=None, argv=None):
+    from twicc.core.services import trust
+    from twicc.providers.claude_code import sessions_watcher
+    from twicc.providers.claude_code.agent.hybrid import agent as agent_module
+
+    monkeypatch.setattr(sessions_watcher, "get_watcher", lambda: SimpleNamespace(request_fast_poll=lambda: None))
+    monkeypatch.setattr(trust, "project_is_untrusted", lambda project: False)
+    monkeypatch.setattr(agent_module.hybrid_tmux, "session_exists", lambda session_id: False)
+    monkeypatch.setattr(agent_module.hybrid_tmux, "pane_status", MagicMock(return_value=(1, False)))
+    monkeypatch.setattr(agent_module.hybrid_tmux, "create_session", create or MagicMock())
+    monkeypatch.setattr(agent_module, "build_argv", argv or MagicMock(return_value=["claude"]))
+    monkeypatch.setattr(agent_module, "write_addendum_file", lambda session_id, addendum: None)
+    monkeypatch.setattr(agent_module, "get_session_hybrid_dir", lambda session_id: directory)
+    agent = agent_module.HybridClaudeAgent("s", "project", directory, AgentSettings(permission_mode="default"))
+    agent._read_system_prompt_addendum = MagicMock(return_value=None)
+    agent._resolve_temp_title = AsyncMock(return_value="title")
+    agent._resolve_and_create_work_dirs = AsyncMock(return_value=[])
+    agent._first_paste = AsyncMock()
+    agent._start_liveness_monitor = MagicMock()
+    return agent
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_launch_ends_when_the_tmux_session_exists(monkeypatch, tmp_path):
+    create = MagicMock()
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), create=create)
+    assert agent.handoff_attempted is False
+    asyncio.run(agent.start("hi", AsyncMock(), resume=True, completion_token="token"))
+    create.assert_called_once()
+    assert agent.handoff_attempted is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_tmux_failure_leaves_the_launch_before_handoff(monkeypatch, tmp_path):
+    create = MagicMock(side_effect=RuntimeError("tmux down"))
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), create=create)
+    with pytest.raises(RuntimeError, match="tmux down"):
+        asyncio.run(agent.start("hi", AsyncMock(), resume=True, completion_token="token"))
+    create.assert_called_once()
+    assert agent.handoff_attempted is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_hybrid_tmux_failure_is_classified_by_the_manager(monkeypatch, tmp_path):
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), create=MagicMock(side_effect=RuntimeError("tmux down")))
+    agent.interrupt_or_kill = AsyncMock()
+    manager = Manager(AsyncMock(return_value=agent))
+
+    async def register(agent, text, resume, **kwargs):
+        await agent.start(text, AsyncMock(), resume=resume, **kwargs)
+
+    manager._register_and_start = register
+    with pytest.raises(AgentStartError) as caught:
+        start(manager, str(tmp_path), completion_token="token")
+    assert caught.value.reason == "start_failed"
+    agent.interrupt_or_kill.assert_awaited_once_with(reason="agent-start-failed")
+    assert agent._completion_inputs["token"].status == "rejected"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_an_absent_hybrid_binary_gets_its_reason(monkeypatch, tmp_path):
+    agent = make_hybrid_agent(monkeypatch, str(tmp_path), argv=MagicMock(side_effect=ClaudeBinaryNotFound("absent")))
+    agent.interrupt_or_kill = AsyncMock()
+    manager = Manager(AsyncMock(return_value=agent))
+
+    async def register(agent, text, resume, **kwargs):
+        await agent.start(text, AsyncMock(), resume=resume, **kwargs)
+
+    manager._register_and_start = register
+    with pytest.raises(AgentStartError) as caught:
+        start(manager, str(tmp_path))
+    assert caught.value.reason == "cli_not_found"
