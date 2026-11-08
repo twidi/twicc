@@ -73,8 +73,15 @@ private fun javascriptNumberText(value: Number): String {
     val exact = BigDecimal(number)
     var shortest = exact
     for (precision in 1..17) {
-        val candidate = exact.round(MathContext(precision, RoundingMode.HALF_EVEN))
-        if (candidate.toDouble() == number) {
+        // Either adjacent decimal can round-trip at an asymmetric binary boundary.
+        val candidate = listOf(
+            exact.round(MathContext(precision, RoundingMode.FLOOR)),
+            exact.round(MathContext(precision, RoundingMode.CEILING)),
+        ).filter { it.toDouble() == number }.minWithOrNull(
+            compareBy<BigDecimal> { it.subtract(exact).abs() }
+                .thenBy { it.unscaledValue().abs().testBit(0) },
+        )
+        if (candidate != null) {
             shortest = candidate.stripTrailingZeros()
             break
         }

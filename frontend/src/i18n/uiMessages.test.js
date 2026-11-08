@@ -113,6 +113,7 @@ test('Vue numeric interpolation defines JavaScript exponent and shortest-decimal
         [1e21, '1e+21'], [1e23, '1e+23'], [-0, '0'],
         [-1e-7, '-1e-7'], [-1e21, '-1e+21'], [Number.MIN_VALUE, '5e-324'],
         [1000000000000000128, '1000000000000000100'], [0.1, '0.1'],
+        [2 ** -24, '5.960464477539063e-8'], [-(2 ** -24), '-5.960464477539063e-8'],
     ]) {
         assert.equal(composer.t('numericText', { value }), expected)
         assert.equal(resolveUiMessage(localUiMessage('numericText', { value }), composer), expected)
