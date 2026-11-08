@@ -7,7 +7,7 @@ class AndroidAppPolicyTest {
     @Test fun onlyExplicitAppCommandsAreAccepted() {
         val commands = listOf("getState", "menuVisibility", "switchInstance", "manageInstances", "reload", "forceRefresh", "serverHome", "openInBrowser")
         commands.forEach { assertNotNull(AppCommand.fromWire(it)) }
-        listOf("eval", "loadUrl", "deleteProfile", "GETSTATE", "", "openInBrowser ").forEach { assertNull(AppCommand.fromWire(it)) }
+        listOf("eval", "loadUrl", "deleteProfile", "GETSTATE", "", "openInBrowser ", "locale.get", "locale.set").forEach { assertNull(AppCommand.fromWire(it)) }
     }
     @Test fun onlySavedOriginTopLevelFramesCanSendCommands() {
         val instance = InstanceUrl.parse("https://twicc.example:8443")

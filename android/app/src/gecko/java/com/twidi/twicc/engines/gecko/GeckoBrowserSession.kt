@@ -32,8 +32,9 @@ internal class GeckoBrowserSession(
     private var documentGeneration = 0L
     private var documentId: String? = null
     private var appPort: WebExtension.Port? = null
-    private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
-    override val nativeTtsDocumentToken: String? get() = ttsDocument.token
+    // One document lease protects speech and installation-language mutations.
+    private val documentLease = com.twidi.twicc.tts.TtsDocumentLease()
+    override val nativeTtsDocumentToken: String? get() = documentLease.token
     private var queuedLoad: Pair<String, Boolean>? = null
 
     init {
@@ -65,7 +66,7 @@ internal class GeckoBrowserSession(
                 override fun onPageStart(session: GeckoSession, url: String) {
                     if (!closed) {
                         documentGeneration++
-                        ttsDocument.begin()
+                        documentLease.begin()
                         documentId?.let { TtsExports.retire(it) }
                         documentId = null
                         appPort?.disconnect()
@@ -124,8 +125,8 @@ internal class GeckoBrowserSession(
                             if (nativeApp == "twicc_tts_document" && message is JSONObject && message.has("ttsDocument")) {
                                 val id = message.optString("ttsDocument")
                                 if (runCatching { UUID.fromString(id) }.isFailure) return null
-                                val epoch = ttsDocument.epoch
-                                if (!ttsDocument.commit(epoch, id)) return null
+                                val epoch = documentLease.epoch
+                                if (!documentLease.commit(epoch, id)) return null
                                 documentId?.let { TtsExports.retire(it) }
                                 documentId = id
                                 TtsExports.register(id, instance, documentGeneration, sender.url)
@@ -171,6 +172,7 @@ internal class GeckoBrowserSession(
     override fun close() {
         if (closed) return
         closed = true
+        documentLease.begin()
         appPort?.disconnect()
         appPort = null
         queuedLoad = null

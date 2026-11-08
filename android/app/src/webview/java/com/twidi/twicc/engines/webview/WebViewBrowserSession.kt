@@ -37,9 +37,10 @@ internal class WebViewBrowserSession(
     private var closed = false
     private var appListenerAdded = false
     private var appReply: JavaScriptReplyProxy? = null
-    private val ttsDocument = com.twidi.twicc.tts.TtsDocumentLease()
+    // One document lease protects speech and installation-language mutations.
+    private val documentLease = com.twidi.twicc.tts.TtsDocumentLease()
     private var ttsProposedToken: String? = null
-    override val nativeTtsDocumentToken: String? get() = ttsDocument.token
+    override val nativeTtsDocumentToken: String? get() = documentLease.token
     private var forceLoading = false
     private var safeUrl = "${instance.address}/"
     private val pending = mutableSetOf<PendingRequest>()
@@ -109,17 +110,17 @@ internal class WebViewBrowserSession(
                 else fail("This page cannot open inside TwiCC. Retry to return to your server.")
                 return
             }
-            ttsDocument.begin()
+            documentLease.begin()
             ttsProposedToken = java.util.UUID.randomUUID().toString()
             url?.let { safeUrl = it }
             events.onPageStarted(url ?: safeUrl)
         }
         override fun onPageCommitVisible(view: WebView, url: String?) {
             if (closed || url == null || !instance.url.allowsNavigation(url)) return
-            val epoch = ttsDocument.epoch
+            val epoch = documentLease.epoch
             val token = ttsProposedToken ?: return
             view.post {
-                if (closed || epoch != ttsDocument.epoch) return@post
+                if (closed || epoch != documentLease.epoch) return@post
                 val encoded = org.json.JSONObject.quote(token)
                 // The immutable token belongs only to this committed JS document. State replies never replace it.
                 view.evaluateJavascript("""(() => {
@@ -127,7 +128,7 @@ internal class WebViewBrowserSession(
                         Object.defineProperty(window, '__twiccNativeTtsDocument', { value: $encoded });
                     return window.__twiccNativeTtsDocument;
                 })()""") { result ->
-                    if (!closed && epoch == ttsDocument.epoch && result == encoded) ttsDocument.commit(epoch, token)
+                    if (!closed && epoch == documentLease.epoch && result == encoded) documentLease.commit(epoch, token)
                 }
             }
         }
@@ -288,6 +289,7 @@ internal class WebViewBrowserSession(
     override fun close() {
         if (closed) return
         closed = true
+        documentLease.begin()
         appReply = null
         pending.toList().forEach { it.cancel() }
         pending.clear()

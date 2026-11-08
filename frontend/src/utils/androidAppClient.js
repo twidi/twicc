@@ -1,8 +1,10 @@
 import { localUiError } from '../i18n/uiMessages.js'
+import { remoteUiError } from '../i18n/remoteMessages.js'
 
 const RESPONSE_CHANNEL = 'twicc.android.response'
 const REQUEST_CHANNEL = 'twicc.android.request'
 const TTS_COMMANDS = new Set(['tts.attach', 'tts.state', 'tts.acknowledge', 'tts.manual', 'tts.listen', 'tts.set_muted', 'tts.disable', 'tts.skip', 'tts.stop_all'])
+const DOCUMENT_COMMANDS = new Set([...TTS_COMMANDS, 'locale.set'])
 
 /** The page uses one client for either native transport. No user-agent detection. */
 export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
@@ -23,7 +25,13 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         pending.delete(response.id)
         clearTimeout(entry.timer)
         if (response.ok) entry.resolve(response.state ?? null)
-        else entry.reject(typeof response.error === 'string' ? new Error(response.error) : localUiError('common.android.errors.actionFailed'))
+        else {
+            const error = response.ui_message
+                ? remoteUiError(response, localUiError('common.android.errors.actionFailed').message)
+                : typeof response.error === 'string' ? new Error(response.error) : localUiError('common.android.errors.actionFailed')
+            if (response.state !== undefined) error.state = response.state
+            entry.reject(error)
+        }
     }
     function fromWindow(event) {
         if (event.source !== target || event.origin !== target.location.origin) return
@@ -41,18 +49,19 @@ export function createAndroidAppClient(target, { timeoutMs = 1500 } = {}) {
         },
         async request(command, args = {}) {
             if (closed) return Promise.reject(localUiError('common.android.errors.closed'))
-            if (proxy && TTS_COMMANDS.has(command)) {
+            if (proxy && DOCUMENT_COMMANDS.has(command)) {
                 const deadline = Date.now() + timeoutMs
                 while (!documentToken && !closed) {
                     const token = target.__twiccNativeTtsDocument
                     if (typeof token === 'string' && token) { documentToken = token; break }
-                    if (Date.now() >= deadline) throw localUiError('common.android.errors.speechPreparing')
+                    if (Date.now() >= deadline) throw localUiError(command === 'locale.set'
+                        ? 'android.language.errors.staleDocument' : 'common.android.errors.speechPreparing')
                     await new Promise(resolve => setTimeout(resolve, 10))
                 }
                 if (closed) throw localUiError('common.android.errors.closed')
             }
             const id = `${prefix}-${++sequence}`
-            const request = { ...args, ...(documentToken && TTS_COMMANDS.has(command) ? { documentToken } : {}), protocol: 1, id, command }
+            const request = { ...args, ...(documentToken && DOCUMENT_COMMANDS.has(command) ? { documentToken } : {}), protocol: 1, id, command }
             let encoded
             try {
                 encoded = JSON.stringify(request)

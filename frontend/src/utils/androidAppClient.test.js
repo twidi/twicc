@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createAndroidAppClient } from './androidAppClient.js'
+import { i18n, loadLocaleMessages } from '../i18n/index.js'
+
+await loadLocaleMessages('fr')
 
 function fixture(webview = false) {
     const listeners = new Set(), sent = []
@@ -112,6 +115,63 @@ test('invalid request data offers recovery without exposing serialization errors
     try {
         await assert.rejects(f.client.request('tts.manual', args), {
             message: 'Could not complete this action. Reload this page and try again.',
+        })
+    } finally { f.client.close() }
+})
+
+for (const webview of [false, true]) test(`language rejections retain authoritative state and reactive explanation (${webview})`, async () => {
+    const f = fixture(webview)
+    const state = { locale: 'de', revision: 8, supportedLocales: ['en', 'de', 'es', 'fr', 'pt-BR'] }
+    const pending = f.client.request('locale.set', { locale: 'fr', expectedRevision: 7 })
+    f.reply({ protocol: 1, id: f.sent[0].id, ok: false, state,
+        ui_message: { key: 'android.language.errors.changed', params: {} } })
+    const original = i18n.global.locale.value
+    try {
+        await assert.rejects(pending, error => {
+            assert.deepEqual(error.state, state)
+            assert.equal(error.uiMessage.key, 'android.language.errors.changed')
+            i18n.global.locale.value = 'en'
+            const english = error.message
+            i18n.global.locale.value = 'fr'
+            assert.notEqual(error.message, english)
+            return true
+        })
+    } finally { i18n.global.locale.value = original; f.client.close() }
+})
+
+test('WebView language reads work before document readiness and selection uses the immutable document token', async () => {
+    const f = fixture(true)
+    delete f.window.__twiccNativeTtsDocument
+    for (const command of ['getState', 'locale.get']) {
+        const read = f.client.request(command)
+        const request = f.sent.at(-1)
+        assert.equal(request.command, command)
+        assert.equal(request.documentToken, undefined)
+        f.reply({ protocol: 1, id: request.id, ok: true, state: {} })
+        await read
+        delete f.window.__twiccNativeTtsDocument
+    }
+    const selection = f.client.request('locale.set', { locale: 'fr', expectedRevision: 0 })
+    assert.equal(f.sent.length, 2)
+    f.window.__twiccNativeTtsDocument = 'language-document'
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(f.sent[2].documentToken, 'language-document')
+    f.reply({ protocol: 1, id: f.sent[2].id, ok: true, state: {} }); await selection
+    f.window.__twiccNativeTtsDocument = 'replacement'
+    const next = f.client.request('locale.set', { locale: 'de', expectedRevision: 1 })
+    assert.equal(f.sent[3].documentToken, 'language-document')
+    f.reply({ protocol: 1, id: f.sent[3].id, ok: true, state: {} }); await next
+    f.client.close()
+})
+
+test('WebView missing document rejects language selection with a language explanation', async () => {
+    const f = fixture(true)
+    delete f.window.__twiccNativeTtsDocument
+    try {
+        await assert.rejects(f.client.request('locale.set', { locale: 'fr', expectedRevision: 0 }), error => {
+            assert.equal(error.uiMessage.key, 'android.language.errors.staleDocument')
+            assert.equal(f.sent.length, 0)
+            return true
         })
     } finally { f.client.close() }
 })

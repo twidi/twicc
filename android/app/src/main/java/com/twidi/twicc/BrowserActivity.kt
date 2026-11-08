@@ -7,6 +7,10 @@ import android.content.Context
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.FutureTask
+import com.twidi.twicc.i18n.AndroidLanguageStore
 import com.twidi.twicc.tts.*
 import java.util.UUID
 import android.graphics.Color
@@ -54,6 +58,9 @@ class BrowserActivity : Activity() {
     private var rendererRecovery = RendererRecovery()
     private var safeUrl = ""
     private lateinit var appBridge: AndroidAppBridge
+    private lateinit var languageStore: AndroidLanguageStore
+    private var languageObserver: AutoCloseable? = null
+    private val ownerHandler = Handler(Looper.getMainLooper())
     private val menuLease = AppMenuLease()
     private val notificationNavigation = NotificationNavigation()
     private var documentGeneration = 0
@@ -92,11 +99,19 @@ class BrowserActivity : Activity() {
         val ttsBridge = com.twidi.twicc.tts.NativeTtsBridge(
             { browser?.nativeTtsSupported == true },
             ::nativeTtsDocumentOwner, ::nativeTtsSnapshot, { browser?.nativeTtsDocumentToken }, ::dispatchNativeTts)
+        languageStore = AndroidLanguageStore(this)
+        val languageBridge = AppLanguageBridge(languageStore::read, { browser?.nativeTtsDocumentToken }, languageStore::select)
         appBridge = AndroidAppBridge(::appState, ::reportWebMenu, ::queueAppAction, ttsBridge::receive,
             { command, request -> AndroidPush.receive(this, instance, command, request) }, { id ->
                 notificationNavigation.acknowledge(id)
                 if (notificationNavigation.pending == null) clearNotificationIntent()
-            }, sessionVisibility = { id -> displayedSessionId = id; reportPushSession() })
+            }, sessionVisibility = { id -> displayedSessionId = id; reportPushSession() }, appLanguage = languageBridge::receive)
+        languageObserver = languageStore.observe {
+            // Store observers hold a shared lock. Post without waiting for the activity thread.
+            ownerHandler.post {
+                if (languageObserver != null && !isFinishing && !isDestroyed) browser?.notifyAppStateChanged()
+            }
+        }
         ttsDocument = DocumentOwner(instance.id, UUID.randomUUID().toString(), TtsService.nextDocumentGeneration())
         openBrowser()
         ttsBound = bindService(Intent(this, TtsService::class.java), ttsConnection, Context.BIND_AUTO_CREATE)
@@ -229,7 +244,12 @@ class BrowserActivity : Activity() {
             showError("The page stopped unexpectedly. Retry to reopen TwiCC.")
             recoverRenderer()
         }
-        override fun onAppMessage(message: String): String = appBridge.receive(message)
+        override fun onAppMessage(message: String): String {
+            if (Looper.myLooper() == ownerHandler.looper) return appBridge.receive(message)
+            val response = FutureTask { appBridge.receive(message) }
+            ownerHandler.post(response)
+            return response.get()
+        }
         override fun onDownload(source: DownloadSource) { BrowserDownloads.save(this@BrowserActivity, source) }
     }
 
@@ -452,6 +472,8 @@ class BrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        languageObserver?.close()
+        languageObserver = null
         ttsSource?.let { ttsBinder?.detachSource(it) }
         if (ttsBound) { unbindService(ttsConnection); ttsBound = false }
         ttsBinder = null
