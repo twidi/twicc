@@ -28,6 +28,7 @@ from twicc.core.models import (
 from twicc.provider_homes import codex_home
 
 from .bin import make_codex_config, resolve_codex_command
+from .rollout_sources import logical_rollout_path, read_rollout_meta
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ def _is_retired_record(record: object) -> bool:
     return record.get("type") == "response_item" and payload_type == "ghost_snapshot"
 
 
-def preflight_rollout(path: Path) -> RolloutPreflight:
+def preflight_rollout(path: Path, *, read_path: Path | None = None) -> RolloutPreflight:
     complete_lines = 0
     malformed_lines = 0
     blank_lines = 0
@@ -204,7 +205,7 @@ def preflight_rollout(path: Path) -> RolloutPreflight:
     source_line = 0
 
     try:
-        source = path.open("rb")
+        source = (read_path if read_path is not None else path).open("rb")
     except OSError as error:
         raise RolloutMigrationError(f"Cannot read rollout {path}: {error}") from error
 
@@ -255,16 +256,17 @@ def preflight_rollout(path: Path) -> RolloutPreflight:
     )
 
 
-def prepare_full_history(path: Path) -> PreparedCodexHistory:
+def prepare_full_history(path: Path, *, read_path: Path | None = None) -> PreparedCodexHistory:
+    direct_path = read_path if read_path is not None else path
     try:
-        with path.open("rb") as source:
+        with direct_path.open("rb") as source:
             raw = source.read()
             last_offset = source.tell()
             opened_stat = os.fstat(source.fileno())
     except OSError as error:
         raise RolloutMigrationError(f"Cannot read canonical rollout {path}: {error}") from error
     try:
-        current_stat = path.stat()
+        current_stat = direct_path.stat()
     except OSError as error:
         raise RolloutMigrationError(f"Canonical rollout disappeared after read: {path}") from error
     if (opened_stat.st_dev, opened_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
@@ -492,7 +494,8 @@ def parse_migration_report(
     if outcome.get("thread_id") != session_id:
         raise RolloutMigrationError("Codex migration returned a different thread id")
     returned_path = outcome.get("rollout_path")
-    if not isinstance(returned_path, str) or Path(returned_path).resolve() != rollout_path.resolve():
+    if (not isinstance(returned_path, str)
+            or logical_rollout_path(Path(returned_path)).resolve() != logical_rollout_path(rollout_path).resolve()):
         raise RolloutMigrationError("Codex migration returned a different rollout path")
     status = outcome.get("status")
     if status not in _KNOWN_APPLY_STATUSES:
@@ -509,9 +512,14 @@ def parse_migration_report(
     return CodexMigrationOutcome(status, bytes_processed, message, failure_reason)
 
 
-def _first_record(path: Path) -> dict | None:
+def _first_record(path: Path, *, read_path: Path | None = None) -> dict | None:
+    if read_path is None and path.suffix == ".zst":
+        try:
+            return read_rollout_meta(path)
+        except OSError:
+            return None
     try:
-        with path.open("rb") as source:
+        with (read_path if read_path is not None else path).open("rb") as source:
             line = source.readline()
     except OSError:
         return None

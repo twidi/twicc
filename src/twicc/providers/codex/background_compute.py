@@ -46,6 +46,7 @@ import asyncio
 import logging
 import multiprocessing
 import queue
+import threading
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -88,6 +89,8 @@ from twicc.startup_progress import broadcast_startup_progress
 
 from .agent import get_codex_agent_manager
 from .initial_sync import extract_session_meta
+from .rollout_sources import PreparedRollout, prepare_rollout, resolve_rollout, source_is_current
+from .source_binding import CodexSourcePayload, ReconcileCodexSourceJob, source_checkpoint
 from .migration_gate import (
     gate_for,
     mark_migrating,
@@ -303,10 +306,10 @@ class CodexComputeCoordinator:
         info = get_codex_agent_manager().get_agent_info(session_id)
         return info is not None and info.state != AgentState.DEAD
 
-    async def _source_mode(self, path: Path, session_id: str) -> HistoryMode:
+    async def _source_mode(self, path: Path, session_id: str, read_path: Path | None = None) -> HistoryMode:
         if not path.exists():
             raise _RolloutMissing(f"Rollout is gone from disk: {path}")
-        meta = await asyncio.to_thread(extract_session_meta, path)
+        meta = await asyncio.to_thread(extract_session_meta, path, read_path=read_path)
         if meta is None or meta.session_id != session_id:
             raise RolloutMigrationError(f"Cannot read matching session_meta from {path}")
         return meta.history_mode
@@ -358,9 +361,37 @@ class CodexComputeCoordinator:
                 "Codex does not know thread %s (predates its state DB): registering it via thread/resume",
                 session_id,
             )
+            path = await asyncio.to_thread(resolve_rollout, path)
             await register_thread_with_codex(session_id, path)
+            path = await asyncio.to_thread(resolve_rollout, path)
             return await self.runner.run(session_id, path), True
         return outcome, False
+
+    async def _prepare_rollout(self, path: Path) -> PreparedRollout:
+        """Join cancelled decoding before disposing its private temporary file."""
+        stop = threading.Event()
+        task = asyncio.create_task(asyncio.to_thread(prepare_rollout, path, stop=stop))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            stop.set()
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except (asyncio.CancelledError, OSError):
+                    pass
+            if not task.cancelled() and task.exception() is None:
+                task.result().close()
+            raise
+
+    async def _reconcile_source(self, session_id: str, source: PreparedRollout) -> None:
+        session = await Session.objects.aget(pk=session_id)
+        relative = str(source.physical_path.relative_to(codex_sessions_dir()))
+        payload = CodexSourcePayload(
+            Provider.CODEX, session_id, relative, source.fingerprint, source_checkpoint(session), None,
+        )
+        if not await self._submit_job(ReconcileCodexSourceJob, payload):
+            raise RolloutMigrationError(f"Rollout source evidence became obsolete: {source.physical_path}")
 
     async def prepare_candidate(self, candidate: CodexComputeCandidate) -> PreparationResult:
         session_id = candidate.session_id
@@ -370,9 +401,37 @@ class CodexComputeCoordinator:
         lease: asyncio.Lock | None = None
         anchors_existed = False
         registered = False
+        path = candidate.file_path
+        source: PreparedRollout | None = None
+
+        async def refresh_source(*, resolve: bool = False) -> None:
+            nonlocal path, source
+            if source is not None:
+                source.close()
+                source = None
+            try:
+                if resolve or path.suffix == ".zst" or not path.exists():
+                    path = await asyncio.to_thread(resolve_rollout, path)
+                if path.suffix == ".zst" or path != candidate.file_path:
+                    source = await self._prepare_rollout(path)
+            except FileNotFoundError as error:
+                raise _RolloutMissing(f"Rollout is gone from disk: {path}") from error
+
+        async def classify() -> HistoryMode:
+            if source is None:
+                return await self._source_mode(path, session_id)
+            return await self._source_mode(path, session_id, source.read_path)
+
+        async def reconcile_source() -> None:
+            if source is not None:
+                if not await asyncio.to_thread(source_is_current, source.fingerprint):
+                    raise RolloutMigrationError(f"Rollout changed during preparation: {path}")
+                await self._reconcile_source(session_id, source)
+
         self._started_at.setdefault(session_id, time.monotonic())
         try:
-            source_mode = await self._source_mode(candidate.file_path, session_id)
+            await refresh_source()
+            source_mode = await classify()
             database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
             anchors_existed = await _has_snapshot_anchor(session_id)
@@ -382,7 +441,7 @@ class CodexComputeCoordinator:
             # interrupted history replacement (see
             # ``_begin_replace_codex_history``) leaves it there with no or
             # only part of its rows.
-            size = _file_size(candidate.file_path)
+            size = source.logical_size if source is not None else _file_size(path)
             truncated = (size is not None and size < candidate.last_offset) or candidate.last_offset == 0
             self._absorb_rebuild_requests()
             if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
@@ -390,6 +449,7 @@ class CodexComputeCoordinator:
 
             needs_gate = preparation != MigrationPreparation.COMPUTE_ONLY or anchors_existed
             if not needs_gate:
+                await reconcile_source()
                 return PreparedCandidate(session_id, None, False)
             if self._is_agent_active(session_id):
                 return DeferredCandidate(session_id, "active")
@@ -397,12 +457,19 @@ class CodexComputeCoordinator:
             lease = gate_for(session_id)
             await lease.acquire()
             mark_migrating(session_id)
-            self.migration_paths[session_id] = candidate.file_path
+            self.migration_paths[session_id] = path
 
-            source_mode = await self._source_mode(candidate.file_path, session_id)
+            if source is None:
+                await refresh_source()
+            elif not await asyncio.to_thread(source_is_current, source.fingerprint):
+                await refresh_source(resolve=True)
+            self.migration_paths[session_id] = path
+            source_mode = await classify()
             database_mode = await self._database_mode(candidate)
             preparation = migration_preparation(source_mode, database_mode)
             anchors_existed = await _has_snapshot_anchor(session_id)
+            size = source.logical_size if source is not None else _file_size(path)
+            truncated = (size is not None and size < candidate.last_offset) or candidate.last_offset == 0
             self._absorb_rebuild_requests()
             if (truncated or session_id in self._forced_rebuild) and preparation == MigrationPreparation.COMPUTE_ONLY:
                 preparation = MigrationPreparation.REPLACE_ONLY
@@ -412,12 +479,16 @@ class CodexComputeCoordinator:
             if preparation == MigrationPreparation.INCONSISTENT:
                 raise RolloutMigrationError("legacy source conflicts with paginated database history")
             if preparation == MigrationPreparation.COMPUTE_ONLY and not anchors_existed:
+                await reconcile_source()
                 self._release_lease(session_id, replay=False)
                 return PreparedCandidate(session_id, None, False)
 
             if source_mode == HistoryMode.LEGACY:
                 phase = "preflight"
-                preflight = await asyncio.to_thread(preflight_rollout, candidate.file_path)
+                if source is None:
+                    preflight = await asyncio.to_thread(preflight_rollout, path)
+                else:
+                    preflight = await asyncio.to_thread(preflight_rollout, path, read_path=source.read_path)
                 if (
                     preflight.malformed_lines
                     or preflight.blank_lines
@@ -445,7 +516,11 @@ class CodexComputeCoordinator:
 
             if source_mode == HistoryMode.LEGACY:
                 phase = "Codex migration"
-                outcome, registered = await self._run_codex_migration(session_id, candidate.file_path)
+                # Codex can restore or replace the source, including during registration.
+                if source is not None:
+                    source.close()
+                    source = None
+                outcome, registered = await self._run_codex_migration(session_id, path)
                 if outcome.status == "skipped_busy":
                     if not anchors_existed:
                         await self._submit_job(ClearSnapshotAnchorsJob, session_id)
@@ -459,10 +534,17 @@ class CodexComputeCoordinator:
                             reason=f"codex_migration_failed:{outcome.failure_reason}", path=candidate.file_path,
                         )
                     raise RolloutMigrationError(error)
+                await refresh_source(resolve=True)
+                await classify()
+                self.migration_paths[session_id] = path
 
             if preparation != MigrationPreparation.COMPUTE_ONLY:
                 phase = "history read"
-                history = await asyncio.to_thread(prepare_full_history, candidate.file_path)
+                if source is None:
+                    history = await asyncio.to_thread(prepare_full_history, path)
+                else:
+                    history = await asyncio.to_thread(prepare_full_history, path, read_path=source.read_path)
+                await reconcile_source()
                 phase = "history replacement"
                 await self._submit_job(
                     ReplaceCodexHistoryJob,
@@ -480,6 +562,8 @@ class CodexComputeCoordinator:
                     await asyncio.to_thread(search.delete_session_documents, session_id)
                     await asyncio.to_thread(search.commit)
 
+            if preparation == MigrationPreparation.COMPUTE_ONLY:
+                await reconcile_source()
             return PreparedCandidate(
                 session_id, lease, True,
                 kind="migrated" if source_mode == HistoryMode.LEGACY else "replaced",
@@ -500,6 +584,9 @@ class CodexComputeCoordinator:
                 session_id, replay=False, outcome='failed', error=str(error), fallback_path=candidate.file_path,
             )
             return FailedCandidate(session_id, phase, str(error))
+        finally:
+            if source is not None:
+                source.close()
 
     async def _condemn(
         self, session_id: str, phase: str, error: str, lease: asyncio.Lock | None, *, reason: str,
@@ -918,10 +1005,12 @@ class CodexComputeCoordinator:
         for candidate in candidates:
             try:
                 path = Path(candidate.file_path)
-                if not path.exists():
-                    tally["missing"] += 1
-                    continue
+                if path.suffix == ".zst" or not path.exists():
+                    path = resolve_rollout(path)
                 meta = extract_session_meta(path)
+            except FileNotFoundError:
+                tally["missing"] += 1
+                continue
             except (TypeError, OSError):
                 meta = None
             if meta is None:

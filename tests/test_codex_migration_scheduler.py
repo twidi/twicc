@@ -34,6 +34,13 @@ def _coordinator():
     return CodexComputeCoordinator(ctx, asyncio.Event())
 
 
+@pytest.fixture
+def rollout_path(tmp_path):
+    path = tmp_path / "rollout-scheduler.jsonl"
+    path.write_bytes(b"{}\n")
+    return path
+
+
 @pytest.mark.django_db(transaction=True)
 def test_normal_superseded_apply_is_successful():
     async def scenario():
@@ -60,10 +67,10 @@ def test_migrated_superseded_apply_is_an_invariant_failure():
     asyncio.run(scenario())
 
 
-def test_active_candidate_defers_without_holding_gate(monkeypatch):
+def test_active_candidate_defers_without_holding_gate(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("active", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("active", rollout_path, SessionType.SESSION)
         monkeypatch.setattr(coordinator, "_source_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
         monkeypatch.setattr(background_compute, "get_db_history_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
         monkeypatch.setattr(background_compute, "_has_snapshot_anchor", lambda *_args: _async_value(False))
@@ -88,10 +95,10 @@ def _clean_preflight() -> RolloutPreflight:
     return RolloutPreflight(1, 0, 0, 0, False, None, None)
 
 
-def test_skipped_busy_clears_attempt_anchors(monkeypatch):
+def test_skipped_busy_clears_attempt_anchors(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("busy", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("busy", rollout_path, SessionType.SESSION)
         jobs = []
         monkeypatch.setattr(coordinator, "_source_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
         monkeypatch.setattr(background_compute, "get_db_history_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
@@ -117,10 +124,10 @@ def test_skipped_busy_clears_attempt_anchors(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_real_failure_after_anchor_does_not_clear_it(monkeypatch):
+def test_real_failure_after_anchor_does_not_clear_it(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("broken", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("broken", rollout_path, SessionType.SESSION)
         jobs = []
         monkeypatch.setattr(coordinator, "_source_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
         monkeypatch.setattr(background_compute, "get_db_history_mode", lambda *_args: _async_value(HistoryMode.LEGACY))
@@ -146,10 +153,10 @@ def test_real_failure_after_anchor_does_not_clear_it(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_cancellation_reaps_child_before_releasing_gate(monkeypatch):
+def test_cancellation_reaps_child_before_releasing_gate(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("cancelled", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("cancelled", rollout_path, SessionType.SESSION)
         run_entered = asyncio.Event()
         reaped = asyncio.Event()
         block = asyncio.Event()
@@ -332,10 +339,10 @@ def _legacy_setup(coordinator, monkeypatch, *, source=HistoryMode.LEGACY, databa
     return jobs
 
 
-def test_missing_sqlite_metadata_registers_the_thread_then_retries(monkeypatch):
+def test_missing_sqlite_metadata_registers_the_thread_then_retries(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("unknown", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("unknown", rollout_path, SessionType.SESSION)
         jobs = _legacy_setup(coordinator, monkeypatch)
         outcomes = [
             CodexMigrationOutcome("failed", 0, "thread unknown is missing its SQLite metadata", "missing_sqlite_metadata"),
@@ -369,10 +376,10 @@ def test_missing_sqlite_metadata_registers_the_thread_then_retries(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_unreadable_rollout_is_flagged_unavailable(monkeypatch):
+def test_unreadable_rollout_is_flagged_unavailable(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("corrupt", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("corrupt", rollout_path, SessionType.SESSION)
         jobs = _legacy_setup(coordinator, monkeypatch)
         coordinator.runner = SimpleNamespace(
             run=lambda *_args: _async_value(
@@ -392,10 +399,10 @@ def test_unreadable_rollout_is_flagged_unavailable(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_environmental_codex_failure_is_not_flagged_unavailable(monkeypatch):
+def test_environmental_codex_failure_is_not_flagged_unavailable(monkeypatch, rollout_path):
     async def scenario():
         coordinator = _coordinator()
-        candidate = CodexComputeCandidate("busy-disk", SimpleNamespace(), SessionType.SESSION)
+        candidate = CodexComputeCandidate("busy-disk", rollout_path, SessionType.SESSION)
         jobs = _legacy_setup(coordinator, monkeypatch)
         coordinator.runner = SimpleNamespace(
             run=lambda *_args: _async_value(

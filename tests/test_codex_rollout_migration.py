@@ -344,14 +344,21 @@ def test_registration_config_disables_every_configured_mcp_server(tmp_path):
 
 
 @pytest.mark.parametrize("cwd_exists", [True, False])
-def test_register_thread_resumes_once_with_the_rollout_cwd(tmp_path, monkeypatch, cwd_exists):
+@pytest.mark.parametrize("compressed", [False, True])
+def test_register_thread_resumes_once_with_the_rollout_cwd(tmp_path, monkeypatch, cwd_exists, compressed):
     cwd = tmp_path / "project"
     if cwd_exists:
         cwd.mkdir()
     rollout = tmp_path / "rollout.jsonl"
     meta = _session_meta()
     meta["payload"]["cwd"] = str(cwd)
-    rollout.write_bytes(orjson.dumps(meta) + b"\n")
+    content = orjson.dumps(meta) + b"\n"
+    if compressed:
+        import zstandard
+
+        rollout = rollout.with_suffix(".jsonl.zst")
+        content = zstandard.ZstdCompressor().compress(content)
+    rollout.write_bytes(content)
     calls: dict = {}
 
     class FakeCodex:
