@@ -185,7 +185,8 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             nonlocal fingerprint
             # Failed decoding returns no PreparedRollout. Retain source evidence
             # so its error cannot terminate catch-up of a newer selection.
-            fingerprint = _prepare_plain_rollout(resolve_rollout(path)).fingerprint
+            selected = resolve_rollout(path)
+            fingerprint = _prepare_plain_rollout(selected).fingerprint
             return prepare_rollout(path, stop=attempt.stop)
 
         try:
@@ -197,7 +198,15 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
             except OSError as failure:
                 error = failure
                 try:
-                    current = fingerprint is None or await asyncio.to_thread(source_is_current, fingerprint)
+                    if fingerprint is not None:
+                        current = await asyncio.to_thread(source_is_current, fingerprint)
+                    elif isinstance(failure, FileNotFoundError):
+                        # A missing open is obsolete absence evidence when a
+                        # source exists now, including a same-path replacement.
+                        await asyncio.to_thread(resolve_rollout, path)
+                        current = False
+                    else:
+                        current = True
                 except OSError:
                     # Unreadability does not prove that the source changed.
                     current = True

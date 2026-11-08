@@ -865,3 +865,75 @@ def test_decode_error_from_restored_plain_retries_without_new_event(provider_hom
             watcher.stop_watcher()
             await watcher._drain_changes()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('replacement', ['plain', 'compressed'])
+def test_fingerprint_open_after_plain_restoration_retries_without_new_event(provider_home, monkeypatch, replacement):
+    watcher = CodexSessionsWatcher()
+    data = records()
+    path = source(watcher, data)
+    compressed = compress(path)
+    compressed_data = compressed.read_bytes()
+    selected_after = path if replacement == 'plain' else compressed
+    processed = lightweight(watcher, monkeypatch)
+    capture = module._prepare_plain_rollout
+    restorations = []
+
+    def restore_before_capture(selected):
+        if selected == compressed and not restorations:
+            compressed.unlink()
+            if replacement == 'plain':
+                path.write_bytes(data)
+                restorations.append(path)
+            else:
+                try:
+                    return capture(selected)
+                finally:
+                    # The real missing open precedes a same-name replacement.
+                    compressed.write_bytes(compressed_data)
+                    restorations.append(compressed)
+        # Exercise the real FileNotFoundError from opening the old selection.
+        return capture(selected)
+    monkeypatch.setattr(module, '_prepare_plain_rollout', restore_before_capture)
+
+    async def run():
+        try:
+            await asyncio.wait_for(watcher.process_path(compressed), 3)
+            await settle(watcher)
+            assert restorations == [selected_after]
+            assert processed == [(path, str(selected_after.relative_to(watcher.projects_dir)), data)]
+            assert watcher._queue.event_token(path) == 1
+            assert watcher._queue._paths[path].terminal is None
+            assert not watcher._preparation_errors
+            assert not watcher._prepared
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+    asyncio.run(run())
+
+
+def test_fingerprint_permission_failure_remains_terminal(provider_home, monkeypatch):
+    watcher = CodexSessionsWatcher()
+    path = source(watcher, records())
+    compressed = compress(path)
+    processed = lightweight(watcher, monkeypatch)
+    captures = []
+
+    def denied(selected):
+        captures.append(selected)
+        raise PermissionError(13, 'Permission denied', str(selected))
+    monkeypatch.setattr(module, '_prepare_plain_rollout', denied)
+
+    async def run():
+        try:
+            await asyncio.wait_for(watcher.process_path(compressed), 3)
+            await settle(watcher)
+            assert captures == [compressed]
+            assert not processed
+            assert watcher._queue._paths[path].terminal == 'failed'
+            assert watcher._queue.event_token(path) == 1
+            assert compressed.exists()
+        finally:
+            watcher.stop_watcher()
+            await watcher._drain_changes()
+    asyncio.run(run())
