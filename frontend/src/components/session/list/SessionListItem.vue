@@ -907,6 +907,19 @@ function handleMenuSelect(event) {
     );
 }
 
+/* The row menu belongs to the title line: push it below the "from" hint line. */
+.session-item-wrapper--tree-hinted {
+    --tree-hint-height: calc(var(--wa-font-size-2xs) * var(--wa-line-height-normal) + var(--wa-space-3xs));
+}
+
+.session-item-wrapper--tree-hinted :deep(.sidebar-row-menu) {
+    top: calc(var(--wa-space-2xs) + var(--tree-hint-height));
+}
+
+.session-item-wrapper--tree-hinted.session-item-wrapper--compact :deep(.sidebar-row-menu) {
+    top: var(--tree-hint-height);
+}
+
 /* Parent rows: the arrow comes before the row button. */
 .session-item-wrapper--tree-parent {
     display: flex;
