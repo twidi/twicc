@@ -1,10 +1,11 @@
 """
 Codex file watcher.
 
-Thin :class:`~twicc.providers.sessions_watcher.BaseSessionsWatcher` subclass
-that plugs in Codex's directory layout and compute object. Everything else
-(watchfiles loop, ORM updates, broadcasts, search indexing, polling) lives
-in the base.
+Adapt :class:`~twicc.providers.sessions_watcher.BaseSessionsWatcher` to the
+Codex layout and plain/compressed rollout transitions. Logical JSONL paths
+own queue state. Validated compressed snapshots stay pinned across live
+slices. Shared ingestion, broadcasts, search indexing and polling stay in
+the base.
 
 Codex uses a date-based layout — ``<codex home>/sessions/YYYY/MM/DD/rollout-*.jsonl``
 — with no per-project subfolder, so we cannot derive ``project_id`` from
@@ -24,7 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
@@ -40,10 +44,12 @@ from twicc.paths import path_to_project_id
 from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.compute_base import BaseSessionCompute
 from twicc.providers.db_writer import submit_async_job
+from twicc.providers.session_change_queue import MigrationRelease, PathDrainTarget
 from twicc.providers.sessions_watcher import (
     BaseSessionsWatcher,
     ParsedSessionFile,
     SessionChangeResult,
+    _read_source_snapshot,
     get_session_by_id,
 )
 
@@ -52,6 +58,11 @@ from .compute import announced_running_process_id, rollout_line_epoch
 from .compute import get_compute as _get_compute
 from .initial_sync import extract_session_meta, is_session_file
 from .migration_gate import gate_for, is_migrating, request_rebuild
+from .rollout_sources import (
+    PreparedRollout, SourceFingerprint, is_rollout_path, logical_rollout_path, prepare_rollout,
+    resolve_rollout, source_is_current,
+)
+from .source_binding import CodexSourcePayload, ReconcileCodexSourceJob, source_checkpoint
 from .rollout_migration import (
     HistoryMode,
     MarkSessionRebuildJob,
@@ -62,9 +73,26 @@ from .rollout_migration import (
 logger = logging.getLogger(__name__)
 
 
+def _prepare_plain_rollout(path: Path) -> PreparedRollout:
+    """Capture a transition fingerprint without ever decoding under a callback."""
+    with path.open('rb') as source:
+        stat = os.fstat(source.fileno())
+        fingerprint = SourceFingerprint(path, stat.st_dev, stat.st_ino, stat.st_size,
+                                        stat.st_mtime_ns, stat.st_ctime_ns)
+    return PreparedRollout(path, path, stat.st_size, stat.st_mtime, fingerprint)
+
+
 class _GateWakeTarget(NamedTuple):
     source_generation: object
     release_token: int
+
+
+class _PreparationAttempt(NamedTuple):
+    lifecycle: object
+    generation: object
+    event_token: int
+    release_token: int
+    stop: threading.Event
 
 
 class CodexSessionsWatcher(BaseSessionsWatcher):
@@ -89,6 +117,318 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         self._paginated_in_db: set[str] = set()
         self._gate_wakes: dict[str, asyncio.Task] = {}
         self._gate_wake_targets: dict[str, dict[Path, _GateWakeTarget]] = {}
+        self._association_sessions: dict[Path, Session] = {}
+        self._prepared: dict[Path, PreparedRollout] = {}
+        self._active_prepared: set[Path] = set()
+        self._preparations: dict[Path, asyncio.Task] = {}
+        self._preparation_attempts: dict[Path, _PreparationAttempt] = {}
+        self._preparation_waiting: dict[Path, None] = {}
+        self._preparation_errors: dict[Path, OSError] = {}
+        self._needs_resolution: set[Path] = set()
+        self._physical_sources: dict[Path, Path] = {}
+        self._target_waiters: dict[Path, list[asyncio.Future]] = {}
+        self._preparation_executor: ThreadPoolExecutor | None = None
+
+    def enumerate_session_files(self, projects_dir: Path) -> list[Path]:
+        selected = {}
+        for path in projects_dir.rglob('*'):
+            if is_rollout_path(path) and path.is_file():
+                logical = logical_rollout_path(path)
+                if logical not in selected or path.suffix != '.zst':
+                    selected[logical] = path
+        return sorted(selected.values())
+
+    def _enqueue(self, path: Path, change: Change) -> None:
+        if not is_rollout_path(path):
+            super()._enqueue(path, change)
+            return
+        logical = logical_rollout_path(path)
+        self._preparation_errors.pop(logical, None)
+        if path.suffix == '.zst' or change == Change.deleted:
+            self._needs_resolution.add(logical)
+            # A physical deletion is not yet a logical deletion. Keep samples,
+            # parsed identity and admitted finite targets until sibling resolution.
+            change = Change.modified
+        super()._enqueue(logical, change)
+
+    def _attempt_current(self, path: Path, attempt: _PreparationAttempt) -> bool:
+        return (not self._queue.closed and attempt.lifecycle is self._queue
+                and attempt.generation is self._queue.source_generation(path)
+                and attempt.event_token == self._queue.event_token(path)
+                and attempt.release_token == self._queue.release_token(path))
+
+    def _start_preparations(self) -> None:
+        while (self._preparation_waiting and not self._queue.closed
+               and len(self._preparations) + len(self._prepared) < 2):
+            path = next((path for path in self._preparation_waiting
+                         if path not in self._preparations and path not in self._prepared), None)
+            if path is None:
+                break
+            self._preparation_waiting.pop(path)
+            attempt = _PreparationAttempt(
+                self._queue, self._queue.source_generation(path), self._queue.event_token(path),
+                self._queue.release_token(path), threading.Event(),
+            )
+            self._preparation_attempts[path] = attempt
+            if self._preparation_executor is None:
+                self._preparation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='codex-rollout')
+            self._preparations[path] = asyncio.create_task(
+                self._prepare_source(path, attempt), name=f'codex-rollout-prepare-{path.name}',
+            )
+
+    async def _prepare_source(self, path: Path, attempt: _PreparationAttempt) -> None:
+        prepared = None
+        error = None
+        try:
+            try:
+                prepared = await asyncio.get_running_loop().run_in_executor(
+                    self._preparation_executor, lambda: prepare_rollout(path, stop=attempt.stop),
+                )
+                current = await asyncio.to_thread(source_is_current, prepared.fingerprint)
+            except OSError as failure:
+                error = failure
+                current = True
+            if not self._attempt_current(path, attempt):
+                # A newer admitted event can have deferred behind this attempt.
+                # Resume that attempt without inventing a fresh filesystem event.
+                if (not self._queue.closed and attempt.lifecycle is self._queue
+                        and attempt.generation is self._queue.source_generation(path)
+                        and attempt.release_token == self._queue.release_token(path)
+                        and self._queue.has_pending_change(path)):
+                    self._queue.resume_pending_change(path)
+                    self._ensure_consumer()
+                return
+            if not current:
+                self._preparation_waiting[path] = None
+                return
+            if error is not None:
+                self._preparation_errors[path] = error
+            elif prepared is not None:
+                self._prepared[path] = prepared
+                prepared = None
+            self._queue.resume_pending_change(path)
+            self._ensure_consumer()
+        finally:
+            if prepared is not None:
+                prepared.close()
+            self._preparations.pop(path, None)
+            self._preparation_attempts.pop(path, None)
+            self._start_preparations()
+
+    def _release_prepared(self, path: Path) -> None:
+        prepared = self._prepared.pop(path, None)
+        if prepared is not None:
+            prepared.close()
+            self._start_preparations()
+
+    def _settle_targets(self, path: Path, target: PathDrainTarget | None) -> None:
+        for future in self._target_waiters.pop(path, []):
+            if not future.done():
+                future.set_result(target)
+
+    async def _observe_source(self, path: Path) -> PathDrainTarget:
+        prepared = self._prepared.get(path)
+        if prepared is None:
+            if self._physical_sources.get(path, path).suffix == '.zst':
+                self._needs_resolution.add(path)
+                return PathDrainTarget(self._queue.source_generation(path), 0)
+            try:
+                target = await super()._observe_source(path)
+                self._physical_sources[path] = path
+            except FileNotFoundError:
+                self._needs_resolution.add(path)
+                return PathDrainTarget(self._queue.source_generation(path), 0)
+        else:
+            async with self._source_lock:
+                previous = self._sources.get(path)
+                fingerprint = prepared.fingerprint
+                identity = (fingerprint.device, fingerprint.inode)
+                # An exact sibling transition can retain its byte coordinates.
+                # Temporary inode values must never identify the physical source.
+                if previous is not None and self._physical_sources.get(path) != prepared.physical_path:
+                    previous = previous._replace(identity=identity)
+                snapshot, replaced = await asyncio.to_thread(
+                    _read_source_snapshot, prepared.read_path, previous, identity=identity,
+                )
+                if previous is None or replaced:
+                    if previous is not None:
+                        self._replaced_paths.add(path)
+                    self._invalidate_parsed_path(path)
+                    self._queue.observe_source(path, object())
+                    self._line_limits.pop(path, None)
+                self._sources[path] = snapshot
+                self._physical_sources[path] = prepared.physical_path
+                target = PathDrainTarget(self._queue.source_generation(path), snapshot.end_offset)
+        self._settle_targets(path, target)
+        return target
+
+    async def _process_change(self, change_type: Change, path_str: str, channel_layer) -> SessionChangeResult:
+        path = logical_rollout_path(Path(path_str))
+        if not is_rollout_path(path):
+            return await super()._process_change(change_type, str(path), channel_layer)
+        special = (path in self._needs_resolution or path in self._prepared
+                   or self._physical_sources.get(path, path).suffix == '.zst')
+        if not special:
+            result = await super()._process_change(change_type, str(path), channel_layer)
+            if path not in self._needs_resolution:
+                if result.disposition in ('drained', 'failed'):
+                    self._release_prepared(path)
+                return result
+        try:
+            selected = await asyncio.to_thread(resolve_rollout, path)
+            if path in self._preparation_errors:
+                error = self._preparation_errors.pop(path)
+                logger.error('Error preparing Codex rollout %s: %s', path, error)
+                self._settle_targets(path, None)
+                return SessionChangeResult('failed')
+            prepared = self._prepared.get(path)
+            if prepared is not None and not await asyncio.to_thread(source_is_current, prepared.fingerprint):
+                self._release_prepared(path)
+                prepared = None
+            if prepared is None:
+                if selected.suffix == '.zst':
+                    if path not in self._preparations:
+                        self._preparation_waiting[path] = None
+                        self._start_preparations()
+                    return SessionChangeResult('deferred')
+                if self._physical_sources.get(path, path).suffix != '.zst':
+                    # A deletion/recreation of plain JSONL retains the existing
+                    # callback path. Reparse before testing old migration state.
+                    self._needs_resolution.discard(path)
+                    self._invalidate_parsed_path(path)
+                    return await super()._process_change(Change.modified, str(path), channel_layer)
+                # Restoration never waits for compressed preparation admission.
+                prepared = await asyncio.to_thread(_prepare_plain_rollout, selected)
+                self._prepared[path] = prepared
+            self._needs_resolution.discard(path)
+            release_token = self._queue.release_token(path)
+            self._active_prepared.add(path)
+            try:
+                result = await super()._process_change(Change.modified, str(path), channel_layer)
+            finally:
+                self._active_prepared.discard(path)
+            if release_token != self._queue.release_token(path) or path in self._replaced_paths:
+                self._release_prepared(path)
+            if result.disposition in ('drained', 'failed'):
+                self._release_prepared(path)
+            return result
+        except FileNotFoundError:
+            # A selected source can disappear between resolution and open.
+            # Confirm logical absence before publishing the stale disposition.
+            try:
+                await asyncio.to_thread(resolve_rollout, path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                self._release_prepared(path)
+                self._settle_targets(path, None)
+                return SessionChangeResult('failed')
+            else:
+                self._release_prepared(path)
+                self._needs_resolution.add(path)
+                return SessionChangeResult('ready')
+            self._release_prepared(path)
+            self._needs_resolution.discard(path)
+            self._invalidate_parsed_path(path)
+            self._sources.pop(path, None)
+            self._physical_sources.pop(path, None)
+            self._queue.observe_source(path, object())
+            self._settle_targets(path, None)
+            return await super()._process_change(Change.deleted, str(path), channel_layer)
+        except OSError:
+            logger.exception('Error preparing Codex rollout %s', path)
+            self._release_prepared(path)
+            self._settle_targets(path, None)
+            return SessionChangeResult('failed')
+
+    def notify_migration_released(self, release: MigrationRelease, *, event_token: int | None = None) -> None:
+        if release.path is not None:
+            release = release._replace(path=logical_rollout_path(release.path))
+        previous = self._queue.release_token(release.path) if release.path is not None else -1
+        super().notify_migration_released(release, event_token=event_token)
+        if release.path is None or self._queue.release_token(release.path) <= previous:
+            return
+        if release.outcome != 'ready':
+            self._preparation_waiting.pop(release.path, None)
+            self._preparation_errors.pop(release.path, None)
+        elif release.path in self._preparations:
+            # The ready outcome owns a new guarded attempt. The old decoder
+            # must terminate before another preparation of this path starts.
+            self._preparation_waiting[release.path] = None
+        if (release.outcome != 'ready' or release.replay) and release.path not in self._active_prepared:
+            self._release_prepared(release.path)
+
+    async def process_path(self, path: Path) -> None:
+        logical = logical_rollout_path(path)
+        if path.suffix != '.zst' and logical not in self._needs_resolution:
+            target = await self._observe_source(logical)
+            if logical not in self._needs_resolution:
+                self._enqueue(logical, Change.modified)
+                await self._queue.wait_drained(logical, target=target)
+                return
+        future = asyncio.get_running_loop().create_future()
+        self._target_waiters.setdefault(logical, []).append(future)
+        self._needs_resolution.add(logical)
+        self._enqueue(logical, Change.modified)
+        terminal = asyncio.create_task(self._queue.wait_drained(
+            logical, target=PathDrainTarget(self._queue.source_generation(logical), 2**63),
+        ))
+        try:
+            await asyncio.wait((future, terminal), return_when=asyncio.FIRST_COMPLETED)
+            if future.done():
+                target = future.result()
+                if target is not None:
+                    await self._queue.wait_drained(logical, target=target)
+            else:
+                await terminal
+        finally:
+            terminal.cancel()
+            await asyncio.gather(terminal, return_exceptions=True)
+            if not future.done():
+                future.cancel()
+            waiters = self._target_waiters.get(logical, [])
+            if future in waiters:
+                waiters.remove(future)
+                if not waiters:
+                    self._target_waiters.pop(logical, None)
+
+    def stop_watcher(self) -> None:
+        for attempt in self._preparation_attempts.values():
+            attempt.stop.set()
+        super().stop_watcher()
+
+    async def _drain_changes(self) -> None:
+        try:
+            await super()._drain_changes()
+        finally:
+            # These tasks are not gate wakes. Await actual decoder termination
+            # before dropping any file that its worker can still access.
+            pending = asyncio.gather(*self._preparations.values(), return_exceptions=True)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    continue
+            pending.result()
+            for path in list(self._prepared):
+                self._release_prepared(path)
+            self._preparation_waiting.clear()
+            self._preparation_errors.clear()
+            for path in list(self._target_waiters):
+                self._settle_targets(path, None)
+            if self._preparation_executor is not None:
+                self._preparation_executor.shutdown(wait=True)
+                self._preparation_executor = None
+
+    def prepare_start(self) -> None:
+        reopening = self._queue.closed
+        if reopening and (self._preparations or self._prepared or self._preparation_executor is not None):
+            raise RuntimeError('Cannot prepare watcher before compressed preparation drains')
+        super().prepare_start()
+        if reopening:
+            self._association_sessions.clear()
+            self._physical_sources.clear()
+            self._needs_resolution.clear()
 
     def create_session_sync(
         self, parsed: ParsedSessionFile, project: Project, parent_session: Session | None = None,
@@ -112,6 +452,8 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
+        *,
+        read_path: Path | None = None,
     ) -> SessionChangeResult:
         if is_migrating(parsed.session_id):
             return SessionChangeResult('deferred')
@@ -130,10 +472,45 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         try:
             if is_migrating(parsed.session_id):
                 return SessionChangeResult('deferred')
-            if change_type != Change.deleted and await self._rewrite_detected(parsed, path):
+            prepared = self._prepared.get(path)
+            if prepared is not None:
+                read_path = prepared.read_path
+            self._association_sessions.pop(path, None)
+            if change_type != Change.deleted and await self._rewrite_detected(parsed, path, read_path=read_path):
                 self._queue.observe_source(path, object())
+                self._association_sessions.pop(path, None)
                 return SessionChangeResult('deferred')
-            return await super()._process_parsed_session_change(path, parsed, change_type, channel_layer)
+            session = self._association_sessions.pop(path, None)
+            if session is not None:
+                if prepared is None:
+                    self._needs_resolution.add(path)
+                    prepared = await asyncio.to_thread(_prepare_plain_rollout, path)
+                    self._prepared[path] = prepared
+                    read_path = prepared.read_path
+                    meta = await asyncio.to_thread(extract_session_meta, prepared.physical_path,
+                                                   read_path=prepared.read_path)
+                    if (meta is None or meta.ignored or meta.session_id != parsed.session_id
+                            or prepared.physical_path != self.projects_dir / parsed.file_path):
+                        self._needs_resolution.add(path)
+                        return SessionChangeResult('ready')
+                # The rewrite check reuses its existing session lookup. Only
+                # association repair submits this short additional writer job.
+                if not await asyncio.to_thread(source_is_current, prepared.fingerprint):
+                    self._needs_resolution.add(path)
+                    return SessionChangeResult('ready')
+                payload = CodexSourcePayload(
+                    Provider.CODEX, session.id, parsed.file_path, prepared.fingerprint,
+                    source_checkpoint(session), None,
+                )
+                future = asyncio.get_running_loop().create_future()
+                if not await submit_async_job(ReconcileCodexSourceJob(Provider.CODEX, payload, future)):
+                    self._needs_resolution.add(path)
+                    return SessionChangeResult('ready')
+                self._needs_resolution.discard(path)
+            return await super()._process_parsed_session_change(
+                path, parsed, change_type, channel_layer,
+                **({'read_path': read_path} if read_path is not None else {}),
+            )
         finally:
             gate.release()
 
@@ -177,7 +554,9 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
 
         task.add_done_callback(forget)
 
-    async def _rewrite_detected(self, parsed: ParsedSessionFile, path: Path) -> bool:
+    async def _rewrite_detected(
+        self, parsed: ParsedSessionFile, path: Path, *, read_path: Path | None = None,
+    ) -> bool:
         """Whether the rollout was rewritten under TwiCC (not appended to).
 
         Two signals, both cheap on the hot path:
@@ -199,8 +578,11 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         session = await get_session_by_id(parsed.session_id)
         if session is None:
             return False
+        if (getattr(session, 'file_path', parsed.file_path) != parsed.file_path
+                or (path in self._prepared and (session.stale or session.unavailable_reason == 'rollout_missing'))):
+            self._association_sessions[path] = session
         try:
-            size = path.stat().st_size
+            size = (read_path if read_path is not None else path).stat().st_size
         except OSError:
             return False
         rewritten = size < session.last_offset or path in self._replaced_paths
@@ -228,6 +610,12 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         return True
 
     async def parse_session_file(self, path: Path) -> ParsedSessionFile | None:
+        logical = logical_rollout_path(path)
+        prepared = self._prepared.get(logical)
+        if prepared is None and logical in self._needs_resolution:
+            return None
+        if prepared is not None:
+            path = prepared.physical_path
         if not is_session_file(path):
             return None
 
@@ -245,7 +633,9 @@ class CodexSessionsWatcher(BaseSessionsWatcher):
         # the first JSONL line. This is blocking I/O (open + readline +
         # orjson parse), so we offload it to a worker thread to keep
         # the watcher event loop snappy.
-        meta = await asyncio.to_thread(extract_session_meta, path)
+        meta = await asyncio.to_thread(
+            extract_session_meta, path, **({'read_path': prepared.read_path} if prepared is not None else {}),
+        )
         if meta is None or meta.ignored:
             # Empty file, unreadable, or missing session_meta — silently
             # skip. Guardian reviewer rollouts are also deliberately ignored;

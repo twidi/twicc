@@ -72,10 +72,13 @@ def _sync_live_session_items(
     compute: BaseSessionCompute, session_id: str, path: Path, limits: LiveSyncLimits, timeline_since=None,
     verified_final_refs=None,
     get_input_origins=None,
+    read_path: Path | None = None,
 ):
     """Load the ORM row and apply one live batch on the compute worker."""
-    return compute.sync_session_slice(session_id, path, limits=limits, timeline_since=timeline_since,
-                                      verified_final_refs=verified_final_refs, get_input_origins=get_input_origins)
+    return compute.sync_session_slice(
+        session_id, read_path if read_path is not None else path, limits=limits, timeline_since=timeline_since,
+        verified_final_refs=verified_final_refs, get_input_origins=get_input_origins,
+    )
 
 
 class SessionChangeResult(NamedTuple):
@@ -104,12 +107,15 @@ class _PendingSourceRelease(NamedTuple):
     event_token: int
 
 
-def _read_source_snapshot(path: Path, previous: _SourceSnapshot | None) -> _SourceObservation:
+def _read_source_snapshot(
+    path: Path, previous: _SourceSnapshot | None, *, identity: tuple[int, int] | None = None,
+) -> _SourceObservation:
     """Capture a watermark and compare bounded evidence from the same file handle.
 
     Metadata-only changes do not establish replacement. Compare the previous
     suffix at its original offset, so appends preserve the source generation.
     This samples append-only history; it cannot detect arbitrary interior edits.
+    A prepared source supplies its physical identity instead of a temporary inode.
     """
     import os
     with path.open('rb') as source:
@@ -118,7 +124,8 @@ def _read_source_snapshot(path: Path, previous: _SourceSnapshot | None) -> _Sour
         prefix = source.read(min(size, 4096))
         source.seek(max(0, size - 4096))
         suffix = source.read(min(size, 4096))
-        identity = (stat.st_dev, stat.st_ino)
+        if identity is None:
+            identity = (stat.st_dev, stat.st_ino)
         replaced = previous is not None and (
             previous.identity != identity or size < previous.size
             or not prefix.startswith(previous.prefix)
@@ -812,6 +819,8 @@ class BaseSessionsWatcher:
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
+        *,
+        read_path: Path | None = None,
     ) -> SessionChangeResult:
         """
         Handle a session or subagent file change.
@@ -879,7 +888,7 @@ class BaseSessionsWatcher:
         # the Project row, so an empty-file event doesn't leave a project
         # (and later a session) row with nothing behind it.
         if session is None:
-            has_content = await check_file_has_content_async(path)
+            has_content = await check_file_has_content_async(read_path if read_path is not None else path)
             if not has_content:
                 return SessionChangeResult('failed')
 
@@ -927,7 +936,8 @@ class BaseSessionsWatcher:
         with sync_timing_context(compute.provider, session.id):
             result = await run_compute_sync(_sync_live_session_items, compute, session.id, path, LiveSyncLimits(limit),
                                             self.timeline_since, verified_final_refs,
-                                            lambda: manager.timeline_input_origins(session.id))
+                                            lambda: manager.timeline_input_origins(session.id),
+                                            **({"read_path": read_path} if read_path is not None else {}))
             self._after_live_slice_committed(session, result)
             log_slow('slice', result.elapsed_ms, lines=result.lines_processed,
                      bytes=result.bytes_consumed, backlog=result.has_more)
@@ -1242,6 +1252,8 @@ class BaseSessionsWatcher:
         parsed: ParsedSessionFile,
         change_type: Change,
         channel_layer,
+        *,
+        read_path: Path | None = None,
     ) -> SessionChangeResult:
         """Run one complete callback after a provider identifies its session."""
 
@@ -1249,7 +1261,7 @@ class BaseSessionsWatcher:
         if change_type != Change.deleted:
             session = await get_session_by_id(parsed.session_id)
             if session is not None and session.last_offset:
-                size = (await asyncio.to_thread(path.stat)).st_size
+                size = (await asyncio.to_thread((read_path if read_path is not None else path).stat)).st_size
                 if path in self._replaced_paths or size < session.last_offset:
                     if path not in self._replaced_paths:
                         # Initial sync can precede the watcher's first snapshot.
@@ -1267,13 +1279,15 @@ class BaseSessionsWatcher:
             and parsed.type == SessionType.SESSION
             and parsed.title is None
             and await get_session_by_id(parsed.session_id) is None
-            and await check_file_has_content_async(path)
+            and await check_file_has_content_async(read_path if read_path is not None else path)
         ):
             parsed.title = await self._fetch_initial_title(parsed)
 
         with sync_timing_context(getattr(session, "provider", None), parsed.session_id):
             result = await run_under_db_write_lock(
-                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer), content_activity=True,
+                lambda: self.sync_and_broadcast(path, parsed, change_type, channel_layer,
+                                                **({"read_path": read_path} if read_path is not None else {})),
+                content_activity=True,
             )
 
         indexing = result.indexing
@@ -1579,6 +1593,10 @@ class BaseSessionsWatcher:
         self._enqueue(path, Change.modified)
         await self._queue.wait_drained(path, target=target)
 
+    def enumerate_session_files(self, projects_dir: Path) -> list[Path]:
+        """List provider session sources in one inventory traversal."""
+        return sorted(path for path in projects_dir.rglob("*.jsonl") if path.is_file())
+
     async def _catch_up_existing_files(self, channel_layer) -> None:
         """Process every session file already present under :attr:`projects_dir`.
 
@@ -1593,7 +1611,7 @@ class BaseSessionsWatcher:
         """
         projects_dir = self.projects_dir
         existing = await asyncio.to_thread(
-            lambda: sorted(path for path in projects_dir.rglob("*.jsonl") if path.is_file())
+            self.enumerate_session_files, projects_dir
         )
         if not existing:
             return
