@@ -1,0 +1,868 @@
+{
+  "format": 1,
+  "locales": [
+    "en",
+    "de",
+    "es",
+    "fr",
+    "pt-BR"
+  ],
+  "messages": {
+    "android.instances.subtitle": {},
+    "android.instances.saved": {},
+    "android.instances.lastUsed": {},
+    "android.instances.emptyTitle": {},
+    "android.instances.emptyBody": {},
+    "android.instances.add": {},
+    "android.instances.editTitle": {},
+    "android.instances.nameLabel": {},
+    "android.instances.addressLabel": {},
+    "android.instances.addressHint": {},
+    "android.instances.remove": {},
+    "android.instances.removeTitle": {},
+    "android.instances.removeMessage": {},
+    "android.instances.openDescription": {},
+    "android.instances.editDescription": {},
+    "android.instances.removeDescription": {},
+    "android.instances.errors.duplicate": {},
+    "android.instances.errors.invalidAddress": {},
+    "android.instances.errors.httpsRequired": {},
+    "android.instances.errors.originRequired": {},
+    "android.instances.errors.rootRequired": {},
+    "android.instances.errors.invalidPort": {},
+    "android.browser.menuDescription": {},
+    "android.browser.version": {},
+    "android.browser.errors.engineStart": {},
+    "android.browser.errors.rendererStopped": {},
+    "android.browser.errors.instanceRemoved": {},
+    "android.browser.errors.sessionClosed": {},
+    "android.browser.errors.unreachable": {},
+    "android.browser.errors.certificate": {},
+    "android.browser.errors.httpStatus": {},
+    "android.browser.errors.pageBlocked": {},
+    "android.browser.errors.webviewProfiles": {},
+    "android.browser.errors.linkUnsupported": {},
+    "android.browser.errors.browserUnavailable": {},
+    "android.browser.errors.applicationUnavailable": {},
+    "android.files.errors.pickerUnavailable": {},
+    "android.files.errors.folderUnsupported": {},
+    "android.files.errors.readFailed": {},
+    "android.downloads.browserRequired": {},
+    "android.downloads.started": {},
+    "android.downloads.saving": {},
+    "android.downloads.saved": {},
+    "android.downloads.errors.startFailed": {},
+    "android.downloads.errors.saveUnavailable": {},
+    "android.downloads.errors.failed": {},
+    "android.speech.channel": {},
+    "android.speech.notificationTitle": {},
+    "android.speech.preparing": {},
+    "android.speech.reading": {},
+    "android.speech.waiting": {},
+    "android.speech.reconnecting": {},
+    "android.speech.stopping": {},
+    "android.speech.skip": {},
+    "android.speech.stopAll": {},
+    "android.speech.pauseTimeline": {},
+    "android.speech.resumeTimeline": {},
+    "android.speech.timelinePaused": {},
+    "android.speech.notificationsRequired": {},
+    "android.speech.batteryTitle": {},
+    "android.speech.batteryAdvice": {},
+    "android.speech.continueWithoutChanges": {},
+    "android.speech.settingsTitle": {},
+    "android.speech.openSettings": {},
+    "common.actions.ok": {},
+    "android.speech.errors.cookieSupport": {},
+    "android.instances.title": {},
+    "android.speech.errors.updateRequired": {},
+    "android.speech.errors.staleDocument": {},
+    "android.speech.errors.playbackChanged": {},
+    "android.speech.errors.changeFailed": {},
+    "android.speech.errors.instanceRequired": {},
+    "android.speech.errors.credentialsUnavailable": {},
+    "android.speech.errors.stopping": {},
+    "android.speech.errors.staleSession": {},
+    "android.speech.errors.instanceChanged": {},
+    "android.speech.errors.androidStopped": {},
+    "android.speech.errors.instanceClosed": {},
+    "android.speech.errors.visibleRequired": {},
+    "android.speech.errors.batteryChoiceRequired": {},
+    "android.speech.errors.generationFailed": {},
+    "android.speech.errors.interrupted": {},
+    "android.speech.errors.playbackFailed": {},
+    "android.speech.errors.retryPlayback": {},
+    "android.speech.errors.failed": {},
+    "android.speech.errors.audioRequest": {},
+    "android.speech.errors.audioEmpty": {},
+    "android.speech.errors.audioFormat": {},
+    "android.push.channels.finished": {},
+    "android.push.channels.attention": {},
+    "android.push.channels.peer": {},
+    "android.push.distributorLabel": {},
+    "android.push.registrationLabel": {},
+    "android.push.titleWithInstance": {},
+    "android.push.genericTitle": {},
+    "android.push.genericBody": {},
+    "android.push.errors.updateApp": {},
+    "android.push.errors.updateServer": {},
+    "android.push.finishedWithShells": {},
+    "android.push.extraUsageBody": {},
+    "android.push.peerBody": {},
+    "android.push.peerBodyWithProject": {},
+    "android.push.peerBodyWithSession": {},
+    "android.push.peerRequestBody": {},
+    "android.language.errors.unsupported": {},
+    "android.language.errors.changed": {},
+    "android.language.errors.staleDocument": {},
+    "android.language.errors.updateApp": {},
+    "android.language.errors.updateServer": {},
+    "common.actions.save": {},
+    "common.actions.cancel": {},
+    "common.actions.retry": {},
+    "composer.status.startingProvider": {},
+    "common.sessionCount": {
+      "numberFormats": {
+        "count": "decimal"
+      }
+    },
+    "workspace.projectCount": {
+      "numberFormats": {
+        "count": "decimal"
+      }
+    },
+    "common.android.errors.actionFailed": {},
+    "common.android.errors.closed": {},
+    "common.android.errors.invalidNotification": {},
+    "common.android.errors.speechPreparing": {},
+    "common.android.errors.tooLarge": {},
+    "common.android.errors.unreachable": {},
+    "navigation.android.active": {},
+    "navigation.android.browser": {},
+    "navigation.android.forceRefresh": {},
+    "navigation.android.manage": {},
+    "navigation.android.menu": {},
+    "navigation.android.refresh": {},
+    "navigation.android.refreshHint": {},
+    "navigation.android.refreshQuestion": {},
+    "navigation.android.reload": {},
+    "navigation.android.serverHome": {},
+    "navigation.android.unsupportedState": {},
+    "session.notifications.activityTimeout": {},
+    "session.notifications.agentStoppedBeforeAck": {},
+    "session.notifications.approval": {},
+    "session.notifications.attention": {},
+    "session.notifications.body": {},
+    "session.notifications.creditsRemaining": {
+      "numberFormats": {
+        "count": "decimal"
+      }
+    },
+    "session.notifications.creditsUsed": {
+      "numberFormats": {
+        "used": "decimal"
+      }
+    },
+    "session.notifications.creditsUsedOf": {
+      "numberFormats": {
+        "used": "decimal",
+        "limit": "decimal"
+      }
+    },
+    "session.notifications.enabledLabel": {},
+    "session.notifications.ephemeral": {},
+    "session.notifications.ephemeralSession": {},
+    "session.notifications.errors.update": {},
+    "session.notifications.extraUsageSentence": {},
+    "session.notifications.extraUsageTitle": {},
+    "session.notifications.finished": {},
+    "session.notifications.instance": {},
+    "session.notifications.invalidTitle": {},
+    "session.notifications.invalidTitleDetail": {},
+    "session.notifications.invalidTitleUnknown": {},
+    "session.notifications.moneyUsed": {
+      "numberFormats": {
+        "used": "decimal"
+      }
+    },
+    "session.notifications.moneyUsedOf": {
+      "numberFormats": {
+        "used": "decimal",
+        "limit": "decimal"
+      }
+    },
+    "session.notifications.mute": {},
+    "session.notifications.mutedLabel": {},
+    "session.notifications.muteTooltip": {},
+    "session.notifications.notConnected": {},
+    "session.notifications.peerAccepted": {},
+    "session.notifications.peerDelivered": {},
+    "session.notifications.peerDone": {},
+    "session.notifications.peerMessage": {},
+    "session.notifications.peerRefused": {},
+    "session.notifications.peerReply": {},
+    "session.notifications.peerRequest": {},
+    "session.notifications.peerRequestFrom": {},
+    "session.notifications.peerVerification": {},
+    "session.notifications.providerDisabled": {},
+    "session.notifications.question": {},
+    "session.notifications.settingsInvalid": {},
+    "session.notifications.shells": {
+      "numberFormats": {
+        "count": "decimal"
+      }
+    },
+    "session.notifications.startTimeout": {},
+    "session.notifications.terminated": {},
+    "session.notifications.turnFinished": {},
+    "session.notifications.unknownError": {},
+    "session.notifications.unmuteTooltip": {},
+    "session.notifications.updateAvailable": {},
+    "session.notifications.viewChanges": {},
+    "session.speech.errors.cut": {},
+    "session.speech.errors.gone": {},
+    "session.speech.errors.identityRequired": {},
+    "session.speech.errors.initializing": {},
+    "session.speech.errors.nativeUnavailable": {},
+    "session.speech.errors.noConfig": {},
+    "session.speech.errors.refused": {},
+    "session.speech.errors.requestFailed": {},
+    "session.speech.errors.startFailed": {},
+    "session.speech.errors.summaryGone": {},
+    "session.speech.errors.unavailable": {},
+    "session.speech.errors.unreachable": {},
+    "backend.tts.audioGone": {},
+    "backend.tts.audioCut": {},
+    "backend.tts.textTooLong": {},
+    "backend.tts.speedNumber": {},
+    "backend.tts.textRequired": {},
+    "backend.tts.modelRequired": {},
+    "backend.tts.summaryReference": {},
+    "backend.tts.summarySavedId": {},
+    "backend.tts.summaryFingerprint": {},
+    "backend.tts.summaryHashRequiresSaved": {},
+    "backend.tts.summaryHandle": {},
+    "backend.tts.scriptId": {},
+    "backend.tts.configMatches": {},
+    "backend.tts.summarySavedGone": {},
+    "backend.tts.summaryChanged": {},
+    "backend.tts.summaryGone": {},
+    "backend.tts.failed": {},
+    "backend.tts.nothingToRead": {},
+    "backend.tts.configNotSaved": {},
+    "backend.tts.configNotValidated": {},
+    "backend.tts.scriptMissing": {},
+    "backend.tts.pcmRateRequired": {},
+    "backend.tts.commandMissing": {},
+    "backend.tts.openrouterTimeout": {},
+    "backend.tts.openrouterUnreachable": {},
+    "backend.tts.summaryStopped": {},
+    "backend.tts.stopped": {},
+    "backend.tts.partFormatChanged": {},
+    "backend.tts.fieldString": {},
+    "backend.tts.originChoices": {},
+    "backend.tts.formatChoices": {},
+    "backend.tts.apiKeyRequired": {},
+    "backend.tts.scriptStart": {},
+    "backend.tts.scriptStalled": {},
+    "backend.tts.scriptAudioLarge": {},
+    "backend.tts.scriptOutputPath": {},
+    "backend.tts.scriptPathReused": {},
+    "backend.tts.scriptUnreadable": {},
+    "backend.tts.scriptExit": {},
+    "backend.tts.scriptSignal": {},
+    "backend.tts.audioExpired": {},
+    "backend.tts.authenticationExpired": {},
+    "backend.tts.sessionLost": {},
+    "backend.tts.invalidCommand": {},
+    "backend.tts.scopeUnavailable": {},
+    "backend.tts.catchupIncomplete": {},
+    "backend.tts.configurationUnavailable": {},
+    "backend.tts.notMp3": {},
+    "backend.tts.notWav": {},
+    "backend.tts.wav16bit": {},
+    "backend.tts.wavFormat": {},
+    "backend.tts.noAudio": {},
+    "backend.tts.chooseMp3": {},
+    "backend.tts.chooseWav": {},
+    "backend.tts.oggUnsupported": {},
+    "backend.tts.flacUnsupported": {},
+    "backend.tts.mp4Unsupported": {},
+    "backend.tts.openrouterStatus": {},
+    "backend.tts.provider400Hint": {},
+    "backend.tts.adaptationStopped": {},
+    "settings.notifications.targets.extraUsage": {},
+    "settings.general.language.label": {},
+    "peer.toast.unnamedInstance": {}
+  },
+  "bootstrapResources": {
+    "tts_channel": {
+      "key": "android.speech.channel"
+    },
+    "tts_notification_title": {
+      "key": "android.speech.notificationTitle",
+      "parameters": {
+        "name": "%1$s"
+      }
+    },
+    "tts_preparing": {
+      "key": "android.speech.preparing"
+    },
+    "tts_reading": {
+      "key": "android.speech.reading"
+    },
+    "tts_waiting": {
+      "key": "android.speech.waiting"
+    },
+    "tts_reconnecting": {
+      "key": "android.speech.reconnecting"
+    },
+    "tts_stopping": {
+      "key": "android.speech.stopping"
+    },
+    "tts_skip": {
+      "key": "android.speech.skip"
+    },
+    "tts_stop_all": {
+      "key": "android.speech.stopAll"
+    },
+    "tts_pause_timeline": {
+      "key": "android.speech.pauseTimeline"
+    },
+    "tts_resume_timeline": {
+      "key": "android.speech.resumeTimeline"
+    },
+    "tts_timeline_paused": {
+      "key": "android.speech.timelinePaused"
+    },
+    "tts_notifications_required": {
+      "key": "android.speech.notificationsRequired"
+    },
+    "tts_battery_title": {
+      "key": "android.speech.batteryTitle"
+    },
+    "tts_battery_advice": {
+      "key": "android.speech.batteryAdvice"
+    },
+    "tts_continue_without_changes": {
+      "key": "android.speech.continueWithoutChanges"
+    },
+    "tts_settings_title": {
+      "key": "android.speech.settingsTitle"
+    },
+    "tts_open_settings": {
+      "key": "android.speech.openSettings"
+    },
+    "instances_title": {
+      "key": "android.instances.title"
+    },
+    "instances_subtitle": {
+      "key": "android.instances.subtitle"
+    },
+    "instances_saved": {
+      "key": "android.instances.saved"
+    },
+    "instances_last_used": {
+      "key": "android.instances.lastUsed"
+    },
+    "instances_empty_title": {
+      "key": "android.instances.emptyTitle"
+    },
+    "instances_empty_body": {
+      "key": "android.instances.emptyBody"
+    },
+    "instances_add": {
+      "key": "android.instances.add"
+    },
+    "instances_edit_title": {
+      "key": "android.instances.editTitle"
+    },
+    "instances_name_label": {
+      "key": "android.instances.nameLabel"
+    },
+    "instances_address_label": {
+      "key": "android.instances.addressLabel"
+    },
+    "instances_address_hint": {
+      "key": "android.instances.addressHint"
+    },
+    "instances_save": {
+      "key": "common.actions.save"
+    },
+    "instances_cancel": {
+      "key": "common.actions.cancel"
+    },
+    "instances_remove": {
+      "key": "android.instances.remove"
+    },
+    "instances_remove_title": {
+      "key": "android.instances.removeTitle",
+      "parameters": {
+        "name": "%1$s"
+      }
+    },
+    "instances_remove_message": {
+      "key": "android.instances.removeMessage"
+    },
+    "instances_open_description": {
+      "key": "android.instances.openDescription",
+      "parameters": {
+        "name": "%1$s",
+        "address": "%2$s"
+      }
+    },
+    "instances_edit_description": {
+      "key": "android.instances.editDescription",
+      "parameters": {
+        "name": "%1$s"
+      }
+    },
+    "instances_remove_description": {
+      "key": "android.instances.removeDescription",
+      "parameters": {
+        "name": "%1$s"
+      }
+    }
+  },
+  "nativeSources": {
+    "android/app/src/main/res/values/strings.xml": {
+      "Timeline speech": "android.speech.channel",
+      "%1$s · Speech": "android.speech.notificationTitle",
+      "Preparing": "android.speech.preparing",
+      "Reading": "android.speech.reading",
+      "Waiting": "android.speech.waiting",
+      "Reconnecting": "android.speech.reconnecting",
+      "Stopping": "android.speech.stopping",
+      "Skip": "android.speech.skip",
+      "Stop all": "android.speech.stopAll",
+      "Pause timeline": "android.speech.pauseTimeline",
+      "Resume timeline": "android.speech.resumeTimeline",
+      "Timeline reading paused": "android.speech.timelinePaused",
+      "Enable speech notifications to use background Skip and Stop all controls. Then start speech again.": "android.speech.notificationsRequired",
+      "Timeline listening and battery": "android.speech.batteryTitle",
+      "You can use timeline listening without changing battery settings. Android may delay or interrupt speech in the background or with the screen off. Allow unrestricted battery use for TwiCC to improve background listening. You can change this later in Android Settings → Apps → TwiCC → Battery.\\n\\nContinue without changes to start now, or open Settings and then enable listening again.": "android.speech.batteryAdvice",
+      "Continue without changes": "android.speech.continueWithoutChanges",
+      "Speech settings required": "android.speech.settingsTitle",
+      "Open Settings": "android.speech.openSettings",
+      "TwiCC": "android.instances.title",
+      "Connect to your existing TwiCC server through an HTTPS tunnel.": "android.instances.subtitle",
+      "Saved instances": "android.instances.saved",
+      "Last used": "android.instances.lastUsed",
+      "No instances yet": "android.instances.emptyTitle",
+      "Add the address of your TwiCC server to get started.": "android.instances.emptyBody",
+      "Add instance": "android.instances.add",
+      "Edit instance": "android.instances.editTitle",
+      "Name (optional)": "android.instances.nameLabel",
+      "Server address": "android.instances.addressLabel",
+      "HTTPS only. A new address starts with a fresh login.": "android.instances.addressHint",
+      "Save": "common.actions.save",
+      "Cancel": "common.actions.cancel",
+      "Remove": "android.instances.remove",
+      "Remove %1$s?": "android.instances.removeTitle",
+      "Remove this address and request deletion of its login and Web storage in each engine. The server is unchanged.": "android.instances.removeMessage",
+      "Open %1$s, %2$s": "android.instances.openDescription",
+      "Edit %1$s": "android.instances.editDescription",
+      "Remove %1$s": "android.instances.removeDescription"
+    },
+    "android/app/src/main/java/com/twidi/twicc/AndroidAppBridge.kt": {
+      "Could not complete this action. Reload this page and try again.": "common.android.errors.actionFailed",
+      "Speech is unavailable. Update the Android app and try again.": "android.speech.errors.updateRequired",
+      "Android notifications are unavailable. Update the Android app and try again.": "android.push.errors.updateApp",
+      "This action contains too much data. Try a smaller selection.": "common.android.errors.tooLarge"
+    },
+    "android/app/src/main/java/com/twidi/twicc/BrowserActivity.kt": {
+      "Android app menu for ${instance.name}": "android.browser.menuDescription",
+      "${EngineProvider.engine.displayName} could not start. Check the engine installation, then reopen TwiCC.": "android.browser.errors.engineStart",
+      "This link type is not supported.": "android.browser.errors.linkUnsupported",
+      "The page stopped unexpectedly. Retry to reopen TwiCC.": "android.browser.errors.rendererStopped",
+      "Manage instances": "navigation.android.manage",
+      "TwiCC ${BuildConfig.VERSION_NAME} · ${EngineProvider.engine.displayName}": "android.browser.version",
+      "Reload page": "navigation.android.reload",
+      "Force refresh (keep login)": "navigation.android.forceRefresh",
+      "Force refresh?": "navigation.android.refreshQuestion",
+      "Reload this page and bypass its resource cache. Your login and preferences stay saved. Unsaved text may be lost.": "navigation.android.refreshHint",
+      "Server home": "navigation.android.serverHome",
+      "Open in browser": "navigation.android.browser",
+      "This instance is no longer saved.": "android.browser.errors.instanceRemoved",
+      "The browser session is closed.": "android.browser.errors.sessionClosed",
+      "Choose how to continue in the battery advice dialog.": "android.speech.errors.batteryChoiceRequired",
+      "Speech is getting ready. Try again in a moment.": "common.android.errors.speechPreparing",
+      "Retry": "common.actions.retry",
+      "Cancel": "common.actions.cancel",
+      "Refresh": "navigation.android.refresh"
+    },
+    "android/app/src/main/java/com/twidi/twicc/InstanceStore.kt": {
+      "This server address is already saved.": "android.instances.errors.duplicate"
+    },
+    "android/app/src/main/java/com/twidi/twicc/MainActivity.kt": {
+      "Enter a valid HTTPS address.": "android.instances.errors.invalidAddress"
+    },
+    "android/app/src/main/java/com/twidi/twicc/platform/BrowserDownloads.kt": {
+      "This download needs a browser. Open the page in your browser to save blob or data exports.": "android.downloads.browserRequired",
+      "Download started. Check Android's Downloads notification.": "android.downloads.started",
+      "The download could not start. Try opening this page in your browser.": "android.downloads.errors.startFailed",
+      "This download cannot be saved. Try opening the page in your browser.": "android.downloads.errors.saveUnavailable",
+      "Saving $filename to Downloads…": "android.downloads.saving",
+      "Saved $filename to Downloads.": "android.downloads.saved",
+      "Download failed. Check your connection and try again.": "android.downloads.errors.failed"
+    },
+    "android/app/src/main/java/com/twidi/twicc/platform/ExternalLinks.kt": {
+      "This link type is not supported.": "android.browser.errors.linkUnsupported",
+      "Open in browser": "navigation.android.browser",
+      "No browser is available to open this link.": "android.browser.errors.browserUnavailable",
+      "No application can open this link.": "android.browser.errors.applicationUnavailable"
+    },
+    "android/app/src/main/java/com/twidi/twicc/platform/NativeRequests.kt": {
+      "No file picker is available.": "android.files.errors.pickerUnavailable",
+      "OK": "common.actions.ok",
+      "Cancel": "common.actions.cancel"
+    },
+    "android/app/src/main/java/com/twidi/twicc/push/AndroidPush.kt": {
+      "Finished work": "android.push.channels.finished",
+      "Questions and approvals": "android.push.channels.attention",
+      "Extra usage": "settings.notifications.targets.extraUsage",
+      "Peer messages and requests": "android.push.channels.peer",
+      "TwiCC notifications": "android.push.distributorLabel"
+    },
+    "android/app/src/main/java/com/twidi/twicc/push/AndroidPushService.kt": {
+      "${payload.title} · ${saved.name}": "android.push.titleWithInstance"
+    },
+    "android/app/src/main/java/com/twidi/twicc/push/PushRegistrationJob.kt": {
+      "TwiCC push registration": "android.push.registrationLabel"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/NativeTtsBridge.kt": {
+      "Speech is unavailable. Update the Android app and try again.": "android.speech.errors.updateRequired",
+      "Speech is getting ready. Try again in a moment.": "common.android.errors.speechPreparing",
+      "Reload this page, then try speech again.": "android.speech.errors.staleDocument",
+      "Speech could not start. Reload the page and try again.": "session.speech.errors.startFailed"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/PcmExtractor.kt": {
+      "Unsupported speech audio format": "android.speech.errors.audioFormat"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsConnection.kt": {
+      "Authentication expired. Open TwiCC and sign in again.": "backend.tts.authenticationExpired",
+      "TTS request failed ($status)": "android.speech.errors.audioRequest",
+      "TTS audio is empty": "android.speech.errors.audioEmpty"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsNotification.kt": {
+      "Open TwiCC before starting speech.": "android.speech.errors.visibleRequired"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsPlayer.kt": {
+      "Speech generation failed": "android.speech.errors.generationFailed",
+      "The audio stopped before the end": "session.speech.errors.cut",
+      "Audio playback was interrupted.": "android.speech.errors.interrupted",
+      "Audio playback could not start.": "android.speech.errors.playbackFailed",
+      "Could not reach TwiCC": "session.speech.errors.unreachable",
+      "The audio is no longer available": "session.speech.errors.gone",
+      "Could not reach TwiCC. Start playback again.": "android.speech.errors.retryPlayback",
+      "Unsupported speech audio format": "android.speech.errors.audioFormat"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsService.kt": {
+      "The active instance was closed. Start speech again to continue.": "android.speech.errors.instanceClosed"
+    },
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsServiceOwner.kt": {
+      "Speech is unavailable. Update the Android app and try again.": "android.speech.errors.updateRequired",
+      "The active instance changed.": "android.speech.errors.instanceChanged",
+      "Open a saved instance before starting speech.": "android.speech.errors.instanceRequired",
+      "Reload this page, then try speech again.": "android.speech.errors.staleDocument",
+      "Speech playback changed. Try again.": "android.speech.errors.playbackChanged",
+      "Could not change speech playback. Reload the page and try again.": "android.speech.errors.changeFailed",
+      "Reopen this instance, then start speech again.": "android.speech.errors.credentialsUnavailable",
+      "Speech is stopping. Wait a moment, then try again.": "android.speech.errors.stopping",
+      "Speech could not start. Reload the page and try again.": "session.speech.errors.startFailed",
+      "Could not reach TwiCC": "session.speech.errors.unreachable",
+      "This notification belongs to an old speech session.": "android.speech.errors.staleSession",
+      "Reopen this instance and start speech again.": "android.speech.errors.credentialsUnavailable",
+      "Authentication expired. Open TwiCC and sign in again.": "backend.tts.authenticationExpired",
+      "Android stopped speech. Start it again.": "android.speech.errors.androidStopped"
+    },
+    "android/app/src/gecko/java/com/twidi/twicc/engines/gecko/GeckoBrowserSession.kt": {
+      "The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date.": "android.browser.errors.certificate",
+      "Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.": "android.browser.errors.unreachable",
+      "Native speech is still initializing. Retry speech.": "common.android.errors.speechPreparing"
+    },
+    "android/app/src/gecko/java/com/twidi/twicc/engines/gecko/GeckoPrompts.kt": {
+      "Folder uploads are not available. Select individual files instead.": "android.files.errors.folderUnsupported",
+      "The selected files could not be read. Try again.": "android.files.errors.readFailed"
+    },
+    "android/app/src/webview/java/com/twidi/twicc/engines/webview/WebViewBrowserSession.kt": {
+      "This page cannot open inside TwiCC. Retry to return to your server.": "android.browser.errors.pageBlocked",
+      "Cannot reach ${instance.name}. Check your connection and HTTPS tunnel, then retry.": "android.browser.errors.unreachable",
+      "The server returned HTTP ${response.statusCode}. Check your tunnel or server, then retry.": "android.browser.errors.httpStatus",
+      "The HTTPS certificate could not be verified. Check the tunnel certificate and your phone's date.": "android.browser.errors.certificate",
+      "Folder uploads are not available. Select individual files instead.": "android.files.errors.folderUnsupported",
+      "Native speech requires a WebView with GET_COOKIE_INFO support. Update Android System WebView.": "android.speech.errors.cookieSupport"
+    },
+    "android/app/src/webview/java/com/twidi/twicc/engines/webview/WebViewEngine.kt": {
+      "Update Android System WebView or Chrome to use separate instances.": "android.browser.errors.webviewProfiles"
+    },
+    "android/policy/src/main/kotlin/com/twidi/twicc/InstanceUrl.kt": {
+      "Enter a valid HTTPS address.": "android.instances.errors.invalidAddress",
+      "Use an HTTPS address, such as https://twicc.example.com.": "android.instances.errors.httpsRequired",
+      "Use the server address without credentials, a query, or a fragment.": "android.instances.errors.originRequired",
+      "Use the server root address, without a page path.": "android.instances.errors.rootRequired",
+      "Enter a valid port number.": "android.instances.errors.invalidPort"
+    },
+    "android/policy/src/main/kotlin/com/twidi/twicc/tts/TtsState.kt": {
+      "Speech stopped. Start playback or turn on timeline reading again.": "backend.tts.sessionLost",
+      "The audio stopped before the end": "session.speech.errors.cut",
+      "Could not reach TwiCC": "session.speech.errors.unreachable",
+      "Speech could not start. Reload the page and try again.": "session.speech.errors.startFailed",
+      "Authentication expired. Open TwiCC and sign in again.": "backend.tts.authenticationExpired",
+      "The active instance changed": "android.speech.errors.instanceChanged",
+      "Speech failed": "android.speech.errors.failed"
+    }
+  },
+  "excludedNativeSources": {
+    "android/app/src/main/res/values/strings.xml": [
+      {
+        "text": "TwiCC",
+        "reason": "app_name is an intentional product name"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/AndroidAppBridge.kt": [
+      {
+        "text": "Unsupported Android protocol or request ID",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Missing navigation ID",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Invalid navigation ID",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Unknown Android command",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Missing menu owner",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Missing menu visibility",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Invalid menu owner",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Invalid displayed session",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Invalid displayed session",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/BrowserActivity.kt": [
+      {
+        "text": "Legacy back handling is enabled in the manifest for this Activity.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "The platform file picker still uses this Activity result API.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/platform/BrowserDownloads.kt": [
+      {
+        "text": "Cannot create download",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Cannot open download",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/push/AndroidPush.kt": [
+      {
+        "text": "${Build.MODEL} · ${instance.name}",
+        "reason": "Device model and user instance name; no application-owned prose"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/NativeTtsBridge.kt": [
+      {
+        "text": "Unknown speech command",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/PcmExtractor.kt": [
+      {
+        "text": "Unsupported PCM parameters",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Duplicate PCM parameter",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Unsupported PCM rate or channels",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech extraction cancelled",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "The PCM stream ends inside an audio frame",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech cannot seek or replay",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsConnection.kt": [
+      {
+        "text": "TTS requires the active HTTPS instance.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "TTS requires the active HTTPS instance.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Audio belongs to another instance",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "This audio resource is already open",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech audio opening cancelled",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech audio opening cancelled",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "<!doctype html",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "TTS ending is empty",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "TTS ending is too large",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Invalid TTS ending",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsJson.kt": [
+      {
+        "text": "TTS command is too large",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "TTS frame is too large",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Not a JSON value",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsPlayer.kt": [
+      {
+        "text": "Speech cannot seek, retry or replay",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech response has no Content-Type",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech response is closed",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech output requires the service main looper",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech extraction requires response headers",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Speech response has no Content-Type",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/main/java/com/twidi/twicc/tts/TtsService.kt": [
+      {
+        "text": "TTS commands require the service main looper",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/gecko/java/com/twidi/twicc/engines/gecko/GeckoBrowserSession.kt": [
+      {
+        "text": "The browser document is unavailable for cookie export.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "The cookie export bridge disconnected.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "The browser document changed.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Cookie export timed out.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/gecko/java/com/twidi/twicc/engines/gecko/GeckoEngine.kt": [
+      {
+        "text": "GeckoView 159",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/gecko/java/com/twidi/twicc/engines/gecko/GeckoPrompts.kt": [
+      {
+        "text": "Cannot read file",
+        "reason": "Internal file-read exception; GeckoPrompts presents android.files.errors.readFailed instead"
+      }
+    ],
+    "android/app/src/webview/java/com/twidi/twicc/engines/webview/WebViewBrowserSession.kt": [
+      {
+        "text": "The browser document is unavailable.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Cookie export requires the active HTTPS instance.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "Partitioned authentication cookies are unsupported.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      },
+      {
+        "text": "WebView returned invalid cookie metadata.",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/app/src/webview/java/com/twidi/twicc/engines/webview/WebViewEngine.kt": [
+      {
+        "text": "Android System WebView",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ],
+    "android/policy/src/main/kotlin/com/twidi/twicc/tts/TtsProtocol.kt": [
+      {
+        "text": "AudioResource(readingId=$readingId, generation=$generation, audioId=$audioId)",
+        "reason": "Internal invariant, transport diagnostic, log, or engine product name; keep verbatim"
+      }
+    ]
+  }
+}
