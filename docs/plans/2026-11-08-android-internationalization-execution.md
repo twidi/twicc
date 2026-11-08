@@ -163,7 +163,7 @@ Final verification runs after the last source change:
 | `npm run lint:i18n:android` and `npm run lint:i18n` | PASS |
 | Native unit and focused instrumentation attempts | BLOCKED before task execution; Java/JAVA_HOME absent |
 
-The earlier 5,092-test result is the Task 11 baseline. The final frontend count
+The earlier 5,092-test result is the Task 11 baseline. The first final-fix frontend count
 is **5,102**, including ten new executable regressions. Complete final fix logs
 retain warnings and expected failure diagnostics. The production build reports
 ineffective dynamic-import warnings. No warning-free result is claimed.
@@ -171,6 +171,39 @@ ineffective dynamic-import warnings. No warning-free result is claimed.
 Native Gradle attempts stop before task execution because Java/JAVA_HOME is absent.
 Neither native RED nor native GREEN execution is claimed. Both engines still
 require the native checks below, including the new settings and channel cases.
+
+### NB1: overlapping recovery read
+
+The scoped re-review identifies one additional recovery race. A newer failed
+read invalidates the successful recovery handshake's generation. Public state
+then remains browser-local despite valid native authority.
+
+The recovery barrier now applies valid authority when public state still lacks
+a native revision. It uses the current generation without incrementing it.
+Newer pending reads can still win. Published newer successful results remain
+unchanged. This adds no request, retry loop, polling, or native selection.
+
+Four regressions cover failed and successful overlapping reads in both completion
+orders. Before the fix, both failed-overlap cases fail. The two successful-overlap
+cases already pass and protect the opposite behavior. After the fix, all **46**
+focused controller, startup, and login tests pass.
+
+Latest verification after the NB1 source change:
+
+| Check | NB1 result |
+| --- | --- |
+| Controller, startup, and login tests | PASS; 46 tests, zero failures/skips |
+| Full `npm test` | PASS; **5,106** tests, zero failures/skips; 130,520.316803 ms |
+| `npm run build` | PASS; all six configured production builds |
+| `npm run i18n:android:check` | PASS; 256 keys, five locales; generated outputs remain current |
+| `npm run lint:i18n` and `npm run lint:i18n:android` | PASS |
+
+The latest frontend count is **5,106**. The earlier 5,102-test result precedes
+NB1's four regressions. Complete logs retain warnings and expected diagnostics.
+The production builds still report ineffective dynamic-import warnings.
+
+No native or backend source changes occur in NB1. Their checks are not repeated.
+The native acceptance block below remains independent of this source correction.
 
 ## Native acceptance still required
 

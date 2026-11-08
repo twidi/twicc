@@ -153,6 +153,10 @@ export function createAndroidLocaleController({ client, document, applyLocale, r
                 await accept(authoritative || fullState.appLanguage, ticket)
                 if (!disposed && state.mode !== 'incompatible') onCompatibility(error.uiMessage || localUiMessage('common.android.errors.unreachable'))
             }
+            // A newer read can invalidate the handshake ticket and then fail.
+            // Commit the best valid authority if takeover has not reached public
+            // state. Keep the generation so any newer pending read can still win.
+            if (state.revision === null && authoritative) await accept(authoritative, generation)
             if (!disposed) markAndroidApp()
         })().finally(() => { recovery = null })
     }

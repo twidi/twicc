@@ -635,3 +635,45 @@ test('native event before a failed capability response permits one recovery prob
         assert.equal(probes, 2)
     } finally { page.controller.dispose() }
 })
+
+for (const newerSucceeds of [false, true]) {
+    for (const newerFinishesFirst of [false, true]) {
+        test(`native takeover survives overlapping ${newerSucceeds ? 'successful' : 'failed'} read completing ${newerFinishesFirst ? 'first' : 'last'}`, async () => {
+            const handshake = deferred(), overlap = deferred()
+            let probes = 0, reads = 0
+            const page = fixture({ browser: 'fr', request: async command => {
+                if (command === 'getState') {
+                    if (++probes === 1) throw new Error('Initial transport failure')
+                    return { capabilities: { appLanguage: 1 }, appLanguage: language('de', 3) }
+                }
+                if (command === 'locale.get') return ++reads === 1 ? handshake.promise : overlap.promise
+                throw new Error('Recovery must not replay selection')
+            } })
+            const state = await page.controller.initialize()
+            assert.equal(state.mode, 'browser')
+            const recovery = page.controller.reconcile()
+            await tick()
+            page.change(language('es', 4))
+            await tick()
+            const finishOverlap = () => newerSucceeds ? overlap.resolve(language('es', 4)) : overlap.reject(new Error('Overlapping read failed'))
+            try {
+                if (newerFinishesFirst) { finishOverlap(); await tick() }
+                handshake.resolve(language('de', 3))
+                await recovery
+                if (!newerFinishesFirst) { finishOverlap(); await tick() }
+                assert.equal(state.mode, 'native')
+                assert.equal(state.locale, newerSucceeds ? 'es' : 'de')
+                assert.equal(state.revision, newerSucceeds ? 4 : 3)
+                assert.equal(page.applied.at(-1), newerSucceeds ? 'es' : 'de')
+                assert.equal(probes, 2)
+                assert.equal(reads, 2, 'recovery must not add an automatic read')
+                assert.ok(page.calls.every(([command]) => command !== 'locale.set'))
+            } finally {
+                handshake.resolve(language('de', 3))
+                overlap.resolve(language('es', 4))
+                await recovery
+                page.controller.dispose()
+            }
+        })
+    }
+}
