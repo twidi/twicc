@@ -39,6 +39,7 @@ android {
         }
     }
     sourceSets.getByName("androidTest").assets.srcDir("../../tests/fixtures/native_tts_audio")
+    sourceSets.getByName("test").resources.srcDir("src/main/assets")
     buildFeatures { buildConfig = true }
     buildTypes {
         release {

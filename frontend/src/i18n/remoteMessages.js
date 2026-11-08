@@ -1,16 +1,11 @@
-import { i18n } from './index.js'
-import { localUiMessage, localUiError } from './uiMessages.js'
+import { toLocalMessageDescriptor } from './messageDescriptors.js'
+import { localUiError } from './uiMessages.js'
 
 // Wire metadata is public data. Convert it to the private render-time descriptor;
 // never translate on receipt because errors and notifications can remain visible.
 export function remoteUiMessage(payload, fallback = payload?.error ?? payload?.message ?? '', field = 'ui_message') {
     const message = payload?.[field] ?? (field === 'ui_message' ? payload?.error_ui_message : undefined)
-    if (!message || typeof message !== 'object' || typeof message.key !== 'string') return fallback
-    if (!i18n.global.te(message.key, 'en')) return fallback
-    const params = message.params ?? {}
-    if (typeof params !== 'object' || Array.isArray(params)) return fallback
-    if (message.count !== undefined && (typeof message.count !== 'number' || !Number.isFinite(message.count))) return fallback
-    return localUiMessage(message.key, params, message.count)
+    return toLocalMessageDescriptor(message) ?? fallback
 }
 
 export function remoteUiError(payload, fallback = payload?.error ?? payload?.message ?? '') {

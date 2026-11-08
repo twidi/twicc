@@ -81,3 +81,45 @@ test('nested message parameters do not freeze retained toast text', () => {
         assert.doesNotMatch(resolveUiMessage(message), /object Object|local-ui-message/)
     } finally { i18n.global.locale.value = previous }
 })
+
+await loadLocaleMessages('fr')
+
+test('preservesDescriptorAcrossLocaleChange with recursive wire parameters', () => {
+    const message = remoteUiMessage({ ui_message: { key: 'files.upload.retryFrom', params: {
+        message: { key: 'common.actions.cancel' }, location: 'Raw folder',
+    } } })
+    assert.equal(message.params.message.type, 'local-ui-message')
+    const previous = i18n.global.locale.value
+    try {
+        i18n.global.locale.value = 'en'
+        assert.match(resolveUiMessage(message), /Cancel/)
+        i18n.global.locale.value = 'fr'
+        assert.match(resolveUiMessage(message), /Annuler/)
+        assert.match(resolveUiMessage(message), /Raw folder/)
+    } finally { i18n.global.locale.value = previous }
+})
+
+test('rejectsBrokenDescriptors without replacing raw external diagnostics', () => {
+    const wrap = child => ({ key: 'files.upload.retryFrom', params: { message: child, location: 'Files' } })
+    let deep = { key: 'common.actions.cancel' }
+    for (let i = 0; i < 4; i++) deep = wrap(deep)
+    const children = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [i, { key: 'common.actions.cancel' }]))
+    for (const descriptor of [
+        { key: 'files.upload.retryFrom', params: { location: 'Files' } },
+        { key: 'backend.unknown' },
+        { key: 'common.actions.cancel', count: Infinity }, deep,
+        { key: 'common.actions.cancel', params: children },
+        wrap({ key: 'backend.unknown' }), wrap([]),
+        { key: 'common.actions.cancel', params: { bad: NaN } },
+        { key: 'common.actions.cancel', params: null },
+        { key: 'session.notifications.creditsUsed', params: { used: '1,25' } },
+        { key: 'session.notifications.creditsUsed', params: { used: true } },
+    ]) {
+        assert.equal(remoteUiMessage({ error: 'External diagnostic', ui_message: descriptor }), 'External diagnostic')
+    }
+    let validDepth = { key: 'common.actions.cancel' }
+    for (let i = 0; i < 3; i++) validDepth = wrap(validDepth)
+    assert.equal(remoteUiMessage({ ui_message: validDepth }).type, 'local-ui-message')
+    assert.equal(remoteUiMessage({ ui_message: { key: 'common.actions.cancel', params: Object.fromEntries(
+        Array.from({ length: 63 }, (_, i) => [i, { key: 'common.actions.cancel' }])) } }).type, 'local-ui-message')
+})
