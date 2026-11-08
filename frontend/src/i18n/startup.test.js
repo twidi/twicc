@@ -10,7 +10,7 @@ await loadLocaleMessages('pt-BR')
 const source = readFileSync(new URL('../main.js', import.meta.url), 'utf8')
 const initializeSource = source.slice(source.indexOf('async function initializeApp()'), source.indexOf('// Keep draft hydration before mount'))
 
-function startup(locale, { accessDenied = false, command = 'twicc password set', clipboardFailure = false } = {}) {
+function startup(locale, { accessDenied = false, command = 'twicc password set', clipboardFailure = false, localeReady = Promise.resolve(), events = [] } = {}) {
     const nodes = new Map()
     const copied = [], timers = []
     const node = () => ({ style: {}, listeners: {}, textContent: '', addEventListener(name, callback) { this.listeners[name] = callback } })
@@ -30,9 +30,11 @@ function startup(locale, { accessDenied = false, command = 'twicc password set',
     const i18n = createAppI18n(locale)
     const dependencies = {
         i18n,
-        readInitialLocale: () => locale,
-        setLocale: async value => { assert.equal(value, locale) },
-        useAuthStore: () => ({ checkAuth: async () => {}, accessDenied, setPasswordCommand: command }),
+        app: { use() {} },
+        router: {},
+        installSessionSwitchTransition() {},
+        initializeInterfaceLocale: async () => { await localeReady; events.push('locale'); return { mode: 'native', locale } },
+        useAuthStore: () => ({ checkAuth: async () => { events.push('auth') }, accessDenied, setPasswordCommand: command }),
         document: { getElementById: id => nodes.get(id) },
         navigator: { clipboard: { async writeText(value) { if (clipboardFailure) throw new Error('Clipboard denied'); copied.push(value) } } },
         window: { isSecureContext: true },
@@ -78,3 +80,30 @@ for (const locale of ['en', 'pt-BR']) {
         assert.equal(page.nodes.get('twicc-bootstrap-description').textContent, page.i18n.global.t('startup.backendUnavailable.description'))
     })
 }
+
+test('authentication waits for the native language catalog before any backend request', async () => {
+    let release
+    const events = []
+    const localeReady = new Promise(resolve => { release = resolve })
+    const page = startup('en', { accessDenied: true, localeReady, events })
+    const result = assert.rejects(page.run(), /Access blocked/)
+    assert.deepEqual(events, [])
+    release()
+    await result
+    assert.deepEqual(events, ['locale', 'auth'])
+})
+
+test('router installation cannot start its authentication guard before locale bootstrap', async () => {
+    const boundary = source.indexOf('async function initializeApp()')
+    const earlyInstall = source.slice(0, boundary).split('\n').filter(line => /^app\.use\(router\)$/.test(line)).join('\n')
+    const startupPrefix = source.slice(boundary, source.indexOf('    const authStore = useAuthStore()', boundary)) + '\n}'
+    let release
+    const ready = new Promise(resolve => { release = resolve })
+    const events = []
+    const run = new Function('app', 'router', 'initializeInterfaceLocale', 'installSessionSwitchTransition', `${earlyInstall}\n${startupPrefix}; return initializeApp()`)
+    const result = run({ use: () => events.push('router') }, {}, async () => { await ready; events.push('locale') }, () => {})
+    assert.deepEqual(events, [])
+    release()
+    await result
+    assert.deepEqual(events, ['locale', 'router'])
+})

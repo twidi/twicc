@@ -7,6 +7,7 @@ import * as Vue from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { createAppI18n, readInitialLocale, loadLocaleMessages } from './index.js'
 import { localUiMessage, resolveUiMessage } from './uiMessages.js'
+import { createAndroidLocaleController } from './androidLocale.js'
 
 // These rendering tests exercise both catalogs; production loads them on demand.
 await loadLocaleMessages('pt-BR')
@@ -51,4 +52,26 @@ test('login translates known errors and preserves server-supplied error text', a
     assert.match(await renderLogin('pt-BR', localUiMessage('auth.errors.network')), /Erro de rede/)
     assert.match(await renderLogin('pt-BR', 'Custom server error'), /Custom server error/)
     assert.match(await renderLogin('pt-BR', 'Network error'), /Network error/)
+})
+
+// A stale browser profile must never choose the Android login language.
+test('native preference chooses login language without an authenticated request', async () => {
+    let selected
+    const controller = createAndroidLocaleController({
+        client: {
+            async request(command) {
+                assert.equal(command, 'getState')
+                return { capabilities: { appLanguage: 1 }, appLanguage: {
+                    locale: 'en', revision: 2, supportedLocales: ['en', 'fr'],
+                } }
+            },
+            onStateChanged: () => () => {},
+        },
+        document: new EventTarget(),
+        readBrowserLocale: () => 'fr',
+        applyLocale: async locale => { selected = locale },
+    })
+    await controller.initialize()
+    assert.match(await renderLogin(selected), /placeholder="Enter password"/)
+    controller.dispose()
 })

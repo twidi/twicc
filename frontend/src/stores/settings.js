@@ -28,6 +28,7 @@ import { ORIGIN_SETTING_KEYS } from '../utils/originSettingsForm'
 import { updateCompactHeight, watchCompactHeight } from '../utils/compactHeight'
 import { applyReduceEffects } from '../utils/reducedMotion'
 import { DEFAULT_LOCALE, isSupportedLocale, setLocale } from '../i18n'
+import { interfaceLocaleState } from '../i18n/androidLocale.js'
 
 const STORAGE_KEY = 'twicc-settings'
 
@@ -1255,7 +1256,15 @@ let _pendingDisabledProvidersPresent = false
  */
 export function initSettings() {
     const store = useSettingsStore()
-    watch(() => store.locale, value => setLocale(value), { immediate: true, flush: 'sync' })
+    // Native bootstrap takes precedence before the immediate rendering watcher.
+    if (interfaceLocaleState.value) store.locale = interfaceLocaleState.value.locale
+    watch(() => interfaceLocaleState.value?.locale, value => {
+        if (value) store.locale = value
+    }, { flush: 'sync' })
+    watch(() => store.locale, value => {
+        // The page controller already renders native changes and fallback.
+        if (interfaceLocaleState.value?.revision == null) void setLocale(value)
+    }, { immediate: true, flush: 'sync' })
 
     // Dispatch the parsed localStorage values that are owned by providers
     // (the generic ones were already applied via the store's state factory).

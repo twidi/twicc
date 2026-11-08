@@ -2,6 +2,7 @@
 import { resolveUiMessage } from '../../i18n/uiMessages.js'
 import { useI18n } from 'vue-i18n'
 import { SUPPORTED_LOCALES } from '../../i18n'
+import { interfaceLocaleCompatibility, selectInterfaceLocale } from '../../i18n/androidLocale.js'
 import McpSettings from '../mcp/McpSettings.vue'
 // SettingsPopover.vue - Settings button with popover panel
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
@@ -86,6 +87,12 @@ const enabledProviders = computed(() => new Set(store.enabledProviders))
 // Show logout button only when password-based auth is active
 const showLogout = computed(() => authStore.passwordRequired && authStore.authenticated)
 const logoutButtonId = useId()
+
+async function handleLocaleChange(event) {
+    try { await selectInterfaceLocale(event.target.value) }
+    catch (error) { toast.error(error.uiMessage || error.message) }
+    finally { event.target.value = store.locale }
+}
 
 function handleLogout() {
     router.push({ name: 'logout' })
@@ -1441,7 +1448,7 @@ function onChangelogClose() {
                             <wa-select
                                 :label="$t('settings.general.language.label')"
                                 :value.prop="store.locale"
-                                @change="store.locale = $event.target.value"
+                                @change="handleLocaleChange"
                                 size="small"
                             >
                                 <wa-option v-for="locale in SUPPORTED_LOCALES" :key="locale.value" :value="locale.value">
@@ -1449,6 +1456,9 @@ function onChangelogClose() {
                                 </wa-option>
                             </wa-select>
                             <span class="setting-group-hint">{{ $t('settings.general.language.hint') }}</span>
+                            <wa-callout v-if="interfaceLocaleCompatibility" variant="warning">
+                                {{ resolveUiMessage(interfaceLocaleCompatibility) }}
+                            </wa-callout>
                         </div>
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.general.externalAddress.label') }} <wa-icon name="cloud" class="synced-icon"></wa-icon></label>

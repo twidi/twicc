@@ -179,7 +179,7 @@ test('component translations reference existing catalog messages', () => {
     checkComponents(new URL('../', import.meta.url))
     const source = readFileSync(new URL('../components/app/SettingsPopover.vue', import.meta.url), 'utf8')
     assert.match(source, /:value\.prop="store.locale"/)
-    assert.match(source, /@change="store.locale = \$event.target.value"/)
+    assert.match(source, /@change="handleLocaleChange"/)
 })
 
 

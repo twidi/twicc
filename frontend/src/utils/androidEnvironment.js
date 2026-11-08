@@ -6,5 +6,5 @@ export const androidPushState = ref(null)
 export function markAndroidApp() {
     if (isAndroidApp.value) return
     isAndroidApp.value = true
-    window.dispatchEvent(new Event('twicc:android-ready'))
+    globalThis.window?.dispatchEvent(new Event('twicc:android-ready'))
 }

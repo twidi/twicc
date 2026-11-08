@@ -98,7 +98,8 @@ import '@awesome.me/webawesome/dist/components/relative-time/relative-time.js'
 import '@awesome.me/webawesome/dist/components/popup/popup.js'
 
 import { createApp } from 'vue'
-import { i18n, readInitialLocale, setLocale } from './i18n'
+import { i18n } from './i18n'
+import { initializeInterfaceLocale } from './i18n/androidLocale.js'
 import { createPinia } from 'pinia'
 import { createNotivue } from 'notivue'
 import { router } from './router'
@@ -135,11 +136,8 @@ import './styles/robot-working.css'
 const app = createApp(App)
 app.use(i18n)
 app.use(createPinia())
-app.use(router)
 app.directive('scroll-shadow', vScrollShadow)
 installScrollEdges()
-// Moving from one session to another crossfades (a draft swapped for its real session does not).
-installSessionSwitchTransition(router, { isDraft: (id) => !!useDataStore().sessions[id]?.draft })
 
 // Configure Notivue toast system
 const notivue = createNotivue({
@@ -184,8 +182,12 @@ window.dispatchEvent(new Event('twicc:assets-ready'))
 // Production chunks can import this entry again while restoring drafts.
 // A top-level await would make both operations wait for each other.
 async function initializeApp() {
-    // Load the saved language before login, access errors or bootstrap messages render.
-    await setLocale(readInitialLocale())
+    // Load the installation or browser language before login and bootstrap messages render.
+    await initializeInterfaceLocale()
+    // Installing the router starts its authentication guard. Language comes first.
+    app.use(router)
+    // Moving from one session to another crossfades; binding a draft does not.
+    installSessionSwitchTransition(router, { isDraft: (id) => !!useDataStore().sessions[id]?.draft })
     // Resolve authentication before fetching any protected data. /api/bootstrap/
     // is behind the password-auth middleware, so on a locked instance we must
     // send the user to /login first (the router guard handles that). Once the
