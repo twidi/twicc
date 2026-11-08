@@ -916,6 +916,22 @@ class CodexHelpers(BaseProviderHelpers):
             _broadcast_changed_titles,
         )
 
+        from .source_binding import ReconcileCodexSourceJob, process_codex_source_payload
+
+        if isinstance(job, ReconcileCodexSourceJob):
+            try:
+                if job.payload.ingestion is not None:
+                    raise ValueError("Codex reconciliation jobs only repair source associations")
+                if job.provider != job.payload.provider:
+                    raise ValueError("Codex reconciliation job provider mismatch")
+                applied = await process_codex_source_payload(job.payload)
+            except Exception as exc:
+                if not job.future.done():
+                    job.future.set_exception(exc)
+            else:
+                if not job.future.done():
+                    job.future.set_result(applied)
+            return True
         if isinstance(job, CaptureSnapshotAnchorsJob):
             await settle_async_job(job, _apply_capture_snapshot_anchors_job, "Codex snapshot anchor capture")
             return True

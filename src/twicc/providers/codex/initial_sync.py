@@ -7,7 +7,7 @@ groups files by project (resolved from the first JSONL line's
 ``payload.cwd``), and pushes initial-sync payloads onto the DB writer's
 thread queue. Producer-side reads only — every DB write is delegated to
 the DB writer via ``CreateSessionPayload`` / ``UpdateSessionPayload`` /
-``DeleteSessionsPayload`` / ``MarkSessionsStalePayload`` /
+``DeleteSessionsPayload`` / ``MarkCodexSourcesMissingPayload`` /
 ``UpdateProjectMetadataPayload``.
 """
 
@@ -32,13 +32,14 @@ from twicc.provider_homes import codex_sessions_dir
 from twicc.providers.db_writer import (
     CreateSessionPayload,
     DeleteSessionsPayload,
-    MarkSessionsStalePayload,
     UpdateProjectMetadataPayload,
     UpdateSessionPayload,
 )
 from twicc.providers.subagent_roots import resolve_flat_parent_id
 from twicc.sync_helpers import BackpressureSyncQueue, check_file_has_content, read_session_items_from_file
 from .rollout_migration import HistoryMode, history_mode_from_record
+from .rollout_sources import is_rollout_path, logical_rollout_path, prepare_rollout, read_rollout_meta, resolve_rollout
+from .source_binding import CodexSourcePayload, MarkCodexSourcesMissingPayload, source_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ if TYPE_CHECKING:
 
 
 def is_session_file(path: Path) -> bool:
-    """Check if a path is a valid Codex session file (rollout-*.jsonl)."""
-    return path.suffix == ".jsonl" and path.name.startswith("rollout-")
+    """Recognize a plain or compressed Codex rollout source."""
+    return is_rollout_path(path)
 
 
 class SessionMeta(NamedTuple):
@@ -69,7 +70,7 @@ class SessionMeta(NamedTuple):
     history_mode: HistoryMode = HistoryMode.LEGACY
 
 
-def extract_session_meta(file_path: Path) -> SessionMeta | None:
+def extract_session_meta(file_path: Path, *, read_path: Path | None = None) -> SessionMeta | None:
     """
     Read the first line of a Codex JSONL file and pull session_id + cwd
     (and a parent session id when the file represents a subagent rollout).
@@ -94,22 +95,28 @@ def extract_session_meta(file_path: Path) -> SessionMeta | None:
     Returns ``None`` if the file is empty, unreadable, or missing either
     ``id`` or ``cwd`` — such files are skipped by the sync.
     """
-    if not file_path.exists():
-        return None
-
-    try:
-        with open(file_path, "rb") as f:
-            first_line = f.readline()
-    except OSError:
-        return None
-
-    if not first_line.strip():
-        return None
-
-    try:
-        parsed = orjson.loads(first_line)
-    except orjson.JSONDecodeError:
-        return None
+    if read_path is None and file_path.suffix == ".zst":
+        try:
+            parsed = read_rollout_meta(file_path)
+        except OSError:
+            return None
+        if parsed is None:
+            return None
+    else:
+        direct_path = read_path if read_path is not None else file_path
+        if not direct_path.exists():
+            return None
+        try:
+            with open(direct_path, "rb") as f:
+                first_line = f.readline()
+        except OSError:
+            return None
+        if not first_line.strip():
+            return None
+        try:
+            parsed = orjson.loads(first_line)
+        except orjson.JSONDecodeError:
+            return None
 
     payload = parsed.get("payload") if isinstance(parsed, dict) else None
     if not isinstance(payload, dict):
@@ -222,7 +229,8 @@ def _build_create_payload(
     project_id: str,
     is_subagent: bool,
     stats: dict[str, int],
-) -> CreateSessionPayload | None:
+    *, stop_event: threading.Event | None = None,
+) -> CreateSessionPayload | CodexSourcePayload | None:
     """Build the CreateSessionPayload for a new entry, or None on parse failure.
 
     Reads the entry's JSONL file (producer-side read); when it has content,
@@ -234,6 +242,42 @@ def _build_create_payload(
     subagent may be the first session the DB writer ever sees for its own
     project.
     """
+    if entry.file_path.suffix != ".zst":
+        payload = _build_plain_create_payload(entry, project_id, is_subagent, stats)
+        if payload is not None:
+            return payload
+    # A compressed inventory entry, or a plain read that lost its source.
+    try:
+        with prepare_rollout(entry.file_path, stop=stop_event) as source:
+            meta = extract_session_meta(source.physical_path, read_path=source.read_path)
+            if meta is None or meta.ignored or meta.session_id != entry.session_id:
+                return None
+            payload = _build_plain_create_payload(
+                entry._replace(file_path=source.physical_path), project_id, is_subagent, stats,
+                read_path=source.read_path,
+            )
+            if payload is None:
+                return None
+            return CodexSourcePayload(
+                Provider.CODEX, entry.session_id,
+                str(source.physical_path.relative_to(codex_sessions_dir())), source.fingerprint, None, payload,
+            )
+    except OSError:
+        return None
+
+
+def _select_content_entry(entry: _NewEntry) -> _NewEntry | None:
+    """Keep the ordinary probe; resolve only a source lost during inventory."""
+    if entry.file_path.suffix == ".zst" or check_file_has_content(entry.file_path):
+        return entry
+    try:
+        selected = resolve_rollout(entry.file_path)
+    except OSError:
+        return None
+    return entry._replace(file_path=selected) if selected != entry.file_path else None
+
+
+def _build_plain_create_payload(entry, project_id, is_subagent, stats, *, read_path=None):
     relative_path = entry.file_path.relative_to(codex_sessions_dir())
     if is_subagent:
         session = Session(
@@ -253,7 +297,7 @@ def _build_create_payload(
             type=SessionType.SESSION,
         )
 
-    to_insert = read_session_items_from_file(session, entry.file_path)
+    to_insert = read_session_items_from_file(session, read_path if read_path is not None else entry.file_path)
     if to_insert is None:
         return None
 
@@ -320,13 +364,15 @@ def _sync_subagents(
 
             # Defensive: the first line parsed (extract_session_meta), but
             # the rest of the file might be empty after a failed write.
-            if not check_file_has_content(entry.file_path):
+            selected_entry = _select_content_entry(entry)
+            if selected_entry is None:
                 stats["inventory_complete"] = 0
                 done += 1
                 if on_session_progress:
                     on_session_progress(entry.session_id, done, total)
                 continue
 
+            entry = selected_entry
             if entry.parent_session_id not in resolvable_parent_ids:
                 # Parent isn't resolvable yet — retry on the next sweep
                 # (it may itself be a subagent resolved later in this pass).
@@ -338,7 +384,8 @@ def _sync_subagents(
                 next_remaining.append(entry)
                 continue
             payload = _build_create_payload(
-                entry._replace(parent_session_id=root_id), path_to_project_id(entry.cwd), True, stats
+                entry._replace(parent_session_id=root_id), path_to_project_id(entry.cwd), True, stats,
+                stop_event=stop_event,
             )
             if payload is None:
                 stats["inventory_complete"] = 0
@@ -365,6 +412,49 @@ def _sync_subagents(
                 )
             break
         remaining = next_remaining
+
+
+def _build_update_payload(session, to_insert) -> UpdateSessionPayload:
+    return UpdateSessionPayload(
+        provider=Provider.CODEX, session=session, items=to_insert.items,
+        last_offset=to_insert.last_offset, last_line=to_insert.last_line, mtime=to_insert.mtime,
+        reset_compute_version=(to_insert.actually_new_count > 0 and session.compute_version is not None),
+        clear_stale=session.stale,
+    )
+
+
+def _build_existing_source_payload(entry, stats, *, stop_event=None) -> CodexSourcePayload | None:
+    """Prepare one special source completely before handing its item list off."""
+    try:
+        with prepare_rollout(entry.file_path, stop=stop_event) as source:
+            meta = extract_session_meta(source.physical_path, read_path=source.read_path)
+            if meta is None or meta.ignored or meta.session_id != entry.session.id:
+                stats["inventory_complete"] = 0
+                return None
+            read_failed = False
+
+            def on_error(error):
+                nonlocal read_failed
+                read_failed = True
+
+            to_insert = read_session_items_from_file(entry.session, source.read_path, on_error=on_error)
+            if read_failed:
+                stats["inventory_complete"] = 0
+                return None
+            ingestion = None
+            if to_insert is not None and (to_insert.items or to_insert.last_offset != entry.session.last_offset
+                                          or to_insert.last_line != entry.session.last_line):
+                ingestion = _build_update_payload(entry.session, to_insert)
+            if to_insert is not None:
+                stats["items_added"] += to_insert.actually_new_count
+            return CodexSourcePayload(
+                Provider.CODEX, entry.session.id,
+                str(source.physical_path.relative_to(codex_sessions_dir())),
+                source.fingerprint, source_checkpoint(entry.session), ingestion,
+            )
+    except OSError:
+        stats["inventory_complete"] = 0
+        return None
 
 
 def sync_project(
@@ -401,9 +491,6 @@ def sync_project(
         "inventory_complete": 1,
     }
 
-    def read_error(error: OSError) -> None:
-        stats["inventory_complete"] = 0
-
     try:
         project = Project.objects.get(id=project_id)
     except Project.DoesNotExist:
@@ -436,22 +523,26 @@ def sync_project(
             )
             return stats
 
-        to_insert = read_session_items_from_file(entry.session, entry.file_path, on_error=read_error)
-        if to_insert is not None:
-            stats["items_added"] += to_insert.actually_new_count
-            sync_queue.put(UpdateSessionPayload(
-                provider=Provider.CODEX,
-                session=entry.session,
-                items=to_insert.items,
-                last_offset=to_insert.last_offset,
-                last_line=to_insert.last_line,
-                mtime=to_insert.mtime,
-                reset_compute_version=(
-                    to_insert.actually_new_count > 0
-                    and entry.session.compute_version is not None
-                ),
-                clear_stale=entry.session.stale,
-            ))
+        special = (entry.file_path.suffix == ".zst"
+                   or str(entry.file_path.relative_to(codex_sessions_dir())) != entry.session.file_path
+                   or entry.session.unavailable_reason == "rollout_missing")
+        if special:
+            payload = _build_existing_source_payload(entry, stats, stop_event=stop_event)
+            if payload is not None:
+                sync_queue.put(payload)
+        else:
+            read_errors: list[OSError] = []
+            to_insert = read_session_items_from_file(entry.session, entry.file_path, on_error=read_errors.append)
+            if read_errors:
+                if all(isinstance(error, FileNotFoundError) for error in read_errors):
+                    payload = _build_existing_source_payload(entry, stats, stop_event=stop_event)
+                    if payload is not None:
+                        sync_queue.put(payload)
+                else:
+                    stats["inventory_complete"] = 0
+            elif to_insert is not None:
+                stats["items_added"] += to_insert.actually_new_count
+                sync_queue.put(_build_update_payload(entry.session, to_insert))
 
         if on_session_progress:
             on_session_progress(entry.session.id, idx, total_sessions)
@@ -471,13 +562,15 @@ def sync_project(
         # Defensive: extract_session_meta already proved the first line
         # is parseable, but the rest of the file might be empty after a
         # failed write — skip without pushing.
-        if not check_file_has_content(entry.file_path):
+        selected_entry = _select_content_entry(entry)
+        if selected_entry is None:
             stats["inventory_complete"] = 0
             if on_session_progress:
                 on_session_progress(entry.session_id, idx, total_sessions)
             continue
 
-        payload = _build_create_payload(entry, project_id, False, stats)
+        entry = selected_entry
+        payload = _build_create_payload(entry, project_id, False, stats, stop_event=stop_event)
         if payload is None:
             stats["inventory_complete"] = 0
             if on_session_progress:
@@ -589,8 +682,13 @@ def sync_all(
         stats["inventory_complete"] = 0
 
     disk_files = scan_session_files(on_error=inventory_error)
+    selected_by_logical_path: dict[str, Path] = {}
+    for path in disk_files:
+        logical = str(logical_rollout_path(path.relative_to(sessions_dir)))
+        if logical not in selected_by_logical_path or path.suffix != ".zst":
+            selected_by_logical_path[logical] = path
     disk_files_by_relative_path = {
-        str(p.relative_to(sessions_dir)): p for p in disk_files
+        str(path.relative_to(sessions_dir)): path for path in selected_by_logical_path.values()
     }
 
     # Match disk files to existing DB rows by ``file_path`` (unique in DB),
@@ -611,7 +709,8 @@ def sync_all(
     ignored_existing_paths = {
         rel_path
         for rel_path, session in db_sessions_by_path.items()
-        if (file_path := disk_files_by_relative_path.get(rel_path)) is not None
+        if (file_path := (disk_files_by_relative_path.get(rel_path)
+                          or selected_by_logical_path.get(str(logical_rollout_path(Path(rel_path)))))) is not None
         and _is_ignored_existing_session(session, file_path, stats)
     }
     if ignored_existing_paths:
@@ -625,12 +724,23 @@ def sync_all(
             if path not in ignored_existing_paths
         }
 
+    db_sessions_by_logical_path = {
+        str(logical_rollout_path(Path(path))): session for path, session in db_sessions_by_path.items()
+    }
+    db_sessions_by_id = {session.id: session for session in db_sessions_by_path.values()}
     new_by_project: dict[str, list[_NewEntry]] = {}
     existing_by_project: dict[str, list[_ExistingEntry]] = {}
 
     for rel_path, file_path in disk_files_by_relative_path.items():
-        if rel_path in db_sessions_by_path:
-            sess = db_sessions_by_path[rel_path]
+        sess = db_sessions_by_path.get(rel_path)
+        if sess is None:
+            sess = db_sessions_by_logical_path.get(str(logical_rollout_path(Path(rel_path))))
+            if sess is not None:
+                meta = extract_session_meta(file_path)
+                if meta is None or meta.ignored or meta.session_id != sess.id:
+                    stats["inventory_complete"] = 0
+                    continue
+        if sess is not None:
             existing_by_project.setdefault(sess.project_id, []).append(
                 _ExistingEntry(file_path=file_path, session=sess)
             )
@@ -640,6 +750,10 @@ def sync_all(
                 stats["inventory_complete"] = 0
                 continue
             if meta.ignored:
+                continue
+            known = db_sessions_by_id.get(meta.session_id)
+            if known is not None and (file_path.suffix == ".zst" or known.file_path.endswith(".zst")):
+                stats["inventory_complete"] = 0
                 continue
             project_id = path_to_project_id(meta.cwd)
             new_by_project.setdefault(project_id, []).append(
@@ -722,19 +836,13 @@ def sync_all(
     # Mark stale sessions (on DB but no longer on disk). Pushed as a
     # single batch payload so the DB writer issues exactly one bulk UPDATE.
     if not interrupted:
-        stale_paths = (
-            set(db_sessions_by_path.keys()) - set(disk_files_by_relative_path.keys())
-        )
-        stale_session_ids = [
-            db_sessions_by_path[p].id for p in stale_paths
-            if not db_sessions_by_path[p].stale
+        stale_sources = [
+            (session.id, path) for path, session in db_sessions_by_path.items()
+            if str(logical_rollout_path(Path(path))) not in selected_by_logical_path and not session.stale
         ]
-        if stale_session_ids:
-            sync_queue.put(MarkSessionsStalePayload(
-                provider=Provider.CODEX,
-                session_ids=stale_session_ids,
-            ))
-            stats["sessions_stale"] = len(stale_session_ids)
+        if stale_sources:
+            sync_queue.put(MarkCodexSourcesMissingPayload(provider=Provider.CODEX, sources=stale_sources))
+            stats["sessions_stale"] = len(stale_sources)
 
     elapsed = time.monotonic() - sync_start
     if interrupted:

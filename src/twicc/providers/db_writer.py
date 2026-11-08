@@ -300,6 +300,11 @@ def _prepare_ingestion_payload(payload):
             return prepare_ingestion_contents(payload.session, [text for _, text in payload.items])
         except Exception:
             logger.warning('Optional ingestion content preparation failed', exc_info=True)
+        return None
+    if getattr(payload, "provider", None) == Provider.CODEX:
+        from twicc.providers.codex.source_binding import CodexSourcePayload
+        if isinstance(payload, CodexSourcePayload):
+            return _prepare_ingestion_payload(payload.ingestion)
     return None
 
 
@@ -2045,6 +2050,12 @@ async def _drain_one() -> bool:
             with provider_log_context(getattr(payload, 'provider', None)):
                 if isinstance(payload, (CreateSessionPayload, UpdateSessionPayload)):
                     await _process_thread_message(payload, prepared=prepared)
+                elif getattr(payload, "provider", None) == Provider.CODEX:
+                    from twicc.providers.codex.source_binding import CodexSourcePayload
+                    if isinstance(payload, CodexSourcePayload):
+                        await _process_thread_message(payload, prepared=prepared)
+                    else:
+                        await _process_thread_message(payload)
                 else:
                     await _process_thread_message(payload)
         processed |= await _background_turn(ingest)
@@ -2981,6 +2992,19 @@ async def _broadcast_project_updated(project_id: str) -> None:
 # =============================================================================
 
 
+async def _publish_created_project(project, created: bool, adopted: bool) -> None:
+    """Publish ordinary project creation/adoption effects after commit."""
+    if created:
+        await _broadcast_project_added(project)
+    if (created or adopted) and project.directory:
+        await auto_add_project_to_workspaces(project.id, project.directory)
+        from twicc.projects import ensure_project_color, ensure_worktree_link
+        await ensure_worktree_link(project.id, project.directory)
+        new_color = await ensure_project_color(project.id, project.directory)
+        if new_color:
+            project.color = new_color
+
+
 async def _process_thread_message(msg, *, prepared=None) -> None:
     """Apply one message drained from the shared thread queue."""
     if isinstance(msg, InitialSyncDoneMarker):
@@ -3005,22 +3029,7 @@ async def _process_thread_message(msg, *, prepared=None) -> None:
         if isinstance(msg, CreateSessionPayload):
             project, created, adopted = await run_compute_sync(_apply_create_session_payload, msg, prepared=prepared)
             if project is not None:
-                # Post-commit side effects, kept out of transaction.atomic so
-                # a project is never announced before it commits. Workspace
-                # auto-add runs only when the project was just created or just
-                # adopted a directory — not for every session of an existing
-                # project (its workspace membership cannot change per-session).
-                if created:
-                    await _broadcast_project_added(project)
-                if (created or adopted) and project.directory:
-                    await auto_add_project_to_workspaces(project.id, project.directory)
-                    # Link to its main repo if this project is a git worktree
-                    # (local import: twicc.projects ↔ db_writer cycle).
-                    from twicc.projects import ensure_project_color, ensure_worktree_link
-                    await ensure_worktree_link(project.id, project.directory)
-                    new_color = await ensure_project_color(project.id, project.directory)
-                    if new_color:
-                        project.color = new_color
+                await _publish_created_project(project, created, adopted)
             else:
                 # _apply_create_session_payload skipped an orphan subagent
                 # (parent row absent). A deliberate skip, not an apply error —
@@ -3045,6 +3054,18 @@ async def _process_thread_message(msg, *, prepared=None) -> None:
             await run_compute_sync(_apply_resolve_git_roots_payload, msg)
         elif isinstance(msg, UpsertWorkflowPayload):
             await run_compute_sync(_apply_upsert_workflow_payload, msg)
+        elif getattr(msg, "provider", None) == Provider.CODEX:
+            from twicc.providers.codex.source_binding import (
+                CodexSourcePayload, MarkCodexSourcesMissingPayload,
+                apply_mark_codex_sources_missing_payload, process_codex_source_payload,
+            )
+            if isinstance(msg, CodexSourcePayload):
+                if not await process_codex_source_payload(msg, prepared=prepared):
+                    _initial_sync_failures[msg.provider] += 1
+            elif isinstance(msg, MarkCodexSourcesMissingPayload):
+                await run_compute_sync(apply_mark_codex_sources_missing_payload, msg)
+            else:
+                logger.error("Unexpected Codex initial-sync message type: %s", type(msg).__name__)
         else:
             logger.error(
                 f"Unexpected initial-sync message type: {type(msg).__name__} => {msg!r:.300}"
