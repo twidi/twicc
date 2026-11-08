@@ -36,6 +36,7 @@ def _agent() -> ClaudeCodeAgent:
     agent.session_id = "session-1"
     agent._live_monitor_tasks = set()
     agent._live_workflow_tasks = {}
+    agent._ended_workflow_tasks = set()
     agent._live_background_tasks = {}
     agent._live_shell_tasks = {}
     agent._background_work_refresh_task = None

@@ -11,7 +11,7 @@ from twicc.agent.states import AgentState
 from twicc.core.models import TimelineKind
 
 #: Version of the payload shapes below. Bump it when a kind's payload changes shape (design §3).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class SessionCreatedData(NamedTuple):
@@ -92,6 +92,28 @@ class PinnedEndedData(NamedTuple):
     scope: str | None = None  # inherited from the started row, see STARTED_OF
 
 
+class WorkflowStartedData(NamedTuple):
+    # One attempt of a Claude Code ``Workflow`` run, read from the session's transcript
+    # (``timeline_workflows``). A resume (``resumeFromRunId``) is a new attempt: same
+    # ``run_id``, new ``task_id``. Attempts of one session can overlap, so ``workflow.ended``
+    # pairs with its start by ``task_id`` and is NOT in ``STARTED_OF``.
+    run_id: str
+    task_id: str
+    name: str | None = None  # the script's meta.name
+    cause: str = "new"  # "new" | "resume"
+
+
+class WorkflowEndedData(NamedTuple):
+    # The first three fields repeat the matching ``workflow.started`` (copied by the writer).
+    run_id: str | None = None
+    task_id: str | None = None
+    name: str | None = None
+    # The CLI's terminal status ("completed", "failed", "killed", "stopped", ...), or one TwiCC
+    # infers: "paused" (resumed later without an end of its own), "interrupted" (its process
+    # ended; the row's ``reason`` says why, "lost" when found dead at boot).
+    status: str | None = None
+
+
 class BackendStartedData(NamedTuple):
     pid: int
     version: str | None = None
@@ -131,6 +153,8 @@ PAYLOAD_TYPES: dict[str, type | None] = {
     TimelineKind.TREE_DETACHED_ENDED: None,
     TimelineKind.PINNED_STARTED: PinnedStartedData,
     TimelineKind.PINNED_ENDED: PinnedEndedData,
+    TimelineKind.WORKFLOW_STARTED: WorkflowStartedData,
+    TimelineKind.WORKFLOW_ENDED: WorkflowEndedData,
     TimelineKind.BACKEND_STARTED: BackendStartedData,
     TimelineKind.BACKEND_ENDED: BackendEndedData,
 }

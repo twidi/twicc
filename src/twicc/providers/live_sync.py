@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -32,6 +33,24 @@ class CompletionObservation(NamedTuple):
     line_num: int = 0
 
 
+class WorkflowTimelineSignal(NamedTuple):
+    """One workflow lifecycle fact of a transcript line, for the timeline (``timeline_workflows``).
+
+    ``kind`` is ``"started"`` (a ``Workflow`` launch acknowledgement: ``run_id``, ``name`` and
+    ``resumed`` are set) or ``"ended"`` (a terminal ``<task-notification>``: ``status`` is set,
+    ``None`` on an old payload-only completion). Only ``task_id`` ties an end to its start.
+    """
+
+    kind: str
+    task_id: str
+    line_num: int
+    timestamp: datetime | None
+    run_id: str | None = None
+    name: str | None = None
+    resumed: bool = False
+    status: str | None = None
+
+
 class LiveSyncUpdates(NamedTuple):
     new_line_nums: list[int]
     modified_line_nums: list[int]
@@ -46,6 +65,7 @@ class LiveSyncUpdates(NamedTuple):
     title_updated_session_ids: tuple[str, ...] = ()
     unresolved_launcher_lookups: tuple = ()
     completion_observations: tuple[CompletionObservation, ...] = ()
+    workflow_signals: tuple[WorkflowTimelineSignal, ...] = ()
 
     @classmethod
     def empty(cls) -> LiveSyncUpdates:

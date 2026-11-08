@@ -1013,6 +1013,16 @@ class BaseAgent(StopOriginMixin):
     # debounce period.
     BACKGROUND_WORK_BROADCAST_RETRIES: ClassVar[int] = 3
 
+    def ended_workflow_task_ids(self) -> frozenset[str]:
+        """Provider hook: the task ids of the workflow runs this agent saw end.
+
+        The timeline reads it when the process ends: every open run dies with the
+        process except these, whose own notification is still on its way through the
+        watcher (``timeline_workflows.close_open_workflows``). Default: none seen
+        (Codex has no workflows, the hybrid CLI streams no task events).
+        """
+        return frozenset()
+
     def current_background_work(self) -> dict | None:
         """Provider hook: what still runs behind this agent right now.
 

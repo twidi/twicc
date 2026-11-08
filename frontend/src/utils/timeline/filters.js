@@ -24,6 +24,7 @@ export const FAMILIES = [
     { value: 'waits', label: 'Waiting for you', hint: 'approvals, questions' },
     { value: 'settings', label: 'Settings', hint: 'model, effort, permissions' },
     { value: 'organization', label: 'Organization', hint: 'archived, hidden, muted, pinned, detached' },
+    { value: 'workflows', label: 'Workflows', hint: 'started, resumed, ended' },
     { value: 'twicc', label: 'TwiCC', hint: 'started, stopped' },
 ]
 

@@ -314,6 +314,10 @@ class ClaudeCodeAgent(BaseAgent):
         # files are no substitute: they outlive a dead process, still
         # "running".
         self._live_workflow_tasks: dict[str, str] = {}
+        # Task ids of the Workflow runs seen ending (terminal task event). When the
+        # process ends, the timeline closes every open run but these: their own
+        # notification is still on its way through the watcher.
+        self._ended_workflow_tasks: set[str] = set()
         # Live shell tasks (``task_type == "local_bash"`` minus Monitors),
         # task_id -> ``_ShellTask`` record (backgrounded flag, owner, command,
         # output path, start time). Every Bash call is a task, foreground
@@ -540,6 +544,9 @@ class ClaudeCodeAgent(BaseAgent):
             active_tools=tuple(self._serialize_active_tools()),
             last_started_tool_id=self._last_started_tool_id,
         )
+
+    def ended_workflow_task_ids(self) -> frozenset[str]:
+        return frozenset(self._ended_workflow_tasks)
 
     def current_background_work(self) -> dict | None:
         return build_background_work(
@@ -2012,6 +2019,7 @@ class ClaudeCodeAgent(BaseAgent):
                 self.session_id, task_id, len(self._live_background_tasks),
             )
         if self._live_workflow_tasks.pop(task_id, None) is not None:
+            self._ended_workflow_tasks.add(task_id)
             released = True
             self._logger.debug(
                 "Session %s: workflow %s stopped (%d live)",

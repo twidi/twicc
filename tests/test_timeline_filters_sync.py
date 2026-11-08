@@ -10,17 +10,20 @@ from pathlib import Path
 import orjson
 
 from twicc.core.enums import Provider
-from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, PROBLEM_REASONS, VIEWS
+from twicc.core.services.timeline_filters import AUTHORS, FAMILIES, PROBLEM_REASONS, PROBLEM_WORKFLOW_STATUSES, VIEWS
 
 JAVASCRIPT = """
 import { AUTHORS, FAMILIES, PROVIDERS, VIEWS } from './frontend/src/utils/timeline/filters.js';
-import { PROCESS_ENDED_REASONS } from './frontend/src/utils/timeline/describeEvent.js';
+import { PROCESS_ENDED_REASONS, WORKFLOW_ENDED_STATUSES } from './frontend/src/utils/timeline/describeEvent.js';
 const values = (entries) => entries.map((entry) => entry.value);
 const problemReasons = Object.entries(PROCESS_ENDED_REASONS)
     .filter(([, [, severity]]) => severity === 'warning' || severity === 'danger')
     .map(([reason]) => reason);
+const problemWorkflowStatuses = Object.entries(WORKFLOW_ENDED_STATUSES)
+    .filter(([, [, severity]]) => severity === 'warning' || severity === 'danger')
+    .map(([status]) => status);
 console.log(JSON.stringify({
-    views: values(VIEWS), families: values(FAMILIES), messageFamily: FAMILIES.find((entry) => entry.value === "messages"), authors: values(AUTHORS), providers: PROVIDERS, problemReasons,
+    views: values(VIEWS), families: values(FAMILIES), messageFamily: FAMILIES.find((entry) => entry.value === "messages"), authors: values(AUTHORS), providers: PROVIDERS, problemReasons, problemWorkflowStatuses,
 }));
 """
 
@@ -41,3 +44,4 @@ def test_frontend_keys_match_the_backend():
     assert frontend["authors"] == list(AUTHORS)
     assert frontend["providers"] == [provider.value for provider in Provider]
     assert sorted(frontend["problemReasons"]) == sorted(PROBLEM_REASONS)
+    assert sorted(frontend["problemWorkflowStatuses"]) == sorted(PROBLEM_WORKFLOW_STATUSES)

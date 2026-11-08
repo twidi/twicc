@@ -176,6 +176,12 @@ def record_process_ended(agent, prev: ProcessSnapshot | None, *, message_refs: l
              if spec.kind == TimelineKind.TURN_ENDED else spec for spec in specs]
     # The rows closed with the end take its origin: the stop caused them.
     _write(agent, specs, occurred_at=now, origin=ended_origin)
+    # Its workflows die with the CLI process: their transcript will never end them. A run the
+    # agent saw end keeps its open row: the watcher has not synced its notification yet.
+    from twicc.core.services.timeline_workflows import close_open_workflows
+    ended_ids = getattr(agent, "ended_workflow_task_ids", None)
+    close_open_workflows(agent.session_id, occurred_at=now, reason=reason, origin=ended_origin,
+                         exclude_task_ids=ended_ids() if callable(ended_ids) else frozenset())
     error = getattr(agent, "error", None)
     caused_by = latest_event_id(agent.session_id, TimelineKind.ARCHIVED_STARTED) if reason == "archived" else None
     record_event_sync(

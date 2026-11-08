@@ -65,7 +65,9 @@ def as_mapping(row):
 
 def test_the_keys_and_their_order():
     assert VIEWS == ("all", "messages", "without_turns", "waits_problems")
-    assert tuple(FAMILIES) == ("sessions", "processes", "turns", "messages", "waits", "settings", "organization", "twicc")
+    assert tuple(FAMILIES) == (
+        "sessions", "processes", "turns", "messages", "waits", "settings", "organization", "workflows", "twicc",
+    )
     assert AUTHORS == ("unknown", "automatic", "you", "agent_cli_mcp", "external_mcp", "session_agent")
 
 
@@ -144,8 +146,13 @@ def test_problems_are_the_warning_and_danger_ends_and_the_unclean_stop():
         build("backend.ended"),
         build("awaiting_input.started", actor="agent"),
     )
-    expected = {row.id for row in process_ends if row.reason in PROBLEM_REASONS} | {unclean.id}
-    assert len(expected) == len(PROBLEM_REASONS) + 1
+    workflow_ends = save(*[
+        build("workflow.ended", data={"task_id": status, "status": status})
+        for status in ("completed", "failed", "killed", "stopped", "paused", "interrupted")
+    ])
+    expected = {row.id for row in process_ends if row.reason in PROBLEM_REASONS} | {unclean.id} | {
+        row.id for row in workflow_ends if row.data["status"] in ("failed", "interrupted")}
+    assert len(expected) == len(PROBLEM_REASONS) + 3
     assert matching_ids(problem_q()) == expected
 
 
@@ -153,15 +160,18 @@ def test_problems_are_the_warning_and_danger_ends_and_the_unclean_stop():
 def test_views():
     rows = save(*[build(kind, actor="agent") for kind in TimelineKind.values])
     by_kind = {row.kind: row.id for row in rows}
-    problem, unclean = save(build("process.ended", reason="error"), build("backend.ended", data={"clean": False}))
-    every_id = set(by_kind.values()) | {problem.id, unclean.id}
+    problem, unclean, failed = save(
+        build("process.ended", reason="error"), build("backend.ended", data={"clean": False}),
+        build("workflow.ended", data={"task_id": "t", "status": "failed"}),
+    )
+    every_id = set(by_kind.values()) | {problem.id, unclean.id, failed.id}
 
     assert view_q("all") is None
     exchanges = {by_kind[kind] for kind in ("turn.started", "turn.ended", "user_message.sent", "assistant_message.sent")}
     assert matching_ids(view_q("messages")) == exchanges
     assert every_id - matching_ids(view_q("without_turns")) == exchanges
     assert matching_ids(view_q("waits_problems")) == {
-        by_kind["awaiting_input.started"], by_kind["awaiting_input.ended"], problem.id, unclean.id,
+        by_kind["awaiting_input.started"], by_kind["awaiting_input.ended"], problem.id, unclean.id, failed.id,
     }
     with pytest.raises(ValueError):
         view_q("pending")
@@ -273,7 +283,8 @@ def test_possible_kinds_are_exactly_the_kinds_the_view_and_families_can_match():
     # One row of every kind, plus the rows that make the problem kinds pass the problem conditions: every kind the
     # helper calls possible has a matching row, every other kind none.
     save(*[build(kind, actor="agent") for kind in TimelineKind.values])
-    save(build("process.ended", reason="error"), build("backend.ended", data={"clean": False}))
+    save(build("process.ended", reason="error"), build("backend.ended", data={"clean": False}),
+         build("workflow.ended", data={"task_id": "t", "status": "failed"}))
     for view in VIEWS:
         for size in range(len(FAMILIES) + 1):
             for families in itertools.combinations(FAMILIES, size):
@@ -294,7 +305,7 @@ def test_the_combinations_that_can_never_match():
     assert can_match(TimelineFilter(view="without_turns", families=("turns", "waits")))
     for families in (("sessions",), ("turns",), ("settings",), ("organization",), ("sessions", "settings")):
         assert not can_match(TimelineFilter(view="waits_problems", families=families)), families
-    for family in ("waits", "processes", "twicc"):
+    for family in ("waits", "processes", "workflows", "twicc"):
         assert can_match(TimelineFilter(view="waits_problems", families=(family, "sessions")))
     # The other groups never make a filter impossible here: only the view and the families decide.
     assert can_match(TimelineFilter(authors=("you",), providers=("codex",), session_id="s1"))

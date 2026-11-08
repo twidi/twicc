@@ -1,0 +1,16 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('core', '0169_message_summary'),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name='timelineevent',
+            name='kind',
+            field=models.CharField(choices=[('session.created', 'Session created'), ('title.changed', 'Title changed'), ('settings.changed', 'Settings changed'), ('process.started', 'Process started'), ('process.ended', 'Process ended'), ('user_message.sent', 'User message sent'), ('assistant_message.sent', 'Assistant message sent'), ('turn.started', 'Turn started'), ('turn.ended', 'Turn ended'), ('awaiting_input.started', 'Awaiting input started'), ('awaiting_input.ended', 'Awaiting input ended'), ('archived.started', 'Archived started'), ('archived.ended', 'Archived ended'), ('hidden.started', 'Hidden started'), ('hidden.ended', 'Hidden ended'), ('muted.started', 'Muted started'), ('muted.ended', 'Muted ended'), ('tree_detached.started', 'Tree detached started'), ('tree_detached.ended', 'Tree detached ended'), ('pinned.started', 'Pinned started'), ('pinned.ended', 'Pinned ended'), ('workflow.started', 'Workflow started'), ('workflow.ended', 'Workflow ended'), ('backend.started', 'Backend started'), ('backend.ended', 'Backend ended')], max_length=40),
+        ),
+    ]

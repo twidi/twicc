@@ -2368,6 +2368,8 @@ class TimelineKind(models.TextChoices):
     TREE_DETACHED_ENDED = "tree_detached.ended", "Tree detached ended"
     PINNED_STARTED = "pinned.started", "Pinned started"
     PINNED_ENDED = "pinned.ended", "Pinned ended"
+    WORKFLOW_STARTED = "workflow.started", "Workflow started"
+    WORKFLOW_ENDED = "workflow.ended", "Workflow ended"
     BACKEND_STARTED = "backend.started", "Backend started"
     BACKEND_ENDED = "backend.ended", "Backend ended"
 

@@ -73,7 +73,9 @@ from twicc.core.session_queries import TOOL_STATE_ANNOTATIONS
 from twicc.git import is_git_root_related, read_head_branch, resolve_git_from_path
 from twicc.inline_artifacts.publications import merge_publications
 from twicc.providers.enrichment_cache import BorrowedEnrichment, EnrichmentCache
-from twicc.providers.live_sync import LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, read_live_slice
+from twicc.providers.live_sync import (
+    LiveSyncLimits, LiveSyncResult, LiveSyncUpdates, RawLiveSlice, WorkflowTimelineSignal, read_live_slice,
+)
 from twicc.providers.live_aggregates import (
     apply_contribution_changes, item_contributions,
     persisted_cost, session_contribution,
@@ -1965,6 +1967,16 @@ class BaseSessionCompute:
 
     def extract_completion_observations(self, parsed, line_num):
         return ()
+
+    def extract_workflow_timeline_signal(
+        self, session_id: str, item: SessionItem, parsed_json: dict,
+    ) -> WorkflowTimelineSignal | None:
+        """The workflow lifecycle fact of this line (a ``WorkflowTimelineSignal``), or ``None``.
+
+        Provider hook: only Claude Code has workflows. Called during live sync for the
+        lines of a normal session; the timeline writes them (``timeline_workflows``).
+        """
+        return None
 
     def apply_provider_title_observations(self, records: tuple) -> tuple[str, ...]:
         return ()
@@ -4377,6 +4389,9 @@ class BaseSessionCompute:
                     record_indexed_messages(session.id, new_line_nums=updates.new_line_nums,
                                             timeline_since=timeline_since, verified_final_refs=verified_final_refs,
                                             get_input_origins=get_input_origins)
+                    if updates.workflow_signals:
+                        from twicc.core.services.timeline_workflows import record_workflow_signals
+                        record_workflow_signals(session, updates.workflow_signals, timeline_since=timeline_since)
         return LiveSyncResult(updates, raw.has_more, len(updates.new_line_nums),
                               raw.bytes_consumed, (perf_counter() - started) * 1000)
 
@@ -4467,6 +4482,7 @@ class BaseSessionCompute:
         agent_link_updates: list[AgentLinkUpdate] = []
         workflow_link_updates: list[WorkflowLinkUpdate] = []
         tool_result_updates: list[ToolResultUpdate] = []
+        workflow_signals: list[WorkflowTimelineSignal] = []
 
         # Track if a compact_summary item was found in this batch
         found_compact_summary = False
@@ -4809,6 +4825,14 @@ class BaseSessionCompute:
                 if completion is not None:
                     if link_update := self.apply_queue_completion(session.id, completion):
                         agent_link_updates.append(link_update)
+                # Timeline bookkeeping only: a malformed line must never abort the slice.
+                try:
+                    signal = self.extract_workflow_timeline_signal(session.id, item, parsed)
+                except Exception:
+                    logger.exception("Workflow timeline signal failed on line %d of %s", item.line_num, session.id)
+                    signal = None
+                if signal is not None:
+                    workflow_signals.append(signal)
 
             if item.kind in (ItemKind.ASSISTANT_MESSAGE, ItemKind.CONTENT_ITEMS):
                 agent_link_updates.extend(
@@ -5072,6 +5096,7 @@ class BaseSessionCompute:
             title_updated_session_ids,
             tuple(unresolved_launcher_lookups),
             tuple(record for record in completion_observations if record.line_num in new_line_nums),
+            tuple(signal for signal in workflow_signals if signal.line_num in new_line_nums),
         )
 
     @staticmethod

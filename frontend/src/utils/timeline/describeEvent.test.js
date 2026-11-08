@@ -379,3 +379,43 @@ test('message labels identify the role from kind, while origin remains a separat
         assert.equal(vm.severity, 'neutral')
     }
 })
+
+test('workflow rows: start, resume and every end status', () => {
+    const data = { run_id: 'wf_1', task_id: 't1', name: 'normalize-i18n-glossary' }
+    const cases = [
+        ['workflow.started', { data: { ...data, cause: 'new' } }, 'Workflow started [normalize-i18n-glossary]', 'sitemap', 'neutral'],
+        ['workflow.started', { data: { ...data, cause: 'resume' } }, 'Workflow resumed [normalize-i18n-glossary]', 'sitemap', 'neutral'],
+        ['workflow.ended', { data: { ...data, status: 'completed' } }, 'Workflow completed [normalize-i18n-glossary]', 'circle-check', 'success'],
+        ['workflow.ended', { data: { ...data, status: 'failed' } }, 'Workflow failed [normalize-i18n-glossary]', 'circle-xmark', 'danger'],
+        ['workflow.ended', { data: { ...data, status: 'killed' } }, 'Workflow stopped [normalize-i18n-glossary]', 'circle-stop', 'neutral'],
+        ['workflow.ended', { data: { ...data, status: 'stopped' } }, 'Workflow stopped [normalize-i18n-glossary]', 'circle-stop', 'neutral'],
+        ['workflow.ended', { data: { ...data, status: 'paused' } }, 'Workflow paused [normalize-i18n-glossary]', 'circle-pause', 'neutral'],
+        ['workflow.ended', { reason: 'manual', data: { ...data, status: 'interrupted' } }, 'Workflow interrupted [normalize-i18n-glossary]', 'circle-stop', 'warning'],
+        ['workflow.ended', { data: { ...data, status: 'odd' } }, 'Workflow ended (odd) [normalize-i18n-glossary]', 'sitemap', 'neutral'],
+        ['workflow.ended', { data: {} }, 'Workflow ended', 'sitemap', 'neutral'],
+    ]
+    for (const [kind, fields, wording, icon, severity] of cases) {
+        const vm = describe(kind, fields)
+        assert.deepEqual([words(vm), vm.icon, vm.severity], [wording, icon, severity], `${kind} ${fields.data?.status ?? fields.data?.cause}`)
+    }
+})
+
+test('an interrupted workflow names what ended its process; an end never says "automatic"', () => {
+    const interrupted = (reason) => describe('workflow.ended', { actor: 'system', reason, data: { status: 'interrupted' } }).tags
+    assert.deepEqual(interrupted('lost'), ['found dead at boot'])
+    assert.deepEqual(interrupted('shutdown'), ['TwiCC shutdown'])
+    assert.deepEqual(interrupted('manual'), ['process stopped'])
+    assert.deepEqual(interrupted('error'), ['process crashed'])
+    assert.deepEqual(interrupted('apply-settings'), ['process restarted to apply settings'])
+    assert.deepEqual(interrupted('unknown-reason'), ['process stopped'])
+    assert.deepEqual(describe('workflow.ended', { actor: 'system', data: { status: 'completed' } }).tags, [])
+})
+
+test('a long workflow name is cut, its full name and ids in the tooltip', () => {
+    const name = 'n'.repeat(90)
+    const vm = describe('workflow.started', { data: { run_id: 'wf_1', task_id: 't1', name } })
+    assert.ok(vm.parts[1].text.length < name.length)
+    assert.match(vm.tooltip, new RegExp(`Workflow: ${name}`))
+    assert.match(vm.tooltip, /Run id: wf_1/)
+    assert.match(vm.tooltip, /Task id: t1/)
+})

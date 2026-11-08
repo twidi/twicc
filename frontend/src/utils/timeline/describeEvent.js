@@ -205,6 +205,61 @@ function describePinned(event, data, phase) {
     return { icon: 'thumbtack-slash', severity: 'neutral', parts: [text('Unpinned')], tags: [scope ? `was ${scope}` : null] }
 }
 
+const NAME_MAX = 60
+
+/**
+ * Wording of a `workflow.ended` status: [text, severity, icon]. The CLI's terminal statuses, plus the two TwiCC
+ * infers (twicc/core/services/timeline_workflows.py): `paused` (resumed later with no end of its own) and
+ * `interrupted` (its process ended; the row's `reason` says why). The set is open: an unknown status keeps its name.
+ */
+export const WORKFLOW_ENDED_STATUSES = {
+    completed: ['Workflow completed', 'success', 'circle-check'],
+    failed: ['Workflow failed', 'danger', 'circle-xmark'],
+    killed: ['Workflow stopped', 'neutral', 'circle-stop'],
+    stopped: ['Workflow stopped', 'neutral', 'circle-stop'],
+    cancelled: ['Workflow cancelled', 'neutral', 'circle-stop'],
+    canceled: ['Workflow cancelled', 'neutral', 'circle-stop'],
+    paused: ['Workflow paused', 'neutral', 'circle-pause'],
+    interrupted: ['Workflow interrupted', 'warning', 'circle-stop'],
+}
+
+/** "Workflow started " + the run's name as a value (its script's meta.name), cut near NAME_MAX. */
+function withWorkflowName(label, data, tooltip) {
+    const name = asString(data.name)
+    if (!name) return [text(label)]
+    const cut = truncateText(name, NAME_MAX)
+    if (cut.truncated) tooltip.push(`Workflow: ${name}`)
+    return [text(`${label} `), valuePart(cut.text)]
+}
+
+function workflowTooltip(data) {
+    const lines = []
+    if (asString(data.run_id)) lines.push(`Run id: ${data.run_id}`)
+    if (asString(data.task_id)) lines.push(`Task id: ${data.task_id}`)
+    return lines
+}
+
+function describeWorkflowStarted(event, data) {
+    const tooltip = workflowTooltip(data)
+    const label = data.cause === 'resume' ? 'Workflow resumed' : 'Workflow started'
+    return { icon: 'sitemap', severity: 'neutral', parts: withWorkflowName(label, data, tooltip), tooltip }
+}
+
+function describeWorkflowEnded(event, data) {
+    const tooltip = workflowTooltip(data)
+    const status = asString(data.status)
+    const [label, severity, icon] = lookup(WORKFLOW_ENDED_STATUSES, status)
+        ?? [status ? `Workflow ended (${status})` : 'Workflow ended', 'neutral', 'sitemap']
+    // An interruption names what ended the process, like `process.ended` does.
+    let cause = null
+    if (status === 'interrupted') {
+        const [label, , tag] = lookup(PROCESS_ENDED_REASONS, event.reason) ?? []
+        cause = tag ?? label?.toLowerCase() ?? 'process stopped'
+    }
+    // The run ends on its own: its wording says what happened, an "automatic" tag would add nothing.
+    return { icon, severity, parts: withWorkflowName(label, data, tooltip), tags: [cause], tooltip, saysAutomatic: true }
+}
+
 function describeBackendStarted(event, data) {
     const version = asString(data.version)
     const label = data.machine_restarted === true ? 'TwiCC started after a machine restart' : 'TwiCC started'
@@ -248,6 +303,8 @@ function describeKind(event, data, context, author) {
         case 'awaiting_input.ended': return describeAwaiting(event, data, 'ended')
         case 'pinned.started': return describePinned(event, data, 'started')
         case 'pinned.ended': return describePinned(event, data, 'ended')
+        case 'workflow.started': return describeWorkflowStarted(event, data)
+        case 'workflow.ended': return describeWorkflowEnded(event, data)
         case 'backend.started': return describeBackendStarted(event, data)
         case 'backend.ended': return describeBackendEnded(event, data)
         default: break

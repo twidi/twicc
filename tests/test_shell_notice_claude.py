@@ -24,6 +24,7 @@ def make_agent():
     agent._live_background_tasks = {}
     agent._live_monitor_tasks = set()
     agent._live_workflow_tasks = {}
+    agent._ended_workflow_tasks = set()
     agent._live_shell_tasks = {}
     agent._listed_background_tasks = set()
     agent._wakeup_refresh_handle = None
@@ -226,6 +227,7 @@ async def test_monitor_workflow_wakeup_and_pending_request_are_not_idle():
     agent._live_workflow_tasks = {"w1": "review"}
     assert agent.shell_notice_state().idle is False
     agent._live_workflow_tasks = {}
+    agent._ended_workflow_tasks = set()
     agent._pending_wakeup_at = time.time() + 600
     assert agent.shell_notice_state().idle is False
     agent._pending_wakeup_at = None

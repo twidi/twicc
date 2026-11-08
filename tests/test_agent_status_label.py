@@ -30,6 +30,7 @@ def _claude_agent() -> ClaudeCodeAgent:
     agent._live_background_tasks = {}
     agent._live_monitor_tasks = set()
     agent._live_workflow_tasks = {}
+    agent._ended_workflow_tasks = set()
     agent._pending_wakeup_at = None
     agent._waiting_label_active = False
     agent._broadcast_process_label = AsyncMock()

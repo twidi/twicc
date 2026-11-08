@@ -50,6 +50,7 @@ def _agent() -> ClaudeCodeAgent:
     agent.session_id = "session-1"
     agent._live_monitor_tasks = set()
     agent._live_workflow_tasks = {}
+    agent._ended_workflow_tasks = set()
     agent._live_background_tasks = {}
     agent._live_shell_tasks = {}
     agent._background_work_refresh_task = None
@@ -99,6 +100,7 @@ def test_the_terminal_update_releases_it() -> None:
     assert agent._live_workflow_tasks == {}
     assert agent._completion_assistant_holds() == frozenset()
     assert agent.current_background_work() is None
+    assert agent.ended_workflow_task_ids() == frozenset({"w4oyzc1pu"})
 
 
 def test_a_killed_run_is_released_by_its_notification() -> None:

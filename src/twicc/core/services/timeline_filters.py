@@ -56,6 +56,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
         TimelineKind.TREE_DETACHED_STARTED, TimelineKind.TREE_DETACHED_ENDED,
         TimelineKind.PINNED_STARTED, TimelineKind.PINNED_ENDED,
     ),
+    "workflows": (TimelineKind.WORKFLOW_STARTED, TimelineKind.WORKFLOW_ENDED),
     "twicc": (TimelineKind.BACKEND_STARTED, TimelineKind.BACKEND_ENDED),
 }
 
@@ -78,6 +79,10 @@ PROBLEM_REASONS: frozenset[str] = frozenset({
     "timeout_starting", "timeout_assistant_turn", "cron_restart_timeout", "lost", "auth_required",
     "startup-failed", "error",
 })
+
+#: The ``workflow.ended`` statuses whose severity is warning or danger in the row wording
+#: (``WORKFLOW_ENDED_STATUSES`` in ``frontend/src/utils/timeline/describeEvent.js``), section 4.4.
+PROBLEM_WORKFLOW_STATUSES: frozenset[str] = frozenset({"failed", "interrupted"})
 
 #: The ``(actor, via)`` pairs TwiCC writes (section 4.3). Any other pair is "Unknown".
 KNOWN_ORIGIN_PAIRS: frozenset[tuple[str, str | None]] = frozenset({
@@ -196,7 +201,7 @@ def families_q(families: tuple[str, ...]) -> Q | None:
 
 
 #: The kind of each problem condition (section 4.4): ``problem_q`` and ``view_kinds`` both read it.
-_PROBLEM_KINDS: tuple[str, ...] = (TimelineKind.PROCESS_ENDED, TimelineKind.BACKEND_ENDED)
+_PROBLEM_KINDS: tuple[str, ...] = (TimelineKind.PROCESS_ENDED, TimelineKind.BACKEND_ENDED, TimelineKind.WORKFLOW_ENDED)
 #: Messages include turn boundaries. Activity keeps the existing ``without_turns`` API key.
 _MESSAGES_VIEW_KINDS: tuple[str, ...] = FAMILIES["messages"] + FAMILIES["turns"]
 _WITHOUT_TURNS_EXCLUDED: tuple[str, ...] = _MESSAGES_VIEW_KINDS
@@ -205,10 +210,11 @@ _WAITS_VIEW_KINDS: tuple[str, ...] = FAMILIES["waits"]
 
 def problem_q() -> Q:
     """The rows that say something went wrong (section 4.4)."""
-    process_ended, backend_ended = _PROBLEM_KINDS
+    process_ended, backend_ended, workflow_ended = _PROBLEM_KINDS
     return (
         (kind_in(process_ended) & Q(reason__in=PROBLEM_REASONS))
         | (kind_in(backend_ended) & Q(data__clean=False))
+        | (kind_in(workflow_ended) & Q(data__status__in=sorted(PROBLEM_WORKFLOW_STATUSES)))
     )
 
 
@@ -253,7 +259,7 @@ def possible_kinds(flt: TimelineFilter) -> frozenset[str]:
 
 def can_match(flt: TimelineFilter) -> bool:
     """False when the view and the checked families leave no kind possible (``without_turns`` with Turns alone,
-    ``waits_problems`` with none of Waiting for you, Processes and TwiCC): no row can ever match."""
+    ``waits_problems`` with none of Waiting for you, Processes, Workflows and TwiCC): no row can ever match."""
     return bool(possible_kinds(flt))
 
 

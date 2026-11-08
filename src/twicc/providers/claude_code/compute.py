@@ -36,7 +36,8 @@ from twicc.core.models import (
 from twicc.paths import get_artifacts_dir
 from twicc.pricing import calculate_line_context_usage
 from twicc.provider_homes import claude_plans_dir, claude_projects_dir
-from twicc.providers.history_facts import HistoryFact, HistoryFactContext
+from twicc.providers.history_facts import HistoryFact, HistoryFactContext, HistoryFactKind, iter_resolver_items
+from twicc.providers.live_sync import WorkflowTimelineSignal
 from twicc.providers.compute_base import (
     _EMPTY_ANALYSIS,
     _EMPTY_FILE_PATHS,
@@ -2512,6 +2513,53 @@ class ClaudeCodeSessionCompute(BaseSessionCompute):
         if not run_id:
             return None
         return tool_use_id, run_id
+
+    def extract_workflow_timeline_signal(
+        self, session_id: str, item: SessionItem, parsed_json: dict,
+    ) -> WorkflowTimelineSignal | None:
+        # A launch: the asynchronous acknowledgement of a ``Workflow`` call. A
+        # notification rewritten at ingest into a tool_result on the same call
+        # carries no ``toolUseResult``, so it never reads as a launch.
+        tool_use_result = parsed_json.get('toolUseResult')
+        if (
+            isinstance(tool_use_result, dict)
+            and tool_use_result.get('status') == 'async_launched'
+            and tool_use_result.get('taskType') == 'local_workflow'
+        ):
+            info = self.extract_workflow_info_from_tool_result(parsed_json)
+            task_id = tool_use_result.get('taskId')
+            if info is None or not isinstance(task_id, str) or not task_id:
+                return None
+            tool_use_id, run_id = info
+            name = tool_use_result.get('workflowName')
+            return WorkflowTimelineSignal(
+                kind='started', task_id=task_id, line_num=item.line_num, timestamp=item.timestamp,
+                run_id=run_id, name=name if isinstance(name, str) and name else None,
+                resumed=self._workflow_call_resumes(session_id, tool_use_id, item.line_num),
+            )
+        # An end: a terminal ``<task-notification>`` in any of its forms. Agents
+        # end the same way: the timeline keeps only the task ids it saw start.
+        note = run_end_notification(parsed_json)
+        if note is not None:
+            return WorkflowTimelineSignal(
+                kind='ended', task_id=note.task_id, line_num=item.line_num, timestamp=item.timestamp,
+                status=note.status,
+            )
+        return None
+
+    def _workflow_call_resumes(self, session_id: str, tool_use_id: str, before_line: int) -> bool:
+        """Whether the ``Workflow`` call ``tool_use_id`` resumes a run (``resumeFromRunId``)."""
+        for candidate in iter_resolver_items(session_id, HistoryFactKind.TOOL_CALL, tool_use_id, before_line=before_line):
+            try:
+                load_current([candidate])
+                candidate_parsed = orjson.loads(effective_current(candidate))
+            except orjson.JSONDecodeError:
+                continue
+            for block in get_message_content_list(candidate_parsed, "assistant") or ():
+                if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('id') == tool_use_id:
+                    tool_input = block.get('input')
+                    return isinstance(tool_input, dict) and bool(tool_input.get('resumeFromRunId'))
+        return False
 
     def extract_task_tool_uses(self, parsed_json: dict) -> list[tuple[str, bool]]:
         content = get_message_content_list(parsed_json, "assistant")

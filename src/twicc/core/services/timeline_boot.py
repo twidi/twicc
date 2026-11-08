@@ -15,6 +15,7 @@ from twicc.core.models import (
     ProcessRun, Session, SessionItem, TimelineActor, TimelineEvent, TimelineKind, TimelinePrecision,
 )
 from twicc.core.services.session_timeline import record_event, record_event_sync
+from twicc.core.services.timeline_workflows import close_open_workflows
 from twicc.core.timeline import process_transition_events
 from twicc.version import get_version
 
@@ -68,6 +69,9 @@ def _reconcile_lost_processes(now: datetime) -> None:
             new_state=AgentState.DEAD.value, new_awaiting=False, new_work=None,
         ):
             record_event_sync(spec.kind, data=spec.data, **common)
+        # Its workflows died with it (like the inner intervals above).
+        close_open_workflows(run.session_id, occurred_at=common["occurred_at"], reason="lost",
+                             precision=TimelinePrecision.ESTIMATED)
         record_event_sync(
             TimelineKind.PROCESS_ENDED, reason="lost", data={"upper_bound": now.isoformat()}, **common,
         )
