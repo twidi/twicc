@@ -3035,6 +3035,19 @@ defineExpose({
     margin-top: var(--wa-space-2xs);
 }
 
+/* A narrow screen wraps the long label: wa-button fixes its height and forbids wrapping. */
+.directory-banner-actions wa-button {
+    max-width: 100%;
+}
+
+.directory-banner-actions wa-button::part(base) {
+    height: auto;
+    min-height: var(--wa-form-control-height);
+    padding-block: var(--wa-space-xs);
+    line-height: var(--wa-line-height-condensed);
+    white-space: normal;
+}
+
 .directory-banner-error {
     color: var(--wa-color-danger-on-quiet);
 }
