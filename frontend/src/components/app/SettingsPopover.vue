@@ -572,6 +572,9 @@ const isMac = computed(() => store.isMac)
 const isLinux = computed(() => store.isLinux)
 const worktreeDirectoryTemplate = computed(() => store.getWorktreeDirectoryTemplate)
 const compactSessionList = computed(() => store.isCompactSessionList)
+const showSessionsAsTree = computed(() => store.isShowSessionsAsTree)
+const showProviderIcons = computed(() => store.isShowProviderIcons)
+const showActiveAcrossFilters = computed(() => store.isShowActiveAcrossFilters)
 const sidebarRailVisibleWhenClosed = computed(() => store.isSidebarRailVisibleWhenClosed)
 const reduceEffects = computed(() => store.isReduceEffects)
 const showMessageTimestamps = computed(() => store.areMessageTimestampsShown)
@@ -1208,6 +1211,18 @@ function onSidebarRailVisibleWhenClosedChange(event) {
 
 function onCompactSessionListChange(event) {
     store.setCompactSessionList(event.target.checked)
+}
+
+function onShowSessionsAsTreeChange(event) {
+    store.setShowSessionsAsTree(event.target.checked)
+}
+
+function onShowProviderIconsChange(event) {
+    store.setShowProviderIcons(event.target.checked)
+}
+
+function onShowActiveAcrossFiltersChange(event) {
+    store.setShowActiveAcrossFilters(event.target.checked)
 }
 
 /**
@@ -1915,6 +1930,7 @@ function onChangelogClose() {
                                 size="small"
                             >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
+                        <wa-divider></wa-divider>
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.sessions.compactList.label') }}</label>
                             <wa-switch
@@ -1923,6 +1939,32 @@ function onChangelogClose() {
                                 size="small"
                             >{{ $t('common.status.enabled') }}</wa-switch>
                         </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">{{ $t('session.list.showAsTree') }}</label>
+                            <wa-switch
+                                :checked="showSessionsAsTree"
+                                @change="onShowSessionsAsTreeChange"
+                                size="small"
+                            >{{ $t('common.status.enabled') }}</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">{{ $t('session.list.showProviderIcons') }}</label>
+                            <wa-switch
+                                :checked="showProviderIcons"
+                                @change="onShowProviderIconsChange"
+                                size="small"
+                            >{{ $t('common.status.enabled') }}</wa-switch>
+                        </div>
+                        <div class="setting-group">
+                            <label class="setting-group-label">{{ $t('session.list.activeAcrossProjects.label') }}</label>
+                            <wa-switch
+                                :checked="showActiveAcrossFilters"
+                                @change="onShowActiveAcrossFiltersChange"
+                                size="small"
+                            >{{ $t('common.status.enabled') }}</wa-switch>
+                            <span class="setting-group-hint">{{ $t('session.list.activeAcrossProjects.hint') }}</span>
+                        </div>
+                        <wa-divider></wa-divider>
                         <div class="setting-group">
                             <label class="setting-group-label">{{ $t('settings.sessions.cache.label', { count: maxCachedSessions }) }}</label>
                             <wa-slider
